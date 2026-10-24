@@ -1,0 +1,1 @@
+Local                        no errors                                     710975 distinct states found depth=23      69s

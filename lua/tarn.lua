@@ -43,7 +43,6 @@ local M = {
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0},
 }
 
-local SPACE_LOCK = 255           -- index_id used for whole-space R locks
 local RW = {txn_isolation = 'read-committed'}
 
 -------------------------------------------------------------------------------
@@ -122,73 +121,98 @@ local function in_range(kd, key, lo, hi, lo_incl, hi_incl)
     return true
 end
 
--- Would a W lock by `txid` on (space_id, index_id, key) conflict with locks
--- held by other prepared transactions? (TarnCommit: CommitLocal.noConf and
--- Prepare.writesOK.) Returns the conflicting txid or nil.
-local function write_conflict(txid, space_id, index_id, key, kb)
-    local L = box.space._tarn_locks.index.pk
-    for _, l in L:pairs({space_id, index_id, kb}, {iterator = 'EQ'}) do
-        if l.txid ~= txid then return l.txid end
+-- Lock records ---------------------------------------------------------------
+-- A prepared transaction holds, on each participant:
+--   W point locks  (space, 0, pk) carrying the intent (op + new tuple), and
+--                  (space, idx, key) for every secondary-index key of the old
+--                  and the new version of each row it writes;
+--   R point locks  (space, idx, key) for every point lookup it made;
+--   R range locks  (space, idx, lo, hi) in _tarn_rlocks for every scan.
+-- Conflicts (TarnCommit Prepare.writesOK / readsOK, CommitLocal.noConf):
+--   a writer conflicts with any lock on the primary key or on a unique key of
+--   its new tuple, with R locks on any secondary key of its old/new tuple, and
+--   with R range locks covering any of those keys;
+--   a reader conflicts with W locks on the keys / within the ranges it read.
+
+-- Index keys of a tuple for every secondary index: {{index_id, key, unique}}.
+local function secondary_keys(space, tuple, out)
+    if tuple == nil then return out end
+    for id, idx in pairs(space.index) do
+        if type(id) == 'number' and id ~= 0 then
+            out[#out + 1] = {id, index_key_def(space.id, id):extract_key(tuple):totable(), idx.unique}
+        end
     end
-    for _, l in L:pairs({space_id, SPACE_LOCK, ''}, {iterator = 'EQ'}) do
-        if l.txid ~= txid then return l.txid end
-    end
-    if index_id == 0 then
-        local kd
-        for _, r in box.space._tarn_rlocks.index.space:pairs({space_id, 0}, {iterator = 'EQ'}) do
-            if r.txid ~= txid then
-                kd = kd or index_key_def(space_id, 0)
-                if in_range(kd, key, r.lo, r.hi, r.lo_incl, r.hi_incl) then return r.txid end
-            end
+    return out
+end
+
+local function range_locked(txid, space_id, index_id, key)
+    local kd
+    for _, r in box.space._tarn_rlocks.index.space:pairs({space_id, index_id}, {iterator = 'EQ'}) do
+        if r.txid ~= txid then
+            kd = kd or index_key_def(space_id, index_id)
+            if in_range(kd, key, r.lo, r.hi, r.lo_incl, r.hi_incl) then return r.txid end
         end
     end
     return nil
 end
 
--- Read validation against W locks of other prepared txns (Prepare.readsOK).
-local function read_conflict_point(txid, space_id, index_id, kb)
-    for _, l in box.space._tarn_locks.index.pk:pairs({space_id, index_id, kb}, {iterator = 'EQ'}) do
+-- Conflicts of a write of `space` with primary key `pk`, old tuple `old`
+-- (nil if none) and new tuple `new` (nil for delete). Returns holder or nil.
+local function write_conflict(txid, space, pk, old, new)
+    local L = box.space._tarn_locks.index.pk
+    local sid = space.id
+    for _, l in L:pairs({sid, 0, kbin(pk)}, {iterator = 'EQ'}) do
+        if l.txid ~= txid then return l.txid end
+    end
+    local h = range_locked(txid, sid, 0, pk)
+    if h then return h end
+    local keys = secondary_keys(space, old, {})
+    local nold = #keys
+    secondary_keys(space, new, keys)
+    for i, k in ipairs(keys) do
+        local any_mode = k[3] and i > nold     -- unique key claimed by the new tuple
+        for _, l in L:pairs({sid, k[1], kbin(k[2])}, {iterator = 'EQ'}) do
+            if l.txid ~= txid and (any_mode or l.mode == 'R') then return l.txid end
+        end
+        h = range_locked(txid, sid, k[1], k[2])
+        if h then return h end
+    end
+    return nil
+end
+
+-- Reads -----------------------------------------------------------------------
+-- A read set from Tarn: points {{space_id, index_id, key}}, ranges
+-- {{space_id, index_id, lo, hi, lo_incl, hi_incl}} (nil bound = unbounded).
+
+local function point_w_locked(txid, space_id, index_id, key)
+    for _, l in box.space._tarn_locks.index.pk:pairs({space_id, index_id, kbin(key)}, {iterator = 'EQ'}) do
         if l.txid ~= txid and l.mode == 'W' then return l.txid end
     end
     return nil
 end
 
-local function read_conflict_range(txid, space_id, lo, hi, lo_incl, hi_incl)
-    local kd = index_key_def(space_id, 0)
-    for _, l in box.space._tarn_locks.index.pk:pairs({space_id, 0}, {iterator = 'EQ'}) do
+local function range_w_locked(txid, space_id, index_id, lo, hi, lo_incl, hi_incl)
+    local kd
+    for _, l in box.space._tarn_locks.index.pk:pairs({space_id, index_id}, {iterator = 'EQ'}) do
         if l.txid ~= txid and l.mode == 'W' then
+            kd = kd or index_key_def(space_id, index_id)
             if in_range(kd, msgpack.decode(l.key), lo, hi, lo_incl, hi_incl) then return l.txid end
         end
     end
     return nil
 end
 
-local function read_conflict_space(txid, space_id)
-    for _, l in box.space._tarn_locks.index.pk:pairs({space_id}, {iterator = 'EQ'}) do
-        if l.txid ~= txid and l.mode == 'W' then return l.txid end
+-- TarnCommit NoWLocks: no other prepared txn holds a W lock on anything read.
+local function reads_w_locked(txid, points, ranges)
+    for _, r in ipairs(points or {}) do
+        local h = point_w_locked(txid, r[1], r[2], r[3])
+        if h then return h end
+    end
+    for _, r in ipairs(ranges or {}) do
+        local h = range_w_locked(txid, r[1], r[2], r[3], r[4], r[5], r[6])
+        if h then return h end
     end
     return nil
-end
-
--- Keys a write must W-lock: the primary key plus, for a new tuple, the key of
--- every unique secondary index (so two txns can't both claim a unique value).
-local function lock_keys_of(space, pk, new_tuple)
-    local out = {{0, pk}}
-    if new_tuple ~= nil then
-        for id, idx in pairs(space.index) do
-            if type(id) == 'number' and id ~= 0 and idx.unique then
-                out[#out + 1] = {id, index_key_def(space.id, id):extract_key(new_tuple):totable()}
-            end
-        end
-    end
-    return out
-end
-
--- Primary key and new tuple (nil for delete) of a write {op, space_id, payload}.
-local function write_target(space, w)
-    if w[1] == 'delete' or w[1] == 'update' then return w[3], nil end
-    local t = box.tuple.new(w[3])
-    return index_key_def(space.id, 0):extract_key(t):totable(), t
 end
 
 -------------------------------------------------------------------------------
@@ -230,34 +254,40 @@ local function apply_write(w)
     error('unknown write op ' .. tostring(op))
 end
 
--- Apply one write inside the current local transaction, refusing it if any
--- key it touches (primary key, unique keys of the new tuple) is locked by
--- another prepared transaction. Returns (result) or (nil, holder_txid);
--- the caller rolls the local transaction back on conflict.
+-- Primary key and new tuple (nil for delete) of a write {op, space_id, payload}.
+local function write_target(space, w)
+    if w[1] == 'delete' or w[1] == 'update' then return w[3], nil end
+    local t = box.tuple.new(w[3])
+    return index_key_def(space.id, 0):extract_key(t):totable(), t
+end
+
+-- Apply one write inside the current local transaction, refusing it if it
+-- conflicts with a lock of another prepared transaction. Returns (result)
+-- or (nil, holder); the caller rolls the local transaction back on conflict.
 local function apply_checked(txid, w)
     local space = box.space[w[2]]
     if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
-    local pk, newt = write_target(space, w)
-    local holder = write_conflict(txid, space.id, 0, pk, kbin(pk))
-    if holder then return nil, holder end
-    local res = apply_write(w)
-    if w[1] == 'update' then newt = res end
-    if newt ~= nil then
-        local keys = lock_keys_of(space, pk, newt)
-        for i = 2, #keys do
-            holder = write_conflict(txid, space.id, keys[i][1], keys[i][2], kbin(keys[i][2]))
-            if holder then return nil, holder end
-        end
+    local pk, new = write_target(space, w)
+    local old = space:get(pk)
+    if w[1] == 'update' then
+        if old == nil then return nil end
+        new = old:update(w[4])
     end
-    return res
+    local holder = write_conflict(txid, space, pk, old, new)
+    if holder then return nil, holder end
+    return apply_write(w)
 end
 
 -- TarnCommit!CommitLocal: called inside the transaction's IPROTO stream after
--- its reads. Validates (MVCC + lock table), applies, and commits in one call.
--- Returns {'ok', results} or {status, code, message}; on failure the stream's
--- transaction is rolled back.
-function tarn_commit_local(txid, writes)
+-- its reads. Validates the read set against W locks (a W lock may belong to a
+-- transaction that is committed but not yet applied here), applies the writes
+-- with lock checks, and commits; Tarantool's MVCC validates the reads
+-- themselves. Returns {'ok', n} or {status, code, message}; on failure the
+-- stream's transaction is rolled back.
+function tarn_commit_local(txid, writes, rpoints, rranges)
     local ok, res = pcall(function()
+        local h = reads_w_locked(txid, rpoints, rranges)
+        if h then return conflict('read row locked by prepared transaction ' .. h) end
         local n = 0
         for _, w in ipairs(writes) do
             local res, holder = apply_checked(txid, w)
@@ -274,6 +304,65 @@ function tarn_commit_local(txid, writes)
     end
     if res[1] ~= OK and box.is_in_txn() then box.rollback() end
     return res
+end
+
+-- Commit of a read-only single-shard transaction (TarnCommit!SnapshotRead):
+-- the lock check runs in the same MVCC view as the reads.
+function tarn_validate(txid, rpoints, rranges)
+    local h = reads_w_locked(txid, rpoints, rranges)
+    if h then
+        if box.is_in_txn() then box.rollback() end
+        return conflict('read row locked by prepared transaction ' .. h)
+    end
+    if box.is_in_txn() then box.commit() end
+    return {OK}
+end
+
+M.unlock_cond = fiber.cond()
+
+-- Autocommit read (TarnCommit!SnapshotRead with check-then-read): a select
+-- on any index that waits while another transaction holds a W lock on what
+-- the select covers. Lock check and select run without a yield in between,
+-- so they observe one state. Returns {'ok', tuples}.
+function tarn_read(space_id, index_id, key, iterator, limit, offset)
+    local deadline = clock.monotonic() + M.cfg.lock_wait
+    local idx = box.space[space_id].index[index_id]
+    local unique_point = (iterator == nil or iterator == 'EQ' or iterator == 0)
+                         and idx.unique and #key == #idx.parts
+    while true do
+        local rows = idx:select(key, {iterator = iterator, limit = limit, offset = offset})
+        local h
+        if box.space._tarn_locks:len() > 0 then
+            if unique_point then
+                h = point_w_locked('', space_id, index_id, key)
+            else
+                -- The rows returned cover [first, last]; an unlimited scan covers
+                -- everything from the start key in the iterator's direction.
+                local kd = index_key_def(space_id, index_id)
+                local lo, hi = nil, nil
+                local it = string.upper(tostring(iterator or 'EQ'))
+                if #rows > 0 and limit ~= nil and #rows >= limit then
+                    local a = kd:extract_key(rows[1]):totable()
+                    local b = kd:extract_key(rows[#rows]):totable()
+                    if it == 'LT' or it == 'LE' or it == 'REQ' then lo, hi = b, a else lo, hi = a, b end
+                end
+                if it == 'EQ' or it == 'REQ' then
+                    lo = lo or key; hi = hi or key
+                elseif it == 'GE' or it == 'GT' then
+                    lo = lo or (#key > 0 and key or nil)
+                elseif it == 'LE' or it == 'LT' then
+                    hi = hi or (#key > 0 and key or nil)
+                end
+                h = range_w_locked('', space_id, index_id, lo, hi, true, true)
+            end
+        end
+        if h == nil then return {OK, rows} end
+        if clock.monotonic() > deadline then
+            return conflict('row locked by prepared transaction ' .. h)
+        end
+        M.stats.lock_waits = M.stats.lock_waits + 1
+        M.unlock_cond:wait(0.01)
+    end
 end
 
 -- Autocommit DML outside any stream: one local transaction. Waits (bounded)
@@ -302,7 +391,7 @@ function tarn_autocommit(writes)
             return conflict('row locked by prepared transaction ' .. res[2])
         end
         M.stats.lock_waits = M.stats.lock_waits + 1
-        fiber.sleep(0.0005)
+        M.unlock_cond:wait(0.01)
     end
 end
 
@@ -315,12 +404,12 @@ local function now() return clock.realtime() end
 -- TarnCommit!Prepare. Runs inside the transaction's stream on this shard.
 --   txid, dshard, parts : transaction id, decision shard, participant shards
 --   writes  : {{op, space_id, tuple_or_key}, ...}  (op: insert/replace/delete)
---   rkeys   : {{space_id, index_id, key}, ...}       point reads
---   rranges : {{space_id, lo, hi, lo_incl, hi_incl}}  primary-key range reads
---   rspaces : {space_id, ...}                         reads needing a space lock
+--   rpoints : {{space_id, index_id, key}, ...}       point reads
+--   rranges : {{space_id, index_id, lo, hi, lo_incl, hi_incl}, ...}  scans
 --   txn_ts  : coordinator's start time (prepares older than max_txn_age refused)
 -- Returns {'yes'} or {'no', code, message}. A NO leaves a tombstone.
-function tarn_prepare(txid, dshard, parts, writes, rkeys, rranges, rspaces, txn_ts)
+function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
+    rpoints, rranges = rpoints or {}, rranges or {}
     local function vote_no(code, msg)
         if box.is_in_txn() then box.rollback() end
         -- Tombstone: a late duplicate of this PREPARE must also fail.
@@ -349,43 +438,34 @@ function tarn_prepare(txid, dshard, parts, writes, rkeys, rranges, rspaces, txn_
             return vote_no(1213, 'transaction too old')
         end
         -- readsOK: no W lock of another prepared txn on anything we read.
-        for _, r in ipairs(rkeys) do
-            local h = read_conflict_point(txid, r[1], r[2], kbin(r[3]))
-            if h then return vote_no(1213, 'read key locked by ' .. h) end
-        end
-        for _, r in ipairs(rranges) do
-            local h = read_conflict_range(txid, r[1], r[2], r[3], r[4], r[5])
-            if h then return vote_no(1213, 'read range locked by ' .. h) end
-        end
-        for _, sid in ipairs(rspaces) do
-            local h = read_conflict_space(txid, sid)
-            if h then return vote_no(1213, 'read space locked by ' .. h) end
-        end
-        -- writesOK: no lock of any mode by another prepared txn on any key the
-        -- write touches; inserts must not collide with existing rows.
-        local targets = {}
+        local h = reads_w_locked(txid, rpoints, rranges)
+        if h then return vote_no(1213, 'read row locked by ' .. h) end
+        -- writesOK, plus uniqueness of the new tuples (tracked reads).
+        local plans = {}
         for i, w in ipairs(writes) do
             local space = box.space[w[2]]
             if space == nil then return vote_no(1146, 'no such space ' .. tostring(w[2])) end
-            local pk, newt = write_target(space, w)
-            local keys = lock_keys_of(space, pk, newt)
-            for _, lk in ipairs(keys) do
-                local h = write_conflict(txid, space.id, lk[1], lk[2], kbin(lk[2]))
-                if h then return vote_no(1213, 'write key locked by ' .. h) end
-            end
-            if w[1] == 'insert' and space:get(pk) ~= nil then
+            local pk, new = write_target(space, w)
+            local old = space:get(pk)
+            h = write_conflict(txid, space, pk, old, new)
+            if h then return vote_no(1213, 'write row locked by ' .. h) end
+            if w[1] == 'insert' and old ~= nil then
                 return vote_no(1062, 'Duplicate entry for key PRIMARY')
             end
-            if newt ~= nil then
+            local keys = secondary_keys(space, old, {})
+            secondary_keys(space, new, keys)
+            if new ~= nil then
                 local pkd = index_key_def(space.id, 0)
-                for j = 2, #keys do
-                    local cur = space.index[keys[j][1]]:get(keys[j][2])
-                    if cur ~= nil and pkd:compare_keys(pkd:extract_key(cur):totable(), pk) ~= 0 then
-                        return vote_no(1062, 'Duplicate entry for key ' .. space.index[keys[j][1]].name)
+                for _, k in ipairs(keys) do
+                    if k[3] then
+                        local cur = space.index[k[1]]:get(k[2])
+                        if cur ~= nil and pkd:compare_keys(pkd:extract_key(cur):totable(), pk) ~= 0 then
+                            return vote_no(1062, 'Duplicate entry for key ' .. space.index[k[1]].name)
+                        end
                     end
                 end
             end
-            targets[i] = keys
+            plans[i] = {space.id, pk, keys}
         end
         -- recOK: the decision shard must not have a record yet (fenced => abort).
         if dshard == M.cfg.shard_id then
@@ -395,27 +475,26 @@ function tarn_prepare(txid, dshard, parts, writes, rkeys, rranges, rspaces, txn_
             box.space._tarn_txn:insert{txid, 'staging', parts, now()}
         end
         local L = box.space._tarn_locks
-        local written = {}
+        local wlocked = {}
         for i, w in ipairs(writes) do
-            local keys = targets[i]
-            local pkb = kbin(keys[1][2])
-            written[w[2] .. ':' .. pkb] = true
-            L:replace{w[2], 0, pkb, txid, 'W', w[1], w[1] ~= 'delete' and w[3] or msgpack.NULL}
-            for j = 2, #keys do
-                L:replace{w[2], keys[j][1], kbin(keys[j][2]), txid, 'W', msgpack.NULL, msgpack.NULL}
+            local sid, pk, keys = plans[i][1], plans[i][2], plans[i][3]
+            local pkb = kbin(pk)
+            wlocked[sid .. ':0:' .. pkb] = true
+            L:replace{sid, 0, pkb, txid, 'W', w[1], w[1] ~= 'delete' and w[3] or msgpack.NULL}
+            for _, k in ipairs(keys) do
+                local kb = kbin(k[2])
+                wlocked[sid .. ':' .. k[1] .. ':' .. kb] = true
+                L:replace{sid, k[1], kb, txid, 'W', msgpack.NULL, msgpack.NULL}
             end
         end
-        for _, r in ipairs(rkeys) do
+        for _, r in ipairs(rpoints) do
             local kb = kbin(r[3])
-            if not (r[2] == 0 and written[r[1] .. ':' .. kb]) then
+            if not wlocked[r[1] .. ':' .. r[2] .. ':' .. kb] then
                 L:replace{r[1], r[2], kb, txid, 'R', msgpack.NULL, msgpack.NULL}
             end
         end
         for i, r in ipairs(rranges) do
-            box.space._tarn_rlocks:replace{txid, i, r[1], 0, r[2], r[3], r[4], r[5]}
-        end
-        for _, sid in ipairs(rspaces) do
-            L:replace{sid, SPACE_LOCK, '', txid, 'R', msgpack.NULL, msgpack.NULL}
+            box.space._tarn_rlocks:replace{txid, i, r[1], r[2], r[3], r[4], r[5] ~= false, r[6] ~= false}
         end
         box.space._tarn_part:insert{txid, 'prepared', dshard, parts, now()}
         box.commit()   -- MVCC validates every read this stream made; may raise conflict
@@ -437,6 +516,7 @@ local function release_locks(txid)
     for _, r in box.space._tarn_rlocks:pairs({txid}, {iterator = 'EQ'}) do
         box.space._tarn_rlocks:delete{r.txid, r.n}
     end
+    box.on_commit(function() M.unlock_cond:broadcast() end)
 end
 
 -- TarnCommit!ApplyAt: move intents into the plain spaces, release locks.

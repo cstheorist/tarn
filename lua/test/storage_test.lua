@@ -56,10 +56,10 @@ r = st:call('tarn_commit_local', {'L2', {{'replace', sid, {1, cur[2] + 1000, 'a@
 check('stale read -> conflict 1213', r[1] == 'conflict' and r[2] == 1213 and bal(1, 1) == 91, r)
 
 print('cross-shard commit (Prepare/ApplyAt)')
-local function prepare(i, txid, writes, rkeys, rranges, rspaces, stream)
+local function prepare(i, txid, writes, rkeys, rranges, _, stream)
     local s = stream or c[i]:new_stream()
     if not stream then s:begin() end
-    return s:call('tarn_prepare', {txid, 1, {1, 2}, writes, rkeys or {}, rranges or {}, rspaces or {}, fiber.time()})
+    return s:call('tarn_prepare', {txid, 1, {1, 2}, writes, rkeys or {}, rranges or {}, fiber.time()})
 end
 -- transfer 40 from acct 1 (shard 1) to acct 2 (shard 2)
 local s1 = c[1]:new_stream(); s1:begin(); local a = s1.space['test.acct']:get{1}
@@ -109,7 +109,7 @@ check('abort restores nothing (intents dropped)', bal(1, 1) == 51)
 
 print('range locks and unique keys')
 s2 = c[2]:new_stream(); s2:begin(); s2.space['test.acct']:select({10}, {iterator = 'GE', limit = 100})
-v2 = prepare(2, 'X6', {}, {}, {{sid, {10}, {20}, true, true}}, nil, s2)
+v2 = prepare(2, 'X6', {}, {}, {{sid, 0, {10}, {20}, true, true}}, nil, s2)
 check('range reader prepared', v2[1] == 'yes', v2)
 r = c[2]:call('tarn_autocommit', {{{'insert', sid, {15, 1, 'r@x', 2}}}})
 check('insert into locked range refused', r[1] == 'conflict', r)
@@ -123,6 +123,47 @@ check('second claimant of u@x refused', r[1] == 'conflict', r)
 v1 = prepare(2, 'X8', {{'insert', sid, {28, 1, 'r@x', 2}}})
 check('prepare of existing unique value votes 1062', v1[1] == 'no' and v1[2] == 1062, v1)
 c[2]:call('tarn_abort', {'X7', 1, {1, 2}})
+
+print('lock-aware reads (strict serializability fix)')
+-- A committed-but-unapplied cross-shard writer must not be read around.
+v1 = prepare(1, 'W1', {{'replace', sid, {1, 7, 'a@x', 1}}})
+check('W1 prepared', v1[1] == 'yes', v1)
+local got
+local f = fiber.create(function() got = c[1]:call('tarn_read', {sid, 0, {1}, 'EQ', 1}) end)
+fiber.sleep(0.05)
+check('tarn_read blocks on W lock', got == nil)
+c[1]:call('tarn_apply', {'W1'})
+fiber.sleep(0.05)
+check('tarn_read returns the applied value', got and got[1] == 'ok' and got[2][1][2] == 7, got)
+-- range read covering a W-locked key waits too
+v1 = prepare(1, 'W2', {{'replace', sid, {3, 33, 'c@x', 1}}})
+got = nil
+f = fiber.create(function() got = c[1]:call('tarn_read', {sid, 0, {0}, 'GE', 10}) end)
+fiber.sleep(0.05)
+check('range tarn_read blocks on W lock inside range', got == nil)
+c[1]:call('tarn_apply', {'W2'})
+fiber.sleep(0.05)
+check('range tarn_read sees the applied row', got and got[1] == 'ok' and #got[2] >= 2, got)
+-- commit_local validates its read set against W locks
+v1 = prepare(1, 'W3', {{'replace', sid, {1, 8, 'a@x', 1}}})
+st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{1}
+r = st:call('tarn_commit_local', {'L4', {{'replace', sid, {50, 1, 'q@x', 1}}}, {{sid, 0, {1}}}})
+check('commit_local with W-locked read key -> conflict', r[1] == 'conflict', r)
+st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{1}
+r = st:call('tarn_validate', {'L5', {{sid, 0, {1}}}})
+check('read-only validate with W-locked read key -> conflict', r[1] == 'conflict', r)
+c[1]:call('tarn_abort', {'W3', 1, {1, 2}})
+st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{1}
+r = st:call('tarn_validate', {'L6', {{sid, 0, {1}}}})
+check('read-only validate passes once unlocked', r[1] == 'ok', r)
+-- secondary-index reads see W locks on old and new index keys
+v1 = prepare(1, 'W4', {{'replace', sid, {1, 9, 'new@x', 1}}})
+got = c[1]:call('tarn_read', {sid, 1, {'a@x'}, 'EQ', 1})
+local got2 = nil
+check('read of old unique key waits/conflicts while locked', got[1] == 'conflict', got)
+c[1]:call('tarn_apply', {'W4'})
+got = c[1]:call('tarn_read', {sid, 1, {'new@x'}, 'EQ', 1})
+check('read of new unique key after apply', got[1] == 'ok' and #got[2] == 1, got)
 
 print('recovery (coordinator crashed)')
 -- (a) both prepared, coordinator vanished: implicitly committed -> applied.

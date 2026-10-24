@@ -2,7 +2,7 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders RK=MCRKeys NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE ABA=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean StrictSerializable";
+    local RD=MCReaders AOP=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
     for b in "$@";
     do
         case $b in 
@@ -18,11 +18,17 @@ mk ()
             LIR)
                 LIR=TRUE
             ;;
-            ABA)
-                ABA=TRUE
+            AOP)
+                AOP=TRUE
+            ;;
+            RYW)
+                INV="DirectReadYourWrites"
             ;;
             ATOMIC)
                 INV="DirectReadAtomic"
+            ;;
+            LRW)
+                LRW=TRUE
             ;;
             NORD)
                 RD=NoReaders; RK=NoRKeys
@@ -49,27 +55,34 @@ CONSTANTS
   BugNoWLockCheckOnRead = $NWC
   BugNoTombstone = $NTS
   BugLocalIgnoresRLocks = $LIR
-  BugAckBeforeApply = $ABA
+  AckOnPrepare = $AOP
+  BugLocalReadsIgnoreWLocks = $LRW
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
 
 }
 # The protocol as designed: every invariant must hold.
-# Commit-phase faults (coordinator crash, message loss) on each workload:
+# Commit-phase faults (coordinator crash, message loss, recovery racing a
+# live coordinator) on each workload:
 mk Skew        RSetSkew  WSetSkew  0 1 1 NORD
 mk Local       RSetLocal WSetLocal 0 1 1 NORD
 mk Frac        RSetFrac  WSetFrac  0 1 1 NORD
 mk Recov       RSetRecov WSetRecov 0 1 2 NORD
-# Leader failover during execution, plus a direct reader:
+# Leader failover during execution, with a direct reader:
 mk SkewFailover  RSetSkew  WSetSkew  1 0 0
 mk LocalFailover RSetLocal WSetLocal 1 0 0
 mk FracFailover  RSetFrac  WSetFrac  1 0 0
+mk RecovReaders  RSetRecov WSetRecov 0 0 0
+# AckOnPrepare (1 round-trip cross-shard commits) keeps SQL strict serializability:
+mk Skew_AckOnPrepare  RSetSkew  WSetSkew  0 1 1 NORD AOP
+mk Recov_AckOnPrepare RSetRecov WSetRecov 0 1 2 NORD AOP
 # Each weakened variant must be caught.
-mk Bug_NoReadLocks        RSetSkew  WSetSkew  0 0 0 NRL
-mk Bug_LocalIgnoresRLocks RSetLocal WSetLocal 0 0 0 LIR
-mk Bug_NoWLockCheckOnRead RSetFrac  WSetFrac  0 0 0 NWC
-mk Bug_NoTombstone        RSetRecov WSetRecov 0 1 1 NTS
-mk Bug_AckBeforeApply     RSetRecov WSetRecov 0 0 0 ABA
-# Documented trade-off: direct multi-key reads are not atomic.
-mk Tradeoff_DirectReadAtomic RSetFrac WSetFrac 0 0 0 ATOMIC
+mk Bug_NoReadLocks            RSetSkew  WSetSkew  0 0 0 NRL
+mk Bug_LocalIgnoresRLocks     RSetLocal WSetLocal 0 0 0 LIR
+mk Bug_NoWLockCheckOnRead     RSetFrac  WSetFrac  0 0 0 NWC
+mk Bug_NoTombstone            RSetRecov WSetRecov 0 1 1 NTS
+mk Bug_LocalReadsIgnoreWLocks RSetRecov WSetRecov 0 0 0 LRW
+# Documented trade-offs (expected to be violated):
+mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
+mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW
