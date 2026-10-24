@@ -2,7 +2,7 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders AOP=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
+    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
     for b in "$@";
     do
         case $b in 
@@ -30,6 +30,9 @@ mk ()
             LRW)
                 LRW=TRUE
             ;;
+            ROV)
+                ROV=TRUE
+            ;;
             NORD)
                 RD=NoReaders; RK=NoRKeys
             ;;
@@ -56,6 +59,7 @@ CONSTANTS
   BugNoTombstone = $NTS
   BugLocalIgnoresRLocks = $LIR
   AckOnPrepare = $AOP
+  ROValidateOnly = $ROV
   BugLocalReadsIgnoreWLocks = $LRW
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
@@ -77,10 +81,15 @@ mk RecovReaders  RSetRecov WSetRecov 0 0 0
 # AckOnPrepare (1 round-trip cross-shard commits) keeps SQL strict serializability:
 mk Skew_AckOnPrepare  RSetSkew  WSetSkew  0 1 1 NORD AOP
 mk Recov_AckOnPrepare RSetRecov WSetRecov 0 1 2 NORD AOP
+# ROValidateOnly (cross-shard reads without PREPARE or locks):
+mk Skew_ROValidate      RSetSkew  WSetSkew  0 1 1 NORD ROV
+mk Frac_ROValidate      RSetFrac  WSetFrac  0 1 1 NORD ROV
+mk FracFailover_ROValidate RSetFrac WSetFrac 1 0 0 ROV
 # Each weakened variant must be caught.
 mk Bug_NoReadLocks            RSetSkew  WSetSkew  0 0 0 NRL
 mk Bug_LocalIgnoresRLocks     RSetLocal WSetLocal 0 0 0 LIR
 mk Bug_NoWLockCheckOnRead     RSetFrac  WSetFrac  0 0 0 NWC
+mk Bug_ROValidateNoWLockCheck RSetFrac  WSetFrac  0 0 0 ROV LRW
 mk Bug_NoTombstone            RSetRecov WSetRecov 0 1 1 NTS
 mk Bug_LocalReadsIgnoreWLocks RSetRecov WSetRecov 0 0 0 LRW
 # Documented trade-offs (expected to be violated):

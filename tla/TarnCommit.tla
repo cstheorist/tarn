@@ -46,6 +46,7 @@ CONSTANTS
     BugNoTombstone,             \* recovery aborts without fencing participants
     BugLocalIgnoresRLocks,      \* single-shard commit ignores other txns' R locks
     AckOnPrepare,               \* option: acknowledge once all PREPAREs succeed
+    ROValidateOnly,             \* option: cross-shard read-only txns validate, no PREPARE
     BugLocalReadsIgnoreWLocks   \* single-shard reads don't check W locks
 
 ASSUME Owner \in [Keys -> Shards]
@@ -83,11 +84,12 @@ VARIABLES
     dirty,       \* history: direct reader saw a value of an uncommitted txn
     nFail, nCrash, nLoss,
     recovering,  \* txns whose commit timed out; a recovery agent works on them
-    nTimeout
+    nTimeout,
+    validated    \* validated[t]: shards where read-only t passed validation
 
 vars == <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, everC,
           acked, started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
-          recovering, nTimeout>>
+          recovering, nTimeout, validated>>
 
 Msg(type, t, s, yes) == [type |-> type, t |-> t, s |-> s, yes |-> yes]
 
@@ -118,6 +120,7 @@ Init ==
     /\ dirty   = [r \in Readers |-> FALSE]
     /\ nFail = 0 /\ nCrash = 0 /\ nLoss = 0
     /\ recovering = {} /\ nTimeout = 0
+    /\ validated = [t \in Txns |-> {}]
 
 \* Record the real-time predecessors of t at its first operation.
 Start(t) ==
@@ -138,7 +141,7 @@ Read(t, k) ==
     /\ obs' = [obs EXCEPT ![t][k] = data[k]]
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, coord, lost, msgs, local, wh,
-                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 \* No other transaction holds a W lock on any key in S: a W lock may belong
 \* to a transaction that is committed but not yet applied on this shard.
@@ -158,7 +161,7 @@ SnapshotRead(t) ==
     /\ acked' = acked \cup {t}
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, lost, msgs, wh, dobs, dpos, dacked, dirty,
-                   nFail, nCrash, nLoss, recovering, nTimeout>>
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 \* Single-shard read-write commit: one local Tarantool transaction.
 CommitLocal(t) ==
@@ -181,18 +184,51 @@ CommitLocal(t) ==
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ Start(t)
     /\ UNCHANGED <<locks, part, rec, obs, lost, msgs, dobs, dpos, dacked, dirty,
-                   nFail, nCrash, nLoss, recovering, nTimeout>>
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+
+\* Cross-shard read-only transactions (option ROValidateOnly): no PREPARE and
+\* no locks.  Each participant checks, in the stream's MVCC view, that the
+\* reads are unchanged and that no other transaction W-locks them.
+ValidateRO(t, s) ==
+    LET rk    == KeysOn(RSet[t], s)
+        valid == /\ s \notin lost[t]
+                 /\ \A k \in rk : data[k] = obs[t][k]
+                 /\ BugLocalReadsIgnoreWLocks \/ NoWLocks(t, rk)
+    IN
+    /\ ROValidateOnly
+    /\ coord[t] = "exec" /\ local[t] = "none"
+    /\ ~SingleShard(t) /\ ReadOnly(t) /\ ReadsDone(t)
+    /\ s \in Part(t) /\ s \notin validated[t]
+    /\ IF valid
+       THEN /\ validated' = [validated EXCEPT ![t] = @ \cup {s}]
+            /\ UNCHANGED <<local, coord>>
+       ELSE /\ local' = [local EXCEPT ![t] = "aborted"]
+            /\ coord' = [coord EXCEPT ![t] = "finished"]
+            /\ UNCHANGED validated
+    /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, wh, acked, started, rtPred,
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+
+FinishRO(t) ==
+    /\ ROValidateOnly
+    /\ coord[t] = "exec" /\ local[t] = "none" /\ ~SingleShard(t) /\ ReadOnly(t)
+    /\ validated[t] = Part(t)
+    /\ local' = [local EXCEPT ![t] = "committed"]
+    /\ coord' = [coord EXCEPT ![t] = "finished"]
+    /\ acked' = acked \cup {t}
+    /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, wh, started, rtPred,
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 -----------------------------------------------------------------------------
 (* Multi-shard commit: coordinator *)
 
 SendPrepare(t) ==
     /\ coord[t] = "exec" /\ ~SingleShard(t) /\ ReadsDone(t)
+    /\ ~(ROValidateOnly /\ ReadOnly(t))
     /\ coord' = [coord EXCEPT ![t] = "preparing"]
     /\ msgs' = msgs \cup {Msg("prepare", t, s, FALSE) : s \in Part(t)}
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, local, wh, acked,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 CoordDecide(t) ==
     /\ coord[t] = "preparing"
@@ -205,7 +241,7 @@ CoordDecide(t) ==
           /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
           /\ UNCHANGED acked
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, local, wh, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 \* Acknowledge the client once every participant applied; mark the record.
 CoordFinish(t) ==
@@ -215,13 +251,13 @@ CoordFinish(t) ==
     /\ acked' = acked \cup {t}
     /\ rec' = [rec EXCEPT ![t] = IF @ = "staging" THEN "committed" ELSE @]
     /\ UNCHANGED <<data, locks, part, obs, lost, msgs, local, wh, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 CoordAbortDone(t) ==
     /\ coord[t] = "aborting"
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 CoordCrash(t) ==
     /\ nCrash < MaxCrashes
@@ -229,7 +265,7 @@ CoordCrash(t) ==
     /\ coord' = [coord EXCEPT ![t] = "crashed"]
     /\ nCrash' = nCrash + 1
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nLoss, recovering, nTimeout>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nLoss, recovering, nTimeout, validated>>
 
 -----------------------------------------------------------------------------
 (* Multi-shard commit: participants (each action is one local transaction) *)
@@ -260,7 +296,7 @@ Prepare(t, s) ==
             /\ msgs' = msgs \cup {Msg("vote", t, s, FALSE)}
             /\ UNCHANGED locks
     /\ UNCHANGED <<data, coord, obs, lost, local, wh, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 \* A re-delivered PREPARE re-sends the vote implied by durable state.
 Revote(t, s) ==
@@ -268,7 +304,7 @@ Revote(t, s) ==
     /\ part[s][t] # "none"
     /\ msgs' = msgs \cup {Msg("vote", t, s, part[s][t] \in {"prepared", "applied"})}
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 ApplyAt(t, s) ==
     LET wk == KeysOn(WSet[t], s) IN
@@ -279,7 +315,7 @@ ApplyAt(t, s) ==
     /\ locks' = [locks EXCEPT ![s] = {l \in @ : l.t # t}]
     /\ part' = [part EXCEPT ![s][t] = "applied"]
     /\ UNCHANGED <<rec, coord, obs, lost, msgs, local, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 \* Abort releases locks; on a participant that never prepared it leaves a
 \* tombstone, so a PREPARE that arrives later is refused.
@@ -289,7 +325,7 @@ AbortAt(t, s) ==
     /\ locks' = [locks EXCEPT ![s] = {l \in @ : l.t # t}]
     /\ part' = [part EXCEPT ![s][t] = "aborted"]
     /\ UNCHANGED <<data, rec, coord, obs, lost, msgs, local, wh, acked, started,
-                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 -----------------------------------------------------------------------------
 (* Recovery: when t's commit times out, any Tarn server may resolve it,    *)
@@ -298,10 +334,11 @@ AbortAt(t, s) ==
 Timeout(t) ==
     /\ nTimeout < MaxTimeouts
     /\ coord[t] # "exec" /\ ~SingleShard(t) /\ t \notin recovering
+    /\ ~(ROValidateOnly /\ ReadOnly(t))   \* validate-only txns leave no records
     /\ recovering' = recovering \cup {t}
     /\ nTimeout' = nTimeout + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, validated>>
 
 \* No record yet: fence D(t) by recording ABORTED (refuses a late PREPARE).
 RecoverFenceRecord(t) ==
@@ -310,7 +347,7 @@ RecoverFenceRecord(t) ==
     /\ rec' = [rec EXCEPT ![t] = "aborted"]
     /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, local, wh, acked, started,
-                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 \* STAGING but some participant never prepared: fence it with a tombstone.
 \* (Bug variant: give up on the transaction without fencing.)
@@ -322,9 +359,9 @@ RecoverFenceParticipant(t, s) ==
             /\ msgs' = msgs \cup {Msg("abort", t, p, FALSE) : p \in Part(t) \ {s}}
             /\ UNCHANGED part
        ELSE /\ part' = [part EXCEPT ![s][t] = "aborted"]
-            /\ UNCHANGED <<rec, msgs, recovering, nTimeout>>
+            /\ UNCHANGED <<rec, msgs, recovering, nTimeout, validated>>
     /\ UNCHANGED <<data, locks, coord, obs, lost, local, wh, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 RecoverDecide(t) ==
     /\ t \in recovering
@@ -343,7 +380,7 @@ RecoverDecide(t) ==
           /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
           /\ UNCHANGED rec
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, local, wh, acked, started,
-                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 -----------------------------------------------------------------------------
 (* Environment *)
@@ -356,7 +393,7 @@ Failover(s) ==
                                THEN lost[t] \cup {s} ELSE lost[t]]
     /\ nFail' = nFail + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nCrash, nLoss, recovering, nTimeout>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nCrash, nLoss, recovering, nTimeout, validated>>
 
 Lose(m) ==
     /\ nLoss < MaxLoss
@@ -364,7 +401,7 @@ Lose(m) ==
     /\ msgs' = msgs \ {m}
     /\ nLoss' = nLoss + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, recovering, nTimeout>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, recovering, nTimeout, validated>>
 
 \* A plain Tarantool get on the owning shard, bypassing Tarn entirely.
 DirectRead(r, k) ==
@@ -374,7 +411,7 @@ DirectRead(r, k) ==
     /\ dacked' = [dacked EXCEPT ![r][k] = acked]
     /\ dirty' = [dirty EXCEPT ![r] = @ \/ ~(data[k] = NoVal \/ everC[data[k]] \/ CommittedNow(data[k]))]
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   started, rtPred, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
 
 -----------------------------------------------------------------------------
 
@@ -397,6 +434,8 @@ AbortAtH(t, s) == AbortAt(t, s) /\ H
 RecoverFenceRecordH(t) == RecoverFenceRecord(t) /\ H
 RecoverFenceParticipantH(t, s) == RecoverFenceParticipant(t, s) /\ H
 RecoverDecideH(t) == RecoverDecide(t) /\ H
+ValidateROH(t, s) == ValidateRO(t, s) /\ H
+FinishROH(t) == FinishRO(t) /\ H
 TimeoutH(t) == Timeout(t) /\ H
 FailoverH(s) == Failover(s) /\ H
 LoseH(m) == Lose(m) /\ H
@@ -419,6 +458,8 @@ Next ==
     \/ \E t \in Txns, s \in Shards : RecoverFenceParticipantH(t, s)
     \/ \E t \in Txns : RecoverDecideH(t)
     \/ \E t \in Txns : TimeoutH(t)
+    \/ \E t \in Txns, s \in Shards : ValidateROH(t, s)
+    \/ \E t \in Txns : FinishROH(t)
     \/ \E s \in Shards : FailoverH(s)
     \/ \E m \in msgs : LoseH(m)
     \/ \E r \in Readers, k \in Keys : DirectReadH(r, k)

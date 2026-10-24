@@ -1,6 +1,17 @@
 [package]
 name = "tarn-mysql"
+description = "MySQL server-side wire protocol for Tarn"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
+tarn-common = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+sha1 = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
