@@ -320,41 +320,62 @@ end
 
 M.unlock_cond = fiber.cond()
 
--- Autocommit read (TarnCommit!SnapshotRead with check-then-read): a select
--- on any index that waits while another transaction holds a W lock on what
--- the select covers. Lock check and select run without a yield in between,
--- so they observe one state. Returns {'ok', tuples}.
-function tarn_read(space_id, index_id, key, iterator, limit, offset)
+local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] = 'GE', [6] = 'GT'}
+
+-- Bounded index scan: rows from `key` in `iterator` order, stopping after
+-- `limit` rows or once past `end_key` (inclusive if end_incl). Inside a
+-- stream the reads are tracked by MVCC. With lock_check (autocommit reads,
+-- TarnCommit!SnapshotRead), the scan waits while another transaction holds a
+-- W lock on anything it covers; scan and lock check run without a yield in
+-- between, so they observe one state. Returns {'ok', tuples}.
+function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset)
+    local space = box.space[space_id]
+    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    local idx = space.index[index_id]
+    local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
+    key = key or {}
+    local kd = index_key_def(space_id, index_id)
+    local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
     local deadline = clock.monotonic() + M.cfg.lock_wait
-    local idx = box.space[space_id].index[index_id]
-    local unique_point = (iterator == nil or iterator == 'EQ' or iterator == 0)
-                         and idx.unique and #key == #idx.parts
     while true do
-        local rows = idx:select(key, {iterator = iterator, limit = limit, offset = offset})
-        local h
-        if box.space._tarn_locks:len() > 0 then
-            if unique_point then
-                h = point_w_locked('', space_id, index_id, key)
-            else
-                -- The rows returned cover [first, last]; an unlimited scan covers
-                -- everything from the start key in the iterator's direction.
-                local kd = index_key_def(space_id, index_id)
-                local lo, hi = nil, nil
-                local it = string.upper(tostring(iterator or 'EQ'))
-                if #rows > 0 and limit ~= nil and #rows >= limit then
-                    local a = kd:extract_key(rows[1]):totable()
-                    local b = kd:extract_key(rows[#rows]):totable()
-                    if it == 'LT' or it == 'LE' or it == 'REQ' then lo, hi = b, a else lo, hi = a, b end
+        local rows = {}
+        local skip = offset or 0
+        if end_key == nil and (limit == nil or limit > 0) and skip == 0 then
+            rows = idx:select(key, {iterator = it, limit = limit})
+        else
+            for _, t in idx:pairs(key, {iterator = it}) do
+                if end_key ~= nil then
+                    local c = kd:compare_with_key(t, end_key)
+                    if reverse then
+                        if c < 0 or (c == 0 and not end_incl) then break end
+                    else
+                        if c > 0 or (c == 0 and not end_incl) then break end
+                    end
                 end
-                if it == 'EQ' or it == 'REQ' then
-                    lo = lo or key; hi = hi or key
-                elseif it == 'GE' or it == 'GT' then
-                    lo = lo or (#key > 0 and key or nil)
-                elseif it == 'LE' or it == 'LT' then
-                    hi = hi or (#key > 0 and key or nil)
+                if skip > 0 then skip = skip - 1
+                else
+                    rows[#rows + 1] = t
+                    if limit ~= nil and #rows >= limit then break end
                 end
-                h = range_w_locked('', space_id, index_id, lo, hi, true, true)
             end
+        end
+        if not lock_check or box.space._tarn_locks:len() == 0 then return {OK, rows} end
+        local h
+        if (it == 'EQ' or it == 'REQ') and idx.unique and #key == #idx.parts then
+            h = point_w_locked('', space_id, index_id, key)
+        else
+            -- Covered range: from the start key to the end key, or to the last
+            -- row returned when the limit cut the scan short.
+            local lo, hi = nil, nil
+            local first = (#key > 0) and key or nil
+            local last = end_key
+            if limit ~= nil and #rows >= limit and #rows > 0 then
+                last = kd:extract_key(rows[#rows]):totable()
+            end
+            if it == 'EQ' or it == 'REQ' then lo, hi = first, first
+            elseif reverse then lo, hi = last, first
+            else lo, hi = first, last end
+            h = range_w_locked('', space_id, index_id, lo, hi, true, true)
         end
         if h == nil then return {OK, rows} end
         if clock.monotonic() > deadline then
@@ -363,6 +384,11 @@ function tarn_read(space_id, index_id, key, iterator, limit, offset)
         M.stats.lock_waits = M.stats.lock_waits + 1
         M.unlock_cond:wait(0.01)
     end
+end
+
+-- Kept for the protocol tests: autocommit lock-aware select.
+function tarn_read(space_id, index_id, key, iterator, limit, offset)
+    return tarn_select(space_id, index_id, key, iterator, limit, nil, true, true, offset)
 end
 
 -- Autocommit DML outside any stream: one local transaction. Waits (bounded)
@@ -752,7 +778,7 @@ function tarn_create_table(def)
         return {'exists'}
     end
     local s = box.schema.space.create(def.name, {
-        engine = def.engine or 'memtx', format = def.format,
+        id = def.id, engine = def.engine or 'memtx', format = def.format,
         is_sync = M.cfg.sync, if_not_exists = true})
     for i, idx in ipairs(def.indexes) do
         s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts,
@@ -773,12 +799,19 @@ end
 function tarn_create_index(name, idx)
     local s = box.space[name]
     if s == nil then return {'error', 1146, 'no such table ' .. name} end
-    s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts, if_not_exists = true})
-    local def = box.space._tarn_catalog:get{name}.def
-    local copy = table.deepcopy(def)
-    copy.indexes[#copy.indexes + 1] = idx
-    box.space._tarn_catalog:replace{name, copy}
+    s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts,
+                              id = idx.id, if_not_exists = true})
     invalidate_key_defs()
+    return {OK}
+end
+
+-- Replace the Tarn-side JSON definition stored with a table.
+function tarn_set_def_json(name, json)
+    local r = box.space._tarn_catalog:get{name}
+    if r == nil then return {'error', 1146, 'no such table ' .. name} end
+    local copy = table.deepcopy(r.def)
+    copy.json = json
+    box.space._tarn_catalog:replace{name, copy}
     return {OK}
 end
 
@@ -790,7 +823,7 @@ end
 function tarn_catalog()
     local out = {}
     for _, t in box.space._tarn_catalog:pairs() do
-        out[#out + 1] = {t.name, box.space[t.name] and box.space[t.name].id or 0, t.def}
+        out[#out + 1] = {t.name, box.space[t.name] and box.space[t.name].id or 0, t.def.json or ''}
     end
     return out
 end
@@ -812,6 +845,30 @@ function tarn_counter_bump(name, v)
     if r == nil or r.value < v then box.space._tarn_meta:replace{'ctr:' .. name, v} end
     box.commit()
     return true
+end
+
+function tarn_db_create(name)
+    box.space._tarn_meta:replace{'db:' .. name, true}
+    return {OK}
+end
+
+function tarn_db_drop(name)
+    box.space._tarn_meta:delete{'db:' .. name}
+    return {OK}
+end
+
+function tarn_db_list()
+    local out = {}
+    for _, t in box.space._tarn_meta:pairs({'db:'}, {iterator = 'GE'}) do
+        if t.key:sub(1, 3) ~= 'db:' then break end
+        out[#out + 1] = t.key:sub(4)
+    end
+    return out
+end
+
+function tarn_catalog_version()
+    local r = box.space._tarn_meta:get{'ctr:catalog_version'}
+    return r and r.value or 0
 end
 
 function tarn_info()

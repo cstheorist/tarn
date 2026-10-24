@@ -1,1 +1,5 @@
 Local                        no errors                                     710975 distinct states found depth=23      69s
+Frac                         no errors                                     1182650 distinct states found depth=23     118s
+LocalFailover                no errors                                     1881011 distinct states found depth=25     195s
+FracFailover                 no errors                                     2715768 distinct states found depth=25     279s
+Skew                         no errors                                     12526098 distinct states found depth=30    1548s

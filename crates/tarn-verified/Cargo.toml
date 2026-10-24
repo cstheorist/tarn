@@ -4,3 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+vstd.workspace = true
+
+[package.metadata.verus]
+verify = true
