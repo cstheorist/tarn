@@ -1,0 +1,160 @@
+-- Exercises lua/tarn.lua on two single-node shards, playing the role of the
+-- Tarn coordinator with net.box streams. Run via lua/test/run.sh.
+local net = require('net.box')
+local fiber = require('fiber')
+local json = require('json')
+
+local S1, S2 = os.getenv('S1'), os.getenv('S2')
+local opts = {user = 'tarn', password = 'tarn', wait_connected = 5}
+local c = {net.connect(S1, opts), net.connect(S2, opts)}
+assert(c[1]:is_connected() and c[2]:is_connected(), 'cannot connect to shards')
+
+local pass, fail = 0, 0
+local function check(name, cond, extra)
+    if cond then pass = pass + 1; print('  ok   ' .. name)
+    else fail = fail + 1; print('  FAIL ' .. name .. (extra and ('  -- ' .. json.encode(extra)) or '')) end
+end
+
+-- DDL on both shards: test.acct(id unsigned PK, bal integer, email string unique, bucket_id)
+local def = {
+    name = 'test.acct', engine = 'memtx',
+    format = {{name = 'id', type = 'unsigned'}, {name = 'bal', type = 'integer'},
+              {name = 'email', type = 'string', is_nullable = true}, {name = 'bucket_id', type = 'unsigned'}},
+    indexes = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+               {name = 'email', unique = true, parts = {{field = 'email', type = 'string', is_nullable = true}}},
+               {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}},
+}
+for i = 1, 2 do c[i]:call('tarn_create_table', {def}) end
+c[1]:reload_schema(); c[2]:reload_schema()
+local sid = c[1].space['test.acct'].id
+local sid2 = c[2].space['test.acct'].id
+assert(sid == sid2, 'space ids must match across shards for this test')
+
+local function get(i, id) return c[i].space['test.acct']:get{id} end
+local function bal(i, id) local t = get(i, id); return t and t[2] end
+
+print('autocommit writes')
+check('insert on shard 1', c[1]:call('tarn_autocommit', {{{'insert', sid, {1, 100, 'a@x', 1}}}})[1] == 'ok')
+check('insert on shard 2', c[2]:call('tarn_autocommit', {{{'insert', sid, {2, 100, 'b@x', 2}}}})[1] == 'ok')
+local r = c[1]:call('tarn_autocommit', {{{'insert', sid, {1, 5, 'z@x', 1}}}})
+check('duplicate PK reported as 1062', r[1] == 'duplicate' and r[2] == 1062, r)
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {1}, {{'+', 2, 1}}}}})
+check('update ops applied', r[1] == 'ok' and bal(1, 1) == 101, r)
+c[1]:call('tarn_autocommit', {{{'update', sid, {1}, {{'=', 2, 100}}}}})
+
+print('single-shard commit (TarnCommit!CommitLocal)')
+local st = c[1]:new_stream(); st:begin()
+local cur = st.space['test.acct']:get{1}
+r = st:call('tarn_commit_local', {'L1', {{'replace', sid, {1, cur[2] - 10, 'a@x', 1}}}})
+check('commit_local ok', r[1] == 'ok' and bal(1, 1) == 90, r)
+
+-- MVCC validation: a read invalidated by a concurrent commit makes commit_local fail.
+st = c[1]:new_stream(); st:begin()
+cur = st.space['test.acct']:get{1}
+c[1]:call('tarn_autocommit', {{{'update', sid, {1}, {{'+', 2, 1}}}}})
+r = st:call('tarn_commit_local', {'L2', {{'replace', sid, {1, cur[2] + 1000, 'a@x', 1}}}})
+check('stale read -> conflict 1213', r[1] == 'conflict' and r[2] == 1213 and bal(1, 1) == 91, r)
+
+print('cross-shard commit (Prepare/ApplyAt)')
+local function prepare(i, txid, writes, rkeys, rranges, rspaces, stream)
+    local s = stream or c[i]:new_stream()
+    if not stream then s:begin() end
+    return s:call('tarn_prepare', {txid, 1, {1, 2}, writes, rkeys or {}, rranges or {}, rspaces or {}, fiber.time()})
+end
+-- transfer 40 from acct 1 (shard 1) to acct 2 (shard 2)
+local s1 = c[1]:new_stream(); s1:begin(); local a = s1.space['test.acct']:get{1}
+local s2 = c[2]:new_stream(); s2:begin(); local b = s2.space['test.acct']:get{2}
+local v1 = prepare(1, 'X1', {{'replace', sid, {1, a[2] - 40, 'a@x', 1}}}, {{sid, 0, {1}}}, nil, nil, s1)
+local v2 = prepare(2, 'X1', {{'replace', sid, {2, b[2] + 40, 'b@x', 2}}}, {{sid, 0, {2}}}, nil, nil, s2)
+check('both participants vote yes', v1[1] == 'yes' and v2[1] == 'yes', {v1, v2})
+check('decision record is staging on D', c[1]:call('tarn_txn_status', {'X1'}) == 'staging')
+check('intents invisible to direct reads', bal(1, 1) == 91 and bal(2, 2) == 100)
+-- A single-shard writer and an autocommit writer must not overwrite a prepared row.
+st = c[1]:new_stream(); st:begin()
+r = st:call('tarn_commit_local', {'L3', {{'replace', sid, {1, 0, 'a@x', 1}}}})
+check('commit_local blocked by prepared W lock', r[1] == 'conflict', r)
+local t0 = fiber.clock()
+r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
+check('autocommit waits then conflicts on W lock', r[1] == 'conflict' and fiber.clock() - t0 >= 0.9, r)
+-- Apply on both shards.
+check('apply shard 1', c[1]:call('tarn_apply', {'X1'})[1] == 'ok')
+check('apply shard 2', c[2]:call('tarn_apply', {'X1'})[1] == 'ok')
+check('balances moved atomically', bal(1, 1) == 51 and bal(2, 2) == 140, {bal(1, 1), bal(2, 2)})
+check('locks released', c[1]:call('tarn_info').locks == 0 and c[2]:call('tarn_info').locks == 0)
+check('apply is idempotent', c[1]:call('tarn_apply', {'X1'})[1] == 'ok' and bal(1, 1) == 51)
+
+print('prepare conflicts')
+v1 = prepare(1, 'X2', {{'replace', sid, {1, 1, 'a@x', 1}}})
+check('X2 prepared on shard 1', v1[1] == 'yes', v1)
+v2 = prepare(1, 'X3', {{'replace', sid, {1, 2, 'a@x', 1}}})
+check('W-W conflict votes no (X3)', v2[1] == 'no' and v2[2] == 1213, v2)
+check('NO leaves a tombstone', c[1]:call('tarn_part_status', {'X3'}) == 'aborted')
+v2 = prepare(1, 'X3', {{'replace', sid, {1, 3, 'a@x', 1}}})
+check('re-delivered PREPARE after tombstone votes no', v2[1] == 'no', v2)
+-- Read validation: a reader of acct 1 is refused while X2 holds its W lock.
+s1 = c[1]:new_stream(); s1:begin(); s1.space['test.acct']:get{1}
+v1 = prepare(1, 'X4', {}, {{sid, 0, {1}}}, nil, nil, s1)
+check('read of W-locked key votes no', v1[1] == 'no', v1)
+-- R lock blocks a later writer: X5 reads acct 2 and prepares; a writer of acct 2 is refused.
+s2 = c[2]:new_stream(); s2:begin(); s2.space['test.acct']:get{2}
+v2 = prepare(2, 'X5', {}, {{sid, 0, {2}}}, nil, nil, s2)
+check('reader X5 prepared', v2[1] == 'yes', v2)
+r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
+check('writer blocked by R lock', r[1] == 'conflict', r)
+c[2]:call('tarn_abort', {'X5', 1, {1, 2}})
+r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
+check('writer proceeds after R lock released', r[1] == 'ok', r)
+c[1]:call('tarn_abort', {'X2', 1, {1, 2}})
+check('abort restores nothing (intents dropped)', bal(1, 1) == 51)
+
+print('range locks and unique keys')
+s2 = c[2]:new_stream(); s2:begin(); s2.space['test.acct']:select({10}, {iterator = 'GE', limit = 100})
+v2 = prepare(2, 'X6', {}, {}, {{sid, {10}, {20}, true, true}}, nil, s2)
+check('range reader prepared', v2[1] == 'yes', v2)
+r = c[2]:call('tarn_autocommit', {{{'insert', sid, {15, 1, 'r@x', 2}}}})
+check('insert into locked range refused', r[1] == 'conflict', r)
+r = c[2]:call('tarn_autocommit', {{{'insert', sid, {25, 1, 'r@x', 2}}}})
+check('insert outside range proceeds', r[1] == 'ok', r)
+c[2]:call('tarn_abort', {'X6', 1, {1, 2}})
+v2 = prepare(2, 'X7', {{'insert', sid, {26, 1, 'u@x', 2}}})
+check('X7 claims unique email u@x', v2[1] == 'yes', v2)
+r = c[2]:call('tarn_autocommit', {{{'insert', sid, {27, 1, 'u@x', 2}}}})
+check('second claimant of u@x refused', r[1] == 'conflict', r)
+v1 = prepare(2, 'X8', {{'insert', sid, {28, 1, 'r@x', 2}}})
+check('prepare of existing unique value votes 1062', v1[1] == 'no' and v1[2] == 1062, v1)
+c[2]:call('tarn_abort', {'X7', 1, {1, 2}})
+
+print('recovery (coordinator crashed)')
+-- (a) both prepared, coordinator vanished: implicitly committed -> applied.
+s1 = c[1]:new_stream(); s1:begin(); a = s1.space['test.acct']:get{1}
+s2 = c[2]:new_stream(); s2:begin(); b = s2.space['test.acct']:get{2}
+prepare(1, 'R1', {{'replace', sid, {1, a[2] - 1, 'a@x', 1}}}, {{sid, 0, {1}}}, nil, nil, s1)
+prepare(2, 'R1', {{'replace', sid, {2, b[2] + 1, 'b@x', 2}}}, {{sid, 0, {2}}}, nil, nil, s2)
+-- (b) only the non-decision shard prepared: D fenced -> aborted.
+v2 = prepare(2, 'R2', {{'replace', sid, {40, -999, 'r2@x', 2}}})
+check('R2 prepared on shard 2 only', v2[1] == 'yes', v2)
+-- (c) D prepared (staging) but shard 2 never got PREPARE: fenced -> aborted.
+v1 = prepare(1, 'R3', {{'replace', sid, {41, -999, 'r3@x', 1}}})
+check('R3 prepared on D only', v1[1] == 'yes', v1)
+local before1, before2 = a[2], b[2]
+local deadline = fiber.clock() + 15
+while fiber.clock() < deadline do
+    if c[1]:call('tarn_info').prepared == 0 and c[2]:call('tarn_info').prepared == 0
+       and c[1]:call('tarn_txn_status', {'R3'}) == 'aborted' then break end
+    fiber.sleep(0.2)
+end
+check('R1 committed by recovery', bal(1, 1) == before1 - 1 and bal(2, 2) == before2 + 1,
+      {bal(1, 1), bal(2, 2), before1, before2})
+check('R1 decision recorded', c[1]:call('tarn_txn_status', {'R1'}) == 'committed')
+check('R2 fenced at D and aborted', c[1]:call('tarn_txn_status', {'R2'}) == 'aborted'
+      and c[2]:call('tarn_part_status', {'R2'}) == 'aborted')
+check('R3 participant fenced, txn aborted', c[2]:call('tarn_part_status', {'R3'}) == 'aborted'
+      and c[1]:call('tarn_txn_status', {'R3'}) == 'aborted')
+check('no aborted intents leaked', get(2, 40) == nil and get(1, 41) == nil)
+check('all locks released', c[1]:call('tarn_info').locks == 0 and c[2]:call('tarn_info').locks == 0)
+-- A late PREPARE for a fenced transaction must be refused.
+v2 = prepare(2, 'R3', {{'replace', sid, {42, -999, 'r4@x', 2}}})
+check('late PREPARE after fence votes no', v2[1] == 'no', v2)
+
+print(string.format('\n%d passed, %d failed', pass, fail))
+os.exit(fail == 0 and 0 or 1)
