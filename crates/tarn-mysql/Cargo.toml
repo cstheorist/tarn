@@ -1,0 +1,6 @@
+[package]
+name = "tarn-mysql"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

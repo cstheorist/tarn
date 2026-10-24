@@ -1,0 +1,4 @@
+target/
+*.log
+tla/states/
+tla/**/*.out

@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tarn-common",
+    "crates/tarn-iproto",
+    "crates/tarn-mysql",
+    "crates/tarn-sql",
+    "crates/tarn-verified",
+    "crates/tarn-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+tarn-common = { path = "crates/tarn-common" }
+tarn-iproto = { path = "crates/tarn-iproto" }
+tarn-mysql = { path = "crates/tarn-mysql" }
+tarn-sql = { path = "crates/tarn-sql" }
+tarn-verified = { path = "crates/tarn-verified" }
+bytes = "1"
+tokio = { version = "1", features = ["full"] }
+thiserror = "2"
+tracing = "0.1"
+rmp = "0.8"
+sha1 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+parking_lot = "0.12"
+vstd = "=0.0.0-2026-10-04-0306"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 1
+panic = "unwind"

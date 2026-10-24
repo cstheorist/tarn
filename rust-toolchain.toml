@@ -1,0 +1,4 @@
+[toolchain]
+# Matches the Verus release we verify with (0.2026.10.04, pinned to Rust 1.98.1),
+# so verified code and the server are compiled by the same compiler.
+channel = "1.98.1"

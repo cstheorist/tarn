@@ -1,0 +1,8 @@
+[package]
+name = "tarn-common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,6 @@
+[package]
+name = "tarn-iproto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
