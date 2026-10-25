@@ -535,6 +535,71 @@ check('a unique-key value lock reads the row holding that value', r[1] == 'ok' a
 c[1]:call('tarn_unlock', {'P18'})
 check('every row lock is released', c[1]:call('tarn_info').row_locks == 0, c[1]:call('tarn_info').row_locks)
 
+print('locking reads of a primary-key range in one call (issue #49)')
+local qdef = {
+    name = 'test.q', engine = 'memtx',
+    format = {{name = 'g', type = 'unsigned'}, {name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
+              {name = 'bucket_id', type = 'unsigned'}},
+    indexes = {{name = 'primary', unique = true, parts = {{field = 'g', type = 'unsigned'}, {field = 'id', type = 'unsigned'}}},
+               {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}},
+}
+for i = 1, 2 do c[i]:call('tarn_create_table', {qdef}) end
+c[1]:reload_schema()
+local qsid = c[1].space['test.q'].id
+for id = 1, 40 do c[1]:call('tarn_autocommit', {{{'replace', qsid, {1, id, id, 1}}}}) end
+c[1]:call('tarn_autocommit', {{{'replace', qsid, {2, 1, 0, 1}}}})
+local function lrange(txid, ranges, mode, o) return c[1]:call('tarn_lock_range', {txid, ranges, mode, o}) end
+local function ids(rows) local out = {} for _, t in ipairs(rows or {}) do out[#out + 1] = t[2] end return table.concat(out, ',') end
+r = lrange('Q1', {{qsid, {1}, 3, {}}}, 'X', {})
+check('the first n rows of the range, locked and read', r[1] == 'ok' and ids(r[3][1]) == '1,2,3' and r[3][1][1][3] == 1, r)
+r = lrange('Q2', {{qsid, {1}, 3, {}}, {qsid, {1}, 1, {}}}, 'X', {skip = true})
+check('SKIP LOCKED: another transaction gets the next free rows; a second range does not skip its locks',
+      r[1] == 'ok' and ids(r[3][1]) == '4,5,6' and ids(r[3][2]) == '4', r)
+r = lrange('Q2', {{qsid, {1}, 4, {}}}, 'X', {skip = true})
+check('... its own locks are not skipped', r[1] == 'ok' and ids(r[3][1]) == '4,5,6,7', r)
+r = lrange('Q3', {{qsid, {1}, 2, {{1, 8}}}}, 'X', {skip = true})
+check('... the keys it is told to leave out are left out', r[1] == 'ok' and ids(r[3][1]) == '9,10', r)
+r = lrange('Q4', {{qsid, {1}, 1, {}}}, 'X', {nowait = true})
+check('NOWAIT on a held row: 3572, with no lock taken', r[1] == 'locked' and r[2] == 3572 and r[4] == nil, r)
+r = lrange('Q4', {{qsid, {1}, 2, {}}}, 'S', {timeout = 0.2})
+check('a waiting request times out with 1205', r[1] == 'timeout' and r[2] == 1205, r)
+r = lrange('Q5', {{qsid, {1}, 100, {}}}, 'X', {skip = true})
+check('a range shorter than n ends with what it has (all free rows, across pages)',
+      r[1] == 'ok' and #r[3][1] == 31 and r[3][1][1][2] == 8 and r[3][1][31][2] == 40, #r[3][1])
+r = lrange('Q6', {{qsid, {2}, 5, {}}, {qsid, {3}, 5, {}}}, 'X', {})
+check('... and stays in its prefix', r[1] == 'ok' and #r[3][1] == 1 and r[3][1][1][1] == 2 and #r[3][2] == 0, r)
+for _, t in ipairs({'Q2', 'Q3', 'Q4', 'Q5', 'Q6'}) do c[1]:call('tarn_unlock', {t}) end
+-- a waiter whose row is deleted by the holder moves on to the next row
+local q1gen = lrange('Q1', {{qsid, {1}, 1, {}}}, 'X', {})[2]
+got = nil
+f = fiber.create(function() got = lrange('Q7', {{qsid, {1}, 1, {}}}, 'X', {timeout = 5}) end)
+fiber.sleep(0.05)
+check('a request queues behind the holder of the first row', got == nil)
+r = c[1]:call('tarn_commit_rc', {'Q1', {{'delete', qsid, {1, 1}}, {'delete', qsid, {1, 2}}}, q1gen})
+fiber.sleep(0.05)
+check('... and, once the holder deleted the rows it waited for, takes the next one',
+      r[1] == 'ok' and got and got[1] == 'ok' and ids(got[3][1]) == '3', {r, got})
+r = lrange('Q8', {{qsid, {1}, 1, {}}}, 'X', {nowait = true})
+check('... having released the lock of the deleted row', r[1] == 'locked', r)
+c[1]:call('tarn_unlock', {'Q7'}); c[1]:call('tarn_unlock', {'Q8'})
+-- a prepared transaction's W lock: waited out, or skipped under SKIP LOCKED
+v1 = prepare(1, 'W21', {{'replace', qsid, {1, 3, 33, 1}}})
+r = lrange('Q9', {{qsid, {1}, 1, {}}}, 'X', {skip = true})
+check('SKIP LOCKED skips a row a prepared transaction W-locks', v1[1] == 'yes' and r[1] == 'ok' and ids(r[3][1]) == '4', {v1, r})
+c[1]:call('tarn_unlock', {'Q9'})
+got = nil
+f = fiber.create(function() got = lrange('Q10', {{qsid, {1}, 1, {}}}, 'X', {timeout = 5}) end)
+fiber.sleep(0.05)
+check('a waiting request waits for the prepared transaction', got == nil)
+c[1]:call('tarn_apply', {'W21'})
+fiber.sleep(0.05)
+check('... and reads the applied value', got and got[1] == 'ok' and ids(got[3][1]) == '3' and got[3][1][1][3] == 33, got)
+c[1]:call('tarn_unlock', {'Q10'})
+r = lrange('Q11', {{qsid + 1000, {1}, 1, {}}}, 'X', {})
+check('an unknown space is 1146', r[1] == 'error' and r[2] == 1146, r)
+c[1]:call('tarn_unlock', {'Q11'})
+check('every row lock is released', c[1]:call('tarn_info').row_locks == 0, c[1]:call('tarn_info').row_locks)
+
 
 print('schema changes (ALTER TABLE)')
 local afmt = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},

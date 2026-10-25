@@ -11,8 +11,12 @@
 //! resolve the outer column.
 
 use crate::collation::Collation;
-use crate::session::{Output, Session};
-use crate::txn::Txn;
+use crate::exec;
+use crate::expr::now_string;
+use crate::normalize::{normalize, Mode};
+use crate::plan::Stmt;
+use crate::session::{check_defs, select_tables, Output, Session};
+use crate::txn::{Mode as TxnMode, Txn};
 use sqlparser::ast::{self as A, Visit, VisitMut, Visitor, VisitorMut};
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;
@@ -257,6 +261,51 @@ pub fn parse_if_needed(sql: &str) -> SqlResult<Option<A::Statement>> {
     Ok(if c.found.is_empty() { None } else { Some(stmt) })
 }
 
+/// The SELECTs of a tree of `UNION ALL`s, in order (false if it has another
+/// set operation).
+fn union_all_parts(e: &A::SetExpr, out: &mut Vec<String>) -> bool {
+    match e {
+        A::SetExpr::Select(s) => out.push(s.to_string()),
+        A::SetExpr::Query(q) => out.push(q.to_string()),
+        A::SetExpr::SetOperation {
+            op: A::SetOperator::Union,
+            set_quantifier: A::SetQuantifier::All,
+            left,
+            right,
+        } => return union_all_parts(left, out) && union_all_parts(right, out),
+        _ => return false,
+    }
+    true
+}
+
+/// The columns of a UNION: a column keeps its type only if both sides
+/// agree; its collation is the sides' (a binary one wins).
+fn union_columns(lc: &[Column], rc: &[Column]) -> SqlResult<Arc<[Column]>> {
+    if lc.len() != rc.len() {
+        return Err(SqlError::new(
+            1222,
+            "21000",
+            "The used SELECT statements have a different number of columns",
+        ));
+    }
+    Ok(lc
+        .iter()
+        .zip(rc.iter())
+        .map(|(a, b)| {
+            let mut c = if a.ty == b.ty {
+                a.clone()
+            } else {
+                let mut c = Column::new(&a.name, ColumnType::VarString);
+                c.schema = a.schema.clone();
+                c
+            };
+            c.charset = union_collation(a.charset, b.charset);
+            c
+        })
+        .collect::<Vec<_>>()
+        .into())
+}
+
 fn rows_of(out: Output) -> SqlResult<(Arc<[Column]>, Vec<Vec<Value>>)> {
     match out {
         Output::Rows { columns, rows } => Ok((columns, rows)),
@@ -354,31 +403,7 @@ impl Session {
                 } => {
                     let (lc, mut lr) = self.eval_set(left).await?;
                     let (rc, rr) = self.eval_set(right).await?;
-                    if lc.len() != rc.len() {
-                        return Err(SqlError::new(
-                            1222,
-                            "21000",
-                            "The used SELECT statements have a different number of columns",
-                        ));
-                    }
-                    // A column keeps its type only if every branch agrees;
-                    // its collation is the branches' (a binary one wins).
-                    let cols: Arc<[Column]> = lc
-                        .iter()
-                        .zip(rc.iter())
-                        .map(|(a, b)| {
-                            let mut c = if a.ty == b.ty {
-                                a.clone()
-                            } else {
-                                let mut c = Column::new(&a.name, ColumnType::VarString);
-                                c.schema = a.schema.clone();
-                                c
-                            };
-                            c.charset = union_collation(a.charset, b.charset);
-                            c
-                        })
-                        .collect::<Vec<_>>()
-                        .into();
+                    let cols = union_columns(&lc, &rc)?;
                     lr.extend(rr);
                     let distinct = !matches!(set_quantifier, A::SetQuantifier::All | A::SetQuantifier::AllByName);
                     if distinct {
@@ -403,8 +428,82 @@ impl Session {
         })
     }
 
+    /// A UNION ALL of locking reads in a READ COMMITTED transaction that
+    /// `tarn_lock_range` does on its own (`exec::run_locking_selects`): every
+    /// part together, in one storage call per shard, instead of one part
+    /// after another (issue #49). The rows come back in part order. None when
+    /// a part needs the general path.
+    async fn union_all_locking(&mut self, e: &A::SetExpr) -> SqlResult<Option<(Arc<[Column]>, Vec<Vec<Value>>)>> {
+        // (Autocommit statements run here in run_complex's implicit
+        // transaction, which is serializable: they keep the general path.)
+        let mut parts = Vec::new();
+        if !self.txn_needed() || !union_all_parts(e, &mut parts) {
+            return Ok(None);
+        }
+        let locking = |sql: &String| {
+            let u = sql.to_ascii_uppercase();
+            u.contains(" FOR UPDATE") || u.contains(" FOR SHARE") || u.contains(" LOCK IN SHARE MODE")
+        };
+        if !parts.iter().all(locking) {
+            return Ok(None);
+        }
+        let mut plans = Vec::with_capacity(parts.len());
+        for sql in &parts {
+            if may_need(sql) {
+                return Ok(None);
+            }
+            let n = normalize(sql, Mode::Literals)?;
+            let Stmt::Select(p) = self.plan_cached(&n.template, &n.params)? else {
+                return Ok(None);
+            };
+            let Some(lock) = p.lock else { return Ok(None) };
+            plans.push((p, n.params, lock));
+        }
+        let mut columns = exec::render_columns(&plans[0].0.columns, &plans[0].1);
+        for (p, params, _) in &plans[1..] {
+            columns = union_columns(&columns, &exec::render_columns(&p.columns, params))?;
+        }
+        self.ensure_txn();
+        let mut txn = self.set_txn(None).unwrap();
+        if txn.mode != TxnMode::ReadCommitted {
+            self.set_txn(Some(txn));
+            return Ok(None);
+        }
+        let now = now_string();
+        let res = match plans
+            .iter()
+            .try_for_each(|(p, _, _)| check_defs(&txn, select_tables(p)))
+        {
+            Err(e) => Err(e),
+            Ok(()) => {
+                let cxs: Vec<_> = plans.iter().map(|(_, params, _)| self.cx(params, &now)).collect();
+                let parts: Vec<_> = plans.iter().zip(&cxs).map(|((p, _, l), cx)| (&**p, cx, *l)).collect();
+                exec::run_locking_selects(&self.cluster, &mut txn, &parts).await
+            }
+        };
+        let rows = match res {
+            Ok(None) => {
+                self.set_txn(Some(txn));
+                return Ok(None);
+            }
+            Ok(Some(rows)) => {
+                let rows: Vec<_> = rows.into_iter().flatten().collect();
+                self.found_rows = rows.len() as u64;
+                Ok(Output::Rows {
+                    columns: columns.clone(),
+                    rows,
+                })
+            }
+            Err(e) => Err(e),
+        };
+        Ok(Some(rows_of(self.finish_txn_stmt(txn, rows)?)?))
+    }
+
     async fn run_union(&mut self, q: &A::Query) -> SqlResult<Output> {
-        let (columns, mut rows) = self.eval_set(&q.body).await?;
+        let (columns, mut rows) = match self.union_all_locking(&q.body).await? {
+            Some(r) => r,
+            None => self.eval_set(&q.body).await?,
+        };
         if let Some(ob) = &q.order_by {
             if let A::OrderByKind::Expressions(list) = &ob.kind {
                 let mut keys: Vec<(usize, bool)> = Vec::new();
@@ -463,5 +562,42 @@ impl Session {
             }
         }
         Ok(Output::Rows { columns, rows })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(sql: &str) -> A::SetExpr {
+        match Parser::parse_sql(&MySqlDialect {}, sql).unwrap().pop().unwrap() {
+            A::Statement::Query(q) => *q.body,
+            other => panic!("not a query: {other}"),
+        }
+    }
+
+    #[test]
+    fn union_all_parts_lists_each_select_in_order() {
+        let mut parts = Vec::new();
+        let e = body("(SELECT a FROM t WHERE g = 1 LIMIT 1 FOR UPDATE SKIP LOCKED) UNION ALL (SELECT a FROM t WHERE g = 2) UNION ALL SELECT 3");
+        assert!(union_all_parts(&e, &mut parts));
+        assert_eq!(parts.len(), 3);
+        assert!(
+            parts[0].contains("g = 1") && parts[0].contains("SKIP LOCKED"),
+            "{}",
+            parts[0]
+        );
+        assert!(parts[1].contains("g = 2"), "{}", parts[1]);
+        assert_eq!(parts[2], "SELECT 3");
+    }
+
+    #[test]
+    fn union_all_parts_refuses_union_distinct() {
+        let mut parts = Vec::new();
+        assert!(!union_all_parts(
+            &body("SELECT 1 UNION ALL SELECT 2 UNION SELECT 3"),
+            &mut parts
+        ));
+        assert!(!union_all_parts(&body("SELECT 1 UNION SELECT 2"), &mut Vec::new()));
     }
 }

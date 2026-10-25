@@ -1149,64 +1149,151 @@ end
 -- {'error', 1213} (the transaction's locks were lost). Locks granted before
 -- an error stay held until the transaction ends (as in InnoDB); the error
 -- then carries their generation (pl_failed).
-function tarn_lock(txid, keys, mode, opts)
+-- The start of tarn_lock and tarn_lock_range: an error status, or nil and
+-- the deadline of the request.
+local function pl_begin(txid, opts)
     writable()
     lk_fresh()
     pl_fresh()
-    opts = opts or {}
     if PL_BROKEN[txid] ~= nil then return {'error', 1213, BROKEN_MSG} end
     local timeout = opts.timeout
     if timeout == nil or timeout == box.NULL then timeout = 50 end
-    local deadline = clock.monotonic() + timeout
     pl_register_session(txid)
+    return nil, clock.monotonic() + timeout
+end
+
+-- Take one row lock of tarn_lock: false (skipped), true (granted; with
+-- opts.read the latest committed tuple, or box.NULL if none), or an error
+-- status table (pl_failed).
+local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline)
+    local r = pl_acquire(txid, sid, iid, kb, mode, opts, deadline)
+    if r == 'skipped' then return false end
+    if r ~= 'granted' then return pl_failed(txid, r) end
+    if not wait_commits(deadline, sid, iid, key) then
+        M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+        return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
+    end
+    -- (A table held by a TRUNCATE or DROP TABLE counts as W-locked.)
+    if point_w_locked(txid, sid, iid, key) or DDL_HELD[sid] ~= nil then
+        if opts.skip then
+            pl_release_key(txid, sid, iid, kb)
+            return false
+        elseif opts.nowait then
+            return pl_failed(txid, {'locked', 3572, NOWAIT_MSG})
+        end
+        while point_w_locked(txid, sid, iid, key) or DDL_HELD[sid] ~= nil do
+            if clock.monotonic() > deadline then
+                M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+                return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
+            end
+            M.stats.lock_waits = M.stats.lock_waits + 1
+            M.unlock_cond:wait(0.01)
+        end
+    end
+    if box.space[sid] == nil then   -- dropped while it waited
+        return {'error', 1146, 'no such space ' .. tostring(sid)}
+    end
+    if not opts.read then return true end
+    local t = box.space[sid].index[iid]:get(key)
+    return (t == nil) and box.NULL or t
+end
+
+function tarn_lock(txid, keys, mode, opts)
+    opts = opts or {}
+    local err, deadline = pl_begin(txid, opts)
+    if err then return err end
     local results = {}
     for i, k in ipairs(keys) do
         local sid, iid, key = k[1], k[2], k[3]
         if box.space[sid] == nil then return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)}) end
-        local kb = kbin(key)
-        local r = pl_acquire(txid, sid, iid, kb, mode, opts, deadline)
-        if r == 'skipped' then
-            results[i] = false
-        elseif r ~= 'granted' then
-            return pl_failed(txid, r)
-        else
-            if not wait_commits(deadline, sid, iid, key) then
-                M.stats.lock_timeouts = M.stats.lock_timeouts + 1
-                return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
+        local r = pl_take(txid, sid, iid, key, kbin(key), mode, opts, deadline)
+        if type(r) == 'table' then return r end
+        results[i] = r
+    end
+    return {OK, pl_session_gen(), results}
+end
+
+local select_scan, select_checked   -- (below, with tarn_select)
+
+-- tarn_lock_range(txid, ranges, mode, opts): the locking reads of READ
+-- COMMITTED `SELECT ... WHERE <primary key prefix> [ORDER BY <primary key>]
+-- LIMIT n FOR UPDATE | FOR SHARE [NOWAIT | SKIP LOCKED]` statements in one
+-- call (issue #49): for each range in order, scan the primary key from the
+-- start of the range and lock each row as tarn_lock does with read (FIFO
+-- queues, NOWAIT, SKIP LOCKED, waiting out in-flight commits and prepared
+-- transactions' W locks), until `n` rows are locked or the range ends.
+--   ranges : {{space_id, prefix, n, skip_keys}, ...}: the rows whose primary
+--            key starts with `prefix` (not empty), leaving out the primary
+--            keys `skip_keys` (rows the transaction itself deleted).
+--   mode, opts : as tarn_lock's (read is implied).
+-- The candidates are read a page at a time, each page as tarn_select reads
+-- with its lock check (RCRead; see below for SKIP LOCKED); each row is read
+-- again under its lock
+-- (RCLock), and one deleted meanwhile has its lock released at once unless
+-- the transaction held it already. The rows found and the order of the
+-- lock requests are those of a locking read that pages through the range
+-- from the SQL server.
+-- Under SKIP LOCKED a page is read without the lock check: a row that a
+-- prepared transaction W-locks is skipped under its lock anyway, where the
+-- separate read and lock request used to wait for it (or fail with 1213).
+-- Returns {'ok', generation, {rows, ...}}: for each range, the rows locked
+-- (their latest committed versions). Errors as tarn_lock's.
+function tarn_lock_range(txid, ranges, mode, opts)
+    opts = opts or {}
+    local err, deadline = pl_begin(txid, opts)
+    if err then return err end
+    local read = {timeout = opts.timeout, nowait = opts.nowait, skip = opts.skip, read = true, held = opts.held}
+    local out = {}
+    for i, rg in ipairs(ranges) do
+        local sid, prefix, n, skip_keys = rg[1], rg[2], rg[3], rg[4]
+        local space = box.space[sid]
+        if space == nil then return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)}) end
+        local idx = space.index[0]
+        local kd = index_key_def(sid, 0)
+        local skip = {}
+        for _, k in ipairs(skip_keys or {}) do skip[kbin(k)] = true end
+        local rows, last = {}, nil
+        while #rows < n do
+            local page = math.min(math.max(2 * (n - #rows), 16), 512)
+            local key, it = prefix, 'GE'
+            if last ~= nil then key, it = last, 'GT' end
+            local r
+            if opts.skip then
+                -- Every candidate is read again under its lock, and one a
+                -- prepared transaction W-locks is skipped: no need to wait
+                -- for those (a row such a transaction inserts would be).
+                r = {OK, select_scan(idx, kd, it, key, page, prefix, true, nil, false)}
+            else
+                r = select_checked(space, idx, kd, it, key, page, prefix, true, nil, false)
             end
-            local skip = false
-            -- (A table held by a TRUNCATE or DROP TABLE counts as W-locked.)
-            if point_w_locked(txid, sid, iid, key) or DDL_HELD[sid] ~= nil then
-                if opts.skip then
-                    pl_release_key(txid, sid, iid, kb)
-                    skip = true
-                elseif opts.nowait then
-                    return pl_failed(txid, {'locked', 3572, NOWAIT_MSG})
-                else
-                    while point_w_locked(txid, sid, iid, key) or DDL_HELD[sid] ~= nil do
-                        if clock.monotonic() > deadline then
-                            M.stats.lock_timeouts = M.stats.lock_timeouts + 1
-                            return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
-                        end
-                        M.stats.lock_waits = M.stats.lock_waits + 1
-                        M.unlock_cond:wait(0.01)
+            if r[1] ~= OK then return pl_failed(txid, r) end
+            local cands = r[2]
+            for j = 1, #cands do
+                local pk = kd:extract_key(cands[j]):totable()
+                last = pk
+                local kb = kbin(pk)
+                if not skip[kb] then
+                    local e = pl_entry(sid, 0, kb, false)
+                    local had = e ~= nil and e.holders[txid] ~= nil
+                    local t = pl_take(txid, sid, 0, pk, kb, mode, read, deadline)
+                    if type(t) == 'table' then return t end   -- an error status
+                    if t == box.NULL then
+                        if not had then pl_release_key(txid, sid, 0, kb) end   -- deleted meanwhile
+                    elseif t then
+                        rows[#rows + 1] = t
+                        if #rows >= n then break end
                     end
                 end
             end
-            if box.space[sid] == nil then   -- dropped while it waited
-                return {'error', 1146, 'no such space ' .. tostring(sid)}
-            end
-            if skip then
-                results[i] = false
-            elseif opts.read then
-                local t = box.space[sid].index[iid]:get(key)
-                results[i] = (t == nil) and box.NULL or t
-            else
-                results[i] = true
-            end
+            if #cands < page then break end   -- the end of the range
+            -- Not in a transaction or an atomic step: let other requests run
+            -- between pages (the SQL server asks for at most 256 rows a range).
+            fiber.yield()
         end
+        out[i] = rows
+        fiber.yield()   -- and between ranges
     end
-    return {OK, pl_session_gen(), results}
+    return {OK, pl_session_gen(), out}
 end
 
 -- tarn_unlock(txid[, keys]): release some row locks of txid ({{space_id,
@@ -1657,7 +1744,7 @@ end
 
 -- Bounded index scan of tarn_select: rows from `key` in `it` order, stopping
 -- after `limit` rows or once past `end_key`, skipping `offset` rows.
-local function select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+function select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
     local in_txn = box.is_in_txn()
     local unbounded = limit == nil or limit > SCAN_CHUNK
     if unbounded and not in_txn then
@@ -1722,6 +1809,33 @@ local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_ke
     return h
 end
 
+-- The lock-checked scan of tarn_select (TarnCommit!SnapshotRead, RCRead):
+-- {OK, rows} read in a state in which no prepared transaction W-locks what
+-- they cover, or the conflict after waiting lock_wait.
+function select_checked(space, idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+    local space_id, index_id = space.id, idx.id
+    if space.engine == 'vinyl' and not box.is_in_txn() then
+        return checked_read(
+            function() return select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse) end,
+            function(rows, since)
+                return select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
+            end)
+    end
+    -- memtx: scan and check without a yield in between observe one state.
+    local deadline = clock.monotonic() + M.cfg.lock_wait
+    while true do
+        local rows = select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+        if NLOCK == 0 and DDL_N == 0 then return {OK, rows} end
+        local h = select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, nil)
+        if h == nil then return {OK, rows} end
+        if clock.monotonic() > deadline then
+            return conflict('row locked by prepared transaction ' .. h)
+        end
+        M.stats.lock_waits = M.stats.lock_waits + 1
+        M.unlock_cond:wait(0.01)
+    end
+end
+
 function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin)
     -- First request of a stream: start the stream's transaction here (it
     -- stays open after the call because the request carries a stream id).
@@ -1744,26 +1858,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     if lock_check ~= true then
         return {OK, select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)}
     end
-    if space.engine == 'vinyl' and not box.is_in_txn() then
-        return checked_read(
-            function() return select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse) end,
-            function(rows, since)
-                return select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
-            end)
-    end
-    -- memtx: scan and check without a yield in between observe one state.
-    local deadline = clock.monotonic() + M.cfg.lock_wait
-    while true do
-        local rows = select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
-        if NLOCK == 0 and DDL_N == 0 then return {OK, rows} end
-        local h = select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, nil)
-        if h == nil then return {OK, rows} end
-        if clock.monotonic() > deadline then
-            return conflict('row locked by prepared transaction ' .. h)
-        end
-        M.stats.lock_waits = M.stats.lock_waits + 1
-        M.unlock_cond:wait(0.01)
-    end
+    return select_checked(space, idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
 end
 
 -- Rows of several keys of one index in one call (issue #10: IN lists, ORs of

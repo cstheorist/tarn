@@ -102,7 +102,7 @@ pub struct LockKey {
     pub key: Vec<Value>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LockOpts {
     pub exclusive: bool,
     pub nowait: bool,
@@ -119,6 +119,17 @@ pub struct LockOpts {
 pub struct ShardLocks {
     pub client: Client,
     pub gen: String,
+}
+
+/// One range of a locking read in one storage call (`tarn_lock_range`):
+/// the first `n` rows of `table` whose primary key starts with `prefix` and
+/// that it can lock, leaving out the primary keys `skip`.
+#[derive(Clone)]
+pub struct LockRange {
+    pub table: Arc<TableDef>,
+    pub prefix: Vec<Value>,
+    pub n: usize,
+    pub skip: Vec<Vec<Value>>,
 }
 
 /// Outcome of one requested lock.
@@ -252,21 +263,7 @@ impl Txn {
         for k in keys {
             m.arr(3).uint(k.table.space_id as u64).uint(k.index as u64).vals(&k.key);
         }
-        m.str(if o.exclusive { "X" } else { "S" });
-        m.map(5)
-            .str("timeout")
-            .f64(self.lock_timeout)
-            .str("nowait")
-            .bool(o.nowait)
-            .str("skip")
-            .bool(o.skip)
-            .str("read")
-            .bool(o.read)
-            .str("held")
-            .arr(held.len());
-        for &s in &held {
-            m.uint(cluster.shards[s].id as u64);
-        }
+        self.encode_lock_opts(&mut m, cluster, o, &held);
         // NOWAIT and SKIP LOCKED requests never queue.
         let _waiting = (!o.nowait && !o.skip).then(|| cluster.lock_request(&self.id, shard, held));
         // Lock requests change nothing that a resend could duplicate: a lost
@@ -274,32 +271,10 @@ impl Txn {
         // transaction).
         let r = client.call(0, "tarn_lock", &m.0).await.map_err(from_iproto_read)?;
         let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
-        let rd = match lua_status(&d) {
-            Ok((_, rd)) => rd,
-            Err(e) => {
-                // Locks granted before the error stay held until the
-                // transaction ends; the reply then names their generation,
-                // so that they are released with the others even if this
-                // was the first request on the shard.
-                if let Some(gen) = failed_lock_gen(&d) {
-                    self.plocks.entry(shard).or_insert(ShardLocks { client, gen });
-                }
-                return Err(e);
-            }
-        };
+        let rd = self.lock_status(shard, &client, &d)?;
         let mut rd = Rd::shared_at(&d, rd);
         let gen = rd.string()?;
-        match self.plocks.get(&shard) {
-            Some(l) if l.gen != gen => {
-                return Err(SqlError::conflict(
-                    "the transaction lost its row locks (shard leader change or lost connection)",
-                ))
-            }
-            Some(_) => {}
-            None => {
-                self.plocks.insert(shard, ShardLocks { client, gen });
-            }
-        }
+        self.note_locks(shard, client, gen)?;
         let n = rd.array()?;
         let mut out = Vec::with_capacity(n);
         for k in keys.iter().take(n) {
@@ -318,6 +293,165 @@ impl Txn {
                 }
                 _ => Locked::Row(Some(rd.row_of(&k.table)?)),
             });
+        }
+        Ok(out)
+    }
+
+    /// Mode and options of a `tarn_lock` / `tarn_lock_range` request;
+    /// `held` are the other shards where the transaction holds row locks.
+    fn encode_lock_opts(&self, m: &mut Mp, cluster: &Cluster, o: LockOpts, held: &[usize]) {
+        m.str(if o.exclusive { "X" } else { "S" });
+        m.map(5)
+            .str("timeout")
+            .f64(self.lock_timeout)
+            .str("nowait")
+            .bool(o.nowait)
+            .str("skip")
+            .bool(o.skip)
+            .str("read")
+            .bool(o.read)
+            .str("held")
+            .arr(held.len());
+        for &s in held {
+            m.uint(cluster.shards[s].id as u64);
+        }
+    }
+
+    /// The status of a lock request's reply. Locks granted before an error
+    /// stay held until the transaction ends; the reply then names their
+    /// generation, so that they are released with the others even if this
+    /// was the first request on the shard.
+    fn lock_status<'d>(&mut self, shard: usize, client: &Client, d: &'d [u8]) -> SqlResult<Rd<'d>> {
+        match lua_status(d) {
+            Ok((_, rd)) => Ok(rd),
+            Err(e) => {
+                if let Some(gen) = failed_lock_gen(d) {
+                    self.plocks.entry(shard).or_insert(ShardLocks {
+                        client: client.clone(),
+                        gen,
+                    });
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// After a lock request on `shard` succeeded with lock generation `gen`:
+    /// remember the connection, or fail if earlier locks there were lost.
+    fn note_locks(&mut self, shard: usize, client: Client, gen: String) -> SqlResult<()> {
+        match self.plocks.get(&shard) {
+            Some(l) if l.gen != gen => Err(SqlError::conflict(
+                "the transaction lost its row locks (shard leader change or lost connection)",
+            )),
+            Some(_) => Ok(()),
+            None => {
+                self.plocks.insert(shard, ShardLocks { client, gen });
+                Ok(())
+            }
+        }
+    }
+
+    /// Locking reads of primary-key ranges (`tarn_lock_range`): each request
+    /// is (shard, options, ranges); for each range come back the rows locked
+    /// in it, read under their locks, in one storage call per request. When
+    /// no request can wait (SKIP LOCKED, NOWAIT) they all run at once;
+    /// otherwise one after another, since the cross-shard deadlock detector
+    /// follows a transaction waiting on one shard at a time. Errors as
+    /// [`Txn::lock`]; locks taken before an error stay held.
+    pub async fn lock_ranges(
+        &mut self,
+        cluster: &Arc<Cluster>,
+        reqs: &[(usize, LockOpts, Vec<LockRange>)],
+    ) -> SqlResult<Vec<Vec<Vec<Row>>>> {
+        let encode = |txn: &Txn, (shard, o, ranges): &(usize, LockOpts, Vec<LockRange>)| {
+            let held: Vec<usize> = txn.plocks.keys().copied().filter(|s| s != shard).collect();
+            let mut m = Mp::new();
+            m.arr(4).str(&txn.id).arr(ranges.len());
+            for r in ranges {
+                m.arr(4).uint(r.table.space_id as u64).vals(&r.prefix).uint(r.n as u64);
+                m.arr(r.skip.len());
+                for k in &r.skip {
+                    m.vals(k);
+                }
+            }
+            txn.encode_lock_opts(&mut m, cluster, *o, &held);
+            (m, held)
+        };
+        let mut out = Vec::with_capacity(reqs.len());
+        if reqs.iter().any(|(_, o, _)| !o.nowait && !o.skip) {
+            for req in reqs {
+                let client = self.conn(cluster, req.0).await?;
+                let (m, held) = encode(self, req);
+                let r = {
+                    let _waiting = cluster.lock_request(&self.id, req.0, held);
+                    client.call(0, "tarn_lock_range", &m.0).await
+                };
+                out.push(self.decode_ranges(req.0, &client, r, &req.2)?);
+            }
+            return Ok(out);
+        }
+        // One connection per shard: the locks of a transaction on a shard
+        // belong to one session.
+        let mut clients: BTreeMap<usize, Client> = BTreeMap::new();
+        let mut calls = Vec::with_capacity(reqs.len());
+        for req in reqs {
+            let client = match clients.get(&req.0) {
+                Some(c) => c.clone(),
+                None => {
+                    let c = self.conn(cluster, req.0).await?;
+                    clients.insert(req.0, c.clone());
+                    c
+                }
+            };
+            calls.push((client, encode(self, req).0));
+        }
+        let replies =
+            futures::future::join_all(calls.iter().map(|(client, m)| client.call(0, "tarn_lock_range", &m.0))).await;
+        let mut first_err = None;
+        for ((req, (client, _)), r) in reqs.iter().zip(&calls).zip(replies) {
+            match self.decode_ranges(req.0, client, r, &req.2) {
+                Ok(v) => out.push(v),
+                Err(e) => {
+                    out.push(Vec::new());
+                    // An error that ends the transaction (1213) wins over
+                    // one that only fails the statement.
+                    if first_err
+                        .as_ref()
+                        .is_none_or(|f: &SqlError| f.code != 1213 && e.code == 1213)
+                    {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(out),
+        }
+    }
+
+    fn decode_ranges(
+        &mut self,
+        shard: usize,
+        client: &Client,
+        r: Result<tarn_iproto::Response, tarn_iproto::Error>,
+        ranges: &[LockRange],
+    ) -> SqlResult<Vec<Vec<Row>>> {
+        let r = r.map_err(from_iproto_read)?;
+        let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+        let rd = self.lock_status(shard, client, &d)?;
+        let mut rd = Rd::shared_at(&d, rd);
+        let gen = rd.string()?;
+        self.note_locks(shard, client.clone(), gen)?;
+        let n = rd.array()?;
+        let mut out = Vec::with_capacity(n);
+        for rg in ranges.iter().take(n) {
+            let nrows = rd.array()?;
+            let mut rows = Vec::with_capacity(nrows);
+            for _ in 0..nrows {
+                rows.push(rd.row_of(&rg.table)?);
+            }
+            out.push(rows);
         }
         Ok(out)
     }
