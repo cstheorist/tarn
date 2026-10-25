@@ -119,7 +119,8 @@ mk SkewFailover_ROValidate  RSetSkew  WSetSkew  1 0 0 ROV AMC
 mk Recov_GC             RSetRecov WSetRecov 0 1 2 NORD GC
 mk Frac_GC_ROValidate   RSetFrac  WSetFrac  0 1 1 NORD ROV GC
 mk Local_GC_ROValidate  RSetLocal WSetLocal 0 1 1 NORD ROV GC
-mk Skew_GC_ROValidate   RSetSkew  WSetSkew  0 1 1 NORD ROV GC
+mk Skew_GC_ROValidate   RSetSkew  WSetSkew  0 1 1 NORD ROV GC   # too large to finish: see out/Skew_GC_ROValidate.out
+mk SkewTimeout_GC_ROValidate RSetSkew WSetSkew 0 0 0 NORD ROV GC   # recovery racing the coordinator, no crash/loss
 # Each weakened variant must be caught.
 mk Bug_NoReadLocks            RSetSkew  WSetSkew  0 0 0 NRL
 mk Bug_LocalIgnoresRLocks     RSetLocal WSetLocal 0 0 0 LIR
