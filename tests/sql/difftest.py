@@ -401,6 +401,35 @@ CASES = [
     ("SELECT id FROM t1 WHERE (a, b) <=> (NULL, 'name5') ORDER BY id", "q"),
     ("SELECT (1, NULL) < (2, 0), (1, NULL) < (1, 0), (NULL, 1) > (0, 0), (1, 2, 3) >= (1, 2, 3)", "q"),
     ("SELECT id FROM t1 WHERE (id, a) > (1, 2, 3)", "err"),
+    # DATETIME spellings (issue #37): one stored form per value; constants
+    # compare by value, not by spelling. (Extra fractional digits are rounded,
+    # as MySQL 8 does; MariaDB truncates them, so no case stores any.)
+    ("CREATE TABLE dtp (s INT NOT NULL, id INT NOT NULL, dt DATETIME(6), d0 DATETIME, dd DATE, "
+     "PRIMARY KEY (s, id), KEY by_dt (s, dt, id), KEY by_d0 (d0))", "ddl:dtp"),
+    ("INSERT INTO dtp VALUES (1, 1, '2025-01-01 00:00:00', '2025-01-01 00:00:00', '2025-01-01'), "
+     "(1, 2, '2025-01-01 00:00:01.000000', '2025-01-01 00:00:01.000000', '2025-01-01 10:00:00'), "
+     "(1, 3, '2025-01-01 00:00:02.5', '2025-01-01 00:00:02', '2025-01-02'), "
+     "(1, 4, '2025-01-01T00:00:03', '2025-12-31 23:59:59', '20250103'), "
+     "(2, 1, '2025-1-1 0:0:4', '20250101000004', '2025-01-04')", "dml:dtp"),
+    ("SELECT * FROM dtp ORDER BY s, id", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND dt = '2025-01-01 00:00:01'", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND dt = '2025-01-01 00:00:01.000'", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND (dt > '2025-01-01 00:00:01' OR (dt = '2025-01-01 00:00:01' AND id > 2)) "
+     "ORDER BY dt, id", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND (dt, id) > ('2025-01-01 00:00:01', 2) ORDER BY dt, id", "q"),
+    ("SELECT id FROM dtp WHERE (s, dt) IN ((1, '2025-01-01 00:00:01'), (2, '2025-01-01 00:00:04')) ORDER BY id", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND dt >= '2025-01-01 00:00:02.5' ORDER BY id", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND dt > '2025-01-01 00:00:02.4999' ORDER BY id", "q"),
+    ("SELECT id FROM dtp WHERE s = 1 AND dt BETWEEN '2025-01-01 00:00:01' AND '2025-01-01 00:00:02.5' ORDER BY id", "q"),
+    ("SELECT id FROM dtp WHERE dt IN ('2025-01-01 00:00:01', '2025-01-01 00:00:04.000') ORDER BY id", "q"),
+    ("SELECT id FROM dtp WHERE d0 = '2025-01-01 00:00:01.000000'", "q"),
+    ("SELECT id FROM dtp WHERE d0 = '2025-01-01 00:00:02.000'", "q"),
+    ("SELECT id FROM dtp WHERE d0 > '2025-01-01 00:00:02.5' ORDER BY id", "q"),
+    ("SELECT id FROM dtp WHERE dd = '2025-01-01 00:00:00'", "q"),
+    ("SELECT id FROM dtp WHERE dd = '2025-01-01 10:00:00'", "q"),
+    ("SELECT id FROM dtp WHERE dd < '2025-01-02 00:00:01' ORDER BY id", "q"),
+    ("SELECT d0, COUNT(*) FROM dtp GROUP BY d0 ORDER BY d0", "q"),
+    ("UPDATE dtp SET dt = '2025-01-01 00:00:01' WHERE dt = '2025-01-01 00:00:01.000000'", "dml:dtp"),
 ]
 
 

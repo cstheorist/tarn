@@ -138,6 +138,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `DATETIME` and `TIMESTAMP` values compared by their spelling: a stored
+  `'2025-01-01 00:00:01.000000'` did not equal `'2025-01-01 00:00:01'`, so
+  keyset pagination repeated rows ([#37](https://github.com/cstheorist/tarn/issues/37)).
+  Values are now stored in one form, with exactly the column's fractional
+  digits (`DATETIME(6)` keeps its precision, which the catalog used to drop),
+  and constants compared with date and datetime columns, in `WHERE`, `IN`,
+  `BETWEEN` and index lookups, compare by value. Rows written before this
+  change keep their old spelling.
 - `CLIENT_FOUND_ROWS` was ignored: an `UPDATE` that matched a row without
   changing it reported 0 affected rows to drivers that ask for matched rows
   (Rails, Go's `clientFoundRows=true`), which read it as a missing row. It now

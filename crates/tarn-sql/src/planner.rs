@@ -10,7 +10,7 @@ use crate::admin::Admin;
 use crate::catalog::{self, Catalog, ColumnDef, ForeignKeyDef, IndexDef, TableDef};
 use crate::expr::{column_expr_type, infer, CastTo, CmpOp, Expr, ExprType, Func};
 use crate::plan::*;
-use crate::types::{Arith, SqlType};
+use crate::types::{Arith, BaseType, SqlType};
 use sqlparser::ast as A;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;
@@ -327,6 +327,40 @@ impl<'a, 'c> Binder<'a, 'c> {
         }
     }
 
+    /// The fractional digits of a DATETIME / TIMESTAMP column (`Some(Some(n))`)
+    /// or a DATE column (`Some(None)`); None for anything else.
+    fn temporal_col(&self, e: &Expr) -> Option<Option<u32>> {
+        let Expr::Col(i) = e else { return None };
+        let t = self
+            .scope
+            .tables
+            .iter()
+            .find(|t| *i >= t.offset && *i < t.offset + t.table.columns.len())?;
+        let ty = t.table.columns[*i - t.offset].ty();
+        match ty.base {
+            BaseType::Date => Some(None),
+            BaseType::DateTime | BaseType::Timestamp => Some(Some(ty.fsp())),
+            _ => None,
+        }
+    }
+
+    /// A constant compared with a temporal column, rewritten so that it
+    /// compares with the column's stored text as the temporal values compare
+    /// (`types::temporal_key`): '2025-01-01 00:00:01' equals a DATETIME(6)'s
+    /// '2025-01-01 00:00:01.000000' (issue #37).
+    fn temporal_operand(&self, col: &Expr, other: Expr) -> Expr {
+        match self.temporal_col(col) {
+            Some(fsp) if other.is_constant() => Expr::Cast(Box::new(other), CastTo::TemporalKey(fsp)),
+            _ => other,
+        }
+    }
+
+    fn temporal_cmp(&self, l: Expr, op: CmpOp, r: Expr) -> Expr {
+        let r = self.temporal_operand(&l, r);
+        let l = self.temporal_operand(&r, l);
+        Expr::Cmp(Box::new(l), op, Box::new(r))
+    }
+
     /// Is `e` an unsigned integer: an UNSIGNED integer column, an unsigned
     /// literal above BIGINT's range, CAST(... AS UNSIGNED), or unsigned
     /// arithmetic?
@@ -449,6 +483,13 @@ impl<'a, 'c> Binder<'a, 'c> {
                 }
                 let lhs: Vec<Expr> = l.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
                 let rhs: Vec<Expr> = r.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
+                // constants compared with temporal columns compare by value (#37)
+                let rhs: Vec<Expr> = lhs.iter().zip(rhs).map(|(l, r)| self.temporal_operand(l, r)).collect();
+                let lhs: Vec<Expr> = lhs
+                    .into_iter()
+                    .zip(&rhs)
+                    .map(|(l, r)| self.temporal_operand(r, l))
+                    .collect();
                 let op = match op {
                     A::BinaryOperator::Lt => CmpOp::Lt,
                     A::BinaryOperator::LtEq => CmpOp::LtEq,
@@ -477,13 +518,13 @@ impl<'a, 'c> Binder<'a, 'c> {
                     B::Divide => Expr::Arith(l, Arith::Div, r),
                     B::Modulo => Expr::Arith(l, Arith::Mod, r),
                     B::MyIntegerDivide | B::DuckIntegerDivide => Expr::Arith(l, Arith::IntDiv, r),
-                    B::Eq => Expr::Cmp(l, CmpOp::Eq, r),
-                    B::NotEq => Expr::Cmp(l, CmpOp::NotEq, r),
-                    B::Lt => Expr::Cmp(l, CmpOp::Lt, r),
-                    B::LtEq => Expr::Cmp(l, CmpOp::LtEq, r),
-                    B::Gt => Expr::Cmp(l, CmpOp::Gt, r),
-                    B::GtEq => Expr::Cmp(l, CmpOp::GtEq, r),
-                    B::Spaceship => Expr::Cmp(l, CmpOp::NullSafeEq, r),
+                    B::Eq => self.temporal_cmp(*l, CmpOp::Eq, *r),
+                    B::NotEq => self.temporal_cmp(*l, CmpOp::NotEq, *r),
+                    B::Lt => self.temporal_cmp(*l, CmpOp::Lt, *r),
+                    B::LtEq => self.temporal_cmp(*l, CmpOp::LtEq, *r),
+                    B::Gt => self.temporal_cmp(*l, CmpOp::Gt, *r),
+                    B::GtEq => self.temporal_cmp(*l, CmpOp::GtEq, *r),
+                    B::Spaceship => self.temporal_cmp(*l, CmpOp::NullSafeEq, *r),
                     B::And => Expr::And(l, r),
                     B::Or => Expr::Or(l, r),
                     B::Xor => Expr::Xor(l, r),
@@ -532,22 +573,28 @@ impl<'a, 'c> Binder<'a, 'c> {
                     e
                 }
             }
-            E::InList { expr, list, negated } => Expr::InList(
-                Box::new(self.bind(expr)?),
-                list.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?,
-                *negated,
-            ),
+            E::InList { expr, list, negated } => {
+                let x = self.bind(expr)?;
+                let list = list
+                    .iter()
+                    .map(|e| {
+                        let b = self.bind(e)?;
+                        Ok(self.temporal_operand(&x, b))
+                    })
+                    .collect::<SqlResult<_>>()?;
+                Expr::InList(Box::new(x), list, *negated)
+            }
             E::Between {
                 expr,
                 negated,
                 low,
                 high,
-            } => Expr::Between(
-                Box::new(self.bind(expr)?),
-                Box::new(self.bind(low)?),
-                Box::new(self.bind(high)?),
-                *negated,
-            ),
+            } => {
+                let x = self.bind(expr)?;
+                let (lo, hi) = (self.bind(low)?, self.bind(high)?);
+                let (lo, hi) = (self.temporal_operand(&x, lo), self.temporal_operand(&x, hi));
+                Expr::Between(Box::new(x), Box::new(lo), Box::new(hi), *negated)
+            }
             E::Like {
                 negated, expr, pattern, ..
             }
@@ -688,7 +735,8 @@ impl<'a, 'c> Binder<'a, 'c> {
         }
         let mut conj: Option<Expr> = None;
         for (l, r) in lhs.iter().zip(rhs) {
-            let c = Expr::Cmp(Box::new(l.clone()), CmpOp::Eq, Box::new(self.bind(r)?));
+            let r = self.bind(r)?;
+            let c = self.temporal_cmp(l.clone(), CmpOp::Eq, r);
             conj = Some(match conj {
                 None => c,
                 Some(x) => Expr::And(Box::new(x), Box::new(c)),
