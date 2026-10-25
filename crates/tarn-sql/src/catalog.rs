@@ -210,6 +210,10 @@ impl TableDef {
     pub fn pk(&self) -> &IndexDef {
         &self.indexes[0]
     }
+    /// A table of `information_schema` (read from the catalog, never written).
+    pub fn is_virtual(&self) -> bool {
+        self.space_id == INFORMATION_SCHEMA_SPACE
+    }
     pub fn bucket_field(&self) -> usize {
         self.bucket.map(|b| b as usize).unwrap_or(self.columns.len())
     }
@@ -472,6 +476,121 @@ impl Catalog {
     pub fn has_db(&self, db: &str) -> bool {
         self.databases.iter().any(|d| d.eq_ignore_ascii_case(db))
     }
+}
+
+/// Space id of the tables of `information_schema`: virtual, read from the
+/// catalog instead of storage (`information_schema_rows`), never written.
+pub const INFORMATION_SCHEMA_SPACE: u32 = u32::MAX;
+
+pub const INFORMATION_SCHEMA: &str = "information_schema";
+
+/// The columns of `information_schema.TABLES`, as MySQL 8 has them.
+const IS_TABLES: &[(&str, &str)] = &[
+    ("TABLE_CATALOG", "varchar(64)"),
+    ("TABLE_SCHEMA", "varchar(64)"),
+    ("TABLE_NAME", "varchar(64)"),
+    ("TABLE_TYPE", "varchar(64)"),
+    ("ENGINE", "varchar(64)"),
+    ("VERSION", "bigint unsigned"),
+    ("ROW_FORMAT", "varchar(10)"),
+    ("TABLE_ROWS", "bigint unsigned"),
+    ("AVG_ROW_LENGTH", "bigint unsigned"),
+    ("DATA_LENGTH", "bigint unsigned"),
+    ("MAX_DATA_LENGTH", "bigint unsigned"),
+    ("INDEX_LENGTH", "bigint unsigned"),
+    ("DATA_FREE", "bigint unsigned"),
+    ("AUTO_INCREMENT", "bigint unsigned"),
+    ("CREATE_TIME", "datetime"),
+    ("UPDATE_TIME", "datetime"),
+    ("CHECK_TIME", "datetime"),
+    ("TABLE_COLLATION", "varchar(64)"),
+    ("CHECKSUM", "bigint unsigned"),
+    ("CREATE_OPTIONS", "varchar(256)"),
+    ("TABLE_COMMENT", "varchar(2048)"),
+];
+
+/// The definition of an `information_schema` table (only `TABLES` exists):
+/// error 1109 for the others, as in MySQL.
+pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
+    if !name.eq_ignore_ascii_case("TABLES") {
+        return Err(SqlError::new(
+            1109,
+            "42S02",
+            format!("Unknown table '{}' in {}", name, INFORMATION_SCHEMA),
+        ));
+    }
+    let columns = IS_TABLES
+        .iter()
+        .map(|(n, ty)| ColumnDef {
+            name: n.to_string(),
+            ty: ty.to_string(),
+            nullable: !matches!(*n, "TABLE_CATALOG" | "TABLE_SCHEMA" | "TABLE_NAME" | "TABLE_TYPE"),
+            default: None,
+            default_null: false,
+            auto_increment: false,
+            field: None,
+            storage_nullable: None,
+            fill: None,
+            hidden: false,
+            sql_type: None,
+        })
+        .collect();
+    let mut def = TableDef {
+        db: INFORMATION_SCHEMA.into(),
+        name: "TABLES".into(),
+        space_id: INFORMATION_SCHEMA_SPACE,
+        columns,
+        indexes: vec![IndexDef {
+            name: "PRIMARY".into(),
+            id: 0,
+            cols: vec![1, 2],
+            unique: true,
+            invisible: false,
+        }],
+        shard_key: vec![1, 2],
+        auto_inc: None,
+        comment: String::new(),
+        engine: Engine::Memtx,
+        ver: 0,
+        bucket: None,
+        dropped: Vec::new(),
+        foreign_keys: Vec::new(),
+        bucket_index: None,
+        layout: Default::default(),
+    };
+    def.resolve_types()?;
+    Ok(def)
+}
+
+/// The rows of `information_schema.TABLES`: one per table, and one for the
+/// view itself. Sizes and row counts are not tracked (NULL).
+pub fn information_schema_rows(cat: &Catalog) -> Vec<Vec<Value>> {
+    let mut tables: Vec<&Arc<TableDef>> = cat.all().collect();
+    tables.sort_by(|a, b| (&a.db, &a.name).cmp(&(&b.db, &b.name)));
+    let mut rows = Vec::with_capacity(tables.len() + 1);
+    let mut row = |db: &str, name: &str, ty: &str, t: Option<&TableDef>| {
+        let mut r = vec![Value::Null; IS_TABLES.len()];
+        r[0] = Value::str("def");
+        r[1] = Value::str(db);
+        r[2] = Value::str(name);
+        r[3] = Value::str(ty);
+        if let Some(t) = t {
+            r[4] = Value::str(t.engine.name());
+            r[5] = Value::UInt(10);
+            r[6] = Value::str("Fixed");
+            r[17] = Value::str("utf8mb4_bin");
+            r[19] = Value::str("");
+            r[20] = Value::str(&t.comment);
+        } else {
+            r[20] = Value::str("");
+        }
+        rows.push(r);
+    };
+    row(INFORMATION_SCHEMA, "TABLES", "SYSTEM VIEW", None);
+    for t in tables {
+        row(&t.db, &t.name, "BASE TABLE", Some(t));
+    }
+    rows
 }
 
 pub fn parse_def_json(json: &str) -> SqlResult<TableDef> {
