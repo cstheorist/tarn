@@ -132,11 +132,12 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, coordinator decisions, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum |
-| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 174 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences |
+| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 236 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`) |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
 | READ COMMITTED | `python3 tests/sql/rctest.py --tarn HOST:PORT` | a Tarn cluster with two or more shards | isolation variables, lock waits, lock wait timeouts, local and cross-shard deadlocks, concurrent counters without lost updates, semi-consistent `UPDATE`/`DELETE`, `SKIP LOCKED` job queues, `NOWAIT`, `FOR SHARE`, duplicate inserts and concurrent upserts on unique keys, savepoints, statement rollback, locks released on disconnect |
+| Schema changes | `python3 tests/sql/ddltest.py --tarn HOST:PORT[,HOST:PORT]` | a Tarn cluster, ideally with two SQL servers (`cluster.sh -s 2`); the `mysql` client | a mysqldump file, multi-statement batches and `COM_SET_OPTION`, refused alterations, `ALTER TABLE` about 300 times while both servers write the table: no autocommit statement fails, no acknowledged write is lost or duplicated; concurrent schema changes; transactions spanning an `ALTER` |
 | Failover | `tests/failover.sh` | Tarantool | 2 shards × 3 replicas under the bank workload and READ COMMITTED transfers: a live leader change, then two leader kills; every check must hold |
 | Faults | `tests/faults.sh` | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
 
@@ -150,7 +151,8 @@ a `sb` user for the differential tests (or point `--ref` at any MariaDB
 
 * **lint**: `cargo fmt --check` and `cargo clippy -D warnings`;
 * **test**: unit and integration tests, storage protocol tests, the SQL
-  suites against MariaDB 10.11, the fault-injection and failover tests;
+  suites against MariaDB 10.11 (on a cluster with two SQL servers), the
+  schema-change, fault-injection and failover tests;
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.

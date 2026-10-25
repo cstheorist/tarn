@@ -13,9 +13,10 @@
 //! other client plugin), CLIENT_DEPRECATE_EOF negotiated per client, text
 //! and binary result sets, COM_QUERY, COM_INIT_DB, COM_PING, COM_QUIT,
 //! COM_FIELD_LIST, COM_STATISTICS, COM_STMT_PREPARE / EXECUTE /
-//! SEND_LONG_DATA / CLOSE / RESET, COM_SET_OPTION, COM_RESET_CONNECTION.
-//! Not supported: SSL, compression, multi-statements, cursors (a cursor
-//! request is answered with an ordinary result set), COM_CHANGE_USER.
+//! SEND_LONG_DATA / CLOSE / RESET, COM_SET_OPTION, COM_RESET_CONNECTION,
+//! multi-statements (CLIENT_MULTI_STATEMENTS or COM_SET_OPTION).
+//! Not supported: SSL, compression, cursors (a cursor request is answered
+//! with an ordinary result set), COM_CHANGE_USER.
 
 pub mod codec;
 pub mod packets;
@@ -129,6 +130,8 @@ struct Conn<B> {
     questions: u64,
     /// Current packet size limit: MAX_PREAUTH_PACKET until authenticated.
     max_packet: usize,
+    /// More results of the current multi-statement follow this one.
+    more: bool,
 }
 
 const COM_QUIT: u8 = 0x01;
@@ -165,6 +168,80 @@ fn text(b: &[u8]) -> std::borrow::Cow<'_, str> {
 
 fn too_large() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "packet larger than max_allowed_packet")
+}
+
+/// Split a COM_QUERY text into its statements at `;` outside quotes and
+/// comments (multi-statement mode). Statements that are empty or only
+/// whitespace and comments are dropped, so a trailing `;` adds nothing.
+pub fn split_statements(sql: &str) -> Vec<&str> {
+    let b = sql.as_bytes();
+    let mut out = Vec::new();
+    let (mut start, mut i) = (0usize, 0usize);
+    let mut content = false;
+    fn push<'a>(out: &mut Vec<&'a str>, s: &'a str, content: bool) {
+        if content {
+            out.push(s.trim());
+        }
+    }
+    while i < b.len() {
+        let c = b[i];
+        match c {
+            b'\'' | b'"' | b'`' => {
+                content = true;
+                let mut j = i + 1;
+                while j < b.len() {
+                    if b[j] == b'\\' && c != b'`' {
+                        j += 2;
+                        continue;
+                    }
+                    if b[j] == c {
+                        if b.get(j + 1) == Some(&c) {
+                            j += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    j += 1;
+                }
+                i = j + 1;
+            }
+            b'#' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'-' if b.get(i + 1) == Some(&b'-') && b.get(i + 2).is_none_or(|x| *x <= b' ') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                // executable comments /*! ... */ are statement text
+                if matches!(b.get(i + 2), Some(b'!') | Some(b'M')) {
+                    content = true;
+                }
+                let mut j = i + 2;
+                while j + 1 < b.len() && !(b[j] == b'*' && b[j + 1] == b'/') {
+                    j += 1;
+                }
+                i = (j + 2).min(b.len());
+            }
+            b';' => {
+                push(&mut out, &sql[start..i], content);
+                content = false;
+                i += 1;
+                start = i;
+            }
+            _ => {
+                if !c.is_ascii_whitespace() {
+                    content = true;
+                }
+                i += 1;
+            }
+        }
+    }
+    push(&mut out, &sql[start.min(sql.len())..], content);
+    out
 }
 
 /// Take one complete logical packet (at most `max` bytes) off the front of
@@ -224,8 +301,19 @@ impl<B: Backend> Conn<B> {
         self.caps & cap::DEPRECATE_EOF != 0
     }
 
+    /// Status flags for an OK/EOF packet: the backend's, plus
+    /// SERVER_MORE_RESULTS_EXISTS while a multi-statement has more results.
+    fn status(&self) -> u16 {
+        self.backend.status_flags()
+            | if self.more {
+                packets::SERVER_MORE_RESULTS_EXISTS
+            } else {
+                0
+            }
+    }
+
     fn send_ok(&mut self, affected: u64, last_id: u64, warnings: u16, info: &str) {
-        let st = self.backend.status_flags();
+        let st = self.status();
         self.send(|p| packets::ok(p, 0x00, affected, last_id, st, warnings, info));
     }
 
@@ -235,7 +323,7 @@ impl<B: Backend> Conn<B> {
 
     /// End of a result set / metadata block: EOF, or OK with header 0xFE.
     fn send_eof_or_ok(&mut self) {
-        let st = self.backend.status_flags();
+        let st = self.status();
         if self.deprecate_eof() {
             self.send(|p| packets::ok(p, 0xFE, 0, 0, st, 0, ""));
         } else {
@@ -415,6 +503,25 @@ impl<B: Backend> Conn<B> {
             COM_QUIT => return Ok(false),
             COM_QUERY => {
                 let sql = text(&body);
+                if self.caps & cap::MULTI_STATEMENTS != 0 {
+                    let parts = split_statements(&sql);
+                    if parts.len() > 1 {
+                        // One result per statement; the first error ends
+                        // the batch (the rest is not executed).
+                        let last = parts.len() - 1;
+                        for (i, part) in parts.into_iter().enumerate() {
+                            let r = self.backend.on_query(part).await;
+                            let failed = r.is_err();
+                            self.more = i < last && !failed;
+                            self.send_result(r, false).await?;
+                            self.more = false;
+                            if failed {
+                                break;
+                            }
+                        }
+                        return Ok(true);
+                    }
+                }
                 let r = self.backend.on_query(&sql).await;
                 self.send_result(r, false).await?;
             }
@@ -553,7 +660,18 @@ impl<B: Backend> Conn<B> {
                 );
                 self.send(|p| p.extend_from_slice(s.as_bytes()));
             }
-            COM_SET_OPTION => self.send_eof_or_ok(),
+            COM_SET_OPTION => match Reader::new(&body).u16() {
+                // MYSQL_OPTION_MULTI_STATEMENTS_ON / _OFF
+                Some(0) => {
+                    self.caps |= cap::MULTI_STATEMENTS;
+                    self.send_eof_or_ok();
+                }
+                Some(1) => {
+                    self.caps &= !cap::MULTI_STATEMENTS;
+                    self.send_eof_or_ok();
+                }
+                _ => self.send_err(&SqlError::new(1047, "08S01", "Unknown command")),
+            },
             COM_RESET_CONNECTION => {
                 self.reset_session().await;
                 self.send_ok(0, 0, 0, "");
@@ -607,6 +725,7 @@ pub async fn serve_connection<B: Backend>(
         started: std::time::Instant::now(),
         questions: 0,
         max_packet: MAX_PREAUTH_PACKET,
+        more: false,
     };
     let r = c.run().await;
     c.backend.on_disconnect().await;
@@ -626,6 +745,29 @@ mod tests {
         ];
         v.resize(4 + len, b'x');
         v
+    }
+
+    #[test]
+    fn splits_statements() {
+        assert_eq!(split_statements("SELECT 1"), vec!["SELECT 1"]);
+        assert_eq!(split_statements("SELECT 1;"), vec!["SELECT 1"]);
+        assert_eq!(
+            split_statements(" SELECT 1 ; SELECT 2;\n"),
+            vec!["SELECT 1", "SELECT 2"]
+        );
+        assert_eq!(
+            split_statements("INSERT INTO t VALUES ('a;b', \"c;\", `d;`); SELECT 'it''s;' -- x;y\n; # z;\n"),
+            vec!["INSERT INTO t VALUES ('a;b', \"c;\", `d;`)", "SELECT 'it''s;' -- x;y"]
+        );
+        assert_eq!(
+            split_statements("SELECT 'a\\';b'; SELECT 2"),
+            vec!["SELECT 'a\\';b'", "SELECT 2"]
+        );
+        assert_eq!(
+            split_statements("/* c; */ SELECT 1; /*!40101 SET x=1 */;"),
+            vec!["/* c; */ SELECT 1", "/*!40101 SET x=1 */"]
+        );
+        assert!(split_statements(" ; -- only\n; ").is_empty());
     }
 
     #[test]

@@ -110,6 +110,13 @@ impl<'a> Rd<'a> {
     pub fn skip(&mut self) -> SqlResult<()> {
         tarn_iproto::mp::skip_value(&mut self.buf).map_err(proto)
     }
+    /// The next value's msgpack encoding, unparsed.
+    pub fn raw_value(&mut self) -> SqlResult<&[u8]> {
+        let before: &[u8] = self.buf;
+        tarn_iproto::mp::skip_value(&mut self.buf).map_err(proto)?;
+        let used = before.len() - self.buf.len();
+        Ok(&before[..used])
+    }
     pub fn string(&mut self) -> SqlResult<String> {
         match self.value()? {
             Value::Str(b) | Value::Bin(b) => Ok(String::from_utf8_lossy(&b).into_owned()),
@@ -120,6 +127,25 @@ impl<'a> Rd<'a> {
     pub fn is_nil(&self) -> bool {
         self.buf.first() == Some(&0xc0)
     }
+    /// Decode a stored tuple of `t` into a row: each column from its field,
+    /// or its fill value when the tuple ends before it (a row written before
+    /// ALTER TABLE added the column).
+    pub fn row_of(&mut self, t: &crate::catalog::TableDef) -> SqlResult<Vec<Value>> {
+        let l = &t.layout;
+        if l.identity {
+            return self.row(t.columns.len());
+        }
+        let n = self.array()?;
+        let mut row = l.fills.clone();
+        for f in 0..n {
+            match l.field_col.get(f).copied().flatten() {
+                Some(c) => row[c] = self.value()?,
+                None => self.skip()?,
+            }
+        }
+        Ok(row)
+    }
+
     /// Decode a stored tuple: the table's columns followed by bucket_id,
     /// which is dropped.
     pub fn row(&mut self, ncols: usize) -> SqlResult<Vec<Value>> {
@@ -156,6 +182,12 @@ pub fn from_iproto(e: tarn_iproto::Error) -> SqlError {
                 SqlError::conflict(message)
             } else if code == tarn_iproto::ER_TUPLE_FOUND {
                 SqlError::new(1062, "23000", message)
+            } else if code == tarn_iproto::errcode::ER_NO_SUCH_INDEX_ID {
+                // an index an ALTER TABLE dropped: re-plan with the new catalog
+                SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
+            } else if code == tarn_iproto::errcode::ER_NO_SUCH_SPACE {
+                // a table dropped (or recreated) through another server
+                SqlError::new(1146, "42S02", format!("Table does not exist ({})", message))
             } else if code == tarn_iproto::ER_READONLY {
                 SqlError::conflict(format!("shard leader changed, retry the transaction ({})", message))
             } else {
