@@ -902,7 +902,11 @@ local function pl_acquire(txid, sid, iid, kb, mode, opts, deadline)
     local e = pl_entry(sid, iid, kb, true)
     local cur = e.holders[txid]
     if cur == 'X' or cur == mode then return 'granted' end
-    local req = {txid = txid, mode = mode, entry = e, cond = fiber.cond()}
+    -- held: the other shards where txid holds row locks, as its SQL server
+    -- sent them; reported with the wait to the cross-shard detector.
+    local held = opts.held
+    if type(held) ~= 'table' then held = nil end
+    local req = {txid = txid, mode = mode, entry = e, cond = fiber.cond(), held = held}
     if pl_grantable(e, req, #e.queue) then
         pl_hold(txid, sid, iid, kb, e, mode)
         return 'granted'
@@ -990,10 +994,22 @@ local function pl_on_disconnect()
     end
 end
 
+-- An error after locks were granted: they stay held until the transaction
+-- ends (as in InnoDB), so the reply carries their generation as a fourth
+-- element, and the SQL server releases them with the transaction's other
+-- locks even when this was its first request here.
+local function pl_failed(txid, r)
+    local p = PTX[txid]
+    if p ~= nil and next(p.keys) ~= nil then r[4] = pl_session_gen() end
+    return r
+end
+
 -- tarn_lock(txid, keys, mode, opts): take row locks for txid, in order.
 --   keys : {{space_id, index_id, key}, ...}   (index 0: primary key; else a unique key value)
 --   mode : 'X' or 'S'
---   opts : {timeout = seconds (50), nowait = bool, skip = bool, read = bool}
+--   opts : {timeout = seconds (50), nowait = bool, skip = bool, read = bool,
+--           held = {shard id, ...}: the other shards where txid holds row
+--           locks, for the cross-shard deadlock detector (tarn_lock_waits)}
 -- Returns {'ok', generation, results} (generation: see pl_session_gen; a
 -- different one than before means the transaction's earlier locks on this
 -- shard were lost); results[i] is, with read, the latest
@@ -1003,7 +1019,8 @@ end
 -- (their value may already be committed: TarnCommit BugRCLockIgnoresWLocks).
 -- Errors: {'locked', 3572} (nowait), {'timeout', 1205}, {'deadlock', 1213},
 -- {'error', 1213} (the transaction's locks were lost). Locks granted before
--- an error stay held until the transaction ends (as in InnoDB).
+-- an error stay held until the transaction ends (as in InnoDB); the error
+-- then carries their generation (pl_failed).
 function tarn_lock(txid, keys, mode, opts)
     writable()
     lk_fresh()
@@ -1017,17 +1034,17 @@ function tarn_lock(txid, keys, mode, opts)
     local results = {}
     for i, k in ipairs(keys) do
         local sid, iid, key = k[1], k[2], k[3]
-        if box.space[sid] == nil then return {'error', 1146, 'no such space ' .. tostring(sid)} end
+        if box.space[sid] == nil then return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)}) end
         local kb = kbin(key)
         local r = pl_acquire(txid, sid, iid, kb, mode, opts, deadline)
         if r == 'skipped' then
             results[i] = false
         elseif r ~= 'granted' then
-            return r
+            return pl_failed(txid, r)
         else
             if not wait_commits(deadline) then
                 M.stats.lock_timeouts = M.stats.lock_timeouts + 1
-                return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+                return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
             end
             local skip = false
             if point_w_locked(txid, sid, iid, key) then
@@ -1035,12 +1052,12 @@ function tarn_lock(txid, keys, mode, opts)
                     pl_release_key(txid, sid, iid, kb)
                     skip = true
                 elseif opts.nowait then
-                    return {'locked', 3572, NOWAIT_MSG}
+                    return pl_failed(txid, {'locked', 3572, NOWAIT_MSG})
                 else
                     while point_w_locked(txid, sid, iid, key) do
                         if clock.monotonic() > deadline then
                             M.stats.lock_timeouts = M.stats.lock_timeouts + 1
-                            return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+                            return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
                         end
                         M.stats.lock_waits = M.stats.lock_waits + 1
                         M.unlock_cond:wait(0.01)
@@ -1075,7 +1092,9 @@ function tarn_unlock(txid, keys)
 end
 
 -- Wait-for edges of this shard for the cross-shard deadlock detector:
--- {{waiter, wait id, {holder, ...}}, ...}.
+-- {{waiter, wait id, {holder, ...}, {shard id, ...}}, ...}, the last list
+-- being the other shards where the waiter holds row locks (opts.held of its
+-- request): there the detector looks for the transactions waiting for it.
 function tarn_lock_waits()
     local out = {}
     for txid, p in pairs(PTX) do
@@ -1083,7 +1102,7 @@ function tarn_lock_waits()
         if q ~= nil and not q.granted and q.failed == nil then
             local hs = {}
             for t in pairs(pl_waits_for(q)) do hs[#hs + 1] = t end
-            out[#out + 1] = {txid, q.id, hs}
+            out[#out + 1] = {txid, q.id, hs, q.held or {}}
         end
     end
     return out

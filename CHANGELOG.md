@@ -114,6 +114,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the whole table. Long scans inside transactions yield, and autocommit
   scans no longer fail with "fiber slice is exceeded"
   ([#10](https://github.com/cstheorist/tarn/issues/10)).
+- The cross-shard deadlock detector follows the wait-for graph from each
+  SQL server's own waiting transactions instead of asking every shard for
+  its lock waits every second
+  ([#26](https://github.com/cstheorist/tarn/issues/26)). Lock requests name
+  the other shards where their transaction holds row locks, so a server
+  asks only the shards where its waiting transactions wait or hold locks,
+  then those where the transactions waiting for them hold locks. A server
+  whose transactions do not wait makes no storage call (each one used to
+  make one per shard per second: 50,000 calls/s for 50 servers and 1,000
+  shards), and with contention the calls grow with the number of waits.
+  A cycle is confirmed only if a second look finds each of its waits still
+  pending and still waiting for the next transaction of the cycle; the
+  same wait id alone no longer suffices. `Tarn_deadlock_detector_calls` in
+  `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
 
@@ -122,6 +136,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (Rails, Go's `clientFoundRows=true`), which read it as a missing row. It now
   reports matched rows, in every `UPDATE` path, and 1 for an upsert that
   changes nothing ([#39](https://github.com/cstheorist/tarn/issues/39)).
+- A READ COMMITTED lock request that failed (1205, 3572 or 1213) after some
+  of its rows were locked kept those locks after its transaction ended when
+  it was the transaction's first lock request on that shard: they were
+  released only when the SQL server's connection to the shard closed or the
+  leader changed, and until then other transactions waited for those rows
+  and timed out. The failed request now reports the locks' generation and
+  the transaction releases them when it ends.
 - Bootstrapping a replicated shard could stop storage instances: the new
   leader's first synchronous write, made while its replicas were still
   joining, timed out (stopping the leader), or reached a joining replica,
