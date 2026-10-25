@@ -391,6 +391,16 @@ CASES = [
     ("EXECUTE p", "err"),
     ("DEALLOCATE PREPARE p", "err"),
     ("PREPARE p2 FROM 'EXECUTE ins'", "err"),
+    # row-value comparisons (issue #40): keyset cursors, NULLs where they decide
+    ("SELECT k1, k2 FROM t3 WHERE (k1, k2) > (2, 'k20') ORDER BY k1, k2 LIMIT 5", "q"),
+    ("SELECT k1, k2 FROM t3 WHERE (k1, k2) >= (2, 'k20') ORDER BY k1, k2 LIMIT 5", "q"),
+    ("SELECT k1, k2 FROM t3 WHERE (k1, k2) < (2, 'k20') ORDER BY k1 DESC, k2 DESC LIMIT 5", "q"),
+    ("SELECT k1, k2 FROM t3 WHERE (k1, k2) <= (1, 'k13') ORDER BY k1, k2", "q"),
+    ("SELECT id FROM t1 WHERE (a, id) > (3, 20) ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE NOT ((a, id) > (3, 20)) ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE (a, b) <=> (NULL, 'name5') ORDER BY id", "q"),
+    ("SELECT (1, NULL) < (2, 0), (1, NULL) < (1, 0), (NULL, 1) > (0, 0), (1, 2, 3) >= (1, 2, 3)", "q"),
+    ("SELECT id FROM t1 WHERE (id, a) > (1, 2, 3)", "err"),
 ]
 
 
