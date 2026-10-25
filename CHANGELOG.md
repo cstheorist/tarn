@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- SQL-level prepared statements: `PREPARE name FROM 'text' | @var`,
+  `EXECUTE name [USING @a, ...]`, `DEALLOCATE | DROP PREPARE name`. Every
+  MySQL 8 dump runs them around its MyRocks bulk-load probes; they failed
+  with 1064 and 1235 ([#34](https://github.com/cstheorist/tarn/issues/34)).
 - `information_schema.TABLES`, read from the catalog, and `SELECT ... INTO
   @var`: the query at the top of every MySQL 8 dump and the ones Rails' MySQL
   adapter sends (`data_source_exists?`, `tables`, `table_comment`) used to

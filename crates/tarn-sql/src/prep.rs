@@ -167,6 +167,111 @@ fn quote(s: &Bytes) -> String {
     o
 }
 
+/// The value of a quoted string literal `'...'` or `"..."` (the whole of
+/// `tok`), with doubled quotes and backslash escapes resolved. None for
+/// anything else.
+pub fn string_literal(tok: &str) -> Option<String> {
+    let b = tok.as_bytes();
+    let q = *b.first()?;
+    if (q != b'\'' && q != b'"') || quoted_end(b, 0) != b.len() || b.len() < 2 || b[b.len() - 1] != q {
+        return None;
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut j = 1;
+    while j < b.len() - 1 {
+        match b[j] {
+            b'\\' => {
+                out.push(match b[j + 1] {
+                    b'n' => b'\n',
+                    b't' => b'\t',
+                    b'r' => b'\r',
+                    b'0' => 0,
+                    b'b' => 8,
+                    b'Z' => 26,
+                    other => other,
+                });
+                j += 2;
+            }
+            c if c == q => {
+                out.push(q);
+                j += 2;
+            }
+            c => {
+                out.push(c);
+                j += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// The `?` parameter markers of a statement's text (outside literals and
+/// comments).
+pub fn count_markers(sql: &str) -> usize {
+    let b = sql.as_bytes();
+    let mut i = 0;
+    let mut n = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\'' || c == b'"' || c == b'`' {
+            i = quoted_end(b, i);
+            continue;
+        }
+        if let Some(e) = line_comment_end(b, i) {
+            i = e;
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            let mut j = i + 2;
+            while j + 1 < b.len() && !(b[j] == b'*' && b[j + 1] == b'/') {
+                j += 1;
+            }
+            i = (j + 2).min(b.len());
+            continue;
+        }
+        n += (c == b'?') as usize;
+        i += 1;
+    }
+    n
+}
+
+/// Replace the `?` markers, in order, by `args` (SQL literal text).
+pub fn bind_markers(sql: &str, args: &[String]) -> String {
+    let b = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len() + 16);
+    let mut i = 0;
+    let mut copied = 0;
+    let mut k = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\'' || c == b'"' || c == b'`' {
+            i = quoted_end(b, i);
+            continue;
+        }
+        if let Some(e) = line_comment_end(b, i) {
+            i = e;
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            let mut j = i + 2;
+            while j + 1 < b.len() && !(b[j] == b'*' && b[j + 1] == b'/') {
+                j += 1;
+            }
+            i = (j + 2).min(b.len());
+            continue;
+        }
+        if c == b'?' && k < args.len() {
+            out.push_str(&sql[copied..i]);
+            out.push_str(&args[k]);
+            k += 1;
+            copied = i + 1;
+        }
+        i += 1;
+    }
+    out.push_str(&sql[copied..]);
+    out
+}
+
 /// A variable reference found in a statement.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VarRef {
@@ -454,6 +559,23 @@ mod tests {
         assert_eq!(s("INSERT INTO t VALUES (@x)"), None);
         assert_eq!(s("SELECT * INTO OUTFILE '/tmp/x' FROM t"), None);
         assert_eq!(s("SELECT 1 INTO @@x"), None);
+    }
+
+    #[test]
+    fn statement_text() {
+        assert_eq!(
+            string_literal("'SELECT ''a'', \\'b\\''").as_deref(),
+            Some("SELECT 'a', 'b'")
+        );
+        assert_eq!(string_literal("\"x\"").as_deref(), Some("x"));
+        assert_eq!(string_literal("'open"), None);
+        assert_eq!(string_literal("x"), None);
+        let s = "SELECT ? + 1, '?', `?` /* ? */ FROM t WHERE a = ? -- ?\n";
+        assert_eq!(count_markers(s), 2);
+        assert_eq!(
+            bind_markers(s, &["5".into(), "'x'".into()]),
+            "SELECT 5 + 1, '?', `?` /* ? */ FROM t WHERE a = 'x' -- ?\n"
+        );
     }
 
     #[test]
