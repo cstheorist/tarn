@@ -2,7 +2,7 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
+    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
     for b in "$@";
     do
         case $b in 
@@ -36,6 +36,21 @@ mk ()
             ROV)
                 ROV=TRUE
             ;;
+            AMC)
+                AMC=TRUE
+            ;;
+            GC)
+                GC=TRUE; AMC=TRUE
+            ;;
+            BGD)
+                BGD=TRUE
+            ;;
+            BNE)
+                BNE=TRUE
+            ;;
+            BFE)
+                BFE=TRUE
+            ;;
             NORD)
                 RD=NoReaders; RK=NoRKeys
             ;;
@@ -65,6 +80,11 @@ CONSTANTS
   ROValidateOnly = $ROV
   BugLocalReadsIgnoreWLocks = $LRW
   BugROValidateNoReadCheck = $NRC
+  ApplyMarksCommitted = $AMC
+  GC = $GC
+  BugGCIgnoresDecision = $BGD
+  BugGCNoExpiry = $BNE
+  BugFenceAfterExpiry = $BFE
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
@@ -85,13 +105,21 @@ mk RecovReaders  RSetRecov WSetRecov 0 0 0
 # AckOnPrepare (1 round-trip cross-shard commits) keeps SQL strict serializability:
 mk Skew_AckOnPrepare  RSetSkew  WSetSkew  0 1 1 NORD AOP
 mk Recov_AckOnPrepare RSetRecov WSetRecov 0 1 2 NORD AOP
-# ROValidateOnly (cross-shard reads without PREPARE or locks):
-mk Skew_ROValidate      RSetSkew  WSetSkew  0 1 1 NORD ROV
-mk Frac_ROValidate      RSetFrac  WSetFrac  0 1 1 NORD ROV
-mk FracFailover_ROValidate RSetFrac WSetFrac 1 0 0 ROV
-mk Local_ROValidate     RSetLocal WSetLocal 0 1 1 NORD ROV
-mk LocalFailover_ROValidate RSetLocal WSetLocal 1 0 0 ROV
-mk SkewFailover_ROValidate  RSetSkew  WSetSkew  1 0 0 ROV
+# The implementation's commit paths: ROValidateOnly (cross-shard reads
+# without PREPARE or locks) and ApplyMarksCommitted (the decision shard's
+# APPLY records COMMITTED):
+mk Skew_ROValidate      RSetSkew  WSetSkew  0 1 1 NORD ROV AMC
+mk Frac_ROValidate      RSetFrac  WSetFrac  0 1 1 NORD ROV AMC
+mk FracFailover_ROValidate RSetFrac WSetFrac 1 0 0 ROV AMC
+mk Local_ROValidate     RSetLocal WSetLocal 0 1 1 NORD ROV AMC
+mk LocalFailover_ROValidate RSetLocal WSetLocal 1 0 0 ROV AMC
+mk SkewFailover_ROValidate  RSetSkew  WSetSkew  1 0 0 ROV AMC
+# ... plus the record lifecycle: expiry and garbage collection of records
+# (GC implies ApplyMarksCommitted):
+mk Recov_GC             RSetRecov WSetRecov 0 1 2 NORD GC
+mk Frac_GC_ROValidate   RSetFrac  WSetFrac  0 1 1 NORD ROV GC
+mk Local_GC_ROValidate  RSetLocal WSetLocal 0 1 1 NORD ROV GC
+mk Skew_GC_ROValidate   RSetSkew  WSetSkew  0 1 1 NORD ROV GC
 # Each weakened variant must be caught.
 mk Bug_NoReadLocks            RSetSkew  WSetSkew  0 0 0 NRL
 mk Bug_LocalIgnoresRLocks     RSetLocal WSetLocal 0 0 0 LIR
@@ -100,6 +128,9 @@ mk Bug_ROValidateNoWLockCheck RSetFrac  WSetFrac  0 0 0 ROV LRW
 mk Bug_NoTombstone            RSetRecov WSetRecov 0 1 1 NTS
 mk Bug_LocalReadsIgnoreWLocks RSetRecov WSetRecov 0 0 0 LRW
 mk Bug_ROValidateNoReadCheck  RSetFrac  WSetFrac  0 0 0 ROV NRC
+mk Bug_GCIgnoresDecision      RSetRecov WSetRecov 0 1 1 NORD GC BGD
+mk Bug_GCNoExpiry             RSetRecov WSetRecov 0 1 1 NORD GC BNE
+mk Bug_FenceAfterExpiry       RSetRecov WSetRecov 0 1 1 NORD GC BFE
 # Documented trade-offs (expected to be violated):
 mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
 mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW

@@ -8,16 +8,26 @@
 //!
 //! `resolve_step` is one step of the recovery procedure
 //! (TarnCommit!RecoverFenceRecord, RecoverFenceParticipant, RecoverDecide)
-//! given the decision shard's record and every participant's state. Its
-//! postconditions are the protocol's safety argument in local form:
+//! given the decision shard's record, every participant's state, and
+//! whether the transaction has expired (its PREPAREs are refused by age).
+//! Its postconditions are the protocol's safety argument in local form:
 //!   * it reports/decides COMMIT only when the transaction is committed in
 //!     the sense of TarnCommit!CommittedNow (record COMMITTED, or STAGING
 //!     with every participant prepared/applied);
-//!   * it reports/decides ABORT only when the transaction can never become
-//!     committed (record ABORTED/NONE-fenced, or a participant tombstoned);
-//!   * it only ever fences participants that never prepared (fencing a
-//!     prepared participant is the bug TLC finds in Bug_NoTombstone's
-//!     neighbourhood).
+//!   * it decides ABORT only when some participant is tombstoned, and
+//!     reports ABORT only when the record says so;
+//!   * it fences only participants without a record while the record is
+//!     STAGING, and fences a missing record only while the transaction has
+//!     not expired or some participant is still prepared;
+//!   * otherwise (no record, expired, nobody prepared) it reports `Gone`.
+//! What these steps mean for the protocol rests on invariants about the
+//! *durable* state that a single step cannot see, and that TLC checks for
+//! the whole protocol (TarnCommit, configurations `*_GC`): a participant
+//! record of a prepared or applied participant is never deleted while the
+//! record is STAGING (so "no participant record" under STAGING means "never
+//! prepared"), and a record is deleted only after expiry and once no
+//! participant is prepared (so "no record" while some participant is
+//! prepared, or before expiry, means "never created").
 
 use vstd::prelude::*;
 
@@ -129,6 +139,11 @@ pub enum Step {
     /// STAGING, nobody tombstoned, these participants never prepared:
     /// tombstone them so a late PREPARE is refused.
     FenceParticipants(Vec<usize>),
+    /// No record, the transaction expired and nobody is prepared: the
+    /// records may have been garbage-collected after the transaction
+    /// finished, so the outcome cannot be determined (and nothing is left
+    /// to do).
+    Gone,
 }
 
 pub open spec fn prepared_or_applied(p: PartState) -> bool {
@@ -140,21 +155,27 @@ pub open spec fn committed_now(rec: RecStatus, parts: Seq<PartState>) -> bool {
     (rec is Committed) || ((rec is Staging) && forall|i: int| 0 <= i < parts.len() ==> prepared_or_applied(#[trigger] parts[i]))
 }
 
-/// Some participant is tombstoned: since tombstones are permanent, the
-/// STAGING record can never be completed by unanimous PREPAREs.
+/// Some participant is tombstoned: a tombstone lives until the transaction
+/// expired, so the STAGING record can never be completed by unanimous
+/// PREPAREs.
 pub open spec fn doomed(parts: Seq<PartState>) -> bool {
     exists|i: int| 0 <= i < parts.len() && (#[trigger] parts[i]) is Aborted
 }
 
-pub fn resolve_step(rec: RecStatus, parts: &[PartState]) -> (s: Step)
+pub open spec fn some_prepared(parts: Seq<PartState>) -> bool {
+    exists|i: int| 0 <= i < parts.len() && (#[trigger] parts[i]) is Prepared
+}
+
+pub fn resolve_step(rec: RecStatus, parts: &[PartState], expired: bool) -> (s: Step)
     requires
         parts.len() > 0,
     ensures
-        (s is Committed) ==> (rec is Committed),
-        (s is Aborted) ==> (rec is Aborted),
+        (s is Committed) <==> (rec is Committed),
+        (s is Aborted) <==> (rec is Aborted),
         (s is DecideCommit) ==> (rec is Staging) && committed_now(rec, parts@),
         (s is DecideAbort) ==> (rec is Staging) && doomed(parts@) && !committed_now(rec, parts@),
-        (s is FenceRecord) ==> (rec is None) && !committed_now(rec, parts@),
+        (s is FenceRecord) ==> (rec is None) && (!expired || some_prepared(parts@)),
+        (s is Gone) <==> ((rec is None) && expired && !some_prepared(parts@)),
         (s matches Step::FenceParticipants(m) ==> {
             &&& (rec is Staging)
             &&& !doomed(parts@)
@@ -168,7 +189,31 @@ pub fn resolve_step(rec: RecStatus, parts: &[PartState]) -> (s: Step)
     match rec {
         RecStatus::Committed => Step::Committed,
         RecStatus::Aborted => Step::Aborted,
-        RecStatus::None => Step::FenceRecord,
+        RecStatus::None => {
+            let mut any_prepared = false;
+            let mut i: usize = 0;
+            while i < parts.len()
+                invariant
+                    i <= parts.len(),
+                    any_prepared <==> (exists|j: int| 0 <= j < i && (#[trigger] parts@[j]) is Prepared),
+                decreases parts.len() - i,
+            {
+                if let PartState::Prepared = parts[i] {
+                    any_prepared = true;
+                }
+                proof {
+                    if any_prepared && parts@[i as int] is Prepared {
+                        assert(exists|j: int| 0 <= j < i + 1 && (#[trigger] parts@[j]) is Prepared);
+                    }
+                }
+                i = i + 1;
+            }
+            if expired && !any_prepared {
+                Step::Gone
+            } else {
+                Step::FenceRecord
+            }
+        },
         RecStatus::Staging => {
             let mut missing: Vec<usize> = Vec::new();
             let mut any_aborted = false;

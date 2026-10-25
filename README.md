@@ -44,8 +44,9 @@ sysbench for benchmarks, Java 11+ and `tla2tools.jar` for TLC, Verus
 0.2026.10.04 for the proofs.
 
 ```sh
+export TARANTOOL=$(which tarantool)   # scripts and tests default to /opt/src/tarantool/build/src/tarantool
 cargo build --release -p tarn-server
-cargo test -p tarn-verified -p tarn-mysql -p tarn-sql -p tarn-iproto
+cargo test -p tarn-verified -p tarn-mysql -p tarn-sql -p tarn-iproto   # iproto tests start their own Tarantool
 ```
 
 ## Run a local cluster
@@ -98,22 +99,24 @@ tarn-server (--config cluster.json | --shard ADDR[,ADDR..] ...)
 { "shards": [ {"id": 1, "replicas": ["127.0.0.1:3311", "127.0.0.1:3312", "127.0.0.1:3313"]},
               {"id": 2, "replicas": ["127.0.0.1:3321", "127.0.0.1:3322", "127.0.0.1:3323"]} ],
   "bucket_count": 3000, "user": "tarn", "password": "tarn", "pool_size": 4,
-  "ack_on_prepare": false }
+  "ack_on_prepare": false, "max_txn_age": 120 }
 ```
 
 Replica addresses may be `unix/:/path/to/socket`. The writable replica of
-each shard is discovered automatically and re-discovered after failover.
-Without `--user`, any MySQL user/password is accepted.
+each shard is discovered automatically and re-discovered after failover
+(including a demoted leader whose connection stays open). `max_txn_age`
+(seconds) must match the storage nodes' setting (`lua/tarn.lua`, default
+120). Without `--user`, any MySQL user/password is accepted.
 
 ## Verification and tests
 
 ```sh
 # TLA+: model-check one configuration (or several)
-tla/run_all.sh Recov Frac_ROValidate Bug_NoTombstone
+tla/run_all.sh Recov Frac_GC_ROValidate Bug_GCIgnoresDecision
 python3 tla/summarize.py                       # table of all results in tla/out
 
 # Verus (from crates/tarn-verified)
-verus --crate-type=lib src/lib.rs              # 58 verified, 0 errors
+verus --crate-type=lib src/lib.rs              # 59 verified, 0 errors
 
 # Storage protocol tests (starts two shards)
 lua/test/run.sh
@@ -122,7 +125,8 @@ lua/test/run.sh
 python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
 python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 2000
 python3 tests/sql/txntest.py  --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321
-tests/failover.sh                               # kills shard leaders under load
+tests/failover.sh                               # moves and kills shard leaders under load
+tests/faults.sh                                 # lost reply to an autocommit write
 ```
 
 ## Benchmarks

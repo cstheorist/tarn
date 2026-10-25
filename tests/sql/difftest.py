@@ -167,9 +167,9 @@ def norm(v):
     if v is None:
         return None
     if isinstance(v, bool):
-        return float(v)
+        return int(v)
     if isinstance(v, (int, float, decimal.Decimal)):
-        return float(v)
+        return v
     if isinstance(v, bytes):
         try:
             return v.decode()
@@ -177,28 +177,30 @@ def norm(v):
             return v.hex()
     if isinstance(v, (datetime.datetime, datetime.date, datetime.timedelta)):
         return str(v)
-    if isinstance(v, str):
-        # numeric strings compare numerically (e.g. CAST(5 AS CHAR) vs 5)
-        return v
     return v
 
 
 def same(x, y):
-    if isinstance(x, float) and isinstance(y, float):
-        return abs(x - y) <= 1e-6 * max(1.0, abs(x), abs(y))
-    if isinstance(x, float) and isinstance(y, str) or isinstance(x, str) and isinstance(y, float):
-        try:
-            return abs(float(x) - float(y)) <= 1e-6 * max(1.0, abs(float(x)))
-        except ValueError:
-            return False
-    return x == y
+    """Exact equality, except that a DOUBLE on either side is compared with
+    a relative tolerance of 1e-9. Integers and DECIMALs compare exactly by
+    value (5 == Decimal('5.00')); a number never equals a string."""
+    num = (int, float, decimal.Decimal)
+    if isinstance(x, num) and isinstance(y, num):
+        if isinstance(x, float) or isinstance(y, float):
+            fx, fy = float(x), float(y)
+            return abs(fx - fy) <= 1e-9 * max(1.0, abs(fx), abs(fy))
+        return decimal.Decimal(x) == decimal.Decimal(y)
+    return type(x) is type(y) and x == y
 
 
 def rows_equal(a, b, ordered):
     if len(a) != len(b):
         return False
     if not ordered:
-        key = lambda r: tuple((0, "") if v is None else (1, str(round(v, 6)) if isinstance(v, float) else str(v)) for v in r)
+        def key(r):
+            return tuple((0, "") if v is None else
+                         (1, "%.6g" % float(v)) if isinstance(v, (int, float, decimal.Decimal)) else (2, str(v))
+                         for v in r)
         a = sorted(a, key=key)
         b = sorted(b, key=key)
     for ra, rb in zip(a, b):
@@ -250,18 +252,14 @@ def main():
         ok = True
         msg = ""
         if kind == "err":
-            ok = ra[0] == "err" and rb[0] == "err"
-            if ok and ra[1] != rb[1]:
-                warns += 1
-                msg = f"  (error codes differ: tarn {ra[1]} vs ref {rb[1]})"
+            # both must fail, with the same MySQL error code
+            ok = ra[0] == "err" and rb[0] == "err" and ra[1] == rb[1]
         elif ra[0] != rb[0]:
             ok = False
         elif ra[0] == "rows":
             ordered = bool(re.search(r"\bORDER\s+BY\b", sql, re.I)) and "GROUP_CONCAT" not in sql
-            ok = rows_equal(ra[1], rb[1], ordered)
-            if ok and [c.lower() for c in ra[2]] != [c.lower() for c in rb[2]]:
-                warns += 1
-                msg = f"  (column names differ: {ra[2]} vs {rb[2]})"
+            # same column names (exactly) and the same rows
+            ok = ra[2] == rb[2] and rows_equal(ra[1], rb[1], ordered)
         elif ra[0] == "ok":
             ok = ra[1] == rb[1]
         if ok and kind.startswith("dml:"):

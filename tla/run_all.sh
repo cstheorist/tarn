@@ -3,8 +3,8 @@
 cd "$(dirname "$0")"; mkdir -p out
 for cfg in "$@"; do
   start=$(date +%s)
-  java -XX:+UseParallelGC -Xmx${TLC_HEAP:-3g} -cp /opt/tla/tla2tools.jar tlc2.TLC -workers ${WORKERS:-1} -cleanup \
-       -metadir /tmp/tlcmeta/$cfg -config $cfg.cfg MC.tla > out/$cfg.out 2>&1
+  java -XX:+UseParallelGC -Xmx${TLC_HEAP:-3g} -cp ${TLA2TOOLS:-/opt/tla/tla2tools.jar} tlc2.TLC -workers ${WORKERS:-1} -cleanup \
+       -metadir ${TLC_META:-/tmp/tlcmeta}/$cfg -config $cfg.cfg MC.tla > out/$cfg.out 2>&1
   secs=$(( $(date +%s) - start ))
   res=$(grep -oE "Invariant [A-Za-z]+ is violated" out/$cfg.out | head -1)
   [ -z "$res" ] && res=$(grep -q "No error has been found" out/$cfg.out && echo "no errors" || echo "ERROR: $(grep -m1 -iE 'error|exception' out/$cfg.out)")

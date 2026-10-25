@@ -18,6 +18,19 @@
 --   _tarn_part     participant records: prepared / applied / aborted(tombstone)
 --   _tarn_txn      transaction records on the decision shard:
 --                  staging / committed / aborted
+--
+-- Record lifecycle (TarnCommit: GC configurations). A PREPARE is refused once
+-- its transaction is older than max_txn_age, so every record carries an
+-- expiry time beyond which no PREPARE of its transaction can be accepted any
+-- more (expires = write time + max_txn_age + clock_skew). Records are only
+-- garbage-collected after their expiry, and
+--   * a prepared participant record is never collected (recovery resolves it);
+--   * an applied participant record only once the decision record is final
+--     (COMMITTED) or gone -- otherwise recovery could read "no record" as
+--     "never prepared" and abort a committed transaction;
+--   * a decision record only once no participant is still prepared.
+-- The decision shard's APPLY marks the record COMMITTED (TarnCommit:
+-- ApplyMarksCommitted), so committed records become final without recovery.
 
 local fiber = require('fiber')
 local log = require('log')
@@ -34,13 +47,14 @@ local M = {
         sync = false,            -- create spaces with is_sync (replicated shards)
         recovery_interval = 0.5, -- seconds between recovery scans
         recovery_after = 2.0,    -- age before an undecided txn is recovered
-        record_ttl = 30.0,       -- age before decided txn records are GC'd
-        tombstone_ttl = 3600.0,  -- age before tombstones are GC'd
         lock_wait = 1.0,         -- max wait for a conflicting lock (autocommit)
-        max_txn_age = 1800.0,    -- prepares for older txns are refused (tombstone GC horizon)
+        max_txn_age = 120.0,     -- PREPAREs of transactions older than this are refused
+        clock_skew = 60.0,       -- assumed bound on clock differences between nodes
+        gc_batch = 500,          -- records deleted per GC transaction
     },
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
-             abort = 0, conflicts = 0, recovered = 0, lock_waits = 0},
+             abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
+             gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -75,16 +89,20 @@ local function ensure_schema()
     rlocks:create_index('pk', {parts = {'txid', 'n'}, if_not_exists = true})
     rlocks:create_index('space', {parts = {'space_id', 'index_id'}, unique = false, if_not_exists = true})
 
+    -- ts: time of the last state change; expires: see "Record lifecycle".
     local part = space('_tarn_part', {
         {'txid', 'string'}, {'state', 'string'}, {'dshard', 'unsigned'},
-        {'parts', 'array'}, {'ts', 'double'}})
+        {'parts', 'array'}, {'ts', 'double'}, {'expires', 'double'}})
     part:create_index('pk', {parts = {'txid'}, if_not_exists = true})
     part:create_index('state', {parts = {'state', 'ts'}, unique = false, if_not_exists = true})
+    part:create_index('exp', {parts = {'expires'}, unique = false, if_not_exists = true})
 
     local txn = space('_tarn_txn', {
-        {'txid', 'string'}, {'status', 'string'}, {'parts', 'array'}, {'ts', 'double'}})
+        {'txid', 'string'}, {'status', 'string'}, {'parts', 'array'}, {'ts', 'double'},
+        {'expires', 'double'}})
     txn:create_index('pk', {parts = {'txid'}, if_not_exists = true})
     txn:create_index('status', {parts = {'status', 'ts'}, unique = false, if_not_exists = true})
+    txn:create_index('exp', {parts = {'expires'}, unique = false, if_not_exists = true})
 
     -- Target of the probe write in tarn_validate (data-temporary: no WAL,
     -- not replicated; the definition reaches replicas).
@@ -163,8 +181,16 @@ end
 --     waiting for their WAL write or quorum (conservative);
 --   * undone if a PREPARE's local transaction rolls back, released when the
 --     APPLY/ABORT that deletes the durable records commits;
---   * rebuilt from the durable records at startup and after any election
---     state change, before the next check (replicas never maintain it).
+--   * rebuilt from the durable records at startup and after any election or
+--     read-only state change, before the next check, and only while this
+--     instance is writable (replicas never maintain it, and a new leader is
+--     writable only once it owns the synchronous queue). The rebuild takes
+--     the union of the read-confirmed and the read-committed view of the
+--     lock spaces: it keeps the locks of PREPAREs still waiting for WAL or
+--     quorum (visible only in the read-committed view; their on_rollback
+--     undo removes them if they fail) and the locks that a pending
+--     APPLY/ABORT is deleting (visible only in the read-confirmed view;
+--     their on_commit release removes them).
 local LK = {}       -- LK[sid][iid][kbin] = {[txid] = 'R' | 'W'}
 local RL = {}       -- RL[sid][iid][txid] = {{lo, hi, lo_incl, hi_incl}, ...}
 local BYTX = {}     -- BYTX[txid] = {{sid, iid, kbin} | {sid, iid}, ...}
@@ -214,20 +240,55 @@ local function lk_release(txid)
     end
 end
 
+-- Raise ER_READONLY unless this instance is writable. Every lock check and
+-- every protocol step that relies on the lock index starts with it.
+local function writable()
+    if box.info.ro then box.error(box.error.READONLY) end
+end
+
+-- All lock records visible under one isolation level (no yields: memtx
+-- scans and a read-only commit do not yield).
+local function lk_scan(isolation)
+    box.begin({txn_isolation = isolation})
+    local pts, rgs = {}, {}
+    for _, l in box.space._tarn_locks:pairs() do pts[#pts + 1] = l end
+    for _, r in box.space._tarn_rlocks:pairs() do rgs[#rgs + 1] = r end
+    box.commit()
+    return pts, rgs
+end
+
 local function lk_reload()
+    writable()
+    local p1, r1 = lk_scan('read-confirmed')
+    local p2, r2 = lk_scan('read-committed')
     LK, RL, BYTX, NLOCK = {}, {}, {}, 0
-    for _, l in box.space._tarn_locks:pairs() do
-        lk_point(l.txid, l.space_id, l.index_id, l.key, l.mode)
+    local seen = {}
+    for _, set in ipairs({p1, p2}) do
+        for _, l in ipairs(set) do
+            local id = l.space_id .. '\0' .. l.index_id .. '\0' .. l.key .. '\0' .. l.txid
+            if not seen[id] then
+                seen[id] = true
+                lk_point(l.txid, l.space_id, l.index_id, l.key, l.mode)
+            end
+        end
     end
-    for _, r in box.space._tarn_rlocks:pairs() do
-        lk_range(r.txid, r.space_id, r.index_id, r.lo, r.hi, r.lo_incl, r.hi_incl)
+    for _, set in ipairs({r1, r2}) do
+        for _, r in ipairs(set) do
+            local id = 'r\0' .. r.txid .. '\0' .. r.n
+            if not seen[id] then
+                seen[id] = true
+                lk_range(r.txid, r.space_id, r.index_id, r.lo, r.hi, r.lo_incl, r.hi_incl)
+            end
+        end
     end
     LK_STALE = false
 end
 
 -- Make the index current; reads the spaces in a separate fiber so that a
--- caller inside a transaction gets no read trackers on them.
+-- caller inside a transaction gets no read trackers on them. Refuses to run
+-- (ER_READONLY) on a read-only instance.
 local function lk_fresh()
+    writable()
     if not LK_STALE then return end
     local f = fiber.new(lk_reload)
     f:set_joinable(true)
@@ -335,6 +396,11 @@ local function conflict(msg)
     M.stats.conflicts = M.stats.conflicts + 1
     return {'conflict', 1213, msg}
 end
+-- ER_READONLY always reaches the Tarn server as an IPROTO error (never as a
+-- status table), so that it drops the connection to the stale leader.
+local function reraise_readonly(e)
+    if type(e) == 'cdata' and e.code == box.error.READONLY then error(e) end
+end
 local function failure(e)
     if type(e) == 'cdata' or type(e) == 'table' then
         local code = e.code or 0
@@ -439,6 +505,7 @@ end
 -- themselves. Returns {'ok', n} or {status, code, message}; on failure the
 -- stream's transaction is rolled back.
 function tarn_commit_local(txid, writes, rpoints, rranges)
+    writable()
     local ok, res = pcall(function()
         lk_fresh()
         -- Without reads on this shard the coordinator sends no stream: the
@@ -458,18 +525,48 @@ function tarn_commit_local(txid, writes, rpoints, rranges)
     end)
     if not ok then
         if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
         return failure(res)
     end
     if res[1] ~= OK and box.is_in_txn() then box.rollback() end
     return res
 end
 
+-- Election term at the start of each open stream transaction (by txn id),
+-- recorded by the request that begins it (tarn_select with begin).
+local STREAM_TERM = {}
+
+local function note_stream_term()
+    local id = box.txn_id()
+    if id == nil then return end
+    STREAM_TERM[id] = box.info.election.term
+    local function forget() STREAM_TERM[id] = nil end
+    box.on_commit(forget)
+    box.on_rollback(forget)
+end
+
 -- Commit of a read-only single-shard transaction (TarnCommit!SnapshotRead):
 -- the lock check runs in the same MVCC view as the reads.
 -- TarnCommit!ValidateRO (cross = true) / the commit of a single-shard
 -- read-only stream (cross = false). Runs inside the reader's stream.
+-- Only a writable leader that has been the leader since the stream began
+-- may validate: a demoted leader whose connection survived can still serve
+-- the stream's reads, but it misses writes committed by its successor, and
+-- the probe write below goes to a data-temporary space, which Tarantool
+-- accepts even on read-only instances.
 function tarn_validate(txid, rpoints, rranges, cross)
+    writable()
+    if box.is_in_txn() then
+        local t0 = STREAM_TERM[box.txn_id()]
+        if t0 ~= nil and t0 ~= box.info.election.term then
+            box.rollback()
+            return conflict('shard leader changed during the transaction')
+        end
+    end
     lk_fresh()
+    if not box.is_in_txn() and (#(rpoints or {}) > 0 or #(rranges or {}) > 0) then
+        return conflict('the stream transaction of these reads no longer exists')
+    end
     if box.is_in_txn() then
         -- "The reads are unchanged": memtx MVCC moves a read-only transaction
         -- whose reads were overwritten into a read view (it keeps seeing the
@@ -480,7 +577,7 @@ function tarn_validate(txid, rpoints, rranges, cross)
         local ok, err = pcall(function() box.space._tarn_scratch:replace{1} end)
         if not ok then
             if box.is_in_txn() then box.rollback() end
-            M.stats.validate_changed = (M.stats.validate_changed or 0) + 1
+            M.stats.validate_changed = M.stats.validate_changed + 1
             return conflict('read set changed before commit: ' .. tostring(err))
         end
     end
@@ -508,10 +605,12 @@ local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
 function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin)
     -- First request of a stream: start the stream's transaction here (it
     -- stays open after the call because the request carries a stream id).
-    if begin == true and not box.is_in_txn() then box.begin(BEGIN_STREAM) end
+    if begin == true and not box.is_in_txn() then
+        box.begin(BEGIN_STREAM)
+        note_stream_term()
+    end
     if lock_check == true then
         -- An autocommit read is only linearizable on the current leader.
-        if box.info.ro then box.error(box.error.READONLY) end
         lk_fresh()
     end
     local space = box.space[space_id]
@@ -580,7 +679,7 @@ end
 -- for conflicting locks of prepared cross-shard txns to clear, then retries.
 -- Returns {'ok', affected_rows, last_tuple}.
 function tarn_autocommit(writes)
-    lk_fresh()
+    lk_fresh()   -- raises ER_READONLY before anything is written
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
         local ok, res = pcall(function()
@@ -597,6 +696,7 @@ function tarn_autocommit(writes)
         end)
         if not ok then
             if box.is_in_txn() then box.rollback() end
+            reraise_readonly(res)
             return failure(res)
         end
         if res[1] ~= 'locked' then return res end
@@ -614,14 +714,26 @@ end
 
 local function now() return clock.realtime() end
 
+-- Expiry of a record written now: no PREPARE of its transaction can be
+-- accepted after this time (the transaction started before now, by at most
+-- clock_skew on another node's clock, and PREPAREs older than max_txn_age
+-- are refused).
+local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
+
 -- TarnCommit!Prepare. Runs inside the transaction's stream on this shard.
 --   txid, dshard, parts : transaction id, decision shard, participant shards
 --   writes  : {{op, space_id, tuple_or_key}, ...}  (op: insert/replace/delete)
 --   rpoints : {{space_id, index_id, key}, ...}       point reads
 --   rranges : {{space_id, index_id, lo, hi, lo_incl, hi_incl}, ...}  scans
 --   txn_ts  : coordinator's start time (prepares older than max_txn_age refused)
--- Returns {'yes'} or {'no', code, message}. A NO leaves a tombstone.
+-- Returns {'yes'}, {'no', code, message} (leaves a tombstone), or
+-- {'expired', 1213, message} for a transaction older than max_txn_age: no
+-- record is written and the reply is neither a YES nor a NO (TarnCommit:
+-- Prepare requires t \notin expired), because a delayed or duplicated
+-- PREPARE may meet a participant whose records were already collected after
+-- the transaction committed. Raises ER_READONLY on a read-only instance.
 function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
+    writable()
     rpoints, rranges = rpoints or {}, rranges or {}
     local function vote_no(code, msg)
         if box.is_in_txn() then box.rollback() end
@@ -629,10 +741,10 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
         pcall(function()
             box.begin(RW)
             if box.space._tarn_part:get{txid} == nil then
-                box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now()}
+                box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now(), expiry()}
             end
             if dshard == M.cfg.shard_id and box.space._tarn_txn:get{txid} == nil then
-                box.space._tarn_txn:insert{txid, 'aborted', parts, now()}
+                box.space._tarn_txn:insert{txid, 'aborted', parts, now(), expiry()}
             end
             box.commit()
         end)
@@ -642,7 +754,6 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
     end
     local ok, res = pcall(function()
         -- Write-only participants are prepared outside any stream.
-        lk_fresh()
         if not box.is_in_txn() then box.begin(RW) end
         local existing = box.space._tarn_part:get{txid}
         if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
@@ -651,8 +762,11 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
             return {'yes'}
         end
         if txn_ts ~= nil and now() - txn_ts > M.cfg.max_txn_age then
-            return vote_no(1213, 'transaction too old')
+            box.rollback()
+            M.stats.prepare_no = M.stats.prepare_no + 1
+            return {'expired', 1213, 'transaction too old'}
         end
+        lk_fresh()
         -- readsOK: no W lock of another prepared txn on anything we read.
         local h = reads_w_locked(txid, rpoints, rranges)
         if h then return vote_no(1213, 'read row locked by ' .. h) end
@@ -688,43 +802,47 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
             if box.space._tarn_txn:get{txid} ~= nil then
                 return vote_no(1213, 'transaction already resolved by recovery')
             end
-            box.space._tarn_txn:insert{txid, 'staging', parts, now()}
+            box.space._tarn_txn:insert{txid, 'staging', parts, now(), expiry()}
         end
+        -- If this local transaction does not commit, its locks never existed.
+        -- Registered before the first index entry: any error from here on
+        -- rolls the transaction back (vote_no), which undoes the entries.
+        box.on_rollback(function() lk_release(txid) end)
         local L = box.space._tarn_locks
         local wlocked = {}
         for i, w in ipairs(writes) do
             local sid, pk, keys = plans[i][1], plans[i][2], plans[i][3]
             local pkb = kbin(pk)
             wlocked[sid .. ':0:' .. pkb] = true
-            L:replace{sid, 0, pkb, txid, 'W', w[1], w[1] ~= 'delete' and w[3] or msgpack.NULL}
             lk_point(txid, sid, 0, pkb, 'W')
+            L:replace{sid, 0, pkb, txid, 'W', w[1], w[1] ~= 'delete' and w[3] or msgpack.NULL}
             for _, k in ipairs(keys) do
                 local kb = kbin(k[2])
                 wlocked[sid .. ':' .. k[1] .. ':' .. kb] = true
-                L:replace{sid, k[1], kb, txid, 'W', msgpack.NULL, msgpack.NULL}
                 lk_point(txid, sid, k[1], kb, 'W')
+                L:replace{sid, k[1], kb, txid, 'W', msgpack.NULL, msgpack.NULL}
             end
         end
         for _, r in ipairs(rpoints) do
             local kb = kbin(r[3])
             if not wlocked[r[1] .. ':' .. r[2] .. ':' .. kb] then
-                L:replace{r[1], r[2], kb, txid, 'R', msgpack.NULL, msgpack.NULL}
                 lk_point(txid, r[1], r[2], kb, 'R')
+                L:replace{r[1], r[2], kb, txid, 'R', msgpack.NULL, msgpack.NULL}
             end
         end
         for i, r in ipairs(rranges) do
             local lo_incl, hi_incl = r[5] ~= false, r[6] ~= false
-            box.space._tarn_rlocks:replace{txid, i, r[1], r[2], r[3], r[4], lo_incl, hi_incl}
             lk_range(txid, r[1], r[2], r[3], r[4], lo_incl, hi_incl)
+            box.space._tarn_rlocks:replace{txid, i, r[1], r[2], r[3], r[4], lo_incl, hi_incl}
         end
-        -- If this local transaction does not commit, its locks never existed.
-        box.on_rollback(function() lk_release(txid) end)
-        box.space._tarn_part:insert{txid, 'prepared', dshard, parts, now()}
+        box.space._tarn_part:insert{txid, 'prepared', dshard, parts, now(), expiry()}
         box.commit()   -- MVCC validates every read this stream made; may raise conflict
         M.stats.prepare_yes = M.stats.prepare_yes + 1
         return {'yes'}
     end)
     if not ok then
+        if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
         local f = failure(res)
         return vote_no(f[2], f[3])
     end
@@ -746,14 +864,42 @@ local function release_locks(txid)
 end
 
 -- TarnCommit!ApplyAt: move intents into the plain spaces, release locks.
--- Only ever called once the transaction is known to be committed.
+-- Only ever called once the transaction is known to be committed. On the
+-- decision shard it also marks the record COMMITTED in the same local
+-- transaction (TarnCommit: ApplyMarksCommitted), so that the record is final
+-- before any participant record can be garbage-collected.
+-- Returns {'ok', 'applied'} (now or earlier), {'ok', 'none'} (no record: it
+-- was applied and then garbage-collected), or an error status.
 function tarn_apply(txid)
+    writable()
     local ok, res = pcall(function()
         box.begin(RW)
         local p = box.space._tarn_part:get{txid}
-        if p == nil or p.state ~= 'prepared' then
+        if p == nil then
             box.rollback()
-            return {OK, p and p.state or 'none'}
+            return {OK, 'none'}
+        end
+        if p.state == 'applied' then
+            box.rollback()
+            return {OK, 'applied'}
+        end
+        if p.state ~= 'prepared' then
+            box.rollback()
+            M.stats.protocol_errors = M.stats.protocol_errors + 1
+            log.error('tarn: APPLY of %s, but the participant is %s', txid, p.state)
+            return {'error', 0, 'APPLY of a transaction whose participant record is ' .. p.state}
+        end
+        if p.dshard == M.cfg.shard_id then
+            local r = box.space._tarn_txn:get{txid}
+            if r == nil or r.status == 'aborted' then
+                box.rollback()
+                M.stats.protocol_errors = M.stats.protocol_errors + 1
+                log.error('tarn: APPLY of %s, but its record is %s', txid, r and r.status or 'missing')
+                return {'error', 0, 'APPLY of a transaction whose record is ' .. (r and r.status or 'missing')}
+            end
+            if r.status == 'staging' then
+                box.space._tarn_txn:replace{txid, 'committed', r.parts, now(), expiry()}
+            end
         end
         for _, l in box.space._tarn_locks.index.txid:pairs({txid}, {iterator = 'EQ'}) do
             if l.mode == 'W' and l.op ~= nil then
@@ -763,13 +909,14 @@ function tarn_apply(txid)
             end
         end
         release_locks(txid)
-        box.space._tarn_part:replace{txid, 'applied', p.dshard, p.parts, now()}
+        box.space._tarn_part:replace{txid, 'applied', p.dshard, p.parts, now(), expiry()}
         box.commit()
         M.stats.apply = M.stats.apply + 1
         return {OK, 'applied'}
     end)
     if not ok then
         if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
         return failure(res)
     end
     return res
@@ -778,22 +925,28 @@ end
 -- TarnCommit!AbortAt: release locks; with no participant record, leave a
 -- tombstone so that a PREPARE still in flight is refused.
 function tarn_abort(txid, dshard, parts)
+    writable()
     local ok, res = pcall(function()
         box.begin(RW)
         local p = box.space._tarn_part:get{txid}
         if p ~= nil and p.state ~= 'prepared' then
             box.rollback()
+            if p.state == 'applied' then
+                M.stats.protocol_errors = M.stats.protocol_errors + 1
+                log.error('tarn: ABORT of %s, but the participant applied it', txid)
+            end
             return {OK, p.state}
         end
         release_locks(txid)
         box.space._tarn_part:replace{txid, 'aborted', dshard or (p and p.dshard) or 0,
-                                     parts or (p and p.parts) or {}, now()}
+                                     parts or (p and p.parts) or {}, now(), expiry()}
         box.commit()
         M.stats.abort = M.stats.abort + 1
         return {OK, 'aborted'}
     end)
     if not ok then
         if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
         return failure(res)
     end
     return res
@@ -801,11 +954,12 @@ end
 
 -- TarnCommit!RecoverFenceParticipant: tombstone if never prepared.
 function tarn_fence(txid, dshard, parts)
+    writable()
     local ok, res = pcall(function()
         box.begin(RW)
         local p = box.space._tarn_part:get{txid}
         if p == nil then
-            box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now()}
+            box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now(), expiry()}
             box.commit()
             return 'aborted'
         end
@@ -814,35 +968,62 @@ function tarn_fence(txid, dshard, parts)
     end)
     if not ok then
         if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
         return nil, tostring(res)
     end
     return res
 end
 
+-- Status reads for recovery run on the leader only: a replica may lag.
 function tarn_part_status(txid)
+    writable()
     local p = box.space._tarn_part:get{txid}
     return p and p.state or 'none'
 end
 
+-- Batched form for garbage collection: statuses in the order of txids.
+function tarn_part_statuses(txids)
+    writable()
+    local out = {}
+    for i, id in ipairs(txids) do
+        local p = box.space._tarn_part:get{id}
+        out[i] = p and p.state or 'none'
+    end
+    return out
+end
+
 -- Decision-shard record operations (TarnCommit: rec[t]).
 function tarn_txn_status(txid)
+    writable()
     local r = box.space._tarn_txn:get{txid}
     return r and r.status or 'none', r and r.parts or nil
 end
 
+function tarn_txn_statuses(txids)
+    writable()
+    local out = {}
+    for i, id in ipairs(txids) do
+        local r = box.space._tarn_txn:get{id}
+        out[i] = r and r.status or 'none'
+    end
+    return out
+end
+
 -- Compare-and-set of the record status; 'none' -> X creates it.
 function tarn_txn_cas(txid, from, to, parts)
+    writable()
     local ok, res = pcall(function()
         box.begin(RW)
         local r = box.space._tarn_txn:get{txid}
         local cur = r and r.status or 'none'
         if cur ~= from then box.rollback(); return cur end
-        box.space._tarn_txn:replace{txid, to, parts or (r and r.parts) or {}, now()}
+        box.space._tarn_txn:replace{txid, to, parts or (r and r.parts) or {}, now(), expiry()}
         box.commit()
         return to
     end)
     if not ok then
         if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
         return nil, tostring(res)
     end
     return res
@@ -875,83 +1056,171 @@ local function shard_conn(shard)
     error('no writable node for shard ' .. tostring(shard))
 end
 
+-- Call fn on the leader of `shard` (locally for this shard). A leader that
+-- was demoted while the connection survived answers ER_READONLY: drop the
+-- connection, find the new leader and retry once.
 local function on_shard(shard, fn, ...)
     local c = shard_conn(shard)
     if c == nil then return _G[fn](...) end
-    return c:call(fn, {...}, {timeout = 2})
+    local args = {...}
+    local ok, a, b = pcall(c.call, c, fn, args, {timeout = 2})
+    if ok then return a, b end
+    if type(a) == 'cdata' and a.code == box.error.READONLY then
+        conns[shard] = nil
+        c:close()
+        c = shard_conn(shard)
+        if c == nil then return _G[fn](unpack(args)) end
+        return c:call(fn, args, {timeout = 2})
+    end
+    error(a)
 end
 
+-- One recovery agent's attempt to finish txid. Returns 'committed',
+-- 'aborted', 'gone' (no record and no prepared participant: nothing left
+-- to do) or 'unresolved'.
 local function resolve(txid, dshard, parts)
     for _ = 1, 4 do
         local status = on_shard(dshard, 'tarn_txn_status', txid)
-        if status == 'none' then
-            -- RecoverFenceRecord: block D's PREPARE, then the txn is aborted.
-            on_shard(dshard, 'tarn_txn_cas', txid, 'none', 'aborted', parts)
-        elseif status == 'committed' then
+        if status == 'committed' then
             for _, p in ipairs(parts) do on_shard(p, 'tarn_apply', txid) end
             return 'committed'
         elseif status == 'aborted' then
             for _, p in ipairs(parts) do on_shard(p, 'tarn_abort', txid, dshard, parts) end
             return 'aborted'
-        elseif status == 'staging' then
-            local all_prepared, any_aborted, missing = true, false, {}
-            for _, p in ipairs(parts) do
-                local st = on_shard(p, 'tarn_part_status', txid)
-                if st == 'aborted' then any_aborted = true; all_prepared = false
-                elseif st == 'none' then all_prepared = false; missing[#missing + 1] = p end
-            end
-            if all_prepared then
-                on_shard(dshard, 'tarn_txn_cas', txid, 'staging', 'committed')
-            elseif any_aborted then
-                on_shard(dshard, 'tarn_txn_cas', txid, 'staging', 'aborted')
-            else
-                for _, p in ipairs(missing) do on_shard(p, 'tarn_fence', txid, dshard, parts) end
-            end
+        end
+        local all_prepared, any_aborted, any_prepared, missing = true, false, false, {}
+        for _, p in ipairs(parts) do
+            local st = on_shard(p, 'tarn_part_status', txid)
+            if st == 'aborted' then any_aborted = true; all_prepared = false
+            elseif st == 'none' then all_prepared = false; missing[#missing + 1] = p
+            elseif st == 'prepared' then any_prepared = true end
+        end
+        if status == 'none' then
+            -- RecoverFenceRecord: block D's PREPARE, then the txn is aborted.
+            -- Only while some participant is prepared: then the record cannot
+            -- have been garbage-collected (TarnCommit: GCRec), so "no record"
+            -- means D never prepared.
+            if not any_prepared then return 'gone' end
+            on_shard(dshard, 'tarn_txn_cas', txid, 'none', 'aborted', parts)
+        elseif all_prepared then
+            on_shard(dshard, 'tarn_txn_cas', txid, 'staging', 'committed')
+        elseif any_aborted then
+            on_shard(dshard, 'tarn_txn_cas', txid, 'staging', 'aborted')
+        else
+            -- STAGING: a participant without a record never prepared (applied
+            -- records are kept until the record is final), so fence it.
+            for _, p in ipairs(missing) do on_shard(p, 'tarn_fence', txid, dshard, parts) end
         end
     end
     return 'unresolved'
 end
 M.resolve = resolve
 
+-- Delete records by primary key, gc_batch per local transaction.
+local function gc_delete(space, ids)
+    local i = 1
+    while i <= #ids do
+        box.begin()
+        for j = i, math.min(i + M.cfg.gc_batch - 1, #ids) do space:delete{ids[j]} end
+        box.commit()
+        i = i + M.cfg.gc_batch
+    end
+end
+
+-- Statuses of txids on `shard` via fn (tarn_txn_statuses/tarn_part_statuses);
+-- nil if the shard cannot be asked right now.
+local function statuses_on(shard, fn, ids)
+    local ok, res = pcall(on_shard, shard, fn, ids)
+    if ok then return res end
+    log.warn('tarn gc: %s on shard %s failed: %s', fn, tostring(shard), tostring(res))
+    return nil
+end
+
+-- Garbage collection of expired records (see "Record lifecycle").
+local function gc_pass(t)
+    local limit, scan = M.cfg.gc_batch * 4, M.cfg.gc_batch * 40
+    -- Participant records.
+    local victims, waiting, n = {}, {}, 0   -- waiting[dshard] = {txid, ...}
+    for _, p in box.space._tarn_part.index.exp:pairs() do   -- ascending expiry
+        n = n + 1
+        if p.expires >= t or n > scan or #victims >= limit then break end
+        if p.state == 'aborted' then
+            victims[#victims + 1] = p.txid
+        elseif p.state == 'applied' then
+            local w = waiting[p.dshard]
+            if w == nil then w = {}; waiting[p.dshard] = w end
+            w[#w + 1] = p.txid
+        end   -- prepared: never collected
+    end
+    for dshard, ids in pairs(waiting) do
+        local st = statuses_on(dshard, 'tarn_txn_statuses', ids)
+        for i, id in ipairs(st and ids or {}) do
+            -- Applied => committed: delete once the record is final or gone.
+            if st[i] == 'committed' or st[i] == 'none' then
+                victims[#victims + 1] = id
+            elseif st[i] == 'aborted' then
+                M.stats.protocol_errors = M.stats.protocol_errors + 1
+                log.error('tarn gc: %s applied here but its record is aborted', id)
+            end
+        end
+    end
+    gc_delete(box.space._tarn_part, victims)
+    M.stats.gc_part = M.stats.gc_part + #victims
+    -- Decision records: final ones, once no participant is still prepared.
+    local cands, ask = {}, {}   -- ask[shard] = {txid, ...}
+    n = 0
+    for _, r in box.space._tarn_txn.index.exp:pairs() do
+        n = n + 1
+        if r.expires >= t or n > scan or #cands >= limit then break end
+        if r.status == 'committed' or r.status == 'aborted' then
+            cands[#cands + 1] = r
+            for _, p in ipairs(r.parts) do
+                local a = ask[p]
+                if a == nil then a = {}; ask[p] = a end
+                a[#a + 1] = r.txid
+            end
+        end
+    end
+    local prepared = {}   -- txid -> true if prepared (or unknown) somewhere
+    for shard, ids in pairs(ask) do
+        local st = statuses_on(shard, 'tarn_part_statuses', ids)
+        for i, id in ipairs(ids) do
+            if st == nil or st[i] == 'prepared' then prepared[id] = true end
+        end
+    end
+    victims = {}
+    for _, r in ipairs(cands) do
+        if not prepared[r.txid] then victims[#victims + 1] = r.txid end
+    end
+    gc_delete(box.space._tarn_txn, victims)
+    M.stats.gc_txn = M.stats.gc_txn + #victims
+end
+
+-- Candidates first, then the (yielding) resolution of each.
+local function stuck(index, key, t)
+    local out = {}
+    for _, x in index:pairs({key}, {iterator = 'EQ'}) do
+        if t - x.ts < M.cfg.recovery_after or #out >= 200 then break end
+        out[#out + 1] = x
+    end
+    return out
+end
+
 local function recovery_pass()
     if box.info.ro then return end
     local t = now()
     -- Participants stuck in 'prepared'.
-    for _, p in box.space._tarn_part.index.state:pairs({'prepared'}, {iterator = 'EQ'}) do
-        if t - p.ts < M.cfg.recovery_after then break end
+    for _, p in ipairs(stuck(box.space._tarn_part.index.state, 'prepared', t)) do
         local ok, err = pcall(resolve, p.txid, p.dshard, p.parts)
         if ok then M.stats.recovered = M.stats.recovered + 1
         else log.warn('tarn recovery of %s failed: %s', p.txid, tostring(err)) end
     end
     -- Records stuck in 'staging' on this decision shard.
-    for _, r in box.space._tarn_txn.index.status:pairs({'staging'}, {iterator = 'EQ'}) do
-        if t - r.ts < M.cfg.recovery_after then break end
+    for _, r in ipairs(stuck(box.space._tarn_txn.index.status, 'staging', t)) do
         local ok, err = pcall(resolve, r.txid, M.cfg.shard_id, r.parts)
         if not ok then log.warn('tarn recovery of %s failed: %s', r.txid, tostring(err)) end
     end
-    -- GC decided records once every participant has resolved.
-    for _, status in ipairs({'committed', 'aborted'}) do
-        local victims = {}
-        for _, r in box.space._tarn_txn.index.status:pairs({status}, {iterator = 'EQ'}) do
-            if t - r.ts < M.cfg.record_ttl then break end
-            local done = true
-            for _, p in ipairs(r.parts) do
-                local ok, st = pcall(on_shard, p, 'tarn_part_status', r.txid)
-                if not ok or st == 'prepared' then done = false; break end
-            end
-            if done then victims[#victims + 1] = r.txid end
-        end
-        for _, id in ipairs(victims) do box.space._tarn_txn:delete{id} end
-    end
-    -- GC participant records: applied ones after record_ttl, tombstones much later.
-    for _, st in ipairs({{'applied', M.cfg.record_ttl}, {'aborted', M.cfg.tombstone_ttl}}) do
-        local victims = {}
-        for _, p in box.space._tarn_part.index.state:pairs({st[1]}, {iterator = 'EQ'}) do
-            if t - p.ts < st[2] then break end
-            victims[#victims + 1] = p.txid
-        end
-        for _, id in ipairs(victims) do box.space._tarn_part:delete{id} end
-    end
+    gc_pass(t)
 end
 
 local recovery_fiber
@@ -1074,6 +1343,7 @@ end
 function tarn_info()
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats,
             locks = box.space._tarn_locks:len(), lock_index = NLOCK, prepared = box.space._tarn_part.index.state:count({'prepared'}),
+            part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0}
 end
 
@@ -1092,6 +1362,7 @@ function M.init(cfg)
     -- The lock index is maintained only while this instance is the leader;
     -- any election state change makes it stale (rebuilt before next use).
     box.ctl.on_election(function() LK_STALE = true end)
+    box.watch('box.status', function() LK_STALE = true end)   -- read-only changes
     if not box.info.ro then lk_reload() end
     M.start_recovery()
     rawset(_G, 'tarn', M)

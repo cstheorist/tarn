@@ -76,6 +76,23 @@ async fn greeting_id_auth_and_ping() {
     c.request(iproto::PING, 0, Bytes::new()).await.unwrap();
 }
 
+/// A reply with ER_READONLY marks the connection stale (its server is no
+/// longer the leader); other errors do not, and the connection keeps working.
+#[tokio::test]
+async fn readonly_reply_marks_connection_stale() {
+    let t = Tarantool::start();
+    let c = t.client().await;
+    assert_eq!(server_code(c.eval(0, "box.error(box.error.NO_SUCH_SPACE, 'x')", &[]).await), 36);
+    assert!(!c.is_stale());
+    assert_eq!(server_code(c.eval(0, "box.error(box.error.READONLY)", &[]).await), ER_READONLY);
+    assert!(c.is_stale() && !c.is_closed());
+    c.ping().await.unwrap();
+    let d = t.client().await;
+    assert!(!d.is_stale());
+    d.mark_stale();
+    assert!(d.is_stale());
+}
+
 #[tokio::test]
 async fn bad_password_and_unknown_user() {
     let t = Tarantool::start();

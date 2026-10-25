@@ -1,17 +1,23 @@
 #!/bin/bash
 # Failover test: 2 shards x 3 synchronous replicas behind one tarn-server.
-# Runs the concurrent bank-transfer workload (with serializable audits) and
-# kill -9's the leader of shard 1, then of shard 2, while it runs. Passes if
-# every audit saw the exact total, the final total is exact (via SQL and via
-# direct Key/Value reads on the new leaders), and transfers kept committing
-# after each failover.
+# Runs the concurrent bank-transfer workload (serializable audits, a ledger
+# that exposes lost or duplicated transfers, autocommit counters that expose
+# double-applied single-row writes) and, while it runs:
+#   1. moves the leadership of shard 1 to another replica (box.ctl.promote):
+#      the old leader is demoted while the SQL server's connections to it
+#      stay open;
+#   2. kill -9's the leader of shard 1;
+#   3. kill -9's the leader of shard 2.
+# Passes if every check of the workload holds, the final total is exact via
+# SQL and via direct Key/Value reads on the new leaders, and transfers kept
+# committing after each event.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=${TARANTOOL:-/opt/src/tarantool/build/src/tarantool}
 DIR=${DIR:-/tmp/tarn-failover}
 BASE=${BASE:-3500}
 PORT=${PORT:-4100}
-SECS=${SECS:-45}
+SECS=${SECS:-60}
 "$ROOT/scripts/cluster.sh" stop -d "$DIR" 2>/dev/null
 "$ROOT/scripts/cluster.sh" start -n 2 -r 3 -d "$DIR" -b "$BASE" -p "$PORT" -m 256 || exit 1
 
@@ -45,12 +51,37 @@ kill_leader() {
   echo "shard $s: no new leader after 20 s"; return 1
 }
 
+move_leader() {  # start an election on a follower of shard $1; the old leader stays up
+  local s=$1 p j
+  check_alive
+  p=$(leader_of "$s") || { echo "shard $s: no leader found"; return 1; }
+  for j in 1 2 3; do
+    local q=$((BASE + 10 * s + j))
+    if [ "$q" != "$p" ]; then
+      echo "$(date +%T) box.ctl.promote() on s$s.$j (port $q); the leader on $p will be demoted with its connections open"
+      # The election may also be won by the third replica: any new leader will do.
+      "$T" "$ROOT/scripts/promote.lua" "tarn:tarn@127.0.0.1:$q" < /dev/null || true
+      for _ in $(seq 100); do
+        local np; np=$(leader_of "$s")
+        if [ -n "$np" ] && [ "$np" != "$p" ]; then
+          echo "$(date +%T) shard $s leader is now $np; $p still running: $(kill -0 "$(cat "$DIR/s$s.$((p - BASE - 10 * s)).pid")" && echo yes)"
+          return 0
+        fi
+        sleep 0.1
+      done
+      echo "shard $s: leadership did not move"; return 1
+    fi
+  done
+}
+
 python3 "$ROOT/tests/sql/txntest.py" --tarn 127.0.0.1:$PORT --only bank --bank-seconds "$SECS" --threads 8 \
   > "$DIR/bank.out" 2>&1 &
 BANK=$!
-sleep $((SECS / 4))
+sleep $((SECS / 5))
+move_leader 1 || MOVE_FAILED=1
+sleep $((SECS / 5))
 kill_leader 1
-sleep $((SECS / 3))
+sleep $((SECS / 5))
 kill_leader 2
 wait $BANK
 rc=$?
@@ -71,7 +102,7 @@ sys.exit(0 if total == 64000 else 1)
 EOF
 kv=$?
 grep -h -E "tarn recovery|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
-if [ $rc -eq 0 ] && [ $kv -eq 0 ]; then
+if [ $rc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
   "$ROOT/scripts/cluster.sh" stop -d "$DIR"
   echo "FAILOVER TEST PASSED"
 else
