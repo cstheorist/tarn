@@ -4,13 +4,20 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
     ignore:
+      # Semver-incompatible upgrades are done deliberately, not by bot.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       # vstd must match the Verus release used for the proofs.
       - dependency-name: vstd
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
