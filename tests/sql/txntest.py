@@ -172,6 +172,58 @@ class T:
         self.check(aborted or n1 == n2 == 2, f"phantom handled (n1={n1} n2={n2} aborted={aborted})")
         self.check(q(c, "SELECT COUNT(*) FROM ph WHERE id = 10")[0][0] == 1, "b's insert committed")
 
+    def test_fractured_read(self):
+        # R reads y, then T updates x and y atomically (across shards for
+        # most pairs) and commits, then R reads x. R must not commit having
+        # seen T's write to x but not to y.
+        c = self.fresh("fr", "CREATE TABLE fr (id INT PRIMARY KEY, v INT)", [f"({i}, 0)" for i in range(1, 13)])
+        r, t = connect(self.args.tarn), connect(self.args.tarn)
+        bad = []
+        for y in range(2, 13):
+            x = 1
+            q(r, "BEGIN")
+            vy = q(r, "SELECT v FROM fr WHERE id = %s", (y,))[0][0]
+            q(t, "BEGIN")
+            q(t, "UPDATE fr SET v = v + 1 WHERE id = %s", (x,))
+            q(t, "UPDATE fr SET v = v + 1 WHERE id = %s", (y,))
+            q(t, "COMMIT")
+            vx = q(r, "SELECT v FROM fr WHERE id = %s", (x,))[0][0]
+            committed = not expect_conflict(lambda: q(r, "COMMIT"))
+            if not committed:
+                try:
+                    q(r, "ROLLBACK")
+                except pymysql.MySQLError:
+                    pass
+            # before T: v(x) = y - 2, v(y) = 0; after T: v(x) = y - 1, v(y) = 1
+            if committed and (vx == y - 1) != (vy == 1):
+                bad.append((x, y, vx, vy))
+        self.check(not bad, f"fractured reads committed: {bad}")
+
+    def test_realtime_order(self):
+        # Strict serializability across shards: R reads y; U updates y and
+        # commits; then V updates x and commits (V starts after U finished);
+        # then R reads x. If R saw V's x it must also see U's y, or abort.
+        self.fresh("rt", "CREATE TABLE rt (id INT PRIMARY KEY, v INT)", [f"({i}, 0)" for i in range(1, 13)])
+        r, u = connect(self.args.tarn), connect(self.args.tarn)
+        bad = []
+        for y in range(2, 13):
+            x = 1
+            vx0 = q(u, "SELECT v FROM rt WHERE id = %s", (x,))[0][0]
+            q(r, "BEGIN")
+            vy = q(r, "SELECT v FROM rt WHERE id = %s", (y,))[0][0]
+            q(u, "UPDATE rt SET v = v + 1 WHERE id = %s", (y,))
+            q(u, "UPDATE rt SET v = v + 1 WHERE id = %s", (x,))
+            vx = q(r, "SELECT v FROM rt WHERE id = %s", (x,))[0][0]
+            committed = not expect_conflict(lambda: q(r, "COMMIT"))
+            if not committed:
+                try:
+                    q(r, "ROLLBACK")
+                except pymysql.MySQLError:
+                    pass
+            if committed and vx == vx0 + 1 and vy == 0:
+                bad.append((x, y))
+        self.check(not bad, f"real-time order violated (saw V's x but not U's y) for {bad}")
+
     def test_cross_shard_atomic_dml(self):
         c = self.fresh("xs", "CREATE TABLE xs (id INT PRIMARY KEY, v INT)", [f"({i}, {i})" for i in range(1, 51)])
         q(c, "BEGIN")
@@ -214,7 +266,8 @@ class T:
         self.fresh("bank", "CREATE TABLE bank (id INT PRIMARY KEY, bal BIGINT NOT NULL)",
                    [f"({i}, {init})" for i in range(n_acc)])
         stop = time.time() + self.args.bank_seconds
-        stats = {"commit": 0, "conflict": 0, "audit": 0, "bad": [], "err": []}
+        stats = {"commit": 0, "conflict": 0, "audit": 0, "bad": [], "err": [], "times": []}
+        t_start = time.time()
         lock = threading.Lock()
 
         def transfer(seed):
@@ -232,6 +285,7 @@ class T:
                     q(c, "COMMIT")
                     with lock:
                         stats["commit"] += 1
+                        stats["times"].append(time.time() - t_start)
                 except pymysql.MySQLError as e:
                     try:
                         q(c, "ROLLBACK")
@@ -284,6 +338,10 @@ class T:
               f"{len(stats['err'])} other errors, final sum {final[0]}")
         for e in stats["err"][:5]:
             print(f"      error: {e}")
+        buckets = [0] * (int(self.args.bank_seconds) // 3 + 1)
+        for t_ in stats["times"]:
+            buckets[min(int(t_ // 3), len(buckets) - 1)] += 1
+        print("    commits per 3 s:", " ".join(str(b) for b in buckets))
         self.check(not stats["bad"], f"audits saw a broken invariant: {stats['bad'][:5]}")
         self.check(int(final[0]) == total and final[1] == n_acc, "final balance sum")
         self.check(stats["commit"] > 0, "some transfers committed")
