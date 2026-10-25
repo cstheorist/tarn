@@ -1281,8 +1281,10 @@ end
 local FRESH_MSG = 'shard leadership changed during the commit'
 
 -- MySQL affected-rows convention for one write: REPLACE of a different row
--- counts 2, an UPDATE or REPLACE that changes nothing counts 0 / 1.
-local function affected(op, old, new)
+-- counts 2, an UPDATE or REPLACE that changes nothing counts 0 / 1. With
+-- `found_rows` (the client's CLIENT_FOUND_ROWS), an UPDATE counts the row it
+-- matched even when it changes nothing.
+local function affected(op, old, new, found_rows)
     if op == 'insert' then return 1 end
     if op == 'delete' then return old ~= nil and 1 or 0 end
     local same = old ~= nil and new ~= nil and msgpack.encode(old) == msgpack.encode(new)
@@ -1291,7 +1293,8 @@ local function affected(op, old, new)
         return 2
     end
     -- update
-    if old == nil or new == nil or same then return 0 end
+    if old == nil or new == nil then return 0 end
+    if same and not found_rows then return 0 end
     return 1
 end
 
@@ -1714,6 +1717,7 @@ function tarn_autocommit(writes, opts)
     lk_fresh()   -- raises ER_READONLY before anything is written
     pl_fresh()
     local fence = opts and opts.fence
+    local found_rows = opts and opts.found_rows == true
     local deadline = clock.monotonic() + M.cfg.lock_wait
     -- Rows held by another transaction's row lock: wait (holding nothing,
     -- so this cannot deadlock) up to the session's lock wait timeout, as an
@@ -1733,7 +1737,7 @@ function tarn_autocommit(writes, opts)
                 local w = writes[i]
                 local p = write_step(w)
                 plans[i] = p
-                n = n + affected(w[1], p[P_OLD], p[P_RES])
+                n = n + affected(w[1], p[P_OLD], p[P_RES], found_rows)
                 if p[P_RES] ~= nil then last = p[P_RES] end
             end
             local r = atomic('autocommit', autocommit_checks, fence, plans)

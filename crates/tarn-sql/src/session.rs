@@ -69,6 +69,9 @@ pub struct Session {
     next_isolation: Option<Isolation>,
     /// innodb_lock_wait_timeout, seconds.
     pub lock_wait_timeout: f64,
+    /// The client set CLIENT_FOUND_ROWS: UPDATE (and an upsert that changes
+    /// nothing) reports the rows it matched, not only those it changed.
+    pub found_rows_flag: bool,
     /// User-defined variables (`@name`, lower-cased).
     user_vars: HashMap<String, Value>,
     /// SQL-level prepared statements by name (lower-cased): their text and
@@ -290,6 +293,7 @@ impl Session {
             isolation,
             next_isolation: None,
             lock_wait_timeout,
+            found_rows_flag: false,
             user_vars: HashMap::new(),
             sql_prepared: HashMap::new(),
             sys_vars: HashMap::new(),
@@ -1148,7 +1152,8 @@ impl Session {
         // the session's innodb_lock_wait_timeout (then 1205); the shard
         // refuses writes made with a replaced table definition (1412).
         let mut writes = writes;
-        writes.map(2).str("lock_timeout").f64(self.lock_wait_timeout);
+        writes.map(3).str("lock_timeout").f64(self.lock_wait_timeout);
+        writes.str("found_rows").bool(self.found_rows_flag);
         writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
         let mut attempt = 0;
         loop {
@@ -1477,6 +1482,8 @@ impl Session {
                                 let old_shard = shard_of_row(&self.cluster, t, &old);
                                 self.buffer_row_change(txn, t, &old, new, old_shard).await?;
                                 affected += 2;
+                            } else if self.found_rows_flag {
+                                affected += 1;
                             }
                         }
                         Some(_) if p.replace => {
@@ -1546,6 +1553,7 @@ impl Session {
                     ..Default::default()
                 };
                 let rows = exec::lock_matching(&self.cluster, txn, t, cands, &p.filter, x, want, &cx).await?;
+                let matched = rows.len() as u64;
                 let mut changed = 0;
                 for old in rows {
                     let new = self.updated_row(p, t, &old, &cx)?;
@@ -1555,7 +1563,7 @@ impl Session {
                         changed += 1;
                     }
                 }
-                Ok((changed, None))
+                Ok((if self.found_rows_flag { matched } else { changed }, None))
             }
             Stmt::Delete(p) if txn.mode == TxnMode::ReadCommitted => {
                 let t = &p.access.table;
@@ -1583,6 +1591,7 @@ impl Session {
             Stmt::Update(p) => {
                 let t = &p.access.table;
                 let rows = matching_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &p.limit, &cx).await?;
+                let matched = rows.len() as u64;
                 let mut changed = 0;
                 for old in rows {
                     let new = self.updated_row(p, t, &old, &cx)?;
@@ -1592,7 +1601,7 @@ impl Session {
                         changed += 1;
                     }
                 }
-                Ok((changed, None))
+                Ok((if self.found_rows_flag { matched } else { changed }, None))
             }
             Stmt::Delete(p) => {
                 let t = &p.access.table;
