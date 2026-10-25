@@ -115,10 +115,14 @@ jobs:
         run: ci/annotate.sh faults tests/faults.sh
       - name: Failover (2 shards x 3 replicas)
         run: SECS=45 ci/annotate.sh failover tests/failover.sh
+      - name: Fault injection and failover with vinyl tables
+        run: |
+          ENGINE=vinyl ci/annotate.sh vinyl-faults tests/faults.sh
+          ENGINE=vinyl SECS=45 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
       - name: Cluster logs
         if: failure()
         run: |
-          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover/*.log /tmp/tarn-failover/*/*.log; do
+          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true

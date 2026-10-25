@@ -787,13 +787,29 @@ class T:
             t.start()
         for t in ths:
             t.join()
-        c = connect(self.args.tarn)
-        led = {r[0]: r[1:] for r in q(c, "SELECT id, x, y, amt FROM led")}
-        bal = dict(q(c, "SELECT id, bal FROM acct"))
-        exp = {i: init for i in range(n_acc)}
-        for x, y, amt in led.values():
-            exp[x] -= amt
-            exp[y] += amt
+        # A shard may still be electing its new leader (tests/failover.sh), and
+        # recovery may still be finishing transfers whose COMMIT was cut off:
+        # retry the reads, and wait until the balances and the ledger agree,
+        # or time out.
+        deadline, c = time.time() + 30, None
+        while True:
+            try:
+                c = c or connect(self.args.tarn)
+                led = {r[0]: r[1:] for r in q(c, "SELECT id, x, y, amt FROM led")}
+                bal = dict(q(c, "SELECT id, bal FROM acct"))
+            except pymysql.MySQLError:
+                if time.time() > deadline:
+                    raise
+                c = None
+                time.sleep(0.5)
+                continue
+            exp = {i: init for i in range(n_acc)}
+            for x, y, amt in led.values():
+                exp[x] -= amt
+                exp[y] += amt
+            if bal == exp or time.time() > deadline:
+                break
+            time.sleep(0.5)
         print(f"    bank (READ COMMITTED): {st['ok']} commits, {st['refused']} deadlocks, {st['timeouts']} lock "
               f"timeouts, {len(st['unknown'])} unknown outcomes, {len(st['other'])} other errors")
         self.check(sum(bal.values()) == n_acc * init, f"total {sum(bal.values())}")
