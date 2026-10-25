@@ -1,0 +1,6 @@
+config,status,seconds
+tarn_2x1,ok,674
+tarn_2x1_vinyl,ok,684
+tarn_2x1_vinyl_10x,ok,685
+tidb_rf1,ok,644
+tidb_rf1_10x,ok,633

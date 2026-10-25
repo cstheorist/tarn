@@ -1,0 +1,1 @@
+cluster up: 2 shard(s) x 1 replica(s); SQL on 127.0.0.1:4000..4000; dir /dev/shm/tarn-compare/tarn
