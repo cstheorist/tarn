@@ -468,6 +468,38 @@ CASES = [
     ("SELECT * FROM information_schema.no_such_table", "err"),
     ("INSERT INTO information_schema.tables (table_name) VALUES ('x')", "err"),
     ("DELETE FROM information_schema.tables", "err"),
+    # Leading comments must not send SET literals through plan normalization
+    # (issue #71). Keep targets, multiple assignments and quoted text intact.
+    ("-- a comment\nSET @commented_x = 1", "q"),
+    ("SELECT @commented_x", "q"),
+    ("/* c */ SET @commented_x = 2", "q"),
+    ("SELECT @commented_x", "q"),
+    ("# c\nSET @commented_x = 3", "q"),
+    ("SELECT @commented_x", "q"),
+    ("--\tcomment ?\r\n/* another */ # third\n"
+     "SET @commented_x := -7, @commented_text = '? # /* literal */ --', @commented_null = NULL", "q"),
+    ("SELECT @commented_x, @commented_text, @commented_null", "q"),
+    ("/* before */ SET /* after SET */ @commented_x /* target */ = /* value */ @commented_x + 1, "
+     "@commented_utf8 = CONCAT('雪', '?/* literal */') /* tail */", "q"),
+    ("SELECT @commented_x, @commented_utf8", "q"),
+    ("/* string escapes */ SET @commented_text = 'it''s # /* literal */ ?'", "q"),
+    ("SELECT @commented_text", "q"),
+    ("/* settings */ SET @@session.autocommit = ON", "q"),
+    ("SELECT @@session.autocommit", "q"),
+    ("SET @commented_bad = 17", "q"),
+    ("-- unbound marker\nSET @commented_bad = ?", "err"),
+    ("SELECT @commented_bad", "q"),
+    # SQL PREPARE counts only real markers; a leading comment and literal '?'
+    # must survive storage in a user variable and later parameter binding.
+    ("/* prepare text */ SET @commented_stmt = '/* ? */ SELECT ? AS n, ''? # /* literal */'' AS txt'", "q"),
+    ("PREPARE commented_p FROM @commented_stmt", "q"),
+    ("# argument\nSET @commented_arg = 41", "q"),
+    ("EXECUTE commented_p USING @commented_arg", "q"),
+    ("DEALLOCATE PREPARE commented_p", "q"),
+    ("PREPARE commented_set FROM '/* ? */ SET @commented_bound = ?, @commented_mark = ''?'''", "q"),
+    ("EXECUTE commented_set USING @commented_arg", "q"),
+    ("SELECT @commented_bound, @commented_mark", "q"),
+    ("DEALLOCATE PREPARE commented_set", "q"),
     # SQL-level PREPARE / EXECUTE / DEALLOCATE PREPARE (issue #34); the
     # first four are the shape of mysqldump's MyRocks preamble (there inside
     # /*!50717 */, which MariaDB skips; ddltest.py loads it verbatim)
