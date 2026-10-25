@@ -10,6 +10,9 @@ pub mod admin;
 pub mod alter;
 pub mod catalog;
 pub mod cluster;
+pub mod collation;
+#[rustfmt::skip]
+mod collation_data;
 pub mod complex;
 pub mod exec;
 pub mod expr;

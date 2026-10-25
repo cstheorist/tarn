@@ -10,6 +10,7 @@
 //! Correlated subqueries are not supported: their inner SELECT fails to
 //! resolve the outer column.
 
+use crate::collation::Collation;
 use crate::session::{Output, Session};
 use crate::txn::Txn;
 use sqlparser::ast::{self as A, Visit, VisitMut, Visitor, VisitorMut};
@@ -23,6 +24,27 @@ use std::sync::Arc;
 use tarn_common::{Column, ColumnType, SqlError, SqlResult, Value};
 
 type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// The collation a result column's metadata names (its charset id).
+fn column_collation(c: &Column) -> Collation {
+    Collation::from_id(c.charset).unwrap_or_default()
+}
+
+/// Collation id of a UNION column from its branches': theirs if they
+/// agree, else a binary one, else utf8mb4_bin, else the first.
+fn union_collation(a: u16, b: u16) -> u16 {
+    if a == b {
+        return a;
+    }
+    let (ca, cb) = (Collation::from_id(a), Collation::from_id(b));
+    if ca == Some(Collation::Binary) || cb == Some(Collation::Binary) {
+        Collation::Binary.id()
+    } else if ca == Some(Collation::Utf8Bin) || cb == Some(Collation::Utf8Bin) {
+        Collation::Utf8Bin.id()
+    } else {
+        a
+    }
+}
 
 /// Cheap pre-check on the raw text: a SELECT nested in another statement
 /// (two SELECTs, or one in UPDATE/DELETE/INSERT/...), or UNION/EXISTS.
@@ -339,26 +361,40 @@ impl Session {
                             "The used SELECT statements have a different number of columns",
                         ));
                     }
-                    // A column keeps its type only if every branch agrees.
+                    // A column keeps its type only if every branch agrees;
+                    // its collation is the branches' (a binary one wins).
                     let cols: Arc<[Column]> = lc
                         .iter()
                         .zip(rc.iter())
                         .map(|(a, b)| {
-                            if a.ty == b.ty {
+                            let mut c = if a.ty == b.ty {
                                 a.clone()
                             } else {
                                 let mut c = Column::new(&a.name, ColumnType::VarString);
                                 c.schema = a.schema.clone();
                                 c
-                            }
+                            };
+                            c.charset = union_collation(a.charset, b.charset);
+                            c
                         })
                         .collect::<Vec<_>>()
                         .into();
                     lr.extend(rr);
                     let distinct = !matches!(set_quantifier, A::SetQuantifier::All | A::SetQuantifier::AllByName);
                     if distinct {
+                        let colls: Vec<Collation> = cols.iter().map(column_collation).collect();
                         let mut seen = HashSet::new();
-                        lr.retain(|row| seen.insert(row.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>()));
+                        lr.retain(|row| {
+                            seen.insert(
+                                row.iter()
+                                    .zip(&colls)
+                                    .map(|(v, c)| match v {
+                                        Value::Str(b) if c.is_ci() => format!("{:?}", c.key(b)),
+                                        _ => format!("{:?}", v),
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                        });
                     }
                     Ok((cols, lr))
                 }
@@ -390,9 +426,10 @@ impl Session {
                     })?;
                     keys.push((idx, matches!(o.options.sort, Some(A::OrderBySort::Desc))));
                 }
+                let colls: Vec<Collation> = columns.iter().map(column_collation).collect();
                 rows.sort_by(|a, b| {
                     for &(i, desc) in &keys {
-                        let ord = crate::types::sort_cmp(&a[i], &b[i]);
+                        let ord = crate::types::sort_cmp_coll(&a[i], &b[i], colls[i]);
                         let ord = if desc { ord.reverse() } else { ord };
                         if ord.is_ne() {
                             return ord;

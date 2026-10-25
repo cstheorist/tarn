@@ -8,6 +8,7 @@
 
 use crate::admin::Admin;
 use crate::catalog::{self, Catalog, ColumnDef, ForeignKeyDef, IndexDef, TableDef};
+use crate::collation::{self, coercibility, Collation, Derived};
 use crate::expr::{column_expr_type, infer, CastTo, CmpOp, Expr, ExprType, Func};
 use crate::plan::*;
 use crate::types::{Arith, BaseType, SqlType};
@@ -25,6 +26,39 @@ pub struct PlanCtx<'a> {
     pub db: Option<&'a str>,
     /// Parameter values when known (text queries), for metadata inference.
     pub params: &'a [Value],
+    /// collation_connection: the collation of literals and parameters.
+    pub conn_coll: &'a str,
+    /// The collation of text columns in tables that name none (the
+    /// server's `--default-collation`).
+    pub default_coll: &'a str,
+}
+
+/// MySQL's default collation of a character set (CHARACTER SET without
+/// COLLATE), or None for a character set Tarn does not know.
+pub fn charset_default_collation(cs: &str) -> Option<&'static str> {
+    Some(
+        match cs.trim_matches('`').trim_matches('\'').to_ascii_lowercase().as_str() {
+            "utf8mb4" => "utf8mb4_general_ci",
+            "utf8" | "utf8mb3" => "utf8mb3_general_ci",
+            "latin1" => "latin1_swedish_ci",
+            "ascii" => "ascii_general_ci",
+            "binary" => "binary",
+            _ => return None,
+        },
+    )
+}
+
+/// A collation name from a definition: known (1273 otherwise), lower case.
+pub fn known_collation(name: &str) -> SqlResult<String> {
+    let n = name.trim_matches('`').trim_matches('\'').to_ascii_lowercase();
+    match Collation::from_name(&n) {
+        Some(_) => Ok(n),
+        None => Err(SqlError::new(1273, "HY000", format!("Unknown collation: '{}'", n))),
+    }
+}
+
+fn unknown_charset(cs: &str) -> SqlError {
+    SqlError::new(1115, "42000", format!("Unknown character set: '{}'", cs))
 }
 
 #[derive(Clone)]
@@ -64,31 +98,30 @@ impl Scope {
 /// `a1 <= b1` (or `>=`) is added as a conjunct: it never changes the result
 /// (the comparison is NULL or FALSE whenever the bound is not TRUE), and it
 /// lets a keyset cursor `(a, b) > (?, ?)` start an index range at `a`.
-fn row_compare(lhs: &[Expr], op: CmpOp, rhs: &[Expr]) -> Expr {
-    let cmp = |a: &Expr, o: CmpOp, b: &Expr| Expr::Cmp(Box::new(a.clone()), o, Box::new(b.clone()));
+fn row_compare(lhs: &[Expr], op: CmpOp, rhs: &[Expr], colls: &[Collation]) -> Expr {
+    // Each pair of parts compares under its own collation, as in MySQL.
+    let cmp = |i: usize, o: CmpOp| Expr::Cmp(Box::new(lhs[i].clone()), o, Box::new(rhs[i].clone()), colls[i]);
     let n = lhs.len();
     if op == CmpOp::NullSafeEq {
-        return (1..n).fold(cmp(&lhs[0], op, &rhs[0]), |acc, i| {
-            Expr::And(Box::new(acc), Box::new(cmp(&lhs[i], op, &rhs[i])))
-        });
+        return (1..n).fold(cmp(0, op), |acc, i| Expr::And(Box::new(acc), Box::new(cmp(i, op))));
     }
     let strict = match op {
         CmpOp::Lt | CmpOp::LtEq => CmpOp::Lt,
         _ => CmpOp::Gt,
     };
     // innermost: the last part takes the operator itself
-    let mut e = cmp(&lhs[n - 1], op, &rhs[n - 1]);
+    let mut e = cmp(n - 1, op);
     for i in (0..n - 1).rev() {
         e = Expr::Or(
-            Box::new(cmp(&lhs[i], strict, &rhs[i])),
-            Box::new(Expr::And(Box::new(cmp(&lhs[i], CmpOp::Eq, &rhs[i])), Box::new(e))),
+            Box::new(cmp(i, strict)),
+            Box::new(Expr::And(Box::new(cmp(i, CmpOp::Eq)), Box::new(e))),
         );
     }
     if n == 1 {
         return e;
     }
     let bound = if strict == CmpOp::Lt { CmpOp::LtEq } else { CmpOp::GtEq };
-    Expr::And(Box::new(cmp(&lhs[0], bound, &rhs[0])), Box::new(e))
+    Expr::And(Box::new(cmp(0, bound)), Box::new(e))
 }
 
 fn ident(i: &A::Ident) -> String {
@@ -355,10 +388,13 @@ impl<'a, 'c> Binder<'a, 'c> {
         }
     }
 
-    fn temporal_cmp(&self, l: Expr, op: CmpOp, r: Expr) -> Expr {
+    /// `l op r` under the collation MySQL derives for it (`name`: the
+    /// operator, for 1267), constants compared with temporal columns by value.
+    fn temporal_cmp(&self, l: Expr, op: CmpOp, r: Expr, name: &str) -> SqlResult<Expr> {
         let r = self.temporal_operand(&l, r);
         let l = self.temporal_operand(&r, l);
-        Expr::Cmp(Box::new(l), op, Box::new(r))
+        let c = self.cmp_coll(&[&l, &r], name)?;
+        Ok(Expr::Cmp(Box::new(l), op, Box::new(r), c))
     }
 
     /// Is `e` an unsigned integer: an UNSIGNED integer column, an unsigned
@@ -414,6 +450,112 @@ impl<'a, 'c> Binder<'a, 'c> {
                 None => col.to_string(),
             })
         })
+    }
+
+    /// The table column a column reference reads (VALUES(col) and row
+    /// alias references included).
+    fn column_at(&self, i: usize) -> Option<(&TableDef, usize)> {
+        let mut i = i;
+        if i >= self.scope.width() {
+            match self.values_offset {
+                Some(off) if i >= off => i -= off,
+                _ => return None,
+            }
+        }
+        self.scope
+            .tables
+            .iter()
+            .find(|t| i >= t.offset && i < t.offset + t.table.columns.len())
+            .map(|t| (&*t.table, i - t.offset))
+    }
+
+    fn conn(&self, coercibility: u8) -> Derived {
+        Derived::named(self.ctx.conn_coll, coercibility)
+            .unwrap_or_else(|| Derived::new(Collation::Utf8Bin, coercibility))
+    }
+
+    /// The collation of a bound text expression with its coercibility, as
+    /// MySQL derives it; None for numbers.
+    fn derive(&self, e: &Expr) -> Option<Derived> {
+        use coercibility::*;
+        let agg = |xs: &[Option<Derived>]| collation::aggregate(xs, "").ok().flatten();
+        match e {
+            Expr::Col(i) if *i >= AGG_BASE => {
+                let a = self.aggs.as_deref()?.get(*i - AGG_BASE)?;
+                match a.func {
+                    AggFunc::Min | AggFunc::Max | AggFunc::AnyValue | AggFunc::GroupConcat => {
+                        a.arg.as_ref().and_then(|x| self.derive(x))
+                    }
+                    _ => None,
+                }
+            }
+            Expr::Col(i) => {
+                let (t, c) = self.column_at(*i)?;
+                let col = &t.columns[c];
+                let ty = col.ty();
+                if ty.is_text() {
+                    Some(Derived {
+                        coll: col.coll(),
+                        coercibility: IMPLICIT,
+                        name: col.collation_name().to_string(),
+                    })
+                } else if ty.is_binary() {
+                    Some(Derived::new(Collation::Binary, IMPLICIT))
+                } else if ty.is_numeric() {
+                    None
+                } else {
+                    // dates, times, JSON: compared as stored
+                    Some(Derived::new(Collation::Utf8Bin, IMPLICIT))
+                }
+            }
+            Expr::Lit(Value::Str(_)) | Expr::Param(_) => Some(self.conn(COERCIBLE)),
+            Expr::Lit(Value::Bin(_)) => Some(Derived::new(Collation::Binary, COERCIBLE)),
+            Expr::Lit(_) => None,
+            Expr::Var(_) => Derived::named("utf8mb3_general_ci", SYSCONST),
+            Expr::Collate(_, c) => Some(Derived::new(*c, EXPLICIT)),
+            Expr::Key(a, _) => self.derive(a),
+            Expr::Cast(_, CastTo::Char) => Some(self.conn(IMPLICIT)),
+            Expr::Cast(_, CastTo::Binary) => Some(Derived::new(Collation::Binary, IMPLICIT)),
+            Expr::Cast(..) => None,
+            Expr::Case(_, w, e, _) => {
+                let mut xs: Vec<Option<Derived>> = w.iter().map(|(_, r)| self.derive(r)).collect();
+                if let Some(e) = e {
+                    xs.push(self.derive(e));
+                }
+                agg(&xs)
+            }
+            Expr::Func(f, args) => {
+                use Func::*;
+                let of = |xs: &[Expr]| -> Vec<Option<Derived>> { xs.iter().map(|x| self.derive(x)).collect() };
+                match f {
+                    Concat | ConcatWs | Coalesce | IfNull | NullIf(_) | Greatest(_) | Least(_) => agg(&of(args)),
+                    Lower | Upper | Substring | Trim | LTrim | RTrim | Replace | Left | Right | Lpad | Rpad
+                    | Repeat => args.first().and_then(|a| self.derive(a)),
+                    If => agg(&of(args.get(1..).unwrap_or(&[]))),
+                    Database | User | Version => Derived::named("utf8mb3_general_ci", SYSCONST),
+                    Hex => Some(self.conn(COERCIBLE)),
+                    WeightString(_) => Some(Derived::new(Collation::Binary, IMPLICIT)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The collation operands compare under (1267 / 1270 for an illegal
+    /// mix); utf8mb4_bin when none is text.
+    fn cmp_coll(&self, items: &[&Expr], op: &str) -> SqlResult<Collation> {
+        let ds: Vec<Option<Derived>> = items.iter().map(|e| self.derive(e)).collect();
+        Ok(collation::aggregate(&ds, op)?.map(|d| d.coll).unwrap_or_default())
+    }
+
+    /// A sort or group key: under a case-insensitive collation, the key of
+    /// the value (see `Expr::Key`).
+    fn sort_key(&self, e: Expr) -> Expr {
+        match self.derive(&e) {
+            Some(d) if d.coll.is_ci() => Expr::Key(Box::new(e), d.coll),
+            _ => e,
+        }
     }
 
     fn bind(&mut self, e: &A::Expr) -> SqlResult<Expr> {
@@ -490,14 +632,19 @@ impl<'a, 'c> Binder<'a, 'c> {
                     .zip(&rhs)
                     .map(|(l, r)| self.temporal_operand(r, l))
                     .collect();
-                let op = match op {
-                    A::BinaryOperator::Lt => CmpOp::Lt,
-                    A::BinaryOperator::LtEq => CmpOp::LtEq,
-                    A::BinaryOperator::Gt => CmpOp::Gt,
-                    A::BinaryOperator::GtEq => CmpOp::GtEq,
-                    _ => CmpOp::NullSafeEq,
+                let (op, name) = match op {
+                    A::BinaryOperator::Lt => (CmpOp::Lt, "<"),
+                    A::BinaryOperator::LtEq => (CmpOp::LtEq, "<="),
+                    A::BinaryOperator::Gt => (CmpOp::Gt, ">"),
+                    A::BinaryOperator::GtEq => (CmpOp::GtEq, ">="),
+                    _ => (CmpOp::NullSafeEq, "<=>"),
                 };
-                row_compare(&lhs, op, &rhs)
+                let colls: Vec<Collation> = lhs
+                    .iter()
+                    .zip(&rhs)
+                    .map(|(a, b)| self.cmp_coll(&[a, b], name))
+                    .collect::<SqlResult<_>>()?;
+                row_compare(&lhs, op, &rhs, &colls)
             }
             E::BinaryOp { left, op, right } => {
                 let (l, r) = (Box::new(self.bind(left)?), Box::new(self.bind(right)?));
@@ -518,13 +665,13 @@ impl<'a, 'c> Binder<'a, 'c> {
                     B::Divide => Expr::Arith(l, Arith::Div, r),
                     B::Modulo => Expr::Arith(l, Arith::Mod, r),
                     B::MyIntegerDivide | B::DuckIntegerDivide => Expr::Arith(l, Arith::IntDiv, r),
-                    B::Eq => self.temporal_cmp(*l, CmpOp::Eq, *r),
-                    B::NotEq => self.temporal_cmp(*l, CmpOp::NotEq, *r),
-                    B::Lt => self.temporal_cmp(*l, CmpOp::Lt, *r),
-                    B::LtEq => self.temporal_cmp(*l, CmpOp::LtEq, *r),
-                    B::Gt => self.temporal_cmp(*l, CmpOp::Gt, *r),
-                    B::GtEq => self.temporal_cmp(*l, CmpOp::GtEq, *r),
-                    B::Spaceship => self.temporal_cmp(*l, CmpOp::NullSafeEq, *r),
+                    B::Eq => self.temporal_cmp(*l, CmpOp::Eq, *r, "=")?,
+                    B::NotEq => self.temporal_cmp(*l, CmpOp::NotEq, *r, "<>")?,
+                    B::Lt => self.temporal_cmp(*l, CmpOp::Lt, *r, "<")?,
+                    B::LtEq => self.temporal_cmp(*l, CmpOp::LtEq, *r, "<=")?,
+                    B::Gt => self.temporal_cmp(*l, CmpOp::Gt, *r, ">")?,
+                    B::GtEq => self.temporal_cmp(*l, CmpOp::GtEq, *r, ">=")?,
+                    B::Spaceship => self.temporal_cmp(*l, CmpOp::NullSafeEq, *r, "<=>")?,
                     B::And => Expr::And(l, r),
                     B::Or => Expr::Or(l, r),
                     B::Xor => Expr::Xor(l, r),
@@ -575,14 +722,17 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             E::InList { expr, list, negated } => {
                 let x = self.bind(expr)?;
-                let list = list
+                let items: Vec<Expr> = list
                     .iter()
                     .map(|e| {
                         let b = self.bind(e)?;
                         Ok(self.temporal_operand(&x, b))
                     })
                     .collect::<SqlResult<_>>()?;
-                Expr::InList(Box::new(x), list, *negated)
+                let mut all: Vec<&Expr> = vec![&x];
+                all.extend(items.iter());
+                let c = self.cmp_coll(&all, "in")?;
+                Expr::InList(Box::new(x), items, *negated, c)
             }
             E::Between {
                 expr,
@@ -593,33 +743,47 @@ impl<'a, 'c> Binder<'a, 'c> {
                 let x = self.bind(expr)?;
                 let (lo, hi) = (self.bind(low)?, self.bind(high)?);
                 let (lo, hi) = (self.temporal_operand(&x, lo), self.temporal_operand(&x, hi));
-                Expr::Between(Box::new(x), Box::new(lo), Box::new(hi), *negated)
+                let c = self.cmp_coll(&[&x, &lo, &hi], "between")?;
+                Expr::Between(Box::new(x), Box::new(lo), Box::new(hi), *negated, c)
             }
             E::Like {
                 negated, expr, pattern, ..
             }
             | E::ILike {
                 negated, expr, pattern, ..
-            } => Expr::Like(Box::new(self.bind(expr)?), Box::new(self.bind(pattern)?), *negated),
+            } => {
+                let (x, p) = (self.bind(expr)?, self.bind(pattern)?);
+                let c = self.cmp_coll(&[&x, &p], "like")?;
+                Expr::Like(Box::new(x), Box::new(p), *negated, c)
+            }
             E::Case {
                 operand,
                 conditions,
                 else_result,
                 ..
-            } => Expr::Case(
-                match operand {
+            } => {
+                let operand = match operand {
                     Some(o) => Some(Box::new(self.bind(o)?)),
                     None => None,
-                },
-                conditions
+                };
+                let whens: Vec<(Expr, Expr)> = conditions
                     .iter()
                     .map(|w| Ok((self.bind(&w.condition)?, self.bind(&w.result)?)))
-                    .collect::<SqlResult<_>>()?,
-                match else_result {
+                    .collect::<SqlResult<_>>()?;
+                let els = match else_result {
                     Some(x) => Some(Box::new(self.bind(x)?)),
                     None => None,
-                },
-            ),
+                };
+                let c = match &operand {
+                    Some(o) => {
+                        let mut all: Vec<&Expr> = vec![o];
+                        all.extend(whens.iter().map(|(w, _)| w));
+                        self.cmp_coll(&all, "case")?
+                    }
+                    None => Collation::Utf8Bin,
+                };
+                Expr::Case(operand, whens, els, c)
+            }
             E::Cast { expr, data_type, .. } => {
                 Expr::Cast(Box::new(self.bind(expr)?), cast_target(&data_type.to_string())?)
             }
@@ -665,9 +829,33 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             E::Ceil { expr, .. } => Expr::Func(Func::Ceil, vec![self.bind(expr)?]),
             E::Floor { expr, .. } => Expr::Func(Func::Floor, vec![self.bind(expr)?]),
-            E::Position { expr, r#in } => Expr::Func(Func::Locate, vec![self.bind(expr)?, self.bind(r#in)?]),
+            E::Position { expr, r#in } => {
+                let (n, h) = (self.bind(expr)?, self.bind(r#in)?);
+                let c = self.cmp_coll(&[&n, &h], "locate")?;
+                Expr::Func(Func::Locate(c), vec![n, h])
+            }
             E::Function(f) => self.bind_function(f)?,
-            E::Collate { expr, .. } => self.bind(expr)?,
+            E::Collate { expr, collation } => {
+                let x = self.bind(expr)?;
+                let name = object_name_parts(collation).join(".").to_ascii_lowercase();
+                let c = Collation::from_name(&name)
+                    .ok_or_else(|| SqlError::new(1273, "HY000", format!("Unknown collation: '{}'", name)))?;
+                let cs = name.split('_').next().unwrap_or("");
+                // A binary string has no collation; a number becomes text.
+                let binary = matches!(self.derive(&x), Some(d) if d.coll == Collation::Binary);
+                if binary || (c != Collation::Binary && !matches!(cs, "utf8mb4" | "utf8mb3" | "utf8" | "uca1400")) {
+                    return Err(SqlError::new(
+                        1253,
+                        "42000",
+                        format!(
+                            "COLLATION '{}' is not valid for CHARACTER SET '{}'",
+                            name,
+                            if binary { "binary" } else { "utf8mb4" }
+                        ),
+                    ));
+                }
+                Expr::Collate(Box::new(x), c)
+            }
             E::TypedString(ts) => self.bind_value(&ts.value.value)?,
             E::Tuple(items) if items.len() == 1 => self.bind(&items[0])?,
             E::Subquery(_) | E::InSubquery { .. } | E::Exists { .. } => {
@@ -736,7 +924,7 @@ impl<'a, 'c> Binder<'a, 'c> {
         let mut conj: Option<Expr> = None;
         for (l, r) in lhs.iter().zip(rhs) {
             let r = self.bind(r)?;
-            let c = self.temporal_cmp(l.clone(), CmpOp::Eq, r);
+            let c = self.temporal_cmp(l.clone(), CmpOp::Eq, r, "=")?;
             conj = Some(match conj {
                 None => c,
                 Some(x) => Expr::And(Box::new(x), Box::new(c)),
@@ -755,7 +943,8 @@ impl<'a, 'c> Binder<'a, 'c> {
                     A::FunctionArgumentClause::OrderBy(obs) => {
                         for o in obs {
                             let desc = matches!(o.options.sort, Some(A::OrderBySort::Desc));
-                            order.push((self.bind(&o.expr)?, desc));
+                            let k = self.bind(&o.expr)?;
+                            order.push((self.sort_key(k), desc));
                         }
                     }
                     A::FunctionArgumentClause::Separator(v) => match &v.value {
@@ -807,6 +996,11 @@ impl<'a, 'c> Binder<'a, 'c> {
             } else {
                 args.into_iter().next()
             };
+            let coll = arg
+                .as_ref()
+                .and_then(|a| self.derive(a))
+                .map(|d| d.coll)
+                .unwrap_or_default();
             let aggs = self.aggs.as_mut().unwrap();
             aggs.push(AggCall {
                 func,
@@ -814,6 +1008,7 @@ impl<'a, 'c> Binder<'a, 'c> {
                 distinct,
                 order,
                 sep,
+                coll,
             });
             return Ok(Expr::Col(AGG_BASE + aggs.len() - 1));
         }
@@ -824,6 +1019,29 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             return Err(SqlError::unsupported("VALUES() outside ON DUPLICATE KEY UPDATE"));
         }
+        if matches!(name.as_str(), "COLLATION" | "COERCIBILITY" | "CHARSET") {
+            // Known when the statement is planned.
+            let (args, _, _) = self.func_args(f)?;
+            let [a] = args.as_slice() else {
+                return Err(SqlError::new(
+                    1582,
+                    "42000",
+                    format!("Incorrect parameter count in the call to native function '{}'", name),
+                ));
+            };
+            let d = self.derive(a);
+            return Ok(Expr::Lit(match name.as_str() {
+                "COLLATION" => Value::str(d.as_ref().map(|d| d.name.as_str()).unwrap_or("binary")),
+                "COERCIBILITY" => Value::Int(d.map(|d| d.coercibility).unwrap_or(coercibility::NUMERIC) as i64),
+                _ => {
+                    let cs = match &d {
+                        Some(d) if d.coll != Collation::Binary => d.name.split('_').next().unwrap_or("utf8mb4"),
+                        _ => "binary",
+                    };
+                    Value::str(cs)
+                }
+            }));
+        }
         let func = Func::lookup(&name).ok_or_else(|| {
             SqlError::new(
                 1305,
@@ -832,6 +1050,21 @@ impl<'a, 'c> Binder<'a, 'c> {
             )
         })?;
         let (args, _, _) = self.func_args(f)?;
+        let all: Vec<&Expr> = args.iter().collect();
+        let lower = name.to_ascii_lowercase();
+        let func = match func {
+            Func::NullIf(_) => Func::NullIf(self.cmp_coll(&all, &lower)?),
+            Func::Greatest(_) => Func::Greatest(self.cmp_coll(&all, &lower)?),
+            Func::Least(_) => Func::Least(self.cmp_coll(&all, &lower)?),
+            Func::Locate(_) => Func::Locate(self.cmp_coll(&all, &lower)?),
+            Func::WeightString(_) => Func::WeightString(
+                args.first()
+                    .and_then(|a| self.derive(a))
+                    .map(|d| d.coll)
+                    .unwrap_or_default(),
+            ),
+            f => f,
+        };
         Ok(Expr::Func(func, args))
     }
 }
@@ -886,6 +1119,19 @@ enum Pred {
     Range(Option<(Expr, bool)>, Option<(Expr, bool)>),
 }
 
+/// Can an index on column `c` of `t` serve a comparison of it under
+/// `coll`? A text column's index orders by the column's collation, so a
+/// range needs that collation; an equality may also use a case-insensitive
+/// index for a binary comparison (it finds a superset of the matches, and
+/// the statement's filter keeps the right ones).
+fn index_serves(t: &TableDef, c: usize, coll: Collation, eq: bool) -> bool {
+    if !t.columns[c].ty().is_text() {
+        return true;
+    }
+    let own = t.layout.colls[c];
+    own == coll || (eq && own.is_ci() && !coll.is_ci())
+}
+
 /// Column refs of `e` all lie outside [lo, hi): computable before this table.
 fn independent_of(e: &Expr, lo: usize, hi: usize, max_allowed: usize) -> bool {
     let mut cols = Vec::new();
@@ -911,26 +1157,30 @@ fn eq_alternatives(
     e: &Expr,
     local: &dyn Fn(&Expr) -> Option<usize>,
     indep: &dyn Fn(&Expr) -> bool,
+    serves: &dyn Fn(usize, Collation) -> bool,
 ) -> Option<Vec<EqAlt>> {
     match e {
-        Expr::Cmp(a, CmpOp::Eq, b) => match (local(a), local(b)) {
-            (Some(c), None) if indep(b) => Some(vec![vec![(c, (**b).clone())]]),
-            (None, Some(c)) if indep(a) => Some(vec![vec![(c, (**a).clone())]]),
+        Expr::Cmp(a, CmpOp::Eq, b, coll) => match (local(a), local(b)) {
+            (Some(c), None) if indep(b) && serves(c, *coll) => Some(vec![vec![(c, (**b).clone())]]),
+            (None, Some(c)) if indep(a) && serves(c, *coll) => Some(vec![vec![(c, (**a).clone())]]),
             _ => None,
         },
-        Expr::InList(x, list, false) => {
+        Expr::InList(x, list, false, coll) => {
             let c = local(x)?;
-            if list.is_empty() || list.len() > MAX_KEYS || !list.iter().all(|v| v.is_constant()) {
+            if list.is_empty() || list.len() > MAX_KEYS || !list.iter().all(|v| v.is_constant()) || !serves(c, *coll) {
                 return None;
             }
             Some(list.iter().map(|v| vec![(c, v.clone())]).collect())
         }
         Expr::Or(a, b) => {
-            let mut l = eq_alternatives(a, local, indep)?;
-            l.extend(eq_alternatives(b, local, indep)?);
+            let mut l = eq_alternatives(a, local, indep, serves)?;
+            l.extend(eq_alternatives(b, local, indep, serves)?);
             (l.len() <= MAX_KEYS).then_some(l)
         }
-        Expr::And(a, b) => match (eq_alternatives(a, local, indep), eq_alternatives(b, local, indep)) {
+        Expr::And(a, b) => match (
+            eq_alternatives(a, local, indep, serves),
+            eq_alternatives(b, local, indep, serves),
+        ) {
             (Some(x), Some(y)) => cross(&x, &y),
             (Some(x), None) | (None, Some(x)) => Some(x),
             (None, None) => None,
@@ -962,10 +1212,11 @@ fn conj_alternatives(
     conj: &[Expr],
     local: &dyn Fn(&Expr) -> Option<usize>,
     indep: &dyn Fn(&Expr) -> bool,
+    serves: &dyn Fn(usize, Collation) -> bool,
 ) -> Option<Vec<EqAlt>> {
     let mut acc: Option<Vec<EqAlt>> = None;
     for p in conj {
-        if let Some(a) = eq_alternatives(p, local, indep) {
+        if let Some(a) = eq_alternatives(p, local, indep, serves) {
             acc = Some(match acc {
                 None => a,
                 Some(prev) => cross(&prev, &a)?,
@@ -1037,7 +1288,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
     };
     for p in conj {
         match p {
-            Expr::Cmp(a, op, b) => {
+            Expr::Cmp(a, op, b, coll) => {
                 let (col, other, op) = match (local(a), local(b)) {
                     (Some(c), None) if independent_of(b, offset, hi, offset) => (c, b, *op),
                     (None, Some(c)) if independent_of(a, offset, hi, offset) => (
@@ -1053,6 +1304,9 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
                     ),
                     _ => continue,
                 };
+                if !index_serves(table, col, *coll, matches!(op, CmpOp::Eq | CmpOp::NullSafeEq)) {
+                    continue;
+                }
                 let o = (**other).clone();
                 preds[col].push(match op {
                     CmpOp::Eq | CmpOp::NullSafeEq => Pred::Eq(o),
@@ -1063,15 +1317,21 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
                     CmpOp::NotEq => continue,
                 });
             }
-            Expr::Between(x, lo, hi2, false) => {
+            Expr::Between(x, lo, hi2, false, coll) => {
                 if let Some(c) = local(x) {
-                    if independent_of(lo, offset, hi, offset) && independent_of(hi2, offset, hi, offset) {
+                    if independent_of(lo, offset, hi, offset)
+                        && independent_of(hi2, offset, hi, offset)
+                        && index_serves(table, c, *coll, false)
+                    {
                         preds[c].push(Pred::Range(Some(((**lo).clone(), true)), Some(((**hi2).clone(), true))));
                     }
                 }
             }
-            Expr::InList(x, list, false) => {
+            Expr::InList(x, list, false, coll) => {
                 if let Some(c) = local(x) {
+                    if !index_serves(table, c, *coll, true) {
+                        continue;
+                    }
                     if list.len() == 1 && list[0].is_constant() {
                         preds[c].push(Pred::Eq(list[0].clone()));
                     } else if list.iter().all(|e| e.is_constant()) && !list.is_empty() {
@@ -1086,7 +1346,8 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
     // Several equality keys (IN lists, ORs of equalities, row-value IN):
     // look each one up instead of scanning (issue #10).
     let indep = |e: &Expr| independent_of(e, offset, hi, offset);
-    if let Some(alts) = conj_alternatives(conj, &local, &indep) {
+    let serves = |c: usize, coll: Collation| index_serves(table, c, coll, true);
+    if let Some(alts) = conj_alternatives(conj, &local, &indep, &serves) {
         if alts.len() > 1 {
             if let Some(u) = union_path(table, &alts) {
                 best = (8, u);
@@ -1333,7 +1594,7 @@ fn post_agg(e: &Expr, groups: &[Expr], aggs: &mut Vec<AggCall>) -> Expr {
             // rebuild children
             let mut slot = |x: &Expr| Box::new(post_agg(x, groups, aggs));
             match e {
-                Expr::Cmp(a, o, b) => Expr::Cmp(slot(a), *o, slot(b)),
+                Expr::Cmp(a, o, b, c) => Expr::Cmp(slot(a), *o, slot(b), *c),
                 Expr::Arith(a, o, b) => Expr::Arith(slot(a), *o, slot(b)),
                 Expr::And(a, b) => Expr::And(slot(a), slot(b)),
                 Expr::Or(a, b) => Expr::Or(slot(a), slot(b)),
@@ -1342,22 +1603,24 @@ fn post_agg(e: &Expr, groups: &[Expr], aggs: &mut Vec<AggCall>) -> Expr {
                 Expr::Neg(a) => Expr::Neg(slot(a)),
                 Expr::IsNull(a, n) => Expr::IsNull(slot(a), *n),
                 Expr::IsTrue(a, t, n) => Expr::IsTrue(slot(a), *t, *n),
-                Expr::Like(a, b, n) => Expr::Like(slot(a), slot(b), *n),
-                Expr::Between(a, b, c, n) => Expr::Between(slot(a), slot(b), slot(c), *n),
+                Expr::Like(a, b, n, c) => Expr::Like(slot(a), slot(b), *n, *c),
+                Expr::Between(a, b, c, n, k) => Expr::Between(slot(a), slot(b), slot(c), *n, *k),
                 Expr::Cast(a, t) => Expr::Cast(slot(a), *t),
-                Expr::InList(a, l, n) => {
+                Expr::Collate(a, c) => Expr::Collate(slot(a), *c),
+                Expr::Key(a, c) => Expr::Key(slot(a), *c),
+                Expr::InList(a, l, n, c) => {
                     let a2 = slot(a);
-                    Expr::InList(a2, l.iter().map(|x| post_agg(x, groups, aggs)).collect(), *n)
+                    Expr::InList(a2, l.iter().map(|x| post_agg(x, groups, aggs)).collect(), *n, *c)
                 }
                 Expr::Func(f, args) => Expr::Func(*f, args.iter().map(|x| post_agg(x, groups, aggs)).collect()),
-                Expr::Case(o, w, el) => {
+                Expr::Case(o, w, el, c) => {
                     let o2 = o.as_ref().map(|x| Box::new(post_agg(x, groups, aggs)));
                     let w2 = w
                         .iter()
                         .map(|(a, b)| (post_agg(a, groups, aggs), post_agg(b, groups, aggs)))
                         .collect();
                     let e2 = el.as_ref().map(|x| Box::new(post_agg(x, groups, aggs)));
-                    Expr::Case(o2, w2, e2)
+                    Expr::Case(o2, w2, e2, *c)
                 }
                 _ => e.clone(),
             }
@@ -1484,10 +1747,16 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
     }) {
         return Err(SqlError::new(1056, "42000", "Can't group on an aggregate"));
     }
+    let group_coll: Vec<Collation> = groups
+        .iter()
+        .map(|g| b.derive(g).map(|d| d.coll).unwrap_or_default())
+        .collect();
 
     // HAVING and ORDER BY may use aggregates too.
     let mut having = None;
     let mut order: Vec<(Expr, bool)> = Vec::new();
+    let mut order_coll: Vec<Collation> = Vec::new();
+    let proj_derived: Vec<Option<Derived>>;
     {
         let mut hb = Binder {
             scope: &scope,
@@ -1510,10 +1779,12 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
                 for o in list {
                     let e = resolve_alias_or_position(&o.expr, &sel.projection, &proj, &mut hb, &mut Some(()))?;
                     let desc = matches!(o.options.sort, Some(A::OrderBySort::Desc));
+                    order_coll.push(hb.derive(&e).map(|d| d.coll).unwrap_or_default());
                     order.push((e, desc));
                 }
             }
         }
+        proj_derived = proj.iter().map(|e| hb.derive(e)).collect();
     }
 
     let aggregated = !aggs.is_empty() || !groups.is_empty();
@@ -1531,11 +1802,24 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         order = order2;
         agg_plan = Some(AggPlan {
             group: groups,
+            group_coll,
             aggs: all_aggs,
         });
     } else if having.is_some() {
         // HAVING without aggregation behaves like WHERE on the projection
     }
+    // Sort by collation keys (after post_agg, which matches expressions).
+    let order: Vec<(Expr, bool)> = order
+        .into_iter()
+        .zip(&order_coll)
+        .map(|((e, d), c)| {
+            if c.is_ci() {
+                (Expr::Key(Box::new(e), *c), d)
+            } else {
+                (e, d)
+            }
+        })
+        .collect();
 
     // Result metadata
     let types_in: Vec<ExprType> = if let Some(ap) = &agg_plan {
@@ -1554,7 +1838,11 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         let mut c = match src {
             Some((t, ci)) => {
                 let cd = &t.columns[*ci];
-                cd.ty().result_column(name, &t.name, cd.nullable, t.is_pk_col(*ci))
+                let mut c = cd.ty().result_column(name, &t.name, cd.nullable, t.is_pk_col(*ci));
+                if cd.ty().is_text() {
+                    c.charset = cd.coll().id();
+                }
+                c
             }
             None => {
                 let et = infer(e, &types_in, ctx.params);
@@ -1563,6 +1851,12 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
                     None => Column::new(name, et.ty),
                 };
                 c.decimals = et.decimals;
+                let stringy = matches!(et.ty, ColumnType::VarString | ColumnType::String | ColumnType::Blob);
+                if let Some(d) = &proj_derived[i] {
+                    if stringy && d.coll != Collation::Binary && c.charset != tarn_common::CHARSET_BINARY {
+                        c.charset = d.coll.id();
+                    }
+                }
                 c
             }
         };
@@ -1617,6 +1911,10 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         project: proj,
         columns: columns.into(),
         distinct: matches!(sel.distinct, Some(A::Distinct::Distinct)),
+        distinct_coll: proj_derived
+            .iter()
+            .map(|d| d.as_ref().map(|d| d.coll).unwrap_or_default())
+            .collect(),
         limit,
         offset,
         lock: q.locks.first().filter(|_| lockable).map(|l| RowLock {
@@ -1915,7 +2213,10 @@ fn assignment_col(table: &TableDef, t: &A::AssignmentTarget) -> SqlResult<usize>
 
 fn order_by_list(list: &[A::OrderByExpr], b: &mut Binder) -> SqlResult<Vec<(Expr, bool)>> {
     list.iter()
-        .map(|o| Ok((b.bind(&o.expr)?, matches!(o.options.sort, Some(A::OrderBySort::Desc)))))
+        .map(|o| {
+            let e = b.bind(&o.expr)?;
+            Ok((b.sort_key(e), matches!(o.options.sort, Some(A::OrderBySort::Desc))))
+        })
         .collect()
 }
 
@@ -2017,8 +2318,11 @@ pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
     let mut default_null = false;
     let mut ai = false;
     let (mut primary, mut unique) = (false, false);
+    let (mut charset, mut collation) = (None::<String>, None::<String>);
     for o in &c.options {
         match &o.option {
+            A::ColumnOption::CharacterSet(n) => charset = Some(object_name_parts(n).join(".")),
+            A::ColumnOption::Collation(n) => collation = Some(known_collation(&object_name_parts(n).join("."))?),
             A::ColumnOption::NotNull => nullable = false,
             A::ColumnOption::Null => nullable = true,
             A::ColumnOption::Default(e) => {
@@ -2064,10 +2368,7 @@ pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
                     ai = true;
                 }
             }
-            A::ColumnOption::Comment(_)
-            | A::ColumnOption::CharacterSet(_)
-            | A::ColumnOption::Collation(_)
-            | A::ColumnOption::OnUpdate(_) => {}
+            A::ColumnOption::Comment(_) | A::ColumnOption::OnUpdate(_) => {}
             other => return Err(SqlError::unsupported(format!("column option {}", other))),
         }
     }
@@ -2091,6 +2392,18 @@ pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
             format!("Invalid default value for '{}'", c.name.value),
         ));
     }
+    // A text column's collation as declared (COLLATE, or the default of its
+    // CHARACTER SET); None: the table's default, filled in by the caller.
+    let collation = match (ty.is_text(), collation, charset) {
+        (false, _, _) => None,
+        (true, Some(co), _) => Some(co),
+        (true, None, Some(cs)) => Some(
+            charset_default_collation(&cs)
+                .ok_or_else(|| unknown_charset(&cs))?
+                .to_string(),
+        ),
+        (true, None, None) => None,
+    };
     Ok(ColumnSpec {
         def: ColumnDef {
             name: c.name.value.clone(),
@@ -2103,6 +2416,8 @@ pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
             storage_nullable: None,
             fill: None,
             hidden: false,
+            collation,
+            weight: None,
             sql_type: Some(ty),
         },
         primary,
@@ -2126,7 +2441,28 @@ fn row_id_column() -> ColumnDef {
         storage_nullable: None,
         fill: None,
         hidden: true,
+        collation: None,
+        weight: None,
         sql_type: Some(ty),
+    }
+}
+
+/// The default collation a table declares (`[DEFAULT] CHARSET` /
+/// `COLLATE` options), if any.
+pub(crate) fn table_collation_option(key: &str, value: &str) -> SqlResult<Option<Option<String>>> {
+    let v = value.trim().trim_matches('\'').trim_matches('"').trim_matches('`');
+    match key.to_ascii_uppercase().as_str() {
+        "DEFAULT CHARSET" | "CHARSET" | "DEFAULT CHARACTER SET" | "CHARACTER SET" => Ok(Some(
+            (!v.eq_ignore_ascii_case("default"))
+                .then(|| {
+                    charset_default_collation(v)
+                        .map(str::to_string)
+                        .ok_or_else(|| unknown_charset(v))
+                })
+                .transpose()?,
+        )),
+        "DEFAULT COLLATE" | "COLLATE" => Ok(Some(Some(known_collation(v)?))),
+        _ => Ok(None),
     }
 }
 
@@ -2459,8 +2795,19 @@ fn plan_create_table(
     let mut auto_increment = None;
     let mut comment = String::new();
     let mut engine = None;
+    let (mut table_cs_coll, mut table_coll) = (None::<String>, None::<String>);
     if let A::CreateTableOptions::Plain(opts) = &ct.table_options {
         for o in opts {
+            if let A::SqlOption::KeyValue { key, value } = o {
+                if let Some(c) = table_collation_option(&key.value, &value.to_string())? {
+                    if key.value.to_ascii_uppercase().contains("COLLATE") {
+                        table_coll = c;
+                    } else {
+                        table_cs_coll = c;
+                    }
+                    continue;
+                }
+            }
             match o {
                 A::SqlOption::KeyValue { key, value } if key.value.eq_ignore_ascii_case("AUTO_INCREMENT") => {
                     auto_increment = value.to_string().trim_matches('\'').parse::<u64>().ok();
@@ -2478,6 +2825,17 @@ fn plan_create_table(
     if let Some(A::CommentDef::WithEq(c) | A::CommentDef::WithoutEq(c)) = &ct.comment {
         comment = c.clone();
     }
+    // Text columns without a collation of their own take the table's
+    // default: its COLLATE, the default of its CHARSET, or the server's.
+    let table_collation = match table_coll.or(table_cs_coll) {
+        Some(c) => c,
+        None => known_collation(ctx.default_coll)?,
+    };
+    for c in columns.iter_mut() {
+        if c.ty().is_text() && c.collation.is_none() {
+            c.collation = Some(table_collation.clone());
+        }
+    }
     let mut def = TableDef {
         db,
         name,
@@ -2491,6 +2849,7 @@ fn plan_create_table(
         ver: 0,
         bucket: None,
         dropped: Vec::new(),
+        collation: Some(table_collation),
         foreign_keys: Vec::new(),
         bucket_index: None,
         layout: Default::default(),
@@ -2518,6 +2877,9 @@ fn plan_create_table(
         }
     }
     def.resolve_types()?;
+    // Case-insensitive columns in an index get their weight fields, after
+    // bucket_id.
+    def.assign_weight_fields(&|_| true)?;
     catalog::validate(&def)?;
     Ok(Stmt::CreateTable {
         def: Box::new(def),
@@ -2540,6 +2902,8 @@ mod tests {
             catalog: &c0,
             db: Some("sbtest"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let Stmt::CreateTable { mut def, .. } = plan(ct, &ctx).unwrap() else {
             panic!()
@@ -2556,6 +2920,8 @@ mod tests {
             catalog: &c0,
             db: Some("d"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let engine = |sql: &str| match plan(sql, &ctx) {
             Ok(Stmt::CreateTable { engine, .. }) => Ok(engine),
@@ -2586,6 +2952,8 @@ mod tests {
             catalog: &cat,
             db: Some("sbtest"),
             params: &n.params,
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         match plan(&n.template, &ctx).unwrap() {
             Stmt::Select(s) => (*s).clone(),
@@ -2607,6 +2975,8 @@ mod tests {
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let ins = |sql: &str| match plan(sql, &ctx) {
             Ok(Stmt::Insert(p)) => Ok(p.on_dup.clone()),
@@ -2719,6 +3089,8 @@ mod tests {
             catalog: &c0,
             db: Some("d"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let def = |sql: &str| match plan(sql, &ctx) {
             Ok(Stmt::CreateTable { def, .. }) => Ok(def),
@@ -2760,6 +3132,8 @@ mod tests {
             catalog: &cat,
             db: Some("d"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         match plan("SELECT * FROM log", &ctx) {
             Ok(Stmt::Select(s)) => assert_eq!(s.columns.len(), 2),
@@ -2787,6 +3161,8 @@ mod tests {
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let code = |sql: &str| plan(sql, &ctx).err().map(|e| e.code);
         match plan(
@@ -2831,7 +3207,7 @@ mod tests {
         };
         let lit = |v: Option<i64>| Expr::Lit(v.map(Value::Int).unwrap_or(Value::Null));
         let ev = |l: [Option<i64>; 2], op, r: [Option<i64>; 2]| {
-            let e = row_compare(&l.map(lit), op, &r.map(lit));
+            let e = row_compare(&l.map(lit), op, &r.map(lit), &[Collation::Utf8Bin; 2]);
             match e.eval(&[], &cx).unwrap() {
                 Value::Null => None,
                 v => Some(v.as_i64().unwrap() != 0),
@@ -2868,6 +3244,8 @@ mod tests {
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let code = |sql: &str| plan(sql, &ctx).err().map(|e| e.code);
         assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) > (1, 2, 3)"), Some(1241));
@@ -2887,6 +3265,92 @@ mod tests {
     }
 
     #[test]
+    fn collation_paths() {
+        // issue #13: a case-insensitive primary key is its own shard key,
+        // indexed and hashed by weight strings
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_general_ci",
+            default_coll: "utf8mb4_bin",
+        };
+        let ct = "CREATE TABLE h (handle VARCHAR(20) PRIMARY KEY, b VARCHAR(10), n INT, KEY kb (b)) \
+                  COLLATE utf8mb4_general_ci";
+        let Stmt::CreateTable { mut def, .. } = plan(ct, &ctx).unwrap() else {
+            panic!()
+        };
+        def.space_id = 600;
+        assert!(!def.layout.identity);
+        assert_eq!(
+            def.index_parts(&def.indexes[0])[0],
+            ("_weight_4".into(), "varbinary".into(), false)
+        );
+        let a = def.shard_key_of(&[Value::str("Alice"), Value::Null, Value::Null]);
+        let b = def.shard_key_of(&[Value::str("aLICE"), Value::Null, Value::Null]);
+        assert_eq!(a, b);
+        assert!(matches!(&a[0], Value::Bin(_)));
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let path = |sql: &str| {
+            let n = normalize(sql, Mode::Literals).unwrap();
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &n.params,
+                conn_coll: "utf8mb4_general_ci",
+                default_coll: "utf8mb4_bin",
+            };
+            match plan(&n.template, &ctx) {
+                Ok(Stmt::Select(s)) => match &s.source {
+                    Source::Table(t) => Ok(t.path.clone()),
+                    _ => panic!(),
+                },
+                Ok(_) => panic!(),
+                Err(e) => Err(e.code),
+            }
+        };
+        assert!(matches!(
+            path("SELECT n FROM h WHERE handle = 'x'"),
+            Ok(AccessPath::Point { .. })
+        ));
+        // a binary comparison may use the case-insensitive index (a superset)
+        assert!(matches!(
+            path("SELECT n FROM h WHERE handle = 'x' COLLATE utf8mb4_bin"),
+            Ok(AccessPath::Point { .. })
+        ));
+        // ... but not for a range, whose order differs
+        assert!(matches!(
+            path("SELECT n FROM h WHERE handle > 'x' COLLATE utf8mb4_bin"),
+            Ok(AccessPath::Full)
+        ));
+        assert!(matches!(
+            path("SELECT n FROM h WHERE b >= 'x'"),
+            Ok(AccessPath::Range { index: 1, .. })
+        ));
+        // a keyset cursor through the case-insensitive primary key
+        assert!(matches!(
+            path("SELECT n FROM h WHERE (handle, n) > ('X', 1)"),
+            Ok(AccessPath::Range { index: 0, .. })
+        ));
+        assert_eq!(
+            path("SELECT n FROM h WHERE handle = 'x' COLLATE utf8mb4_unicode_ci")
+                .ok()
+                .map(|_| ()),
+            Some(())
+        );
+        assert_eq!(
+            path("SELECT n FROM h WHERE handle = 'x' COLLATE nonesuch").err(),
+            Some(1273)
+        );
+        assert_eq!(
+            path("SELECT n FROM h WHERE b = CAST('a' AS BINARY) COLLATE utf8mb4_bin").err(),
+            Some(1253)
+        );
+        assert!(path("SELECT n FROM h WHERE n COLLATE utf8mb4_bin = '5'").is_ok());
+    }
+
+    #[test]
     fn partition_by_key() {
         let (sql, key) = extract_partition_by_key(
             "CREATE TABLE o (tenant_id INT, id INT, PRIMARY KEY (tenant_id, id)) PARTITION BY KEY (tenant_id) PARTITIONS 16",
@@ -2898,6 +3362,8 @@ mod tests {
             catalog: &c0,
             db: Some("d"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let bad = "CREATE TABLE o (tenant_id INT, id INT, email VARCHAR(10), PRIMARY KEY (tenant_id, id), UNIQUE KEY (email)) PARTITION BY KEY (tenant_id)";
         assert!(plan(bad, &ctx).is_err());

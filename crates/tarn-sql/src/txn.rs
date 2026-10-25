@@ -54,6 +54,8 @@ pub struct BufWrite {
     pub op: WOp,
     /// Full new row (columns only) for insert/replace.
     pub row: Option<Row>,
+    /// Primary key as the primary index holds it (`TableDef::pk_key`: a
+    /// case-insensitive part is its weight string).
     pub pk: Vec<Value>,
 }
 
@@ -92,7 +94,8 @@ pub enum Mode {
     ReadCommitted,
 }
 
-/// A row lock to take: a row by primary key (`index` 0) or a unique-key value.
+/// A row lock to take: a row by primary key (`index` 0) or a unique-key
+/// value, as the index holds it (`TableDef::index_key`).
 pub struct LockKey {
     pub table: Arc<TableDef>,
     pub index: u32,
@@ -455,14 +458,10 @@ impl Txn {
         if mine.is_empty() {
             return rows;
         }
-        let pk_cols = &t.indexes[0].cols;
         let written: BTreeSet<Bytes> = mine.iter().map(|w| key_bytes(&w.pk)).collect();
         let mut out: Vec<Row> = rows
             .into_iter()
-            .filter(|r| {
-                let pk: Vec<Value> = pk_cols.iter().map(|&c| r[c].clone()).collect();
-                !written.contains(&key_bytes(&pk))
-            })
+            .filter(|r| !written.contains(&key_bytes(&t.pk_key(r))))
             .collect();
         for w in mine {
             if let Some(r) = &w.row {
@@ -498,8 +497,8 @@ impl Txn {
             m.uint(w.table.space_id as u64);
             match &w.row {
                 Some(r) if w.op != WOp::Delete => {
-                    let sk: Vec<Value> = w.table.shard_key.iter().map(|&c| r[c].clone()).collect();
-                    w.table.encode_tuple(r, cluster.bucket_of(&sk) as u64, m);
+                    w.table
+                        .encode_tuple(r, cluster.bucket_of(&w.table.shard_key_of(r)) as u64, m);
                 }
                 _ => {
                     m.vals(&w.pk);

@@ -13,7 +13,17 @@
 //! written as nil from then on; renames and reordering change only the
 //! definition. So a column's field (`ColumnDef::field`) is not always its
 //! position, and `Layout` maps between the two.
+//!
+//! A case-insensitive text column (issue #13) that is part of an index has a
+//! second field, its *weight field* (`_weight_<field>`, varbinary): the
+//! column's comparison key under its collation (`Collation::key`), written
+//! with every row. Its indexes are built on that field instead of the
+//! column's, so the storage orders, compares and enforces uniqueness exactly
+//! as the SQL layer's collation does, and the shard key hashes it. Index
+//! keys (lookups, read sets, locks, the write buffer) are therefore in that
+//! form: `TableDef::index_key`.
 
+use crate::collation::Collation;
 use crate::mpw::Mp;
 use crate::types::SqlType;
 use serde::{Deserialize, Serialize};
@@ -104,6 +114,15 @@ pub struct ColumnDef {
     /// CREATE TABLE`, and statements cannot name it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Collation of a text column, as declared or inherited (lower case).
+    /// None: utf8mb4_bin (also every definition written before collations
+    /// existed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
+    /// Field holding the column's weight string: a case-insensitive column
+    /// that is part of an index (see the module comment).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<u32>,
     #[serde(skip)]
     pub sql_type: Option<SqlType>,
 }
@@ -121,6 +140,25 @@ impl ColumnDef {
     }
     pub fn storage_nullable(&self) -> bool {
         self.storage_nullable.unwrap_or(self.nullable)
+    }
+    /// The collation values of this column compare under: its own for text,
+    /// `Binary` for binary strings, utf8mb4_bin (unused) otherwise.
+    pub fn coll(&self) -> Collation {
+        let t = self.ty();
+        if t.is_binary() {
+            Collation::Binary
+        } else if t.is_text() {
+            self.collation
+                .as_deref()
+                .and_then(Collation::from_name)
+                .unwrap_or(Collation::Utf8Bin)
+        } else {
+            Collation::Utf8Bin
+        }
+    }
+    /// Name of the collation (text columns).
+    pub fn collation_name(&self) -> &str {
+        self.collation.as_deref().unwrap_or("utf8mb4_bin")
     }
 }
 
@@ -167,6 +205,12 @@ pub struct Layout {
     pub field_col: Vec<Option<usize>>,
     /// Value of each column when the tuple ends before its field.
     pub fills: Vec<Value>,
+    /// Collation of each column (see `ColumnDef::coll`).
+    pub colls: Vec<Collation>,
+    /// Weight field of each column (case-insensitive columns in an index).
+    pub col_weight: Vec<Option<usize>>,
+    /// Column whose weight string each field holds.
+    pub field_weight: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -194,6 +238,10 @@ pub struct TableDef {
     /// Fields of dropped columns (named `_dropped_<n>` in the format).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped: Vec<u32>,
+    /// Default collation of the table's text columns (DEFAULT CHARSET /
+    /// COLLATE). None: utf8mb4_bin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign_keys: Vec<ForeignKeyDef>,
     /// Tarantool id of the bucket_id index (from the shard at load).
@@ -254,18 +302,26 @@ impl TableDef {
         }
         let n = self.columns.len();
         let col_field: Vec<usize> = (0..n).map(|c| self.field_of(c)).collect();
+        let col_weight: Vec<Option<usize>> = self.columns.iter().map(|c| c.weight.map(|f| f as usize)).collect();
         let bucket = self.bucket_field();
         let width = col_field
             .iter()
             .copied()
             .chain(std::iter::once(bucket))
             .chain(self.dropped.iter().map(|&f| f as usize))
+            .chain(col_weight.iter().flatten().copied())
             .max()
             .map(|m| m + 1)
             .unwrap_or(1);
         let mut field_col = vec![None; width];
         for (c, &f) in col_field.iter().enumerate() {
             field_col[f] = Some(c);
+        }
+        let mut field_weight = vec![None; width];
+        for (c, f) in col_weight.iter().enumerate() {
+            if let Some(f) = f {
+                field_weight[*f] = Some(c);
+            }
         }
         let mut fills = Vec::with_capacity(n);
         for c in &self.columns {
@@ -274,6 +330,7 @@ impl TableDef {
                 _ => Value::Null,
             });
         }
+        let colls: Vec<Collation> = self.columns.iter().map(|c| c.coll()).collect();
         let identity = bucket == n && width == n + 1 && col_field.iter().enumerate().all(|(c, &f)| c == f);
         self.layout = Layout {
             identity,
@@ -282,8 +339,93 @@ impl TableDef {
             col_field,
             field_col,
             fills,
+            colls,
+            col_weight,
+            field_weight,
         };
         Ok(())
+    }
+
+    /// The value an index holds for column `c` given the column's value:
+    /// the weight string of a column with a weight field, else the value.
+    pub fn key_part(&self, c: usize, v: &Value) -> Value {
+        match (self.layout.col_weight.get(c), v) {
+            (Some(Some(_)), Value::Str(b)) => Value::Bin(self.layout.colls[c].key(b)),
+            _ => v.clone(),
+        }
+    }
+
+    /// A lookup value for column `c` of an index, converted to what the
+    /// index holds; None if no stored value can equal it.
+    pub fn lookup_part(&self, c: usize, v: &Value) -> Option<Value> {
+        crate::exec::coerce_key_part(self.columns[c].ty(), v).map(|x| self.key_part(c, &x))
+    }
+
+    /// Index key of a row (as the index holds it).
+    pub fn index_key(&self, idx: &IndexDef, row: &[Value]) -> Vec<Value> {
+        idx.cols.iter().map(|&c| self.key_part(c, &row[c])).collect()
+    }
+
+    /// Primary key of a row, as the primary index holds it: the identity of
+    /// the row in the write buffer and in row locks.
+    pub fn pk_key(&self, row: &[Value]) -> Vec<Value> {
+        self.index_key(&self.indexes[0], row)
+    }
+
+    /// The values a row's shard key hashes (see route.rs).
+    pub fn shard_key_of(&self, row: &[Value]) -> Vec<Value> {
+        self.shard_key.iter().map(|&c| self.key_part(c, &row[c])).collect()
+    }
+
+    /// Order of two values of column `c` as its indexes order them.
+    pub fn key_cmp(&self, c: usize, a: &Value, b: &Value) -> std::cmp::Ordering {
+        crate::types::sort_cmp_coll(a, b, self.layout.colls[c])
+    }
+
+    /// Do two rows hold the same value of unique key `idx`? (A NULL part
+    /// never equals anything.)
+    pub fn same_key(&self, idx: &IndexDef, a: &[Value], b: &[Value]) -> bool {
+        idx.cols
+            .iter()
+            .all(|&c| !a[c].is_null() && !b[c].is_null() && self.key_cmp(c, &a[c], &b[c]) == std::cmp::Ordering::Equal)
+    }
+
+    /// Give every case-insensitive column in an index a weight field (after
+    /// the last field). Columns with `fresh(c)` false must have one already
+    /// (their stored rows would need rewriting): error 1235 otherwise.
+    pub fn assign_weight_fields(&mut self, fresh: &dyn Fn(&ColumnDef) -> bool) -> SqlResult<()> {
+        let mut next = self.layout.width.max(self.bucket_field() + 1) as u32;
+        for c in &self.columns {
+            if let Some(f) = c.field {
+                next = next.max(f + 1);
+            }
+            if let Some(f) = c.weight {
+                next = next.max(f + 1);
+            }
+        }
+        for &f in &self.dropped {
+            next = next.max(f + 1);
+        }
+        let mut need: Vec<usize> = Vec::new();
+        for idx in &self.indexes {
+            for &c in &idx.cols {
+                if self.columns[c].coll().is_ci() && self.columns[c].weight.is_none() && !need.contains(&c) {
+                    need.push(c);
+                }
+            }
+        }
+        need.sort();
+        for c in need {
+            if !fresh(&self.columns[c]) {
+                return Err(SqlError::unsupported(format!(
+                    "an index on case-insensitive column '{}' that has none yet (its rows would have to be rewritten)",
+                    self.columns[c].name
+                )));
+            }
+            self.columns[c].weight = Some(next);
+            next += 1;
+        }
+        self.resolve_types()
     }
 
     /// Write a row as a stored tuple (columns at their fields, bucket_id,
@@ -302,11 +444,12 @@ impl TableDef {
         for f in 0..l.width {
             if f == l.bucket {
                 m.uint(bucket_id);
+            } else if let Some(c) = l.field_col[f] {
+                m.val(&r[c]);
+            } else if let Some(c) = l.field_weight[f] {
+                m.val(&self.key_part(c, &r[c]));
             } else {
-                match l.field_col[f] {
-                    Some(c) => m.val(&r[c]),
-                    None => m.nil(),
-                };
+                m.nil();
             }
         }
     }
@@ -320,7 +463,11 @@ impl TableDef {
             return None;
         }
         let pad = (l.bucket + 1..l.width)
-            .map(|f| l.field_col[f].map(|c| l.fills[c].clone()).unwrap_or(Value::Null))
+            .map(|f| match (l.field_col[f], l.field_weight[f]) {
+                (Some(c), _) => l.fills[c].clone(),
+                (None, Some(c)) => self.key_part(c, &l.fills[c]),
+                _ => Value::Null,
+            })
             .collect();
         Some((l.bucket + 1, pad))
     }
@@ -339,6 +486,12 @@ impl TableDef {
                         col.ty().tarantool_type().to_string(),
                         col.storage_nullable(),
                     )
+                } else if let Some(c) = l.field_weight[f] {
+                    (
+                        weight_field_name(f),
+                        "varbinary".to_string(),
+                        self.columns[c].storage_nullable(),
+                    )
                 } else {
                     (dropped_field_name(f), "any".to_string(), true)
                 }
@@ -346,19 +499,46 @@ impl TableDef {
             .collect()
     }
 
-    /// Tarantool parts of an index: (field name, type, nullable).
+    /// Tarantool parts of an index: (field name, type, nullable). A column
+    /// with a weight field is indexed by that field.
     pub fn index_parts(&self, idx: &IndexDef) -> Vec<(String, String, bool)> {
         idx.cols
             .iter()
             .map(|&c| {
                 let col = &self.columns[c];
-                (
-                    col.name.clone(),
-                    col.ty().tarantool_type().to_string(),
-                    col.storage_nullable(),
-                )
+                match self.layout.col_weight[c] {
+                    Some(f) => (weight_field_name(f), "varbinary".to_string(), col.storage_nullable()),
+                    None => (
+                        col.name.clone(),
+                        col.ty().tarantool_type().to_string(),
+                        col.storage_nullable(),
+                    ),
+                }
             })
             .collect()
+    }
+
+    /// Like `index_parts`, by 1-based field number (ALTER TABLE builds).
+    pub fn index_part_fields(&self, idx: &IndexDef) -> Vec<(u32, String, bool)> {
+        idx.cols
+            .iter()
+            .map(|&c| {
+                let col = &self.columns[c];
+                match self.layout.col_weight[c] {
+                    Some(f) => (f as u32 + 1, "varbinary".to_string(), col.storage_nullable()),
+                    None => (
+                        self.layout.col_field[c] as u32 + 1,
+                        col.ty().tarantool_type().to_string(),
+                        col.storage_nullable(),
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    /// Name of the table's default collation.
+    pub fn collation_name(&self) -> &str {
+        self.collation.as_deref().unwrap_or("utf8mb4_bin")
     }
     pub fn is_pk_col(&self, c: usize) -> bool {
         self.indexes[0].cols.contains(&c)
@@ -433,6 +613,11 @@ pub fn space_name(db: &str, table: &str) -> String {
 /// Format name of the field of a dropped column.
 pub fn dropped_field_name(field: usize) -> String {
     format!("_dropped_{}", field)
+}
+
+/// Format name of a weight field.
+pub fn weight_field_name(field: usize) -> String {
+    format!("_weight_{}", field)
 }
 
 /// Immutable snapshot of all table definitions; replaced wholesale on DDL.
@@ -532,6 +717,8 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
             storage_nullable: None,
             fill: None,
             hidden: false,
+            collation: None,
+            weight: None,
             sql_type: None,
         })
         .collect();
@@ -556,6 +743,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
         dropped: Vec::new(),
         foreign_keys: Vec::new(),
         bucket_index: None,
+        collation: None,
         layout: Default::default(),
     };
     def.resolve_types()?;
@@ -636,6 +824,16 @@ pub fn validate(def: &TableDef) -> SqlResult<()> {
                 "HY000",
                 "A PRIMARY KEY must include all columns in the table's partitioning function",
             ));
+        }
+    }
+    for idx in &def.indexes {
+        for &c in &idx.cols {
+            if def.columns[c].coll().is_ci() && def.columns[c].weight.is_none() {
+                return Err(SqlError::internal(format!(
+                    "index {} on case-insensitive column {} without a weight field",
+                    idx.name, def.columns[c].name
+                )));
+            }
         }
     }
     for idx in &def.indexes[1..] {
