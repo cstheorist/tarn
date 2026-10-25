@@ -6,7 +6,7 @@ use crate::catalog::{IndexDef, TableDef};
 use crate::cluster::Cluster;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
-use crate::txn::{select_keys, select_rows, RangeRead, Row, Txn};
+use crate::txn::{select_keys, select_rows, LockKey, LockOpts, Locked, RangeRead, Row, Txn};
 use crate::types::{key_val, sort_cmp, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -28,6 +28,11 @@ pub enum ReadMode<'a> {
     Txn(&'a mut Txn),
     /// One lock-aware autocommit read (TarnCommit!SnapshotRead).
     Auto { calls: usize },
+    /// READ COMMITTED (TarnCommit!RCRead): every storage read sees the latest
+    /// committed state -- waiting out prepared transactions' W locks, as
+    /// autocommit reads do -- and is neither tracked nor validated; the
+    /// transaction's own buffered writes are overlaid.
+    Committed(&'a mut Txn),
 }
 
 /// Convert a key value to the exact type stored in the index column, or
@@ -113,7 +118,7 @@ pub fn shard_of_row(cluster: &Cluster, t: &TableDef, row: &[Value]) -> usize {
     cluster.shard_of(&sk)
 }
 
-fn eval_limit(e: &Option<Expr>, cx: &EvalCtx) -> SqlResult<Option<u64>> {
+pub(crate) fn eval_limit(e: &Option<Expr>, cx: &EvalCtx) -> SqlResult<Option<u64>> {
     match e {
         None => Ok(None),
         Some(e) => {
@@ -210,6 +215,16 @@ async fn fetch_keys(
                 rows.extend(select_keys(&client, 0, t, idx.id, ks, limit, true, false).await?);
             }
         }
+        ReadMode::Committed(_) => {
+            let mut futs = Vec::new();
+            for (s, ks) in &per_shard {
+                let client = cluster.shards[*s].client(cluster).await?;
+                futs.push(async move { select_keys(&client, 0, t, idx.id, ks, limit, true, false).await });
+            }
+            for r in futures::future::join_all(futs).await {
+                rows.extend(r?);
+            }
+        }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
             for (s, ks) in &per_shard {
@@ -285,6 +300,19 @@ async fn fetch_stored(
     outer: &[Value],
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Vec<Row>> {
+    fetch_stored_from(cluster, mode, ta, outer, cx, None).await
+}
+
+/// `fetch_stored`, but a range scan (a `Range` path or a single prefix)
+/// starts at `resume` (index key, inclusive?) instead of its lower bound.
+async fn fetch_stored_from(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    ta: &TableAccess,
+    outer: &[Value],
+    cx: &EvalCtx<'_>,
+    resume: Option<(&[Value], bool)>,
+) -> SqlResult<Vec<Row>> {
     let t = &ta.table;
     let limit = eval_limit(&ta.limit, cx)?.map(|l| l.min(u32::MAX as u64) as u32);
     let mut calls: Vec<Call> = Vec::new();
@@ -346,11 +374,15 @@ async fn fetch_stored(
                 lo_incl: true,
                 hi_incl: true,
             };
+            let (key, iter) = match resume {
+                Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
+                None => (prefix.clone(), Iter::Ge),
+            };
             for s in shards {
                 calls.push(Call {
                     shard: s,
-                    key: prefix.clone(),
-                    iter: Iter::Ge,
+                    key: key.clone(),
+                    iter,
                     limit,
                     end: Some((prefix.clone(), true)),
                     range: Some(range.clone()),
@@ -456,6 +488,10 @@ async fn fetch_stored(
                 lo_incl,
                 hi_incl: end.as_ref().map(|(_, i)| *i).unwrap_or(true),
             };
+            let (key, iter) = match resume {
+                Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
+                None => (key, iter),
+            };
             for s in shards {
                 calls.push(Call {
                     shard: s,
@@ -507,6 +543,19 @@ async fn fetch_stored(
                 rows.extend(select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await?);
             }
         }
+        ReadMode::Committed(_) => {
+            let mut futs = Vec::new();
+            for c in &calls {
+                let client = cluster.shards[c.shard].client(cluster).await?;
+                futs.push(async move {
+                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                    select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await
+                });
+            }
+            for r in futures::future::join_all(futs).await {
+                rows.extend(r?);
+            }
+        }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
             for c in &calls {
@@ -546,7 +595,7 @@ async fn fetch_stored(
 
 fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
     match mode {
-        ReadMode::Txn(txn) => txn.overlay(t, rows),
+        ReadMode::Txn(txn) | ReadMode::Committed(txn) => txn.overlay(t, rows),
         ReadMode::Auto { .. } => rows,
     }
 }
@@ -895,6 +944,12 @@ pub async fn run_select(
         }
         rows = kept;
     }
+    finish_select(rows, p, cx)
+}
+
+/// The rest of a SELECT over its filtered FROM rows: aggregation, HAVING,
+/// ORDER BY, projection, DISTINCT, OFFSET/LIMIT.
+fn finish_select(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Vec<Row>> {
     if let Some(ap) = &p.agg {
         rows = aggregate(rows, ap, cx)?;
     }
@@ -947,6 +1002,459 @@ pub async fn run_select(
         out.push(pr);
     }
     Ok(out)
+}
+
+fn sort_rows(rows: &mut [Row], order: &[(Expr, bool)], cx: &EvalCtx<'_>) {
+    if order.is_empty() {
+        return;
+    }
+    rows.sort_by(|a, b| {
+        for (e, desc) in order {
+            let (x, y) = (
+                e.eval(a, cx).unwrap_or(Value::Null),
+                e.eval(b, cx).unwrap_or(Value::Null),
+            );
+            let o = sort_cmp(&x, &y);
+            let o = if *desc { o.reverse() } else { o };
+            if o != std::cmp::Ordering::Equal {
+                return o;
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+}
+
+fn pk_of(t: &TableDef, row: &[Value], offset: usize) -> Vec<Value> {
+    t.indexes[0].cols.iter().map(|&c| row[offset + c].clone()).collect()
+}
+
+/// One lock request of a batch: which candidate and table it belongs to.
+struct LockItem {
+    cand: usize,
+    table: usize,
+    shard: usize,
+    key: LockKey,
+}
+
+/// Take the locks of a batch, shard by shard in order of first appearance;
+/// returns the outcome of each item (same order).
+async fn lock_batch(cluster: &Arc<Cluster>, txn: &mut Txn, items: &[LockItem], o: LockOpts) -> SqlResult<Vec<Locked>> {
+    let mut shards: Vec<usize> = Vec::new();
+    for it in items {
+        if !shards.contains(&it.shard) {
+            shards.push(it.shard);
+        }
+    }
+    let mut out: Vec<Option<Locked>> = vec![None; items.len()];
+    for s in shards {
+        let idx: Vec<usize> = (0..items.len()).filter(|&i| items[i].shard == s).collect();
+        let keys: Vec<LockKey> = idx
+            .iter()
+            .map(|&i| LockKey {
+                table: items[i].key.table.clone(),
+                index: items[i].key.index,
+                key: items[i].key.key.clone(),
+            })
+            .collect();
+        let res = txn.lock(cluster, s, &keys, o).await?;
+        for (j, r) in idx.into_iter().zip(res) {
+            out[j] = Some(r);
+        }
+    }
+    Ok(out.into_iter().map(|r| r.unwrap_or(Locked::Granted)).collect())
+}
+
+/// Release locks taken for rows that did not qualify, grouped by shard.
+async fn unlock_items(cluster: &Arc<Cluster>, txn: &Txn, items: Vec<(usize, LockKey)>) {
+    let mut by: BTreeMap<usize, Vec<LockKey>> = BTreeMap::new();
+    for (s, k) in items {
+        by.entry(s).or_default().push(k);
+    }
+    for (s, keys) in by {
+        txn.unlock(cluster, s, &keys).await;
+    }
+}
+
+/// The latest version of a locked row for this transaction: its own
+/// buffered version if it wrote the row (None: it deleted it), else the
+/// committed row read under the lock.
+fn own_or_latest(txn: &Txn, t: &TableDef, pk: &[Value], latest: Option<Row>) -> Option<Row> {
+    match txn.buffered(t.space_id, pk) {
+        Some(b) => b.cloned(),
+        None => latest,
+    }
+}
+
+/// Lock rows of one table by primary key, in the given order and in
+/// batches, reading each under its lock: a row that no longer exists or no
+/// longer matches `filter` (re-checked on the latest version, as InnoDB's
+/// READ COMMITTED "semi-consistent" read does) has its lock released at
+/// once. Stops after `want` qualifying rows. SKIP LOCKED leaves out rows
+/// other transactions hold. Returns the latest versions of the rows kept.
+#[allow(clippy::too_many_arguments)]
+pub async fn lock_matching(
+    cluster: &Arc<Cluster>,
+    txn: &mut Txn,
+    t: &Arc<TableDef>,
+    cands: Vec<Row>,
+    filter: &Option<Expr>,
+    o: LockOpts,
+    want: Option<usize>,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
+    let o = LockOpts { read: true, ..o };
+    let mut kept = Vec::new();
+    let mut i = 0;
+    while i < cands.len() && want.is_none_or(|w| kept.len() < w) {
+        let n = match want {
+            Some(w) => (w - kept.len()).clamp(1, 64),
+            None => 256,
+        };
+        let chunk = &cands[i..(i + n).min(cands.len())];
+        i += chunk.len();
+        let items: Vec<LockItem> = chunk
+            .iter()
+            .enumerate()
+            .map(|(j, r)| LockItem {
+                cand: j,
+                table: 0,
+                shard: shard_of_row(cluster, t, r),
+                key: LockKey {
+                    table: t.clone(),
+                    index: 0,
+                    key: pk_of(t, r, 0),
+                },
+            })
+            .collect();
+        let res = lock_batch(cluster, txn, &items, o).await?;
+        let mut release = Vec::new();
+        for (it, r) in items.into_iter().zip(res) {
+            let latest = match r {
+                Locked::Skipped => continue,
+                Locked::Row(row) => own_or_latest(txn, t, &it.key.key, row),
+                Locked::Granted => own_or_latest(txn, t, &it.key.key, Some(chunk[it.cand].clone())),
+            };
+            let ok = match &latest {
+                None => false,
+                Some(row) => match filter {
+                    Some(f) => f.eval_bool(row, cx)?,
+                    None => true,
+                },
+            };
+            if ok && want.is_none_or(|w| kept.len() < w) {
+                kept.push(latest.unwrap());
+            } else if txn.buffered(t.space_id, &it.key.key).is_none() {
+                release.push((it.shard, it.key));
+            }
+        }
+        unlock_items(cluster, txn, release).await;
+    }
+    Ok(kept)
+}
+
+/// Candidate rows of a single table for a READ COMMITTED UPDATE/DELETE: the
+/// latest committed state (with the transaction's own writes), filtered and
+/// ordered; locked and re-checked by `lock_matching`.
+pub async fn candidate_rows(
+    cluster: &Arc<Cluster>,
+    txn: &mut Txn,
+    access: &TableAccess,
+    filter: &Option<Expr>,
+    order: &[(Expr, bool)],
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
+    let mut mode = ReadMode::Committed(txn);
+    let rows = fetch(cluster, &mut mode, access, &[], cx).await?;
+    let mut out = Vec::new();
+    for r in rows {
+        if match filter {
+            Some(f) => f.eval_bool(&r, cx)?,
+            None => true,
+        } {
+            out.push(r);
+        }
+    }
+    sort_rows(&mut out, order, cx);
+    Ok(out)
+}
+
+/// SELECT ... FOR UPDATE / FOR SHARE [NOWAIT | SKIP LOCKED]: every base row
+/// of each candidate is locked (in ORDER BY order, until LIMIT rows
+/// qualify), as InnoDB does.
+///
+/// READ COMMITTED: the candidates come from the latest committed state;
+/// single-table queries read each row under its lock and re-check WHERE on
+/// that version (joins lock the rows they read). Serializable: the
+/// candidates are read through the transaction (rows and ranges validated
+/// at commit, like any read of it); the locks keep other writers off them
+/// until the transaction ends, so the reads stay valid. (Rows SKIP LOCKED
+/// leaves out were read too: their changes still abort the transaction.)
+pub async fn run_locking_select(
+    cluster: &Arc<Cluster>,
+    txn: &mut Txn,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+    lock: RowLock,
+) -> SqlResult<Vec<Row>> {
+    let rc = txn.mode == crate::txn::Mode::ReadCommitted;
+    let plain = p.agg.is_none() && p.having.is_none() && !p.distinct;
+    let want = if plain {
+        match eval_limit(&p.limit, cx)? {
+            Some(l) => Some(l as usize + eval_limit(&p.offset, cx)?.unwrap_or(0) as usize),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let filter = |rows: Vec<Row>| -> SqlResult<Vec<Row>> {
+        let Some(f) = &p.filter else { return Ok(rows) };
+        let mut kept = Vec::with_capacity(rows.len());
+        for r in rows {
+            if f.eval_bool(&r, cx)? {
+                kept.push(r);
+            }
+        }
+        Ok(kept)
+    };
+    // With LIMIT on one index range in index order, read the candidates a
+    // page at a time (as InnoDB scans and locks as it goes) instead of the
+    // whole range: SKIP LOCKED over a long queue stops at the first free rows.
+    let page_size = |accepted: usize| {
+        want.map(|w| (2 * w.saturating_sub(accepted)).clamp(16, 512))
+            .unwrap_or(512)
+    };
+    let mut pager = match (&p.source, want) {
+        (Source::Table(ta), Some(_)) => Pager::new(cluster, txn, ta, &p.order, cx)?,
+        _ => None,
+    };
+    let mut rows = match pager.as_mut() {
+        Some(pg) => filter(pg.next(cluster, txn, rc, cx, page_size(0)).await?)?,
+        None => {
+            let rows = if rc {
+                let mut mode = ReadMode::Committed(txn);
+                source_rows(cluster, &mut mode, &p.source, cx).await?
+            } else {
+                let mut mode = ReadMode::Txn(txn);
+                source_rows(cluster, &mut mode, &p.source, cx).await?
+            };
+            let mut rows = filter(rows)?;
+            if plain {
+                sort_rows(&mut rows, &p.order, cx);
+            }
+            rows
+        }
+    };
+    let o = LockOpts {
+        exclusive: lock.exclusive,
+        nowait: lock.nowait,
+        skip: lock.skip,
+        read: rc,
+    };
+    let tables: Vec<TableAccess> = p.source.tables().into_iter().cloned().collect();
+    let single = tables.len() == 1;
+    let mut accepted = Vec::new();
+    let mut i = 0;
+    while want.is_none_or(|w| accepted.len() < w) {
+        if i >= rows.len() {
+            match pager.as_mut() {
+                Some(pg) if !pg.done => {
+                    let more = pg.next(cluster, txn, rc, cx, page_size(accepted.len())).await?;
+                    rows.extend(filter(more)?);
+                    continue;
+                }
+                _ => break,
+            }
+        }
+        let n = match want {
+            Some(w) => (w - accepted.len()).clamp(1, 64),
+            None => 256,
+        };
+        let chunk = &rows[i..(i + n).min(rows.len())];
+        i += chunk.len();
+        let mut items = Vec::new();
+        for (j, r) in chunk.iter().enumerate() {
+            for (k, ta) in tables.iter().enumerate() {
+                let pk = pk_of(&ta.table, r, ta.offset);
+                if pk.iter().all(|v| v.is_null()) {
+                    continue; // LEFT JOIN without a match
+                }
+                let base: Row = r[ta.offset..ta.offset + ta.table.columns.len()].to_vec();
+                items.push(LockItem {
+                    cand: j,
+                    table: k,
+                    shard: shard_of_row(cluster, &ta.table, &base),
+                    key: LockKey {
+                        table: ta.table.clone(),
+                        index: 0,
+                        key: pk,
+                    },
+                });
+            }
+        }
+        let res = lock_batch(cluster, txn, &items, o).await?;
+        let mut cand_rows: Vec<Option<Row>> = chunk.iter().map(|r| Some(r.clone())).collect();
+        let mut cand_items: Vec<Vec<(usize, LockKey)>> = (0..chunk.len()).map(|_| Vec::new()).collect();
+        for (it, r) in items.into_iter().zip(res) {
+            let ta = &tables[it.table];
+            let row = match r {
+                Locked::Skipped => {
+                    cand_rows[it.cand] = None;
+                    continue;
+                }
+                Locked::Row(latest) => own_or_latest(txn, &ta.table, &it.key.key, latest),
+                Locked::Granted => Some(chunk[it.cand][ta.offset..ta.offset + ta.table.columns.len()].to_vec()),
+            };
+            match (row, cand_rows[it.cand].as_mut()) {
+                (Some(latest), Some(cr)) => {
+                    if single {
+                        cr[ta.offset..ta.offset + ta.table.columns.len()].clone_from_slice(&latest);
+                    }
+                }
+                (None, Some(_)) => cand_rows[it.cand] = None, // deleted meanwhile
+                _ => {}
+            }
+            cand_items[it.cand].push((it.shard, it.key));
+        }
+        let mut release = Vec::new();
+        for (j, cr) in cand_rows.into_iter().enumerate() {
+            let ok = match &cr {
+                None => false,
+                Some(row) if single => match &p.filter {
+                    Some(f) => f.eval_bool(row, cx)?,
+                    None => true,
+                },
+                Some(_) => true,
+            };
+            if ok && want.is_none_or(|w| accepted.len() < w) {
+                accepted.push(cr.unwrap());
+            } else {
+                for (s, k) in std::mem::take(&mut cand_items[j]) {
+                    if txn.buffered(k.table.space_id, &k.key).is_none() {
+                        release.push((s, k));
+                    }
+                }
+            }
+        }
+        unlock_items(cluster, txn, release).await;
+    }
+    finish_select(accepted, p, cx)
+}
+
+/// Paged candidates of a locking read: a forward scan of one index range on
+/// one shard, a page at a time, each page starting after the last row
+/// returned. Only for scans whose index order is the statement's ORDER BY,
+/// on a table where the transaction has at most deleted rows (those are left
+/// out; rows it inserted or changed would need merging into index order).
+struct Pager {
+    ta: TableAccess,
+    key_cols: Vec<usize>,
+    /// The primary key: the next page starts strictly after the last key.
+    /// Other indexes may repeat a key: the next page starts at it and skips
+    /// the rows already returned with it.
+    unique: bool,
+    last: Option<Vec<Value>>,
+    last_pks: HashSet<Bytes>,
+    done: bool,
+}
+
+impl Pager {
+    fn new(
+        cluster: &Arc<Cluster>,
+        txn: &Txn,
+        ta: &TableAccess,
+        order: &[(Expr, bool)],
+        cx: &EvalCtx<'_>,
+    ) -> SqlResult<Option<Pager>> {
+        let t = &ta.table;
+        let (index, prefix) = match &ta.path {
+            AccessPath::Range {
+                index,
+                eq,
+                reverse: false,
+                ..
+            } => (*index, eq),
+            AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, &keys[0]),
+            _ => return Ok(None),
+        };
+        let idx = index_def(t, index);
+        let Some(prefix) = eval_keys(t, idx, std::slice::from_ref(prefix), &[], cx)?.pop() else {
+            return Ok(None);
+        };
+        let wrote_rows = txn
+            .writes
+            .range((t.space_id, Bytes::new())..)
+            .take_while(|((sp, _), _)| *sp == t.space_id)
+            .any(|(_, w)| w.row.is_some());
+        if wrote_rows || route_prefix(cluster, t, idx, &prefix).is_none() {
+            return Ok(None);
+        }
+        // ORDER BY: columns fixed by the equality prefix, then the next index
+        // columns in order, ascending.
+        let mut next = prefix.len();
+        for (e, desc) in order {
+            let Expr::Col(c) = e else { return Ok(None) };
+            match idx.cols.iter().position(|x| x == c) {
+                Some(pos) if pos < prefix.len() => {}
+                Some(pos) if pos == next && !desc => next += 1,
+                _ => return Ok(None),
+            }
+        }
+        Ok(Some(Pager {
+            ta: ta.clone(),
+            key_cols: idx.cols.clone(),
+            unique: idx.id == 0,
+            last: None,
+            last_pks: HashSet::new(),
+            done: false,
+        }))
+    }
+
+    async fn next(
+        &mut self,
+        cluster: &Arc<Cluster>,
+        txn: &mut Txn,
+        rc: bool,
+        cx: &EvalCtx<'_>,
+        n: usize,
+    ) -> SqlResult<Vec<Row>> {
+        let limit = n + if self.unique { 0 } else { self.last_pks.len() };
+        let page = TableAccess {
+            limit: Some(Expr::Lit(Value::Int(limit as i64))),
+            ..self.ta.clone()
+        };
+        let resume = self.last.as_ref().map(|k| (k.as_slice(), !self.unique));
+        let rows = if rc {
+            let mut mode = ReadMode::Committed(txn);
+            fetch_stored_from(cluster, &mut mode, &page, &[], cx, resume).await?
+        } else {
+            let mut mode = ReadMode::Txn(txn);
+            fetch_stored_from(cluster, &mut mode, &page, &[], cx, resume).await?
+        };
+        if rows.len() < limit {
+            self.done = true;
+        }
+        let t = &self.ta.table;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let key: Vec<Value> = self.key_cols.iter().map(|&c| r[c].clone()).collect();
+            let pk_vals = pk_of(t, &r, 0);
+            let pk = crate::txn::key_bytes(&pk_vals);
+            let deleted = txn.buffered(t.space_id, &pk_vals).is_some();
+            if self.last.as_ref() == Some(&key) {
+                if !self.last_pks.insert(pk) {
+                    continue; // returned by the previous page
+                }
+            } else {
+                self.last = Some(key);
+                self.last_pks.clear();
+                self.last_pks.insert(pk);
+            }
+            if !deleted {
+                out.push(r); // (rows this transaction deleted are left out)
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// Rows of a single table matching an UPDATE/DELETE (access + filter, then

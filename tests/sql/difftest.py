@@ -27,6 +27,9 @@ SCHEMA = [
     "CREATE TABLE u (id INT PRIMARY KEY, email VARCHAR(40), n INT, UNIQUE KEY ue (email, id))",
     "CREATE TABLE sgn (id BIGINT PRIMARY KEY, n BIGINT NOT NULL, u BIGINT UNSIGNED NOT NULL, i INT NOT NULL, "
     "ui INT UNSIGNED NOT NULL DEFAULT 0)",
+    # a unique key apart from the primary key (both contain the shard key t)
+    "CREATE TABLE uk (t INT, id INT, name VARCHAR(10), n INT, PRIMARY KEY (t, id), UNIQUE KEY tn (t, name)) "
+    "PARTITION BY KEY(t)",
 ]
 
 
@@ -187,6 +190,59 @@ CASES = [
     ("UPDATE sgn SET u = u + 10, ui = ui + 3 WHERE id = 2", "dml:sgn"),
     ("SELECT u - 1 FROM sgn WHERE id = 1", "err"),
     ("SELECT id, u + 0, u * 2, ui - 0, n - 1, i + 1 FROM sgn ORDER BY id", "q"),
+    # unique keys other than the primary key: upserts, IGNORE, REPLACE
+    ("INSERT INTO uk VALUES (1, 1, 'a', 1), (1, 2, 'b', 1), (2, 1, 'a', 1)", "dml:uk"),
+    ("INSERT INTO uk VALUES (1, 3, 'a', 5) ON DUPLICATE KEY UPDATE n = n + VALUES(n)", "dml:uk"),
+    ("INSERT IGNORE INTO uk VALUES (1, 4, 'b', 9), (1, 5, 'c', 9)", "dml:uk"),
+    ("REPLACE INTO uk VALUES (1, 6, 'b', 7)", "dml:uk"),
+    ("REPLACE INTO uk VALUES (1, 0, 'c', 3), (2, 1, 'c', 4)", "dml:uk"),
+    ("INSERT INTO uk VALUES (1, 7, 'a', 1)", "err"),
+    ("INSERT INTO uk VALUES (1, 1, 'z', 1) ON DUPLICATE KEY UPDATE name = 'b'", "err"),
+    ("UPDATE uk SET name = 'a' WHERE t = 1 AND id = 6", "err"),
+    # session isolation level, lock wait timeout, locking reads (issue #17);
+    # the rest of the cases run at READ COMMITTED on both servers
+    ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),
+    ("SELECT @@tx_isolation, @@session.tx_isolation", "q"),
+    ("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", "q"),
+    ("SELECT @@tx_isolation", "q"),
+    ("SET @@tx_isolation = 'SERIALIZABLE'", "q"),
+    ("SELECT @@tx_isolation", "q"),
+    ("SET tx_isolation = 'SNAPSHOT'", "err"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("SELECT @@tx_isolation", "q"),
+    ("SET innodb_lock_wait_timeout = 7", "q"),
+    ("SELECT @@innodb_lock_wait_timeout", "q"),
+    ("SET innodb_lock_wait_timeout = -1", "q"),
+    ("SELECT @@innodb_lock_wait_timeout", "q"),
+    ("SET innodb_lock_wait_timeout = 2.5", "err"),
+    ("SET innodb_lock_wait_timeout = 50", "q"),
+    ("SELECT id, a FROM t1 WHERE id < 4 ORDER BY id LOCK IN SHARE MODE", "q"),
+    ("SELECT id FROM t1 WHERE id BETWEEN 3 AND 6 ORDER BY id FOR UPDATE", "q"),
+    ("SELECT id FROM t1 WHERE a = 2 ORDER BY id LIMIT 2 FOR UPDATE SKIP LOCKED", "q"),
+    ("SELECT id, b FROM t1 WHERE id = 9 FOR UPDATE NOWAIT", "q"),
+    ("SELECT t1.id, t2.id FROM t1 JOIN t2 ON t2.t1_id = t1.id WHERE t1.id < 8 ORDER BY t2.id LOCK IN SHARE MODE", "q"),
+    ("SELECT COUNT(*) FROM t1 WHERE a = 1 FOR UPDATE", "q"),
+    ("UPDATE uk SET n = n * 2 WHERE name IN ('a', 'c')", "dml:uk"),
+    ("DELETE FROM uk WHERE n > 10", "dml:uk"),
+    # savepoints and statement-level rollback inside a transaction
+    ("BEGIN", "q"),
+    ("INSERT INTO uk VALUES (3, 1, 'x', 1), (3, 4, 'w', 1)", "dml:uk"),
+    ("UPDATE uk SET name = 'x' WHERE t = 3 AND id = 4", "err"),
+    ("UPDATE uk SET name = 'v' WHERE t = 3 AND id = 4", "dml:uk"),
+    ("SAVEPOINT s1", "q"),
+    ("UPDATE uk SET n = n + 100 WHERE t = 1", "dml:uk"),
+    ("INSERT INTO uk VALUES (3, 2, 'y', 1), (3, 3, 'x', 1)", "err"),
+    ("SELECT * FROM uk ORDER BY t, id", "q"),
+    ("SAVEPOINT s2", "q"),
+    ("DELETE FROM uk WHERE t = 2", "dml:uk"),
+    ("ROLLBACK TO SAVEPOINT s1", "q"),
+    ("SELECT * FROM uk ORDER BY t, id", "q"),
+    ("ROLLBACK TO s2", "err"),
+    ("RELEASE SAVEPOINT s1", "q"),
+    ("RELEASE SAVEPOINT s1", "err"),
+    ("COMMIT", "dml:uk"),
+    ("ROLLBACK TO SAVEPOINT s1", "err"),
+    ("SET SESSION tx_isolation = 'REPEATABLE-READ'", "q"),
 ]
 
 

@@ -34,4 +34,34 @@ WSetFrac == [t \in MCTxns |-> CASE t = "T1" -> {"x", "y"} [] t = "T2" -> {} [] t
 \* message loss, a single-shard writer on B, and a single-shard reader on A.
 RSetRecov == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"y"} [] t = "T3" -> {"x"}]
 WSetRecov == [t \in MCTxns |-> CASE t = "T1" -> {"x", "y"} [] t = "T2" -> {"y"} [] t = "T3" -> {}]
+
+\* No READ COMMITTED transactions (every workload above).
+NoRC   == {}
+NoLSet == [t \in MCTxns |-> {}]
+
+\* Counter: two READ COMMITTED read-modify-writes of x (UPDATE ... SET x =
+\* x - 1) race a serializable one: T1 on A only (after a plain read of x),
+\* T2 across shards (x and y, through PREPARE/APPLY), and T3 a serializable
+\* cross-shard read-modify-write of x and y (W locks while prepared).
+RCCounter    == {"T1", "T2"}
+RSetCounter  == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {} [] t = "T3" -> {"x", "y"}]
+WSetCounter  == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {"x", "y"}]
+LSetCounter  == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {}]
+
+\* Mixed: an RC writer of x that reads y, a serializable cross-shard
+\* read-modify-write of y, and an RC transaction that locks y FOR UPDATE
+\* (no write) and reads x.
+RCMixed    == {"T1", "T3"}
+RSetMixed  == [t \in MCTxns |-> CASE t = "T1" -> {"y"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {"x"}]
+WSetMixed  == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"y"} [] t = "T3" -> {}]
+LSetMixed  == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {} [] t = "T3" -> {"y"}]
+
+\* Local: RC read-modify-writes of x (T1 on A, T2 across shards) race a
+\* serializable single-shard read-modify-write of x (T3: a local commit,
+\* like an autocommit UPDATE), whose commit may still be in flight when an
+\* RC lock on x is granted.
+RCLocal     == {"T1", "T2"}
+RSetRCLocal == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {} [] t = "T3" -> {"x"}]
+WSetRCLocal == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {"x"}]
+LSetRCLocal == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {}]
 =============================================================================
