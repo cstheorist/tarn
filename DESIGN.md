@@ -87,9 +87,9 @@ one local Tarantool transaction (lock check + apply + commit).
   read set against W locks of prepared cross-shard transactions, applies the
   buffered writes (with lock checks) and commits; MVCC aborts the transaction
   if anything it read was overwritten.
-* *Commit, read-only across shards:* each participant validates in its stream
-  that no read was overwritten and nothing read is W-locked (`tarn_validate`;
-  see §2.4 for how "not overwritten" is enforced).
+* *Commit, read-only (one or several shards):* each participant validates in
+  its stream that no read was overwritten and nothing read is W-locked
+  (`tarn_validate`; see §2.4 for how "not overwritten" is enforced).
 * *Commit, read-write across shards:* a "parallel commit" two-phase commit.
   PREPARE runs on every participant in parallel and, in one local
   transaction, validates the reads, takes durable R/W locks (W locks carry the
@@ -98,7 +98,7 @@ one local Tarantool transaction (lock check + apply + commit).
   participant is prepared, so the decision needs no extra round trip. APPLY
   then moves the intents into the plain spaces and releases the locks; the
   client is acknowledged after every APPLY (or, with `--ack-on-prepare`,
-  right after the PREPAREs; see §2.5).
+  right after the PREPAREs; see §2.7).
 * *Recovery:* any storage node's recovery fiber (and any SQL server) can
   resolve a transaction whose coordinator vanished: fence the record (no
   record yet → ABORTED, refusing a late PREPARE), fence participants that
@@ -207,7 +207,31 @@ stream is in a read view. The model got the corresponding switch
 check is removed. (Read-write paths were never affected: their writes, or
 PREPARE's lock records, hit the same refusal.)
 
-### 2.5 Timing assumptions (outside the model)
+### 2.5 The lock index: correct but slow, found by benchmarking
+
+Lock checks first read the `_tarn_locks`/`_tarn_rlocks` spaces from inside
+the transaction doing the check. Under memtx MVCC every such read leaves a
+read tracker, and a range check had to scan all lock records of a table, so
+two concurrent PREPAREs on one shard that locked *different* rows of a table
+conflicted with each other through the lock space itself. That is safe
+(only extra aborts) but sysbench `oltp_read_write` collapsed under
+concurrency: 63 transactions/s at 64 threads with 8,672 conflicts in 15 s.
+
+Lock checks now consult an in-memory index of the lock records (`LK`/`RL` in
+`tarn.lua`) that is never read through MVCC. It is updated in the same
+non-yielding step as the checks (so check-and-lock stays atomic, as
+TarnCommit's `Prepare` requires) and it shows the locks of PREPAREs still
+waiting for their WAL write or quorum. A PREPARE whose local transaction
+rolls back removes its entries (`box.on_rollback`); APPLY/ABORT remove them
+when their transaction commits (`box.on_commit`). The durable records stay
+in the spaces for recovery; the index is rebuilt from them at startup and
+after any election state change, before the next check (replicas do not
+maintain it). Because checks now see current lock state rather than the
+reads' snapshot, every read-only validation (single-shard too) does the
+probe write of §2.4, so "reads unchanged" plus "no W lock now" together
+give the model's atomic `SnapshotRead`/`ValidateRO`.
+
+### 2.6 Timing assumptions (outside the model)
 
 Safety does not depend on timing, with one exception that the model does not
 cover: garbage collection of protocol records. Tombstones (participants
@@ -220,7 +244,7 @@ recovery, as in the model), so applied participant records and decided
 transaction records can be dropped after `record_ttl` (30 s) once no
 participant is still prepared.
 
-### 2.6 Ack-on-prepare
+### 2.7 Ack-on-prepare
 
 With `--ack-on-prepare`, the client is acknowledged as soon as every PREPARE
 succeeded (one round trip instead of two); APPLY happens in the background.
@@ -265,20 +289,75 @@ Rust. What is proven:
 | `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads | 50/50 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, MP_DECIMAL written by Tarantool | 29 tests pass |
-| `tests/sql/difftest.py` | 83 SQL cases run on Tarn and MariaDB 10.11, results compared (incl. column names, affected rows, final table contents) | 83/83 identical |
+| `tests/sql/difftest.py` | 99 SQL cases run on Tarn and MariaDB 10.11, results compared (incl. column names, affected rows, final table contents): access paths, expressions, aggregates, joins, subqueries, UNION, DML, errors | 99/99 identical |
+| `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads, concurrent bank transfers with serializable audits | 12/12 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload; kill -9 the leader of shard 1, then of shard 2 | passes: new leaders in ≈2 s, every audit exact, final sums exact via SQL and via direct KV reads on the new leaders |
 
 ## 5. Results
 
-(Benchmarks: see `bench/RESULTS.md`; TLC results below.)
+### 5.1 Model checking
+
+Every configuration of `tla/MC.tla` and its result (`python3 tla/summarize.py`
+regenerates this table from `tla/out`). Configurations named `*_ROValidate`
+model the implementation exactly (cross-shard read-only transactions commit
+by validation, no PREPARE); the others model the PREPARE-based variant.
+`Bug_*` configurations switch off one protection each and must fail;
+`Tradeoff_*` check documented weaker guarantees and must fail.
+
+<!-- TLC -->
+| Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
+|---|---|---:|---:|---:|---|---:|
+| Bug_LocalIgnoresRLocks | violates StrictSerializable | 33430 | 136338 | 13 | 03s | 13 |
+| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3608 | 10065 | 10 | 01s | 10 |
+| Bug_NoReadLocks | violates StrictSerializable | 2056 | 7030 | 9 | 01s | 9 |
+| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6541 | 17971 | 9 | 01s | 9 |
+| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12218 | 45049 | 11 | 02s | 11 |
+| Bug_ROValidateNoReadCheck | violates StrictSerializable | 19356 | 70996 | 12 | 04s | 12 |
+| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10736 | 37525 | 11 | 04s | 11 |
+| Frac | no errors | 1182650 | 9419404 | 23 | 01min 57s |  |
+| FracFailover | no errors | 2715768 | 21065756 | 25 | 04min 39s |  |
+| FracFailover_ROValidate | no errors | 544585 | 2974335 | 21 | 57s |  |
+| Frac_ROValidate | no errors | 103162 | 596551 | 19 | 13s |  |
+| Local | no errors | 710975 | 5538922 | 23 | 01min 08s |  |
+| LocalFailover | no errors | 1881011 | 14423765 | 25 | 03min 14s |  |
+| LocalFailover_ROValidate | no errors | 407273 | 2199390 | 21 | 39s |  |
+| Local_ROValidate | no errors | 69500 | 394964 | 19 | 08s |  |
+| Recov | no errors | 71927 | 412305 | 18 | 08s |  |
+| RecovReaders | no errors | 28258 | 135187 | 17 | 04s |  |
+| Recov_AckOnPrepare | no errors | 83195 | 474842 | 18 | 08s |  |
+| Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
+| SkewFailover | incomplete | 137797 | 650139 | - | - |  |
+| SkewFailover_ROValidate | no errors | 4519985 | 36314837 | 28 | 09min 57s |  |
+| Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
+| Skew_ROValidate | no errors | 2085494 | 17591232 | 26 | 23min 00s |  |
+| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 546 | 957 | 7 | 00s | 7 |
+| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 2236 | 6582 | 8 | 01s | 8 |
+
+### 5.2 Benchmarks
+
+See [bench/RESULTS.md](bench/RESULTS.md) for the full tables, setup and
+discussion. In short, on this 2-vCPU machine (load generator included):
+
+<!-- BENCH -->
+| Best throughput over 1/16/64 threads | MariaDB 10.11 | MySQL 9.7 | Tarn 2 shards | Tarn 1×3 sync replicas |
+|---|---:|---:|---:|---:|
+| oltp_point_select (QPS) | 84,134 | 62,481 | 42,490 | 54,648 |
+| oltp_read_only (TPS) | 3,294 | 2,012 | 902 | – |
+| oltp_read_write (TPS) | 2,250 | 1,112 | 549 | 669 |
+| oltp_write_only (TPS) | 9,766 | 5,679 | 2,756 | – |
+| oltp_update_index (TPS) | 43,426 | 24,907 | 26,056 | 14,651 |
+| oltp_insert (TPS) | 45,461 | 29,632 | 24,255 | 14,560 |
+| direct KV point reads (ops/s) | – | – | 366,436 | – |
 
 ## 6. Limitations
 
-* SQL coverage is "sysbench-level plus": no subqueries, derived tables,
-  UNION, views, stored procedures, triggers, foreign keys, savepoints,
-  `ALTER TABLE`, window functions, RIGHT/FULL joins; joins are nested-loop
-  with index lookups.
+* SQL coverage is "sysbench-level plus": uncorrelated subqueries (`IN`,
+  `EXISTS`, scalar) and `UNION [ALL]` work (the inner SELECTs run first,
+  inside the statement's transaction); not supported are correlated
+  subqueries, derived tables, views, stored procedures, triggers, foreign
+  keys, savepoints, `ALTER TABLE`, window functions, RIGHT/FULL joins.
+  Joins are nested-loop with index lookups.
 * String comparison, ordering, grouping and unique indexes are binary (like
   `utf8mb4_bin`); MySQL's default collations are case-insensitive, so
   `WHERE name = 'ALICE'` does not match `'alice'` in Tarn.
