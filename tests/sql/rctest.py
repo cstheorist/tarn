@@ -588,6 +588,96 @@ class T:
         self.check(sorted(claims) == list(range(1, 21)), f"each job claimed exactly once ({sorted(claims)})")
         self.check(q(c, "SELECT COUNT(*) FROM jobs WHERE state = 'taken'")[0][0] == 20, "all taken")
 
+    def test_skip_locked_union(self):
+        """A reservation: claim one free unit of each item with a UNION ALL of
+        SKIP LOCKED parts (one storage call per shard, parts at once, #49)."""
+        items = list(range(1, 7))
+        c = self.fresh("units", "CREATE TABLE units (g INT, item INT, id INT, PRIMARY KEY (g, item, id)) "
+                                 "PARTITION BY KEY(g, item)",
+                       [f"(1, {it}, {i})" for it in items for i in range(1, 11)])
+        q(c, "DROP TABLE IF EXISTS holds")
+        q(c, "CREATE TABLE holds (cart INT, item INT, id INT, PRIMARY KEY (cart, item, id))")
+
+        def claim(s, its, n=1, how="SKIP LOCKED"):
+            sql = " UNION ALL ".join(f"(SELECT item, id FROM units WHERE g = 1 AND item = {it} "
+                                     f"ORDER BY g, item, id LIMIT {n} FOR UPDATE {how})" for it in its)
+            return [tuple(r) for r in q(s, sql)]
+
+        a, b, d = self.rc(), self.rc(), self.rc()
+        q(a, "BEGIN")
+        q(b, "BEGIN")
+        ra = claim(a, [1, 2, 3])
+        self.check(ra == [(1, 1), (2, 1), (3, 1)], f"the first free unit of each item, in part order ({ra})")
+        rb = claim(b, [3, 1, 2], 2)
+        self.check(rb == [(3, 2), (3, 3), (1, 2), (1, 3), (2, 2), (2, 3)], f"another cart skips them ({rb})")
+        self.check(claim(a, [1], 2) == [(1, 1), (1, 4)], "a cart's own locks are not skipped")
+        q(d, "BEGIN")
+        self.check(err_code(lambda: claim(d, [4, 1], 1, "NOWAIT")) == NOWAIT, "NOWAIT on a held unit: 3572")
+        q(d, "ROLLBACK")
+        q(d, "BEGIN")
+        q(d, "SET innodb_lock_wait_timeout = 1")
+        self.check(err_code(lambda: claim(d, [5, 2], 1, "")) == LOCK_TIMEOUT, "a waiting part times out: 1205")
+        self.check(err_code(lambda: q(c, "SELECT id FROM units WHERE g = 1 AND item = 5 AND id = 1 "
+                                         "FOR UPDATE NOWAIT")) == NOWAIT,
+                   "... and keeps the locks the other parts took")
+        q(d, "ROLLBACK")
+        q(d, "SET innodb_lock_wait_timeout = 10")
+        q(d, "BEGIN")
+        bg = Bg(lambda: claim(d, [2], 1, ""))
+        time.sleep(0.3)
+        self.check(bg.running(), "without SKIP LOCKED a part waits for the held unit")
+        q(b, "ROLLBACK")
+        q(a, "DELETE FROM units WHERE g = 1 AND item = 2 AND id = 1")
+        q(a, "COMMIT")
+        bg.join()
+        self.check(bg.exc is None and bg.res == [(2, 2)],
+                   f"... and, once it is deleted, takes the next one ({bg.res}, {bg.exc})")
+        q(d, "ROLLBACK")
+        q(a, "BEGIN")
+        q(a, "DELETE FROM units WHERE g = 1 AND item = 3 AND id IN (1, 2)")
+        got = claim(a, [3, 3], 1)
+        self.check(got == [(3, 3), (3, 3)], f"rows the cart deleted are left out ({got})")
+        q(a, "ROLLBACK")
+
+        # reserve and release at once: no unit is lost, held twice or made up
+        q(c, "DELETE FROM units")
+        q(c, "INSERT INTO units VALUES " + ",".join(f"(1, {it}, {i})" for it in items for i in range(1, 6)))
+        errors, stop = [], time.time() + 4
+        lk = threading.Lock()
+
+        def cart(w):
+            s = self.rc(autocommit=False)
+            rnd = random.Random(w)
+            while time.time() < stop:
+                try:
+                    its = rnd.sample(items, 2)
+                    got = claim(s, its)
+                    for it, i in got:
+                        q(s, f"DELETE FROM units WHERE g = 1 AND item = {it} AND id = {i}")
+                        q(s, f"INSERT INTO holds VALUES ({w}, {it}, {i})")
+                    s.commit()
+                    held = q(s, f"SELECT item, id FROM holds WHERE cart = {w} ORDER BY item, id FOR UPDATE")
+                    for it, i in held:
+                        q(s, f"DELETE FROM holds WHERE cart = {w} AND item = {it} AND id = {i}")
+                        q(s, f"INSERT INTO units VALUES (1, {it}, {i})")
+                    s.commit()
+                except pymysql.MySQLError as e:
+                    with lk:
+                        errors.append(e.args)
+                    s.rollback()
+
+        ths = [threading.Thread(target=cart, args=(w,)) for w in range(self.args.threads)]
+        for t in ths:
+            t.start()
+        for t in ths:
+            t.join(60)
+        self.check(not [e for e in errors if e[0] != DEADLOCK], f"no errors but deadlocks ({errors[:3]})")
+        units = q(c, "SELECT item, id FROM units")
+        holds = q(c, "SELECT item, id FROM holds")
+        every = sorted(tuple(r) for r in units + holds)
+        self.check(every == sorted((it, i) for it in items for i in range(1, 6)),
+                   f"every unit is either free or held once ({len(units)} free, {len(holds)} held)")
+
     def test_for_share(self):
         self.fresh("fs", "CREATE TABLE fs (id INT PRIMARY KEY, v INT)", ["(1, 0)"])
         a, b, w = self.rc(), self.rc(), self.rc()

@@ -127,6 +127,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A READ COMMITTED `SELECT ... WHERE <primary key prefix> [ORDER BY
+  <primary key>] LIMIT n FOR UPDATE | FOR SHARE [NOWAIT | SKIP LOCKED]`
+  makes one storage call: the shard scans the range and takes the locks
+  itself (`tarn_lock_range`), where the SQL server used to read a page of
+  candidates and then send a lock request for them. The parts of a `UNION
+  ALL` of such reads go together, in one call per shard, and under `SKIP
+  LOCKED` or `NOWAIT` the shards' calls run in parallel
+  ([#49](https://github.com/cstheorist/tarn/issues/49)). A two-part
+  reservation query went from 4 sequential storage calls to 1. Under `SKIP
+  LOCKED` such a read now skips a row a prepared cross-shard transaction
+  W-locks instead of waiting for it (or failing with 1213 after
+  `lock_wait`). Reads of more than 256 rows keep the paged path.
 - Vinyl reads from disk on several threads by default
   ([#74](https://github.com/cstheorist/tarn/issues/74)): a storage instance
   sets `vinyl_read_threads` to the machine's CPUs divided by
