@@ -1,7 +1,7 @@
 //! Runs a throw-away Tarantool for integration tests.
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -64,7 +64,7 @@ impl Tarantool {
         }
     }
 
-    fn logs_of(dir: &PathBuf) -> String {
+    fn logs_of(dir: &Path) -> String {
         let a = std::fs::read_to_string(dir.join("stdout.log")).unwrap_or_default();
         let b = std::fs::read_to_string(dir.join("tarantool.log")).unwrap_or_default();
         format!("{a}\n{b}")
