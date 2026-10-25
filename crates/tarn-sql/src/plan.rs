@@ -20,6 +20,15 @@ pub enum AccessPath {
         hi: Option<(Expr, bool)>,
         reverse: bool,
     },
+    /// Equality on the same prefix of an index for several keys -- `col IN
+    /// (...)` on a non-unique or partial key, an OR of equalities, a
+    /// row-value IN: every row whose index key starts with one of `keys`
+    /// (all of the same length), read in one call per shard.
+    Prefixes { index: u32, keys: Vec<Vec<Expr>> },
+    /// Union of single-index lookups (an OR whose disjuncts fix prefixes of
+    /// different indexes, like MySQL's index_merge union): rows are
+    /// deduplicated by primary key and returned in primary-key order.
+    Union(Vec<AccessPath>),
     /// Every row (all shards).
     Full,
 }

@@ -594,6 +594,46 @@ pub async fn resolve(
     Err(SqlError::internal("could not resolve transaction"))
 }
 
+/// Rows of several index keys in one call (`tarn_select_keys`): for each key,
+/// the row with that full unique key, or every row whose index key starts
+/// with it (at most `limit` per key); rows come back key by key.
+#[allow(clippy::too_many_arguments)]
+pub async fn select_keys(
+    client: &Client,
+    stream: u64,
+    t: &TableDef,
+    index: u32,
+    keys: &[Vec<Value>],
+    limit: Option<u32>,
+    lock_check: bool,
+    begin: bool,
+) -> SqlResult<Vec<Row>> {
+    let ncols = t.columns.len();
+    let mut m = Mp::new();
+    m.arr(6).uint(t.space_id as u64).uint(index as u64).arr(keys.len());
+    for k in keys {
+        m.vals(k);
+    }
+    match limit {
+        Some(l) => m.uint(l as u64),
+        None => m.nil(),
+    };
+    m.bool(lock_check).bool(begin);
+    let r = client
+        .call(stream, "tarn_select_keys", &m.0)
+        .await
+        .map_err(from_iproto_read)?;
+    let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+    let (_, rd) = lua_status(&d)?;
+    let mut rd = Rd::shared_at(&d, rd);
+    let n = rd.array()?;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(rd.row(ncols)?);
+    }
+    Ok(out)
+}
+
 /// Read rows of `t` from one shard, optionally inside a stream.
 /// `key`/`iter`/`end` describe a bounded index scan (see tarn_select).
 #[allow(clippy::too_many_arguments)]
