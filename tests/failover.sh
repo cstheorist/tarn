@@ -20,6 +20,7 @@ PORT=${PORT:-4100}
 SECS=${SECS:-60}
 "$ROOT/scripts/cluster.sh" stop -d "$DIR" 2>/dev/null
 "$ROOT/scripts/cluster.sh" start -n 2 -r 3 -d "$DIR" -b "$BASE" -p "$PORT" -m 256 || exit 1
+exec > >(tee -a "$DIR/events.out") 2>&1   # keep the event log for the failure report
 
 leader_of() {  # shard -> port of its current writable node
   local s=$1 j
@@ -109,6 +110,16 @@ if [ $rc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
   echo "FAILOVER TEST PASSED"
 else
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR"
-  echo "FAILOVER TEST FAILED (bank rc=$rc kv=$kv); logs kept in $DIR"
+  echo "FAILOVER TEST FAILED (bank rc=$rc kv=$kv move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
+  # On GitHub Actions, put the evidence in an annotation (job logs are not
+  # always at hand; annotations are).
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    msg=$({ echo "bank rc=$rc kv=$kv move_failed=${MOVE_FAILED:-0}"; grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
+            echo "--- workload"; tail -25 "$DIR/bank.out"
+            echo "--- storage logs"; grep -h -iE "error|warn|election|promote" "$DIR"/s*.log | tail -15
+            echo "--- tarn-server"; grep -h -iE "error|warn" "$DIR"/tarn*.log | tail -8; } |
+          sed 's/%/%25/g; s/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g')
+    echo "::error title=Failover test failed::$msg"
+  fi
   exit 1
 fi
