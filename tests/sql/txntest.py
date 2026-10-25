@@ -172,6 +172,52 @@ class T:
         self.check(aborted or n1 == n2 == 2, f"phantom handled (n1={n1} n2={n2} aborted={aborted})")
         self.check(q(c, "SELECT COUNT(*) FROM ph WHERE id = 10")[0][0] == 1, "b's insert committed")
 
+    def test_count_in_storage(self):
+        # COUNTs the shards compute (issue #52) see the transaction's own
+        # buffered writes, and a serializable count is validated at commit.
+        c = self.fresh("cn", "CREATE TABLE cn (g INT NOT NULL, id INT NOT NULL, s VARCHAR(10), f TINYINT NOT NULL, "
+                       "PRIMARY KEY (g, id), KEY gs (g, s))",
+                       [f"({i % 3}, {i}, {'NULL' if i % 4 == 0 else repr('s' + str(i % 2))}, {i % 2})"
+                        for i in range(60)])
+        before = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_counts'"))["Tarn_storage_counts"])
+        queries = ["SELECT COUNT(*) FROM cn WHERE g = 1", "SELECT COUNT(*) FROM cn WHERE g = 1 AND f = 0",
+                   "SELECT COUNT(s) FROM cn WHERE g = 2", "SELECT COUNT(*) FROM cn WHERE g = 0 AND s IS NULL",
+                   "SELECT COUNT(*) FROM cn", "SELECT COUNT(*) FROM cn WHERE id >= 10 AND s IN ('s0', 'x')"]
+
+        def counts(conn):
+            return [q(conn, s)[0][0] for s in queries]
+
+        def by_rows(conn):
+            # the same counts from the rows (no pushdown: GROUP BY)
+            out = []
+            for s in queries:
+                r = q(conn, s.replace("COUNT(", "0 AS z, COUNT(") + " GROUP BY z")
+                out.append(r[0][1] if r else 0)
+            return out
+        q(c, "BEGIN")
+        q(c, "INSERT INTO cn VALUES (1, 100, NULL, 0), (2, 101, 's0', 1), (0, 102, NULL, 0)")
+        q(c, "UPDATE cn SET f = 1 - f, s = NULL WHERE id IN (1, 4, 7, 11)")
+        q(c, "DELETE FROM cn WHERE id IN (2, 13, 30)")
+        q(c, "UPDATE cn SET g = 2 WHERE id = 10")
+        mine = counts(c)
+        self.check(mine == by_rows(c), f"counts with buffered writes {mine} vs {by_rows(c)}")
+        other = connect(self.args.tarn)
+        self.check(counts(other) == by_rows(other) and counts(other) != mine, "others count the committed rows")
+        q(c, "COMMIT")
+        self.check(counts(other) == mine, "committed counts")
+        after = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_counts'"))["Tarn_storage_counts"])
+        self.check(after > before, "the counts ran in storage")
+        # Serializable: a count, then another transaction inserts into its
+        # range, then the counting transaction writes: it must abort.
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        q(a, "BEGIN")
+        n1 = q(a, "SELECT COUNT(*) FROM cn WHERE g = 1 AND f = 0")[0][0]
+        q(b, "INSERT INTO cn VALUES (1, 200, NULL, 0)")
+        n2 = q(a, "SELECT COUNT(*) FROM cn WHERE g = 1 AND f = 0")[0][0]
+        q(a, "INSERT INTO cn VALUES (2, 201, NULL, 0)")
+        aborted = expect_conflict(lambda: q(a, "COMMIT"))
+        self.check(aborted and n1 == n2, f"counted range validated (n1={n1} n2={n2} aborted={aborted})")
+
     def test_fractured_read(self):
         # R reads y, then T updates x and y atomically (across shards for
         # most pairs) and commits, then R reads x. R must not commit having

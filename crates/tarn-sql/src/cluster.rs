@@ -308,6 +308,8 @@ pub struct Stats {
     pub deadlocks: AtomicU64,
     /// Storage calls made by `detect_deadlocks`.
     pub deadlock_calls: AtomicU64,
+    /// COUNTs the shards computed without returning rows (issue #52).
+    pub storage_counts: AtomicU64,
 }
 
 pub struct CachedPlan {
