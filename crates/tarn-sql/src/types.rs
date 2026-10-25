@@ -113,6 +113,14 @@ impl SqlType {
         })
     }
 
+    /// Fractional-second digits of a DATETIME / TIMESTAMP (0 to 6).
+    pub fn fsp(&self) -> u32 {
+        match self.base {
+            BaseType::DateTime | BaseType::Timestamp => self.len.unwrap_or(0).min(6),
+            _ => 0,
+        }
+    }
+
     pub fn is_integer(&self) -> bool {
         use BaseType::*;
         matches!(self.base, TinyInt | SmallInt | MediumInt | Int | BigInt | Bool | Year)
@@ -184,7 +192,9 @@ impl SqlType {
             VarBinary => format!("varbinary({})", self.len.unwrap_or(255)),
             Blob => "blob".to_string(),
             Date => "date".to_string(),
+            DateTime if self.fsp() > 0 => format!("datetime({})", self.fsp()),
             DateTime => "datetime".to_string(),
+            Timestamp if self.fsp() > 0 => format!("timestamp({})", self.fsp()),
             Timestamp => "timestamp".to_string(),
             Time => "time".to_string(),
             Year => "year".to_string(),
@@ -340,7 +350,7 @@ impl SqlType {
                 }
                 let b = match self.base {
                     Date | DateTime | Timestamp => {
-                        normalize_datetime(&b, self.base == Date).ok_or_else(|| bad("datetime"))?
+                        normalize_datetime(&b, self.base == Date, self.fsp() as usize).ok_or_else(|| bad("datetime"))?
                     }
                     _ => b,
                 };
@@ -434,33 +444,201 @@ pub fn rescale_decimal(s: &str, scale: u32) -> Option<String> {
     Some(out)
 }
 
-/// Accept 'YYYY-MM-DD', 'YYYY-MM-DD HH:MM:SS[.frac]', 'YYYYMMDD...' and return
-/// the canonical text form (which sorts chronologically as bytes).
-fn normalize_datetime(b: &Bytes, date_only: bool) -> Option<Bytes> {
-    let s = std::str::from_utf8(b).ok()?.trim();
-    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-        if date_only {
-            return Some(Bytes::copy_from_slice(&s.as_bytes()[..10]));
+/// A date or datetime literal, split into its parts.
+#[derive(Clone, Debug, PartialEq)]
+struct Temporal {
+    y: i64,
+    mo: u32,
+    d: u32,
+    h: u32,
+    mi: u32,
+    s: u32,
+    /// Fractional-second digits as written.
+    frac: String,
+}
+
+/// Parse 'YYYY-MM-DD', 'YYYY-MM-DD[ T]HH:MM[:SS[.frac]]' (one- or two-digit
+/// parts after the year) and 'YYYYMMDD[HHMMSS[.frac]]'. Zero dates are
+/// accepted, as MySQL accepts them.
+fn parse_temporal(s: &str) -> Option<Temporal> {
+    let s = s.trim();
+    let num = |p: &str| -> Option<u32> {
+        (!p.is_empty() && p.len() <= 2 && p.bytes().all(|c| c.is_ascii_digit())).then(|| p.parse().ok())?
+    };
+    let (date, time) = match s.find([' ', 'T']) {
+        Some(i) => (&s[..i], Some(s[i + 1..].trim())),
+        None => (s, None),
+    };
+    let mut t = if date.contains('-') {
+        let mut it = date.split('-');
+        let (y, mo, d) = (it.next()?, it.next()?, it.next()?);
+        if it.next().is_some() || y.len() != 4 || !y.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
         }
-        if s.len() == 10 {
-            return Some(Bytes::from(format!("{} 00:00:00", s)));
+        Temporal {
+            y: y.parse().ok()?,
+            mo: num(mo)?,
+            d: num(d)?,
+            h: 0,
+            mi: 0,
+            s: 0,
+            frac: String::new(),
         }
-        return Some(Bytes::copy_from_slice(s.replacen('T', " ", 1).as_bytes()));
-    }
-    if digits.len() == 8 || digits.len() == 14 {
-        let d = format!("{}-{}-{}", &digits[0..4], &digits[4..6], &digits[6..8]);
-        if date_only {
-            return Some(Bytes::from(d));
+    } else {
+        // YYYYMMDD[HHMMSS][.frac], as a string or a number
+        if time.is_some() {
+            return None;
         }
-        let t = if digits.len() == 14 {
-            format!("{}:{}:{}", &digits[8..10], &digits[10..12], &digits[12..14])
-        } else {
-            "00:00:00".to_string()
+        let (digits, frac) = date.split_once('.').unwrap_or((date, ""));
+        let ok_len = digits.len() == 14 || (digits.len() == 8 && frac.is_empty());
+        if !ok_len || !digits.bytes().all(|c| c.is_ascii_digit()) || !frac.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let p = |a: usize, b: usize| digits.get(a..b).map(|x| x.parse::<u32>().unwrap_or(0)).unwrap_or(0);
+        Temporal {
+            y: p(0, 4) as i64,
+            mo: p(4, 6),
+            d: p(6, 8),
+            h: p(8, 10),
+            mi: p(10, 12),
+            s: p(12, 14),
+            frac: frac.to_string(),
+        }
+    };
+    if let Some(time) = time {
+        let (hms, frac) = time.split_once('.').unwrap_or((time, ""));
+        if !frac.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let mut it = hms.split(':');
+        t.h = num(it.next()?)?;
+        t.mi = num(it.next()?)?;
+        t.s = match it.next() {
+            Some(x) => num(x)?,
+            None if frac.is_empty() => 0,
+            None => return None,
         };
-        return Some(Bytes::from(format!("{} {}", d, t)));
+        if it.next().is_some() {
+            return None;
+        }
+        t.frac = frac.to_string();
     }
-    None
+    if t.mo > 12 || t.d > 31 || t.h > 23 || t.mi > 59 || t.s > 59 {
+        return None;
+    }
+    Some(t)
+}
+
+impl Temporal {
+    fn date(&self) -> String {
+        format!("{:04}-{:02}-{:02}", self.y, self.mo, self.d)
+    }
+    fn time_is_zero(&self) -> bool {
+        self.h == 0 && self.mi == 0 && self.s == 0 && self.frac.bytes().all(|c| c == b'0')
+    }
+    /// 'YYYY-MM-DD HH:MM:SS', then `.frac` when `frac` is not empty.
+    fn datetime(&self, frac: &str) -> String {
+        let mut out = format!("{} {:02}:{:02}:{:02}", self.date(), self.h, self.mi, self.s);
+        if !frac.is_empty() {
+            out.push('.');
+            out.push_str(frac);
+        }
+        out
+    }
+    /// Rounded to `fsp` fractional digits, as MySQL stores a DATETIME(fsp).
+    fn rounded(mut self, fsp: usize) -> Temporal {
+        if self.frac.len() <= fsp {
+            return self;
+        }
+        let up = self.frac.as_bytes()[fsp] >= b'5';
+        self.frac.truncate(fsp);
+        if !up {
+            return self;
+        }
+        // add one unit in the last kept digit, carrying into the seconds
+        let mut digits = self.frac.clone().into_bytes();
+        let mut carry = true;
+        for c in digits.iter_mut().rev() {
+            if *c == b'9' {
+                *c = b'0';
+            } else {
+                *c += 1;
+                carry = false;
+                break;
+            }
+        }
+        self.frac = String::from_utf8(digits).expect("ascii digits");
+        if carry && self.mo != 0 && self.d != 0 {
+            let secs =
+                days_from_civil(self.y, self.mo, self.d) * 86_400 + (self.h * 3600 + self.mi * 60 + self.s) as i64 + 1;
+            let s = crate::expr::format_datetime(secs);
+            if let Some(t) = parse_temporal(&s) {
+                self = Temporal { frac: self.frac, ..t };
+            }
+        }
+        self
+    }
+}
+
+/// Days since 1970-01-01 of a civil date (Howard Hinnant).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let m = m as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The text a DATE (`fsp` None) or DATETIME / TIMESTAMP(fsp) column stores
+/// for a value: 'YYYY-MM-DD', or 'YYYY-MM-DD HH:MM:SS' with exactly `fsp`
+/// fractional digits (rounded, as MySQL rounds). One spelling per value, so
+/// stored values compare, sort, group and index as bytes in time order.
+fn canonical_temporal(t: Temporal, fsp: Option<usize>) -> String {
+    match fsp {
+        None => t.date(),
+        Some(fsp) => {
+            let t = t.rounded(fsp);
+            let mut frac = t.frac.clone();
+            while frac.len() < fsp {
+                frac.push('0');
+            }
+            t.datetime(&frac)
+        }
+    }
+}
+
+/// A value compared with a DATE (`fsp` None) or DATETIME(fsp) column,
+/// written so that comparing it as bytes with the column's stored text
+/// compares the temporal values (issue #37): padded to the column's
+/// fractional digits, with any further digits kept only up to the last
+/// non-zero one, and for a DATE a time part only when it is not midnight.
+/// (A stored text that is a prefix of the key is then smaller, as its time
+/// is.) None when the value is not a date or datetime.
+pub fn temporal_key(b: &[u8], fsp: Option<u32>) -> Option<String> {
+    let t = parse_temporal(std::str::from_utf8(b).ok()?)?;
+    let keep = match fsp {
+        None if t.time_is_zero() => return Some(t.date()),
+        None => 0,
+        Some(f) => f as usize,
+    };
+    let mut frac = t.frac.clone();
+    while frac.len() < keep {
+        frac.push('0');
+    }
+    while frac.len() > keep && frac.ends_with('0') {
+        frac.pop();
+    }
+    Some(t.datetime(&frac))
+}
+
+/// Accept 'YYYY-MM-DD', 'YYYY-MM-DD HH:MM:SS[.frac]', 'YYYYMMDD...' and return
+/// the canonical text form (which sorts chronologically as bytes): see
+/// `canonical_temporal`.
+fn normalize_datetime(b: &Bytes, date_only: bool, fsp: usize) -> Option<Bytes> {
+    let t = parse_temporal(std::str::from_utf8(b).ok()?)?;
+    Some(Bytes::from(canonical_temporal(t, (!date_only).then_some(fsp))))
 }
 
 // ---------------------------------------------------------------------------
@@ -854,5 +1032,43 @@ mod tests {
             t.coerce(Value::str("2024-01-02"), "c").unwrap(),
             Value::str("2024-01-02 00:00:00")
         );
+    }
+
+    #[test]
+    fn temporal_spellings() {
+        // issue #37: one stored spelling per value, rounded to the precision
+        let c = |ty: &str, v: &str| match SqlType::parse(ty).unwrap().coerce(Value::str(v), "c") {
+            Ok(Value::Str(b)) => String::from_utf8(b.to_vec()).unwrap(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(SqlType::parse("DATETIME(6)").unwrap().display(), "datetime(6)");
+        assert_eq!(SqlType::parse("TIMESTAMP(3)").unwrap().display(), "timestamp(3)");
+        assert_eq!(c("DATETIME", "2025-01-01 00:00:01.000000"), "2025-01-01 00:00:01");
+        assert_eq!(c("DATETIME", "2025-01-01 00:00:01.5"), "2025-01-01 00:00:02");
+        assert_eq!(c("DATETIME", "2025-12-31 23:59:59.7"), "2026-01-01 00:00:00");
+        assert_eq!(c("DATETIME(6)", "2025-01-01 00:00:01"), "2025-01-01 00:00:01.000000");
+        assert_eq!(c("DATETIME(3)", "2025-01-01T00:00:01.12349"), "2025-01-01 00:00:01.123");
+        assert_eq!(c("DATETIME(2)", "2025-02-28 23:59:59.999"), "2025-03-01 00:00:00.00");
+        assert_eq!(c("DATETIME", "2025-1-2 3:04:05"), "2025-01-02 03:04:05");
+        assert_eq!(c("DATETIME", "20250102030405"), "2025-01-02 03:04:05");
+        assert_eq!(c("DATETIME(6)", "0000-00-00 00:00:00"), "0000-00-00 00:00:00.000000");
+        assert_eq!(c("DATE", "2025-01-02 10:00:00"), "2025-01-02");
+        assert!(SqlType::parse("DATETIME")
+            .unwrap()
+            .coerce(Value::str("2025-13-01"), "c")
+            .is_err());
+        // comparison keys: equal values spell alike, longer ones only when
+        // they differ
+        let k = |v: &str, fsp| temporal_key(v.as_bytes(), fsp);
+        assert_eq!(k("2025-01-01 00:00:01", Some(6)).unwrap(), "2025-01-01 00:00:01.000000");
+        assert_eq!(k("2025-01-01 00:00:01.000000", Some(0)).unwrap(), "2025-01-01 00:00:01");
+        assert_eq!(k("2025-01-01 00:00:01.50", Some(0)).unwrap(), "2025-01-01 00:00:01.5");
+        assert_eq!(k("2025-01-01 00:00:00", None).unwrap(), "2025-01-01");
+        assert_eq!(k("2025-01-01 00:00:01", None).unwrap(), "2025-01-01 00:00:01");
+        assert_eq!(k("not a date", Some(0)), None);
+        // ... and compare as bytes in time order against stored values
+        assert!("2025-01-01 00:00:01" < k("2025-01-01 00:00:01.5", Some(0)).unwrap().as_str());
+        assert!("2025-01-01" < k("2025-01-01 00:00:01", None).unwrap().as_str());
+        assert!("2025-01-02" > k("2025-01-01 23:59:59", None).unwrap().as_str());
     }
 }
