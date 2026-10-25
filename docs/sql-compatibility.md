@@ -5,9 +5,11 @@ Tarn speaks the MySQL client/server protocol and parses SQL with
 covers what OLTP applications and sysbench use, plus joins, aggregates,
 subqueries without outer references, and `UNION`, at two isolation levels:
 strictly serializable (the default) and READ COMMITTED as InnoDB implements
-it. Behaviour is checked against MariaDB 10.11 by a differential test (174
-cases, compared exactly) and by 2,000 randomly generated queries, and the
-locking behaviour of READ COMMITTED by concurrent tests (`tests/sql/`).
+it. Behaviour is checked against MariaDB 10.11 by a differential test (236
+cases, compared exactly) and by 2,000 randomly generated queries, the
+locking behaviour of READ COMMITTED by concurrent tests, and online schema
+changes by a test that alters a table hundreds of times while two SQL
+servers write to it (`tests/sql/`).
 
 ## Protocol
 
@@ -17,8 +19,9 @@ locking behaviour of READ COMMITTED by concurrent tests (`tests/sql/`).
 | Users | from the `--user NAME:PASSWORD` flags, or any user with `--allow-all` / no `--user` |
 | Text protocol | `COM_QUERY` with full result sets |
 | Binary protocol | `COM_STMT_PREPARE`, `EXECUTE` (all parameter types), `SEND_LONG_DATA`, `CLOSE`, `RESET` |
-| Other commands | `COM_PING`, `COM_INIT_DB`, `COM_FIELD_LIST`, `COM_STATISTICS`, `COM_SET_OPTION`, `COM_RESET_CONNECTION`, `COM_QUIT` |
-| Not supported | TLS, `COM_CHANGE_USER`, multi-statement packets, server-side cursors (`COM_STMT_FETCH`) |
+| Multi-statements | `CLIENT_MULTI_STATEMENTS`, or `COM_SET_OPTION` (as Rails and other drivers turn it on): one result per statement, and the first error ends the batch |
+| Other commands | `COM_PING`, `COM_INIT_DB`, `COM_FIELD_LIST`, `COM_STATISTICS`, `COM_RESET_CONNECTION`, `COM_QUIT` |
+| Not supported | TLS, `COM_CHANGE_USER`, server-side cursors (`COM_STMT_FETCH`) |
 | Limits | 64 MiB per packet and per prepared statement's long data (64 KiB before authentication); 16,382 prepared statements per connection |
 
 ## Statements
@@ -61,14 +64,58 @@ locking behaviour of READ COMMITTED by concurrent tests (`tests/sql/`).
 
 * `CREATE DATABASE`, `DROP DATABASE`, `USE`.
 * `CREATE TABLE` with column types (below), `NOT NULL`, `DEFAULT`,
-  `AUTO_INCREMENT`, `PRIMARY KEY`, `UNIQUE [KEY]`, `KEY` / `INDEX`, and the
-  shard key clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the partition
-  count is ignored: rows are spread over the cluster's buckets).
-* `CREATE [UNIQUE] INDEX`, `DROP TABLE`, `TRUNCATE TABLE`.
+  `AUTO_INCREMENT`, `PRIMARY KEY`, `UNIQUE [KEY]`, `KEY` / `INDEX` (with
+  `VISIBLE` / `INVISIBLE`), `FOREIGN KEY` (recorded, not enforced, below),
+  the table options `AUTO_INCREMENT = n` and `COMMENT`, and the shard key
+  clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the partition count is
+  ignored: rows are spread over the cluster's buckets). Other table options
+  (`ENGINE`, `CHARSET`, `ROW_FORMAT`, ...) are accepted and ignored.
+* `ALTER TABLE`, online (below), `RENAME TABLE`, `CREATE [UNIQUE] INDEX`,
+  `DROP INDEX ... ON`, `DROP TABLE`, `TRUNCATE TABLE`.
 * Every table needs a primary key, and every unique key must include the
   shard key (by default the primary key), so that uniqueness is enforced on
   one shard.
-* DDL is not transactional and assumes no concurrent DDL on the same table.
+* `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
+  transactional; another SQL server sees their result within its catalog
+  poll (0.3 s), and a statement that meets an older catalog there is run
+  again with the new one.
+
+#### ALTER TABLE
+
+Schema changes do not rewrite rows and do not block reads; writes to the
+table wait while the change is prepared (the statement is retried
+internally, up to the lock wait timeout, like a wait for MySQL's metadata
+lock). Writes made with the old definition after that point are refused
+by the shards and retried with the new one, so no SQL server can write in
+an old layout. A transaction that wrote the table before the change fails
+with 1412 (`ER_TABLE_DEF_CHANGED`, "Table definition has changed, please
+retry transaction") at its next statement on the table, or at COMMIT; at
+SERIALIZABLE, one that read the table is aborted by the change (1213 at its
+next read or at COMMIT). One schema change runs at a time; one that a crashed server
+left half done is finished by the next schema change or server start.
+
+| Alteration | Support |
+|---|---|
+| `ADD [COLUMN]` (`FIRST`, `AFTER col`, several at once) | instant; existing rows get the default (or the type's zero value for `NOT NULL` without a default, as MySQL fills them); not `AUTO_INCREMENT` |
+| `DROP [COLUMN]` | instant (the stored values stay, unused); not primary key or shard key columns, nor columns of a foreign key (1828 / 1553); indexes lose the column |
+| `MODIFY`, `CHANGE` | type changes within one family (integers, `CHAR`/`VARCHAR`/`TEXT`/`JSON`, `DECIMAL` with the same scale, `DATETIME`/`TIMESTAMP`, binary strings, floats), `NULL` / `NOT NULL`, defaults, position, name. Existing rows are checked against the narrower type (1264 / 1265, as MariaDB reports them) |
+| `RENAME COLUMN`, `ALTER [COLUMN] SET DEFAULT / DROP DEFAULT` | instant |
+| `ADD [UNIQUE] INDEX / KEY`, `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062 |
+| `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
+| `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
+| `ENGINE`, `[DEFAULT] CHARSET`, `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS`, `CHECK` constraints | accepted and ignored |
+| Not supported (1235) | conversions that need every row rewritten (`INT` to `VARCHAR`, a different `DECIMAL` scale, `VARCHAR` to `DATETIME`), changing or dropping the primary key, `FULLTEXT` / `SPATIAL` indexes, partition maintenance, invisible columns |
+
+#### Loading dumps
+
+Files written by `mysqldump` load with the `mysql` client or as one
+multi-statement batch: executable comments `/*!NNNNN ... */` are run up to
+MySQL 8.0.40's version and later ones and MariaDB's `/*M! ... */` are
+skipped; `SET @saved = @@var` / `SET var = @saved`, `SET NAMES`,
+`TIME_ZONE = '+00:00'`, `SQL_MODE` (with `NO_AUTO_VALUE_ON_ZERO`),
+`FOREIGN_KEY_CHECKS`, `UNIQUE_CHECKS` and `SQL_NOTES` are accepted; `LOCK
+TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
+`ALTER TABLE ... DISABLE KEYS` do nothing.
 
 ### Transactions and sessions
 
@@ -80,13 +127,19 @@ locking behaviour of READ COMMITTED by concurrent tests (`tests/sql/`).
   leaves none of its writes behind; the transaction goes on, except after a
   deadlock (1213), which rolls the whole transaction back.
 * Isolation level and lock wait timeout, per session or globally: see
-  [Isolation and locking](#isolation-and-locking). Other `SET`s of session
-  variables are accepted (`SET NAMES`, `SET SESSION ...`).
+  [Isolation and locking](#isolation-and-locking). `sql_mode` honours
+  `NO_AUTO_VALUE_ON_ZERO` (Tarn is always strict); `time_zone` may be set to
+  UTC (`'+00:00'`, `'SYSTEM'`), and the connection character set to
+  `utf8mb4` or a subset of it (`SET NAMES`). Other session variables are
+  accepted and reported back by `SELECT @@var`.
+* User-defined variables: `SET @v = expr` (also `:=`), and `@v` anywhere
+  in a statement (not in prepared statements, nor assigned inside a
+  `SELECT`).
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
   VARIABLES | STATUS | WARNINGS | ENGINES | COLLATION | CHARACTER SET |
   PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
-* `LOCK`, `UNLOCK`, `FLUSH`, `ANALYZE`, `OPTIMIZE`, `CHECKSUM`, `DO` are
-  accepted and do nothing.
+* `UNLOCK`, `FLUSH`, `ANALYZE`, `OPTIMIZE`, `CHECKSUM`, `DO` are accepted
+  and do nothing; `LOCK TABLES` commits the open transaction.
 
 ## Isolation and locking
 
@@ -153,7 +206,7 @@ read stay validated at commit.
 | `TINYINT`, `SMALLINT`, `MEDIUMINT`, `INT`, `BIGINT` (`UNSIGNED` too) | `integer` / `unsigned` | range-checked on write (error 1264) |
 | `BOOL`, `BOOLEAN`, `TINYINT(1)` | `integer` | |
 | `FLOAT`, `DOUBLE` | `double` | |
-| `DECIMAL(p, s)` | `decimal` | exact |
+| `DECIMAL(p, s)` | `decimal` | exact; precision checked on write (1264) |
 | `CHAR`, `VARCHAR`, `TEXT` | `string` | binary comparison (see below) |
 | `BINARY`, `VARBINARY`, `BLOB` | `varbinary` | |
 | `DATE`, `DATETIME`, `TIMESTAMP`, `TIME`, `YEAR` | `string` / `integer` | MySQL text formats |
@@ -197,13 +250,19 @@ read stay validated at commit.
   have no such limit.
 * **Hash sharding:** range predicates on the shard key and lookups through
   non-unique secondary indexes are sent to every shard.
+* **Foreign keys** are recorded (`SHOW CREATE TABLE`, `DROP FOREIGN KEY`)
+  but not enforced, as in MyISAM or TiDB before 6.6: `ON DELETE CASCADE`
+  does not cascade and a missing parent row is not an error. `CHECK`
+  constraints are accepted and not enforced either.
+* **ENUM and SET** columns are stored as text without checking the value
+  list.
 
 ## Not supported
 
 Subqueries that reference the outer query, derived tables (`FROM (SELECT
-...)`), views, stored procedures and functions, triggers, events, foreign
-keys, `ALTER TABLE`, window functions, common table expressions,
-`RIGHT` / `FULL` / `NATURAL` joins, multi-table `UPDATE` / `DELETE`,
-`CREATE TABLE ... AS` / `LIKE`, user management statements, and online
-resharding. Unsupported syntax fails with error 1235
+...)`), views, stored procedures and functions, triggers, events, enforced
+foreign keys, `ALTER TABLE` changes that rewrite rows (above), window
+functions, common table expressions, `RIGHT` / `FULL` / `NATURAL` joins,
+multi-table `UPDATE` / `DELETE`, `CREATE TABLE ... AS` / `LIKE`,
+`information_schema`, user management statements, and online resharding. Unsupported syntax fails with error 1235
 (`ER_NOT_SUPPORTED_YET`) or a parse error.

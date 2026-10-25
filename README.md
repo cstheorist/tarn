@@ -21,7 +21,12 @@ in-memory speed.
 
 * **MySQL-compatible.** The `mysql` CLI, sysbench, PyMySQL and other MySQL
   clients connect unchanged: text and binary protocol, prepared statements,
-  sysbench-level SQL plus joins, aggregates, subqueries and `UNION`.
+  multi-statement batches, sysbench-level SQL plus joins, aggregates,
+  subqueries and `UNION`; `mysqldump` files load as they are.
+* **Online schema changes.** `ALTER TABLE` adds, drops and changes columns
+  and indexes without rewriting rows or stopping reads, while every SQL
+  server keeps writing: writes made with a replaced table definition are
+  refused by the shards and redone.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
   sharded with vshard's bucket function.

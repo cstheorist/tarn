@@ -35,6 +35,30 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/sql/rctest.py`: concurrent tests of READ COMMITTED against InnoDB's
   behaviour; `bench/locking.py`, a contention benchmark;
   `Tarn_cross_shard_deadlocks` in `SHOW TARN STATUS`.
+- Online `ALTER TABLE`: add, drop, modify, change and rename columns,
+  defaults, add, drop and rename indexes, foreign keys, `RENAME TABLE`,
+  `DROP INDEX ... ON`, table options
+  ([#16](https://github.com/cstheorist/tarn/issues/16)). No row is
+  rewritten (added columns get new fields after the existing ones, filled
+  with their default in older rows); existing rows are checked against
+  narrower types (1264 / 1265); new indexes are built on every shard before
+  the change takes effect. Every write carries the version of its table's
+  definition and the shards refuse writes made with a replaced one (1412),
+  so SQL servers that have not reloaded their catalog cannot write in an
+  old layout; their statements are run again with the new definition. A
+  transaction that wrote a table and then meets a newer definition of it
+  fails with 1412 and rolls back. Schema changes run one at a time; those
+  sent from several connections at once wait for each other.
+  Conversions that would need rows rewritten (`INT` to `VARCHAR`, a
+  different `DECIMAL` scale) and primary key changes are refused (1235).
+- Loading `mysqldump` files: MySQL's executable comments `/*!NNNNN ... */`,
+  user-defined variables (`SET @v = expr`, `@v` in statements), session
+  variables set and read back (`SET var = @saved`), `NO_AUTO_VALUE_ON_ZERO`,
+  `LOCK TABLES`, `CREATE TABLE` options `AUTO_INCREMENT = n` and `COMMENT`,
+  `INVISIBLE` indexes, and foreign keys (recorded, not enforced).
+- Multi-statement batches (`CLIENT_MULTI_STATEMENTS`, `COM_SET_OPTION`).
+- `tests/sql/ddltest.py`: dumps, batches, and `ALTER TABLE` while two SQL
+  servers write the table.
 
 ### Changed
 
@@ -47,6 +71,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `DECIMAL(p, s)` values with more than p - s digits before the point were
+  stored; they now fail with 1264, as in MySQL.
+- A statement on one SQL server right after another server created or
+  recreated a table, a column or a database failed until the next catalog
+  poll (up to 0.3 s) with "doesn't exist" errors; it is now re-planned with
+  the newer catalog, and `SHOW TABLES`, `SHOW CREATE TABLE`, `SHOW INDEX`,
+  `SHOW COLUMNS` and `DESCRIBE` check for a newer catalog first.
 - `REPLACE` into a table with a unique key besides the primary key failed
   with 1062 when the new row collided with another row on that key; it now
   deletes that row, as MySQL does. Commits apply deletes before inserts, so
