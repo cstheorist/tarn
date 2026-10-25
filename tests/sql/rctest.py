@@ -614,6 +614,40 @@ class T:
         self.check(bg.exc is None and bg.res == 1 and q(c, "SELECT id FROM sc ORDER BY id") == ((1,), (2,)),
                    f"DELETE re-checks its WHERE under the lock ({bg.res}, {bg.exc})")
 
+    def test_pk_point_writes(self):
+        # UPDATE / DELETE by full primary key lock and read the row in one
+        # step (#48): they still wait for the lock, see the newest version
+        # and re-check WHERE on it.
+        c = self.fresh("pp", "CREATE TABLE pp (id INT PRIMARY KEY, v INT, s VARCHAR(5))",
+                       ["(1, 0, 'a')", "(2, 0, 'a')", "(3, 0, 'a')"])
+        a, b = self.rc(), self.rc()
+        q(a, "BEGIN")
+        q(a, "UPDATE pp SET v = v + 1 WHERE id = 1")
+        q(a, "UPDATE pp SET s = 'b' WHERE id = 2")
+        q(a, "DELETE FROM pp WHERE id = 3")
+        q(a, "INSERT INTO pp VALUES (4, 0, 'a')")
+        q(b, "BEGIN")
+        bg = Bg(lambda: q(b, "UPDATE pp SET v = v + 10 WHERE id = 1"))
+        time.sleep(0.3)
+        self.check(bg.running(), "a point UPDATE waits for the row lock")
+        q(a, "COMMIT")
+        bg.join()
+        self.check(bg.exc is None and bg.res == 1, f"... then updates the row ({bg.res}, {bg.exc})")
+        self.check(q(b, "UPDATE pp SET v = 1 WHERE id = 2 AND s = 'a'") == 0,
+                   "WHERE is checked on the version read under the lock")
+        self.check(q(b, "UPDATE pp SET v = 1 WHERE id = 3") == 0, "a row deleted meanwhile is not updated")
+        self.check(q(b, "DELETE FROM pp WHERE id IN (3, 4)") == 1, "a row inserted meanwhile is deleted")
+        q(b, "COMMIT")
+        self.check(q(c, "SELECT id, v, s FROM pp ORDER BY id") == ((1, 11, 'a'), (2, 0, 'b')),
+                   "no lost update")
+        # a non-matching row's lock is released at once
+        q(a, "BEGIN")
+        self.check(q(a, "UPDATE pp SET v = 5 WHERE id = 2 AND s = 'a'") == 0, "no row matches")
+        bg = Bg(lambda: q(connect(self.args.tarn), "UPDATE pp SET v = 7 WHERE id = 2"))
+        bg.join()
+        self.check(bg.exc is None and bg.res == 1, f"... and its lock is not held ({bg.exc})")
+        q(a, "ROLLBACK")
+
     def test_duplicate_insert_waits(self):
         c = self.fresh("ui", "CREATE TABLE ui (k VARCHAR(10) PRIMARY KEY, n INT)", [])
         a, b = self.rc(), self.rc()
