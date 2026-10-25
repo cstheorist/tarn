@@ -195,6 +195,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- New indexes on instant-added columns could miss old rows or accept
+  duplicate logical keys: short tuples omit the column's non-NULL fill,
+  which a native index reads as NULL
+  ([#70](https://github.com/cstheorist/tarn/issues/70)). Such builds now fail
+  with 1846 before publishing the index; empty tables, physically present
+  fields and NULL fills remain supported. Automatic backfill is not yet
+  implemented. Vinyl builds that need this check run behind the write fence.
 - `col <=> NULL` (and `col <=> ?` bound to NULL) on an indexed nullable
   column found no rows: the index lookup it became drops a NULL key part.
   On a nullable column, `<=>` is now a filter, not an index equality, in
