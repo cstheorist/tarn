@@ -71,6 +71,9 @@ pub struct Session {
     pub lock_wait_timeout: f64,
     /// User-defined variables (`@name`, lower-cased).
     user_vars: HashMap<String, Value>,
+    /// SQL-level prepared statements by name (lower-cased): their text and
+    /// number of `?` markers.
+    sql_prepared: HashMap<String, (String, usize)>,
     /// System variables the session set that Tarn reports but does not act
     /// on (character sets, sql_mode, foreign_key_checks, ...).
     sys_vars: HashMap<String, Value>,
@@ -288,6 +291,7 @@ impl Session {
             next_isolation: None,
             lock_wait_timeout,
             user_vars: HashMap::new(),
+            sql_prepared: HashMap::new(),
             sys_vars: HashMap::new(),
             no_auto_value_on_zero: false,
         }
@@ -2020,6 +2024,71 @@ impl Session {
                 t.savepoints.truncate(i);
                 Ok(Output::ok(0))
             }
+            Admin::Prepare { name, source } => {
+                // A failed PREPARE leaves no statement of that name, as in MySQL.
+                self.sql_prepared.remove(&name);
+                let text = match source {
+                    admin::PrepareSource::Text(s) => s,
+                    admin::PrepareSource::Var(v) => match self.user_vars.get(&v) {
+                        Some(Value::Str(b) | Value::Bin(b)) => String::from_utf8_lossy(b).into_owned(),
+                        Some(Value::Null) | None => "NULL".into(),
+                        Some(other) => other.to_string(),
+                    },
+                };
+                let text = crate::prep::expand_comments(&text)
+                    .trim()
+                    .trim_end_matches(';')
+                    .to_string();
+                let first = first_keyword(&text).to_ascii_uppercase();
+                if matches!(first.as_str(), "PREPARE" | "EXECUTE" | "DEALLOCATE")
+                    || (first == "DROP" && admin::recognize(&text)?.is_some())
+                {
+                    return Err(SqlError::new(
+                        1295,
+                        "HY000",
+                        "This command is not supported in the prepared statement protocol yet",
+                    ));
+                }
+                if text.is_empty() || text.eq_ignore_ascii_case("NULL") {
+                    return Err(SqlError::parse("You have an error in your SQL syntax: empty statement"));
+                }
+                let n = crate::prep::count_markers(&text);
+                self.sql_prepared.insert(name, (text, n));
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info: "Statement prepared".into(),
+                })
+            }
+            Admin::Execute { name, using } => {
+                let (text, n) = self.sql_prepared.get(&name).cloned().ok_or_else(|| {
+                    SqlError::new(
+                        1243,
+                        "HY000",
+                        format!("Unknown prepared statement handler ({}) given to EXECUTE", name),
+                    )
+                })?;
+                if using.len() != n {
+                    return Err(SqlError::new(1210, "HY000", "Incorrect arguments to EXECUTE"));
+                }
+                let args: Vec<String> = using
+                    .iter()
+                    .map(|v| crate::prep::literal(self.user_vars.get(v).unwrap_or(&Value::Null)))
+                    .collect();
+                let sql = crate::prep::bind_markers(&text, &args);
+                Box::pin(self.query(&sql)).await
+            }
+            Admin::Deallocate(name) => match self.sql_prepared.remove(&name) {
+                Some(_) => Ok(Output::ok(0)),
+                None => Err(SqlError::new(
+                    1243,
+                    "HY000",
+                    format!(
+                        "Unknown prepared statement handler ({}) given to DEALLOCATE PREPARE",
+                        name
+                    ),
+                )),
+            },
             Admin::Noop => Ok(Output::ok(0)),
             Admin::LockTables => {
                 self.implicit_commit().await?;
