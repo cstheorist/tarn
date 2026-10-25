@@ -1064,6 +1064,12 @@ fn type_change(old: &ColumnDef, new: &ColumnDef, field: u32, fill: &Value, pk: b
                 checks.push(check(CheckKind::Range(blo, bhi)));
             }
         }
+        8 => {
+            // stored values carry exactly fsp fractional digits (#37)
+            if a.fsp() != b.fsp() {
+                return Err(refuse());
+            }
+        }
         4 => {
             if a.scale.unwrap_or(0) != b.scale.unwrap_or(0) {
                 return Err(refuse());

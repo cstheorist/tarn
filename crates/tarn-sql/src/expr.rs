@@ -153,6 +153,10 @@ pub enum CastTo {
     Date,
     DateTime,
     Binary,
+    /// Not SQL: a constant compared with a DATE (None) or DATETIME(fsp)
+    /// column, written as `types::temporal_key` spells it; values that are
+    /// not dates stay as they are.
+    TemporalKey(Option<u32>),
 }
 
 /// Per-statement evaluation context.
@@ -566,6 +570,10 @@ fn cast(v: Value, to: CastTo) -> SqlResult<Value> {
         }),
         CastTo::Char | CastTo::Date | CastTo::DateTime => Value::Str(v.to_text().unwrap_or_default()),
         CastTo::Binary => Value::Bin(v.to_text().unwrap_or_default()),
+        CastTo::TemporalKey(fsp) => match crate::types::temporal_key(&v.to_text().unwrap_or_default(), fsp) {
+            Some(k) => Value::str(&k),
+            None => v,
+        },
         CastTo::Double => Value::Float(to_num(&v).unwrap_or(0.0)),
         CastTo::Decimal(scale) => {
             let s = match &v {
