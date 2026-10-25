@@ -406,17 +406,31 @@ c[1]:call('tarn_unlock', {'P6'})
 -- the cross-shard detector's interface
 lock(1, 'P8', {k(305)}, 'X', {})
 got = nil
-f = fiber.create(function() got = lock(1, 'P9', {k(305)}, 'X', {timeout = 5}) end)
+f = fiber.create(function() got = lock(1, 'P9', {k(305)}, 'X', {timeout = 5, held = {2}}) end)
 fiber.sleep(0.05)
 local waits = c[1]:call('tarn_lock_waits')
 local w9
 for _, w in ipairs(waits) do if w[1] == 'P9' then w9 = w end end
 check('tarn_lock_waits reports the wait-for edge', w9 ~= nil and w9[3][1] == 'P8', waits)
+check('... and the other shards where the waiter holds row locks',
+      w9 ~= nil and #w9[4] == 1 and w9[4][1] == 2, waits)
 check('tarn_lock_victim fails a pending wait with 1213',
       w9 ~= nil and c[1]:call('tarn_lock_victim', {'P9', w9[2]}) == true)
 fiber.sleep(0.05)
 check('... seen by the waiter', got and got[1] == 'deadlock', got)
 c[1]:call('tarn_unlock', {'P8'}); c[1]:call('tarn_unlock', {'P9'})
+-- a request that fails after some of its locks were granted keeps them and
+-- names their generation, so that the SQL server releases them later
+r = lock(1, 'P20', {k(305)}, 'X', {})
+local p20gen = r[2]
+r = lock(1, 'P21', {k(304), k(305)}, 'X', {timeout = 0.2})
+check('a request that times out after taking locks reports their generation',
+      r[1] == 'timeout' and r[2] == 1205 and r[4] == p20gen, r)
+r = lock(1, 'P22', {k(304)}, 'X', {nowait = true})
+check('... and keeps them', r[1] == 'locked', r)
+r = lock(1, 'P22', {k(305)}, 'X', {timeout = 0.2})
+check('a request that took no lock reports no generation', r[1] == 'timeout' and r[4] == nil, r)
+for _, t in ipairs({'P20', 'P21', 'P22'}) do c[1]:call('tarn_unlock', {t}) end
 -- other writers respect row locks
 r = lock(1, 'P10', {k(301)}, 'X', {})
 local p10gen = r[2]

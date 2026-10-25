@@ -118,8 +118,8 @@ class T:
                 return first, k
         raise RuntimeError("no two ids on different shards")
 
-    def rc(self, autocommit=True):
-        c = connect(self.args.tarn, autocommit=autocommit)
+    def rc(self, autocommit=True, hp=None):
+        c = connect(hp or self.args.tarn, autocommit=autocommit)
         q(c, "SET SESSION transaction_isolation = 'READ-COMMITTED'")
         return c
 
@@ -336,8 +336,8 @@ class T:
                    and time.time() - t0 < 0.5, "a zero timeout fails at once")
         q(a, "ROLLBACK")
 
-    def deadlock(self, x, y, table):
-        a, b = self.rc(), self.rc()
+    def deadlock(self, x, y, table, servers=(None, None)):
+        a, b = self.rc(hp=servers[0]), self.rc(hp=servers[1])
         q(a, "SET innodb_lock_wait_timeout = 30")
         q(b, "SET innodb_lock_wait_timeout = 30")
         q(a, "BEGIN")
@@ -393,6 +393,94 @@ class T:
         slowest = self.deadlock(x, y, "dx")
         self.check(slowest < 10, f"broken by the cross-shard detector, not the 30 s timeout ({slowest:.1f}s)")
         self.check(self.status("Tarn_cross_shard_deadlocks") == before + 1, "counted in Tarn_cross_shard_deadlocks")
+
+    def test_deadlock_cross_shard_servers(self):
+        # Each SQL server starts its search from its own waiting transactions
+        # and learns where the others' hold locks from their lock requests
+        # (issue #26): cycles whose transactions are on different servers.
+        if len(self.args.servers) < 2:
+            print("    (one SQL server listed: skipped)")
+            return
+        s1, s2 = self.args.servers[0], self.args.servers[1]
+        x, y = self.two_shards(list(range(1, 30)))
+        self.fresh("dv", "CREATE TABLE dv (id INT PRIMARY KEY, v INT)", [f"({x}, 0)", f"({y}, 0)"])
+        before = self.status("Tarn_cross_shard_deadlocks")
+        slowest = self.deadlock(x, y, "dv", (s1, s2))
+        self.check(slowest < 10, f"two servers: broken by the detector ({slowest:.1f}s)")
+        self.check(self.status("Tarn_cross_shard_deadlocks") == before + 1, "two servers: counted once")
+        # Three transactions on alternating servers, each holding one row and
+        # asking for the next: rows 0 and 2 on one shard, row 1 on the other,
+        # so no shard sees the whole cycle.
+        x0, x1 = self.two_shards(list(range(1, 60)))
+        x2 = [k for k in range(1, 60) if self.shard(k) == self.shard(x0) and k != x0][0]
+        rows = [x0, x1, x2]
+        self.fresh("d3", "CREATE TABLE d3 (id INT PRIMARY KEY, v INT)", [f"({k}, 0)" for k in rows])
+        before = self.status("Tarn_cross_shard_deadlocks")
+        ss = [self.rc(hp=self.args.servers[i % 2]) for i in range(3)]
+        for i, s in enumerate(ss):
+            q(s, "SET innodb_lock_wait_timeout = 30")
+            q(s, "BEGIN")
+            q(s, f"UPDATE d3 SET v = v + 1 WHERE id = {rows[i]}")
+        def ask_then_commit(s, i):
+            # Once the victim is gone, the others form a chain: each commits
+            # at once so that the next one gets its row.
+            q(s, f"UPDATE d3 SET v = v + 1 WHERE id = {rows[(i + 1) % 3]}")
+            q(s, "COMMIT")
+
+        gs = []
+        for i, s in enumerate(ss):
+            gs.append(Bg(lambda s=s, i=i: ask_then_commit(s, i)))
+            time.sleep(0.2)
+        for g in gs:
+            g.join(40)
+        codes = [g.code() or 0 for g in gs]
+        self.check(sorted(codes) == [0, 0, DEADLOCK], f"three servers' cycle: exactly one victim ({codes})")
+        slowest = max(g.elapsed or 99 for g in gs)
+        self.check(slowest < 10, f"three transactions: broken by the detector ({slowest:.1f}s)")
+        exp = {k: 0 for k in rows}
+        for i in range(3):
+            if codes[i] == 0:
+                exp[rows[i]] += 1
+                exp[rows[(i + 1) % 3]] += 1
+        got = dict(q(connect(self.args.tarn), "SELECT id, v FROM d3"))
+        self.check(got == exp, f"only the survivors' writes ({got}, expected {exp})")
+        self.check(self.status("Tarn_cross_shard_deadlocks") == before + 1, "three transactions: counted once")
+
+    def test_deadlock_detector_idle(self):
+        # Without lock waits, no SQL server calls the shards to look for
+        # deadlocks (issue #26: it used to call every shard every second).
+        time.sleep(0.2)
+        before = self.status("Tarn_deadlock_detector_calls")
+        time.sleep(2.5)
+        self.check(self.status("Tarn_deadlock_detector_calls") == before, "no detector calls without lock waits")
+
+    def test_failed_lock_request_releases(self):
+        # A lock request that is granted one row and then times out on the
+        # next keeps the first lock until the transaction ends (as InnoDB);
+        # it used to keep it for good when the request was the transaction's
+        # first on that shard.
+        x = 1
+        y = [k for k in range(2, 40) if self.shard(k) == self.shard(x)][0]
+        self.fresh("fl", "CREATE TABLE fl (id INT PRIMARY KEY, v INT)", [f"({x}, 0)", f"({y}, 0)"])
+        h, t, u = self.rc(), self.rc(), self.rc()
+        q(u, "SET innodb_lock_wait_timeout = 2")
+        for ending in ("COMMIT", "ROLLBACK", "autocommit"):
+            q(h, "BEGIN")
+            q(h, f"UPDATE fl SET v = v + 1 WHERE id = {y}")
+            q(t, "SET innodb_lock_wait_timeout = 1")
+            if ending != "autocommit":
+                q(t, "BEGIN")
+            code = err_code(lambda: q(t, f"SELECT id FROM fl WHERE id IN ({x}, {y}) ORDER BY id FOR UPDATE"))
+            self.check(code == LOCK_TIMEOUT, f"{ending}: 1205 on the second row ({code})")
+            if ending != "autocommit":
+                self.check(err_code(lambda: q(u, f"SELECT id FROM fl WHERE id = {x} FOR UPDATE NOWAIT")) == NOWAIT,
+                           f"{ending}: the first row stays locked while the transaction lasts")
+                q(t, ending)
+            q(h, "ROLLBACK")
+            q(u, "BEGIN")
+            code = err_code(lambda: q(u, f"UPDATE fl SET v = v + 10 WHERE id = {x}"))
+            self.check(code is None, f"{ending}: the lock is released with the transaction ({code})")
+            q(u, "ROLLBACK")
 
     def test_skip_locked(self):
         c = self.fresh("jobs", "CREATE TABLE jobs (id INT PRIMARY KEY, state VARCHAR(10), worker INT)",

@@ -156,6 +156,20 @@ pub fn definition_changed() -> SqlError {
     SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
 }
 
+/// The generation in a failed `tarn_lock` reply (`[[status, code, message,
+/// generation]]`): present when locks granted before the error stay held.
+fn failed_lock_gen(d: &[u8]) -> Option<String> {
+    let mut rd = Rd::new(d);
+    rd.array().ok()?;
+    if rd.array().ok()? < 4 {
+        return None;
+    }
+    for _ in 0..3 {
+        rd.skip().ok()?;
+    }
+    rd.string().ok()
+}
+
 /// msgpack bytes of a key: the canonical identity of a row in the buffer
 /// (identical to Lua's msgpack.encode of the key array on the shard).
 pub fn key_bytes(key: &[Value]) -> Bytes {
@@ -224,13 +238,19 @@ impl Txn {
             return Ok(Vec::new());
         }
         let client = self.conn(cluster, shard).await?;
+        // The other shards where this transaction holds row locks, for the
+        // cross-shard deadlock detectors: this server's (registered below)
+        // and the others' (sent with the request, reported by
+        // tarn_lock_waits). A transaction makes one lock request at a time
+        // and takes no other lock while it waits, so the list stays exact.
+        let held: Vec<usize> = self.plocks.keys().copied().filter(|&s| s != shard).collect();
         let mut m = Mp::new();
         m.arr(4).str(&self.id).arr(keys.len());
         for k in keys {
             m.arr(3).uint(k.table.space_id as u64).uint(k.index as u64).vals(&k.key);
         }
         m.str(if o.exclusive { "X" } else { "S" });
-        m.map(4)
+        m.map(5)
             .str("timeout")
             .f64(self.lock_timeout)
             .str("nowait")
@@ -238,13 +258,32 @@ impl Txn {
             .str("skip")
             .bool(o.skip)
             .str("read")
-            .bool(o.read);
+            .bool(o.read)
+            .str("held")
+            .arr(held.len());
+        for &s in &held {
+            m.uint(cluster.shards[s].id as u64);
+        }
+        // NOWAIT and SKIP LOCKED requests never queue.
+        let _waiting = (!o.nowait && !o.skip).then(|| cluster.lock_request(&self.id, shard, held));
         // Lock requests change nothing that a resend could duplicate: a lost
         // reply just fails the statement (the locks are released with the
         // transaction).
         let r = client.call(0, "tarn_lock", &m.0).await.map_err(from_iproto_read)?;
         let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
-        let (_, rd) = lua_status(&d)?;
+        let rd = match lua_status(&d) {
+            Ok((_, rd)) => rd,
+            Err(e) => {
+                // Locks granted before the error stay held until the
+                // transaction ends; the reply then names their generation,
+                // so that they are released with the others even if this
+                // was the first request on the shard.
+                if let Some(gen) = failed_lock_gen(&d) {
+                    self.plocks.entry(shard).or_insert(ShardLocks { client, gen });
+                }
+                return Err(e);
+            }
+        };
         let mut rd = Rd::shared_at(&d, rd);
         let gen = rd.string()?;
         match self.plocks.get(&shard) {
@@ -991,4 +1030,33 @@ pub async fn select_rows(
         out.push(rd.row_of(t)?);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_lock_gen_reads_the_fourth_field() {
+        let reply = |fields: &[&str]| {
+            let mut m = Mp::new();
+            m.arr(1).arr(fields.len()).str(fields[0]);
+            if fields.len() > 1 {
+                m.uint(1205);
+            }
+            for f in &fields[2..] {
+                m.str(f);
+            }
+            m.0
+        };
+        assert_eq!(
+            failed_lock_gen(&reply(&["timeout", "1205", "Lock wait timeout exceeded", "g/7"])),
+            Some("g/7".to_string())
+        );
+        // No locks were left held: no generation.
+        assert_eq!(
+            failed_lock_gen(&reply(&["timeout", "1205", "Lock wait timeout exceeded"])),
+            None
+        );
+    }
 }

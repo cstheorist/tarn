@@ -8,10 +8,10 @@ use crate::route;
 use bytes::Bytes;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tarn_common::{SqlError, SqlResult, Value};
 use tarn_iproto::{Client, Opts};
 
@@ -235,6 +235,8 @@ pub struct Stats {
     pub plan_cache_misses: AtomicU64,
     /// Deadlocks through several shards broken by `detect_deadlocks`.
     pub deadlocks: AtomicU64,
+    /// Storage calls made by `detect_deadlocks`.
+    pub deadlock_calls: AtomicU64,
 }
 
 pub struct CachedPlan {
@@ -258,54 +260,189 @@ pub struct Cluster {
     /// `refresh_catalog` calls share one reload.
     reloads: AtomicU64,
     reload_mu: tokio::sync::Mutex<()>,
+    /// Row-lock requests in flight, by transaction (each makes one at a
+    /// time): where the cross-shard deadlock detector starts.
+    lock_requests: Mutex<HashMap<String, LockRequest>>,
+    /// Position in `shards` of each configured shard id.
+    shard_pos: HashMap<u32, usize>,
 }
 
-/// A pending lock wait on one shard: (shard, waiter, wait id, holders).
-type Wait = (usize, String, u64, Vec<String>);
+/// A row-lock request in flight (`Txn::lock`).
+struct LockRequest {
+    /// Shard (position in `Cluster::shards`) it may wait on.
+    shard: usize,
+    /// The other shards where its transaction holds row locks.
+    held: Vec<usize>,
+    since: Instant,
+}
 
-async fn lock_waits(c: &Arc<Cluster>) -> Vec<Wait> {
-    let mut args = crate::mpw::Mp::new();
-    args.arr(0);
-    let futs = (0..c.shards.len()).map(|s| c.call(s, "tarn_lock_waits", &args.0));
+/// Keeps a request in `Cluster::lock_requests` until dropped.
+pub struct LockRequestGuard<'a> {
+    cluster: &'a Cluster,
+    txid: String,
+}
+
+impl Drop for LockRequestGuard<'_> {
+    fn drop(&mut self) {
+        self.cluster.lock_requests.lock().remove(&self.txid);
+    }
+}
+
+/// A lock request younger than this is left out of a detection round: it
+/// is most likely about to be granted, and the next round looks at it again
+/// if it still waits.
+const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
+
+/// A pending row-lock wait, as its shard reports it (`tarn_lock_waits`).
+#[derive(Clone, Debug, PartialEq)]
+struct Wait {
+    /// Shard (position in `Cluster::shards`) where it waits.
+    shard: usize,
+    waiter: String,
+    /// The shard's id for this wait: a later wait of the transaction has
+    /// another one.
+    id: u64,
+    /// The transactions it waits for: holders of the lock in a conflicting
+    /// mode, and conflicting requests queued before it.
+    holders: Vec<String>,
+    /// The other shards where the waiter holds row locks (sent with its
+    /// request).
+    held: Vec<usize>,
+}
+
+/// `tarn_lock_waits` on each of `shards`, in parallel. A shard that does
+/// not answer contributes nothing.
+async fn lock_waits(c: &Cluster, shards: &[usize]) -> Vec<Wait> {
+    let futs = shards.iter().map(|&s| c.call(s, "tarn_lock_waits", &[0x90]));
+    let replies = futures::future::join_all(futs).await;
+    c.stats.deadlock_calls.fetch_add(shards.len() as u64, Ordering::Relaxed);
     let mut out = Vec::new();
-    for (s, r) in futures::future::join_all(futs).await.into_iter().enumerate() {
-        let Ok(d) = r else { continue };
-        let mut rd = crate::mpw::Rd::new(&d);
-        let parse = |rd: &mut crate::mpw::Rd| -> SqlResult<Vec<Wait>> {
-            let mut v = Vec::new();
-            rd.array()?; // CALL results
-            let n = rd.array()?;
-            for _ in 0..n {
-                rd.array()?;
-                let waiter = rd.string()?;
-                let id = rd.value()?.as_i64().unwrap_or(0) as u64;
-                let m = rd.array()?;
-                let mut hs = Vec::with_capacity(m);
-                for _ in 0..m {
-                    hs.push(rd.string()?);
-                }
-                v.push((s, waiter, id, hs));
-            }
-            Ok(v)
-        };
-        if let Ok(v) = parse(&mut rd) {
+    for (&s, r) in shards.iter().zip(replies) {
+        if let Ok(v) = r.and_then(|d| parse_waits(&d, s, &c.shard_pos)) {
             out.extend(v);
         }
     }
     out
 }
 
-/// Cycles in the wait-for graph of `waits` (each as the waits on it).
+/// The waits in a `tarn_lock_waits` reply from shard `s`. Storage nodes
+/// that predate the held shards (issue #26) send three fields per wait.
+fn parse_waits(d: &[u8], s: usize, shard_pos: &HashMap<u32, usize>) -> SqlResult<Vec<Wait>> {
+    let mut rd = Rd::new(d);
+    let mut v = Vec::new();
+    rd.array()?; // CALL results
+    let n = rd.array()?;
+    for _ in 0..n {
+        let fields = rd.array()?;
+        let waiter = rd.string()?;
+        let id = rd.value()?.as_i64().unwrap_or(0) as u64;
+        let m = rd.array()?;
+        let mut holders = Vec::with_capacity(m);
+        for _ in 0..m {
+            holders.push(rd.string()?);
+        }
+        let mut held = Vec::new();
+        if fields > 3 {
+            for _ in 0..rd.array()? {
+                let id = rd.value()?.as_i64().unwrap_or(0);
+                if let Some(&p) = u32::try_from(id).ok().and_then(|id| shard_pos.get(&id)) {
+                    held.push(p);
+                }
+            }
+        }
+        for _ in 4..fields {
+            rd.skip()?;
+        }
+        v.push(Wait {
+            shard: s,
+            waiter,
+            id,
+            holders,
+            held,
+        });
+    }
+    Ok(v)
+}
+
+/// The first collection of a detection round. It starts from this server's
+/// waiting transactions, visiting the shards where they wait or hold row
+/// locks, and follows the wait-for edges backwards: a transaction found
+/// waiting for one already reached is reached too, and the shards where it
+/// holds row locks are visited next, since its own waiters can only be
+/// there or on the shard where it waits, already visited. A transaction
+/// waits for one lock at a time and takes no lock while it waits, so the
+/// held shards its request carried are still exact. Every shard is visited
+/// at most once.
+struct Walk {
+    reached: HashSet<String>,
+    visited: BTreeSet<usize>,
+    next: BTreeSet<usize>,
+    waits: Vec<Wait>,
+}
+
+impl Walk {
+    /// `starts`: (transaction, shard it waits on, shards where it holds
+    /// row locks).
+    fn new(starts: &[(String, usize, Vec<usize>)]) -> Walk {
+        let mut w = Walk {
+            reached: HashSet::new(),
+            visited: BTreeSet::new(),
+            next: BTreeSet::new(),
+            waits: Vec::new(),
+        };
+        for (txid, shard, held) in starts {
+            w.reached.insert(txid.clone());
+            w.next.insert(*shard);
+            w.next.extend(held.iter().copied());
+        }
+        w
+    }
+
+    /// The shards to visit in the next step (none: the walk is over).
+    fn step(&mut self) -> Vec<usize> {
+        let out: Vec<usize> = std::mem::take(&mut self.next).into_iter().collect();
+        self.visited.extend(out.iter().copied());
+        out
+    }
+
+    /// Add the waits reported by the shards of the last step.
+    fn add(&mut self, got: Vec<Wait>) {
+        self.waits.extend(got);
+        let mut by_holder: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, w) in self.waits.iter().enumerate() {
+            for h in &w.holders {
+                by_holder.entry(h.as_str()).or_default().push(i);
+            }
+        }
+        let mut todo: Vec<String> = self.reached.iter().cloned().collect();
+        while let Some(t) = todo.pop() {
+            for &i in by_holder.get(t.as_str()).map(|v| v.as_slice()).unwrap_or(&[]) {
+                let w = &self.waits[i];
+                if self.reached.insert(w.waiter.clone()) {
+                    todo.push(w.waiter.clone());
+                }
+            }
+        }
+        for w in &self.waits {
+            if self.reached.contains(&w.waiter) {
+                self.next.extend(w.held.iter().filter(|s| !self.visited.contains(s)));
+            }
+        }
+    }
+}
+
+/// Cycles in the wait-for graph of `waits`, each as its waits in order:
+/// each one waits for the waiter of the next (the last for the first's).
 fn wait_cycles(waits: &[Wait]) -> Vec<Vec<Wait>> {
     let mut adj: HashMap<&str, Vec<(&str, &Wait)>> = HashMap::new();
     for w in waits {
-        for h in &w.3 {
-            adj.entry(w.1.as_str()).or_default().push((h.as_str(), w));
+        for h in &w.holders {
+            adj.entry(w.waiter.as_str()).or_default().push((h.as_str(), w));
         }
     }
     let mut cycles: Vec<Vec<Wait>> = Vec::new();
     let mut seen_sets: Vec<Vec<String>> = Vec::new();
-    let mut done: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut done: HashSet<&str> = HashSet::new();
     for start in adj.keys().copied().collect::<Vec<_>>() {
         if done.contains(start) {
             continue;
@@ -327,7 +464,7 @@ fn wait_cycles(waits: &[Wait]) -> Vec<Vec<Wait>> {
                     if let Some(pos) = path.iter().position(|(n, _)| *n == h) {
                         let mut cyc: Vec<Wait> = path[pos + 1..].iter().filter_map(|(_, e)| e.cloned()).collect();
                         cyc.push(w.clone());
-                        let mut members: Vec<String> = cyc.iter().map(|w| w.1.clone()).collect();
+                        let mut members: Vec<String> = cyc.iter().map(|w| w.waiter.clone()).collect();
                         members.sort();
                         if !seen_sets.contains(&members) {
                             seen_sets.push(members);
@@ -344,40 +481,73 @@ fn wait_cycles(waits: &[Wait]) -> Vec<Vec<Wait>> {
     cycles
 }
 
-/// Cross-shard deadlock detection (issue #17). Each shard fails a request
-/// that would close a cycle among its own waits at once (1213); a cycle
-/// through several shards is visible only here. Every `deadlock_interval`
-/// seconds the wait-for edges of all shards are collected; a cycle whose
-/// waits are all still pending, with the same wait ids, in a second
-/// collection is a real deadlock -- each of its waits was pending from its
-/// first observation to its second, so all were pending at once -- and its
-/// transaction with the largest id (the same choice on every SQL server)
-/// is failed with 1213 on the shard where it waits.
+/// Is every wait of `cyc` still pending in `second`, with the same id and
+/// still waiting for the next transaction of the cycle? Each edge was then
+/// there at both observations and all the time in between (a transaction
+/// that leaves a waits-for set can only queue behind the waiter again), and
+/// every first observation came before every second one: at any moment
+/// between the two collections, every edge of the cycle was there at once.
+fn still_deadlocked(cyc: &[Wait], second: &[Wait]) -> bool {
+    cyc.iter().enumerate().all(|(i, w)| {
+        let next = &cyc[(i + 1) % cyc.len()].waiter;
+        second
+            .iter()
+            .any(|v| v.shard == w.shard && v.waiter == w.waiter && v.id == w.id && v.holders.contains(next))
+    })
+}
+
+/// Cross-shard deadlock detection (issues #17 and #26). Each shard fails a
+/// request that would close a cycle among its own waits at once (1213); a
+/// cycle through several shards is found here. Every `deadlock_interval`
+/// seconds, if some of this server's lock requests have been waiting for
+/// `DEADLOCK_MIN_WAIT`, a `Walk` from them collects the wait-for edges that
+/// lead to them; a cycle found there is a real deadlock if a second
+/// collection, from the shards of its waits, still has each of them pending
+/// with the same id and waiting for the same next transaction
+/// (`still_deadlocked`). Its transaction with the largest id (the same
+/// choice on every SQL server) is failed with 1213 on the shard where it
+/// waits. Every transaction of a cycle waits, and its SQL server walks from
+/// it, so every deadlock is found; a server with no waiting request makes
+/// no call.
 pub async fn detect_deadlocks(c: &Arc<Cluster>) {
-    let first = lock_waits(c).await;
-    if first.len() < 2 {
+    let starts: Vec<(String, usize, Vec<usize>)> = c
+        .lock_requests
+        .lock()
+        .iter()
+        .filter(|(_, r)| r.since.elapsed() >= DEADLOCK_MIN_WAIT)
+        .map(|(t, r)| (t.clone(), r.shard, r.held.clone()))
+        .collect();
+    if starts.is_empty() {
         return;
     }
-    let cycles = wait_cycles(&first);
+    let mut walk = Walk::new(&starts);
+    loop {
+        let shards = walk.step();
+        if shards.is_empty() {
+            break;
+        }
+        let got = lock_waits(c, &shards).await;
+        walk.add(got);
+    }
+    let cycles = wait_cycles(&walk.waits);
     if cycles.is_empty() {
         return;
     }
-    let second = lock_waits(c).await;
+    let shards: BTreeSet<usize> = cycles.iter().flatten().map(|w| w.shard).collect();
+    let second = lock_waits(c, &shards.into_iter().collect::<Vec<_>>()).await;
     for cyc in cycles {
-        let still = cyc
-            .iter()
-            .all(|w| second.iter().any(|v| v.0 == w.0 && v.1 == w.1 && v.2 == w.2));
-        if !still {
+        if !still_deadlocked(&cyc, &second) {
             continue;
         }
-        let victim = cyc.iter().max_by(|a, b| a.1.cmp(&b.1)).unwrap();
-        let mut m = crate::mpw::Mp::new();
-        m.arr(2).str(&victim.1).uint(victim.2);
+        let victim = cyc.iter().max_by(|a, b| a.waiter.cmp(&b.waiter)).unwrap();
+        let mut m = Mp::new();
+        m.arr(2).str(&victim.waiter).uint(victim.id);
         // true when this call failed the wait; false when it was already
         // over (another SQL server's detector may have got there first)
-        let broke = match c.call(victim.0, "tarn_lock_victim", &m.0).await {
+        c.stats.deadlock_calls.fetch_add(1, Ordering::Relaxed);
+        let broke = match c.call(victim.shard, "tarn_lock_victim", &m.0).await {
             Ok(d) => {
-                let mut rd = crate::mpw::Rd::new(&d);
+                let mut rd = Rd::new(&d);
                 rd.array().is_ok() && matches!(rd.value(), Ok(Value::Int(1)))
             }
             Err(_) => false,
@@ -387,7 +557,7 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
             tracing::info!(
                 "deadlock across shards among {} transactions; rolled back {}",
                 cyc.len(),
-                victim.1
+                victim.waiter
             );
         }
     }
@@ -422,6 +592,7 @@ impl Cluster {
             isolation,
             lock_wait_timeout: cfg.lock_wait_timeout,
         });
+        let shard_pos = cfg.shards.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
         let c = Arc::new(Cluster {
             cfg,
             shards,
@@ -434,6 +605,8 @@ impl Cluster {
             stats: Stats::default(),
             reloads: AtomicU64::new(0),
             reload_mu: tokio::sync::Mutex::new(()),
+            lock_requests: Mutex::new(HashMap::new()),
+            shard_pos,
         });
         for s in &c.shards {
             s.client(&c).await?;
@@ -483,6 +656,22 @@ impl Cluster {
 
     pub fn nshards(&self) -> usize {
         self.shards.len()
+    }
+
+    /// Register a row-lock request of `txid` that may wait on `shard`, for
+    /// the cross-shard deadlock detector, until the guard is dropped; `held`
+    /// are the other shards where the transaction holds row locks.
+    pub fn lock_request(&self, txid: &str, shard: usize, held: Vec<usize>) -> LockRequestGuard<'_> {
+        let r = LockRequest {
+            shard,
+            held,
+            since: Instant::now(),
+        };
+        self.lock_requests.lock().insert(txid.to_string(), r);
+        LockRequestGuard {
+            cluster: self,
+            txid: txid.to_string(),
+        }
     }
 
     pub fn catalog(&self) -> Arc<Catalog> {
@@ -1139,48 +1328,177 @@ impl Cluster {
 mod tests {
     use super::*;
 
-    fn w(shard: usize, waiter: &str, id: u64, holders: &[&str]) -> Wait {
-        (
+    fn w(shard: usize, waiter: &str, id: u64, holders: &[&str], held: &[usize]) -> Wait {
+        Wait {
             shard,
-            waiter.into(),
+            waiter: waiter.into(),
             id,
-            holders.iter().map(|h| h.to_string()).collect(),
-        )
+            holders: holders.iter().map(|h| h.to_string()).collect(),
+            held: held.to_vec(),
+        }
     }
 
     fn members(c: &[Wait]) -> Vec<String> {
-        let mut m: Vec<String> = c.iter().map(|w| w.1.clone()).collect();
+        let mut m: Vec<String> = c.iter().map(|w| w.waiter.clone()).collect();
         m.sort();
         m
+    }
+
+    /// Run a walk over simulated shards; returns it and the shards of each step.
+    fn walk(starts: &[(&str, usize, &[usize])], shards: &[Vec<Wait>]) -> (Walk, Vec<Vec<usize>>) {
+        let starts: Vec<(String, usize, Vec<usize>)> =
+            starts.iter().map(|(t, s, h)| (t.to_string(), *s, h.to_vec())).collect();
+        let mut wk = Walk::new(&starts);
+        let mut steps = Vec::new();
+        loop {
+            let step = wk.step();
+            if step.is_empty() {
+                break;
+            }
+            let got = step.iter().flat_map(|&s| shards[s].clone()).collect();
+            steps.push(step);
+            wk.add(got);
+        }
+        (wk, steps)
     }
 
     #[test]
     fn finds_cycles_through_shards() {
         // A waits on shard 0 for B, B on shard 1 for A: one cycle, both waits.
-        let c = wait_cycles(&[w(0, "A", 1, &["B"]), w(1, "B", 7, &["A"])]);
+        let c = wait_cycles(&[w(0, "A", 1, &["B"], &[]), w(1, "B", 7, &["A"], &[])]);
         assert_eq!(c.len(), 1);
         assert_eq!(members(&c[0]), ["A", "B"]);
-        assert!(c[0].iter().any(|x| x.0 == 0 && x.2 == 1) && c[0].iter().any(|x| x.0 == 1 && x.2 == 7));
+        assert!(c[0].iter().any(|x| x.shard == 0 && x.id == 1) && c[0].iter().any(|x| x.shard == 1 && x.id == 7));
         // A chain is not a cycle.
-        assert!(wait_cycles(&[w(0, "A", 1, &["B"]), w(1, "B", 2, &["C"])]).is_empty());
+        assert!(wait_cycles(&[w(0, "A", 1, &["B"], &[]), w(1, "B", 2, &["C"], &[])]).is_empty());
         // Three transactions, with a bystander waiting on the cycle.
         let c = wait_cycles(&[
-            w(0, "A", 1, &["B"]),
-            w(1, "B", 2, &["C"]),
-            w(0, "C", 3, &["A", "D"]),
-            w(1, "E", 4, &["A"]),
+            w(0, "A", 1, &["B"], &[]),
+            w(1, "B", 2, &["C"], &[]),
+            w(0, "C", 3, &["A", "D"], &[]),
+            w(1, "E", 4, &["A"], &[]),
         ]);
         assert_eq!(c.len(), 1);
         assert_eq!(members(&c[0]), ["A", "B", "C"]);
+        // Each wait of a cycle waits for the next one's waiter.
+        for (i, x) in c[0].iter().enumerate() {
+            assert!(x.holders.contains(&c[0][(i + 1) % c[0].len()].waiter));
+        }
         // Two separate cycles are both reported, each once.
         let c = wait_cycles(&[
-            w(0, "A", 1, &["B"]),
-            w(1, "B", 2, &["A"]),
-            w(0, "C", 3, &["D"]),
-            w(1, "D", 4, &["C"]),
+            w(0, "A", 1, &["B"], &[]),
+            w(1, "B", 2, &["A"], &[]),
+            w(0, "C", 3, &["D"], &[]),
+            w(1, "D", 4, &["C"], &[]),
         ]);
         let mut all: Vec<Vec<String>> = c.iter().map(|x| members(x)).collect();
         all.sort();
         assert_eq!(all, vec![vec!["A", "B"], vec!["C", "D"]]);
+    }
+
+    #[test]
+    fn walk_follows_waits_backwards() {
+        // A (this server's) waits on shard 0 for B and holds locks on shard
+        // 1. D waits for A on shard 1, C for D on shard 2, B for C on shard
+        // 3: a cycle through four shards. X waits on shard 1 for Y, which
+        // nobody here waits for, and E waits for F on shard 4.
+        let shards = vec![
+            vec![w(0, "A", 1, &["B"], &[1])],
+            vec![w(1, "D", 2, &["A"], &[2]), w(1, "X", 3, &["Y"], &[5])],
+            vec![w(2, "C", 4, &["D"], &[3])],
+            vec![w(3, "B", 5, &["C"], &[0])],
+            vec![w(4, "E", 6, &["F"], &[])],
+            vec![],
+        ];
+        let (wk, steps) = walk(&[("A", 0, &[1])], &shards);
+        // Shards where A waits or holds locks, then where D, then C holds
+        // locks; B holds locks only where the walk has been.
+        assert_eq!(steps, vec![vec![0, 1], vec![2], vec![3]]);
+        let reached: BTreeSet<&str> = wk.reached.iter().map(|s| s.as_str()).collect();
+        assert_eq!(reached, ["A", "B", "C", "D"].into_iter().collect());
+        let c = wait_cycles(&wk.waits);
+        assert_eq!(c.len(), 1);
+        assert_eq!(members(&c[0]), ["A", "B", "C", "D"]);
+    }
+
+    #[test]
+    fn walk_follows_queued_requests() {
+        // U (this server's) waits on shard 0 for H; V is queued behind U
+        // there and holds locks on shard 1, where W waits for V.
+        let shards = vec![
+            vec![w(0, "U", 1, &["H"], &[]), w(0, "V", 2, &["H", "U"], &[1])],
+            vec![w(1, "W", 3, &["V"], &[2])],
+            vec![],
+        ];
+        let (wk, steps) = walk(&[("U", 0, &[])], &shards);
+        assert_eq!(steps, vec![vec![0], vec![1], vec![2]]);
+        assert!(wk.reached.contains("W"));
+        assert!(wait_cycles(&wk.waits).is_empty());
+    }
+
+    #[test]
+    fn walk_without_waiters() {
+        // Nobody waits for A: only the shards where it waits or holds locks
+        // are visited, once.
+        let shards = vec![
+            vec![],
+            vec![w(1, "A", 1, &["B"], &[0])],
+            vec![w(2, "C", 2, &["D"], &[])],
+        ];
+        let (wk, steps) = walk(&[("A", 1, &[0])], &shards);
+        assert_eq!(steps, vec![vec![0, 1]]);
+        assert_eq!(wk.reached.len(), 1);
+        // Several starts share one step per shard.
+        let (_, steps) = walk(&[("A", 1, &[0]), ("C", 2, &[0, 1])], &shards);
+        assert_eq!(steps, vec![vec![0, 1, 2]]);
+    }
+
+    #[test]
+    fn second_collection_needs_the_same_edges() {
+        let cyc = vec![w(0, "A", 1, &["B"], &[1]), w(1, "B", 7, &["A"], &[0])];
+        assert!(still_deadlocked(&cyc, &cyc));
+        // Each wait is matched on its own shard.
+        assert!(still_deadlocked(
+            &cyc,
+            &[w(1, "B", 7, &["A"], &[]), w(0, "A", 1, &["B", "C"], &[])]
+        ));
+        // A wait that ended (a later wait of A has another id).
+        assert!(!still_deadlocked(
+            &cyc,
+            &[w(0, "A", 2, &["B"], &[1]), w(1, "B", 7, &["A"], &[0])]
+        ));
+        // A still waits with the same id, but no longer for B (B released
+        // the lock, and A waits for another holder): no proof of a cycle.
+        assert!(!still_deadlocked(
+            &cyc,
+            &[w(0, "A", 1, &["C"], &[1]), w(1, "B", 7, &["A"], &[0])]
+        ));
+        assert!(!still_deadlocked(&cyc, &[w(0, "A", 1, &["B"], &[1])]));
+        assert!(!still_deadlocked(
+            &cyc,
+            &[w(1, "A", 1, &["B"], &[1]), w(1, "B", 7, &["A"], &[0])]
+        ));
+    }
+
+    #[test]
+    fn parses_lock_waits() {
+        // CALL reply: [[wait, ...]]; shard ids 1 and 2 are positions 0 and 1.
+        let mut m = Mp::new();
+        m.arr(1).arr(3);
+        m.arr(4).str("A").uint(5).arr(1).str("B").arr(3).uint(2).uint(9).uint(1);
+        m.arr(3).str("C").uint(6).arr(2).str("D").str("E");
+        m.arr(5).str("F").uint(7).arr(0).arr(1).uint(1).str("later field");
+        let pos: HashMap<u32, usize> = [(1, 0), (2, 1)].into_iter().collect();
+        let v = parse_waits(&m.0, 1, &pos).unwrap();
+        // An unknown shard id is left out; a storage node that sends no held
+        // shards (an older one) gives an empty list; later fields are skipped.
+        assert_eq!(
+            v,
+            vec![
+                w(1, "A", 5, &["B"], &[1, 0]),
+                w(1, "C", 6, &["D", "E"], &[]),
+                w(1, "F", 7, &[], &[0]),
+            ]
+        );
     }
 }

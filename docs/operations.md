@@ -201,8 +201,11 @@ Replica addresses may be `unix/:/path/to/socket`. Logging uses
 `isolation` and `lock_wait_timeout` are the initial global values of
 `transaction_isolation` and `innodb_lock_wait_timeout` (`SET GLOBAL` changes
 them per SQL server until it restarts). `deadlock_interval` is how often, in
-seconds, each SQL server looks for deadlocks that span shards (0 turns the
-detector off; cycles within one shard are always detected at once).
+seconds, each SQL server looks for deadlocks that span shards, starting from
+its own transactions' lock waits (0 turns the detector off; cycles within
+one shard are always detected at once). A server whose transactions do not
+wait for row locks calls no shard for it, so a smaller interval, which
+finds such deadlocks sooner, costs storage calls only while lock waits last.
 
 **Ack-on-prepare** acknowledges a cross-shard commit as soon as every
 participant has prepared (one round trip instead of two) and applies it in
@@ -232,7 +235,9 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 * `SHOW TARN STATUS` (or `SHOW STATUS LIKE 'Tarn%'`) on any SQL connection:
   statements, local / read-only / two-phase commits, conflicts, internal
   retries, plan-cache hits and misses, deadlocks across shards broken by
-  this server, number of shards.
+  this server, storage calls its deadlock detector made
+  (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), number
+  of shards.
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
