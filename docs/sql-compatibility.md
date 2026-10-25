@@ -147,6 +147,13 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   @b` (before `FROM` or at the end; more than one row is 1172, none leaves
   the variables as they were), and `@v` anywhere in a statement (not in
   prepared statements, nor assigned inside a `SELECT` with `:=`).
+* SQL-level prepared statements: `PREPARE name FROM 'text'` or `FROM @var`,
+  `EXECUTE name [USING @a, ...]` (the variables' values replace the `?`
+  markers in order), `DEALLOCATE PREPARE name` and `DROP PREPARE name`.
+  They belong to the session; an unknown name is 1243, a wrong number of
+  variables 1210, and `PREPARE`, `EXECUTE` and `DEALLOCATE` cannot be
+  prepared themselves (1295). The text is re-planned at each `EXECUTE`
+  through the plan cache, as a text query would be.
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
   VARIABLES | STATUS | WARNINGS | ENGINES | COLLATION | CHARACTER SET |
   PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).

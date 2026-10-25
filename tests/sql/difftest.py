@@ -364,6 +364,32 @@ CASES = [
     ("SELECT * FROM information_schema.no_such_table", "err"),
     ("INSERT INTO information_schema.tables (table_name) VALUES ('x')", "err"),
     ("DELETE FROM information_schema.tables", "err"),
+    # SQL-level PREPARE / EXECUTE / DEALLOCATE PREPARE (issue #34); the
+    # first four are the shape of mysqldump's MyRocks preamble (there inside
+    # /*!50717 */, which MariaDB skips; ddltest.py loads it verbatim)
+    ("SET @rocksdb_get_is_supported = IF (@rocksdb_has_p_s_session_variables, 'SELECT COUNT(*) INTO "
+     "@rocksdb_is_supported FROM performance_schema.session_variables WHERE VARIABLE_NAME=\\'rocksdb_bulk_load\\'', "
+     "'SELECT 0 AS probe')", "q"),
+    ("PREPARE s FROM @rocksdb_get_is_supported", "q"),
+    ("EXECUTE s", "q"),
+    ("DEALLOCATE PREPARE s", "q"),
+    ("SET @q = 'SELECT id, b FROM t1 WHERE id < ? AND a = ? ORDER BY id'", "q"),
+    ("PREPARE p FROM @q", "q"),
+    ("SET @lim = 12, @a = 3", "q"),
+    ("EXECUTE p USING @lim, @a", "q"),
+    ("SET @lim = 30", "q"),
+    ("EXECUTE p USING @lim, @a", "q"),
+    ("EXECUTE p USING @lim", "err"),
+    ("PREPARE ins FROM 'INSERT INTO t2 (id, t1_id, name) VALUES (?, ?, ''prep'')'", "q"),
+    ("SET @i = 900, @t = 4", "q"),
+    ("EXECUTE ins USING @i, @t", "dml:t2"),
+    ("EXECUTE ins USING @i, @t", "err"),
+    ("PREPARE p FROM 'SELECT COUNT(*) FROM t2 WHERE name = ''prep'''", "q"),
+    ("EXECUTE p", "q"),
+    ("DROP PREPARE p", "q"),
+    ("EXECUTE p", "err"),
+    ("DEALLOCATE PREPARE p", "err"),
+    ("PREPARE p2 FROM 'EXECUTE ins'", "err"),
 ]
 
 
