@@ -47,7 +47,8 @@ CONSTANTS
     BugLocalIgnoresRLocks,      \* single-shard commit ignores other txns' R locks
     AckOnPrepare,               \* option: acknowledge once all PREPAREs succeed
     ROValidateOnly,             \* option: cross-shard read-only txns validate, no PREPARE
-    BugLocalReadsIgnoreWLocks   \* single-shard reads don't check W locks
+    BugLocalReadsIgnoreWLocks,  \* single-shard reads don't check W locks
+    BugROValidateNoReadCheck    \* ValidateRO skips "reads unchanged" (memtx read views)
 
 ASSUME Owner \in [Keys -> Shards]
 ASSUME RSet \in [Txns -> SUBSET Keys] /\ WSet \in [Txns -> SUBSET Keys]
@@ -189,10 +190,15 @@ CommitLocal(t) ==
 \* Cross-shard read-only transactions (option ROValidateOnly): no PREPARE and
 \* no locks.  Each participant checks, in the stream's MVCC view, that the
 \* reads are unchanged and that no other transaction W-locks them.
+\* Implementation note: memtx MVCC does not abort a read-only transaction
+\* whose reads were overwritten -- it moves it into a read view, where it
+\* could still commit.  "Reads unchanged" is therefore enforced with a probe
+\* write (refused from a read view); BugROValidateNoReadCheck models the
+\* implementation without the probe.
 ValidateRO(t, s) ==
     LET rk    == KeysOn(RSet[t], s)
         valid == /\ s \notin lost[t]
-                 /\ \A k \in rk : data[k] = obs[t][k]
+                 /\ BugROValidateNoReadCheck \/ \A k \in rk : data[k] = obs[t][k]
                  /\ BugLocalReadsIgnoreWLocks \/ NoWLocks(t, rk)
     IN
     /\ ROValidateOnly

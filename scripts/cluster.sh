@@ -4,7 +4,7 @@
 #
 #   scripts/cluster.sh start [-n SHARDS] [-r REPLICAS] [-d DIR] [-p TARN_PORT]
 #                            [-s SERVERS] [-w WAL_MODE] [-m MEMORY_MB] [-t THREADS]
-#                            [-a]  (ack-on-prepare)
+#                            [-a]  (ack-on-prepare)  [-u]  (SQL servers reach storage via Unix sockets)
 #   scripts/cluster.sh stop  [-d DIR]
 #   scripts/cluster.sh status [-d DIR]
 #
@@ -16,12 +16,14 @@ T=${TARANTOOL:-/opt/src/tarantool/build/src/tarantool}
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
 CMD=${1:-}; shift || true
 N=2; R=1; DIR=${TARN_DIR:-/tmp/tarn-cluster}; TPORT=4000; SERVERS=1; WAL=write; MEM=1024
-THREADS=""; ACK=""; BASE=${TARN_BASE_PORT:-3300}; ITHREADS=1
-while getopts "n:r:d:p:s:w:m:t:ab:i:" o; do
+THREADS=""; ACK=""; BASE=${TARN_BASE_PORT:-3300}; ITHREADS=1; UNIX=0; POOL=""
+while getopts "n:r:d:p:s:w:m:t:ab:i:uP:" o; do
   case $o in
     n) N=$OPTARG;; r) R=$OPTARG;; d) DIR=$OPTARG;; p) TPORT=$OPTARG;; s) SERVERS=$OPTARG;;
     w) WAL=$OPTARG;; m) MEM=$OPTARG;; t) THREADS=$OPTARG;; a) ACK=--ack-on-prepare;; b) BASE=$OPTARG;;
     i) ITHREADS=$OPTARG;;
+    u) UNIX=1;;
+    P) POOL=$OPTARG;;
     *) echo "bad option"; exit 2;;
   esac
 done
@@ -57,6 +59,7 @@ start_storage() {
   ( cd "$DIR/s$i.$j" && TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$p TARN_WORKDIR="$DIR/s$i.$j" \
       TARN_REPLICAS="$(replicas_json "$i")" TARN_PEERS="$(peers_json)" TARN_MEMORY_MB=$MEM \
       TARN_WAL_MODE=$WAL TARN_LOG_LEVEL=${TARN_LOG_LEVEL:-5} TARN_IPROTO_THREADS=$ITHREADS \
+      TARN_LISTEN_UNIX=$([ "$UNIX" = 1 ] && echo "$DIR/s$i.$j.sock") \
       exec "$T" "$ROOT/lua/storage.lua" >> "$DIR/s$i.$j.log" 2>&1 < /dev/null ) &
   echo $! > "$DIR/s$i.$j.pid"
 }
@@ -65,7 +68,10 @@ write_config() {
   local i j sep="" out="{\"shards\":["
   for i in $(seq 1 "$N"); do
     out+="$sep{\"id\":$i,\"replicas\":["; local s2=""
-    for j in $(seq 1 "$R"); do out+="$s2\"127.0.0.1:$(port_of "$i" "$j")\""; s2=","; done
+    for j in $(seq 1 "$R"); do
+      if [ "$UNIX" = 1 ]; then out+="$s2\"unix/:$DIR/s$i.$j.sock\""; else out+="$s2\"127.0.0.1:$(port_of "$i" "$j")\""; fi
+      s2=","
+    done
     out+="]}"; sep=","
   done
   out+="]}"
@@ -93,7 +99,7 @@ case "$CMD" in
     for k in $(seq 1 "$SERVERS"); do
       tp=$((TPORT + k - 1))
       TARN_LOG=${TARN_LOG:-info} "$TARN" --config "$DIR/cluster.json" --listen 127.0.0.1:$tp --node-id "$k" \
-        ${THREADS:+--threads $THREADS} $ACK >> "$DIR/tarn$k.log" 2>&1 < /dev/null &
+        ${THREADS:+--threads $THREADS} ${POOL:+--pool $POOL} $ACK >> "$DIR/tarn$k.log" 2>&1 < /dev/null &
       echo $! > "$DIR/tarn$k.pid"
       wait_port "$tp" || { tail -5 "$DIR/tarn$k.log"; exit 1; }
     done

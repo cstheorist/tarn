@@ -62,6 +62,8 @@ pub struct RangeRead {
 pub struct Stream {
     pub client: Client,
     pub id: u64,
+    /// A request that began the stream's transaction has succeeded.
+    pub begun: bool,
 }
 
 /// A stream handle for one request: `begin` is true for the first request
@@ -117,12 +119,21 @@ impl Txn {
     /// on a stream are processed in order, so later ones run inside it.
     pub async fn stream(&mut self, cluster: &Cluster, shard: usize) -> SqlResult<StreamRef> {
         if let Some(s) = self.streams.get(&shard) {
-            return Ok(StreamRef { client: s.client.clone(), id: s.id, begin: false });
+            // Until a beginning request has succeeded, keep asking requests
+            // to begin (idempotent: tarn_select begins only outside a txn).
+            return Ok(StreamRef { client: s.client.clone(), id: s.id, begin: !s.begun });
         }
         let client = cluster.shards[shard].client(cluster).await?;
         let id = client.next_stream_id();
-        self.streams.insert(shard, Stream { client: client.clone(), id });
+        self.streams.insert(shard, Stream { client: client.clone(), id, begun: false });
         Ok(StreamRef { client, id, begin: true })
+    }
+
+    /// Record that a request with the begin flag succeeded on `shard`.
+    pub fn mark_begun(&mut self, shard: usize) {
+        if let Some(s) = self.streams.get_mut(&shard) {
+            s.begun = true;
+        }
     }
 
     /// Stream with an explicit IPROTO BEGIN (for requests that cannot begin
@@ -131,6 +142,7 @@ impl Txn {
         let s = self.stream(cluster, shard).await?;
         if s.begin {
             s.client.begin(s.id, Some(60.0), Some(TxnIsolation::ReadConfirmed)).await.map_err(from_iproto)?;
+            self.mark_begun(shard);
         }
         Ok((s.client, s.id))
     }

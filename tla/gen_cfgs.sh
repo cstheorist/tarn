@@ -2,7 +2,7 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
+    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
     for b in "$@";
     do
         case $b in 
@@ -29,6 +29,9 @@ mk ()
             ;;
             LRW)
                 LRW=TRUE
+            ;;
+            NRC)
+                NRC=TRUE
             ;;
             ROV)
                 ROV=TRUE
@@ -61,6 +64,7 @@ CONSTANTS
   AckOnPrepare = $AOP
   ROValidateOnly = $ROV
   BugLocalReadsIgnoreWLocks = $LRW
+  BugROValidateNoReadCheck = $NRC
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
@@ -85,6 +89,9 @@ mk Recov_AckOnPrepare RSetRecov WSetRecov 0 1 2 NORD AOP
 mk Skew_ROValidate      RSetSkew  WSetSkew  0 1 1 NORD ROV
 mk Frac_ROValidate      RSetFrac  WSetFrac  0 1 1 NORD ROV
 mk FracFailover_ROValidate RSetFrac WSetFrac 1 0 0 ROV
+mk Local_ROValidate     RSetLocal WSetLocal 0 1 1 NORD ROV
+mk LocalFailover_ROValidate RSetLocal WSetLocal 1 0 0 ROV
+mk SkewFailover_ROValidate  RSetSkew  WSetSkew  1 0 0 ROV
 # Each weakened variant must be caught.
 mk Bug_NoReadLocks            RSetSkew  WSetSkew  0 0 0 NRL
 mk Bug_LocalIgnoresRLocks     RSetLocal WSetLocal 0 0 0 LIR
@@ -92,6 +99,7 @@ mk Bug_NoWLockCheckOnRead     RSetFrac  WSetFrac  0 0 0 NWC
 mk Bug_ROValidateNoWLockCheck RSetFrac  WSetFrac  0 0 0 ROV LRW
 mk Bug_NoTombstone            RSetRecov WSetRecov 0 1 1 NTS
 mk Bug_LocalReadsIgnoreWLocks RSetRecov WSetRecov 0 0 0 LRW
+mk Bug_ROValidateNoReadCheck  RSetFrac  WSetFrac  0 0 0 ROV NRC
 # Documented trade-offs (expected to be violated):
 mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
 mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW
