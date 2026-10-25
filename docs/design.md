@@ -648,8 +648,9 @@ type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
 **Not yet.** Replica bootstrap and backups copy a shard's whole data set.
-Sizing (`TARN_VINYL_MEMORY_MB`, `TARN_VINYL_CACHE_MB`) and benchmarks with
-data larger than the cache are issue #23's remaining steps.
+Benchmarks with data larger than the cache are issue #23's last step;
+[Sizing](operations.md#sizing) gives the memory and disk a vinyl shard
+needs, measured.
 
 ## 3. Verus
 
@@ -704,8 +705,8 @@ does not check.
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 22/22 |
 | `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
-| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
-| `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection | the client gets 1180 (outcome unknown), the row is incremented exactly once |
+| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
+| `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
 ## 5. Results
 
@@ -810,13 +811,15 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * `ALTER TABLE` does not rewrite rows: conversions between type families
   and `DECIMAL` scale changes are refused, dropped columns keep their
   stored values (no space is reclaimed), and writes to the table wait while
-  a change prepares, including index builds (§2.10) -- on a large vinyl
-  table, for as long as the build takes. A table cannot move between memtx
-  and vinyl.
+  a change prepares (§2.10): on memtx tables also while their new indexes
+  are built, at memory speed; vinyl tables build them before. Checking the
+  existing rows (a narrower type, `NOT NULL`) is refused above
+  `tarn.cfg.alter_check_rows` rows per shard. A table cannot move between
+  memtx and vinyl.
 * Vinyl tables (§2.11): an autocommit read whose range a cross-shard
   transaction writes again and again while it scans runs again each time,
-  and fails with 1213 after `lock_wait` (1 s); tuning and benchmarks with
-  data larger than the cache are still to come (#23).
+  and fails with 1213 after `lock_wait` (1 s); benchmarks with data larger
+  than the cache are still to come (#23).
 * String comparison, ordering, grouping and unique indexes are binary (like
   `utf8mb4_bin`); MySQL's default collations are case-insensitive, so
   `WHERE name = 'ALICE'` does not match `'alice'` in Tarn.

@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Vinyl settings and sizing: storage nodes take vinyl's read and write
+  threads, page and range size and bloom filter false-positive rate from
+  `TARN_VINYL_*` variables, and `docs/operations.md` gives the memory and
+  disk a vinyl shard needs, measured
+  ([#23](https://github.com/cstheorist/tarn/issues/23)). CI runs the
+  fault-injection and failover tests with vinyl tables too.
 - `ALTER TABLE ... ADD INDEX` on a vinyl table builds the index before it
   holds the table's writes, which then wait only for the switch at the end
   instead of the whole build ([#23](https://github.com/cstheorist/tarn/issues/23)).

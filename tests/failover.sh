@@ -20,8 +20,9 @@ DIR=${DIR:-/tmp/tarn-failover}
 BASE=${BASE:-3500}
 PORT=${PORT:-4100}
 SECS=${SECS:-60}
+ENGINE=${ENGINE:-}   # vinyl: the workloads' tables are vinyl tables
 "$ROOT/scripts/cluster.sh" stop -d "$DIR" 2>/dev/null
-"$ROOT/scripts/cluster.sh" start -n 2 -r 3 -d "$DIR" -b "$BASE" -p "$PORT" -m 256 || exit 1
+"$ROOT/scripts/cluster.sh" start -n 2 -r 3 -d "$DIR" -b "$BASE" -p "$PORT" -m 256 ${ENGINE:+-e "$ENGINE"} || exit 1
 exec > >(tee -a "$DIR/events.out") 2>&1   # keep the event log for the failure report
 
 leader_of() {  # shard -> port of its current writable node
@@ -83,7 +84,8 @@ move_leader() {  # start an election on a follower of shard $1; the old leader s
       echo "$(date +%T) box.ctl.promote() on s$s.$j (port $q), attempt $attempt; the leader on $p will be demoted with its connections open"
       # The election may also be won by the third replica: any new leader will do.
       "$T" "$ROOT/scripts/promote.lua" "tarn:tarn@127.0.0.1:$q" < /dev/null 2>&1 | head -1
-      for _ in $(seq 50); do
+      local until=$(( $(date +%s) + 5 ))
+      while [ "$(date +%s)" -lt "$until" ]; do
         local np; np=$(leader_of "$s")
         if [ -n "$np" ] && [ "$np" != "$p" ]; then
           echo "$(date +%T) shard $s leader is now $np; $p still running: $(kill -0 "$(cat "$DIR/s$s.$((p - BASE - 10 * s)).pid")" && echo yes)"
@@ -102,11 +104,15 @@ BANK=$!
 python3 "$ROOT/tests/sql/rctest.py" --tarn 127.0.0.1:$PORT --only bank --bank-seconds "$SECS" --threads 4 \
   > "$DIR/rcbank.out" 2>&1 &
 RCBANK=$!
-sleep $((SECS / 5))
+# The events happen at fixed times into the workloads, so that a leadership
+# move that needs several attempts does not push the kills past their end.
+START=$(date +%s)
+at() { local t=$((START + $1)); while [ "$(date +%s)" -lt "$t" ]; do sleep 0.2; done; }
+at $((SECS / 5))
 move_leader 1 || MOVE_FAILED=1
-sleep $((SECS / 5))
+at $((2 * SECS / 5))
 kill_leader 1
-sleep $((SECS / 5))
+at $((3 * SECS / 5))
 kill_leader 2
 wait $BANK
 rc=$?

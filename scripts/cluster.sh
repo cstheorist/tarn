@@ -8,6 +8,7 @@
 #                            [-I ISOLATION]  (default level of new sessions, e.g. READ-COMMITTED)
 #                            [-e ENGINE]  (memtx | vinyl: engine of tables created without ENGINE=)
 #   Environment: TARN_VINYL_MEMORY_MB, TARN_VINYL_CACHE_MB (vinyl memory per storage instance),
+#                TARN_VINYL_READ_THREADS, _WRITE_THREADS, _PAGE_SIZE, _RANGE_SIZE, _BLOOM_FPR,
 #                TARN_CHECK_YIELDS=1 (an atomic protocol step that yields fails: tests),
 #                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests)
 #   scripts/cluster.sh stop  [-d DIR]
@@ -67,6 +68,9 @@ start_storage() {
       TARN_REPLICAS="$(replicas_json "$i")" TARN_PEERS="$(peers_json)" TARN_MEMORY_MB=$MEM \
       TARN_WAL_MODE=$WAL TARN_LOG_LEVEL=${TARN_LOG_LEVEL:-5} TARN_IPROTO_THREADS=$ITHREADS \
       TARN_VINYL_MEMORY_MB=${TARN_VINYL_MEMORY_MB:-128} TARN_VINYL_CACHE_MB=${TARN_VINYL_CACHE_MB:-128} \
+      TARN_VINYL_READ_THREADS=${TARN_VINYL_READ_THREADS:-} TARN_VINYL_WRITE_THREADS=${TARN_VINYL_WRITE_THREADS:-} \
+      TARN_VINYL_PAGE_SIZE=${TARN_VINYL_PAGE_SIZE:-} TARN_VINYL_RANGE_SIZE=${TARN_VINYL_RANGE_SIZE:-} \
+      TARN_VINYL_BLOOM_FPR=${TARN_VINYL_BLOOM_FPR:-} \
       TARN_CHECK_YIELDS=${TARN_CHECK_YIELDS:-} TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} \
       TARN_LISTEN_UNIX=$([ "$UNIX" = 1 ] && echo "$DIR/s$i.$j.sock") \
       exec "$T" "$ROOT/lua/storage.lua" >> "$DIR/s$i.$j.log" 2>&1 < /dev/null ) &

@@ -9,6 +9,9 @@
 --   TARN_MEMORY_MB     memtx memory (default 1024)
 --   TARN_VINYL_MEMORY_MB  vinyl in-memory level of the LSM trees (default 128)
 --   TARN_VINYL_CACHE_MB   vinyl tuple cache (default 128)
+--   TARN_VINYL_READ_THREADS, TARN_VINYL_WRITE_THREADS, TARN_VINYL_PAGE_SIZE,
+--   TARN_VINYL_RANGE_SIZE, TARN_VINYL_BLOOM_FPR   Tarantool's vinyl_* options
+--                      of those names (its defaults when unset)
 --   TARN_WAL_MODE      write | fsync | none (default write)
 --   TARN_IPROTO_THREADS (default 1)
 --   TARN_LISTEN_UNIX   optional Unix socket path to listen on as well
@@ -48,6 +51,11 @@ box.cfg{
     memtx_use_mvcc_engine = true,
     vinyl_memory = tonumber(env('TARN_VINYL_MEMORY_MB', '128')) * 1024 * 1024,
     vinyl_cache = tonumber(env('TARN_VINYL_CACHE_MB', '128')) * 1024 * 1024,
+    vinyl_read_threads = tonumber(env('TARN_VINYL_READ_THREADS', '')),
+    vinyl_write_threads = tonumber(env('TARN_VINYL_WRITE_THREADS', '')),
+    vinyl_page_size = tonumber(env('TARN_VINYL_PAGE_SIZE', '')),
+    vinyl_range_size = tonumber(env('TARN_VINYL_RANGE_SIZE', '')),
+    vinyl_bloom_fpr = tonumber(env('TARN_VINYL_BLOOM_FPR', '')),
     -- Plain (direct) reads must never observe data that a failover could
     -- still roll back.
     txn_isolation = 'read-confirmed',
