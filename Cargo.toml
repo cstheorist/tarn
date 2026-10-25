@@ -33,7 +33,7 @@ rmp = "0.8"
 sha1 = "0.10"
 base64 = "0.22"
 rand = "0.8"
-parking_lot = "0.12"
+parking_lot = "0.13"
 vstd = "=0.0.0-2026-10-04-0306"
 
 [profile.release]
