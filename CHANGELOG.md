@@ -119,6 +119,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in flight that write the locked row or unique value, not for every one on
   the shard: transactions writing different rows no longer queue behind
   each other's WAL writes ([#47](https://github.com/cstheorist/tarn/issues/47)).
+- Under READ COMMITTED, `UPDATE` and `DELETE` by full primary key (`WHERE
+  id = ?`, `id IN (...)`) lock and read their rows in one storage call per
+  shard, without reading candidates first: a read-modify-write transaction
+  of two such updates makes 3 storage calls instead of 5
+  ([#48](https://github.com/cstheorist/tarn/issues/48)).
 - `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
   on any index, batched into one storage call per shard, and an `OR` across
   indexes is a union of lookups (MySQL's `index_merge`); they used to scan

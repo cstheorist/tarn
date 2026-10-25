@@ -1546,13 +1546,9 @@ impl Session {
                 // (TarnCommit!RCLock): SET x = x - 1 starts from the newest
                 // version and never loses a concurrent update.
                 let t = &p.access.table;
-                let cands = exec::candidate_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &cx).await?;
-                let want = exec::eval_limit(&p.limit, &cx)?.map(|l| l as usize);
-                let x = LockOpts {
-                    exclusive: true,
-                    ..Default::default()
-                };
-                let rows = exec::lock_matching(&self.cluster, txn, t, cands, &p.filter, x, want, &cx).await?;
+                let rows = self
+                    .rc_lock_rows(txn, &p.access, &p.filter, &p.order, &p.limit, &cx)
+                    .await?;
                 let matched = rows.len() as u64;
                 let mut changed = 0;
                 for old in rows {
@@ -1567,13 +1563,9 @@ impl Session {
             }
             Stmt::Delete(p) if txn.mode == TxnMode::ReadCommitted => {
                 let t = &p.access.table;
-                let cands = exec::candidate_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &cx).await?;
-                let want = exec::eval_limit(&p.limit, &cx)?.map(|l| l as usize);
-                let x = LockOpts {
-                    exclusive: true,
-                    ..Default::default()
-                };
-                let rows = exec::lock_matching(&self.cluster, txn, t, cands, &p.filter, x, want, &cx).await?;
+                let rows = self
+                    .rc_lock_rows(txn, &p.access, &p.filter, &p.order, &p.limit, &cx)
+                    .await?;
                 let n = rows.len() as u64;
                 for old in rows {
                     let pk: Vec<Value> = t.indexes[0].cols.iter().map(|&c| old[c].clone()).collect();
@@ -1825,6 +1817,32 @@ impl Session {
             }
         }
         Ok(None)
+    }
+
+    /// The rows a READ COMMITTED UPDATE/DELETE changes, each locked (X) and
+    /// read under its lock, WHERE re-checked on that version. Rows named by
+    /// their full primary key are locked and read in one storage call per
+    /// shard (`lock_pk_points`); others are read as candidates from the
+    /// latest committed state first (`candidate_rows`, `lock_matching`).
+    async fn rc_lock_rows(
+        &self,
+        txn: &mut Txn,
+        access: &TableAccess,
+        filter: &Option<Expr>,
+        order: &[(Expr, bool)],
+        limit: &Option<Expr>,
+        cx: &EvalCtx<'_>,
+    ) -> SqlResult<Vec<Row>> {
+        let want = exec::eval_limit(limit, cx)?.map(|l| l as usize);
+        let x = LockOpts {
+            exclusive: true,
+            ..Default::default()
+        };
+        if let Some(rows) = exec::lock_pk_points(&self.cluster, txn, access, filter, order, x, want, cx).await? {
+            return Ok(rows);
+        }
+        let cands = exec::candidate_rows(&self.cluster, txn, access, filter, order, cx).await?;
+        exec::lock_matching(&self.cluster, txn, &access.table, cands, filter, x, want, cx).await
     }
 
     async fn buffer_row_change(
