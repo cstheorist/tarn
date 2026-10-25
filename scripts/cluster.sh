@@ -10,9 +10,12 @@
 #   Environment: TARN_VINYL_MEMORY_MB, TARN_VINYL_CACHE_MB (vinyl memory per storage instance),
 #                TARN_VINYL_READ_THREADS, _WRITE_THREADS, _PAGE_SIZE, _RANGE_SIZE, _BLOOM_FPR,
 #                TARN_CHECK_YIELDS=1 (an atomic protocol step that yields fails: tests),
-#                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests)
+#                TARN_TEST_HOOKS=1 (tarn_test_hook may hold protocol steps: tests),
+#                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests),
+#                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests)
 #   scripts/cluster.sh stop  [-d DIR]
 #   scripts/cluster.sh status [-d DIR]
+#   scripts/cluster.sh restart [-d DIR] INSTANCE...   (e.g. s2.1: start a stopped storage instance again)
 #
 # Storage instance (shard i, replica j) listens on 127.0.0.1:$((BASE + 10*i + j)).
 # tarn-server k listens on 127.0.0.1:$((TARN_PORT + k - 1)).
@@ -35,6 +38,7 @@ while getopts "n:r:d:p:s:w:m:t:ab:i:uP:I:e:" o; do
     *) echo "bad option"; exit 2;;
   esac
 done
+shift $((OPTIND - 1))
 
 port_of() { echo $((BASE + 10 * $1 + $2)); }
 
@@ -64,16 +68,23 @@ replicas_json() {
 start_storage() {
   local i=$1 j=$2 p; p=$(port_of "$i" "$j")
   mkdir -p "$DIR/s$i.$j"
-  ( cd "$DIR/s$i.$j" && TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$p TARN_WORKDIR="$DIR/s$i.$j" \
+  # The instance's command, kept in s<i>.<j>.sh for `restart`.
+  {
+    printf 'cd %q || exit 1\nexec env' "$DIR/s$i.$j"
+    printf ' %q' TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$p TARN_WORKDIR="$DIR/s$i.$j" \
       TARN_REPLICAS="$(replicas_json "$i")" TARN_PEERS="$(peers_json)" TARN_MEMORY_MB=$MEM \
       TARN_WAL_MODE=$WAL TARN_LOG_LEVEL=${TARN_LOG_LEVEL:-5} TARN_IPROTO_THREADS=$ITHREADS \
       TARN_VINYL_MEMORY_MB=${TARN_VINYL_MEMORY_MB:-128} TARN_VINYL_CACHE_MB=${TARN_VINYL_CACHE_MB:-128} \
       TARN_VINYL_READ_THREADS=${TARN_VINYL_READ_THREADS:-} TARN_VINYL_WRITE_THREADS=${TARN_VINYL_WRITE_THREADS:-} \
       TARN_VINYL_PAGE_SIZE=${TARN_VINYL_PAGE_SIZE:-} TARN_VINYL_RANGE_SIZE=${TARN_VINYL_RANGE_SIZE:-} \
       TARN_VINYL_BLOOM_FPR=${TARN_VINYL_BLOOM_FPR:-} \
-      TARN_CHECK_YIELDS=${TARN_CHECK_YIELDS:-} TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} \
+      TARN_CHECK_YIELDS=${TARN_CHECK_YIELDS:-} TARN_TEST_HOOKS=${TARN_TEST_HOOKS:-} \
+      TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} \
       TARN_LISTEN_UNIX=$([ "$UNIX" = 1 ] && echo "$DIR/s$i.$j.sock") \
-      exec "$T" "$ROOT/lua/storage.lua" >> "$DIR/s$i.$j.log" 2>&1 < /dev/null ) &
+      "$T" "$ROOT/lua/storage.lua"
+    printf ' >> %q 2>&1 < /dev/null\n' "$DIR/s$i.$j.log"
+  } > "$DIR/s$i.$j.sh"
+  bash "$DIR/s$i.$j.sh" &
   echo $! > "$DIR/s$i.$j.pid"
 }
 
@@ -87,8 +98,9 @@ write_config() {
     done
     out+="]}"; sep=","
   done
-  out+="]}"
-  echo "$out" > "$DIR/cluster.json"
+  out+="]"
+  [ -n "${TARN_DDL_JOB_STALE:-}" ] && out+=",\"ddl_job_stale\":$TARN_DDL_JOB_STALE"
+  echo "$out}" > "$DIR/cluster.json"
 }
 
 case "$CMD" in
@@ -139,11 +151,23 @@ case "$CMD" in
     for f in "$DIR"/*.pid; do [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null; done
     [ "${KEEP:-0}" = 1 ] || rm -rf "$DIR"
     ;;
+  restart)
+    # shellcheck disable=SC1091
+    . "$DIR/params"
+    for n in "$@"; do
+      [ -f "$DIR/$n.sh" ] || { echo "no storage instance $n in $DIR" >&2; exit 1; }
+      [ -f "$DIR/$n.pid" ] && kill -0 "$(cat "$DIR/$n.pid")" 2>/dev/null && { echo "$n is running" >&2; exit 1; }
+      bash "$DIR/$n.sh" &
+      echo $! > "$DIR/$n.pid"
+      i=${n#s}; j=${i#*.}; i=${i%.*}
+      wait_port "$(port_of "$i" "$j")" || exit 1
+    done
+    ;;
   status)
     for f in "$DIR"/*.pid; do
       [ -f "$f" ] || continue
       if kill -0 "$(cat "$f")" 2>/dev/null; then echo "$(basename "$f" .pid) up"; else echo "$(basename "$f" .pid) DOWN"; fi
     done
     ;;
-  *) sed -n 2,12p "$0"; exit 2;;
+  *) sed -n 2,17p "$0"; exit 2;;
 esac

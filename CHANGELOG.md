@@ -108,6 +108,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Schema changes run as jobs with one record per table on the first shard,
+  instead of one at a time cluster-wide: an `ALTER TABLE` that builds an
+  index on a large table no longer holds up DDL on other tables. A job
+  records its phase, and a server that finds one abandoned
+  (`ddl_job_stale`, 30 s, in `cluster.json`) rolls it back before every
+  shard prepared and forward after; every SQL server looks for them every
+  10 s ([#30](https://github.com/cstheorist/tarn/issues/30)).
 - `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
   on any index, batched into one storage call per shard, and an `OR` across
   indexes is a union of lookups (MySQL's `index_merge`); they used to scan
@@ -143,6 +150,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leader changed, and until then other transactions waited for those rows
   and timed out. The failed request now reports the locks' generation and
   the transaction releases them when it ends.
+- `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` were sent to every shard at
+  once: a shard that failed left the table on some shards only, a
+  `TRUNCATE` between a cross-shard transaction's PREPARE and its APPLY left
+  that transaction's rows, and a transaction that had read the table could
+  still commit after it. They now run in steps like `ALTER TABLE` and take
+  effect on every shard or on none. A `DROP TABLE` or `TRUNCATE` first waits
+  for the prepared transactions holding locks on the table; until it is
+  applied, reads of the table wait and transactions that read it fail
+  validation; `TRUNCATE` refuses writes encoded before it (1412)
+  ([#30](https://github.com/cstheorist/tarn/issues/30)).
+  `tests/ddlfaults.sh` interrupts each with a shard failure.
 - Bootstrapping a replicated shard could stop storage instances: the new
   leader's first synchronous write, made while its replicas were still
   joining, timed out (stopping the leader), or reached a joining replica,
