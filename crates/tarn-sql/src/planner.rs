@@ -202,6 +202,7 @@ fn extract_partition_by_key(sql: &str) -> (String, Option<Vec<String>>) {
 
 struct Binder<'a, 'c> {
     scope: &'a Scope,
+    #[allow(dead_code)]
     ctx: &'a PlanCtx<'c>,
     aggs: Option<&'a mut Vec<AggCall>>,
     /// For ON DUPLICATE KEY UPDATE: VALUES(col) refers to col + values_offset.
@@ -252,6 +253,19 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             E::Value(v) => self.bind_value(&v.value)?,
             E::Nested(inner) => self.bind(inner)?,
+            E::BinaryOp { left, op: op @ (A::BinaryOperator::Eq | A::BinaryOperator::NotEq), right }
+                if matches!(**left, E::Tuple(_)) && matches!(**right, E::Tuple(_)) =>
+            {
+                let (E::Tuple(l), E::Tuple(r)) = (&**left, &**right) else { unreachable!() };
+                let lhs: Vec<Expr> = l.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
+                let rhs: Vec<&A::Expr> = r.iter().collect();
+                let e = self.row_eq(&lhs, &rhs)?;
+                if matches!(op, A::BinaryOperator::NotEq) {
+                    Expr::Not(Box::new(e))
+                } else {
+                    e
+                }
+            }
             E::BinaryOp { left, op, right } => {
                 let (l, r) = (Box::new(self.bind(left)?), Box::new(self.bind(right)?));
                 use A::BinaryOperator as B;
@@ -294,6 +308,29 @@ impl<'a, 'c> Binder<'a, 'c> {
             E::IsNotTrue(x) => Expr::IsTrue(Box::new(self.bind(x)?), true, true),
             E::IsFalse(x) => Expr::IsTrue(Box::new(self.bind(x)?), false, false),
             E::IsNotFalse(x) => Expr::IsTrue(Box::new(self.bind(x)?), false, true),
+            E::InList { expr, list, negated } if matches!(**expr, E::Tuple(_)) => {
+                let E::Tuple(lhs) = &**expr else { unreachable!() };
+                let lhs: Vec<Expr> = lhs.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
+                let mut disj: Option<Expr> = None;
+                for item in list {
+                    let rhs: Vec<&A::Expr> = match item {
+                        E::Tuple(r) => r.iter().collect(),
+                        E::Nested(inner) => vec![&**inner],
+                        other => vec![other],
+                    };
+                    let conj = self.row_eq(&lhs, &rhs)?;
+                    disj = Some(match disj {
+                        None => conj,
+                        Some(d) => Expr::Or(Box::new(d), Box::new(conj)),
+                    });
+                }
+                let e = disj.unwrap_or(Expr::Lit(Value::Int(0)));
+                if *negated {
+                    Expr::Not(Box::new(e))
+                } else {
+                    e
+                }
+            }
             E::InList { expr, list, negated } => Expr::InList(
                 Box::new(self.bind(expr)?),
                 list.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?,
@@ -401,6 +438,48 @@ impl<'a, 'c> Binder<'a, 'c> {
         Ok((out, star, distinct))
     }
 
+    /// `(l1, l2, ...) = (r1, r2, ...)` as a conjunction of comparisons.
+    fn row_eq(&mut self, lhs: &[Expr], rhs: &[&A::Expr]) -> SqlResult<Expr> {
+        if lhs.len() != rhs.len() {
+            return Err(SqlError::new(1241, "21000", format!("Operand should contain {} column(s)", lhs.len())));
+        }
+        let mut conj: Option<Expr> = None;
+        for (l, r) in lhs.iter().zip(rhs) {
+            let c = Expr::Cmp(Box::new(l.clone()), CmpOp::Eq, Box::new(self.bind(r)?));
+            conj = Some(match conj {
+                None => c,
+                Some(x) => Expr::And(Box::new(x), Box::new(c)),
+            });
+        }
+        conj.ok_or_else(|| SqlError::parse("empty row value"))
+    }
+
+    /// ORDER BY / SEPARATOR clauses inside an aggregate call (GROUP_CONCAT).
+    fn agg_clauses(&mut self, f: &A::Function) -> SqlResult<(Vec<(Expr, bool)>, Option<bytes::Bytes>)> {
+        let mut order = Vec::new();
+        let mut sep = None;
+        if let A::FunctionArguments::List(list) = &f.args {
+            for c in &list.clauses {
+                match c {
+                    A::FunctionArgumentClause::OrderBy(obs) => {
+                        for o in obs {
+                            let desc = matches!(o.options.sort, Some(A::OrderBySort::Desc));
+                            order.push((self.bind(&o.expr)?, desc));
+                        }
+                    }
+                    A::FunctionArgumentClause::Separator(v) => match &v.value {
+                        A::Value::SingleQuotedString(s) | A::Value::DoubleQuotedString(s) => {
+                            sep = Some(bytes::Bytes::copy_from_slice(s.as_bytes()))
+                        }
+                        other => return Err(SqlError::unsupported(format!("SEPARATOR {}", other))),
+                    },
+                    other => return Err(SqlError::unsupported(format!("aggregate clause {}", other))),
+                }
+            }
+        }
+        Ok((order, sep))
+    }
+
     fn bind_function(&mut self, f: &A::Function) -> SqlResult<Expr> {
         let name = object_name_parts(&f.name).last().cloned().unwrap_or_default().to_ascii_uppercase();
         let agg = match name.as_str() {
@@ -419,12 +498,18 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             // aggregate arguments are bound without aggregate context
             let saved = self.aggs.take();
-            let r = self.func_args(f);
+            let r = self.func_args(f).and_then(|a| Ok((a, self.agg_clauses(f)?)));
             self.aggs = saved;
-            let (args, star, distinct) = r?;
+            let ((mut args, star, distinct), (order, sep)) = r?;
             let func = if func == AggFunc::Count && (star || args.is_empty()) { AggFunc::CountStar } else { func };
+            let arg = if func == AggFunc::GroupConcat && args.len() > 1 {
+                // GROUP_CONCAT(a, b, ...) concatenates its arguments per row
+                Some(Expr::Func(Func::Concat, std::mem::take(&mut args)))
+            } else {
+                args.into_iter().next()
+            };
             let aggs = self.aggs.as_mut().unwrap();
-            aggs.push(AggCall { func, arg: args.into_iter().next(), distinct });
+            aggs.push(AggCall { func, arg, distinct, order, sep });
             return Ok(Expr::Col(AGG_BASE + aggs.len() - 1));
         }
         if name == "VALUES" {
@@ -625,7 +710,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
 fn build_scope(from: &[A::TableWithJoins], ctx: &PlanCtx) -> SqlResult<(Scope, Vec<(JoinKind, Option<A::Expr>)>)> {
     let mut scope = Scope::default();
     let mut joins = Vec::new();
-    let mut add = |tf: &A::TableFactor, scope: &mut Scope| -> SqlResult<()> {
+    let add = |tf: &A::TableFactor, scope: &mut Scope| -> SqlResult<()> {
         match tf {
             A::TableFactor::Table { name, alias, .. } => {
                 let table = lookup_table(name, ctx)?;
@@ -732,7 +817,7 @@ fn post_agg(e: &Expr, groups: &[Expr], aggs: &mut Vec<AggCall>) -> Expr {
     match e {
         Expr::Col(c) if *c >= AGG_BASE => Expr::Col(ng + (*c - AGG_BASE)),
         Expr::Col(c) => {
-            aggs.push(AggCall { func: AggFunc::AnyValue, arg: Some(Expr::Col(*c)), distinct: false });
+            aggs.push(AggCall::simple(AggFunc::AnyValue, Some(Expr::Col(*c)), false));
             Expr::Col(ng + aggs.len() - 1)
         }
         Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => e.clone(),
@@ -887,7 +972,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
     {
         let mut hb = Binder { scope: &scope, ctx, aggs: Some(&mut aggs), values_offset: None };
         if let Some(h) = &sel.having {
-            having = Some(resolve_alias_or_position(h, &sel.projection, &proj, &mut hb, &mut Some(())).or_else(|_| hb.bind(h))?);
+            having = Some(resolve_alias_or_position(h, &sel.projection, &proj, &mut hb, &mut Some(()))?);
         }
         if let Some(ob) = &q.order_by {
             if let A::OrderByKind::Expressions(list) = &ob.kind {
@@ -1061,7 +1146,32 @@ fn resolve_alias_or_position(
             }
         }
     }
-    b.bind(e)
+    // Aliases nested inside an expression (HAVING n > 7, ORDER BY n + 1).
+    let e = subst_aliases(e, items, b);
+    b.bind(&e)
+}
+
+/// Replace identifiers that name a select-list alias (and no source column)
+/// by the aliased expression.
+fn subst_aliases(e: &A::Expr, items: &[A::SelectItem], b: &Binder) -> A::Expr {
+    let mut e = e.clone();
+    let _ = A::visit_expressions_mut(&mut e, |x| {
+        if let A::Expr::Identifier(i) = x {
+            if b.resolve(None, &i.value).is_err() {
+                let sub = items.iter().find_map(|it| match it {
+                    A::SelectItem::ExprWithAlias { expr, alias } if alias.value.eq_ignore_ascii_case(&i.value) => {
+                        Some(expr.clone())
+                    }
+                    _ => None,
+                });
+                if let Some(sub) = sub {
+                    *x = A::Expr::Nested(Box::new(sub));
+                }
+            }
+        }
+        std::ops::ControlFlow::<()>::Continue(())
+    });
+    e
 }
 
 fn build_source(scope: &Scope, joins: &[(JoinKind, Option<A::Expr>)], on: &[Option<Expr>], conj: &[Expr]) -> SqlResult<Source> {

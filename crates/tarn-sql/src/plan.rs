@@ -83,6 +83,16 @@ pub struct AggCall {
     pub func: AggFunc,
     pub arg: Option<Expr>,
     pub distinct: bool,
+    /// GROUP_CONCAT(... ORDER BY ...): sort keys over the input row.
+    pub order: Vec<(Expr, bool)>,
+    /// GROUP_CONCAT(... SEPARATOR s); default ",".
+    pub sep: Option<bytes::Bytes>,
+}
+
+impl AggCall {
+    pub fn simple(func: AggFunc, arg: Option<Expr>, distinct: bool) -> AggCall {
+        AggCall { func, arg, distinct, order: Vec::new(), sep: None }
+    }
 }
 
 #[derive(Clone, Debug)]
