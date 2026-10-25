@@ -1,0 +1,16 @@
+last yb_servers() query: psql: error: connection to server at "127.0.0.1", port 5433 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+--- docker ps -a
+CONTAINER ID   IMAGE                        COMMAND                  CREATED                  STATUS                              PORTS     NAMES
+870b94bfdf4c   yugabytedb/yugabyte:latest   "/sbin/tini -- bash …"   Less than a second ago   Exited (1) Less than a second ago             yb
+--- docker logs (tail)
+bash: line 1: /var/yb/start1.log: Permission denied
+--- yugabyted status
+Error response from daemon: container 870b94bfdf4c5bd1bf601ecde2f578bf416104da01ee99423994fa66764d19c6 is not running
+--- listening
+--- memory
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1345        7990          48        7047       14644
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           7.9G   84K  7.9G   1% /dev/shm

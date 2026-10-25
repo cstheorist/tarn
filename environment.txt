@@ -1,0 +1,11 @@
+date: 2026-10-25T09:52:47Z
+kernel: 6.17.0-1022-azure
+CPU(s):                                  4
+Model name:                              AMD EPYC 7763 64-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+Socket(s):                               1
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1062       10916          47        4404       14926
+sysbench: sysbench 1.0.20
+settings: TABLES=4 SIZE=100000 THREADS='1 16 64' TIME=5 MANY=1000
