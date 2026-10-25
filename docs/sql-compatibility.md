@@ -243,7 +243,9 @@ read stay validated at commit.
 ## Expressions and functions
 
 * Operators: arithmetic (`+ - * / DIV %`), comparison, `AND OR NOT XOR`,
-  `BETWEEN`, `IN (...)`, row values `(a, b) IN ((1, 2), ...)`, `LIKE`,
+  `BETWEEN`, `IN (...)`, row values `(a, b) IN ((1, 2), ...)` and
+  `(a, b) = | <> | < | <= | > | >= | <=> (x, y)` (lexicographic; a keyset
+  cursor `(a, b) > (?, ?)` on an index starts its range at `a`), `LIKE`,
   `IS [NOT] NULL`, `CASE`, `CAST(x AS SIGNED | UNSIGNED | CHAR | DECIMAL(p, s) | DOUBLE | DATE | DATETIME | BINARY)`.
   NULL semantics follow MySQL.
 * Functions: `CONCAT`, `CONCAT_WS`, `LENGTH`, `CHAR_LENGTH`, `LOWER`,
