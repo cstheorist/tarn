@@ -63,7 +63,7 @@ jobs:
       - name: Install Python packages
         run: pip install PyMySQL
       - name: Cache Tarantool
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local/tarantool
           key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
