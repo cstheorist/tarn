@@ -339,6 +339,31 @@ CASES = [
     ("ALTER TABLE nk DROP COLUMN msg", "ddl:nk"),
     ("ALTER TABLE nk DROP COLUMN n, DROP COLUMN z", "err"),
     ("CREATE TABLE rid (DB_ROW_ID INT)", "err"),
+    # information_schema.TABLES and SELECT ... INTO @var (issue #33): what
+    # mysqldump's header and Rails send
+    ("SELECT table_name FROM information_schema.tables WHERE table_schema = database() ORDER BY table_name", "q"),
+    ("SELECT table_name FROM information_schema.tables WHERE table_schema = database() AND table_name = 't1' "
+     "AND table_name IN (SELECT table_name FROM information_schema.tables WHERE table_schema = database())", "q"),
+    ("SELECT table_name FROM information_schema.tables WHERE table_schema = database() "
+     "AND table_type = 'BASE TABLE' AND table_name LIKE 't%'", "q"),
+    ("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES "
+     "WHERE TABLE_SCHEMA = 'difftest' AND TABLE_NAME = 'u'", "q"),
+    ("SELECT table_comment FROM information_schema.tables WHERE table_schema = database() AND table_name = 'nope'", "q"),
+    ("SELECT COUNT(*) FROM information_schema.tables t WHERE t.table_schema = database()", "q"),
+    ("SELECT COUNT(*) INTO @rocksdb_has_p_s_session_variables FROM INFORMATION_SCHEMA.TABLES "
+     "WHERE TABLE_SCHEMA = 'performance_schema' AND TABLE_NAME = 'session_variables'", "q"),
+    ("SELECT @rocksdb_has_p_s_session_variables", "q"),
+    ("SELECT COUNT(*) INTO @n FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = database()", "q"),
+    ("SELECT @n", "q"),
+    ("SELECT a, b INTO @ia, @ib FROM t1 WHERE id = 2", "q"),
+    ("SELECT @ia, @ib", "q"),
+    ("SELECT a INTO @ia FROM t1 WHERE id = 999", "q"),
+    ("SELECT @ia", "q"),
+    ("SELECT id FROM t1 WHERE id < 5 INTO @ia", "err"),
+    ("SELECT 1, 2 INTO @ia", "err"),
+    ("SELECT * FROM information_schema.no_such_table", "err"),
+    ("INSERT INTO information_schema.tables (table_name) VALUES ('x')", "err"),
+    ("DELETE FROM information_schema.tables", "err"),
 ]
 
 

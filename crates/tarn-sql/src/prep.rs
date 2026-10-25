@@ -339,9 +339,122 @@ fn scan_vars(sql: &str, keep_targets: bool, lookup: &mut dyn FnMut(&VarRef) -> O
     (out, changed)
 }
 
+/// `SELECT ... INTO @a, @b ...` (before FROM or at the end): the statement
+/// without its INTO clause, and the variables (lower-cased) it assigns.
+/// None for any other statement, including `INTO OUTFILE` and `INSERT INTO`.
+pub fn split_select_into(sql: &str) -> Option<(String, Vec<String>)> {
+    let b = sql.as_bytes();
+    let n = b.len();
+    let mut i = 0;
+    let mut depth = 0i32;
+    let mut first = true;
+    while i < n {
+        let c = b[i];
+        if c == b'\'' || c == b'"' || c == b'`' {
+            i = quoted_end(b, i);
+            continue;
+        }
+        if let Some(e) = line_comment_end(b, i) {
+            i = e;
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            let mut j = i + 2;
+            while j + 1 < n && !(b[j] == b'*' && b[j + 1] == b'/') {
+                j += 1;
+            }
+            i = (j + 2).min(n);
+            continue;
+        }
+        if is_ident_byte(c) {
+            let s = i;
+            while i < n && is_ident_byte(b[i]) {
+                i += 1;
+            }
+            let w = &sql[s..i];
+            if first {
+                if !w.eq_ignore_ascii_case("SELECT") {
+                    return None;
+                }
+                first = false;
+            } else if depth == 0 && w.eq_ignore_ascii_case("INTO") {
+                // @var [, @var]...
+                let mut vars = Vec::new();
+                let mut j = i;
+                loop {
+                    while j < n && b[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if b.get(j) != Some(&b'@') || b.get(j + 1) == Some(&b'@') {
+                        return None;
+                    }
+                    j += 1;
+                    let name = if j < n && (b[j] == b'\'' || b[j] == b'"' || b[j] == b'`') {
+                        let e = quoted_end(b, j);
+                        let v = sql[j + 1..e.saturating_sub(1).max(j + 1)].to_string();
+                        j = e;
+                        v
+                    } else {
+                        let s = j;
+                        while j < n && (is_ident_byte(b[j]) || b[j] == b'.') {
+                            j += 1;
+                        }
+                        sql[s..j].to_string()
+                    };
+                    if name.is_empty() {
+                        return None;
+                    }
+                    vars.push(name.to_ascii_lowercase());
+                    let mut k = j;
+                    while k < n && b[k].is_ascii_whitespace() {
+                        k += 1;
+                    }
+                    if b.get(k) == Some(&b',') {
+                        j = k + 1;
+                        continue;
+                    }
+                    break;
+                }
+                let rest = format!("{} {}", &sql[..s], &sql[j..]);
+                return Some((rest, vars));
+            }
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn select_into_variables() {
+        let s =
+            |sql: &str| split_select_into(sql).map(|(q, v)| (q.split_whitespace().collect::<Vec<_>>().join(" "), v));
+        assert_eq!(
+            s("SELECT COUNT(*) INTO @Has FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'x'"),
+            Some((
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'x'".into(),
+                vec!["has".into()]
+            ))
+        );
+        assert_eq!(
+            s("SELECT a, b FROM t WHERE id = 1 INTO @a, @`b c`"),
+            Some(("SELECT a, b FROM t WHERE id = 1".into(), vec!["a".into(), "b c".into()]))
+        );
+        assert_eq!(s("SELECT 'INTO @x' AS v"), None);
+        assert_eq!(s("SELECT (SELECT 1 INTO @x)"), None);
+        assert_eq!(s("INSERT INTO t VALUES (@x)"), None);
+        assert_eq!(s("SELECT * INTO OUTFILE '/tmp/x' FROM t"), None);
+        assert_eq!(s("SELECT 1 INTO @@x"), None);
+    }
 
     #[test]
     fn executable_comments() {

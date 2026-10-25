@@ -143,12 +143,19 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   UTC (`'+00:00'`, `'SYSTEM'`), and the connection character set to
   `utf8mb4` or a subset of it (`SET NAMES`). Other session variables are
   accepted and reported back by `SELECT @@var`.
-* User-defined variables: `SET @v = expr` (also `:=`), and `@v` anywhere
-  in a statement (not in prepared statements, nor assigned inside a
-  `SELECT`).
+* User-defined variables: `SET @v = expr` (also `:=`), `SELECT ... INTO @a,
+  @b` (before `FROM` or at the end; more than one row is 1172, none leaves
+  the variables as they were), and `@v` anywhere in a statement (not in
+  prepared statements, nor assigned inside a `SELECT` with `:=`).
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
   VARIABLES | STATUS | WARNINGS | ENGINES | COLLATION | CHARACTER SET |
   PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
+* `information_schema.TABLES`, with MySQL 8's columns: one row per table
+  (`TABLE_TYPE` `BASE TABLE`, `ENGINE` memtx or vinyl, `TABLE_COMMENT`) and
+  one for itself (`SYSTEM VIEW`). Sizes, row counts and times are NULL. It
+  is read from the catalog, so it takes no locks and needs no transaction
+  (`FOR UPDATE` on it alone is a plain read); writing it is 1044, and the
+  other `information_schema` tables are 1109.
 * `UNLOCK`, `FLUSH`, `ANALYZE`, `OPTIMIZE`, `CHECKSUM`, `DO` are accepted
   and do nothing; `LOCK TABLES` commits the open transaction.
 
@@ -275,5 +282,5 @@ Subqueries that reference the outer query, derived tables (`FROM (SELECT
 foreign keys, `ALTER TABLE` changes that rewrite rows (above), window
 functions, common table expressions, `RIGHT` / `FULL` / `NATURAL` joins,
 multi-table `UPDATE` / `DELETE`, `CREATE TABLE ... AS` / `LIKE`,
-`information_schema`, user management statements, and online resharding. Unsupported syntax fails with error 1235
+`information_schema` other than `TABLES`, user management statements, and online resharding. Unsupported syntax fails with error 1235
 (`ER_NOT_SUPPORTED_YET`) or a parse error.
