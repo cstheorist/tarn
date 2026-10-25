@@ -948,6 +948,8 @@ pub enum CheckKind {
     Chars(u32),
     Range(i128, i128),
     Digits(u32),
+    /// A native index cannot substitute a non-NULL fill for a missing field.
+    IndexFieldPresent,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1750,6 +1752,29 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
             }),
         }
     }
+    // Instant ADD leaves short tuples in storage: SQL supplies their frozen
+    // fills, but a native index sees NULL for a missing field. Check before
+    // publishing any new index that could disagree, including weight fields.
+    // NULL fills need no check; a missing field already indexes as NULL.
+    for ix in nd.indexes.iter().filter(|ix| builds.iter().any(|b| b.id == ix.id)) {
+        for &c in &ix.cols {
+            if nd.columns[c].fill.is_none() || nd.layout.fills[c] == Value::Null {
+                continue;
+            }
+            let field = nd.layout.col_weight[c].unwrap_or(nd.layout.col_field[c]) as u32 + 1;
+            if !checks
+                .iter()
+                .any(|ch| ch.field == field && ch.kind == CheckKind::IndexFieldPresent)
+            {
+                checks.push(Check {
+                    field,
+                    col: nd.columns[c].name.clone(),
+                    kind: CheckKind::IndexFieldPresent,
+                    fill: nd.layout.fills[c].clone(),
+                });
+            }
+        }
+    }
     Ok(Change {
         def: nd,
         format,
@@ -1774,7 +1799,7 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     m.str("checks").arr(ch.checks.len());
     for c in &ch.checks {
         let n = match c.kind {
-            CheckKind::NotNull => 3,
+            CheckKind::NotNull | CheckKind::IndexFieldPresent => 3,
             CheckKind::Chars(_) | CheckKind::Digits(_) => 4,
             CheckKind::Range(..) => 5,
         };
@@ -1782,6 +1807,9 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
         match &c.kind {
             CheckKind::NotNull => {
                 m.str("notnull");
+            }
+            CheckKind::IndexFieldPresent => {
+                m.str("indexed");
             }
             CheckKind::Chars(x) => {
                 m.str("chars").uint(*x as u64);
@@ -1940,6 +1968,82 @@ mod tests {
     }
 
     const T: &str = "CREATE TABLE t (id INT PRIMARY KEY, a INT, s VARCHAR(10), d DECIMAL(6,2), KEY ka (a))";
+
+    #[test]
+    fn indexes_require_stored_non_null_fills() {
+        let (def, cat) = table("CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+        for spec in ["c INT DEFAULT 3", "c INT NOT NULL", "c VARCHAR(10) DEFAULT ''"] {
+            let ch = alter(
+                &def,
+                &cat,
+                &format!("ALTER TABLE t ADD {spec}, ADD INDEX ic (c, id), ADD INDEX ivc (v, c)"),
+            )
+            .unwrap();
+            let c = ch.def.col_index("c").unwrap();
+            let present: Vec<_> = ch
+                .checks
+                .iter()
+                .filter(|c| c.kind == CheckKind::IndexFieldPresent)
+                .collect();
+            assert_eq!(present.len(), 1, "one check even with several indexes: {spec}");
+            assert_eq!(present[0].field, ch.def.layout.col_field[c] as u32 + 1);
+            assert_eq!(present[0].fill, ch.def.layout.fills[c]);
+        }
+        // Missing NULL and physically stored NULL have the same native key.
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT NULL, ADD INDEX ic (c)").unwrap();
+        assert!(ch.checks.is_empty());
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX iv (v)").unwrap();
+        assert!(ch.checks.is_empty());
+
+        // A later DEFAULT change does not change what the old short rows hold.
+        let added = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT 3").unwrap().def;
+        let ch = alter(&added, &cat, "ALTER TABLE t ALTER c SET DEFAULT 9, ADD INDEX ic (c)").unwrap();
+        assert_eq!(ch.checks.len(), 1);
+        assert_eq!(ch.checks[0].fill, Value::Int(3));
+        let added_null = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT NULL").unwrap().def;
+        let ch = alter(
+            &added_null,
+            &cat,
+            "ALTER TABLE t ALTER c SET DEFAULT 9, ADD INDEX ic (c)",
+        )
+        .unwrap();
+        assert!(
+            ch.checks.is_empty(),
+            "a current non-NULL default does not change the frozen NULL fill"
+        );
+
+        // Collated indexes store a weight field, not the visible text field.
+        let ch = alter(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD c VARCHAR(10) COLLATE utf8mb4_general_ci DEFAULT 'X', ADD UNIQUE INDEX ic (c, id)",
+        )
+        .unwrap();
+        let c = ch.def.col_index("c").unwrap();
+        assert_eq!(ch.checks[0].field, ch.def.layout.col_weight[c].unwrap() as u32 + 1);
+
+        // The storage check is carried to every DDL stage in the persisted job.
+        let encoded = lua_args(&ch, 2, 5.0);
+        let mut rd = Rd::new(&encoded);
+        let count = rmp::decode::read_map_len(&mut rd.buf).unwrap();
+        let mut found = false;
+        for _ in 0..count {
+            if rd.string().unwrap() == "checks" {
+                assert_eq!(rd.array().unwrap(), 1);
+                assert_eq!(rd.array().unwrap(), 6);
+                rd.skip().unwrap();
+                assert_eq!(rd.string().unwrap(), "c");
+                assert_eq!(rd.string().unwrap(), "indexed");
+                for _ in 0..3 {
+                    rd.skip().unwrap();
+                }
+                found = true;
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert!(found && rd.buf.is_empty());
+    }
 
     #[test]
     fn collations_and_weight_fields() {

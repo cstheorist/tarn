@@ -661,6 +661,12 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    no write waits for the build, however long it takes. A memtx table
    builds in PREPARE instead: with memtx MVCC, any write committed while an
    index build yields aborts the build.
+   An index on an instant-added column with a non-NULL fill is deferred to
+   PREPARE instead: its stored field (or collation weight field) must be
+   physically present in every existing tuple. Otherwise the native index
+   would hold NULL where SQL reads the fill, missing rows and failing to
+   enforce logical uniqueness. PREPARE refuses that change with 1846;
+   automatic backfill is not implemented. NULL fills need no such check.
 2. PREPARE raises the table's fence to V in memory, waits until no local
    commit that passed the check is still in flight (`wait_commits`) and no
    prepared cross-shard transaction holds locks on the table (their writes
@@ -1007,8 +1013,9 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   and `DECIMAL` scale changes are refused, dropped columns keep their
   stored values (no space is reclaimed), and writes to the table wait while
   a change prepares (§2.10): on memtx tables also while their new indexes
-  are built, at memory speed; vinyl tables build them before. Checking the
-  existing rows (a narrower type, `NOT NULL`) is refused above
+  are built, at memory speed; vinyl tables build them before unless they
+  need a physical-field presence check for a non-NULL fill. Checking the
+  existing rows (a narrower type, `NOT NULL`, indexed field presence) is refused above
   `tarn.cfg.alter_check_rows` rows per shard. A table cannot move between
   memtx and vinyl.
 * Vinyl tables (§2.11): an autocommit read whose range a cross-shard
