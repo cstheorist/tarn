@@ -12,7 +12,7 @@
 # tarn-server k listens on 127.0.0.1:$((TARN_PORT + k - 1)).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-T=${TARANTOOL:-/opt/src/tarantool/build/src/tarantool}
+T=${TARANTOOL:-tarantool}
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
 CMD=${1:-}; shift || true
 N=2; R=1; DIR=${TARN_DIR:-/tmp/tarn-cluster}; TPORT=4000; SERVERS=1; WAL=write; MEM=1024

@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! For security issues, or correctness bugs that could corrupt data, please use
+        [private vulnerability reporting](https://github.com/cstheorist/tarn/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: SQL statements, commands, or a script. The smaller the better.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Tarn commit, Tarantool version, cluster layout (shards x replicas), OS.
+      placeholder: |
+        Tarn: main @ abc1234
+        Tarantool: 3.9.0
+        Cluster: scripts/cluster.sh start -n 2 -r 3
+        OS: Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant tarn-server or storage-node log lines (cluster logs are under the cluster directory).
+      render: text

@@ -9,7 +9,7 @@
 //! ```
 //!
 //! Without `--addr` a local Tarantool is started (binary from `$TARANTOOL`,
-//! default `/opt/src/tarantool/build/src/tarantool`) with the same init script
+//! default `tarantool`) with the same init script
 //! as the integration tests; with `--addr` the target must have the `kv`
 //! space (id 515) from `tests/common/init.lua` and a `tarn`/`tarn` user.
 
@@ -32,7 +32,14 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { addr: None, secs: 10.0, tasks: 64, conns: 1, rows: 100_000, modes: vec!["select".into(), "replace".into()] };
+    let mut a = Args {
+        addr: None,
+        secs: 10.0,
+        tasks: 64,
+        conns: 1,
+        rows: 100_000,
+        modes: vec!["select".into(), "replace".into()],
+    };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut val = || it.next().unwrap_or_else(|| panic!("{flag} needs a value"));
@@ -58,7 +65,7 @@ impl LocalServer {
     // The child is waited for in `Drop` (or before panicking).
     #[allow(clippy::zombie_processes)]
     fn start(rows: u64) -> (LocalServer, String) {
-        let bin = std::env::var("TARANTOOL").unwrap_or_else(|_| "/opt/src/tarantool/build/src/tarantool".into());
+        let bin = std::env::var("TARANTOOL").unwrap_or_else(|_| "tarantool".into());
         let dir = std::env::temp_dir().join(format!("tarn-iproto-bench-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -190,7 +197,11 @@ async fn phase(clients: &[Client], mode: Mode, args: &Args, server_pid: Option<u
         _ => None,
     };
     all.sort_unstable();
-    let pct = |p: f64| all.get(((all.len() as f64 * p) as usize).min(all.len().saturating_sub(1))).copied().unwrap_or(0);
+    let pct = |p: f64| {
+        all.get(((all.len() as f64 * p) as usize).min(all.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0)
+    };
     let name = match mode {
         Mode::Select => "select",
         Mode::Replace => "replace",
@@ -211,7 +222,11 @@ async fn phase(clients: &[Client], mode: Mode, args: &Args, server_pid: Option<u
         reqs as f64 / writes.max(1) as f64,
         reqs as f64 / reads.max(1) as f64
     );
-    print!("          cpu: client {:.2} cores, {:.2} us/op", client_cpu / elapsed, client_cpu * 1e6 / n);
+    print!(
+        "          cpu: client {:.2} cores, {:.2} us/op",
+        client_cpu / elapsed,
+        client_cpu * 1e6 / n
+    );
     match server_cpu {
         Some(s) => println!(" | tarantool {:.2} cores, {:.2} us/op", s / elapsed, s * 1e6 / n),
         None => println!(),

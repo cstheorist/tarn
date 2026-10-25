@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest an improvement or a missing MySQL feature
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that Tarn does not support well today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like Tarn to do? For protocol changes, say how they affect the commit protocol and its TLA+ model.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds or other designs you considered.

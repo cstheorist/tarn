@@ -25,9 +25,16 @@ struct Conn {
 
 fn convert(o: Output) -> QueryResult {
     match o {
-        Output::Ok { affected, last_insert_id, info } => {
-            QueryResult::Ok { affected_rows: affected, last_insert_id, info, warnings: 0 }
-        }
+        Output::Ok {
+            affected,
+            last_insert_id,
+            info,
+        } => QueryResult::Ok {
+            affected_rows: affected,
+            last_insert_id,
+            info,
+            warnings: 0,
+        },
         Output::Rows { columns, rows } => QueryResult::Rows { columns, rows },
     }
 }
@@ -49,7 +56,10 @@ impl Backend for Conn {
 
     async fn on_prepare(&mut self, stmt_id: u32, sql: &str) -> SqlResult<PrepareInfo> {
         let (n, columns) = self.s.prepare(stmt_id, sql)?;
-        Ok(PrepareInfo { num_params: n as u16, columns })
+        Ok(PrepareInfo {
+            num_params: n as u16,
+            columns,
+        })
     }
 
     async fn on_execute(&mut self, stmt_id: u32, params: &[Value]) -> SqlResult<QueryResult> {
@@ -209,7 +219,10 @@ async fn run(args: Args, cfg: ClusterConfig) {
     } else {
         AuthConfig::Users(args.users.clone())
     };
-    let opts = Arc::new(ServerOpts { server_version: tarn_sql::SERVER_VERSION.to_string(), auth });
+    let opts = Arc::new(ServerOpts {
+        server_version: tarn_sql::SERVER_VERSION.to_string(),
+        auth,
+    });
     let listener = match tokio::net::TcpListener::bind(&args.listen).await {
         Ok(l) => l,
         Err(e) => {
@@ -217,7 +230,12 @@ async fn run(args: Args, cfg: ClusterConfig) {
             std::process::exit(1)
         }
     };
-    tracing::info!("tarn-server listening on {} ({} shards, {} threads)", args.listen, nshards, args.threads);
+    tracing::info!(
+        "tarn-server listening on {} ({} shards, {} threads)",
+        args.listen,
+        nshards,
+        args.threads
+    );
     let next_id = AtomicU32::new(1);
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -230,7 +248,9 @@ async fn run(args: Args, cfg: ClusterConfig) {
         };
         let _ = stream.set_nodelay(true);
         let id = next_id.fetch_add(1, Ordering::Relaxed);
-        let backend = Conn { s: Session::new(cluster.clone(), id) };
+        let backend = Conn {
+            s: Session::new(cluster.clone(), id),
+        };
         let opts = opts.clone();
         tokio::spawn(async move {
             if let Err(e) = tarn_mysql::serve_connection(stream, id, opts, backend).await {

@@ -1,136 +1,203 @@
 # Tarn
 
-A distributed, MySQL-compatible SQL server on top of Tarantool shards.
+**A distributed, strictly serializable, MySQL-compatible SQL database on [Tarantool](https://www.tarantool.io), with a TLA+-checked commit protocol and a Verus-verified core.**
 
-* **MySQL protocol** — the `mysql`/`mariadb` CLI, sysbench, PyMySQL and other
-  MySQL clients connect unchanged (text and binary protocol, prepared
-  statements).
-* **Tarantool storage** — every SQL table is a plain Tarantool space
-  (`"db.table"`), sharded by a hash of the shard key with vshard's bucket
-  function. Committed rows can be read directly as Key/Value
-  (`box.space['db.t'].index.primary:get{42}`) without going through SQL.
+[![CI](https://github.com/cstheorist/tarn/actions/workflows/ci.yml/badge.svg)](https://github.com/cstheorist/tarn/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Rust 1.98](https://img.shields.io/badge/rust-1.98-orange.svg)](rust-toolchain.toml)
+
+Tarn speaks the MySQL protocol, stores every SQL table as an ordinary
+sharded Tarantool space, and commits transactions that span shards with
+**strict serializability**. Because rows are plain Tarantool tuples,
+applications can also skip SQL entirely and read them as **key/value**, at
+in-memory speed.
+
+> **Status: research prototype (v0.1).** The commit protocol is model-checked
+> and the core is tested hard, but Tarn lacks much of what production use
+> needs (TLS, online resharding, much of MySQL's SQL surface). See
+> [limitations](docs/design.md#6-limitations).
+
+## Highlights
+
+* **MySQL-compatible.** The `mysql` CLI, sysbench, PyMySQL and other MySQL
+  clients connect unchanged: text and binary protocol, prepared statements,
+  sysbench-level SQL plus joins, aggregates, subqueries and `UNION`.
+* **Tarantool storage.** Each shard is a Tarantool replica set with
+  synchronous replication and automatic leader election. Tables are hash
+  sharded with vshard's bucket function.
 * **Strictly serializable transactions** across shards: lock-aware reads,
-  MVCC-validated local commits, and a parallel-commit two-phase commit with
-  recovery, specified in TLA+ and model-checked with TLC.
-* **Verus-verified core pieces**: shard routing, coordinator decisions and
-  recovery steps, and the MySQL wire codec (length-encoded values, packet
-  framing) are proven and compiled into the server.
+  MVCC-validated single-shard commits, and a parallel-commit two-phase commit
+  whose recovery survives coordinator crashes and leader failover.
+* **Key/value fast path.** Committed rows are ordinary tuples
+  (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
+  reads per second on two vCPUs.
+* **Verified where it matters.** The commit protocol is specified in TLA+
+  and model-checked with TLC (33 configurations, including 10 deliberately
+  broken variants that TLC must catch). Shard routing, commit decisions and
+  the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
+  and compiled into the server.
+* **Tested against reality.** Exact differential tests against MariaDB,
+  transaction-anomaly tests, a ledger-checked bank workload under leader
+  failover, and fault injection for lost replies.
 
-See [DESIGN.md](DESIGN.md) for the architecture, the protocol and its
-verification, and [bench/RESULTS.md](bench/RESULTS.md) for benchmarks.
+## Quick start
 
-## Layout
-
-```
-crates/tarn-server    the tarn-server binary
-crates/tarn-mysql     MySQL wire protocol (server side)
-crates/tarn-sql       SQL parsing/planning/execution, transactions, 2PC coordinator
-crates/tarn-iproto    async pipelined Tarantool IPROTO client
-crates/tarn-verified  Verus-verified routing, coordinator logic, wire codec
-crates/tarn-common    shared value/column/error types
-lua/                  storage-node module (tarn.lua) and instance bootstrap (storage.lua)
-tla/                  TarnCommit.tla, model configs, TLC results (tla/out)
-tests/                SQL differential tests, transaction tests, failover and fault-injection tests
-bench/                sysbench harness, baselines, results
-scripts/cluster.sh    start/stop a local cluster
-```
-
-## Build
-
-Requirements: Rust 1.98.1 (pinned in `rust-toolchain.toml` to the compiler of
-the Verus release used for the proofs; rustup installs it on the first build),
-Tarantool 3.x (developed with 3.9.0), Python 3 with PyMySQL for the SQL tests,
-sysbench for benchmarks, Java 11+ and `tla2tools.jar` for TLC, Verus
-0.2026.10.04 for the proofs.
+You need Rust (via [rustup](https://rustup.rs)), Tarantool 3.x on your
+`PATH`, and a MySQL client.
 
 ```sh
-export TARANTOOL=$(which tarantool)   # scripts and tests default to /opt/src/tarantool/build/src/tarantool
+git clone https://github.com/cstheorist/tarn.git && cd tarn
 cargo build --release -p tarn-server
-cargo test -p tarn-verified -p tarn-mysql -p tarn-sql -p tarn-iproto   # iproto tests start their own Tarantool
+scripts/cluster.sh start -n 2 -r 1 -p 4000      # 2 shards, SQL on port 4000
 ```
 
-## Run a local cluster
-
 ```sh
-# 2 shards x 1 replica, SQL on 127.0.0.1:4000 (data under /tmp/tarn-cluster)
-scripts/cluster.sh start -n 2 -r 1 -p 4000
-# HA: 2 shards x 3 synchronous replicas with automatic leader election
-scripts/cluster.sh start -n 2 -r 3 -p 4000
-
 mysql -h 127.0.0.1 -P 4000 -u root -e "
   CREATE DATABASE demo;
   CREATE TABLE demo.orders (id BIGINT PRIMARY KEY AUTO_INCREMENT,
                             customer INT NOT NULL, total DECIMAL(10,2), KEY c (customer));
   INSERT INTO demo.orders (customer, total) VALUES (7, 19.99), (8, 5.00);
   SELECT * FROM demo.orders WHERE id = 1;"
-
-scripts/cluster.sh stop
 ```
 
-Options of `scripts/cluster.sh start`: `-n` shards, `-r` replicas per shard,
-`-p` SQL port, `-s` number of SQL servers, `-m` memtx memory (MB), `-w` WAL
-mode, `-a` ack-on-prepare, `-u` connect SQL servers to storage over Unix
-sockets, `-d` data directory, `-b` base port (storage instance *(i, j)*
-listens on `base + 10·i + j`).
-
-### Direct Key/Value reads
+The same row, read straight from Tarantool:
 
 ```lua
--- any Tarantool client; the row lives on the shard that owns its bucket
+-- tarantool
 local c = require('net.box').connect('tarn:tarn@127.0.0.1:3311')
-c.space['demo.orders'].index.primary:get{1}
--- -> [1, 7, 19.99, <bucket_id>]   (columns in table order, then bucket_id)
+c.space['demo.orders'].index.primary:get{1}   -- on whichever shard owns it
 ```
 
-`crates/tarn-sql/examples/kvbench.rs` routes keys to shards with the same
-(Verus-verified) bucket function the SQL layer uses.
+`scripts/cluster.sh start -n 2 -r 3` gives every shard three synchronous
+replicas with automatic failover. The [getting started guide](docs/getting-started.md)
+walks through all of this, including a failover.
 
-### tarn-server
+## How it works
 
-```
-tarn-server (--config cluster.json | --shard ADDR[,ADDR..] ...)
-            [--listen HOST:PORT] [--threads N] [--user NAME:PASSWORD]...
-            [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N]
-```
-
-`cluster.json`:
-
-```json
-{ "shards": [ {"id": 1, "replicas": ["127.0.0.1:3311", "127.0.0.1:3312", "127.0.0.1:3313"]},
-              {"id": 2, "replicas": ["127.0.0.1:3321", "127.0.0.1:3322", "127.0.0.1:3323"]} ],
-  "bucket_count": 3000, "user": "tarn", "password": "tarn", "pool_size": 4,
-  "ack_on_prepare": false, "max_txn_age": 120 }
-```
-
-Replica addresses may be `unix/:/path/to/socket`. The writable replica of
-each shard is discovered automatically and re-discovered after failover
-(including a demoted leader whose connection stays open). `max_txn_age`
-(seconds) must match the storage nodes' setting (`lua/tarn.lua`, default
-120). Without `--user`, any MySQL user/password is accepted.
-
-## Verification and tests
-
-```sh
-# TLA+: model-check one configuration (or several); TLA2TOOLS defaults to /opt/tla/tla2tools.jar
-TLA2TOOLS=/path/to/tla2tools.jar WORKERS=2 tla/run_all.sh Recov Frac_GC_ROValidate Bug_GCIgnoresDecision
-python3 tla/summarize.py                       # table of all results in tla/out
-
-# Verus (from crates/tarn-verified)
-verus --crate-type=lib src/lib.rs              # 59 verified, 0 errors
-
-# Storage protocol tests (starts two shards)
-lua/test/run.sh
-
-# SQL tests against a running cluster (and MariaDB for the differential test)
-python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
-python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 2000
-python3 tests/sql/txntest.py  --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321
-tests/failover.sh                               # moves and kills shard leaders under load
-tests/faults.sh                                 # lost reply to an autocommit write
+```mermaid
+flowchart LR
+  C[MySQL clients] -->|MySQL protocol| S[tarn-server<br/>stateless, any number]
+  S -->|IPROTO| A
+  S -->|IPROTO| B
+  KV[Key/value clients] -->|IPROTO get| A
+  subgraph A [Shard 1]
+    A1[(leader)] --- A2[(replica)] --- A3[(replica)]
+  end
+  subgraph B [Shard 2]
+    B1[(leader)] --- B2[(replica)] --- B3[(replica)]
+  end
 ```
 
-## Benchmarks
+* An **autocommit point read** is one call to the owning shard. It waits
+  if a committed cross-shard transaction has not yet been applied to that
+  row, which is what makes even single-shard reads strictly serializable.
+* An **autocommit single-row write** is one local Tarantool transaction.
+* A **transaction** reads inside Tarantool streams (memtx MVCC tracks its
+  reads), buffers its writes in `tarn-server`, and commits locally on one
+  shard, by validation if it only read, or with a parallel-commit two-phase
+  commit across shards: PREPARE takes durable locks with the new values as
+  intents, the transaction is committed as soon as every participant is
+  prepared, and APPLY moves the intents into the tables.
 
-`bench/run_matrix.sh` runs sysbench's OLTP workloads against MariaDB, MySQL
-and Tarn configurations on one machine; results land in `bench/results.csv`
-and are summarized in [bench/RESULTS.md](bench/RESULTS.md).
+The [design document](docs/design.md) covers the protocol, recovery, record
+garbage collection, and the argument for why it is correct.
+
+## Performance
+
+sysbench on one 2-vCPU VM, with the load generator on the same VM; best
+throughput over 1, 16 and 64 threads. MariaDB and MySQL run REPEATABLE READ;
+Tarn runs strict serializable.
+
+| Workload | MariaDB 10.11 | MySQL 9.7 | Tarn, 2 shards | Tarn, 1 shard × 3 replicas |
+|---|---:|---:|---:|---:|
+| `oltp_point_select` (QPS) | 46,391 | 26,442 | 29,711 | 32,389 |
+| `oltp_update_index` (TPS) | 28,197 | 13,237 | 17,617 | 10,231 |
+| `oltp_insert` (TPS) | 30,020 | 17,493 | 16,646 | 11,566 |
+| `oltp_read_write` (TPS) | 1,389 | 726 | 356 | 495 |
+| direct key/value reads (ops/s) | – | – | 259,797 | – |
+
+On single-row statements Tarn is ahead of MySQL 9.7 here and reaches 55–75%
+of MariaDB at 64 threads. Multi-statement transactions reach 45–70% of
+MySQL: they need 10–20 storage round trips each, and on two shards almost
+every write transaction is a two-phase commit. Rankings shift with hardware:
+on another host Tarn was behind MySQL on point selects. Full tables,
+latencies, abort rates and a per-vCPU comparison with published TiDB and
+YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md).
+
+## Correctness
+
+* **TLA+** ([`tla/TarnCommit.tla`](tla/TarnCommit.tla)): strict
+  serializability, atomicity, clean direct reads and read-your-writes, under
+  coordinator crashes, lost and re-delivered messages, recovery racing a
+  live coordinator, leader failover, and record garbage collection. TLC
+  found a real design flaw early on: single-shard reads could break strict
+  serializability. It later caught a flaw in a fix too.
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 59 verified
+  functions and lemmas for routing, coordinator decisions and the MySQL wire
+  codec.
+* **Tests**: 74 storage-protocol tests, 99 SQL statements compared exactly
+  with MariaDB plus 2,000 random queries, transaction-anomaly tests, failover
+  and fault-injection tests. An independent code review found five bugs
+  that the tests had missed, one of them critical. All are fixed, each with
+  a regression test and, where it was a protocol bug, a TLA+ configuration
+  that catches it.
+
+[docs/verification.md](docs/verification.md) explains what each layer
+covers and how to run it.
+
+## Documentation
+
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | build, run a cluster, SQL and key/value access, failover |
+| [SQL compatibility](docs/sql-compatibility.md) | supported statements, types, functions, and differences from MySQL |
+| [Operations](docs/operations.md) | configuration, deployment, monitoring, error codes, security |
+| [Design](docs/design.md) | architecture, the commit protocol, and the correctness argument |
+| [Verification](docs/verification.md) | the TLA+ model, the Verus proofs, the test suites, CI |
+| [Benchmarks](bench/RESULTS.md) | setup, full results, analysis |
+
+## Repository layout
+
+```
+crates/tarn-server     the tarn-server binary
+crates/tarn-mysql      MySQL wire protocol (server side)
+crates/tarn-sql        SQL parsing, planning and execution; transactions and the 2PC coordinator
+crates/tarn-iproto     async, pipelined Tarantool IPROTO client
+crates/tarn-verified   Verus-verified routing, coordinator decisions, wire codec
+crates/tarn-common     shared value, column and error types
+lua/                   storage-node module (tarn.lua), bootstrap (storage.lua), protocol tests
+tla/                   TLA+ specification, model configurations, TLC results
+tests/                 SQL differential and transaction tests, failover and fault-injection tests
+bench/                 sysbench harness, baseline servers, results
+scripts/               local cluster management and doc generation
+docs/                  documentation
+```
+
+## Contributing
+
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+development setup, the checks a change has to pass, and how to extend the
+TLA+ model when the protocol changes. Please report security issues
+privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+Licensed under either of
+
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.
+
+## Acknowledgments
+
+Tarn builds on [Tarantool](https://github.com/tarantool/tarantool),
+[sqlparser-rs](https://github.com/apache/datafusion-sqlparser-rs),
+[tokio](https://tokio.rs), [Verus](https://github.com/verus-lang/verus) and
+[TLA+](https://lamport.azurewebsites.net/tla/tla.html). It was designed and
+written with the help of Claude (Anthropic).

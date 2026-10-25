@@ -2,6 +2,10 @@
 //! Tarantool shards, plus the session/transaction logic of the commit
 //! protocol specified in tla/TarnCommit.tla.
 
+// Plans and read sets are nested tuples/maps by design; naming every one of
+// them would not make the code clearer.
+#![allow(clippy::type_complexity)]
+
 pub mod admin;
 pub mod catalog;
 pub mod cluster;

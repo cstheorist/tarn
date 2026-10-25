@@ -1,7 +1,7 @@
 #!/bin/bash
 # Start two single-node shards and run the storage protocol tests against them.
 set -u
-T=${TARANTOOL:-/opt/src/tarantool/build/src/tarantool}
+T=${TARANTOOL:-tarantool}
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d /tmp/tarn-lua-test.XXXX)
 P1=${P1:-3511}; P2=${P2:-3512}

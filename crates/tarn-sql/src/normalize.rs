@@ -59,7 +59,12 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
     while i < n {
         let c = b[i];
         // comments
-        if c == b'#' || (c == b'-' && i + 2 <= n && b.get(i + 1) == Some(&b'-') && b.get(i + 2).map_or(true, |x| x.is_ascii_whitespace())) {
+        if c == b'#'
+            || (c == b'-'
+                && i + 2 <= n
+                && b.get(i + 1) == Some(&b'-')
+                && b.get(i + 2).is_none_or(|x| x.is_ascii_whitespace()))
+        {
             while i < n && b[i] != b'\n' {
                 i += 1;
             }
@@ -145,14 +150,16 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         // placeholders
         if c == b'?' {
             if mode == Mode::Literals {
-                return Err(SqlError::parse("'?' placeholders are only allowed in prepared statements"));
+                return Err(SqlError::parse(
+                    "'?' placeholders are only allowed in prepared statements",
+                ));
             }
             push_param(&mut out, &mut n_params);
             i += 1;
             continue;
         }
         // numbers (not part of an identifier)
-        let starts_number = c.is_ascii_digit() || (c == b'.' && b.get(i + 1).map_or(false, |d| d.is_ascii_digit()));
+        let starts_number = c.is_ascii_digit() || (c == b'.' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit()));
         // Identifier characters are consumed whole by the identifier branch, so a
         // digit seen here always starts a token.
         if starts_number {
@@ -253,7 +260,11 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         out.push_str(&sql[i..(i + len).min(n)]);
         i += len;
     }
-    Ok(Normalized { template: out.trim().to_string(), params, n_params })
+    Ok(Normalized {
+        template: out.trim().to_string(),
+        params,
+        n_params,
+    })
 }
 
 fn utf8_len(c: u8) -> usize {
@@ -270,7 +281,11 @@ fn number_value(text: &str) -> Value {
         if text.contains(['e', 'E']) {
             return Value::Float(text.parse().unwrap_or(0.0));
         }
-        let t = if text.starts_with('.') { format!("0{}", text) } else { text.to_string() };
+        let t = if text.starts_with('.') {
+            format!("0{}", text)
+        } else {
+            text.to_string()
+        };
         let t = if t.ends_with('.') { format!("{}0", t) } else { t };
         return Value::Decimal(t);
     }
@@ -299,7 +314,15 @@ mod tests {
         assert_eq!(p, vec![Value::Int(42)]);
         let (t, p) = norm("INSERT INTO t VALUES (1, 'it''s', -2.50, \"x\\ny\")");
         assert_eq!(t, "INSERT INTO t VALUES (?1, ?2, -?3, ?4)");
-        assert_eq!(p, vec![Value::Int(1), Value::str("it's"), Value::Decimal("2.50".into()), Value::str("x\ny")]);
+        assert_eq!(
+            p,
+            vec![
+                Value::Int(1),
+                Value::str("it's"),
+                Value::Decimal("2.50".into()),
+                Value::str("x\ny")
+            ]
+        );
     }
 
     #[test]
@@ -317,12 +340,23 @@ mod tests {
 
     #[test]
     fn same_template_for_different_literals() {
-        assert_eq!(norm("SELECT * FROM t WHERE id = 1").0, norm("select * from t where id = 99").0.replace("select", "SELECT").replace("from", "FROM").replace("where", "WHERE"));
+        assert_eq!(
+            norm("SELECT * FROM t WHERE id = 1").0,
+            norm("select * from t where id = 99")
+                .0
+                .replace("select", "SELECT")
+                .replace("from", "FROM")
+                .replace("where", "WHERE")
+        );
     }
 
     #[test]
     fn placeholders_numbered_in_prepare_mode() {
-        let n = normalize("SELECT c FROM t WHERE id BETWEEN ? AND ? AND c <> 'a?b'", Mode::Placeholders).unwrap();
+        let n = normalize(
+            "SELECT c FROM t WHERE id BETWEEN ? AND ? AND c <> 'a?b'",
+            Mode::Placeholders,
+        )
+        .unwrap();
         assert_eq!(n.template, "SELECT c FROM t WHERE id BETWEEN ?1 AND ?2 AND c <> 'a?b'");
         assert_eq!(n.n_params, 2);
         assert!(normalize("SELECT ?", Mode::Literals).is_err());
@@ -331,7 +365,11 @@ mod tests {
     #[test]
     fn comments_and_interval() {
         let (t, p) = norm("SELECT /* hi 5 */ NOW() - INTERVAL 1 DAY -- 7\n FROM dual");
-        assert!(t.contains("INTERVAL 1 DAY") && !t.contains("hi 5") && !t.contains('7'), "{}", t);
+        assert!(
+            t.contains("INTERVAL 1 DAY") && !t.contains("hi 5") && !t.contains('7'),
+            "{}",
+            t
+        );
         assert!(p.is_empty());
     }
 }

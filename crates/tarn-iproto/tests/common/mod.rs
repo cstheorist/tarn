@@ -13,7 +13,7 @@ pub const INIT_LUA: &str = include_str!("init.lua");
 
 /// Path of the Tarantool binary (`$TARANTOOL` overrides the default).
 pub fn tarantool_bin() -> String {
-    std::env::var("TARANTOOL").unwrap_or_else(|_| "/opt/src/tarantool/build/src/tarantool".into())
+    std::env::var("TARANTOOL").unwrap_or_else(|_| "tarantool".into())
 }
 
 pub struct Tarantool {
@@ -29,7 +29,10 @@ impl Tarantool {
 
     pub fn start_with(script: &str, env: &[(&str, &str)]) -> Tarantool {
         static SEQ: AtomicU32 = AtomicU32::new(0);
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
         let dir = std::env::temp_dir().join(format!(
             "tarn-iproto-{}-{}-{}",
             std::process::id(),
@@ -42,16 +45,26 @@ impl Tarantool {
         let out = std::fs::File::create(dir.join("stdout.log")).unwrap();
         let err = out.try_clone().unwrap();
         let mut cmd = Command::new(&bin);
-        cmd.arg("init.lua").current_dir(&dir).stdin(Stdio::null()).stdout(out).stderr(err);
+        cmd.arg("init.lua")
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .stdout(out)
+            .stderr(err);
         for (k, v) in env {
             cmd.env(k, v);
         }
-        let mut child = cmd.spawn().unwrap_or_else(|e| panic!("cannot start {bin}: {e} (set $TARANTOOL)"));
+        let mut child = cmd
+            .spawn()
+            .unwrap_or_else(|e| panic!("cannot start {bin}: {e} (set $TARANTOOL)"));
         let listen = dir.join("listen.txt");
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if let Ok(addr) = std::fs::read_to_string(&listen) {
-                return Tarantool { child: Some(child), dir, addr: addr.trim().to_string() };
+                return Tarantool {
+                    child: Some(child),
+                    dir,
+                    addr: addr.trim().to_string(),
+                };
             }
             if let Some(status) = child.try_wait().unwrap() {
                 panic!("tarantool exited with {status}: {}", Self::logs_of(&dir));

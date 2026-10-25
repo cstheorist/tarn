@@ -28,7 +28,10 @@ type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// (two SELECTs, or one in UPDATE/DELETE/INSERT/...), or UNION/EXISTS.
 pub fn may_need(sql: &str) -> bool {
     let b = sql.as_bytes();
-    let starts_with_select = sql.trim_start().get(..6).is_some_and(|w| w.eq_ignore_ascii_case("select"));
+    let starts_with_select = sql
+        .trim_start()
+        .get(..6)
+        .is_some_and(|w| w.eq_ignore_ascii_case("select"));
     let mut selects = 0;
     let mut i = 0;
     while i + 5 < b.len() {
@@ -175,7 +178,9 @@ fn literal(v: &Value) -> A::Expr {
         }
         Value::Decimal(d) => A::Value::Number(d.clone(), false),
         Value::Str(b) => match std::str::from_utf8(b) {
-            Ok(s) if !s.contains('\\') && !s.chars().any(|c| c.is_control()) => A::Value::SingleQuotedString(s.to_string()),
+            Ok(s) if !s.contains('\\') && !s.chars().any(|c| c.is_control()) => {
+                A::Value::SingleQuotedString(s.to_string())
+            }
             _ => A::Value::HexStringLiteral(hex(b)),
         },
         Value::Bin(b) => A::Value::HexStringLiteral(hex(b)),
@@ -192,7 +197,13 @@ pub fn bind_params(mut stmt: A::Statement, params: &[Value]) -> A::Statement {
     let _ = A::visit_expressions_mut(&mut stmt, |e| {
         if let A::Expr::Value(v) = e {
             if let A::Value::Placeholder(p) = &v.value {
-                if let Some(x) = p.trim_start_matches('?').parse::<usize>().ok().and_then(|n| n.checked_sub(1)).and_then(|i| params.get(i)) {
+                if let Some(x) = p
+                    .trim_start_matches('?')
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|i| params.get(i))
+                {
                     *e = literal(x);
                 }
             }
@@ -216,7 +227,10 @@ pub fn parse_if_needed(sql: &str) -> SqlResult<Option<A::Statement>> {
             return Ok(Some(stmt));
         }
     }
-    let mut c = Collect { depth: 0, found: Vec::new() };
+    let mut c = Collect {
+        depth: 0,
+        found: Vec::new(),
+    };
     let _ = stmt.visit(&mut c);
     Ok(if c.found.is_empty() { None } else { Some(stmt) })
 }
@@ -268,7 +282,10 @@ impl Session {
                     return self.run_union(&q).await;
                 }
             }
-            let mut c = Collect { depth: 0, found: Vec::new() };
+            let mut c = Collect {
+                depth: 0,
+                found: Vec::new(),
+            };
             let _ = stmt.visit(&mut c);
             let mut results = Vec::with_capacity(c.found.len());
             for (kind, q) in c.found {
@@ -284,7 +301,12 @@ impl Session {
                 let (_, rows) = rows_of(self.query_boxed(q.to_string()).await?)?;
                 results.push(rows);
             }
-            let mut r = Replace { depth: 0, next: 0, results, err: None };
+            let mut r = Replace {
+                depth: 0,
+                next: 0,
+                results,
+                err: None,
+            };
             let _ = VisitMut::visit(&mut stmt, &mut r);
             if let Some(e) = r.err {
                 return Err(e);
@@ -302,7 +324,12 @@ impl Session {
             match e {
                 A::SetExpr::Select(s) => rows_of(self.query_boxed(s.to_string()).await?),
                 A::SetExpr::Query(q) => rows_of(self.query_boxed(q.to_string()).await?),
-                A::SetExpr::SetOperation { op: A::SetOperator::Union, set_quantifier, left, right } => {
+                A::SetExpr::SetOperation {
+                    op: A::SetOperator::Union,
+                    set_quantifier,
+                    left,
+                    right,
+                } => {
                     let (lc, mut lr) = self.eval_set(left).await?;
                     let (rc, rr) = self.eval_set(right).await?;
                     if lc.len() != rc.len() {
@@ -328,10 +355,7 @@ impl Session {
                         .collect::<Vec<_>>()
                         .into();
                     lr.extend(rr);
-                    let distinct = !matches!(
-                        set_quantifier,
-                        A::SetQuantifier::All | A::SetQuantifier::AllByName
-                    );
+                    let distinct = !matches!(set_quantifier, A::SetQuantifier::All | A::SetQuantifier::AllByName);
                     if distinct {
                         let mut seen = HashSet::new();
                         lr.retain(|row| seen.insert(row.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>()));
@@ -355,13 +379,15 @@ impl Session {
                             _ => None,
                         },
                         A::Expr::Identifier(i) => columns.iter().position(|c| c.name.eq_ignore_ascii_case(&i.value)),
-                        A::Expr::CompoundIdentifier(p) => {
-                            p.last().and_then(|i| columns.iter().position(|c| c.name.eq_ignore_ascii_case(&i.value)))
-                        }
+                        A::Expr::CompoundIdentifier(p) => p
+                            .last()
+                            .and_then(|i| columns.iter().position(|c| c.name.eq_ignore_ascii_case(&i.value))),
                         _ => None,
                     }
                     .filter(|&i| i < columns.len())
-                    .ok_or_else(|| SqlError::new(1054, "42S22", format!("Unknown column '{}' in 'order clause'", o.expr)))?;
+                    .ok_or_else(|| {
+                        SqlError::new(1054, "42S22", format!("Unknown column '{}' in 'order clause'", o.expr))
+                    })?;
                     keys.push((idx, matches!(o.options.sort, Some(A::OrderBySort::Desc))));
                 }
                 rows.sort_by(|a, b| {
@@ -387,9 +413,10 @@ impl Session {
         };
         if let Some(lc) = &q.limit_clause {
             let (limit, offset) = match lc {
-                A::LimitClause::LimitOffset { limit, offset, .. } => {
-                    (limit.as_ref().map(num).transpose()?, offset.as_ref().map(|o| num(&o.value)).transpose()?)
-                }
+                A::LimitClause::LimitOffset { limit, offset, .. } => (
+                    limit.as_ref().map(num).transpose()?,
+                    offset.as_ref().map(|o| num(&o.value)).transpose()?,
+                ),
                 A::LimitClause::OffsetCommaLimit { offset, limit } => (Some(num(limit)?), Some(num(offset)?)),
             };
             let off = offset.unwrap_or(0).min(rows.len());

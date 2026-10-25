@@ -41,7 +41,11 @@ fn decode_all(src: &Bytes, zero_copy: bool) -> Vec<Vec<Value>> {
     let n = mp::read_array_len(&mut p).unwrap() as usize;
     let mut rows = Vec::with_capacity(n);
     for _ in 0..n {
-        rows.push(if zero_copy { mp::decode_tuple_shared(src, &mut p).unwrap() } else { mp::decode_tuple(&mut p).unwrap() });
+        rows.push(if zero_copy {
+            mp::decode_tuple_shared(src, &mut p).unwrap()
+        } else {
+            mp::decode_tuple(&mut p).unwrap()
+        });
     }
     rows
 }
@@ -82,7 +86,15 @@ fn sweep() {
         mp::write_array_len(&mut out, 1000);
         let text = "s".repeat(len);
         for _ in 0..1000 {
-            mp::encode_tuple(&mut out, &[Value::str(&text), Value::str(&text), Value::str(&text), Value::str(&text)]);
+            mp::encode_tuple(
+                &mut out,
+                &[
+                    Value::str(&text),
+                    Value::str(&text),
+                    Value::str(&text),
+                    Value::str(&text),
+                ],
+            );
         }
         let src = Bytes::from(out);
         let trial = |zc: bool, x: bool| {
@@ -108,11 +120,17 @@ fn sweep() {
         };
         let mut best = [f64::MAX; 4];
         for _ in 0..7 {
-            for (i, (zc, x)) in [(false, false), (true, false), (false, true), (true, true)].into_iter().enumerate() {
+            for (i, (zc, x)) in [(false, false), (true, false), (false, true), (true, true)]
+                .into_iter()
+                .enumerate()
+            {
                 best[i] = best[i].min(trial(zc, x));
             }
         }
-        println!("  {len:>4} | {:>6.1} | {:>6.1} | {:>6.1} | {:>6.1}", best[0], best[1], best[2], best[3]);
+        println!(
+            "  {len:>4} | {:>6.1} | {:>6.1} | {:>6.1} | {:>6.1}",
+            best[0], best[1], best[2], best[3]
+        );
     }
 }
 
@@ -124,9 +142,17 @@ fn main() {
     for str_len in [8usize, 64, 512] {
         let src = reply(1000, str_len);
         let iters = if str_len >= 512 { 400 } else { 2000 };
-        println!("rows of 7 fields incl. 2 strings ({str_len} and {} bytes), {} byte reply:", str_len / 2, src.len());
+        println!(
+            "rows of 7 fields incl. 2 strings ({str_len} and {} bytes), {} byte reply:",
+            str_len / 2,
+            src.len()
+        );
         for drop_elsewhere in [false, true] {
-            let suffix = if drop_elsewhere { " (dropped on another thread)" } else { "" };
+            let suffix = if drop_elsewhere {
+                " (dropped on another thread)"
+            } else {
+                ""
+            };
             let copy = bench(&format!("copy{suffix}"), &src, false, iters, drop_elsewhere);
             let zc = bench(&format!("zero-copy{suffix}"), &src, true, iters, drop_elsewhere);
             println!("  -> zero-copy is {:.2}x the speed of copy", copy / zc);

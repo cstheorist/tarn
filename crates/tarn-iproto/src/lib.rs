@@ -40,7 +40,12 @@ pub struct Opts {
 impl Opts {
     /// Options for `addr` with no authentication and a 5 s connect timeout.
     pub fn new(addr: impl Into<String>) -> Opts {
-        Opts { addr: addr.into(), user: None, password: None, connect_timeout: Duration::from_secs(5) }
+        Opts {
+            addr: addr.into(),
+            user: None,
+            password: None,
+            connect_timeout: Duration::from_secs(5),
+        }
     }
 }
 

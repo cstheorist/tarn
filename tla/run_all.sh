@@ -1,9 +1,12 @@
 #!/bin/bash
 # Model-check every configuration; summarize outcome, states and time.
 cd "$(dirname "$0")"; mkdir -p out
+# tla2tools.jar: $TLA2TOOLS, or tla/tla2tools.jar (see docs/verification.md)
+JAR=${TLA2TOOLS:-tla2tools.jar}
+[ -f "$JAR" ] || { echo "tla2tools.jar not found: set TLA2TOOLS or download it into tla/" >&2; exit 2; }
 for cfg in "$@"; do
   start=$(date +%s)
-  java -XX:+UseParallelGC -Xmx${TLC_HEAP:-3g} -cp ${TLA2TOOLS:-/opt/tla/tla2tools.jar} tlc2.TLC -workers ${WORKERS:-1} -cleanup \
+  java -XX:+UseParallelGC -Xmx${TLC_HEAP:-3g} -cp "$JAR" tlc2.TLC -workers ${WORKERS:-1} -cleanup \
        -metadir ${TLC_META:-/tmp/tlcmeta}/$cfg -config $cfg.cfg MC.tla > out/$cfg.out 2>&1
   secs=$(( $(date +%s) - start ))
   res=$(grep -oE "Invariant [A-Za-z]+ is violated" out/$cfg.out | head -1)

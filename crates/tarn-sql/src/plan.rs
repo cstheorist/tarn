@@ -13,7 +13,13 @@ pub enum AccessPath {
     /// Several keys come from `col IN (...)`.
     Point { index: u32, keys: Vec<Vec<Expr>> },
     /// Equality on a prefix of an index, optionally bounded on the next column.
-    Range { index: u32, eq: Vec<Expr>, lo: Option<(Expr, bool)>, hi: Option<(Expr, bool)>, reverse: bool },
+    Range {
+        index: u32,
+        eq: Vec<Expr>,
+        lo: Option<(Expr, bool)>,
+        hi: Option<(Expr, bool)>,
+        reverse: bool,
+    },
     /// Every row (all shards).
     Full,
 }
@@ -42,7 +48,12 @@ pub enum Source {
     Table(TableAccess),
     /// Nested-loop join: for every row of `left`, read `right` with its
     /// access path evaluated against that row.
-    Join { left: Box<Source>, right: TableAccess, kind: JoinKind, on: Option<Expr> },
+    Join {
+        left: Box<Source>,
+        right: TableAccess,
+        kind: JoinKind,
+        on: Option<Expr>,
+    },
 }
 
 impl Source {
@@ -91,7 +102,13 @@ pub struct AggCall {
 
 impl AggCall {
     pub fn simple(func: AggFunc, arg: Option<Expr>, distinct: bool) -> AggCall {
-        AggCall { func, arg, distinct, order: Vec::new(), sep: None }
+        AggCall {
+            func,
+            arg,
+            distinct,
+            order: Vec::new(),
+            sep: None,
+        }
     }
 }
 
@@ -161,12 +178,34 @@ pub enum Stmt {
     Insert(Arc<InsertPlan>),
     Update(Arc<UpdatePlan>),
     Delete(Arc<DeletePlan>),
-    CreateTable { def: crate::catalog::TableDef, if_not_exists: bool },
-    CreateIndex { db: String, table: String, name: String, cols: Vec<String>, unique: bool, if_not_exists: bool },
-    DropTable { tables: Vec<(String, String)>, if_exists: bool },
-    Truncate { db: String, table: String },
-    CreateDatabase { name: String, if_not_exists: bool },
-    DropDatabase { name: String, if_exists: bool },
+    CreateTable {
+        def: crate::catalog::TableDef,
+        if_not_exists: bool,
+    },
+    CreateIndex {
+        db: String,
+        table: String,
+        name: String,
+        cols: Vec<String>,
+        unique: bool,
+        if_not_exists: bool,
+    },
+    DropTable {
+        tables: Vec<(String, String)>,
+        if_exists: bool,
+    },
+    Truncate {
+        db: String,
+        table: String,
+    },
+    CreateDatabase {
+        name: String,
+        if_not_exists: bool,
+    },
+    DropDatabase {
+        name: String,
+        if_exists: bool,
+    },
     Admin(crate::admin::Admin),
 }
 

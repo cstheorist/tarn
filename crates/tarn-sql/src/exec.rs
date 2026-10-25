@@ -167,10 +167,23 @@ pub async fn fetch(
                     continue;
                 }
                 let shard = route_prefix(cluster, t, idx, &key).unwrap_or(0);
-                calls.push(Call { shard, key, iter: Iter::Eq, limit: Some(1), end: None, range: None });
+                calls.push(Call {
+                    shard,
+                    key,
+                    iter: Iter::Eq,
+                    limit: Some(1),
+                    end: None,
+                    range: None,
+                });
             }
         }
-        AccessPath::Range { index, eq, lo, hi, reverse: _ } => {
+        AccessPath::Range {
+            index,
+            eq,
+            lo,
+            hi,
+            reverse: _,
+        } => {
             let idx = index_def(t, *index);
             let mut prefix = Vec::with_capacity(eq.len() + 1);
             for (i, e) in eq.iter().enumerate() {
@@ -205,7 +218,11 @@ pub async fn fetch(
                     k.push(v.clone());
                     (k, if *incl { Iter::Ge } else { Iter::Gt }, *incl)
                 }
-                None => (prefix.clone(), if prefix.is_empty() { Iter::All } else { Iter::Ge }, true),
+                None => (
+                    prefix.clone(),
+                    if prefix.is_empty() { Iter::All } else { Iter::Ge },
+                    true,
+                ),
             };
             let end = match &hi_v {
                 Some((v, incl)) => {
@@ -229,13 +246,34 @@ pub async fn fetch(
                 hi_incl: end.as_ref().map(|(_, i)| *i).unwrap_or(true),
             };
             for s in shards {
-                calls.push(Call { shard: s, key: key.clone(), iter, limit, end: end.clone(), range: Some(range.clone()) });
+                calls.push(Call {
+                    shard: s,
+                    key: key.clone(),
+                    iter,
+                    limit,
+                    end: end.clone(),
+                    range: Some(range.clone()),
+                });
             }
         }
         AccessPath::Full => {
-            let range = RangeRead { space: t.space_id, index: 0, lo: None, hi: None, lo_incl: true, hi_incl: true };
+            let range = RangeRead {
+                space: t.space_id,
+                index: 0,
+                lo: None,
+                hi: None,
+                lo_incl: true,
+                hi_incl: true,
+            };
             for s in 0..cluster.nshards() {
-                calls.push(Call { shard: s, key: Vec::new(), iter: Iter::All, limit, end: None, range: Some(range.clone()) });
+                calls.push(Call {
+                    shard: s,
+                    key: Vec::new(),
+                    iter: Iter::All,
+                    limit,
+                    end: None,
+                    range: Some(range.clone()),
+                });
             }
         }
     }
@@ -262,7 +300,10 @@ pub async fn fetch(
                 let st = txn.stream(cluster, c.shard).await?;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    select_rows(&st.client, st.id, t, index, &c.key, c.iter, c.limit, end, false, st.begin).await
+                    select_rows(
+                        &st.client, st.id, t, index, &c.key, c.iter, c.limit, end, false, st.begin,
+                    )
+                    .await
                 });
             }
             let results = futures::future::join_all(futs).await;
@@ -298,7 +339,12 @@ fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
 }
 
 /// All rows produced by the FROM clause (joins applied, WHERE not yet).
-async fn source_rows(cluster: &Arc<Cluster>, mode: &mut ReadMode<'_>, src: &Source, cx: &EvalCtx<'_>) -> SqlResult<Vec<Row>> {
+async fn source_rows(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    src: &Source,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
     // Flatten the left-deep join tree.
     let mut steps: Vec<(&TableAccess, JoinKind, Option<&Expr>)> = Vec::new();
     let mut cur = src;
@@ -429,12 +475,12 @@ impl AggState {
                 }
             }
             AggState::Min(m) => {
-                if m.as_ref().map_or(true, |x| sort_cmp(&v, x).is_lt()) {
+                if m.as_ref().is_none_or(|x| sort_cmp(&v, x).is_lt()) {
                     *m = Some(v);
                 }
             }
             AggState::Max(m) => {
-                if m.as_ref().map_or(true, |x| sort_cmp(&v, x).is_gt()) {
+                if m.as_ref().is_none_or(|x| sort_cmp(&v, x).is_gt()) {
                     *m = Some(v);
                 }
             }
@@ -520,7 +566,11 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
         let gk: Vec<KeyVal> = gv.iter().map(key_val).collect();
         let entry = groups.entry(gk.clone()).or_insert_with(|| {
             order.push(gk);
-            (gv, ap.aggs.iter().map(AggState::new).collect(), ap.aggs.iter().map(|_| HashSet::new()).collect())
+            (
+                gv,
+                ap.aggs.iter().map(AggState::new).collect(),
+                ap.aggs.iter().map(|_| HashSet::new()).collect(),
+            )
         });
         for (i, a) in ap.aggs.iter().enumerate() {
             let v = match &a.arg {
@@ -537,7 +587,8 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
             if a.func == AggFunc::GroupConcat && !a.order.is_empty() {
                 if let Some(x) = v {
                     if !x.is_null() {
-                        let keys: Vec<Value> = a.order.iter().map(|(e, _)| e.eval(row, cx)).collect::<SqlResult<_>>()?;
+                        let keys: Vec<Value> =
+                            a.order.iter().map(|(e, _)| e.eval(row, cx)).collect::<SqlResult<_>>()?;
                         if let AggState::Concat(parts) = &mut entry.1[i] {
                             parts.push((keys, x.to_text().unwrap_or_default()));
                         }
@@ -615,7 +666,12 @@ pub fn render_name(s: &str, params: &[Value]) -> String {
 }
 
 /// Execute a SELECT and return its projected rows.
-pub async fn run_select(cluster: &Arc<Cluster>, mode: &mut ReadMode<'_>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Vec<Row>> {
+pub async fn run_select(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
     let mut rows = source_rows(cluster, mode, &p.source, cx).await?;
     if let Some(f) = &p.filter {
         let mut kept = Vec::with_capacity(rows.len());
@@ -705,7 +761,10 @@ pub async fn matching_rows(
     if !order.is_empty() {
         out.sort_by(|a, b| {
             for (e, desc) in order {
-                let (x, y) = (e.eval(a, cx).unwrap_or(Value::Null), e.eval(b, cx).unwrap_or(Value::Null));
+                let (x, y) = (
+                    e.eval(a, cx).unwrap_or(Value::Null),
+                    e.eval(b, cx).unwrap_or(Value::Null),
+                );
                 let o = sort_cmp(&x, &y);
                 let o = if *desc { o.reverse() } else { o };
                 if o != std::cmp::Ordering::Equal {

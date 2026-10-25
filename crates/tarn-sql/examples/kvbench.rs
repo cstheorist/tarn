@@ -86,7 +86,10 @@ async fn main() {
         let d = r.data().unwrap();
         let mut p: &[u8] = &d;
         tarn_iproto::mp::read_array_len(&mut p).unwrap();
-        tarn_iproto::mp::decode_value(&mut p).unwrap().as_i64().expect("no such space") as u32
+        tarn_iproto::mp::decode_value(&mut p)
+            .unwrap()
+            .as_i64()
+            .expect("no such space") as u32
     };
     let pools = Arc::new(pools);
     let stop = Arc::new(AtomicBool::new(false));
@@ -136,7 +139,12 @@ async fn main() {
     }
     let el = t0.elapsed().as_secs_f64();
     all.sort_unstable();
-    let pct = |p: f64| all.get(((all.len() as f64 * p) as usize).min(all.len().saturating_sub(1))).copied().unwrap_or(0) as f64 / 1000.0;
+    let pct = |p: f64| {
+        all.get(((all.len() as f64 * p) as usize).min(all.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0) as f64
+            / 1000.0
+    };
     println!(
         "kv point reads: {} ops in {:.1}s = {:.0} ops/s | latency us p50 {:.0} p95 {:.0} p99 {:.0} | wrong/missing {}",
         ops.load(Ordering::Relaxed),

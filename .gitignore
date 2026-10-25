@@ -3,3 +3,4 @@ target/
 tla/states/
 tla/MC_TTrace_*
 __pycache__/
+tla/tla2tools.jar

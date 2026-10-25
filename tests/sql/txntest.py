@@ -19,7 +19,7 @@ import time
 
 import pymysql
 
-TARANTOOL = os.environ.get("TARANTOOL", "/opt/src/tarantool/build/src/tarantool")
+TARANTOOL = os.environ.get("TARANTOOL", "tarantool")
 DB = "txntest"
 CONFLICT = 1213
 

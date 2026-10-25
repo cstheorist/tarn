@@ -84,14 +84,22 @@ impl<'a> Rd<'a> {
     }
     /// Continue `rd` (a reader over `src`) with zero-copy string values.
     pub fn shared_at(src: &'a bytes::Bytes, rd: Rd<'a>) -> Rd<'a> {
-        Rd { buf: rd.buf, src: Some(src) }
+        Rd {
+            buf: rd.buf,
+            src: Some(src),
+        }
     }
     /// Reader over a whole response buffer with zero-copy string values.
     pub fn shared(src: &'a bytes::Bytes) -> Rd<'a> {
-        Rd { buf: src, src: Some(src) }
+        Rd {
+            buf: src,
+            src: Some(src),
+        }
     }
     pub fn array(&mut self) -> SqlResult<usize> {
-        tarn_iproto::mp::read_array_len(&mut self.buf).map(|n| n as usize).map_err(proto)
+        tarn_iproto::mp::read_array_len(&mut self.buf)
+            .map(|n| n as usize)
+            .map_err(proto)
     }
     pub fn value(&mut self) -> SqlResult<Value> {
         match self.src {
@@ -165,7 +173,10 @@ pub fn ambiguous(shard: u32, e: &dyn std::fmt::Display) -> SqlError {
     SqlError::new(
         1180,
         "40003",
-        format!("Lost connection to shard {} during commit ({}); the statement may or may not have been applied", shard, e),
+        format!(
+            "Lost connection to shard {} during commit ({}); the statement may or may not have been applied",
+            shard, e
+        ),
     )
 }
 
@@ -184,7 +195,9 @@ pub fn from_iproto_read(e: tarn_iproto::Error) -> SqlError {
 /// True if `data` (a CALL reply) is a `{status, ...}` table with this status.
 pub fn status_is(data: &[u8], status: &str) -> bool {
     let mut rd = Rd::new(data);
-    matches!(rd.array(), Ok(n) if n > 0) && matches!(rd.array(), Ok(m) if m > 0) && rd.string().is_ok_and(|s| s == status)
+    matches!(rd.array(), Ok(n) if n > 0)
+        && matches!(rd.array(), Ok(m) if m > 0)
+        && rd.string().is_ok_and(|s| s == status)
 }
 
 /// Decode the `{status, ...}` table returned by a Tarn Lua procedure:

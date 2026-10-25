@@ -6,15 +6,14 @@
 //! need it. Writes are buffered in `writes` and overlaid on reads.
 //!
 //! Commit (`commit`):
-//!   * one shard, writes      -> `tarn_commit_local` (TarnCommit!CommitLocal)
-//!   * no writes              -> `tarn_validate` on every participant
-//!                               (TarnCommit!ValidateRO / SnapshotRead)
-//!   * several shards, writes -> parallel-commit 2PC: `tarn_prepare` on all
-//!                               participants (the decision shard also writes
-//!                               the STAGING record), then `tarn_apply`
-//!                               (TarnCommit!Prepare, ApplyAt). The client is
-//!                               acknowledged after APPLY unless
-//!                               `ack_on_prepare` is set.
+//! * one shard, writes: `tarn_commit_local` (TarnCommit!CommitLocal);
+//! * no writes: `tarn_validate` on every participant (TarnCommit!ValidateRO,
+//!   SnapshotRead);
+//! * several shards, writes: parallel-commit 2PC, `tarn_prepare` on all
+//!   participants (the decision shard also writes the STAGING record), then
+//!   `tarn_apply` (TarnCommit!Prepare, ApplyAt). The client is acknowledged
+//!   after APPLY unless `ack_on_prepare` is set.
+//!
 //! The pure decision logic (what to do with a set of votes, when it is safe
 //! to apply/abort) is `tarn_verified::coord`, proven in Verus to only decide
 //! COMMIT on unanimous YES and never to decide both ways.
@@ -100,7 +99,10 @@ impl Txn {
     pub fn new(cluster: &Cluster, explicit: bool) -> Txn {
         Txn {
             id: cluster.new_txid(),
-            ts: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0),
+            ts: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0),
             explicit,
             streams: BTreeMap::new(),
             writes: BTreeMap::new(),
@@ -121,12 +123,27 @@ impl Txn {
         if let Some(s) = self.streams.get(&shard) {
             // Until a beginning request has succeeded, keep asking requests
             // to begin (idempotent: tarn_select begins only outside a txn).
-            return Ok(StreamRef { client: s.client.clone(), id: s.id, begin: !s.begun });
+            return Ok(StreamRef {
+                client: s.client.clone(),
+                id: s.id,
+                begin: !s.begun,
+            });
         }
         let client = cluster.shards[shard].client(cluster).await?;
         let id = client.next_stream_id();
-        self.streams.insert(shard, Stream { client: client.clone(), id, begun: false });
-        Ok(StreamRef { client, id, begin: true })
+        self.streams.insert(
+            shard,
+            Stream {
+                client: client.clone(),
+                id,
+                begun: false,
+            },
+        );
+        Ok(StreamRef {
+            client,
+            id,
+            begin: true,
+        })
     }
 
     /// Record that a request with the begin flag succeeded on `shard`.
@@ -303,7 +320,7 @@ impl Txn {
         match err {
             None => Ok(()),
             Some(e) => {
-                let t = std::mem::replace(&mut self.streams, BTreeMap::new());
+                let t = std::mem::take(&mut self.streams);
                 for (_, s) in t {
                     let _ = s.client.rollback(s.id).await;
                 }
@@ -349,7 +366,9 @@ impl Txn {
             for (_, s) in t {
                 let _ = s.client.rollback(s.id).await;
             }
-            return Err(SqlError::conflict("transaction too old (max_txn_age exceeded); retry it"));
+            return Err(SqlError::conflict(
+                "transaction too old (max_txn_age exceeded); retry it",
+            ));
         }
         // Decision shard: the lowest participant that writes.
         let dshard = self.writes.values().map(|w| w.shard).min().unwrap();
@@ -381,9 +400,10 @@ impl Txn {
                     Ok(r) => match r.data() {
                         // 'expired' is neither YES nor NO (TarnCommit: an
                         // expired PREPARE has no effect and sends no vote).
-                        Some(d) if crate::mpw::status_is(&d, "expired") => {
-                            (Vote::Unknown, Some(SqlError::conflict("transaction too old (max_txn_age exceeded)")))
-                        }
+                        Some(d) if crate::mpw::status_is(&d, "expired") => (
+                            Vote::Unknown,
+                            Some(SqlError::conflict("transaction too old (max_txn_age exceeded)")),
+                        ),
                         Some(d) => match lua_status(&d) {
                             Ok(_) => (Vote::Yes, None),
                             Err(e) => (Vote::No, Some(e)),
@@ -429,7 +449,10 @@ impl Txn {
                         None => "transaction aborted".to_string(),
                     })),
                     Ok(None) => Err(ambiguous(did, &"transaction expired before its outcome was known")),
-                    Err(e) => Err(ambiguous(did, &format!("{}; recovery will finish transaction {}", e, self.id))),
+                    Err(e) => Err(ambiguous(
+                        did,
+                        &format!("{}; recovery will finish transaction {}", e, self.id),
+                    )),
                 }
             }
         }
@@ -437,7 +460,10 @@ impl Txn {
 }
 
 fn now_secs() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 /// APPLY a committed transaction everywhere (TarnCommit!ApplyAt); the
@@ -479,7 +505,11 @@ async fn apply_all(cluster: &Arc<Cluster>, txid: &str, parts: &[usize]) {
         }
         todo = left;
     }
-    tracing::warn!("APPLY of {} still pending on {} shard(s); recovery will finish it", txid, todo.len());
+    tracing::warn!(
+        "APPLY of {} still pending on {} shard(s); recovery will finish it",
+        txid,
+        todo.len()
+    );
 }
 
 async fn abort_all(cluster: &Arc<Cluster>, txid: &str, did: u32, part_ids: &[u32], parts: &[usize]) {
@@ -503,7 +533,13 @@ async fn call_str(cluster: &Arc<Cluster>, shard: usize, f: &str, args: &[u8]) ->
 /// Determine the outcome of a transaction whose votes are not all known.
 /// Ok(Some(true)) = committed (and applied), Ok(Some(false)) = aborted,
 /// Ok(None) = cannot be known any more (expired, records gone).
-pub async fn resolve(cluster: &Arc<Cluster>, txid: &str, dshard: usize, parts: &[usize], expired: bool) -> SqlResult<Option<bool>> {
+pub async fn resolve(
+    cluster: &Arc<Cluster>,
+    txid: &str,
+    dshard: usize,
+    parts: &[usize],
+    expired: bool,
+) -> SqlResult<Option<bool>> {
     let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
     let did = cluster.shards[dshard].id;
     let mut idm = Mp::new();
@@ -590,7 +626,11 @@ pub async fn select_rows(
         return Ok(out);
     }
     let mut m = Mp::new();
-    m.arr(if begin { 10 } else { 8 }).uint(t.space_id as u64).uint(index as u64).vals(key).uint(iter as u64);
+    m.arr(if begin { 10 } else { 8 })
+        .uint(t.space_id as u64)
+        .uint(index as u64)
+        .vals(key)
+        .uint(iter as u64);
     match limit {
         Some(l) => m.uint(l as u64),
         None => m.nil(),
@@ -607,7 +647,10 @@ pub async fn select_rows(
     if begin {
         m.nil().bool(true); // offset, begin
     }
-    let r = client.call(stream, "tarn_select", &m.0).await.map_err(from_iproto_read)?;
+    let r = client
+        .call(stream, "tarn_select", &m.0)
+        .await
+        .map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     let (_, rd) = lua_status(&d)?;
     let mut rd = Rd::shared_at(&d, rd);

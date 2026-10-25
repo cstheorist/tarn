@@ -52,7 +52,10 @@ pub struct ServerOpts {
 
 impl Default for ServerOpts {
     fn default() -> Self {
-        ServerOpts { server_version: "8.0.40-tarn".to_string(), auth: AuthConfig::AllowAll }
+        ServerOpts {
+            server_version: "8.0.40-tarn".to_string(),
+            auth: AuthConfig::AllowAll,
+        }
     }
 }
 
@@ -66,8 +69,16 @@ pub enum AuthConfig {
 
 #[derive(Clone, Debug)]
 pub enum QueryResult {
-    Ok { affected_rows: u64, last_insert_id: u64, info: String, warnings: u16 },
-    Rows { columns: Arc<[Column]>, rows: Vec<Vec<Value>> },
+    Ok {
+        affected_rows: u64,
+        last_insert_id: u64,
+        info: String,
+        warnings: u16,
+    },
+    Rows {
+        columns: Arc<[Column]>,
+        rows: Vec<Vec<Value>>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +152,11 @@ fn malformed() -> SqlError {
 }
 
 fn unknown_stmt(id: u32, cmd: &str) -> SqlError {
-    SqlError::new(1243, "HY000", format!("Unknown prepared statement handler ({}) given to {}", id, cmd))
+    SqlError::new(
+        1243,
+        "HY000",
+        format!("Unknown prepared statement handler ({}) given to {}", id, cmd),
+    )
 }
 
 fn text(b: &[u8]) -> std::borrow::Cow<'_, str> {
@@ -155,7 +170,9 @@ fn too_large() -> io::Error {
 /// Take one complete logical packet (at most `max` bytes) off the front of
 /// `rbuf`.
 fn take_packet(rbuf: &mut BytesMut, max: usize) -> io::Result<Option<(Bytes, u8)>> {
-    let Some((len, seq)) = codec::packet_header(rbuf) else { return Ok(None) };
+    let Some((len, seq)) = codec::packet_header(rbuf) else {
+        return Ok(None);
+    };
     if len > max {
         return Err(too_large());
     }
@@ -171,7 +188,9 @@ fn take_packet(rbuf: &mut BytesMut, max: usize) -> io::Result<Option<(Bytes, u8)
     let mut off = 0usize;
     let mut last_seq;
     loop {
-        let Some((l, s)) = codec::packet_header(&rbuf[off..]) else { return Ok(None) };
+        let Some((l, s)) = codec::packet_header(&rbuf[off..]) else {
+            return Ok(None);
+        };
         if off + l > max {
             return Err(too_large());
         }
@@ -270,7 +289,9 @@ impl<B: Backend> Conn<B> {
         let ver = self.opts.server_version.clone();
         let id = self.id;
         self.send(|p| packets::handshake_v10(p, &ver, id, &scramble, SERVER_STATUS_AUTOCOMMIT));
-        let Some((payload, seq)) = self.read_packet().await? else { return Ok(false) };
+        let Some((payload, seq)) = self.read_packet().await? else {
+            return Ok(false);
+        };
         self.seq = seq.wrapping_add(1);
         let Some(hs) = packets::parse_handshake_response(&payload) else {
             self.send_err(&SqlError::new(1043, "08S01", "Bad handshake"));
@@ -281,7 +302,10 @@ impl<B: Backend> Conn<B> {
         let user = text(hs.user).into_owned();
         let db = hs.database.filter(|d| !d.is_empty()).map(|d| text(d).into_owned());
         let mut response = hs.auth.to_vec();
-        let plugin = hs.plugin.map(|p| text(p).into_owned()).unwrap_or_else(|| packets::NATIVE_PASSWORD.into());
+        let plugin = hs
+            .plugin
+            .map(|p| text(p).into_owned())
+            .unwrap_or_else(|| packets::NATIVE_PASSWORD.into());
         let users = match &self.opts.auth {
             AuthConfig::AllowAll => None,
             AuthConfig::Users(u) => Some(u.clone()),
@@ -289,18 +313,25 @@ impl<B: Backend> Conn<B> {
         if let Some(users) = users {
             if plugin != packets::NATIVE_PASSWORD {
                 self.send(|p| packets::auth_switch(p, &scramble));
-                let Some((resp, seq)) = self.read_packet().await? else { return Ok(false) };
+                let Some((resp, seq)) = self.read_packet().await? else {
+                    return Ok(false);
+                };
                 self.seq = seq.wrapping_add(1);
                 response = resp.to_vec();
             }
-            let ok = users.get(&user).is_some_and(|pw| packets::native_password_ok(pw, &scramble, &response));
+            let ok = users
+                .get(&user)
+                .is_some_and(|pw| packets::native_password_ok(pw, &scramble, &response));
             if !ok {
                 let host = self.stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
                 let using = if response.is_empty() { "NO" } else { "YES" };
                 self.send_err(&SqlError::new(
                     1045,
                     "28000",
-                    format!("Access denied for user '{}'@'{}' (using password: {})", user, host, using),
+                    format!(
+                        "Access denied for user '{}'@'{}' (using password: {})",
+                        user, host, using
+                    ),
                 ));
                 self.flush().await?;
                 return Ok(false);
@@ -325,9 +356,12 @@ impl<B: Backend> Conn<B> {
     async fn send_result(&mut self, r: SqlResult<QueryResult>, binary: bool) -> io::Result<()> {
         match r {
             Err(e) => self.send_err(&e),
-            Ok(QueryResult::Ok { affected_rows, last_insert_id, info, warnings }) => {
-                self.send_ok(affected_rows, last_insert_id, warnings, &info)
-            }
+            Ok(QueryResult::Ok {
+                affected_rows,
+                last_insert_id,
+                info,
+                warnings,
+            }) => self.send_ok(affected_rows, last_insert_id, warnings, &info),
             Ok(QueryResult::Rows { columns, rows }) => {
                 if columns.is_empty() {
                     self.send_ok(0, 0, 0, "");
@@ -398,7 +432,11 @@ impl<B: Backend> Conn<B> {
                     st.long_data.clear();
                     st.long_bytes = 0;
                     st.long_overflow = false;
-                    self.send_err(&SqlError::new(1153, "08S01", "Got a packet bigger than 'max_allowed_packet' bytes"));
+                    self.send_err(&SqlError::new(
+                        1153,
+                        "08S01",
+                        "Got a packet bigger than 'max_allowed_packet' bytes",
+                    ));
                     return Ok(true);
                 }
                 let params = packets::decode_params(&mut r, st.num_params as usize, &mut st.types, &mut st.long_data);
@@ -417,7 +455,10 @@ impl<B: Backend> Conn<B> {
                     self.send_err(&SqlError::new(
                         1461,
                         "42000",
-                        format!("Can't create more than max_prepared_stmt_count statements (current value: {})", MAX_PREPARED_STMTS),
+                        format!(
+                            "Can't create more than max_prepared_stmt_count statements (current value: {})",
+                            MAX_PREPARED_STMTS
+                        ),
                     ));
                     return Ok(true);
                 }
@@ -529,7 +570,9 @@ impl<B: Backend> Conn<B> {
             return Ok(());
         }
         loop {
-            let Some((payload, seq)) = self.read_packet().await? else { return Ok(()) };
+            let Some((payload, seq)) = self.read_packet().await? else {
+                return Ok(());
+            };
             self.seq = seq.wrapping_add(1);
             if !self.dispatch(payload).await? {
                 return self.flush().await;
@@ -575,7 +618,12 @@ mod tests {
     use super::*;
 
     fn packet(len: usize, seq: u8) -> Vec<u8> {
-        let mut v = vec![(len & 0xff) as u8, ((len >> 8) & 0xff) as u8, ((len >> 16) & 0xff) as u8, seq];
+        let mut v = vec![
+            (len & 0xff) as u8,
+            ((len >> 8) & 0xff) as u8,
+            ((len >> 16) & 0xff) as u8,
+            seq,
+        ];
         v.resize(4 + len, b'x');
         v
     }
@@ -592,7 +640,10 @@ mod tests {
         assert!(take_packet(&mut b, MAX_PREAUTH_PACKET).is_err());
         // ... and is accepted after authentication.
         let mut b = BytesMut::from(&packet(MAX_PREAUTH_PACKET + 1, 1)[..]);
-        assert_eq!(take_packet(&mut b, MAX_ALLOWED_PACKET).unwrap().unwrap().0.len(), MAX_PREAUTH_PACKET + 1);
+        assert_eq!(
+            take_packet(&mut b, MAX_ALLOWED_PACKET).unwrap().unwrap().0.len(),
+            MAX_PREAUTH_PACKET + 1
+        );
         // A multi-packet payload is refused once its pieces exceed the limit.
         let max = codec::MAX_PAYLOAD; // 0xFFFFFF
         let mut big = packet(max, 0);

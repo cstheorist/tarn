@@ -41,12 +41,13 @@ client.commit(sid).await?;          // Err(Server{code: ER_TRANSACTION_CONFLICT,
 | `begin(stream, timeout_secs, isolation)`, `commit`, `rollback` | Must use a non-zero stream id; stream id 0 gets `ER_UNABLE_TO_PROCESS_OUT_OF_STREAM`. |
 | `next_stream_id()` | 1, 2, 3, … per connection. 0 means "no stream". |
 | `is_closed()` | True once the connection failed or was closed. Every later call fails at once with `Error::Closed`. |
+| `is_stale()`, `mark_stale()` | True once the server answered any request with `ER_READONLY` (it was demoted or is a replica). The connection keeps working; Tarn's connection pools stop handing it out and look for the new leader. |
 | `Response { schema_version, body }` | `data()` returns the raw `IPROTO_DATA` value; `tuples()` returns each element of `DATA` as a raw slice. Both are zero-copy slices of `body`. |
 | `Error` | `Io`, `Protocol(String)`, `Server { code, message }`, `Closed`, `Timeout`. `code` is the error code from the reply type (`type & 0x7fff`). `message` comes from `IPROTO_ERROR_24` (0x31), falling back to the first entry of the `IPROTO_ERROR` (0x52) stack. |
 | error codes | `ER_TUPLE_FOUND` (3), `ER_READONLY` (7), `ER_PROC_LUA` (32), `ER_NO_SUCH_PROC` (33), `ER_NO_SUCH_SPACE` (36), `ER_TRANSACTION_CONFLICT` (97), `ER_TRANSACTION_TIMEOUT` (231), `ER_UNABLE_TO_PROCESS_{IN,OUT_OF}_STREAM` (229/230), and others: see `errcode` (all re-exported at the crate root). There is no "no such stream" error; the server creates streams on first use. |
 | `Iter`, `TxnIsolation` | `#[repr(u32)]` + `Copy`, so `iter as u64` gives the wire code. |
 
-### Additions beyond the brief (the briefed API is unchanged)
+### More API
 
 `Opts::new`, `Client::close`, `Client::server_info` (greeting version,
 protocol version, features, auth type), `Client::stats` (requests, replies,
@@ -138,9 +139,9 @@ of plain arrays.
 
 ## Tests
 
-`cargo test -p tarn-iproto` runs 12 unit tests and 17 integration tests,
+`cargo test -p tarn-iproto` runs 12 unit tests and 18 integration tests,
 about 3 s in total. Each integration test starts its own Tarantool
-(`$TARANTOOL`, default `/opt/src/tarantool/build/src/tarantool`) in a temp dir
+(`$TARANTOOL`, default `tarantool`) in a temp dir
 with `tests/common/init.lua`: `listen = 127.0.0.1:0`,
 `memtx_use_mvcc_engine = true`, user `tarn`/`tarn` with super grants, and test
 spaces and functions. The server exits by itself if the test process dies.
@@ -178,6 +179,8 @@ spaces and functions. The server exits by itself if the test process dies.
   and evals, each answer checked); 50 tasks doing write-then-read in private
   key ranges; 3,000 in-flight futures inside one task; 4 MB requests and a
   2.3 MB reply while small requests interleave.
+* **Stale leaders:** an `ER_READONLY` reply marks the connection stale,
+  other errors do not, and the connection keeps working.
 * **Connection loss:**
   - SIGKILL the server while 50 calls are parked inside it and 8 tasks run
     selects in a loop: all 58 fail with `Error::Closed` within a few ms (no

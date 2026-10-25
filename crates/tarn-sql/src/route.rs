@@ -42,8 +42,14 @@ mod tests {
     #[test]
     fn matches_tarantool_digest_crc32() {
         // digest.crc32('123456789') in Tarantool 3.9
-        assert_eq!(tarn_verified::route::crc32c_update(tarn_verified::route::CRC_INIT, b"123456789"), 486108540);
-        assert_eq!(tarn_verified::route::crc32c_update(tarn_verified::route::CRC_INIT, b""), 0xFFFF_FFFF);
+        assert_eq!(
+            tarn_verified::route::crc32c_update(tarn_verified::route::CRC_INIT, b"123456789"),
+            486108540
+        );
+        assert_eq!(
+            tarn_verified::route::crc32c_update(tarn_verified::route::CRC_INIT, b""),
+            0xFFFF_FFFF
+        );
     }
 
     #[test]

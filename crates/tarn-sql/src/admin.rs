@@ -6,31 +6,62 @@ use tarn_common::{SqlError, SqlResult, Value};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Admin {
-    Begin { read_only: bool },
+    Begin {
+        read_only: bool,
+    },
     Commit,
     Rollback,
     SetAutocommit(bool),
     /// SET ... statements with no effect on Tarn (names, isolation, sql_mode...).
     SetIgnored,
-    SetVar { name: String, value: Value },
+    SetVar {
+        name: String,
+        value: Value,
+    },
     Use(String),
-    ShowDatabases { like: Option<String> },
-    ShowTables { db: Option<String>, full: bool, like: Option<String> },
-    ShowColumns { db: Option<String>, table: String, full: bool },
-    ShowCreateTable { db: Option<String>, table: String },
-    ShowIndex { db: Option<String>, table: String },
-    ShowVariables { like: Option<String> },
-    ShowStatus { like: Option<String> },
+    ShowDatabases {
+        like: Option<String>,
+    },
+    ShowTables {
+        db: Option<String>,
+        full: bool,
+        like: Option<String>,
+    },
+    ShowColumns {
+        db: Option<String>,
+        table: String,
+        full: bool,
+    },
+    ShowCreateTable {
+        db: Option<String>,
+        table: String,
+    },
+    ShowIndex {
+        db: Option<String>,
+        table: String,
+    },
+    ShowVariables {
+        like: Option<String>,
+    },
+    ShowStatus {
+        like: Option<String>,
+    },
     ShowWarnings,
     ShowEngines,
     ShowCollation,
     ShowCharset,
     ShowProcesslist,
-    ShowTableStatus { db: Option<String>, like: Option<String> },
+    ShowTableStatus {
+        db: Option<String>,
+        like: Option<String>,
+    },
     ShowTarnStatus,
     /// SELECT @@a [AS x], @@b ... [LIMIT n]
     SelectVars(Vec<(String, String)>),
-    Describe { db: Option<String>, table: String },
+    Describe {
+        db: Option<String>,
+        table: String,
+    },
     Noop,
 }
 
@@ -55,8 +86,12 @@ pub fn system_var(name: &str, autocommit: bool, db: Option<&str>) -> Option<Valu
         "tx_read_only" | "transaction_read_only" | "read_only" | "super_read_only" => Value::Int(0),
         "max_allowed_packet" => Value::Int(67_108_864),
         "net_buffer_length" => Value::Int(16384),
-        "character_set_client" | "character_set_connection" | "character_set_results" | "character_set_server"
-        | "character_set_database" | "character_set_system" => Value::str("utf8mb4"),
+        "character_set_client"
+        | "character_set_connection"
+        | "character_set_results"
+        | "character_set_server"
+        | "character_set_database"
+        | "character_set_system" => Value::str("utf8mb4"),
         "collation_connection" | "collation_server" | "collation_database" => Value::str("utf8mb4_bin"),
         "sql_mode" => Value::str("STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"),
         "time_zone" => Value::str("SYSTEM"),
@@ -68,7 +103,7 @@ pub fn system_var(name: &str, autocommit: bool, db: Option<&str>) -> Option<Valu
         "net_read_timeout" => Value::Int(30),
         "query_cache_size" | "query_cache_type" => Value::Int(0),
         "init_connect" => Value::str(""),
-        "license" => Value::str("Apache-2.0"),
+        "license" => Value::str("MIT OR Apache-2.0"),
         "performance_schema" => Value::Int(0),
         "have_ssl" | "have_openssl" => Value::str("DISABLED"),
         "max_connections" => Value::Int(100_000),
@@ -93,11 +128,33 @@ pub fn system_var(name: &str, autocommit: bool, db: Option<&str>) -> Option<Valu
 }
 
 pub const SHOWN_VARIABLES: &[&str] = &[
-    "autocommit", "character_set_client", "character_set_connection", "character_set_results", "character_set_server",
-    "collation_connection", "collation_server", "default_storage_engine", "div_precision_increment", "init_connect",
-    "innodb_lock_wait_timeout", "interactive_timeout", "license", "lower_case_table_names", "max_allowed_packet",
-    "max_connections", "net_buffer_length", "net_write_timeout", "performance_schema", "sql_mode", "system_time_zone",
-    "time_zone", "transaction_isolation", "transaction_read_only", "tx_isolation", "version", "version_comment",
+    "autocommit",
+    "character_set_client",
+    "character_set_connection",
+    "character_set_results",
+    "character_set_server",
+    "collation_connection",
+    "collation_server",
+    "default_storage_engine",
+    "div_precision_increment",
+    "init_connect",
+    "innodb_lock_wait_timeout",
+    "interactive_timeout",
+    "license",
+    "lower_case_table_names",
+    "max_allowed_packet",
+    "max_connections",
+    "net_buffer_length",
+    "net_write_timeout",
+    "performance_schema",
+    "sql_mode",
+    "system_time_zone",
+    "time_zone",
+    "transaction_isolation",
+    "transaction_read_only",
+    "tx_isolation",
+    "version",
+    "version_comment",
     "wait_timeout",
 ];
 
@@ -131,7 +188,14 @@ impl Toks {
                 i = j + 1;
             } else if c.is_ascii_alphanumeric() || c == b'_' || c == b'@' || c == b'$' || c == b'.' || c >= 0x80 {
                 let mut j = i;
-                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'@' || b[j] == b'$' || b[j] == b'.' || b[j] >= 0x80) {
+                while j < b.len()
+                    && (b[j].is_ascii_alphanumeric()
+                        || b[j] == b'_'
+                        || b[j] == b'@'
+                        || b[j] == b'$'
+                        || b[j] == b'.'
+                        || b[j] >= 0x80)
+                {
                     j += 1;
                 }
                 t.push(sql[i..j].to_string());
@@ -144,7 +208,10 @@ impl Toks {
         Toks { t, i: 0 }
     }
     fn peek_up(&self, k: usize) -> String {
-        self.t.get(self.i + k).map(|s| s.to_ascii_uppercase()).unwrap_or_default()
+        self.t
+            .get(self.i + k)
+            .map(|s| s.to_ascii_uppercase())
+            .unwrap_or_default()
     }
     fn is(&mut self, w: &str) -> bool {
         if self.peek_up(0) == w {
@@ -166,7 +233,7 @@ impl Toks {
 
 fn unquote(s: &str) -> String {
     let b = s.as_bytes();
-    if b.len() >= 1 && (b[0] == b'\'' || b[0] == b'"' || b[0] == b'`') {
+    if !b.is_empty() && (b[0] == b'\'' || b[0] == b'"' || b[0] == b'`') {
         s[1..].to_string()
     } else {
         s.to_string()
@@ -242,7 +309,9 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
         "SAVEPOINT" | "RELEASE" => return Err(SqlError::unsupported("savepoints")),
         "USE" => {
             t.i += 1;
-            Admin::Use(unquote(&t.next().ok_or_else(|| SqlError::parse("USE needs a database"))?))
+            Admin::Use(unquote(
+                &t.next().ok_or_else(|| SqlError::parse("USE needs a database"))?,
+            ))
         }
         "SET" => {
             t.i += 1;
@@ -257,7 +326,7 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             let (db, table) = split_qualified(&t.next().unwrap_or_default());
             Admin::Describe { db, table }
         }
-        "SELECT" if t.t.get(1).map_or(false, |s| s.starts_with("@@")) => match parse_select_vars(&mut t) {
+        "SELECT" if t.t.get(1).is_some_and(|s| s.starts_with("@@")) => match parse_select_vars(&mut t) {
             Some(v) => Admin::SelectVars(v),
             None => return Ok(None),
         },
@@ -292,10 +361,12 @@ fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
             .or_else(|| name.strip_prefix("local."))
             .unwrap_or(&name)
             .to_string();
-        if !(t.is("=") || (t.peek_up(0) == ":" && t.peek_up(1) == "=" && {
-            t.i += 2;
-            true
-        })) {
+        if !(t.is("=")
+            || (t.peek_up(0) == ":" && t.peek_up(1) == "=" && {
+                t.i += 2;
+                true
+            }))
+        {
             return Err(SqlError::parse(format!("syntax error near SET {}", name)));
         }
         let val = t.next().map(|s| literal_value(&s)).unwrap_or(Value::Null);
@@ -328,11 +399,18 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         "DATABASES" | "SCHEMAS" => Admin::ShowDatabases { like: like_clause(t) },
         "TABLES" => {
             let db = from_db(t);
-            Admin::ShowTables { db, full, like: like_clause(t) }
+            Admin::ShowTables {
+                db,
+                full,
+                like: like_clause(t),
+            }
         }
         "TABLE" if t.is("STATUS") => {
             let db = from_db(t);
-            Admin::ShowTableStatus { db, like: like_clause(t) }
+            Admin::ShowTableStatus {
+                db,
+                like: like_clause(t),
+            }
         }
         "COLUMNS" | "FIELDS" => {
             let _ = t.is("FROM") || t.is("IN");
@@ -408,16 +486,38 @@ mod tests {
     #[test]
     fn recognizes() {
         assert_eq!(recognize("BEGIN").unwrap(), Some(Admin::Begin { read_only: false }));
-        assert_eq!(recognize("start transaction read only").unwrap(), Some(Admin::Begin { read_only: true }));
-        assert_eq!(recognize("SET autocommit=0").unwrap(), Some(Admin::SetAutocommit(false)));
-        assert_eq!(recognize("SET @@session.autocommit = ON").unwrap(), Some(Admin::SetAutocommit(true)));
+        assert_eq!(
+            recognize("start transaction read only").unwrap(),
+            Some(Admin::Begin { read_only: true })
+        );
+        assert_eq!(
+            recognize("SET autocommit=0").unwrap(),
+            Some(Admin::SetAutocommit(false))
+        );
+        assert_eq!(
+            recognize("SET @@session.autocommit = ON").unwrap(),
+            Some(Admin::SetAutocommit(true))
+        );
         assert_eq!(recognize("SET NAMES utf8mb4").unwrap(), Some(Admin::SetIgnored));
-        assert_eq!(recognize("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap(), Some(Admin::SetIgnored));
+        assert_eq!(
+            recognize("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap(),
+            Some(Admin::SetIgnored)
+        );
         assert_eq!(
             recognize("select @@version_comment limit 1").unwrap(),
-            Some(Admin::SelectVars(vec![("@@version_comment".into(), "@@version_comment".into())]))
+            Some(Admin::SelectVars(vec![(
+                "@@version_comment".into(),
+                "@@version_comment".into()
+            )]))
         );
-        assert_eq!(recognize("SHOW TABLES FROM sbtest LIKE 'sb%'").unwrap(), Some(Admin::ShowTables { db: Some("sbtest".into()), full: false, like: Some("sb%".into()) }));
+        assert_eq!(
+            recognize("SHOW TABLES FROM sbtest LIKE 'sb%'").unwrap(),
+            Some(Admin::ShowTables {
+                db: Some("sbtest".into()),
+                full: false,
+                like: Some("sb%".into())
+            })
+        );
         assert_eq!(recognize("SELECT 1").unwrap(), None);
         assert_eq!(recognize("USE `sbtest`").unwrap(), Some(Admin::Use("sbtest".into())));
     }
