@@ -42,3 +42,5 @@ Checkpointing completed at (2026-10-24 23:16:29)
 Progress(18) at 2026-10-24 23:16:29: 37,084,067 states generated (1,598,754 s/min), 5,518,981 distinct states found (198,817 ds/min), 2,352,386 states left on queue.
 Progress(18) at 2026-10-24 23:17:29: 42,322,905 states generated (5,238,838 s/min), 6,250,650 distinct states found (731,669 ds/min), 2,634,905 states left on queue.
 Progress(18) at 2026-10-24 23:18:29: 47,330,664 states generated (5,007,759 s/min), 6,846,907 distinct states found (596,257 ds/min), 2,815,827 states left on queue.
+Progress(18) at 2026-10-24 23:19:30: 49,373,746 states generated (2,043,082 s/min), 7,099,764 distinct states found (252,857 ds/min), 2,901,333 states left on queue.
+Progress(18) at 2026-10-24 23:20:30: 50,957,810 states generated (1,584,064 s/min), 7,345,215 distinct states found (245,451 ds/min), 3,007,203 states left on queue.

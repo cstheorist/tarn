@@ -1120,9 +1120,17 @@ M.resolve = resolve
 local function gc_delete(space, ids)
     local i = 1
     while i <= #ids do
-        box.begin()
-        for j = i, math.min(i + M.cfg.gc_batch - 1, #ids) do space:delete{ids[j]} end
-        box.commit()
+        local ok, err = pcall(function()
+            box.begin()
+            for j = i, math.min(i + M.cfg.gc_batch - 1, #ids) do space:delete{ids[j]} end
+            box.commit()
+        end)
+        if not ok then
+            -- e.g. ER_READONLY after a leader change: never leave this
+            -- (long-lived) fiber inside a transaction.
+            if box.is_in_txn() then box.rollback() end
+            error(err)
+        end
         i = i + M.cfg.gc_batch
     end
 end
