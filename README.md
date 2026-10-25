@@ -37,8 +37,11 @@ scripts/cluster.sh    start/stop a local cluster
 
 ## Build
 
-Requirements: Rust 1.85+ (developed with 1.98), Tarantool 3.x (developed with
-3.9.0), Python 3 with PyMySQL for the SQL tests, sysbench for benchmarks.
+Requirements: Rust 1.98.1 (pinned in `rust-toolchain.toml` to the compiler of
+the Verus release used for the proofs; rustup installs it on the first build),
+Tarantool 3.x (developed with 3.9.0), Python 3 with PyMySQL for the SQL tests,
+sysbench for benchmarks, Java 11+ and `tla2tools.jar` for TLC, Verus
+0.2026.10.04 for the proofs.
 
 ```sh
 cargo build --release -p tarn-server
