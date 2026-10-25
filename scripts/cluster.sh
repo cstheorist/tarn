@@ -98,6 +98,20 @@ case "$CMD" in
       done
       [ $ok = 1 ] || { echo "shard $i has no writable leader; see $DIR/s$i.*.log" >&2; exit 1; }
     done
+    # Wait until every replica has joined, so that workloads start on whole
+    # replica sets: a replica still joining a new shard that already takes
+    # synchronous writes has been seen to stop in its first checkpoint
+    # ("can't initialize storage: timed out").
+    if [ "$R" -gt 1 ]; then
+      for i in $(seq 1 "$N"); do for j in $(seq 1 "$R"); do
+        ok=0
+        for _ in $(seq 300); do
+          if "$T" "$ROOT/scripts/joined.lua" "tarn:tarn@127.0.0.1:$(port_of "$i" "$j")" "$R" < /dev/null > /dev/null 2>&1; then ok=1; break; fi
+          sleep 0.2
+        done
+        [ $ok = 1 ] || { echo "storage s$i.$j did not finish joining its shard; see $DIR/s$i.$j.log" >&2; exit 1; }
+      done; done
+    fi
     for k in $(seq 1 "$SERVERS"); do
       tp=$((TPORT + k - 1))
       TARN_LOG=${TARN_LOG:-info} "$TARN" --config "$DIR/cluster.json" --listen 127.0.0.1:$tp --node-id "$k" \

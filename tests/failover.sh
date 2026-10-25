@@ -39,12 +39,26 @@ check_alive() {
   [ -n "$dead" ] && echo "$(date +%T) NOT RUNNING:$dead"
 }
 
+# Instances that stopped although the test did not kill them, with the end
+# of their logs: why they stopped.
+stopped_on_their_own() {
+  local f n
+  for f in "$DIR"/s*.pid; do
+    n=$(basename "$f" .pid)
+    kill -0 "$(cat "$f")" 2>/dev/null && continue
+    [ -e "$DIR/$n.killed" ] && continue
+    echo "--- $n stopped on its own; the end of $n.log:"
+    tail -12 "$DIR/$n.log"
+  done
+}
+
 kill_leader() {
   local s=$1 p
   check_alive
   p=$(leader_of "$s") || { echo "shard $s: no leader found"; return 1; }
   local j=$(( (p - BASE - 10 * s) ))
   echo "$(date +%T) killing shard $s leader on port $p (s$s.$j)"
+  touch "$DIR/s$s.$j.killed"
   kill -9 "$(cat "$DIR/s$s.$j.pid")"
   local t0; t0=$(date +%s%N)
   for _ in $(seq 200); do
@@ -119,12 +133,16 @@ if [ $rc -eq 0 ] && [ $rcrc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" 
   "$ROOT/scripts/cluster.sh" stop -d "$DIR"
   echo "FAILOVER TEST PASSED"
 else
+  crashed=$(stopped_on_their_own)
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR"
   echo "FAILOVER TEST FAILED (bank rc=$rc rc-bank rc=$rcrc kv=$kv move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
+  [ -n "$crashed" ] && echo "$crashed"
   # On GitHub Actions, put the evidence in an annotation (job logs are not
   # always at hand; annotations are).
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    msg=$({ echo "bank rc=$rc rc-bank rc=$rcrc kv=$kv move_failed=${MOVE_FAILED:-0}"; grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
+    msg=$({ echo "bank rc=$rc rc-bank rc=$rcrc kv=$kv move_failed=${MOVE_FAILED:-0}"
+            [ -n "$crashed" ] && echo "$crashed"
+            grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
             echo "--- workload"; tail -25 "$DIR/bank.out"; tail -8 "$DIR/rcbank.out"
             echo "--- storage logs"; grep -h -iE "error|warn|election|promote" "$DIR"/s*.log | tail -15
             echo "--- tarn-server"; grep -h -iE "error|warn" "$DIR"/tarn*.log | tail -8; } |
