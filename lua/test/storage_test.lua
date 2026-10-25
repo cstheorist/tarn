@@ -709,6 +709,18 @@ r = c[1]:call('tarn_apply', {'XG'})
 check('... APPLY lands the write to the other one', r[1] == 'ok' and bal(1, 9001) == 7, {r, bal(1, 9001)})
 check('... and releases the locks', c[1]:eval("return box.space._tarn_locks.index.txid:count{'XG'}") == 0)
 
+print('vinyl reader threads')
+-- lua/test/run.sh sets TARN_VINYL_READ_THREADS=3 on shard 1, and on shard 2
+-- only TARN_HOST_INSTANCES=2: the CPUs halved, 1 to 8.
+local ffi = require('ffi')
+pcall(ffi.cdef, 'long sysconf(int name);')
+local cpus = tonumber(ffi.C.sysconf(jit.os == 'OSX' and 58 or 84))
+local want = math.max(1, math.min(8, math.floor(cpus / 2)))
+r = c[1]:eval('return box.cfg.vinyl_read_threads')
+check('TARN_VINYL_READ_THREADS sets vinyl_read_threads', r == 3, r)
+r = c[2]:eval('return box.cfg.vinyl_read_threads')
+check('by default, the CPUs divided among the instances', r == want, {r, want, cpus})
+
 print('vinyl tables: commit steps that yield')
 -- A vinyl read can yield; tarn_test_hook holds a step at such a point
 -- (lua/tarn.lua "Yields") while another step runs. The storage instances run
