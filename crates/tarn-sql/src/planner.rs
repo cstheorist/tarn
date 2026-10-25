@@ -1275,20 +1275,26 @@ fn union_path(table: &TableDef, alts: &[EqAlt]) -> Option<AccessPath> {
 
 /// Whether reading `idx` with `eq_len` leading columns fixed returns rows in
 /// the order of `order` (table columns, descending?): every ORDER BY column
-/// is fixed by the equality prefix or is the next index column, ascending.
-fn index_follows_order(idx: &crate::catalog::IndexDef, eq_len: usize, order: &[(usize, bool)]) -> bool {
+/// is fixed by the equality prefix or is the next index column, all of the
+/// latter in one direction. Some(true): read backwards (issue #50).
+fn index_follows_order(idx: &crate::catalog::IndexDef, eq_len: usize, order: &[(usize, bool)]) -> Option<bool> {
     let mut next = eq_len;
-    !order.is_empty()
-        && order
-            .iter()
-            .all(|&(c, desc)| match idx.cols.iter().position(|&x| x == c) {
-                Some(pos) if pos < eq_len => true,
-                Some(pos) if pos == next && !desc => {
-                    next += 1;
-                    true
-                }
-                _ => false,
-            })
+    let mut dir: Option<bool> = None;
+    for &(c, desc) in order {
+        match idx.cols.iter().position(|&x| x == c) {
+            Some(pos) if pos < eq_len => {}
+            Some(pos) if pos == next && dir.is_none_or(|d| d == desc) => {
+                next += 1;
+                dir = Some(desc);
+            }
+            _ => return None,
+        }
+    }
+    match dir {
+        Some(d) => Some(d),
+        None if !order.is_empty() => Some(false),
+        None => None,
+    }
 }
 
 /// Access path for the conjuncts `conj`. `order` is the statement's ORDER BY
@@ -1475,11 +1481,12 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
             // longer equality prefix or a bound on the next column; only
             // when the prefix fixes the shard key (one shard, read in pages).
             let routed = table.shard_key.iter().all(|c| idx.cols[..eq.len()].contains(c));
-            let ordered = if routed && index_follows_order(idx, eq.len(), order) {
-                3
+            let follows = if routed {
+                index_follows_order(idx, eq.len(), order)
             } else {
-                0
+                None
             };
+            let ordered = if follows.is_some() { 3 } else { 0 };
             let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus + ordered;
             (
                 s,
@@ -1488,7 +1495,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
                     eq,
                     lo,
                     hi: hi2,
-                    reverse: false,
+                    reverse: follows == Some(true),
                 },
             )
         } else {
@@ -3213,6 +3220,32 @@ mod tests {
                 "SELECT * FROM orders WHERE shop_id = 1 AND number = 3 ORDER BY processed_at LIMIT 5"
             )),
             (2, 2)
+        );
+        // issue #50: all descending reads the index backwards; mixed
+        // directions follow no index
+        let rev = |sql: &str| match path(sql) {
+            AccessPath::Range { index, reverse, .. } => (index, reverse),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at DESC, id DESC LIMIT 51"),
+            (1, true)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY shop_id, id DESC LIMIT 5"),
+            (0, true)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at, id LIMIT 5"),
+            (1, false)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at DESC, id LIMIT 5"),
+            (0, false)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at DESC, id DESC"),
+            (0, false)
         );
         // aggregates read every row anyway
         let ctx = PlanCtx {
