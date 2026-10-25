@@ -56,7 +56,11 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
   KEY(cols)` chooses others). `bucket_id = crc32c(key) % 3000 + 1` using
   vshard's `mpcrc32` definition (Tarantool's `digest.crc32`, strings hashed as
   raw bytes, other values as their msgpack encoding). Buckets map to shards in
-  equal contiguous ranges.
+  equal contiguous ranges. A case-insensitive text column is hashed by its
+  weight string (§1.3), so `'a'` and `'A'` land on the same shard.
+* A case-insensitive text column that is part of an index has a second
+  field after `bucket_id`, `_weight_<n>` (varbinary), holding its weight
+  string; its indexes are built on that field (§1.3).
 * As in MySQL's partitioned tables, every unique index must contain the shard
   key, so uniqueness is enforced by one shard.
 * The table definitions live in `_tarn_catalog` on every shard; SQL servers
@@ -64,7 +68,9 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
 
 Direct reads: a Tarantool client computes the bucket from the key (or simply
 asks each shard) and does `space.index.primary:get{key}`. The `kvbench`
-example does exactly that with the same Verus-verified routing code.
+example does exactly that with the same Verus-verified routing code. A
+case-insensitive key is looked up (and hashed) by its weight string, which
+`SELECT WEIGHT_STRING(...)` returns (without trailing spaces).
 
 ### 1.2 Request paths
 
@@ -124,6 +130,75 @@ written. A connection lost while a commit or an autocommit write was in
 flight is different: the write may or may not have happened, so Tarn reports
 error 1180 with SQLSTATE 40003 ("statement completion unknown") and never
 re-sends the request.
+
+### 1.3 Collations
+
+Text compares under its column's collation (issue #13): `utf8mb4_bin`, or
+MariaDB's `utf8mb4_general_ci` and `utf8mb4_unicode_ci` and their NO PAD
+variants, reproduced from MariaDB 10.11's own weight tables
+(`crates/tarn-sql/src/collation_data.rs`, generated from `WEIGHT_STRING()`
+by `scripts/gen_collations.py`: 1,108 general_ci code points whose weight is
+not the code point itself, 12,060 unicode_ci code points with listed
+weights, the rest computed). Other collation names map to the closest of
+these ([SQL compatibility](sql-compatibility.md#collations)). Under a
+`_ci` collation a string's *key* is its weight string, big-endian, without
+trailing space weights under PAD SPACE: two strings are equal exactly when
+their keys are, and order as their keys do.
+
+**Where the storage needs the collation.** Equality decides three things
+below the SQL layer: which values a unique index refuses, which keys a lock
+names (the lock index, row locks and read sets compare msgpack-encoded index
+keys), and which shard a shard-key value routes to. So a case-insensitive
+column that is part of an index gets a *weight field*, `_weight_<n>`: a
+varbinary field after `bucket_id` that holds the column's key, written with
+every row (`TableDef::encode_tuple`, and the update operations of the
+autocommit fast path). The column's indexes are built on that field, the
+shard key hashes it, and every index key the SQL servers send -- lookups,
+ranges, read sets, row locks, the identities of rows in the write buffer --
+holds it (`TableDef::index_key`). Byte order on keys is the collation's
+order, so `'a'` and `'A'` are one key in every index, lock and route by
+construction, and the commit protocol, the lock index and the storage module
+needed no change. `tests/sql/txntest.py` races two cross-shard transactions
+that insert case variants of one key, at both isolation levels: one commits,
+the other fails with 1062 or 1213.
+
+**Why not Tarantool's ICU collations.** An index part can carry an ICU
+collation (`unicode_ci`), which would keep the stored layout and let direct
+readers find `'ALICE'` by `'alice'`. Routing is what rules it out: equal
+strings must hash alike, so the bucket would have to be computed from a
+canonical form of everything ICU considers equal. ICU's primary sort keys
+change between ICU versions, so bucket ids (stored in every tuple) and the
+values a unique index refuses would depend on the ICU library of whichever
+machine computed them, and no fixed normalization captures ICU's equality
+exactly (expansions, ignorable characters, Hiragana equal to Katakana, ...).
+The SQL servers would also need ICU to sort, group and deduplicate in the
+indexes' order, and the lock index a canonical form of its keys. A
+collation defined by a fixed table, as MySQL's are (a collation's weights
+never change; new behaviour gets a new collation name), keeps placement and
+uniqueness stable, and matches MariaDB exactly instead of approximately.
+
+**The cost.** A weight field roughly doubles the stored size of an indexed
+case-insensitive column, and a direct reader looks such a key up by its
+weight string. Adding an index on an existing case-insensitive column that
+has no weight field yet would mean rewriting every row, which `ALTER TABLE`
+does not do (§2.10), so it is refused (1235), and so is changing the
+collation of an indexed column (its index order would change). A column
+that the same statement adds gets its weight field at once: older rows end
+before both fields.
+
+**In the SQL layer.** The binder derives every text expression's collation
+with MySQL's coercibility rules (an explicit `COLLATE` wins over a column,
+a column over a literal; between two columns a `_bin` collation wins and
+two other different ones are error 1267) and stores it in each comparison
+(`=`, `IN`, `BETWEEN`, `LIKE`, `CASE`, `NULLIF`, `GREATEST`, `LEAST`,
+`LOCATE`). `ORDER BY` items become collation keys (`Expr::Key`); `GROUP BY`
+items, `DISTINCT` columns and aggregates record their collation, and `UNION`
+takes it from the branches' result metadata. The planner uses an index for
+a predicate only if the index orders by the predicate's collation -- or, for
+an equality, if the index is case-insensitive and the comparison binary:
+the index then finds a superset, which the statement's filter narrows.
+Literals take `collation_connection` (from the client's handshake or `SET
+NAMES`), and plans are cached per connection collation.
 
 ## 2. Isolation and the commit protocol
 
@@ -793,11 +868,11 @@ does not check.
 | Suite | Scope | Result |
 |---|---|---|
 | `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE` | 227/227 |
-| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection) | all pass |
+| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection) | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
-| `tests/sql/difftest.py` | 236 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors | 236/236 identical |
+| `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings; collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
-| `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
+| `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent cross-shard inserts of case variants of one case-insensitive key (serializable and READ COMMITTED: exactly one commits); concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 13/13 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, primary-key point writes locked and read in one step, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 26/26 |
 | `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
@@ -916,9 +991,13 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   transaction writes again and again while it scans runs again each time,
   and fails with 1213 after `lock_wait` (1 s); benchmarks with data larger
   than the cache are still to come (#23).
-* String comparison, ordering, grouping and unique indexes are binary (like
-  `utf8mb4_bin`); MySQL's default collations are case-insensitive, so
-  `WHERE name = 'ALICE'` does not match `'alice'` in Tarn.
+* Collations (§1.3): the server's default is `utf8mb4_bin`, which counts
+  trailing spaces, unless `--default-collation` names another; collations
+  other than `utf8mb4_bin`, `utf8mb4_general_ci` and `utf8mb4_unicode_ci`
+  (and their NO PAD forms) compare like the closest of those. An index
+  cannot be added on an existing case-insensitive column that is in no
+  index yet, nor an indexed column's collation changed (1235), and an
+  indexed case-insensitive column is stored twice (text and weights).
 * Hash sharding: range predicates on the shard key and lookups through
   non-unique secondary indexes go to every shard.
 * Serializable OCC: long read-only transactions that span shards can starve

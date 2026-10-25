@@ -1,6 +1,7 @@
 //! Compiled scalar expressions and their evaluation with MySQL semantics.
 
-use crate::types::{arith, bool_val, compare, to_num, truth, Arith, BaseType, SqlType};
+use crate::collation::Collation;
+use crate::types::{arith, bool_val, compare_coll, to_num, truth, Arith, BaseType, SqlType};
 use bytes::Bytes;
 use std::cmp::Ordering;
 use tarn_common::{ColumnType, SqlError, SqlResult, Value};
@@ -36,10 +37,11 @@ pub enum Func {
     Mod,
     Coalesce,
     IfNull,
-    NullIf,
+    /// Functions that compare text carry the collation they compare under.
+    NullIf(Collation),
     If,
-    Greatest,
-    Least,
+    Greatest(Collation),
+    Least(Collation),
     Now,
     CurDate,
     UnixTimestamp,
@@ -58,10 +60,11 @@ pub enum Func {
     Sign,
     Sqrt,
     Pow,
-    Locate,
+    Locate(Collation),
     Ascii,
     FoundRows,
     RowCount,
+    WeightString(Collation),
 }
 
 impl Func {
@@ -86,10 +89,10 @@ impl Func {
             "MOD" => Mod,
             "COALESCE" => Coalesce,
             "IFNULL" => IfNull,
-            "NULLIF" => NullIf,
+            "NULLIF" => NullIf(Collation::Utf8Bin),
             "IF" => If,
-            "GREATEST" => Greatest,
-            "LEAST" => Least,
+            "GREATEST" => Greatest(Collation::Utf8Bin),
+            "LEAST" => Least(Collation::Utf8Bin),
             "NOW" | "CURRENT_TIMESTAMP" | "SYSDATE" | "LOCALTIME" | "LOCALTIMESTAMP" | "UTC_TIMESTAMP" => Now,
             "CURDATE" | "CURRENT_DATE" | "UTC_DATE" => CurDate,
             "UNIX_TIMESTAMP" => UnixTimestamp,
@@ -108,10 +111,11 @@ impl Func {
             "SIGN" => Sign,
             "SQRT" => Sqrt,
             "POW" | "POWER" => Pow,
-            "LOCATE" | "INSTR" | "POSITION" => Locate,
+            "LOCATE" | "INSTR" | "POSITION" => Locate(Collation::Utf8Bin),
             "ASCII" => Ascii,
             "FOUND_ROWS" => FoundRows,
             "ROW_COUNT" => RowCount,
+            "WEIGHT_STRING" => WeightString(Collation::Utf8Bin),
             _ => return None,
         })
     }
@@ -124,7 +128,8 @@ pub enum Expr {
     Lit(Value),
     /// Statement parameter (0-based).
     Param(usize),
-    Cmp(Box<Expr>, CmpOp, Box<Expr>),
+    /// Comparisons carry the collation two text values compare under.
+    Cmp(Box<Expr>, CmpOp, Box<Expr>, Collation),
     Arith(Box<Expr>, Arith, Box<Expr>),
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
@@ -133,14 +138,20 @@ pub enum Expr {
     Neg(Box<Expr>),
     IsNull(Box<Expr>, bool),
     IsTrue(Box<Expr>, bool, bool),
-    InList(Box<Expr>, Vec<Expr>, bool),
-    Between(Box<Expr>, Box<Expr>, Box<Expr>, bool),
-    Like(Box<Expr>, Box<Expr>, bool),
+    InList(Box<Expr>, Vec<Expr>, bool, Collation),
+    Between(Box<Expr>, Box<Expr>, Box<Expr>, bool, Collation),
+    Like(Box<Expr>, Box<Expr>, bool, Collation),
     Func(Func, Vec<Expr>),
-    Case(Option<Box<Expr>>, Vec<(Expr, Expr)>, Option<Box<Expr>>),
+    /// CASE [operand] WHEN ...: the collation compares operand and WHENs.
+    Case(Option<Box<Expr>>, Vec<(Expr, Expr)>, Option<Box<Expr>>, Collation),
     Cast(Box<Expr>, CastTo),
     /// Session/system variable rendered at plan time.
     Var(String),
+    /// `e COLLATE name`: the value of `e`, whose collation is now explicit.
+    Collate(Box<Expr>, Collation),
+    /// Sort / group key of a value: under a case-insensitive collation a
+    /// text value becomes its comparison key (binary), anything else stays.
+    Key(Box<Expr>, Collation),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,18 +294,22 @@ impl Expr {
             Expr::Col(_) => false,
             Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => true,
             Expr::Func(f, args) => !matches!(f, Func::Rand) && args.iter().all(|a| a.is_constant()),
-            Expr::Cmp(a, _, b)
+            Expr::Cmp(a, _, b, _)
             | Expr::Arith(a, _, b)
             | Expr::And(a, b)
             | Expr::Or(a, b)
             | Expr::Xor(a, b)
-            | Expr::Like(a, b, _) => a.is_constant() && b.is_constant(),
-            Expr::Not(a) | Expr::Neg(a) | Expr::IsNull(a, _) | Expr::IsTrue(a, _, _) | Expr::Cast(a, _) => {
-                a.is_constant()
-            }
-            Expr::InList(a, l, _) => a.is_constant() && l.iter().all(|x| x.is_constant()),
-            Expr::Between(a, b, c, _) => a.is_constant() && b.is_constant() && c.is_constant(),
-            Expr::Case(o, w, e) => {
+            | Expr::Like(a, b, _, _) => a.is_constant() && b.is_constant(),
+            Expr::Not(a)
+            | Expr::Neg(a)
+            | Expr::IsNull(a, _)
+            | Expr::IsTrue(a, _, _)
+            | Expr::Cast(a, _)
+            | Expr::Collate(a, _)
+            | Expr::Key(a, _) => a.is_constant(),
+            Expr::InList(a, l, _, _) => a.is_constant() && l.iter().all(|x| x.is_constant()),
+            Expr::Between(a, b, c, _, _) => a.is_constant() && b.is_constant() && c.is_constant(),
+            Expr::Case(o, w, e, _) => {
                 o.as_ref().is_none_or(|x| x.is_constant())
                     && w.iter().all(|(a, b)| a.is_constant() && b.is_constant())
                     && e.as_ref().is_none_or(|x| x.is_constant())
@@ -309,7 +324,7 @@ impl Expr {
         match self {
             Expr::Col(i) => map(*i),
             Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => self.clone(),
-            Expr::Cmp(a, o, b) => Expr::Cmp(r(a), *o, r(b)),
+            Expr::Cmp(a, o, b, c) => Expr::Cmp(r(a), *o, r(b), *c),
             Expr::Arith(a, o, b) => Expr::Arith(r(a), *o, r(b)),
             Expr::And(a, b) => Expr::And(r(a), r(b)),
             Expr::Or(a, b) => Expr::Or(r(a), r(b)),
@@ -318,16 +333,19 @@ impl Expr {
             Expr::Neg(a) => Expr::Neg(r(a)),
             Expr::IsNull(a, n) => Expr::IsNull(r(a), *n),
             Expr::IsTrue(a, t, n) => Expr::IsTrue(r(a), *t, *n),
-            Expr::InList(a, l, n) => Expr::InList(r(a), l.iter().map(|x| x.remap(map)).collect(), *n),
-            Expr::Between(a, b, c, n) => Expr::Between(r(a), r(b), r(c), *n),
-            Expr::Like(a, b, n) => Expr::Like(r(a), r(b), *n),
+            Expr::InList(a, l, n, c) => Expr::InList(r(a), l.iter().map(|x| x.remap(map)).collect(), *n, *c),
+            Expr::Between(a, b, c, n, k) => Expr::Between(r(a), r(b), r(c), *n, *k),
+            Expr::Like(a, b, n, c) => Expr::Like(r(a), r(b), *n, *c),
             Expr::Func(f, args) => Expr::Func(*f, args.iter().map(|x| x.remap(map)).collect()),
-            Expr::Case(o, w, e) => Expr::Case(
+            Expr::Case(o, w, e, c) => Expr::Case(
                 o.as_ref().map(|x| r(x)),
                 w.iter().map(|(a, b)| (a.remap(map), b.remap(map))).collect(),
                 e.as_ref().map(|x| r(x)),
+                *c,
             ),
             Expr::Cast(a, t) => Expr::Cast(r(a), *t),
+            Expr::Collate(a, c) => Expr::Collate(r(a), *c),
+            Expr::Key(a, c) => Expr::Key(r(a), *c),
         }
     }
 
@@ -335,29 +353,33 @@ impl Expr {
         match self {
             Expr::Col(i) => out.push(*i),
             Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => {}
-            Expr::Cmp(a, _, b)
+            Expr::Cmp(a, _, b, _)
             | Expr::Arith(a, _, b)
             | Expr::And(a, b)
             | Expr::Or(a, b)
             | Expr::Xor(a, b)
-            | Expr::Like(a, b, _) => {
+            | Expr::Like(a, b, _, _) => {
                 a.columns(out);
                 b.columns(out);
             }
-            Expr::Not(a) | Expr::Neg(a) | Expr::IsNull(a, _) | Expr::IsTrue(a, _, _) | Expr::Cast(a, _) => {
-                a.columns(out)
-            }
-            Expr::InList(a, l, _) => {
+            Expr::Not(a)
+            | Expr::Neg(a)
+            | Expr::IsNull(a, _)
+            | Expr::IsTrue(a, _, _)
+            | Expr::Cast(a, _)
+            | Expr::Collate(a, _)
+            | Expr::Key(a, _) => a.columns(out),
+            Expr::InList(a, l, _, _) => {
                 a.columns(out);
                 l.iter().for_each(|x| x.columns(out));
             }
-            Expr::Between(a, b, c, _) => {
+            Expr::Between(a, b, c, _, _) => {
                 a.columns(out);
                 b.columns(out);
                 c.columns(out);
             }
             Expr::Func(_, args) => args.iter().for_each(|x| x.columns(out)),
-            Expr::Case(o, w, e) => {
+            Expr::Case(o, w, e, _) => {
                 if let Some(o) = o {
                     o.columns(out);
                 }
@@ -382,16 +404,16 @@ impl Expr {
                 .cloned()
                 .ok_or_else(|| SqlError::new(1210, "HY000", "Incorrect arguments to mysqld_stmt_execute"))?,
             Expr::Var(name) => Value::str(name),
-            Expr::Cmp(a, op, b) => {
+            Expr::Cmp(a, op, b, coll) => {
                 let (x, y) = (a.eval(row, cx)?, b.eval(row, cx)?);
                 if *op == CmpOp::NullSafeEq {
                     return Ok(Value::Int(match (x.is_null(), y.is_null()) {
                         (true, true) => 1,
                         (true, false) | (false, true) => 0,
-                        _ => (compare(&x, &y) == Some(Ordering::Equal)) as i64,
+                        _ => (compare_coll(&x, &y, *coll) == Some(Ordering::Equal)) as i64,
                     }));
                 }
-                bool_val(compare(&x, &y).map(|o| match op {
+                bool_val(compare_coll(&x, &y, *coll).map(|o| match op {
                     CmpOp::Eq => o == Ordering::Equal,
                     CmpOp::NotEq => o != Ordering::Equal,
                     CmpOp::Lt => o == Ordering::Less,
@@ -458,7 +480,7 @@ impl Expr {
                 let t = truth(&a.eval(row, cx)?);
                 Value::Int(((t == Some(*want)) != *negated) as i64)
             }
-            Expr::InList(a, list, negated) => {
+            Expr::InList(a, list, negated, coll) => {
                 let x = a.eval(row, cx)?;
                 if x.is_null() {
                     return Ok(Value::Null);
@@ -466,7 +488,7 @@ impl Expr {
                 let mut saw_null = false;
                 for e in list {
                     let y = e.eval(row, cx)?;
-                    match compare(&x, &y) {
+                    match compare_coll(&x, &y, *coll) {
                         Some(Ordering::Equal) => return Ok(Value::Int((!negated) as i64)),
                         None => saw_null = true,
                         _ => {}
@@ -478,25 +500,31 @@ impl Expr {
                     Value::Int(*negated as i64)
                 }
             }
-            Expr::Between(a, lo, hi, negated) => {
+            Expr::Between(a, lo, hi, negated, coll) => {
                 let x = a.eval(row, cx)?;
                 let (l, h) = (lo.eval(row, cx)?, hi.eval(row, cx)?);
-                let ge = compare(&x, &l).map(|o| o != Ordering::Less);
-                let le = compare(&x, &h).map(|o| o != Ordering::Greater);
+                let ge = compare_coll(&x, &l, *coll).map(|o| o != Ordering::Less);
+                let le = compare_coll(&x, &h, *coll).map(|o| o != Ordering::Greater);
                 bool_val(match (ge, le) {
                     (Some(p), Some(q)) => Some((p && q) != *negated),
                     (Some(false), _) | (_, Some(false)) => Some(*negated),
                     _ => None,
                 })
             }
-            Expr::Like(a, p, negated) => {
+            Expr::Like(a, p, negated, coll) => {
                 let (x, y) = (a.eval(row, cx)?, p.eval(row, cx)?);
+                // A binary string makes the match byte by byte.
+                let coll = if matches!(x, Value::Bin(_)) || matches!(y, Value::Bin(_)) {
+                    Collation::Binary
+                } else {
+                    *coll
+                };
                 match (text(&x), text(&y)) {
-                    (Some(s), Some(p)) => Value::Int((like_match(&s, &p) != *negated) as i64),
+                    (Some(s), Some(p)) => Value::Int((coll.like(&s, &p) != *negated) as i64),
                     _ => Value::Null,
                 }
             }
-            Expr::Case(operand, whens, els) => {
+            Expr::Case(operand, whens, els, coll) => {
                 let base = match operand {
                     Some(o) => Some(o.eval(row, cx)?),
                     None => None,
@@ -504,7 +532,7 @@ impl Expr {
                 for (w, r) in whens {
                     let c = w.eval(row, cx)?;
                     let hit = match &base {
-                        Some(b) => compare(b, &c) == Some(Ordering::Equal),
+                        Some(b) => compare_coll(b, &c, *coll) == Some(Ordering::Equal),
                         None => truth(&c) == Some(true),
                     };
                     if hit {
@@ -518,6 +546,16 @@ impl Expr {
             }
             Expr::Cast(a, to) => cast(a.eval(row, cx)?, *to)?,
             Expr::Func(f, args) => eval_func(*f, args, row, cx)?,
+            Expr::Collate(a, _) => match a.eval(row, cx)? {
+                v @ (Value::Int(_) | Value::UInt(_) | Value::Float(_) | Value::Decimal(_)) => {
+                    Value::Str(v.to_text().unwrap_or_default())
+                }
+                v => v,
+            },
+            Expr::Key(a, coll) => match a.eval(row, cx)? {
+                Value::Str(b) if coll.is_ci() => Value::Bin(coll.key(&b)),
+                v => v,
+            },
         })
     }
 
@@ -731,9 +769,9 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
                 v
             }
         }
-        NullIf => {
+        NullIf(coll) => {
             let (a, b) = (arg(0)?, arg(1)?);
-            if compare(&a, &b) == Some(Ordering::Equal) {
+            if compare_coll(&a, &b, coll) == Some(Ordering::Equal) {
                 Value::Null
             } else {
                 a
@@ -746,15 +784,16 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
                 arg(2)?
             }
         }
-        Greatest | Least => {
+        Greatest(coll) | Least(coll) => {
             let vals = all()?;
             if vals.iter().any(|v| v.is_null()) {
                 return Ok(Value::Null);
             }
+            let greatest = matches!(f, Greatest(_));
             let mut best = vals[0].clone();
             for v in &vals[1..] {
-                let o = compare(v, &best).unwrap_or(Ordering::Equal);
-                if (f == Greatest && o == Ordering::Greater) || (f == Least && o == Ordering::Less) {
+                let o = compare_coll(v, &best, coll).unwrap_or(Ordering::Equal);
+                if (greatest && o == Ordering::Greater) || (!greatest && o == Ordering::Less) {
                     best = v.clone();
                 }
             }
@@ -848,17 +887,18 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             (Some(x), Some(y)) => Value::Float(x.powf(y)),
             _ => Value::Null,
         },
-        Locate => {
+        Locate(coll) => {
             let (a, b) = (arg(0)?, arg(1)?);
             if a.is_null() || b.is_null() {
                 return Ok(Value::Null);
             }
-            let (needle, hay) = (text_str(&a), text_str(&b));
-            Value::Int(
-                hay.find(&needle)
-                    .map(|i| hay[..i].chars().count() as i64 + 1)
-                    .unwrap_or(0),
-            )
+            let coll = if matches!(a, Value::Bin(_)) || matches!(b, Value::Bin(_)) {
+                Collation::Binary
+            } else {
+                coll
+            };
+            let (needle, hay) = (a.to_text().unwrap_or_default(), b.to_text().unwrap_or_default());
+            Value::Int(coll.locate(&needle, &hay))
         }
         Ascii => match text(&arg(0)?) {
             Some(b) => Value::Int(b.first().copied().unwrap_or(0) as i64),
@@ -866,6 +906,11 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
         },
         FoundRows => Value::UInt(cx.found_rows),
         RowCount => Value::Int(cx.row_count),
+        WeightString(coll) => match arg(0)? {
+            Value::Null => Value::Null,
+            Value::Bin(b) => Value::Bin(b),
+            v => Value::Bin(coll.weight_string(&v.to_text().unwrap_or_default())),
+        },
     })
 }
 
@@ -952,13 +997,15 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
             }
         }
         Expr::Neg(a) => infer(a, input, params),
+        Expr::Collate(a, _) => infer(a, input, params),
+        Expr::Key(a, _) => infer(a, input, params),
         Expr::Cast(_, to) => ExprType::of(match to {
             CastTo::Signed | CastTo::Unsigned => C::LongLong,
             CastTo::Double => C::Double,
             CastTo::Decimal(_) => C::NewDecimal,
             _ => C::VarString,
         }),
-        Expr::Case(_, w, e) => w
+        Expr::Case(_, w, e, _) => w
             .first()
             .map(|(_, r)| infer(r, input, params))
             .or_else(|| e.as_ref().map(|x| infer(x, input, params)))
@@ -966,10 +1013,15 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
         Expr::Func(f, args) => {
             use Func::*;
             match f {
-                Length | CharLength | ConnectionId | LastInsertId | UnixTimestamp | Locate | Ascii | Sign
+                Length | CharLength | ConnectionId | LastInsertId | UnixTimestamp | Locate(_) | Ascii | Sign
                 | FoundRows | RowCount => ExprType::of(C::LongLong),
                 Ceil | Floor => ExprType::of(C::LongLong),
-                Abs | Round | Mod | Greatest | Least | Coalesce | IfNull | NullIf => args
+                WeightString(_) => {
+                    let mut t = ExprType::of(C::VarString);
+                    t.sql = Some(SqlType::new(BaseType::VarBinary));
+                    t
+                }
+                Abs | Round | Mod | Greatest(_) | Least(_) | Coalesce | IfNull | NullIf(_) => args
                     .first()
                     .map(|a| infer(a, input, params))
                     .unwrap_or_else(|| ExprType::of(C::VarString)),
@@ -1089,6 +1141,7 @@ mod tests {
             Box::new(Expr::Lit(Value::Int(3))),
             vec![Expr::Lit(Value::Int(1)), null],
             false,
+            Collation::Utf8Bin,
         );
         assert_eq!(inl.eval(&[], &c).unwrap(), Value::Null);
     }

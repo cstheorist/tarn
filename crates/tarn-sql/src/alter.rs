@@ -108,6 +108,12 @@ pub enum AlterOp {
     Comment(String),
     /// ENGINE = memtx | vinyl
     Engine(crate::catalog::Engine),
+    /// [DEFAULT] CHARSET / COLLATE: the table's default collation; with
+    /// `convert` (CONVERT TO CHARACTER SET ...) every text column's too.
+    TableCollation {
+        collation: String,
+        convert: bool,
+    },
     /// ADD / DROP PRIMARY KEY: the primary key decides where rows live
     PrimaryKey,
     /// Accepted without effect (ENGINE, ALGORITHM, LOCK, DISABLE KEYS, ...)
@@ -735,8 +741,21 @@ fn alteration(sql: &str, spec: &[Tok], ctx: &PlanCtx, out: &mut Vec<AlterOp>) ->
                     cs
                 )));
             }
-            out.push(AlterOp::Ignored);
+            match table_collation(spec)? {
+                Some(collation) => out.push(AlterOp::TableCollation {
+                    collation,
+                    convert: true,
+                }),
+                None => out.push(AlterOp::Ignored),
+            }
         }
+        "DEFAULT" | "CHARACTER" | "CHARSET" | "COLLATE" if !c.peek_kw_at(1, "KEYS") => match table_collation(spec)? {
+            Some(collation) => out.push(AlterOp::TableCollation {
+                collation,
+                convert: false,
+            }),
+            None => out.push(AlterOp::Ignored),
+        },
         "DEFAULT" | "CHARACTER" | "CHARSET" | "COLLATE" | "ROW_FORMAT" | "KEY_BLOCK_SIZE" | "AVG_ROW_LENGTH"
         | "CHECKSUM" | "PAGE_CHECKSUM" | "COMPRESSION" | "DELAY_KEY_WRITE" | "ENCRYPTION" | "INSERT_METHOD"
         | "MAX_ROWS" | "MIN_ROWS" | "PACK_KEYS" | "STATS_AUTO_RECALC" | "STATS_PERSISTENT" | "STATS_SAMPLE_PAGES"
@@ -759,6 +778,39 @@ fn alteration(sql: &str, spec: &[Tok], ctx: &PlanCtx, out: &mut Vec<AlterOp>) ->
 impl Cur<'_> {
     fn peek_kw_at(&self, k: usize, w: &str) -> bool {
         self.kw_at(k).as_deref() == Some(w)
+    }
+}
+
+/// The collation table options in `spec` name: `[DEFAULT] COLLATE [=] co`,
+/// else the default of `[DEFAULT] {CHARACTER SET | CHARSET} [=] cs`.
+fn table_collation(spec: &[Tok]) -> SqlResult<Option<String>> {
+    let words: Vec<String> = spec
+        .iter()
+        .filter_map(|x| match &x.t {
+            T::Word(w) | T::Quoted(w) | T::Str(w) => Some(w.clone()),
+            _ => None,
+        })
+        .collect();
+    let after = |k: &str| -> Option<&String> {
+        let i = words.iter().position(|w| w.eq_ignore_ascii_case(k))?;
+        let j = if k.eq_ignore_ascii_case("CHARACTER") {
+            i + 2
+        } else {
+            i + 1
+        };
+        words.get(j)
+    };
+    if let Some(co) = after("COLLATE") {
+        return Ok(Some(planner::known_collation(co)?));
+    }
+    match after("CHARSET").or_else(|| after("CHARACTER")) {
+        Some(cs) if cs.eq_ignore_ascii_case("DEFAULT") => Ok(None),
+        Some(cs) => Ok(Some(
+            planner::charset_default_collation(cs)
+                .ok_or_else(|| SqlError::new(1115, "42000", format!("Unknown character set: '{}'", cs)))?
+                .to_string(),
+        )),
+        None => Ok(None),
     }
 }
 
@@ -1095,6 +1147,27 @@ fn type_change(old: &ColumnDef, new: &ColumnDef, field: u32, fill: &Value, pk: b
     Ok(checks)
 }
 
+/// A column's collation may change only where no index orders by it: an
+/// index (or the weight field kept for one) would have to be rebuilt in a
+/// new order from rewritten rows (1235).
+fn check_collation_change(def: &TableDef, i: usize, new: &ColumnDef) -> SqlResult<()> {
+    let cur = &def.columns[i];
+    if !cur.ty().is_text() && !new.ty().is_text() {
+        return Ok(());
+    }
+    let (a, b) = (cur.coll(), new.coll());
+    let ordered = cur.weight.is_some() || def.indexes.iter().any(|ix| ix.cols.contains(&i));
+    if a != b && ordered {
+        return Err(SqlError::unsupported(format!(
+            "changing the collation of indexed column '{}' from {} to {} (its index order would change)",
+            cur.name,
+            cur.collation_name(),
+            new.collation_name()
+        )));
+    }
+    Ok(())
+}
+
 /// Apply the alterations of `plan` to `def` (the current definition).
 pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlResult<Change> {
     let mut nd = def.clone();
@@ -1161,6 +1234,9 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                     return Err(SqlError::unsupported("adding an AUTO_INCREMENT column"));
                 }
                 let mut col = col.clone();
+                if col.ty().is_text() && col.collation.is_none() {
+                    col.collation = Some(nd.collation_name().to_string());
+                }
                 col.field = Some(next_field);
                 next_field += 1;
                 col.storage_nullable = Some(true);
@@ -1258,6 +1334,9 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 nd.indexes = kept;
                 let field = nd.columns[i].field.unwrap_or(i as u32);
                 nd.dropped.push(field);
+                if let Some(w) = nd.columns[i].weight {
+                    nd.dropped.push(w);
+                }
                 nd.columns.remove(i);
                 remap_columns(&mut nd, &|c| match c.cmp(&i) {
                     std::cmp::Ordering::Less => Some(c),
@@ -1300,6 +1379,11 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         "All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead",
                     ));
                 }
+                if col.ty().is_text() && col.collation.is_none() {
+                    // MODIFY / CHANGE without COLLATE: the table's default
+                    col.collation = Some(nd.collation_name().to_string());
+                }
+                check_collation_change(&nd, i, &col)?;
                 let field = cur.field.unwrap_or(i as u32);
                 let fill_v = cur
                     .fill
@@ -1310,6 +1394,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                     .unwrap_or(Value::Null);
                 checks.extend(type_change(&cur, &col, field + 1, &fill_v, pk)?);
                 col.field = Some(field);
+                col.weight = cur.weight;
                 // A field never becomes NOT NULL in the format again: the SQL
                 // layer enforces NOT NULL.
                 col.storage_nullable = Some(cur.storage_nullable() || col.nullable);
@@ -1582,6 +1667,20 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 nd.comment = c.clone();
                 changed = true;
             }
+            AlterOp::TableCollation { collation, convert } => {
+                if *convert {
+                    for i in 0..nd.columns.len() {
+                        if nd.columns[i].ty().is_text() {
+                            let mut col = nd.columns[i].clone();
+                            col.collation = Some(collation.clone());
+                            check_collation_change(&nd, i, &col)?;
+                            nd.columns[i].collation = Some(collation.clone());
+                        }
+                    }
+                }
+                nd.collation = Some(collation.clone());
+                changed = true;
+            }
             AlterOp::Engine(e) => {
                 if *e != nd.engine {
                     return Err(SqlError::unsupported(format!(
@@ -1616,6 +1715,12 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         c.auto_increment = nd.auto_inc == Some(k);
     }
     nd.resolve_types()?;
+    // Case-insensitive columns in an index need weight fields: a column
+    // added by this statement gets one (its older rows end before it and
+    // take the weight of its fill); an existing column without one would
+    // need every row rewritten (1235).
+    let old_width = def.layout.width as u32;
+    nd.assign_weight_fields(&|c| c.field.is_some_and(|f| f >= old_width))?;
     catalog::validate(&nd)?;
     // Storage: format and indexes, by difference.
     let old_format = def.lua_format();
@@ -1641,18 +1746,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 id: ix.id,
                 name: ix.name.clone(),
                 unique: ix.unique,
-                parts: ix
-                    .cols
-                    .iter()
-                    .map(|&c| {
-                        let col = &nd.columns[c];
-                        (
-                            nd.layout.col_field[c] as u32 + 1,
-                            col.ty().tarantool_type().to_string(),
-                            col.storage_nullable(),
-                        )
-                    })
-                    .collect(),
+                parts: nd.index_part_fields(ix),
             }),
         }
     }
@@ -1815,6 +1909,8 @@ mod tests {
             catalog: &c0,
             db: Some("db"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let Stmt::CreateTable { def, .. } = crate::planner::plan(sql, &ctx).unwrap() else {
             panic!("not a CREATE TABLE")
@@ -1831,6 +1927,8 @@ mod tests {
             catalog: cat,
             db: Some("db"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let mut v = plan(sql, &ctx).unwrap().expect("a schema change");
         assert_eq!(v.len(), 1);
@@ -1842,6 +1940,84 @@ mod tests {
     }
 
     const T: &str = "CREATE TABLE t (id INT PRIMARY KEY, a INT, s VARCHAR(10), d DECIMAL(6,2), KEY ka (a))";
+
+    #[test]
+    fn collations_and_weight_fields() {
+        // issue #13: a case-insensitive column in an index has a weight field
+        let (def, cat) = table(
+            "CREATE TABLE t (id INT PRIMARY KEY, h VARCHAR(10), n VARCHAR(10), b VARCHAR(10) COLLATE utf8mb4_bin, \
+             UNIQUE KEY uh (h, id)) DEFAULT CHARSET=utf8mb4",
+        );
+        assert_eq!(def.collation.as_deref(), Some("utf8mb4_general_ci"));
+        assert_eq!(def.columns[1].weight, Some(5)); // after the 4 columns and bucket_id
+        assert_eq!(def.columns[2].weight, None); // not in an index
+        assert_eq!(def.columns[3].collation.as_deref(), Some("utf8mb4_bin"));
+        // an existing case-insensitive column cannot get an index: no weights
+        assert_eq!(
+            alter(&def, &cat, "ALTER TABLE t ADD INDEX ix (n)").unwrap_err().code,
+            1235
+        );
+        // nor change collation while indexed; unindexed it may
+        assert_eq!(
+            alter(&def, &cat, "ALTER TABLE t MODIFY h VARCHAR(10) COLLATE utf8mb4_bin")
+                .unwrap_err()
+                .code,
+            1235
+        );
+        let ch = alter(
+            &def,
+            &cat,
+            "ALTER TABLE t MODIFY n VARCHAR(10) COLLATE utf8mb4_unicode_ci",
+        )
+        .unwrap();
+        assert_eq!(ch.def.columns[2].collation.as_deref(), Some("utf8mb4_unicode_ci"));
+        assert!(ch.builds.is_empty());
+        // MODIFY without COLLATE takes the table's default: same as h's
+        assert!(alter(&def, &cat, "ALTER TABLE t MODIFY h VARCHAR(20)").is_ok());
+        // a column added with its index gets a weight field
+        let ch = alter(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD COLUMN e VARCHAR(10) DEFAULT 'X', ADD UNIQUE KEY ue (e, id)",
+        )
+        .unwrap();
+        let e = ch.def.col_index("e").unwrap();
+        let w = ch.def.columns[e].weight.unwrap() as usize;
+        assert_eq!(w, 7); // field 6 is the new column
+        let b = ch.builds.iter().find(|b| b.name == "ue").unwrap();
+        assert_eq!(b.parts[0], (w as u32 + 1, "varbinary".to_string(), true));
+        let (n, pad) = ch.def.update_pad().unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(pad[w - 5], Value::Bin(ch.def.layout.colls[e].key(b"X")));
+        // dropping it drops its weight field too
+        let ch2 = apply(
+            &ch.def,
+            &plan1("ALTER TABLE t DROP COLUMN h", &cat),
+            &cat,
+            "2026-10-25 12:00:00",
+        )
+        .unwrap();
+        assert!(ch2.def.dropped.contains(&1) && ch2.def.dropped.contains(&5));
+        // CONVERT TO changes every text column: refused for an indexed one
+        assert_eq!(
+            alter(
+                &def,
+                &cat,
+                "ALTER TABLE t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            )
+            .unwrap_err()
+            .code,
+            1235
+        );
+        let ch = alter(
+            &def,
+            &cat,
+            "ALTER TABLE t DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        )
+        .unwrap();
+        assert_eq!(ch.def.collation.as_deref(), Some("utf8mb4_unicode_ci"));
+        assert_eq!(ch.def.columns[1].collation.as_deref(), Some("utf8mb4_general_ci"));
+    }
 
     #[test]
     fn parses_mysql_alterations() {
@@ -1877,7 +2053,7 @@ mod tests {
                 "IndexVisibility",
                 "DropIndex",
                 "Ignored",
-                "Ignored",
+                "TableCollation",
                 "Comment",
                 "AutoIncrement",
                 "Ignored",
@@ -1892,6 +2068,8 @@ mod tests {
             catalog: &cat,
             db: Some("db"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         let v = plan("RENAME TABLE t TO t2, other.x TO db.y", &ctx).unwrap().unwrap();
         assert_eq!((v.len(), v[1].db.as_str(), v[1].table.as_str()), (2, "other", "x"));
@@ -2100,6 +2278,8 @@ mod tests {
             catalog: &cat,
             db: Some("db"),
             params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
         };
         assert_eq!(plan("ALTER TABLE t ENGINE=Falcon", &ctx).unwrap_err().code, 1286);
     }

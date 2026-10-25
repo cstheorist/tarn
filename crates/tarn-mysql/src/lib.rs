@@ -92,12 +92,14 @@ pub struct PrepareInfo {
 /// SQL engine behind one client connection.
 pub trait Backend: Send {
     /// `found_rows`: the client set CLIENT_FOUND_ROWS (UPDATE reports the
-    /// rows it matched, not those it changed).
+    /// rows it matched, not those it changed). `collation`: the character
+    /// set and collation id the client asked for in its handshake response.
     fn on_connect(
         &mut self,
         user: &str,
         database: Option<&str>,
         found_rows: bool,
+        collation: u8,
     ) -> impl Future<Output = SqlResult<()>> + Send;
     fn on_query(&mut self, sql: &str) -> impl Future<Output = SqlResult<QueryResult>> + Send;
     fn on_prepare(&mut self, stmt_id: u32, sql: &str) -> impl Future<Output = SqlResult<PrepareInfo>> + Send;
@@ -133,6 +135,8 @@ struct Conn<B> {
     next_stmt: u32,
     user: String,
     db: Option<String>,
+    /// Collation id from the handshake response.
+    collation: u8,
     started: std::time::Instant,
     questions: u64,
     /// Current packet size limit: MAX_PREAUTH_PACKET until authenticated.
@@ -436,7 +440,12 @@ impl<B: Backend> Conn<B> {
                 return Ok(false);
             }
         }
-        match self.backend.on_connect(&user, db.as_deref(), self.found_rows()).await {
+        self.collation = hs.collation;
+        match self
+            .backend
+            .on_connect(&user, db.as_deref(), self.found_rows(), hs.collation)
+            .await
+        {
             Ok(()) => {
                 self.user = user;
                 self.db = db;
@@ -496,10 +505,14 @@ impl<B: Backend> Conn<B> {
         self.stmts.clear();
         self.backend.on_disconnect().await;
         let (user, db) = (self.user.clone(), self.db.clone());
-        let found_rows = self.found_rows();
-        if let Err(e) = self.backend.on_connect(&user, db.as_deref(), found_rows).await {
+        let (found_rows, collation) = (self.found_rows(), self.collation);
+        if let Err(e) = self
+            .backend
+            .on_connect(&user, db.as_deref(), found_rows, collation)
+            .await
+        {
             tracing::debug!("reset connection: reconnect with db {:?} failed: {}", db, e);
-            let _ = self.backend.on_connect(&user, None, found_rows).await;
+            let _ = self.backend.on_connect(&user, None, found_rows, collation).await;
         }
     }
 
@@ -734,6 +747,7 @@ pub async fn serve_connection<B: Backend>(
         next_stmt: 1,
         user: String::new(),
         db: None,
+        collation: 0,
         started: std::time::Instant::now(),
         questions: 0,
         max_packet: MAX_PREAUTH_PACKET,

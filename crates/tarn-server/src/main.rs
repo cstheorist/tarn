@@ -40,9 +40,16 @@ fn convert(o: Output) -> QueryResult {
 }
 
 impl Backend for Conn {
-    async fn on_connect(&mut self, user: &str, database: Option<&str>, found_rows: bool) -> SqlResult<()> {
+    async fn on_connect(
+        &mut self,
+        user: &str,
+        database: Option<&str>,
+        found_rows: bool,
+        collation: u8,
+    ) -> SqlResult<()> {
         self.s.user = user.to_string();
         self.s.found_rows_flag = found_rows;
+        self.s.set_client_collation(collation);
         if let Some(db) = database {
             if !db.is_empty() {
                 self.s.use_db_fresh(db).await?;
@@ -97,6 +104,7 @@ struct Args {
     isolation: Option<String>,
     lock_wait_timeout: Option<f64>,
     default_engine: Option<String>,
+    default_collation: Option<String>,
 }
 
 fn usage() -> ! {
@@ -104,7 +112,7 @@ fn usage() -> ! {
         "usage: tarn-server (--config FILE | --shard ADDR[,ADDR..] ...) [--listen HOST:PORT] \
          [--threads N] [--user NAME:PASSWORD]... [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N] \
          [--isolation READ-COMMITTED|REPEATABLE-READ|SERIALIZABLE] [--lock-wait-timeout SECONDS] \
-         [--default-engine memtx|vinyl]"
+         [--default-engine memtx|vinyl] [--default-collation NAME]"
     );
     std::process::exit(2)
 }
@@ -123,6 +131,7 @@ fn parse_args() -> Args {
         isolation: None,
         lock_wait_timeout: None,
         default_engine: None,
+        default_collation: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -144,6 +153,7 @@ fn parse_args() -> Args {
             "--isolation" => a.isolation = Some(val()),
             "--lock-wait-timeout" => a.lock_wait_timeout = Some(val().parse().unwrap_or_else(|_| usage())),
             "--default-engine" => a.default_engine = Some(val()),
+            "--default-collation" => a.default_collation = Some(val()),
             "-h" | "--help" => usage(),
             _ => {
                 eprintln!("unknown argument {arg}");
@@ -207,6 +217,13 @@ fn load_config(a: &Args) -> ClusterConfig {
             eprintln!("--default-engine: memtx or vinyl, not {e}");
             std::process::exit(2)
         });
+    }
+    if let Some(c) = &a.default_collation {
+        cfg.default_collation = c.to_ascii_lowercase();
+    }
+    if tarn_sql::collation::Collation::from_name(&cfg.default_collation).is_none() {
+        eprintln!("unknown default collation {}", cfg.default_collation);
+        std::process::exit(2)
     }
     cfg
 }

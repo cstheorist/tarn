@@ -170,6 +170,8 @@ tarn-server (--config cluster.json | --shard ADDR[,ADDR..] ...)
             [--node-id N]             distinguishes servers in transaction ids (default: pid)
             [--isolation LEVEL]       default level of new sessions (default SERIALIZABLE)
             [--lock-wait-timeout S]   default innodb_lock_wait_timeout, seconds (default 50)
+            [--default-engine E]      memtx or vinyl: tables without ENGINE= (default memtx)
+            [--default-collation C]   collation of text in tables that name none (default utf8mb4_bin)
 ```
 
 `--shard` takes the comma-separated replica addresses of one shard and may
@@ -191,9 +193,17 @@ options:
   "isolation": "SERIALIZABLE",
   "lock_wait_timeout": 50,
   "deadlock_interval": 1.0,
-  "ddl_job_stale": 30
+  "ddl_job_stale": 30,
+  "default_collation": "utf8mb4_bin"
 }
 ```
+
+`default_collation` (`--default-collation`) is the collation of text
+columns in tables that declare none (`@@collation_server`); MySQL's own
+default is case-insensitive (`utf8mb4_general_ci` in MariaDB,
+`utf8mb4_0900_ai_ci` in MySQL 8). Like the default engine it is read when a
+table is created, so give every SQL server the same one. Tables keep the
+collations they were created with.
 
 Replica addresses may be `unix/:/path/to/socket`. Logging uses
 `tracing` filters from `TARN_LOG` (default `info`), e.g.
