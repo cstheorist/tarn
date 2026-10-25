@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `information_schema.TABLES`, read from the catalog, and `SELECT ... INTO
+  @var`: the query at the top of every MySQL 8 dump and the ones Rails' MySQL
+  adapter sends (`data_source_exists?`, `tables`, `table_comment`) used to
+  fail with 1146 ([#33](https://github.com/cstheorist/tarn/issues/33)).
 - Tables without a `PRIMARY KEY`, keyed as InnoDB keys them: by the first
   `UNIQUE` key with only `NOT NULL` columns, or else by a hidden row id that
   statements do not see ([#32](https://github.com/cstheorist/tarn/issues/32)).

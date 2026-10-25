@@ -314,6 +314,15 @@ async fn fetch_stored_from(
     resume: Option<(&[Value], bool)>,
 ) -> SqlResult<Vec<Row>> {
     let t = &ta.table;
+    if t.is_virtual() {
+        if resume.is_some() {
+            return Ok(Vec::new());
+        }
+        // A table another SQL server has just created shows up at once, as
+        // in SHOW TABLES.
+        cluster.refresh_if_newer().await?;
+        return Ok(crate::catalog::information_schema_rows(&cluster.catalog()));
+    }
     let limit = eval_limit(&ta.limit, cx)?.map(|l| l.min(u32::MAX as u64) as u32);
     let mut calls: Vec<Call> = Vec::new();
     let mut unique_point = false;
