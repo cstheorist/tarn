@@ -9,9 +9,12 @@
 --   TARN_MEMORY_MB     memtx memory (default 1024)
 --   TARN_VINYL_MEMORY_MB  vinyl in-memory level of the LSM trees (default 128)
 --   TARN_VINYL_CACHE_MB   vinyl tuple cache (default 128)
---   TARN_VINYL_READ_THREADS, TARN_VINYL_WRITE_THREADS, TARN_VINYL_PAGE_SIZE,
---   TARN_VINYL_RANGE_SIZE, TARN_VINYL_BLOOM_FPR   Tarantool's vinyl_* options
---                      of those names (its defaults when unset)
+--   TARN_VINYL_READ_THREADS  threads reading vinyl pages from disk (default:
+--                      the CPUs divided among TARN_HOST_INSTANCES, 1 to 8)
+--   TARN_HOST_INSTANCES storage instances sharing this machine (default 1)
+--   TARN_VINYL_WRITE_THREADS, TARN_VINYL_PAGE_SIZE, TARN_VINYL_RANGE_SIZE,
+--   TARN_VINYL_BLOOM_FPR   Tarantool's vinyl_* options of those names (its
+--                      defaults when unset)
 --   TARN_WAL_MODE      write | fsync | none (default write)
 --   TARN_IPROTO_THREADS (default 1)
 --   TARN_LISTEN_UNIX   optional Unix socket path to listen on as well
@@ -37,6 +40,19 @@ local replicas = json.decode(env('TARN_REPLICAS', '[]'))
 local peers = json.decode(env('TARN_PEERS', '{}'))
 fio.mktree(workdir)
 
+-- Vinyl reads a page that misses its cache on one of vinyl_read_threads,
+-- in turn; Tarantool's default of one thread queues every such read behind
+-- the last. The readers wait on the disk and decompress pages: give them the
+-- machine's CPUs, shared among the storage instances on it, at least 1 and at
+-- most 8 (past that the transaction thread is the limit).
+local function default_read_threads()
+    local ffi = require('ffi')
+    pcall(ffi.cdef, 'long sysconf(int name);')
+    local cpus = tonumber(ffi.C.sysconf(jit.os == 'OSX' and 58 or 84)) -- _SC_NPROCESSORS_ONLN
+    local per = math.floor(cpus / tonumber(env('TARN_HOST_INSTANCES', '1')))
+    return math.max(1, math.min(8, per))
+end
+
 local replicated = #replicas > 1
 -- Optionally also listen on a Unix socket (co-located SQL servers use it to
 -- skip the TCP stack).
@@ -51,7 +67,7 @@ box.cfg{
     memtx_use_mvcc_engine = true,
     vinyl_memory = tonumber(env('TARN_VINYL_MEMORY_MB', '128')) * 1024 * 1024,
     vinyl_cache = tonumber(env('TARN_VINYL_CACHE_MB', '128')) * 1024 * 1024,
-    vinyl_read_threads = tonumber(env('TARN_VINYL_READ_THREADS', '')),
+    vinyl_read_threads = tonumber(env('TARN_VINYL_READ_THREADS', '')) or default_read_threads(),
     vinyl_write_threads = tonumber(env('TARN_VINYL_WRITE_THREADS', '')),
     vinyl_page_size = tonumber(env('TARN_VINYL_PAGE_SIZE', '')),
     vinyl_range_size = tonumber(env('TARN_VINYL_RANGE_SIZE', '')),

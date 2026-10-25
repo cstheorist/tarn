@@ -127,6 +127,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Vinyl reads from disk on several threads by default
+  ([#74](https://github.com/cstheorist/tarn/issues/74)): a storage instance
+  sets `vinyl_read_threads` to the machine's CPUs divided by
+  `TARN_HOST_INSTANCES` (1 unless set; `scripts/cluster.sh` sets it), at
+  least 1 and at most 8, instead of Tarantool's single thread.
+  `TARN_VINYL_READ_THREADS` still overrides it. Point selects of a vinyl
+  table holding 13 times its cache went from 8.6k/s to 25.3k/s at 8 clients.
 - Schema changes run as jobs with one record per table on the first shard,
   instead of one at a time cluster-wide: an `ALTER TABLE` that builds an
   index on a large table no longer holds up DDL on other tables. A job
