@@ -307,6 +307,9 @@ end
 -- stream's transaction is rolled back.
 function tarn_commit_local(txid, writes, rpoints, rranges)
     local ok, res = pcall(function()
+        -- Without reads on this shard the coordinator sends no stream: the
+        -- commit is then its own local transaction.
+        if not box.is_in_txn() then box.begin(RW) end
         local h = reads_w_locked(txid, rpoints, rranges)
         if h then return conflict('read row locked by prepared transaction ' .. h) end
         local n = 0
@@ -363,7 +366,12 @@ local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] 
 -- TarnCommit!SnapshotRead), the scan waits while another transaction holds a
 -- W lock on anything it covers; scan and lock check run without a yield in
 -- between, so they observe one state. Returns {'ok', tuples}.
-function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset)
+local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
+
+function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin)
+    -- First request of a stream: start the stream's transaction here (it
+    -- stays open after the call because the request carries a stream id).
+    if begin == true and not box.is_in_txn() then box.begin(BEGIN_STREAM) end
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
@@ -374,7 +382,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
         local rows = {}
-        local skip = offset or 0
+        local skip = (offset ~= nil) and offset or 0   -- msgpack nil arrives as box.NULL
         if end_key == nil and (limit == nil or limit > 0) and skip == 0 then
             rows = idx:select(key, {iterator = it, limit = limit})
         else
@@ -490,6 +498,8 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
         return {'no', code, msg}
     end
     local ok, res = pcall(function()
+        -- Write-only participants are prepared outside any stream.
+        if not box.is_in_txn() then box.begin(RW) end
         local existing = box.space._tarn_part:get{txid}
         if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
             box.rollback()
