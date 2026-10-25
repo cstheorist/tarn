@@ -10,7 +10,8 @@
 -- names below match the actions of that spec.
 --
 -- System spaces (all synchronous when the shard is replicated):
---   _tarn_meta     key -> value                 (shard id, counters)
+--   _tarn_meta     key -> value                 (shard id, counters, DDL jobs
+--                                                and table holds)
 --   _tarn_catalog  table name -> definition     (written by DDL)
 --   _tarn_locks    R/W point locks and space locks of prepared txns;
 --                  W locks carry the intent (op + new tuple)
@@ -62,7 +63,8 @@ local M = {
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
-             stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0},
+             stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0,
+             creates = 0, drops = 0, truncates = 0, ddl_doomed = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -348,14 +350,45 @@ end
 local FENCE = {}
 local FENCE_STALE = true   -- rebuilt from _tarn_catalog before the next check
 
+-- Tables held by a TRUNCATE or DROP TABLE (see "CREATE TABLE, DROP TABLE and
+-- TRUNCATE" below). From its PREPARE to its APPLY on this shard, a TRUNCATE
+-- or DROP holds the whole table as a prepared transaction holds the rows it
+-- writes: reads that check W locks wait for it, and transactions that read
+-- the table fail validation. DDL_HELD[space_id] = what holds it (for
+-- messages). The holds are also stored ('hold:<space_id>' in _tarn_meta), so
+-- that they survive a restart or a leader change.
+local DDL_HELD, DDL_N = {}, 0
+-- A TRUNCATE or DROP applied here also fails the validation of the open
+-- stream transactions that read the table before it: memtx MVCC aborts the
+-- readers of a space that changes, vinyl only its writers.
+-- DOOMED[txn id] = {space_id = true}, set when one is applied.
+local DOOMED = {}
+-- Election term at the start of each open stream transaction (by txn id),
+-- recorded by the request that begins it (tarn_select with begin).
+local STREAM_TERM = {}
+
 local function fence_rebuild()
     local f = {}
     for _, t in box.space._tarn_catalog:pairs() do
         local sp = box.space[t.name]
         if sp ~= nil and t.def.ver ~= nil then f[sp.id] = t.def.ver end
     end
+    local held, n = {}, 0
+    for _, t in box.space._tarn_meta:pairs({'hold:'}, {iterator = 'GE'}) do
+        if t.key:sub(1, 5) ~= 'hold:' then break end
+        local sid = tonumber(t.key:sub(6))
+        if sid ~= nil and box.space[sid] ~= nil then
+            held[sid], n = t.value.label, n + 1
+            if (f[sid] or 0) < t.value.ver then f[sid] = t.value.ver end
+        end
+    end
     FENCE, FENCE_STALE = f, false
+    DDL_HELD, DDL_N = held, n
 end
+
+-- Rebuild the fences and the holds from storage before their next use (as
+-- after a restart or a leader change; tests).
+function M.stale_fences() FENCE_STALE = true end
 
 -- Like lk_fresh: in a separate fiber, so that a caller inside a transaction
 -- gets no read trackers on _tarn_catalog.
@@ -368,6 +401,53 @@ local function fence_fresh()
 end
 
 local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
+
+local function ddl_hold(sid, label)
+    if DDL_HELD[sid] == nil then DDL_N = DDL_N + 1 end
+    DDL_HELD[sid] = label
+end
+
+local function ddl_release(sid)
+    if DDL_HELD[sid] == nil then return end
+    DDL_HELD[sid] = nil
+    DDL_N = DDL_N - 1
+    M.unlock_cond:broadcast()
+end
+
+-- The open stream transactions may have read space `sid` before a TRUNCATE
+-- or DROP that is applied now: their validation fails if they did.
+local function doom_readers(sid)
+    for id in pairs(STREAM_TERM) do
+        local d = DOOMED[id]
+        if d == nil then d = {}; DOOMED[id] = d end
+        d[sid] = true
+    end
+end
+
+-- Why reads {points, ranges} of the current stream transaction fail
+-- validation because of a TRUNCATE or DROP TABLE, or nil: one holds a table
+-- they read, or one was applied to it since the stream began. Does not yield.
+local function reads_ddl_conflict(points, ranges)
+    if DDL_N == 0 and next(DOOMED) == nil then return nil end
+    local doomed = DOOMED[box.txn_id() or -1]
+    local function bad(sid)
+        if DDL_HELD[sid] ~= nil then return 'read a table held by ' .. DDL_HELD[sid] end
+        if doomed ~= nil and doomed[sid] then
+            M.stats.ddl_doomed = M.stats.ddl_doomed + 1
+            return 'read a table that a TRUNCATE or DROP TABLE changed since'
+        end
+        return nil
+    end
+    for _, r in ipairs(points or {}) do
+        local h = bad(r[1])
+        if h then return h end
+    end
+    for _, r in ipairs(ranges or {}) do
+        local h = bad(r[1])
+        if h then return h end
+    end
+    return nil
+end
 
 -- The writes of a transaction name, per table, the definition version they
 -- were encoded with: fence = {space_id, ver, space_id, ver, ...}. Returns
@@ -1047,14 +1127,15 @@ function tarn_lock(txid, keys, mode, opts)
                 return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
             end
             local skip = false
-            if point_w_locked(txid, sid, iid, key) then
+            -- (A table held by a TRUNCATE or DROP TABLE counts as W-locked.)
+            if point_w_locked(txid, sid, iid, key) or DDL_HELD[sid] ~= nil then
                 if opts.skip then
                     pl_release_key(txid, sid, iid, kb)
                     skip = true
                 elseif opts.nowait then
                     return pl_failed(txid, {'locked', 3572, NOWAIT_MSG})
                 else
-                    while point_w_locked(txid, sid, iid, key) do
+                    while point_w_locked(txid, sid, iid, key) or DDL_HELD[sid] ~= nil do
                         if clock.monotonic() > deadline then
                             M.stats.lock_timeouts = M.stats.lock_timeouts + 1
                             return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
@@ -1063,6 +1144,9 @@ function tarn_lock(txid, keys, mode, opts)
                         M.unlock_cond:wait(0.01)
                     end
                 end
+            end
+            if box.space[sid] == nil then   -- dropped while it waited
+                return {'error', 1146, 'no such space ' .. tostring(sid)}
             end
             if skip then
                 results[i] = false
@@ -1334,6 +1418,8 @@ local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plan
     if stale then return stale end
     local h = reads_w_locked(txid, rpoints, rranges)
     if h then return conflict('read row locked by prepared transaction ' .. h) end
+    h = reads_ddl_conflict(rpoints, rranges)
+    if h then return conflict(h) end
     h = writes_locked(txid, plans)
     if h then return conflict('row locked by prepared transaction ' .. h) end
     return nil
@@ -1375,15 +1461,12 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence)
     return res
 end
 
--- Election term at the start of each open stream transaction (by txn id),
--- recorded by the request that begins it (tarn_select with begin).
-local STREAM_TERM = {}
-
+-- (STREAM_TERM: see the definition fences above.)
 local function note_stream_term()
     local id = box.txn_id()
     if id == nil then return end
     STREAM_TERM[id] = box.info.election.term
-    local function forget() STREAM_TERM[id] = nil end
+    local function forget() STREAM_TERM[id] = nil; DOOMED[id] = nil end
     box.on_commit(forget)
     box.on_rollback(forget)
 end
@@ -1433,6 +1516,11 @@ function tarn_validate(txid, rpoints, rranges, cross, lock_gen)
     if h then
         if box.is_in_txn() then box.rollback() end
         return conflict('read row locked by prepared transaction ' .. h)
+    end
+    h = reads_ddl_conflict(rpoints, rranges)
+    if h then
+        if box.is_in_txn() then box.rollback() end
+        return conflict(h)
     end
     if box.is_in_txn() then box.commit() end
     pl_release_all(txid)
@@ -1496,7 +1584,7 @@ local function checked_read(scan, locked)
         if not ok then error(rows) end
         local h = atomic('SnapshotRead', function()
             if LK_STALE then return {'stale'} end
-            if NLOCK == 0 and LOG_SEQ == s0 then return nil end
+            if NLOCK == 0 and LOG_SEQ == s0 and DDL_N == 0 then return nil end
             return locked(rows, s0)
         end)
         if h == nil then return {OK, rows} end
@@ -1563,6 +1651,7 @@ end
 -- nil. Covered: from the start key to the end key, or to the last row
 -- returned when the limit cut the scan short.
 local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
+    if DDL_HELD[space_id] ~= nil then return DDL_HELD[space_id] end
     local lo, hi, h
     if (it == 'EQ' or it == 'REQ') and idx.unique and #key == #idx.parts then
         lo, hi = key, key
@@ -1618,7 +1707,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
         local rows = select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
-        if NLOCK == 0 then return {OK, rows} end
+        if NLOCK == 0 and DDL_N == 0 then return {OK, rows} end
         local h = select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, nil)
         if h == nil then return {OK, rows} end
         if clock.monotonic() > deadline then
@@ -1659,6 +1748,7 @@ local function keys_scan(idx, keys, limit)
 end
 
 local function keys_locked(space_id, index_id, idx, kd, keys, since)
+    if DDL_HELD[space_id] ~= nil then return DDL_HELD[space_id] end
     local nparts = #idx.parts
     for _, key in ipairs(keys) do
         local h
@@ -1696,7 +1786,7 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
         local rows = keys_scan(idx, keys, limit)
-        if NLOCK == 0 then return {OK, rows} end
+        if NLOCK == 0 and DDL_N == 0 then return {OK, rows} end
         local h = keys_locked(space_id, index_id, idx, nil, keys, nil)
         if h == nil then return {OK, rows} end
         if clock.monotonic() > deadline then
@@ -1901,6 +1991,8 @@ local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock
     -- readsOK: no W lock of another prepared txn on anything we read.
     local h = reads_w_locked(txid, rpoints, rranges)
     if h then return {1213, 'read row locked by ' .. h} end
+    h = reads_ddl_conflict(rpoints, rranges)
+    if h then return {1213, h} end
     -- writesOK
     h = writes_locked(txid, plans)
     if h then return {1213, 'write row locked by ' .. h} end
@@ -2477,15 +2569,16 @@ function M.start_recovery()
 end
 
 -------------------------------------------------------------------------------
--- DDL and catalog. Tarn broadcasts DDL to every shard.
+-- DDL and catalog
 -------------------------------------------------------------------------------
+-- SQL servers run CREATE TABLE, DROP TABLE, TRUNCATE and ALTER TABLE as jobs
+-- in steps on every shard (see "CREATE TABLE, DROP TABLE and TRUNCATE" and
+-- "Jobs" below). tarn_create_table, tarn_drop_table and tarn_truncate do it
+-- in one step, for SQL servers from before those jobs.
 
 -- def = {name=, engine=, format={{name=,type=,is_nullable=}}, indexes={{name=,
 --        unique=, parts={{field=,type=,is_nullable=,collation=}}}}, ...}
-function tarn_create_table(def)
-    if box.space[def.name] ~= nil then
-        return {'exists'}
-    end
+local function create_space(def)
     local s = box.schema.space.create(def.name, {
         id = def.id, engine = def.engine or 'memtx', format = def.format,
         is_sync = M.cfg.sync, if_not_exists = true})
@@ -2493,6 +2586,14 @@ function tarn_create_table(def)
         s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts,
                                   id = i - 1, if_not_exists = true})
     end
+    return s
+end
+
+function tarn_create_table(def)
+    if box.space[def.name] ~= nil then
+        return {'exists'}
+    end
+    local s = create_space(def)
     box.space._tarn_catalog:replace{def.name, def}
     invalidate_key_defs()
     return {OK, s.id}
@@ -2752,54 +2853,332 @@ function tarn_alter_abort(name, a)
     return {OK}
 end
 
--- The schema change in progress (on the first shard): at most one at a
--- time; a SQL server that finds one abandoned finishes it.
---   job = {owner, space, ver, a}
-function tarn_ddl_begin(job)
-    -- Read-committed: a job that another call inserted and that still waits
-    -- for its WAL write is invisible to a read-confirmed read, and the
-    -- insert below would then fail on the key instead of reporting busy.
-    local cur
-    local ok = pcall(function()
-        box.begin({txn_isolation = 'read-committed'})
-        cur = box.space._tarn_meta:get{'ddl:job'}
-        if cur == nil then
-            box.space._tarn_meta:insert{'ddl:job', {owner = job[1], ts = clock.realtime(),
-                                                    space = job[2], ver = job[3], a = job[4]}}
-        end
-        box.commit()
-    end)
-    if box.is_in_txn() then box.rollback() end
-    if not ok then return {'busy', '', 0} end   -- another job began at the same moment
-    if cur ~= nil then
-        return {'busy', cur.value.owner, clock.realtime() - cur.value.ts}
+-------------------------------------------------------------------------------
+-- CREATE TABLE, DROP TABLE and TRUNCATE (issue #30)
+-------------------------------------------------------------------------------
+-- Each runs as a job (see "Jobs" below) in steps on every shard, as ALTER
+-- TABLE does, so that it takes effect on every shard or on none:
+--   CREATE    PREPARE creates the space and its indexes, which no catalog
+--             names yet (the SQL servers read the first shard's); APPLY
+--             names it in _tarn_catalog; ABORT drops it.
+--   DROP,     PREPARE raises the table's fence (writes made with its current
+--   TRUNCATE  definition get 1412) and holds the table (DDL_HELD: reads that
+--             check W locks wait, and validation of transactions that read
+--             it fails), then waits for the local commits in flight and for
+--             the prepared transactions holding locks on it (drain). APPLY
+--             drops or truncates it, dooms the open streams that may have
+--             read it before (DOOMED) and releases it; TRUNCATE also stores
+--             the table's definition under a new version, so that writes
+--             encoded before it stay refused. ABORT lowers the fence and
+--             releases the table.
+-- A TRUNCATE or DROP thus acts like a cross-shard transaction that writes
+-- every row of the table: no transaction sees it applied on one shard and
+-- not yet on another. Every step can be repeated.
+
+-- a = {def = the catalog entry, as tarn_create_table takes it}
+function tarn_create_prepare(name, a)
+    writable()
+    local sp = box.space[name]
+    if sp ~= nil then
+        if sp.id == a.def.id then return {OK} end
+        return {'error', 1050, "Table '" .. name .. "' already exists"}
+    end
+    create_space(a.def)
+    return {OK}
+end
+
+function tarn_create_apply(name, a)
+    writable()
+    yield_point('ddl_apply')   -- tests: a shard that fails while it applies
+    local sp = box.space[name]
+    if sp == nil then
+        create_space(a.def)
+    elseif sp.id ~= a.def.id then
+        return {'error', 1050, "Table '" .. name .. "' already exists"}
+    end
+    if box.space._tarn_catalog:get{name} == nil then
+        box.space._tarn_catalog:replace{name, a.def}
+        invalidate_key_defs()
+        M.stats.creates = M.stats.creates + 1
     end
     return {OK}
 end
 
+function tarn_create_abort(name, a)
+    writable()
+    local sp = box.space[name]
+    if sp == nil or sp.id ~= a.def.id then return {OK} end
+    if box.space._tarn_catalog:get{name} ~= nil then return {OK, 'applied'} end
+    sp:drop()
+    return {OK}
+end
+
+local function hold_key(sid) return 'hold:' .. sid end
+local NO_TABLE = "Table '%s' doesn't exist"
+
+-- The table a DROP or TRUNCATE (op) with arguments a = {ver, timeout, id[,
+-- def]} acts on, or nil when it is gone or (TRUNCATE) already applied.
+local function clear_target(op, name, a)
+    local sp = box.space[name]
+    if sp == nil or sp.id ~= a.id then return nil end
+    if op == 'TRUNCATE' and catalog_ver(name) >= a.ver then return nil end
+    return sp
+end
+
+local function clear_prepare(op, name, a)
+    writable()
+    local sp = clear_target(op, name, a)
+    if sp == nil then
+        if op == 'TRUNCATE' and box.space[name] == nil then return {'error', 1146, string.format(NO_TABLE, name)} end
+        return {OK, 'applied'}
+    end
+    local sid, label = sp.id, string.format('(%s TABLE %s)', op, name)
+    -- Stored first, so that the fence and the hold survive a restart or a
+    -- leader change (fence_rebuild).
+    box.space._tarn_meta:replace{hold_key(sid), {op = op, ver = a.ver, label = label}}
+    fence_fresh()
+    if (FENCE[sid] or 0) < a.ver then FENCE[sid] = a.ver end
+    ddl_hold(sid, label)
+    if not drain(sid, clock.monotonic() + (a.timeout or 50)) then
+        box.space._tarn_meta:delete{hold_key(sid)}
+        local cur = catalog_ver(name)
+        FENCE[sid] = cur > 0 and cur or nil
+        ddl_release(sid)
+        M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+        return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+    end
+    return {OK}
+end
+
+local function clear_apply(op, name, a)
+    writable()
+    yield_point('ddl_apply')   -- tests: a shard that fails while it applies
+    local sp = box.space[name]
+    if sp ~= nil and sp.id ~= a.id then sp = nil end
+    if sp == nil then
+        if op == 'TRUNCATE' then return {'error', 1146, string.format(NO_TABLE, name)} end
+        -- Dropped by an earlier APPLY: finish what it may have left.
+        box.begin(RW)
+        local c = box.space._tarn_catalog:get{name}
+        if c ~= nil and c.def.id == a.id then box.space._tarn_catalog:delete{name} end
+        box.space._tarn_meta:delete{hold_key(a.id)}
+        box.commit()
+        ddl_release(a.id)
+        return {OK, 'applied'}
+    end
+    if op == 'TRUNCATE' and catalog_ver(name) >= a.ver then return {OK, 'applied'} end
+    local sid = sp.id
+    fence_fresh()
+    if (FENCE[sid] or 0) < a.ver or DDL_HELD[sid] == nil then
+        -- Fence or hold gone (a PREPARE that timed out, a lost one): again.
+        local r = clear_prepare(op, name, a)
+        if r[1] ~= OK or r[2] == 'applied' then return r end
+    end
+    if op == 'DROP' then
+        sp:drop()
+        box.begin(RW)
+        box.space._tarn_catalog:delete{name}
+        box.space._tarn_meta:delete{hold_key(sid)}
+        box.commit()
+        -- From here on nothing yields: until the table is released below,
+        -- the hold fails the validation of its readers; from then on, the
+        -- streams that began before are doomed.
+        doom_readers(sid)
+        FENCE[sid] = nil
+        M.stats.drops = M.stats.drops + 1
+    else
+        sp:truncate()
+        box.begin(RW)
+        box.space._tarn_catalog:replace{name, a.def}
+        box.space._tarn_meta:delete{hold_key(sid)}
+        box.commit()
+        doom_readers(sid)
+        FENCE[sid] = a.ver
+        M.stats.truncates = M.stats.truncates + 1
+    end
+    invalidate_key_defs()
+    ddl_release(sid)
+    return {OK}
+end
+
+local function clear_abort(op, name, a)
+    writable()
+    local sp = box.space[name]
+    if sp ~= nil and sp.id == a.id and op == 'TRUNCATE' and catalog_ver(name) >= a.ver then
+        return {OK, 'applied'}
+    end
+    box.space._tarn_meta:delete{hold_key(a.id)}
+    if sp ~= nil and sp.id == a.id then
+        fence_fresh()
+        local cur = catalog_ver(name)
+        FENCE[sp.id] = cur > 0 and cur or nil
+    end
+    ddl_release(a.id)
+    return {OK}
+end
+
+function tarn_drop_prepare(name, a) return clear_prepare('DROP', name, a) end
+function tarn_drop_apply(name, a) return clear_apply('DROP', name, a) end
+function tarn_drop_abort(name, a) return clear_abort('DROP', name, a) end
+function tarn_truncate_prepare(name, a) return clear_prepare('TRUNCATE', name, a) end
+function tarn_truncate_apply(name, a) return clear_apply('TRUNCATE', name, a) end
+function tarn_truncate_abort(name, a) return clear_abort('TRUNCATE', name, a) end
+
+-------------------------------------------------------------------------------
+-- Jobs (on the first shard)
+-------------------------------------------------------------------------------
+-- A job is a CREATE, DROP, TRUNCATE or ALTER TABLE in progress. It has one
+-- record per table name it touches ('job:<name>' in _tarn_meta; an ALTER
+-- TABLE that renames touches two), so that statements on other tables do
+-- not wait for it -- an ALTER TABLE may build an index for hours. Its phase
+-- is 'prepare' until every shard has prepared, then 'apply', or 'abort' if
+-- one could not ('run': an ALTER TABLE begun by a SQL server from before
+-- phases). A SQL server that finds a job abandoned finishes it: back before
+-- 'apply', forward after.
+--   job = {owner, kind, space, names, ver, a, phase}
+local JOB = 'job:'
+local JOB_COND = fiber.cond()
+
+local function job_value(key)
+    local t = box.space._tarn_meta:get{key}
+    return t and t.value or nil
+end
+
+-- The record keys of the job that `owner` runs.
+local function job_keys(owner)
+    local out = {}
+    for _, t in box.space._tarn_meta:pairs({JOB}, {iterator = 'GE'}) do
+        if t.key:sub(1, #JOB) ~= JOB then break end
+        if t.value.owner == owner then out[#out + 1] = t.key end
+    end
+    return out
+end
+
+-- Update (ops) or delete (ops == nil) every record of the job that `owner`
+-- runs, in one transaction that reads them too: of two SQL servers taking
+-- over the same abandoned job, one finds it gone or fails on the conflict.
+-- Field updates, so that the owner's keep-alive and its phase change do not
+-- undo each other.
+local function job_change(owner, ops)
+    local ok, res = pcall(function()
+        box.begin(RW)
+        local keys = job_keys(owner)
+        for _, k in ipairs(keys) do
+            if ops == nil then box.space._tarn_meta:delete{k} else box.space._tarn_meta:update(k, ops) end
+        end
+        box.commit()
+        return #keys
+    end)
+    if box.is_in_txn() then box.rollback() end
+    if not ok then return {'conflict', 1213, tostring(res)} end
+    if res == 0 then return {'gone'} end
+    return {OK}
+end
+
+-- Begin a job, waiting up to `wait` seconds while another holds one of its
+-- names. {OK}, or {'busy', owner, age} of the job in the way.
+function tarn_job_begin(job, wait)
+    writable()
+    local deadline = clock.monotonic() + (tonumber(wait) or 0)
+    while true do
+        local busy
+        -- Read-committed: a job that another call inserted and that still
+        -- waits for its WAL write is invisible to a read-confirmed read, and
+        -- the insert below would then fail on the key instead of finding it.
+        local ok = pcall(function()
+            box.begin({txn_isolation = 'read-committed'})
+            for _, n in ipairs(job.names) do
+                busy = job_value(JOB .. n)
+                if busy ~= nil then break end
+            end
+            if busy == nil then
+                local v = {owner = job.owner, ts = clock.realtime(), kind = job.kind, space = job.space,
+                           names = job.names, ver = job.ver, a = job.a, phase = job.phase or 'prepare'}
+                for _, n in ipairs(job.names) do box.space._tarn_meta:insert{JOB .. n, v} end
+            end
+            box.commit()
+        end)
+        if box.is_in_txn() then box.rollback() end
+        if ok and busy == nil then return {OK} end
+        -- (A repeated call whose first one began the job: see Cluster::call.)
+        if busy ~= nil and busy.owner == job.owner then return {OK} end
+        local left = deadline - clock.monotonic()
+        if left <= 0 then
+            if busy == nil then return {'busy', '', 0} end   -- (one began at the same moment)
+            return {'busy', busy.owner, clock.realtime() - busy.ts}
+        end
+        JOB_COND:wait(math.min(left, 0.25))
+    end
+end
+
+-- Change the phase of the job (and keep it alive).
+function tarn_job_phase(owner, phase)
+    writable()
+    return job_change(owner, {{'=', '[2].phase', phase}, {'=', '[2].ts', clock.realtime()}})
+end
+
 -- Keep the job alive (owner), or take over an abandoned one (owner, from).
-function tarn_ddl_touch(owner, from)
-    local cur = box.space._tarn_meta:get{'ddl:job'}
-    if cur == nil then return {'gone'} end
-    local v = table.deepcopy(cur.value)
-    if v.owner ~= (from or owner) then return {'busy', v.owner, clock.realtime() - v.ts} end
-    v.owner, v.ts = owner, clock.realtime()
-    box.space._tarn_meta:replace{'ddl:job', v}
-    return {OK}
+function tarn_job_touch(owner, from)
+    writable()
+    if from ~= nil and from ~= box.NULL then
+        local r = job_change(from, {{'=', '[2].owner', owner}, {'=', '[2].ts', clock.realtime()}})
+        -- (A repeated call whose first one took it over.)
+        if r[1] == 'gone' and #job_keys(owner) > 0 then return {OK} end
+        return r
+    end
+    return job_change(owner, {{'=', '[2].ts', clock.realtime()}})
 end
 
-function tarn_ddl_end(owner)
-    local cur = box.space._tarn_meta:get{'ddl:job'}
-    if cur ~= nil and cur.value.owner == owner then box.space._tarn_meta:delete{'ddl:job'} end
-    return {OK}
+function tarn_job_end(owner)
+    writable()
+    local r = job_change(owner, nil)
+    JOB_COND:broadcast()
+    if r[1] == 'gone' then return {OK} end
+    return r
 end
 
--- {OK, owner, age, space, ver, a} or {OK} when no schema change is pending.
+-- The jobs in progress: {{owner, age, kind, space, phase, ver, a, names}, ...}
+function tarn_jobs()
+    local out, seen = {}, {}
+    for _, t in box.space._tarn_meta:pairs({JOB}, {iterator = 'GE'}) do
+        if t.key:sub(1, #JOB) ~= JOB then break end
+        local v = t.value
+        if not seen[v.owner] then
+            seen[v.owner] = true
+            out[#out + 1] = {v.owner, clock.realtime() - v.ts, v.kind, v.space, v.phase, v.ver, v.a, v.names}
+        end
+    end
+    return out
+end
+
+-- For SQL servers from before per-table jobs, which run ALTER TABLE only
+-- this way: job = {owner, space, ver, a}.
+function tarn_ddl_begin(job)
+    return tarn_job_begin({owner = job[1], kind = 'alter', space = job[2], names = {job[2]},
+                           ver = job[3], a = job[4], phase = 'run'}, 0)
+end
+function tarn_ddl_touch(owner, from) return tarn_job_touch(owner, from) end
+function tarn_ddl_end(owner) return tarn_job_end(owner) end
+-- {OK, owner, age, space, ver, a} of an ALTER TABLE in progress, or {OK}.
 function tarn_ddl_job()
-    local cur = box.space._tarn_meta:get{'ddl:job'}
-    if cur == nil then return {OK} end
-    local v = cur.value
-    return {OK, v.owner, clock.realtime() - v.ts, v.space, v.ver, v.a}
+    for _, j in ipairs(tarn_jobs()) do
+        if j[3] == 'alter' then return {OK, j[1], j[2], j[4], j[6], j[7]} end
+    end
+    return {OK}
+end
+
+-- A job record from before per-table jobs ('ddl:job'), made one.
+local function migrate_legacy_job()
+    local old = box.space._tarn_meta:get{'ddl:job'}
+    if old == nil then return end
+    local v = old.value
+    box.begin(RW)
+    if box.space._tarn_meta:get{JOB .. v.space} == nil then
+        box.space._tarn_meta:insert{JOB .. v.space, {owner = v.owner, ts = v.ts, kind = 'alter', space = v.space,
+                                                     names = {v.space}, ver = v.ver, a = v.a, phase = 'run'}}
+    end
+    box.space._tarn_meta:delete{'ddl:job'}
+    box.commit()
 end
 
 function tarn_truncate(name)
@@ -2862,7 +3241,7 @@ end
 
 function tarn_info()
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats,
-            locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
+            locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0}
 end
@@ -2903,6 +3282,7 @@ local function setup_schema()
         end
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
     end
+    migrate_legacy_job()
 end
 
 -- Run setup_schema in the background whenever this node is writable, until

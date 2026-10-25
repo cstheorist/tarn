@@ -190,7 +190,8 @@ options:
   "max_txn_age": 120,
   "isolation": "SERIALIZABLE",
   "lock_wait_timeout": 50,
-  "deadlock_interval": 1.0
+  "deadlock_interval": 1.0,
+  "ddl_job_stale": 30
 }
 ```
 
@@ -206,6 +207,13 @@ its own transactions' lock waits (0 turns the detector off; cycles within
 one shard are always detected at once). A server whose transactions do not
 wait for row locks calls no shard for it, so a smaller interval, which
 finds such deadlocks sooner, costs storage calls only while lock waits last.
+
+`ddl_job_stale` is how long, in seconds, a schema change (`CREATE TABLE`,
+`DROP TABLE`, `TRUNCATE`, `ALTER TABLE`) may go without its SQL server
+touching it before another server takes it over and finishes it: back if
+not every shard had prepared it, forward if every shard had (`docs/design.md`
+§2.10). Every server looks for such jobs at startup and every
+`ddl_job_stale / 2` seconds (at most 10).
 
 **Ack-on-prepare** acknowledges a cross-shard commit as soon as every
 participant has prepared (one round trip instead of two) and applies it in
@@ -241,7 +249,8 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
-  collection, row locks held (`row_locks`), and counters (`prepare_yes`,
+  collection, row locks held (`row_locks`), tables held by a `TRUNCATE` or
+  `DROP TABLE` in progress (`ddl_held`), and counters (`prepare_yes`,
   `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `recovered`,
   `gc_part`, `gc_txn`, `validate_changed`; for row locks `plock_waits`,
   `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`).
@@ -260,6 +269,7 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 | `tarn-server` dies during a cross-shard commit | The storage nodes' recovery fiber finishes or aborts the transaction after `recovery_after`; its locks block conflicting statements until then. |
 | Connection lost while a commit is in flight | The client gets 1180 / SQLSTATE 40003: the outcome is unknown, and the write is not re-sent. |
 | A shard is down for a while | Transactions that touch it fail; rows of transactions that committed but were not yet applied there stay locked until it returns and recovery applies them. |
+| A shard fails during `CREATE TABLE`, `DROP TABLE`, `TRUNCATE` or `ALTER TABLE` | Before every shard prepared: the statement fails and the change is undone on every shard (once the shard is back, for that shard). After: the statement reports 1180 and the change is completed on every shard once the shard is back. Either way a SQL server finishes the job by itself (`ddl_job_stale`); until then, other schema changes of the same table wait. |
 | Partitioned old leader | It steps down after the election timeout (`election_fencing_mode = 'strict'`); until then it may still answer autocommit reads from its own data (the usual leader-lease assumption). |
 
 ## Error codes

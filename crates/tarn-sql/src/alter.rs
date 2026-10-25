@@ -1739,22 +1739,28 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
         Some(n) => m.str(n),
         None => m.nil(),
     };
-    // The catalog entry, as tarn_create_table stores it.
-    let ld = ch.def.lua_def();
-    m.str("def").map(7);
+    m.str("def");
+    catalog_entry(&mut m, &ch.def, ver);
+    m.0
+}
+
+/// A table's catalog entry (`_tarn_catalog`), as tarn_create_table stores
+/// it, under definition version `ver`.
+pub fn catalog_entry(m: &mut Mp, def: &TableDef, ver: u64) {
+    let ld = def.lua_def();
+    m.map(7);
     m.str("name").str(&ld.name);
-    m.str("id").uint(ch.def.space_id as u64);
+    m.str("id").uint(def.space_id as u64);
     m.str("engine").str(ld.engine);
     m.str("format");
-    format_list(&mut m, &ld.format);
+    format_list(m, &ld.format);
     m.str("indexes").arr(ld.indexes.len());
     for (n, unique, parts) in &ld.indexes {
         m.map(3).str("name").str(n).str("unique").bool(*unique).str("parts");
-        format_parts(&mut m, parts);
+        format_parts(m, parts);
     }
     m.str("json").str(&ld.json);
     m.str("ver").uint(ver);
-    m.0
 }
 
 fn int(m: &mut Mp, v: i128) {

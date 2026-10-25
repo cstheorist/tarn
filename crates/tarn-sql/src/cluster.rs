@@ -84,23 +84,86 @@ pub struct ClusterConfig {
     /// dumps say `ENGINE=InnoDB`).
     #[serde(default)]
     pub default_engine: crate::catalog::Engine,
+    /// A schema change whose server has not touched it for this long
+    /// (seconds) is taken over and finished by another server.
+    #[serde(default = "default_ddl_job_stale")]
+    pub ddl_job_stale: f64,
+}
+
+fn default_ddl_job_stale() -> f64 {
+    30.0
 }
 
 fn default_deadlock_interval() -> f64 {
     1.0
 }
 
-/// A schema change whose owner has not touched it for this long (seconds)
-/// is taken over and finished by another server.
-const DDL_JOB_STALE: f64 = 30.0;
+/// What a schema change job does (lua/tarn.lua "Jobs").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JobKind {
+    Alter,
+    Create,
+    Drop,
+    Truncate,
+}
 
-/// A schema change in progress (the job record on the first shard).
-struct DdlJob {
+impl JobKind {
+    fn name(self) -> &'static str {
+        match self {
+            JobKind::Alter => "alter",
+            JobKind::Create => "create",
+            JobKind::Drop => "drop",
+            JobKind::Truncate => "truncate",
+        }
+    }
+
+    fn parse(s: &str) -> Option<JobKind> {
+        Some(match s {
+            "alter" => JobKind::Alter,
+            "create" => JobKind::Create,
+            "drop" => JobKind::Drop,
+            "truncate" => JobKind::Truncate,
+            _ => return None,
+        })
+    }
+
+    /// The storage procedure of a step: build (ALTER TABLE only), prepare,
+    /// apply or abort.
+    fn proc(self, step: &str) -> String {
+        format!("tarn_{}_{}", self.name(), step)
+    }
+
+    fn statement(self) -> &'static str {
+        match self {
+            JobKind::Alter => "ALTER TABLE",
+            JobKind::Create => "CREATE TABLE",
+            JobKind::Drop => "DROP TABLE",
+            JobKind::Truncate => "TRUNCATE",
+        }
+    }
+}
+
+/// A schema change in progress: CREATE, DROP, TRUNCATE or ALTER TABLE (its
+/// records on the first shard, one per table name it touches).
+struct Job {
     owner: String,
     age: f64,
+    kind: JobKind,
     space: String,
-    /// msgpack argument of tarn_alter_prepare / _apply / _abort
+    /// "prepare" until every shard prepared, then "apply" or "abort" ("run":
+    /// an ALTER TABLE begun by a server from before phases)
+    phase: String,
+    /// msgpack of its arguments (`a` of the storage procedures)
     args: Vec<u8>,
+}
+
+/// `{'ok', 'applied'}`: a step found its job already applied on that shard.
+fn applied_reply(d: &[u8]) -> bool {
+    let mut rd = Rd::new(d);
+    matches!(rd.array(), Ok(n) if n > 0)
+        && matches!(rd.array(), Ok(m) if m > 1)
+        && rd.string().is_ok_and(|s| s == "ok")
+        && rd.string().is_ok_and(|s| s == "applied")
 }
 
 /// Server-wide defaults for new sessions (SET GLOBAL).
@@ -611,10 +674,25 @@ impl Cluster {
         for s in &c.shards {
             s.client(&c).await?;
         }
-        if let Err(e) = c.finish_pending_ddl().await {
-            tracing::warn!("finishing a pending schema change: {}", e);
+        if let Err(e) = c.finish_stale_jobs().await {
+            tracing::warn!("finishing abandoned schema changes: {}", e);
         }
         c.reload_catalog().await?;
+        {
+            // Schema changes whose server stopped are finished by whichever
+            // server finds them first.
+            let weak = Arc::downgrade(&c);
+            let every = Duration::from_secs_f64((c.cfg.ddl_job_stale / 2.0).clamp(0.1, 10.0));
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(every).await;
+                    let Some(c) = weak.upgrade() else { break };
+                    if let Err(e) = c.finish_stale_jobs().await {
+                        tracing::debug!("looking for abandoned schema changes: {}", e);
+                    }
+                }
+            });
+        }
         if c.shards.len() > 1 && c.cfg.deadlock_interval > 0.0 {
             let weak = Arc::downgrade(&c);
             let every = Duration::from_secs_f64(c.cfg.deadlock_interval);
@@ -882,7 +960,7 @@ impl Cluster {
         self.bump_catalog().await
     }
 
-    pub async fn drop_database(&self, name: &str, if_exists: bool) -> SqlResult<u64> {
+    pub async fn drop_database(&self, name: &str, if_exists: bool, lock_timeout: f64) -> SqlResult<u64> {
         let cat = self.catalog();
         if !cat.has_db(name) {
             if if_exists {
@@ -895,14 +973,17 @@ impl Cluster {
             ));
         }
         let tables = cat.tables_in(name);
+        let mut n = 0;
         for t in &tables {
-            self.drop_table_raw(&t.space_name()).await?;
+            if self.drop_table(&t.db, &t.name, lock_timeout).await? {
+                n += 1;
+            }
         }
         let mut a = Mp::new();
         a.arr(1).str(name);
         lua_status(&self.call(0, "tarn_db_drop", &a.0).await?)?;
         self.bump_catalog().await?;
-        Ok(tables.len() as u64)
+        Ok(n)
     }
 
     pub async fn create_table(
@@ -910,20 +991,25 @@ impl Cluster {
         mut def: TableDef,
         if_not_exists: bool,
         auto_increment: Option<u64>,
+        lock_timeout: f64,
     ) -> SqlResult<()> {
         let cat = self.catalog();
         if !cat.has_db(&def.db) {
             return Err(SqlError::new(1049, "42000", format!("Unknown database '{}'", def.db)));
         }
-        if cat.get(&def.db, &def.name).is_some() {
+        let exists = || {
             if if_not_exists {
-                return Ok(());
+                Ok(())
+            } else {
+                Err(SqlError::new(
+                    1050,
+                    "42S01",
+                    format!("Table '{}' already exists", def.name),
+                ))
             }
-            return Err(SqlError::new(
-                1050,
-                "42S01",
-                format!("Table '{}' already exists", def.name),
-            ));
+        };
+        if cat.get(&def.db, &def.name).is_some() {
+            return exists();
         }
         for &c in &def.shard_key {
             let t = def.columns[c].ty();
@@ -940,8 +1026,9 @@ impl Cluster {
         rd.array()?;
         def.space_id = 10_000 + rd.value()?.as_i64().unwrap_or(0) as u32;
         let ld = def.lua_def();
+        // The arguments of the job's steps: {def = the catalog entry}.
         let mut m = Mp::new();
-        m.arr(1).map(6);
+        m.map(1).str("def").map(6);
         m.str("name").str(&ld.name);
         m.str("id").uint(ld.id as u64);
         m.str("engine").str(ld.engine);
@@ -975,27 +1062,27 @@ impl Cluster {
             }
         }
         m.str("json").str(&ld.json);
-        for d in self.call_all("tarn_create_table", &m.0).await? {
-            lua_status(&d)?;
+        let name = def.space_name();
+        let deadline = std::time::Instant::now() + Duration::from_secs_f64(lock_timeout.max(1.0));
+        let job = self
+            .job_begin(JobKind::Create, &name, std::slice::from_ref(&name), 0, &m.0, deadline)
+            .await?;
+        // Another server may have created it before the job began.
+        self.reload_catalog().await?;
+        if self.catalog().get(&def.db, &def.name).is_some() {
+            self.job_end(&job.owner).await?;
+            return exists();
         }
+        self.run_job(&job).await?;
         if let Some(n) = auto_increment.filter(|&n| n > 1) {
             if def.auto_inc.is_some() {
                 self.note_auto_inc(&def, n - 1).await?;
             }
         }
-        self.bump_catalog().await
-    }
-
-    async fn drop_table_raw(&self, space: &str) -> SqlResult<()> {
-        let mut a = Mp::new();
-        a.arr(1).str(space);
-        for d in self.call_all("tarn_drop_table", &a.0).await? {
-            lua_status(&d)?;
-        }
         Ok(())
     }
 
-    pub async fn drop_tables(&self, tables: &[(String, String)], if_exists: bool) -> SqlResult<()> {
+    pub async fn drop_tables(&self, tables: &[(String, String)], if_exists: bool, lock_timeout: f64) -> SqlResult<()> {
         let cat = self.catalog();
         for (db, t) in tables {
             if cat.get(db, t).is_none() && !if_exists {
@@ -1003,24 +1090,69 @@ impl Cluster {
             }
         }
         for (db, t) in tables {
-            if let Some(def) = cat.get(db, t) {
-                self.drop_table_raw(&def.space_name()).await?;
+            if !self.drop_table(db, t, lock_timeout).await? && !if_exists {
+                // dropped by another statement meanwhile
+                return Err(SqlError::new(1051, "42S02", format!("Unknown table '{}.{}'", db, t)));
             }
         }
-        self.bump_catalog().await
+        Ok(())
     }
 
-    pub async fn truncate(&self, db: &str, table: &str) -> SqlResult<()> {
-        let def = self
-            .catalog()
-            .get(db, table)
-            .ok_or_else(|| SqlError::no_table(db, table))?;
-        let mut a = Mp::new();
-        a.arr(1).str(&def.space_name());
-        for d in self.call_all("tarn_truncate", &a.0).await? {
-            lua_status(&d)?;
+    /// DROP TABLE of one table, as a job: false if it does not exist.
+    async fn drop_table(&self, db: &str, table: &str, lock_timeout: f64) -> SqlResult<bool> {
+        let deadline = std::time::Instant::now() + Duration::from_secs_f64(lock_timeout.max(1.0));
+        loop {
+            let Some(def) = self.catalog().get(db, table) else {
+                return Ok(false);
+            };
+            let ver = self.next_catalog_version().await?;
+            let mut a = Mp::new();
+            a.map(3).str("ver").uint(ver).str("timeout").f64(lock_timeout).str("id");
+            a.uint(def.space_id as u64);
+            let name = def.space_name();
+            let job = self
+                .job_begin(JobKind::Drop, &name, std::slice::from_ref(&name), ver, &a.0, deadline)
+                .await?;
+            if !self.job_still(&job, &def).await? {
+                continue;
+            }
+            self.run_job(&job).await?;
+            return Ok(true);
         }
-        Ok(())
+    }
+
+    pub async fn truncate(&self, db: &str, table: &str, lock_timeout: f64) -> SqlResult<()> {
+        let deadline = std::time::Instant::now() + Duration::from_secs_f64(lock_timeout.max(1.0));
+        loop {
+            let def = self
+                .catalog()
+                .get(db, table)
+                .ok_or_else(|| SqlError::no_table(db, table))?;
+            // The table's definition, under a new version: the shards refuse
+            // writes encoded before the TRUNCATE (1412).
+            let ver = self.next_catalog_version().await?;
+            let mut nd = (*def).clone();
+            nd.ver = ver;
+            let mut a = Mp::new();
+            a.map(4).str("ver").uint(ver).str("timeout").f64(lock_timeout).str("id");
+            a.uint(def.space_id as u64).str("def");
+            crate::alter::catalog_entry(&mut a, &nd, ver);
+            let name = def.space_name();
+            let job = self
+                .job_begin(
+                    JobKind::Truncate,
+                    &name,
+                    std::slice::from_ref(&name),
+                    ver,
+                    &a.0,
+                    deadline,
+                )
+                .await?;
+            if !self.job_still(&job, &def).await? {
+                continue;
+            }
+            return self.run_job(&job).await;
+        }
     }
 
     /// The current catalog version, plus one: the version of a schema change.
@@ -1034,45 +1166,11 @@ impl Cluster {
     }
 
     /// ALTER TABLE (and RENAME TABLE, CREATE / DROP INDEX), online: see
-    /// `alter` and lua/tarn.lua "Schema changes". One schema change runs at a
-    /// time (the job record on the first shard); a pending one left by a
-    /// failed or crashed server is finished first.
+    /// `alter` and lua/tarn.lua "Schema changes". It runs as a job on the
+    /// table (and on its new name), after any other schema change of them.
     pub async fn alter_table(&self, plan: &crate::alter::AlterPlan, lock_timeout: f64) -> SqlResult<()> {
-        let owner = format!(
-            "{}-{:08x}-{}",
-            self.cfg.node_id,
-            self.boot,
-            self.txn_seq.fetch_add(1, Ordering::Relaxed)
-        );
         let deadline = std::time::Instant::now() + Duration::from_secs_f64(lock_timeout.max(1.0));
-        // Take the job slot; finish an abandoned job on the way.
         loop {
-            if let Some(job) = self.ddl_job().await? {
-                if job.age > DDL_JOB_STALE {
-                    tracing::warn!("finishing schema change of {} abandoned by {}", job.space, job.owner);
-                    let mut t = Mp::new();
-                    t.arr(2).str(&owner).str(&job.owner);
-                    let d = self.call(0, "tarn_ddl_touch", &t.0).await?;
-                    if crate::mpw::status_is(&d, "ok") {
-                        let r = self.run_ddl_job(&job.space, &job.args, &owner).await;
-                        self.ddl_end(&owner).await?;
-                        r.map_err(|mut e| {
-                            e.message = format!("{} (finishing an earlier schema change)", e.message);
-                            e
-                        })?;
-                    }
-                    continue;
-                }
-                if std::time::Instant::now() > deadline {
-                    return Err(SqlError::new(
-                        1205,
-                        "HY000",
-                        "Lock wait timeout exceeded; try restarting transaction (another schema change is running)",
-                    ));
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            }
             self.reload_catalog().await?;
             let cat = self.catalog();
             let def = cat
@@ -1092,144 +1190,343 @@ impl Cluster {
             ch.def.ver = ver;
             let args = crate::alter::lua_args(&ch, ver, lock_timeout);
             let space = def.space_name();
-            let mut j = Mp::new();
-            j.arr(1).arr(4).str(&owner).str(&space).uint(ver);
-            j.0.extend_from_slice(&args);
-            let d = self.call(0, "tarn_ddl_begin", &j.0).await?;
-            if crate::mpw::status_is(&d, "busy") {
-                // Someone else started one meanwhile (perhaps not yet
-                // visible to tarn_ddl_job: give it time).
-                tokio::time::sleep(Duration::from_millis(20)).await;
+            let mut names = vec![space.clone()];
+            names.extend(ch.rename.iter().cloned());
+            let job = self
+                .job_begin(JobKind::Alter, &space, &names, ver, &args, deadline)
+                .await?;
+            if !self.job_still(&job, &def).await? {
                 continue;
             }
-            lua_status(&d)?;
-            // Keep the job alive while it runs.
-            let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
-            let toucher = {
-                let owner = owner.clone();
-                let s0 = self.shards[0].client(self).await?;
-                tokio::spawn(async move {
-                    let mut t = Mp::new();
-                    t.arr(1).str(&owner);
-                    loop {
-                        tokio::select! {
-                            _ = &mut stop_rx => break,
-                            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                                let _ = s0.call(0, "tarn_ddl_touch", &t.0).await;
-                            }
-                        }
-                    }
-                })
-            };
-            let r = self.run_ddl_job(&space, &args, &owner).await;
-            let _ = stop_tx.send(());
-            let _ = toucher.await;
-            if r.is_ok() || r.as_ref().is_err_and(|e| e.code != 1180) {
-                self.ddl_end(&owner).await?;
-            }
-            r?;
+            self.run_job(&job).await?;
             return self.alter_auto_inc(&ch.def, &ch).await;
         }
     }
 
-    /// BUILD everywhere (new indexes, while writes go on); then PREPARE
-    /// everywhere; then APPLY everywhere, or ABORT everywhere if a BUILD or
-    /// a PREPARE failed; then publish the new catalog. Every step may be
-    /// repeated (a job finished by another server runs it again).
-    async fn run_ddl_job(&self, space: &str, args: &[u8], _owner: &str) -> SqlResult<()> {
-        let mut call = Mp::new();
-        call.arr(2).str(space);
-        call.0.extend_from_slice(args);
-        let n = self.shards.len();
-        let mut failed = None;
-        for r in futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_build", &call.0))).await {
-            match r.and_then(|d| lua_status(&d).map(|_| ())) {
-                Ok(()) => {}
-                // a storage node from before BUILD existed: its PREPARE builds them
-                Err(e) if e.message.contains("'tarn_alter_build' is not defined") => {}
-                Err(e) => {
-                    failed.get_or_insert(e);
-                }
+    // ---- schema change jobs (lua/tarn.lua "Jobs") ---------------------------
+
+    fn job_owner(&self) -> String {
+        format!(
+            "{}-{:08x}-{}",
+            self.cfg.node_id,
+            self.boot,
+            self.txn_seq.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    /// Begin a job on table `space` and the other `names` it touches,
+    /// waiting while another job holds one of them (an abandoned one is
+    /// finished first), up to `deadline` (1205).
+    async fn job_begin(
+        &self,
+        kind: JobKind,
+        space: &str,
+        names: &[String],
+        ver: u64,
+        args: &[u8],
+        deadline: std::time::Instant,
+    ) -> SqlResult<Job> {
+        let owner = self.job_owner();
+        loop {
+            let wait = deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .as_secs_f64()
+                .min(2.0);
+            let mut m = Mp::new();
+            m.arr(2).map(7);
+            m.str("owner").str(&owner);
+            m.str("kind").str(kind.name());
+            m.str("space").str(space);
+            m.str("names").arr(names.len());
+            for n in names {
+                m.str(n);
             }
-        }
-        if failed.is_none() {
-            let prep = futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_prepare", &call.0))).await;
-            for r in prep {
-                if let Err(e) = r.and_then(|d| lua_status(&d).map(|_| ())) {
-                    failed.get_or_insert(e);
-                }
+            m.str("ver").uint(ver);
+            m.str("a");
+            m.0.extend_from_slice(args);
+            m.str("phase").str("prepare");
+            m.f64(wait);
+            let d = self.call(0, "tarn_job_begin", &m.0).await?;
+            if crate::mpw::status_is(&d, "ok") {
+                return Ok(Job {
+                    owner,
+                    age: 0.0,
+                    kind,
+                    space: space.to_string(),
+                    phase: "prepare".to_string(),
+                    args: args.to_vec(),
+                });
             }
-        }
-        if let Some(e) = failed {
-            for r in futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_abort", &call.0))).await {
-                if let Err(x) = r.and_then(|d| lua_status(&d).map(|_| ())) {
-                    tracing::warn!("schema change abort of {}: {}", space, x);
-                }
+            // {'busy', owner, age} of the job in the way
+            let mut rd = Rd::new(&d);
+            rd.array()?;
+            let n = rd.array()?;
+            let _busy = rd.string()?;
+            let other = if n > 1 { rd.string()? } else { String::new() };
+            let age = if n > 2 {
+                rd.value()?.as_f64().unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            if age > self.cfg.ddl_job_stale && !other.is_empty() {
+                self.finish_job(&other).await;
+                continue;
             }
-            return Err(e);
-        }
-        for r in futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_apply", &call.0))).await {
-            if let Err(e) = r.and_then(|d| lua_status(&d).map(|_| ())) {
-                // Some shards may have the new definition: the job stays and
-                // the next schema change (or a restart) finishes it.
+            if std::time::Instant::now() >= deadline {
                 return Err(SqlError::new(
-                    1180,
-                    "40003",
-                    format!(
-                        "ALTER TABLE did not finish on every shard ({}); the next schema change statement completes it",
-                        e.message
-                    ),
+                    1205,
+                    "HY000",
+                    "Lock wait timeout exceeded; try restarting transaction (another schema change of the table is running)",
                 ));
             }
+            if wait <= 0.0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
         }
-        self.bump_catalog().await
     }
 
-    async fn ddl_end(&self, owner: &str) -> SqlResult<()> {
+    /// After `job` began: is `def` still the table's definition? Another
+    /// schema change may have finished between reading the catalog and the
+    /// job's start; then the job ends and the statement starts over.
+    async fn job_still(&self, job: &Job, def: &TableDef) -> SqlResult<bool> {
+        self.reload_catalog().await?;
+        let same = self
+            .catalog()
+            .get(&def.db, &def.name)
+            .is_some_and(|d| d.space_id == def.space_id && d.ver == def.ver);
+        if !same {
+            self.job_end(&job.owner).await?;
+        }
+        Ok(same)
+    }
+
+    async fn job_end(&self, owner: &str) -> SqlResult<()> {
         let mut a = Mp::new();
         a.arr(1).str(owner);
-        lua_status(&self.call(0, "tarn_ddl_end", &a.0).await?).map(|_| ())
+        lua_status(&self.call(0, "tarn_job_end", &a.0).await?).map(|_| ())
     }
 
-    /// The pending schema change, if any.
-    async fn ddl_job(&self) -> SqlResult<Option<DdlJob>> {
-        let d = self.call(0, "tarn_ddl_job", &[0x90]).await?;
+    /// Record the job's decision: from now on, whoever finishes it goes
+    /// this way.
+    async fn job_phase(&self, job: &Job, phase: &str) -> SqlResult<()> {
+        let mut a = Mp::new();
+        a.arr(2).str(&job.owner).str(phase);
+        let d = self.call(0, "tarn_job_phase", &a.0).await?;
+        if crate::mpw::status_is(&d, "ok") {
+            return Ok(());
+        }
+        Err(SqlError::new(
+            1180,
+            "40003",
+            format!(
+                "{} of {}: another server took the schema change over; it finishes it",
+                job.kind.statement(),
+                job.space
+            ),
+        ))
+    }
+
+    /// The schema changes in progress.
+    async fn jobs(&self) -> SqlResult<Vec<Job>> {
+        let d = self.call(0, "tarn_jobs", &[0x90]).await?;
         let mut rd = Rd::new(&d);
         rd.array()?;
         let n = rd.array()?;
-        let _ok = rd.string()?;
-        if n < 6 {
-            return Ok(None);
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            // {owner, age, kind, space, phase, ver, a, names}
+            let k = rd.array()?;
+            let owner = rd.string()?;
+            let age = rd.value()?.as_f64().unwrap_or(0.0);
+            let kind = rd.string()?;
+            let space = rd.string()?;
+            let phase = rd.string()?;
+            let _ver = rd.value()?;
+            let args = rd.raw_value()?.to_vec();
+            for _ in 7..k {
+                rd.raw_value()?;
+            }
+            if let Some(kind) = JobKind::parse(&kind) {
+                out.push(Job {
+                    owner,
+                    age,
+                    kind,
+                    space,
+                    phase,
+                    args,
+                });
+            }
         }
-        let owner = rd.string()?;
-        let age = rd.value()?.as_f64().unwrap_or(0.0);
-        let space = rd.string()?;
-        let _ver = rd.value()?;
-        let args = rd.raw_value()?.to_vec();
-        Ok(Some(DdlJob {
-            owner,
-            age,
-            space,
-            args,
-        }))
+        Ok(out)
     }
 
-    /// Finish a schema change a crashed server left (at startup).
-    pub async fn finish_pending_ddl(&self) -> SqlResult<()> {
-        if let Some(job) = self.ddl_job().await? {
-            if job.age > DDL_JOB_STALE {
-                let owner = format!("{}-{:08x}-recovery", self.cfg.node_id, self.boot);
-                let mut t = Mp::new();
-                t.arr(2).str(&owner).str(&job.owner);
-                let d = self.call(0, "tarn_ddl_touch", &t.0).await?;
-                if crate::mpw::status_is(&d, "ok") {
-                    let r = self.run_ddl_job(&job.space, &job.args, &owner).await;
-                    self.ddl_end(&owner).await?;
-                    r?;
+    /// Take over the job of `owner` if it is still abandoned, and finish it
+    /// (failures are logged: the next look tries again).
+    async fn finish_job(&self, owner: &str) {
+        let r: SqlResult<()> = async {
+            let Some(mut job) = self.jobs().await?.into_iter().find(|j| j.owner == owner) else {
+                return Ok(());
+            };
+            if job.age <= self.cfg.ddl_job_stale {
+                return Ok(());
+            }
+            let me = self.job_owner();
+            let mut t = Mp::new();
+            t.arr(2).str(&me).str(owner);
+            if !crate::mpw::status_is(&self.call(0, "tarn_job_touch", &t.0).await?, "ok") {
+                return Ok(()); // another server took it over
+            }
+            tracing::warn!(
+                "finishing the {} of {} that {} left in phase {}",
+                job.kind.statement(),
+                job.space,
+                owner,
+                job.phase
+            );
+            job.owner = me;
+            match self.run_job(&job).await {
+                // (a job rolled back reports the reason as an error)
+                Err(e) if e.code != 1180 => {
+                    tracing::warn!("{} of {} rolled back: {}", job.kind.statement(), job.space, e.message);
+                    Ok(())
                 }
+                r => r,
+            }
+        }
+        .await;
+        if let Err(e) = r {
+            tracing::warn!("finishing an abandoned schema change: {}", e);
+        }
+    }
+
+    /// Finish the schema changes whose servers stopped (at startup, and
+    /// periodically: every ddl_job_stale / 2, at most every 10 s).
+    pub async fn finish_stale_jobs(&self) -> SqlResult<()> {
+        for job in self.jobs().await? {
+            if job.age > self.cfg.ddl_job_stale {
+                self.finish_job(&job.owner).await;
             }
         }
         Ok(())
+    }
+
+    /// Run a job to its end, keeping it alive meanwhile.
+    async fn run_job(&self, job: &Job) -> SqlResult<()> {
+        let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let toucher = {
+            let owner = job.owner.clone();
+            let s0 = self.shards[0].client(self).await?;
+            let every = Duration::from_secs_f64((self.cfg.ddl_job_stale / 3.0).clamp(0.05, 5.0));
+            tokio::spawn(async move {
+                let mut t = Mp::new();
+                t.arr(1).str(&owner);
+                loop {
+                    tokio::select! {
+                        _ = &mut stop_rx => break,
+                        _ = tokio::time::sleep(every) => {
+                            let _ = s0.call(0, "tarn_job_touch", &t.0).await;
+                        }
+                    }
+                }
+            })
+        };
+        let r = self.run_job_steps(job).await;
+        let _ = stop_tx.send(());
+        let _ = toucher.await;
+        r
+    }
+
+    /// BUILD everywhere (ALTER TABLE: new indexes, while writes go on); then
+    /// PREPARE everywhere; then, recorded in the job first, APPLY everywhere,
+    /// or ABORT everywhere if a shard did not prepare; then publish the new
+    /// catalog. Every step may be repeated: a job that another server
+    /// finishes runs again from its phase. A job applied on some shard can
+    /// only go forward.
+    async fn run_job_steps(&self, job: &Job) -> SqlResult<()> {
+        let mut call = Mp::new();
+        call.arr(2).str(&job.space);
+        call.0.extend_from_slice(&job.args);
+        let n = self.shards.len();
+        let step = |i: usize, proc: String| {
+            let call = &call;
+            async move {
+                self.call(i, &proc, &call.0)
+                    .await
+                    .and_then(|d| lua_status(&d).map(|_| d.clone()))
+            }
+        };
+        let mut failed: Option<SqlError> = None;
+        let mut phase = job.phase.as_str();
+        if phase == "prepare" || phase == "run" {
+            if job.kind == JobKind::Alter {
+                for r in futures::future::join_all((0..n).map(|i| step(i, job.kind.proc("build")))).await {
+                    match r {
+                        Ok(_) => {}
+                        // a storage node from before BUILD existed: its PREPARE builds them
+                        Err(e) if e.message.contains("'tarn_alter_build' is not defined") => {}
+                        Err(e) => {
+                            failed.get_or_insert(e);
+                        }
+                    }
+                }
+            }
+            let mut applied = false;
+            if failed.is_none() {
+                for r in futures::future::join_all((0..n).map(|i| step(i, job.kind.proc("prepare")))).await {
+                    match r {
+                        Ok(d) => applied |= applied_reply(&d),
+                        Err(e) => {
+                            failed.get_or_insert(e);
+                        }
+                    }
+                }
+            }
+            phase = if failed.is_some() && !applied { "abort" } else { "apply" };
+            self.job_phase(job, phase).await?;
+        }
+        if phase == "abort" {
+            for r in futures::future::join_all((0..n).map(|i| step(i, job.kind.proc("abort")))).await {
+                if let Err(e) = r {
+                    // The job stays: whoever finishes it aborts again.
+                    tracing::warn!("{} of {}: abort: {}", job.kind.statement(), job.space, e);
+                    return Err(failed.unwrap_or(e));
+                }
+            }
+            self.job_end(&job.owner).await?;
+            return Err(failed.unwrap_or_else(|| {
+                SqlError::new(
+                    1213,
+                    "40001",
+                    format!("{} of {} was rolled back", job.kind.statement(), job.space),
+                )
+            }));
+        }
+        // CREATE TABLE names the table in the first shard's catalog, which
+        // the SQL servers read, last.
+        let groups: Vec<Vec<usize>> = if job.kind == JobKind::Create && n > 1 {
+            vec![(1..n).collect(), vec![0]]
+        } else {
+            vec![(0..n).collect()]
+        };
+        for g in groups {
+            for r in futures::future::join_all(g.iter().map(|&i| step(i, job.kind.proc("apply")))).await {
+                if let Err(e) = r {
+                    // Some shards may have applied it: the job stays, and a
+                    // server finishes it (finish_stale_jobs).
+                    return Err(SqlError::new(
+                        1180,
+                        "40003",
+                        format!(
+                            "{} did not finish on every shard ({}); it completes in the background",
+                            job.kind.statement(),
+                            e.message
+                        ),
+                    ));
+                }
+            }
+        }
+        self.bump_catalog().await?;
+        self.job_end(&job.owner).await
     }
 
     /// AUTO_INCREMENT = n, and a column that became AUTO_INCREMENT: the
