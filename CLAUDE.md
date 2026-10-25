@@ -13,6 +13,7 @@ lua/test/run.sh                            # storage protocol tests
 scripts/cluster.sh start -n 2 -r 1 -p 4000 # local cluster for the SQL suites
 python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407   # MariaDB: bench/baselines.sh start mariadb
 python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321
+python3 tests/sql/rctest.py --tarn 127.0.0.1:4000    # READ COMMITTED, row locks
 tests/faults.sh && tests/failover.sh
 tla/check.sh                               # needs tla/tla2tools.jar
 ```
@@ -20,9 +21,10 @@ tla/check.sh                               # needs tla/tla2tools.jar
 ## Rules of the road
 
 - The commit protocol lives in `lua/tarn.lua` (participants, recovery,
-  garbage collection) and `crates/tarn-sql/src/txn.rs` (coordinator). Change
-  `tla/TarnCommit.tla` with it and model-check; every protection has a `Bug*`
-  switch with a `Bug_*` configuration that TLC must fail.
+  garbage collection, row locks) and `crates/tarn-sql/src/txn.rs`
+  (coordinator). Change `tla/TarnCommit.tla` with it and model-check; every
+  protection has a `Bug*` switch with a `Bug_*` configuration that TLC must
+  fail.
 - Code in `crates/tarn-verified` must keep verifying with Verus (59 verified,
   0 errors); keep its Verus idioms.
 - SQL behaviour is defined by MariaDB 10.11: add cases to

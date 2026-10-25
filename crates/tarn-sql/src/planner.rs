@@ -246,6 +246,29 @@ struct Binder<'a, 'c> {
     aggs: Option<&'a mut Vec<AggCall>>,
     /// For ON DUPLICATE KEY UPDATE: VALUES(col) refers to col + values_offset.
     values_offset: Option<usize>,
+    /// `INSERT ... AS alias [(cols)] ON DUPLICATE KEY UPDATE`: the alias
+    /// names the proposed row too.
+    row_alias: Option<&'a RowAlias>,
+}
+
+/// The row alias of `INSERT ... VALUES (...) AS alias [(c1, c2, ...)]`
+/// (MySQL 8.0.19): `alias.col`, and with column aliases also the bare alias
+/// names, refer to the proposed row in ON DUPLICATE KEY UPDATE.
+struct RowAlias {
+    name: String,
+    /// (name, table column): every table column, or the column aliases
+    /// (which name the INSERT's columns in order).
+    cols: Vec<(String, usize)>,
+    explicit: bool,
+}
+
+impl RowAlias {
+    fn col(&self, name: &str) -> Option<usize> {
+        self.cols
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, c)| *c)
+    }
 }
 
 fn unknown_col(name: &str) -> SqlError {
@@ -259,6 +282,7 @@ impl<'a, 'c> Binder<'a, 'c> {
             ctx,
             aggs: None,
             values_offset: None,
+            row_alias: None,
         }
     }
 
@@ -320,13 +344,23 @@ impl<'a, 'c> Binder<'a, 'c> {
     fn bind(&mut self, e: &A::Expr) -> SqlResult<Expr> {
         use A::Expr as E;
         Ok(match e {
-            E::Identifier(i) => Expr::Col(self.resolve(None, &i.value)?),
+            E::Identifier(i) => match (self.row_alias, self.values_offset) {
+                (Some(ra), Some(off)) if ra.explicit && self.resolve(None, &i.value).is_err() => {
+                    Expr::Col(off + ra.col(&i.value).ok_or_else(|| unknown_col(&i.value))?)
+                }
+                _ => Expr::Col(self.resolve(None, &i.value)?),
+            },
             E::CompoundIdentifier(parts) => {
                 let n = parts.len();
-                if n >= 2 {
-                    Expr::Col(self.resolve(Some(&parts[n - 2].value), &parts[n - 1].value)?)
-                } else {
-                    Expr::Col(self.resolve(None, &parts[0].value)?)
+                match (self.row_alias, self.values_offset) {
+                    (Some(ra), Some(off)) if n == 2 && parts[0].value.eq_ignore_ascii_case(&ra.name) => {
+                        let c = ra
+                            .col(&parts[1].value)
+                            .ok_or_else(|| unknown_col(&format!("{}.{}", parts[0].value, parts[1].value)))?;
+                        Expr::Col(off + c)
+                    }
+                    _ if n >= 2 => Expr::Col(self.resolve(Some(&parts[n - 2].value), &parts[n - 1].value)?),
+                    _ => Expr::Col(self.resolve(None, &parts[0].value)?),
                 }
             }
             E::Value(v) => self.bind_value(&v.value)?,
@@ -1254,6 +1288,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
             ctx,
             aggs: Some(&mut aggs),
             values_offset: None,
+            row_alias: None,
         };
         for item in &sel.projection {
             match item {
@@ -1331,6 +1366,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
             ctx,
             aggs: Some(&mut aggs),
             values_offset: None,
+            row_alias: None,
         };
         if let Some(h) = &sel.having {
             having = Some(resolve_alias_or_position(
@@ -1442,7 +1478,11 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         distinct: matches!(sel.distinct, Some(A::Distinct::Distinct)),
         limit,
         offset,
-        for_update: !q.locks.is_empty(),
+        lock: q.locks.first().map(|l| RowLock {
+            exclusive: q.locks.iter().any(|l| matches!(l.lock_type, A::LockType::Update)),
+            nowait: matches!(l.nonblock, Some(A::NonBlock::Nowait)),
+            skip: matches!(l.nonblock, Some(A::NonBlock::SkipLocked)),
+        }),
     })
 }
 
@@ -1678,11 +1718,40 @@ fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
     let mut on_dup = Vec::new();
     if let Some(A::OnInsert::DuplicateKeyUpdate(assigns)) = &ins.on {
         let scope = single_table_scope(table.clone(), None);
+        let row_alias = match &ins.insert_alias {
+            Some(a) => Some(RowAlias {
+                name: object_name_parts(&a.row_alias).last().cloned().unwrap_or_default(),
+                explicit: a.col_aliases.as_ref().is_some_and(|cs| !cs.is_empty()),
+                cols: match &a.col_aliases {
+                    Some(cs) if !cs.is_empty() => {
+                        if cs.len() != targets.len() {
+                            return Err(SqlError::new(
+                                1136,
+                                "21S01",
+                                "Column count doesn't match value count at row 1",
+                            ));
+                        }
+                        cs.iter()
+                            .map(|c| c.value.clone())
+                            .zip(targets.iter().copied())
+                            .collect()
+                    }
+                    _ => table
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| (c.name.clone(), i))
+                        .collect(),
+                },
+            }),
+            None => None,
+        };
         let mut b = Binder {
             scope: &scope,
             ctx,
             aggs: None,
             values_offset: Some(ncols),
+            row_alias: row_alias.as_ref(),
         };
         for a in assigns {
             let c = assignment_col(&table, &a.target)?;
@@ -2000,6 +2069,35 @@ mod tests {
             Source::Table(t) => t.path,
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn upsert_row_alias() {
+        let cat = catalog();
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("sbtest"),
+            params: &[],
+        };
+        let ins = |sql: &str| match plan(sql, &ctx) {
+            Ok(Stmt::Insert(p)) => Ok(p.on_dup.clone()),
+            Ok(_) => panic!(),
+            Err(e) => Err(e.code),
+        };
+        // columns: id 0, k 1, c 2, pad 3; the proposed row starts at 4
+        let d = ins("INSERT INTO sbtest1 (id, k) VALUES (1, 2) AS new ON DUPLICATE KEY UPDATE k = sbtest1.k + new.k")
+            .unwrap();
+        assert!(matches!(&d[0].1, Expr::Arith(a, _, b) if matches!(**a, Expr::Col(1)) && matches!(**b, Expr::Col(5))));
+        let d = ins("INSERT INTO sbtest1 (id, k) VALUES (1, 2) AS v(i, kk) ON DUPLICATE KEY UPDATE k = kk").unwrap();
+        assert!(matches!(d[0].1, Expr::Col(5)));
+        assert_eq!(
+            ins("INSERT INTO sbtest1 (id, k) VALUES (1, 2) AS v ON DUPLICATE KEY UPDATE k = v.nope").err(),
+            Some(1054)
+        );
+        assert_eq!(
+            ins("INSERT INTO sbtest1 (id, k) VALUES (1, 2) AS v(i) ON DUPLICATE KEY UPDATE k = i").err(),
+            Some(1136)
+        );
     }
 
     #[test]

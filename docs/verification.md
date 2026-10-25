@@ -5,12 +5,12 @@ kind of mistake:
 
 | Layer | Checks | Where |
 |---|---|---|
-| TLA+ model, checked with TLC | the commit protocol as a design: strict serializability, atomicity, recovery and record garbage collection under crashes, lost and re-delivered messages, and leader failover | `tla/` |
+| TLA+ model, checked with TLC | the commit protocol as a design: strict serializability, atomicity, recovery and record garbage collection under crashes, lost and re-delivered messages, and leader failover; READ COMMITTED transactions with row locks (no lost updates, real-time visibility) | `tla/` |
 | Verus proofs | that specific Rust functions do what their specifications say, for every input | `crates/tarn-verified/` |
 | Tests | that the implementation matches the model and MySQL: storage protocol, SQL semantics against MariaDB, transaction anomalies, failover, faults | `lua/test/`, `tests/`, `crates/*/tests` |
 
 What each layer found, and how the findings were fixed, is described in the
-[design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5 and §2.8).
+[design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5, §2.8 and §2.9).
 
 ## TLA+ model
 
@@ -18,9 +18,12 @@ What each layer found, and how the findings were fixed, is described in the
 transactions with fixed read and write sets, direct (non-SQL) readers, and
 the actions of execution, single-shard commit, read-only validation,
 PREPARE, APPLY, ABORT, coordinator decisions, timeout-driven recovery,
-record expiry and garbage collection. Faults are coordinator crashes, lost
-and re-delivered messages, and shard leader failover (durable state
-survives, the MVCC read tracking of open streams does not).
+record expiry and garbage collection, and READ COMMITTED transactions:
+plain reads of the latest committed value, pessimistic row locks with a read
+under the lock, their commits, and the window in which a local commit is not
+yet visible to readers outside it. Faults are coordinator crashes, lost and
+re-delivered messages, and shard leader failover (durable state survives,
+the MVCC read tracking of open streams and the row-lock table do not).
 
 Invariants checked in every configuration:
 
@@ -32,7 +35,9 @@ Invariants checked in every configuration:
 | `PlainOnlyCommitted` | the plain Tarantool spaces only ever hold committed values |
 | `DirectReadsClean` | direct key/value readers never see uncommitted data |
 | `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
-| `StrictSerializable` | the committed transactions have a serial order, consistent with real time, that explains every value they read |
+| `StrictSerializable` | the committed transactions have a serial order, consistent with real time, that explains every value they read (for READ COMMITTED transactions: every value they read under a lock) |
+| `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
+| `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
 
 `StrictSerializable` is checked constructively: the spec records the order in
 which writes reached each key and each transaction's real-time
@@ -40,9 +45,11 @@ predecessors, and the invariant searches for a witness order.
 
 ### Configurations
 
-`tla/MC.tla` defines four workloads on two shards (`Skew`, `Local`, `Frac`,
-`Recov`), and `tla/gen_cfgs.sh` generates one `.cfg` per combination of
-workload, fault budget and options. The names say what is checked:
+`tla/MC.tla` defines seven workloads on two shards (`Skew`, `Local`,
+`Frac`, `Recov` with serializable transactions; `Counter`, `Mixed`, `Local`
+with READ COMMITTED ones), and `tla/gen_cfgs.sh` generates one `.cfg` per
+combination of workload, fault budget and options. The names say what is
+checked:
 
 | Name | Meaning |
 |---|---|
@@ -51,6 +58,7 @@ workload, fault budget and options. The names say what is checked:
 | `*_AckOnPrepare` | clients are acknowledged after PREPARE instead of after APPLY |
 | `*_ROValidate` | the implementation's commit paths: cross-shard read-only transactions validate instead of preparing, and the decision shard's APPLY records COMMITTED |
 | `*_GC` | additionally, transactions expire and protocol records are garbage-collected |
+| `RC_*` | READ COMMITTED read-modify-writes racing each other and serializable transactions (`RC_Counter`, `RC_Mixed`, `RC_Local`), with faults, failovers (which empty the row-lock table) or ack-on-prepare |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -125,10 +133,11 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, coordinator decisions, IPROTO client against a real Tarantool |
 | Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum |
-| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 99 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents |
+| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 174 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
-| Failover | `tests/failover.sh` | Tarantool | 2 shards × 3 replicas under the bank workload: a live leader change, then two leader kills; every check must hold |
+| READ COMMITTED | `python3 tests/sql/rctest.py --tarn HOST:PORT` | a Tarn cluster with two or more shards | isolation variables, lock waits, lock wait timeouts, local and cross-shard deadlocks, concurrent counters without lost updates, semi-consistent `UPDATE`/`DELETE`, `SKIP LOCKED` job queues, `NOWAIT`, `FOR SHARE`, duplicate inserts and concurrent upserts on unique keys, savepoints, statement rollback, locks released on disconnect |
+| Failover | `tests/failover.sh` | Tarantool | 2 shards × 3 replicas under the bank workload and READ COMMITTED transfers: a live leader change, then two leader kills; every check must hold |
 | Faults | `tests/faults.sh` | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
 
 `bench/baselines.sh start mariadb` starts a local MariaDB on port 3407 with

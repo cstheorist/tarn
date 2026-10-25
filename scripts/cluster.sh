@@ -5,6 +5,7 @@
 #   scripts/cluster.sh start [-n SHARDS] [-r REPLICAS] [-d DIR] [-p TARN_PORT]
 #                            [-s SERVERS] [-w WAL_MODE] [-m MEMORY_MB] [-t THREADS]
 #                            [-a]  (ack-on-prepare)  [-u]  (SQL servers reach storage via Unix sockets)
+#                            [-I ISOLATION]  (default level of new sessions, e.g. READ-COMMITTED)
 #   scripts/cluster.sh stop  [-d DIR]
 #   scripts/cluster.sh status [-d DIR]
 #
@@ -16,14 +17,15 @@ T=${TARANTOOL:-tarantool}
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
 CMD=${1:-}; shift || true
 N=2; R=1; DIR=${TARN_DIR:-/tmp/tarn-cluster}; TPORT=4000; SERVERS=1; WAL=write; MEM=1024
-THREADS=""; ACK=""; BASE=${TARN_BASE_PORT:-3300}; ITHREADS=1; UNIX=0; POOL=""
-while getopts "n:r:d:p:s:w:m:t:ab:i:uP:" o; do
+THREADS=""; ACK=""; BASE=${TARN_BASE_PORT:-3300}; ITHREADS=1; UNIX=0; POOL=""; ISO=""
+while getopts "n:r:d:p:s:w:m:t:ab:i:uP:I:" o; do
   case $o in
     n) N=$OPTARG;; r) R=$OPTARG;; d) DIR=$OPTARG;; p) TPORT=$OPTARG;; s) SERVERS=$OPTARG;;
     w) WAL=$OPTARG;; m) MEM=$OPTARG;; t) THREADS=$OPTARG;; a) ACK=--ack-on-prepare;; b) BASE=$OPTARG;;
     i) ITHREADS=$OPTARG;;
     u) UNIX=1;;
     P) POOL=$OPTARG;;
+    I) ISO=$OPTARG;;
     *) echo "bad option"; exit 2;;
   esac
 done
@@ -99,7 +101,7 @@ case "$CMD" in
     for k in $(seq 1 "$SERVERS"); do
       tp=$((TPORT + k - 1))
       TARN_LOG=${TARN_LOG:-info} "$TARN" --config "$DIR/cluster.json" --listen 127.0.0.1:$tp --node-id "$k" \
-        ${THREADS:+--threads $THREADS} ${POOL:+--pool $POOL} $ACK >> "$DIR/tarn$k.log" 2>&1 < /dev/null &
+        ${THREADS:+--threads $THREADS} ${POOL:+--pool $POOL} ${ISO:+--isolation $ISO} $ACK >> "$DIR/tarn$k.log" 2>&1 < /dev/null &
       echo $! > "$DIR/tarn$k.pid"
       wait_port "$tp" || { tail -5 "$DIR/tarn$k.log"; exit 1; }
     done

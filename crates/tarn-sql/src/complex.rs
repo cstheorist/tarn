@@ -259,7 +259,7 @@ impl Session {
                 (Ok(out), Some(t)) => t.commit(&self.cluster).await.map(|_| out),
                 (Ok(out), None) => Ok(out),
                 (Err(e), Some(t)) => {
-                    t.rollback();
+                    t.rollback(&self.cluster);
                     Err(e)
                 }
                 (Err(e), None) => Err(e),

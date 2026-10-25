@@ -141,7 +141,16 @@ pub struct SelectPlan {
     pub distinct: bool,
     pub limit: Option<Expr>,
     pub offset: Option<Expr>,
-    pub for_update: bool,
+    /// FOR UPDATE / FOR SHARE [NOWAIT | SKIP LOCKED].
+    pub lock: Option<RowLock>,
+}
+
+/// A locking read: take row locks on what is read (issue #17).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowLock {
+    pub exclusive: bool,
+    pub nowait: bool,
+    pub skip: bool,
 }
 
 #[derive(Clone, Debug)]

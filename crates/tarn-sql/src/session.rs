@@ -1,7 +1,7 @@
 //! One client connection: statement dispatch, prepared statements, explicit
 //! and implicit transactions, DML fast paths, SHOW/SET handling and DDL.
 
-use crate::admin::{self, Admin};
+use crate::admin::{self, Admin, Isolation, SetItem, VarScope};
 use crate::catalog::TableDef;
 use crate::cluster::{CachedPlan, Cluster};
 use crate::exec::{self, matching_rows, run_select, shard_of_row, ReadMode, NEED_TXN};
@@ -10,10 +10,9 @@ use crate::mpw::{lua_status, Mp, Rd};
 use crate::normalize::{normalize, Mode};
 use crate::plan::*;
 use crate::planner::{self, PlanCtx};
-use crate::txn::{key_bytes, select_rows, BufWrite, Row, Txn, WOp};
+use crate::txn::{key_bytes, select_rows, BufWrite, LockKey, LockOpts, Locked, Mode as TxnMode, Row, Txn, WOp};
 use crate::types::Arith;
-use bytes::Bytes;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tarn_common::{Column, ColumnType, SqlError, SqlResult, Value};
@@ -64,6 +63,12 @@ pub struct Session {
     found_rows: u64,
     row_count: i64,
     prepared: HashMap<u32, Prepared>,
+    /// Session isolation level (transaction_isolation).
+    pub isolation: Isolation,
+    /// SET TRANSACTION ISOLATION LEVEL ...: the next transaction only.
+    next_isolation: Option<Isolation>,
+    /// innodb_lock_wait_timeout, seconds.
+    pub lock_wait_timeout: f64,
 }
 
 const MAX_RETRIES: usize = 20;
@@ -116,6 +121,10 @@ fn like_ci(s: &str, pat: &Option<String>) -> bool {
 
 impl Session {
     pub fn new(cluster: Arc<Cluster>, conn_id: u32) -> Session {
+        let (isolation, lock_wait_timeout) = {
+            let g = cluster.globals.lock();
+            (g.isolation, g.lock_wait_timeout)
+        };
         Session {
             cluster,
             db: None,
@@ -127,6 +136,29 @@ impl Session {
             found_rows: 0,
             row_count: -1,
             prepared: HashMap::new(),
+            isolation,
+            next_isolation: None,
+            lock_wait_timeout,
+        }
+    }
+
+    /// A new transaction of this session: explicit (BEGIN, autocommit off)
+    /// takes the isolation set for the next transaction, if any.
+    pub(crate) fn new_txn(&mut self, explicit: bool) -> Txn {
+        let lvl = if explicit {
+            self.next_isolation.take().unwrap_or(self.isolation)
+        } else {
+            self.isolation
+        };
+        Txn::with_mode(&self.cluster, explicit, lvl.mode(), self.lock_wait_timeout)
+    }
+
+    fn session_vars(&self) -> admin::SessionVars<'_> {
+        admin::SessionVars {
+            autocommit: self.autocommit,
+            db: self.db.as_deref(),
+            isolation: self.isolation,
+            lock_wait_timeout: self.lock_wait_timeout,
         }
     }
 
@@ -279,7 +311,7 @@ impl Session {
 
     pub fn disconnect(&mut self) {
         if let Some(t) = self.txn.take() {
-            t.rollback();
+            t.rollback(&self.cluster);
         }
     }
 
@@ -349,7 +381,7 @@ impl Session {
 
     fn ensure_txn(&mut self) {
         if self.txn.is_none() {
-            self.txn = Some(Txn::new(&self.cluster, true));
+            self.txn = Some(self.new_txn(true));
         }
     }
 
@@ -358,15 +390,35 @@ impl Session {
     async fn run_select(&mut self, p: &Arc<SelectPlan>, params: &[Value]) -> SqlResult<Output> {
         let now = now_string();
         let columns = exec::render_columns(&p.columns, params);
+        if let Some(lock) = p.lock {
+            return self.run_locking_select(p, params, lock, columns).await;
+        }
         if self.txn_needed() {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
             let res = {
                 let cx = self.cx(params, &now);
-                let mut mode = ReadMode::Txn(&mut txn);
-                run_select(&self.cluster, &mut mode, p, &cx).await
+                if txn.mode == TxnMode::ReadCommitted {
+                    let mut mode = ReadMode::Committed(&mut txn);
+                    run_select(&self.cluster, &mut mode, p, &cx).await
+                } else {
+                    let mut mode = ReadMode::Txn(&mut txn);
+                    run_select(&self.cluster, &mut mode, p, &cx).await
+                }
             };
             return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+        }
+        if self.isolation.mode() == TxnMode::ReadCommitted {
+            // READ COMMITTED autocommit: every storage read sees the latest
+            // committed state; nothing to validate, so nothing can abort.
+            let mut txn = self.new_txn(false);
+            let rows = {
+                let cx = self.cx(params, &now);
+                let mut mode = ReadMode::Committed(&mut txn);
+                run_select(&self.cluster, &mut mode, p, &cx).await?
+            };
+            self.found_rows = rows.len() as u64;
+            return Ok(Output::Rows { columns, rows });
         }
         // Autocommit: one lock-aware storage read if the plan allows it,
         // otherwise an implicit read-only transaction (validated at the end).
@@ -384,7 +436,7 @@ impl Session {
         }
         let mut attempt = 0;
         loop {
-            let mut txn = Txn::new(&self.cluster, false);
+            let mut txn = self.new_txn(false);
             let rows = {
                 let cx = self.cx(params, &now);
                 let mut mode = ReadMode::Txn(&mut txn);
@@ -393,7 +445,7 @@ impl Session {
             let res = match rows {
                 Ok(rows) => txn.commit(&self.cluster).await.map(|_| rows),
                 Err(e) => {
-                    txn.rollback();
+                    txn.rollback(&self.cluster);
                     Err(e)
                 }
             };
@@ -408,6 +460,47 @@ impl Session {
                     backoff(attempt).await;
                 }
                 Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// SELECT ... FOR UPDATE / FOR SHARE: row locks in the session's
+    /// transaction, or (autocommit) in a statement-long one that releases
+    /// them at its end.
+    async fn run_locking_select(
+        &mut self,
+        p: &Arc<SelectPlan>,
+        params: &[Value],
+        lock: RowLock,
+        columns: Arc<[Column]>,
+    ) -> SqlResult<Output> {
+        let now = now_string();
+        if self.txn_needed() {
+            self.ensure_txn();
+            let mut txn = self.txn.take().unwrap();
+            let res = {
+                let cx = self.cx(params, &now);
+                exec::run_locking_select(&self.cluster, &mut txn, p, &cx, lock).await
+            };
+            if let Ok(rows) = &res {
+                self.found_rows = rows.len() as u64;
+            }
+            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+        }
+        let mut txn = self.new_txn(false);
+        let res = {
+            let cx = self.cx(params, &now);
+            exec::run_locking_select(&self.cluster, &mut txn, p, &cx, lock).await
+        };
+        match res {
+            Ok(rows) => {
+                txn.commit(&self.cluster).await?;
+                self.found_rows = rows.len() as u64;
+                Ok(Output::Rows { columns, rows })
+            }
+            Err(e) => {
+                txn.rollback(&self.cluster);
+                Err(e)
             }
         }
     }
@@ -430,7 +523,7 @@ impl Session {
     fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
         match res {
             Err(e) if e.code == 1213 || txn.doomed.is_some() => {
-                txn.rollback();
+                txn.rollback(&self.cluster);
                 Err(e)
             }
             other => {
@@ -469,11 +562,11 @@ impl Session {
         }
         let mut attempt = 0;
         loop {
-            let mut txn = Txn::new(&self.cluster, false);
+            let mut txn = self.new_txn(false);
             let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
                 Ok(r) => txn.commit(&self.cluster).await.map(|_| r),
                 Err(e) => {
-                    txn.rollback();
+                    txn.rollback(&self.cluster);
                     Err(e)
                 }
             };
@@ -512,7 +605,13 @@ impl Session {
     ) -> SqlResult<Option<Output>> {
         let cx = self.cx(params, now);
         let (shard, writes, insert_id) = match stmt {
-            Stmt::Insert(p) if p.on_dup.is_empty() && !p.ignore => {
+            // REPLACE on a table with another unique key may have to delete
+            // other rows (those it collides with on that key): not here.
+            Stmt::Insert(p)
+                if p.on_dup.is_empty()
+                    && !p.ignore
+                    && !(p.replace && p.table.indexes.iter().skip(1).any(|i| i.unique)) =>
+            {
                 let InsertSource::Values(_) = &p.source else {
                     return Ok(None);
                 };
@@ -528,7 +627,7 @@ impl Session {
                     return Ok(None);
                 }
                 let mut m = Mp::new();
-                m.arr(1).arr(rows.len());
+                m.arr(2).arr(rows.len());
                 for r in &rows {
                     m.arr(3)
                         .str(if p.replace { "replace" } else { "insert" })
@@ -545,7 +644,7 @@ impl Session {
                 let idx = &t.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, t, idx, &pk).unwrap_or(0);
                 let mut m = Mp::new();
-                m.arr(1).arr(1).arr(5).str("update").uint(t.space_id as u64).vals(&pk);
+                m.arr(2).arr(1).arr(5).str("update").uint(t.space_id as u64).vals(&pk);
                 m.arr(ops.len());
                 for (op, field, v) in &ops {
                     m.arr(3).str(op).str(field).val(v);
@@ -582,7 +681,7 @@ impl Session {
                 let idx = &p.access.table.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, &p.access.table, idx, &pk).unwrap_or(0);
                 let mut m = Mp::new();
-                m.arr(1)
+                m.arr(2)
                     .arr(1)
                     .arr(3)
                     .str("delete")
@@ -592,6 +691,10 @@ impl Session {
             }
             _ => return Ok(None),
         };
+        // Rows under another transaction's row lock are waited for, up to
+        // the session's innodb_lock_wait_timeout (then 1205).
+        let mut writes = writes;
+        writes.map(1).str("lock_timeout").f64(self.lock_wait_timeout);
         let mut attempt = 0;
         loop {
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
@@ -846,8 +949,13 @@ impl Session {
                 let t = &p.table;
                 let selected = match &p.source {
                     InsertSource::Select(sp, _) => {
-                        let mut mode = ReadMode::Txn(txn);
-                        Some(run_select(&self.cluster, &mut mode, sp, &cx).await?)
+                        if txn.mode == TxnMode::ReadCommitted {
+                            let mut mode = ReadMode::Committed(txn);
+                            Some(run_select(&self.cluster, &mut mode, sp, &cx).await?)
+                        } else {
+                            let mut mode = ReadMode::Txn(txn);
+                            Some(run_select(&self.cluster, &mut mode, sp, &cx).await?)
+                        }
                     }
                     _ => None,
                 };
@@ -858,7 +966,7 @@ impl Session {
                 let pk_cols = &t.indexes[0].cols;
                 let mut affected = 0;
                 let plain = p.on_dup.is_empty() && !p.replace && !p.ignore;
-                if plain && !txn.explicit {
+                if plain && !txn.explicit && txn.mode == TxnMode::Serializable {
                     // A single-statement transaction: the shards refuse an
                     // existing key when the INSERT commits (local commit or
                     // PREPARE votes NO with 1062), failing the statement as a
@@ -881,44 +989,20 @@ impl Session {
                     }
                     return Ok((affected, id));
                 }
-                // Look up every key not written by this transaction yet, all
-                // requests pipelined, then apply the per-row logic in order.
-                let keyed: Vec<(Vec<Value>, usize)> = rows
-                    .iter()
-                    .map(|row| {
-                        (
-                            pk_cols.iter().map(|&c| row[c].clone()).collect(),
-                            shard_of_row(&self.cluster, t, row),
-                        )
-                    })
-                    .collect();
-                let mut found: HashMap<Bytes, Option<Row>> = HashMap::new();
-                {
-                    let mut lookups = Vec::new();
-                    for (pk, shard) in &keyed {
-                        if txn.buffered(t.space_id, pk).is_none() {
-                            lookups.push((pk.clone(), *shard, txn.stream(&self.cluster, *shard).await?));
-                        }
-                    }
-                    let futs = lookups.iter().map(|(pk, _, st)| {
-                        select_rows(&st.client, st.id, t, 0, pk, Iter::Eq, Some(1), None, false, st.begin)
-                    });
-                    let results = futures::future::join_all(futs).await;
-                    for ((pk, shard, _), r) in lookups.into_iter().zip(results) {
-                        let r = r?;
-                        txn.mark_begun(shard);
-                        found.insert(crate::txn::key_bytes(&pk), r.into_iter().next());
-                        txn.note_point(shard, t.space_id, 0, pk);
-                    }
-                }
-                for (row, (pk, shard)) in rows.into_iter().zip(keyed) {
-                    let existing = match txn.buffered(t.space_id, &pk) {
-                        Some(b) => b.cloned(),
-                        None => found.get(&crate::txn::key_bytes(&pk)).cloned().flatten(),
-                    };
-                    match existing {
+                // The stored rows each new row collides with, by primary key
+                // and by every unique key: read through the transaction
+                // (serializable) or under row locks on the key values (READ
+                // COMMITTED: concurrent inserts of one value wait).
+                let stored = self.stored_conflicts(txn, t, &rows).await?;
+                for (row, st) in rows.into_iter().zip(stored) {
+                    let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
+                    let shard = shard_of_row(&self.cluster, t, &row);
+                    let (pk_row, uniq) = current_conflicts(txn, t, &row, &pk, st);
+                    let conflict = pk_row.clone().or_else(|| uniq.first().map(|(_, r)| r.clone()));
+                    match conflict {
                         Some(old) if !p.on_dup.is_empty() => {
-                            // ON DUPLICATE KEY UPDATE: expressions see old row ++ proposed row
+                            // ON DUPLICATE KEY UPDATE applies to the row it
+                            // collided with; expressions see old row ++ proposed.
                             let mut both = old.clone();
                             both.extend(row.iter().cloned());
                             let mut new = old.clone();
@@ -928,24 +1012,50 @@ impl Session {
                                 both[*c] = new[*c].clone();
                             }
                             if new != old {
-                                self.buffer_row_change(txn, t, &old, new, shard).await?;
+                                let old_shard = shard_of_row(&self.cluster, t, &old);
+                                self.buffer_row_change(txn, t, &old, new, old_shard).await?;
                                 affected += 2;
                             }
                         }
                         Some(_) if p.replace => {
+                            // REPLACE deletes every row it collides with.
+                            let mut deleted = 0;
+                            for (_, r) in &uniq {
+                                let rpk: Vec<Value> = pk_cols.iter().map(|&c| r[c].clone()).collect();
+                                if rpk != pk {
+                                    txn.buffer(BufWrite {
+                                        shard: shard_of_row(&self.cluster, t, r),
+                                        table: t.clone(),
+                                        op: WOp::Delete,
+                                        row: None,
+                                        pk: rpk,
+                                    });
+                                    deleted += 1;
+                                }
+                            }
+                            let op = if pk_row.is_some() { WOp::Replace } else { WOp::Insert };
                             txn.buffer(BufWrite {
                                 shard,
                                 table: t.clone(),
-                                op: WOp::Replace,
+                                op,
                                 row: Some(row),
                                 pk,
                             });
-                            affected += 2;
+                            affected += 1 + deleted + pk_row.is_some() as u64;
                         }
                         Some(_) if p.ignore => {}
                         Some(_) => {
-                            let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
-                            return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
+                            return Err(match (&pk_row, uniq.first()) {
+                                (Some(_), _) | (None, None) => {
+                                    let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
+                                    SqlError::dup_key(&shown.join("-"), "PRIMARY")
+                                }
+                                (None, Some((ix, _))) => {
+                                    let idx = &t.indexes[*ix];
+                                    let shown: Vec<String> = idx.cols.iter().map(|&c| row[c].to_string()).collect();
+                                    SqlError::dup_key(&shown.join("-"), &idx.name)
+                                }
+                            });
                         }
                         None => {
                             txn.buffer(BufWrite {
@@ -961,24 +1071,59 @@ impl Session {
                 }
                 Ok((affected, id))
             }
+            Stmt::Update(p) if txn.mode == TxnMode::ReadCommitted => {
+                // READ COMMITTED: candidates from the latest committed state,
+                // then each row locked, re-read and re-checked under its lock
+                // (TarnCommit!RCLock): SET x = x - 1 starts from the newest
+                // version and never loses a concurrent update.
+                let t = &p.access.table;
+                let cands = exec::candidate_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &cx).await?;
+                let want = exec::eval_limit(&p.limit, &cx)?.map(|l| l as usize);
+                let x = LockOpts {
+                    exclusive: true,
+                    ..Default::default()
+                };
+                let rows = exec::lock_matching(&self.cluster, txn, t, cands, &p.filter, x, want, &cx).await?;
+                let mut changed = 0;
+                for old in rows {
+                    let new = self.updated_row(p, t, &old, &cx)?;
+                    if new != old {
+                        let shard = shard_of_row(&self.cluster, t, &old);
+                        self.buffer_row_change(txn, t, &old, new, shard).await?;
+                        changed += 1;
+                    }
+                }
+                Ok((changed, None))
+            }
+            Stmt::Delete(p) if txn.mode == TxnMode::ReadCommitted => {
+                let t = &p.access.table;
+                let cands = exec::candidate_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &cx).await?;
+                let want = exec::eval_limit(&p.limit, &cx)?.map(|l| l as usize);
+                let x = LockOpts {
+                    exclusive: true,
+                    ..Default::default()
+                };
+                let rows = exec::lock_matching(&self.cluster, txn, t, cands, &p.filter, x, want, &cx).await?;
+                let n = rows.len() as u64;
+                for old in rows {
+                    let pk: Vec<Value> = t.indexes[0].cols.iter().map(|&c| old[c].clone()).collect();
+                    let shard = shard_of_row(&self.cluster, t, &old);
+                    txn.buffer(BufWrite {
+                        shard,
+                        table: t.clone(),
+                        op: WOp::Delete,
+                        row: None,
+                        pk,
+                    });
+                }
+                Ok((n, None))
+            }
             Stmt::Update(p) => {
                 let t = &p.access.table;
                 let rows = matching_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &p.limit, &cx).await?;
                 let mut changed = 0;
                 for old in rows {
-                    let mut new = old.clone();
-                    for (c, e) in &p.set {
-                        let col = &t.columns[*c];
-                        let v = col.ty().coerce(e.eval(&new, &cx)?, &col.name)?;
-                        if v.is_null() && !col.nullable {
-                            return Err(SqlError::new(
-                                1048,
-                                "23000",
-                                format!("Column '{}' cannot be null", col.name),
-                            ));
-                        }
-                        new[*c] = v;
-                    }
+                    let new = self.updated_row(p, t, &old, &cx)?;
                     if new != old {
                         let shard = shard_of_row(&self.cluster, t, &old);
                         self.buffer_row_change(txn, t, &old, new, shard).await?;
@@ -1008,6 +1153,209 @@ impl Session {
         }
     }
 
+    /// The row after an UPDATE's SET list (assignments see earlier ones).
+    fn updated_row(&self, p: &UpdatePlan, t: &TableDef, old: &Row, cx: &EvalCtx) -> SqlResult<Row> {
+        let mut new = old.clone();
+        for (c, e) in &p.set {
+            let col = &t.columns[*c];
+            let v = col.ty().coerce(e.eval(&new, cx)?, &col.name)?;
+            if v.is_null() && !col.nullable {
+                return Err(SqlError::new(
+                    1048,
+                    "23000",
+                    format!("Column '{}' cannot be null", col.name),
+                ));
+            }
+            new[*c] = v;
+        }
+        Ok(new)
+    }
+
+    /// For each new row: the stored row with its primary key and, for each
+    /// unique secondary index, the stored row holding its value (as read,
+    /// before this transaction's own writes are taken into account).
+    async fn stored_conflicts(
+        &self,
+        txn: &mut Txn,
+        t: &Arc<TableDef>,
+        rows: &[Row],
+    ) -> SqlResult<Vec<StoredConflicts>> {
+        let pk_cols = &t.indexes[0].cols;
+        let uniq: Vec<usize> = (1..t.indexes.len()).filter(|&i| t.indexes[i].unique).collect();
+        // (row, slot: 0 = primary key, k = uniq[k - 1]) -> lookup
+        let mut lookups: Vec<(usize, usize, usize, u32, Vec<Value>)> = Vec::new(); // row, slot, shard, index, key
+        for (i, row) in rows.iter().enumerate() {
+            let shard = shard_of_row(&self.cluster, t, row);
+            let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
+            lookups.push((i, 0, shard, 0, pk));
+            for (k, &ix) in uniq.iter().enumerate() {
+                let key: Vec<Value> = t.indexes[ix].cols.iter().map(|&c| row[c].clone()).collect();
+                if key.iter().any(|v| v.is_null()) {
+                    continue; // NULLs never collide in a unique index
+                }
+                lookups.push((i, k + 1, shard, t.indexes[ix].id, key));
+            }
+        }
+        let mut out: Vec<StoredConflicts> = rows
+            .iter()
+            .map(|_| StoredConflicts {
+                pk: None,
+                uniq: vec![None; uniq.len()],
+            })
+            .collect();
+        let place = |out: &mut Vec<StoredConflicts>, i: usize, slot: usize, r: Option<Row>| {
+            if slot == 0 {
+                out[i].pk = r;
+            } else {
+                out[i].uniq[slot - 1] = r.map(|r| (uniq[slot - 1], r));
+            }
+        };
+        if txn.mode == TxnMode::ReadCommitted {
+            let mut by: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for (j, l) in lookups.iter().enumerate() {
+                by.entry(l.2).or_default().push(j);
+            }
+            let x = LockOpts {
+                exclusive: true,
+                read: true,
+                ..Default::default()
+            };
+            for (shard, js) in by {
+                let keys: Vec<LockKey> = js
+                    .iter()
+                    .map(|&j| LockKey {
+                        table: t.clone(),
+                        index: lookups[j].3,
+                        key: lookups[j].4.clone(),
+                    })
+                    .collect();
+                let res = txn.lock(&self.cluster, shard, &keys, x).await?;
+                for (&j, r) in js.iter().zip(res) {
+                    if let Locked::Row(r) = r {
+                        place(&mut out, lookups[j].0, lookups[j].1, r);
+                    }
+                }
+            }
+        } else {
+            let mut pending = Vec::new();
+            for l in &lookups {
+                if l.1 == 0 && txn.buffered(t.space_id, &l.4).is_some() {
+                    continue;
+                }
+                pending.push((l, txn.stream(&self.cluster, l.2).await?));
+            }
+            let futs = pending.iter().map(|(l, st)| {
+                select_rows(
+                    &st.client,
+                    st.id,
+                    t,
+                    l.3,
+                    &l.4,
+                    Iter::Eq,
+                    Some(1),
+                    None,
+                    false,
+                    st.begin,
+                )
+            });
+            let results = futures::future::join_all(futs).await;
+            for ((l, _), r) in pending.into_iter().zip(results) {
+                let r = r?;
+                txn.mark_begun(l.2);
+                txn.note_point(l.2, t.space_id, l.3, l.4.clone());
+                place(&mut out, l.0, l.1, r.into_iter().next());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Before a row's unique-key values change (UPDATE, ON DUPLICATE KEY
+    /// UPDATE): the unique index whose new value another row holds, if any,
+    /// as MySQL checks row by row. READ COMMITTED locks each new value (X)
+    /// and reads its holder under the lock, so concurrent writers of one
+    /// value wait for each other; serializable reads it through the
+    /// transaction (validated at commit).
+    async fn changed_unique_conflict(
+        &self,
+        txn: &mut Txn,
+        t: &Arc<TableDef>,
+        old: &Row,
+        new: &Row,
+        old_pk: &[Value],
+    ) -> SqlResult<Option<usize>> {
+        let changed: Vec<usize> = (1..t.indexes.len())
+            .filter(|&i| t.indexes[i].unique)
+            .filter(|&i| t.indexes[i].cols.iter().any(|&c| old[c] != new[c]))
+            .filter(|&i| t.indexes[i].cols.iter().all(|&c| !new[c].is_null()))
+            .collect();
+        if changed.is_empty() {
+            return Ok(None);
+        }
+        let shard = shard_of_row(&self.cluster, t, new);
+        let key_of = |i: usize| -> Vec<Value> { t.indexes[i].cols.iter().map(|&c| new[c].clone()).collect() };
+        let mut stored: Vec<Option<Row>> = Vec::with_capacity(changed.len());
+        if txn.mode == TxnMode::ReadCommitted {
+            let keys: Vec<LockKey> = changed
+                .iter()
+                .map(|&i| LockKey {
+                    table: t.clone(),
+                    index: t.indexes[i].id,
+                    key: key_of(i),
+                })
+                .collect();
+            let x = LockOpts {
+                exclusive: true,
+                read: true,
+                ..Default::default()
+            };
+            for r in txn.lock(&self.cluster, shard, &keys, x).await? {
+                stored.push(match r {
+                    Locked::Row(r) => r,
+                    _ => None,
+                });
+            }
+        } else {
+            for &i in &changed {
+                let st = txn.stream(&self.cluster, shard).await?;
+                let key = key_of(i);
+                let id = t.indexes[i].id;
+                let rows =
+                    select_rows(&st.client, st.id, t, id, &key, Iter::Eq, Some(1), None, false, st.begin).await?;
+                txn.mark_begun(shard);
+                txn.note_point(shard, t.space_id, id, key);
+                stored.push(rows.into_iter().next());
+            }
+        }
+        let pk_cols = &t.indexes[0].cols;
+        let pk_of = |r: &Row| -> Vec<Value> { pk_cols.iter().map(|&c| r[c].clone()).collect() };
+        for (&i, holder) in changed.iter().zip(stored) {
+            let cols = &t.indexes[i].cols;
+            let same = |r: &Row| cols.iter().all(|&c| r[c] == new[c]);
+            // A row this transaction wrote with that value ...
+            let mine = txn
+                .writes
+                .range((t.space_id, bytes::Bytes::new())..)
+                .take_while(|((sp, _), _)| *sp == t.space_id)
+                .filter_map(|(_, w)| w.row.as_ref())
+                .any(|r| same(r) && pk_of(r) != old_pk);
+            if mine {
+                return Ok(Some(i));
+            }
+            // ... or a stored one, unless this transaction rewrote it.
+            if let Some(r) = holder {
+                let rpk = pk_of(&r);
+                if rpk != old_pk {
+                    match txn.buffered(t.space_id, &rpk) {
+                        None => return Ok(Some(i)),
+                        Some(Some(b)) if same(b) => return Ok(Some(i)),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     async fn buffer_row_change(
         &self,
         txn: &mut Txn,
@@ -1019,6 +1367,11 @@ impl Session {
         let pk_cols = &t.indexes[0].cols;
         let old_pk: Vec<Value> = pk_cols.iter().map(|&c| old[c].clone()).collect();
         let new_pk: Vec<Value> = pk_cols.iter().map(|&c| new[c].clone()).collect();
+        if let Some(ix) = self.changed_unique_conflict(txn, t, old, &new, &old_pk).await? {
+            let idx = &t.indexes[ix];
+            let shown: Vec<String> = idx.cols.iter().map(|&c| new[c].to_string()).collect();
+            return Err(SqlError::dup_key(&shown.join("-"), &idx.name));
+        }
         if key_bytes(&old_pk) == key_bytes(&new_pk) {
             txn.buffer(BufWrite {
                 shard,
@@ -1031,7 +1384,27 @@ impl Session {
         }
         // primary key (and possibly shard) changes: delete + insert
         let new_shard = shard_of_row(&self.cluster, t, &new);
-        if self.row_exists(txn, t, &new_pk, new_shard).await?.is_some() {
+        let exists = if txn.mode == TxnMode::ReadCommitted {
+            // Lock the new key value: a concurrent insert of it waits.
+            let x = LockOpts {
+                exclusive: true,
+                read: true,
+                ..Default::default()
+            };
+            let key = LockKey {
+                table: t.clone(),
+                index: 0,
+                key: new_pk.clone(),
+            };
+            let r = txn.lock(&self.cluster, new_shard, &[key], x).await?;
+            match txn.buffered(t.space_id, &new_pk) {
+                Some(b) => b.is_some(),
+                None => matches!(r.first(), Some(Locked::Row(Some(_)))),
+            }
+        } else {
+            self.row_exists(txn, t, &new_pk, new_shard).await?.is_some()
+        };
+        if exists {
             let shown: Vec<String> = new_pk.iter().map(|v| v.to_string()).collect();
             return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
         }
@@ -1089,7 +1462,7 @@ impl Session {
         match a {
             Admin::Begin { .. } => {
                 self.implicit_commit().await?;
-                self.txn = Some(Txn::new(&self.cluster, true));
+                self.txn = Some(self.new_txn(true));
                 Ok(Output::ok(0))
             }
             Admin::Commit => {
@@ -1100,18 +1473,85 @@ impl Session {
             }
             Admin::Rollback => {
                 if let Some(t) = self.txn.take() {
-                    t.rollback();
+                    t.rollback(&self.cluster);
                 }
                 Ok(Output::ok(0))
             }
-            Admin::SetAutocommit(on) => {
-                if on && !self.autocommit {
-                    self.implicit_commit().await?;
+            Admin::Set(items) => {
+                for it in items {
+                    match it {
+                        SetItem::Autocommit(on) => {
+                            if on && !self.autocommit {
+                                self.implicit_commit().await?;
+                            }
+                            self.autocommit = on;
+                        }
+                        SetItem::Isolation(VarScope::Session, lvl) => self.isolation = lvl,
+                        SetItem::Isolation(VarScope::Global, lvl) => self.cluster.globals.lock().isolation = lvl,
+                        SetItem::Isolation(VarScope::Next, lvl) => {
+                            if self.in_transaction() {
+                                return Err(SqlError::new(
+                                    1568,
+                                    "25001",
+                                    "Transaction characteristics can't be changed while a transaction is in progress",
+                                ));
+                            }
+                            self.next_isolation = Some(lvl);
+                        }
+                        SetItem::LockWaitTimeout(VarScope::Global, t) => {
+                            let t = t.unwrap_or(self.cluster.cfg.lock_wait_timeout);
+                            self.cluster.globals.lock().lock_wait_timeout = t
+                        }
+                        SetItem::LockWaitTimeout(_, t) => {
+                            let t = t.unwrap_or_else(|| self.cluster.globals.lock().lock_wait_timeout);
+                            // Read at each lock wait, as InnoDB does.
+                            self.lock_wait_timeout = t;
+                            if let Some(txn) = self.txn.as_mut() {
+                                txn.lock_timeout = t;
+                            }
+                        }
+                        SetItem::UserVar(..) => {}
+                    }
                 }
-                self.autocommit = on;
                 Ok(Output::ok(0))
             }
-            Admin::SetIgnored | Admin::SetVar { .. } | Admin::Noop => Ok(Output::ok(0)),
+            Admin::Savepoint(name) => {
+                if self.txn.is_none() && !self.autocommit {
+                    self.ensure_txn();
+                }
+                if let Some(t) = self.txn.as_mut() {
+                    // A savepoint of the same name is replaced.
+                    t.savepoints.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                    t.savepoints.push((name, t.writes.clone()));
+                }
+                Ok(Output::ok(0))
+            }
+            Admin::RollbackToSavepoint(name) => {
+                let missing = || SqlError::new(1305, "42000", format!("SAVEPOINT {} does not exist", name));
+                let t = self.txn.as_mut().ok_or_else(missing)?;
+                let i = t
+                    .savepoints
+                    .iter()
+                    .rposition(|(n, _)| n.eq_ignore_ascii_case(&name))
+                    .ok_or_else(missing)?;
+                // Undo the writes since the savepoint; keep the row locks and
+                // the read set (as InnoDB keeps the locks).
+                t.writes = t.savepoints[i].1.clone();
+                t.savepoints.truncate(i + 1);
+                Ok(Output::ok(0))
+            }
+            Admin::ReleaseSavepoint(name) => {
+                let missing = || SqlError::new(1305, "42000", format!("SAVEPOINT {} does not exist", name));
+                let t = self.txn.as_mut().ok_or_else(missing)?;
+                let i = t
+                    .savepoints
+                    .iter()
+                    .rposition(|(n, _)| n.eq_ignore_ascii_case(&name))
+                    .ok_or_else(missing)?;
+                t.savepoints.truncate(i);
+                Ok(Output::ok(0))
+            }
+            Admin::Noop => Ok(Output::ok(0)),
             Admin::Use(db) => {
                 self.use_db(&db)?;
                 Ok(Output::ok(0))
@@ -1120,7 +1560,7 @@ impl Session {
                 let mut columns = Vec::new();
                 let mut row = Vec::new();
                 for (alias, var) in &vars {
-                    let v = admin::system_var(var, self.autocommit, self.db.as_deref()).unwrap_or(Value::Null);
+                    let v = admin::system_var(var, &self.session_vars()).unwrap_or(Value::Null);
                     let ty = match &v {
                         Value::Int(_) | Value::UInt(_) => ColumnType::LongLong,
                         _ => ColumnType::VarString,
@@ -1260,7 +1700,7 @@ impl Session {
                 let mut rows = Vec::new();
                 for name in admin::SHOWN_VARIABLES {
                     if like_ci(name, &like) {
-                        let v = admin::system_var(name, self.autocommit, self.db.as_deref()).unwrap_or(Value::Null);
+                        let v = admin::system_var(name, &self.session_vars()).unwrap_or(Value::Null);
                         rows.push(vec![Value::str(name), Value::Str(v.to_text().unwrap_or_default())]);
                     }
                 }
@@ -1395,6 +1835,7 @@ impl Session {
             ("Tarn_retries", s.retries.load(Ordering::Relaxed)),
             ("Tarn_plan_cache_hits", s.plan_cache_hits.load(Ordering::Relaxed)),
             ("Tarn_plan_cache_misses", s.plan_cache_misses.load(Ordering::Relaxed)),
+            ("Tarn_cross_shard_deadlocks", s.deadlocks.load(Ordering::Relaxed)),
             ("Tarn_shards", self.cluster.nshards() as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));
@@ -1425,6 +1866,66 @@ fn split(e: &Expr, out: &mut Vec<Expr>) {
         }
         other => out.push(other.clone()),
     }
+}
+
+/// What an inserted row collides with in storage: the row with its primary
+/// key, and per unique secondary index the (index position, row) holding
+/// its value.
+struct StoredConflicts {
+    pk: Option<Row>,
+    uniq: Vec<Option<(usize, Row)>>,
+}
+
+/// The rows a new row collides with now, taking the transaction's own
+/// writes into account: (row with its primary key, [(index position, row)]
+/// for unique keys whose value another row holds).
+fn current_conflicts(
+    txn: &Txn,
+    t: &TableDef,
+    row: &Row,
+    pk: &[Value],
+    st: StoredConflicts,
+) -> (Option<Row>, Vec<(usize, Row)>) {
+    let pk_cols = &t.indexes[0].cols;
+    let pk_row = match txn.buffered(t.space_id, pk) {
+        Some(b) => b.cloned(),
+        None => st.pk,
+    };
+    let mut uniq: Vec<(usize, Row)> = Vec::new();
+    let pk_of = |r: &Row| -> Vec<Value> { pk_cols.iter().map(|&c| r[c].clone()).collect() };
+    for (slot, stored) in st.uniq.into_iter().enumerate() {
+        let ix = (1..t.indexes.len()).filter(|&i| t.indexes[i].unique).nth(slot).unwrap();
+        let cols = &t.indexes[ix].cols;
+        let val: Vec<&Value> = cols.iter().map(|&c| &row[c]).collect();
+        if val.iter().any(|v| v.is_null()) {
+            continue;
+        }
+        let same = |r: &Row| cols.iter().zip(&val).all(|(&c, v)| r[c] == **v);
+        // A live row this transaction wrote with that value comes first.
+        let mut found = txn
+            .writes
+            .range((t.space_id, bytes::Bytes::new())..)
+            .take_while(|((sp, _), _)| *sp == t.space_id)
+            .filter_map(|(_, w)| w.row.as_ref())
+            .find(|r| same(r))
+            .cloned();
+        if found.is_none() {
+            if let Some((_, r)) = stored {
+                // A stored holder counts unless this transaction rewrote it.
+                found = match txn.buffered(t.space_id, &pk_of(&r)) {
+                    None => Some(r),
+                    Some(Some(b)) if same(b) => Some(b.clone()),
+                    _ => None,
+                };
+            }
+        }
+        if let Some(r) = found {
+            if pk_of(&r) != pk && !uniq.iter().any(|(_, u)| pk_of(u) == pk_of(&r)) {
+                uniq.push((ix, r));
+            }
+        }
+    }
+    (pk_row, uniq)
 }
 
 async fn backoff(attempt: usize) {

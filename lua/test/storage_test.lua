@@ -350,5 +350,130 @@ check('int_lt compares signed and unsigned exactly', c[1]:eval([[
        and lt(-9223372036854775807LL, 0) and lt(5, 18446744073709551615ULL)
        and not lt(18446744073709551615ULL, 5) and lt(-2LL, -1) and not lt(3, 3)]]))
 
+print('row locks (READ COMMITTED, #17)')
+for id = 300, 305 do
+    c[1]:call('tarn_autocommit', {{{'replace', sid, {id, id, 'r' .. id .. '@x', 1}}}})
+end
+local function lock(i, txid, keys, mode, opts) return c[i]:call('tarn_lock', {txid, keys, mode, opts}) end
+local function k(id) return {sid, 0, {id}} end
+r = lock(1, 'P1', {k(300)}, 'X', {read = true})
+check('X lock granted with the latest row', r[1] == 'ok' and r[3][1][2] == 300, r)
+local gen = r[2]
+r = lock(1, 'P2', {k(300)}, 'X', {timeout = 0.2})
+check('a conflicting X request times out with 1205', r[1] == 'timeout' and r[2] == 1205, r)
+r = lock(1, 'P2', {k(300)}, 'X', {nowait = true})
+check('NOWAIT fails at once with 3572', r[1] == 'locked' and r[2] == 3572, r)
+r = lock(1, 'P2', {k(300), k(301)}, 'X', {skip = true, read = true})
+check('SKIP LOCKED skips the held row and takes the free one',
+      r[1] == 'ok' and r[3][1] == false and r[3][2][1] == 301, r)
+c[1]:call('tarn_unlock', {'P2'})
+r = lock(1, 'P3', {k(302)}, 'S', {}); local r2 = lock(1, 'P4', {k(302)}, 'S', {})
+check('S locks are shared', r[1] == 'ok' and r2[1] == 'ok', {r, r2})
+r = lock(1, 'P3', {k(302)}, 'X', {timeout = 0.2})
+check('S -> X upgrade waits for the other S holder', r[1] == 'timeout', r)
+c[1]:call('tarn_unlock', {'P4'})
+r = lock(1, 'P3', {k(302)}, 'X', {timeout = 0.2})
+check('... and is granted once it is the only holder', r[1] == 'ok', r)
+c[1]:call('tarn_unlock', {'P3'})
+-- a waiter is granted when the holder releases
+got = nil
+f = fiber.create(function() got = lock(1, 'P5', {k(300)}, 'X', {read = true, timeout = 5}) end)
+fiber.sleep(0.05)
+check('a waiter queues behind the holder', got == nil)
+r = c[1]:call('tarn_commit_rc', {'P1', {{'replace', sid, {300, 999, 'r300@x', 1}}}, gen})
+fiber.sleep(0.05)
+check('RC commit applies the write and releases the lock',
+      r[1] == 'ok' and bal(1, 300) == 999 and got and got[1] == 'ok' and got[3][1][2] == 999, {r, got})
+c[1]:call('tarn_unlock', {'P5'})
+-- local deadlock: P6 holds 303 and waits for 304; P7 holds 304 and asks for 303
+lock(1, 'P6', {k(303)}, 'X', {}); lock(1, 'P7', {k(304)}, 'X', {})
+got = nil
+f = fiber.create(function() got = lock(1, 'P6', {k(304)}, 'X', {timeout = 5}) end)
+fiber.sleep(0.05)
+r = lock(1, 'P7', {k(303)}, 'X', {timeout = 5})
+check('the request that closes a cycle fails with 1213 at once', r[1] == 'deadlock' and r[2] == 1213, r)
+c[1]:call('tarn_unlock', {'P7'})
+fiber.sleep(0.05)
+check('... and the other transaction proceeds', got and got[1] == 'ok', got)
+c[1]:call('tarn_unlock', {'P6'})
+-- the cross-shard detector's interface
+lock(1, 'P8', {k(305)}, 'X', {})
+got = nil
+f = fiber.create(function() got = lock(1, 'P9', {k(305)}, 'X', {timeout = 5}) end)
+fiber.sleep(0.05)
+local waits = c[1]:call('tarn_lock_waits')
+local w9
+for _, w in ipairs(waits) do if w[1] == 'P9' then w9 = w end end
+check('tarn_lock_waits reports the wait-for edge', w9 ~= nil and w9[3][1] == 'P8', waits)
+check('tarn_lock_victim fails a pending wait with 1213',
+      w9 ~= nil and c[1]:call('tarn_lock_victim', {'P9', w9[2]}) == true)
+fiber.sleep(0.05)
+check('... seen by the waiter', got and got[1] == 'deadlock', got)
+c[1]:call('tarn_unlock', {'P8'}); c[1]:call('tarn_unlock', {'P9'})
+-- other writers respect row locks
+r = lock(1, 'P10', {k(301)}, 'X', {})
+local p10gen = r[2]
+r = c[1]:call('tarn_autocommit', {{{'replace', sid, {301, 1, 'r301@x', 1}}}, {lock_timeout = 0.2}})
+check('an autocommit write waits for a row lock, then fails with 1205', r[1] == 'timeout' and r[2] == 1205, r)
+got = nil
+f = fiber.create(function()
+    got = c[1]:call('tarn_autocommit', {{{'replace', sid, {301, 2, 'r301@x', 1}}}, {lock_timeout = 5}})
+end)
+fiber.sleep(0.05)
+check('... it keeps waiting while the lock is held', got == nil)
+c[1]:call('tarn_unlock', {'P10'})
+fiber.sleep(0.05)
+check('... and writes once it is released', got and got[1] == 'ok' and bal(1, 301) == 2, got)
+lock(1, 'P11', {k(301)}, 'X', {})
+st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{301}
+r = st:call('tarn_commit_local', {'L20', {{'replace', sid, {301, 3, 'r301@x', 1}}}, {{sid, 0, {301}}}})
+check('a serializable commit over a row lock conflicts', r[1] == 'conflict', r)
+-- a stale generation (leader change) or a lost connection breaks a transaction
+r = c[1]:call('tarn_commit_rc', {'P11', {{'replace', sid, {301, 4, 'r301@x', 1}}}, 'not-the-generation'})
+check('RC commit with a stale lock generation is refused', r[1] == 'error' and r[2] == 1213 and bal(1, 301) == 2, r)
+r = lock(1, 'P12', {k(301)}, 'X', {timeout = 0.2})
+check('... and releases the transaction\'s locks', r[1] == 'ok', r)
+c[1]:call('tarn_unlock', {'P12'})
+local c3 = net.connect(S1, opts)
+r = c3:call('tarn_lock', {'P13', {k(302)}, 'X', {}})
+local p13gen = r[2]
+c3:close()
+fiber.sleep(0.1)
+r = lock(1, 'P14', {k(302)}, 'X', {timeout = 0.5})
+check('a closed connection releases its locks', r[1] == 'ok', r)
+c[1]:call('tarn_unlock', {'P14'})
+r = c[1]:call('tarn_commit_rc', {'P13', {{'replace', sid, {302, 5, 'r302@x', 1}}}, p13gen})
+check('... and its transaction can no longer commit', r[1] == 'error' and r[2] == 1213 and bal(1, 302) == 302, r)
+r = lock(1, 'P13', {k(302)}, 'X', {})
+check('... nor take new locks', r[1] == 'error' and r[2] == 1213, r)
+c[1]:call('tarn_unlock', {'P13'})   -- (rollback) forgets that P13 was broken
+r = c[1]:call('tarn_commit_rc', {'P13', {{'replace', sid, {302, 5, 'r302@x', 1}}}, p13gen})
+check('... even once that is forgotten: the generation names the closed session',
+      r[1] == 'error' and r[2] == 1213 and bal(1, 302) == 302, r)
+v1 = prepare(1, 'P15', {{'replace', sid, {303, 6, 'r303@x', 1}}}, nil, nil, nil, nil)
+check('PREPARE without row locks is unaffected', v1[1] == 'yes', v1)
+c[1]:call('tarn_apply', {'P15'})
+r = lock(1, 'P16', {k(304)}, 'X', {})
+local s16 = c[1]:new_stream(); s16:begin()
+v1 = s16:call('tarn_prepare', {'P16', 1, {1}, {{'replace', sid, {304, 7, 'r304@x', 1}}}, {}, {}, fiber.time(), 'stale'})
+check('PREPARE of an RC transaction whose locks were lost votes NO', v1[1] == 'no' and v1[2] == 1213, v1)
+c[1]:call('tarn_abort', {'P16', 1, {1}})
+check('... and its ABORT releases the row locks', lock(1, 'P19', {k(304)}, 'X', {timeout = 0.2})[1] == 'ok')
+c[1]:call('tarn_unlock', {'P19'})
+-- a lock request waits out a prepared transaction's W lock, then reads its value
+v1 = prepare(1, 'W20', {{'replace', sid, {305, 77, 'r305@x', 1}}})
+got = nil
+f = fiber.create(function() got = lock(1, 'P17', {k(305)}, 'X', {read = true, timeout = 5}) end)
+fiber.sleep(0.05)
+check('a lock request waits while a prepared transaction W-locks the row', got == nil)
+c[1]:call('tarn_apply', {'W20'})
+fiber.sleep(0.05)
+check('... and reads the applied value', got and got[1] == 'ok' and got[3][1][2] == 77, got)
+c[1]:call('tarn_unlock', {'P17'})
+r = lock(1, 'P18', {{sid, 1, {'r305@x'}}}, 'X', {read = true})
+check('a unique-key value lock reads the row holding that value', r[1] == 'ok' and r[3][1][1] == 305, r)
+c[1]:call('tarn_unlock', {'P18'})
+check('every row lock is released', c[1]:call('tarn_info').row_locks == 0, c[1]:call('tarn_info').row_locks)
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
