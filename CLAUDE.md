@@ -16,7 +16,7 @@ python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1
 python3 tests/sql/rctest.py --tarn 127.0.0.1:4000    # READ COMMITTED, row locks (list every SQL server)
 python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001   # ALTER TABLE online, dumps (cluster.sh -s 2)
 TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 scripts/cluster.sh start ... -e vinyl   # the suites on vinyl, reading from disk
-tests/faults.sh && tests/failover.sh
+tests/faults.sh && tests/failover.sh        # ENGINE=vinyl: the same with vinyl tables
 tla/check.sh                               # needs tla/tla2tools.jar
 ```
 
