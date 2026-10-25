@@ -6,7 +6,7 @@ use crate::catalog::{IndexDef, TableDef};
 use crate::cluster::Cluster;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
-use crate::txn::{select_rows, RangeRead, Row, Txn};
+use crate::txn::{select_keys, select_rows, RangeRead, Row, Txn};
 use crate::types::{key_val, sort_cmp, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -133,8 +133,152 @@ struct Call {
     range: Option<RangeRead>,
 }
 
+/// Lexicographic order of index keys (as Tarantool orders them).
+fn key_cmp(a: &[Value], b: &[Value]) -> std::cmp::Ordering {
+    for (x, y) in a.iter().zip(b) {
+        let o = sort_cmp(x, y);
+        if o != std::cmp::Ordering::Equal {
+            return o;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+/// Evaluate the keys of a multi-key access: NULLs and values no stored key
+/// can equal are dropped, duplicates removed, and the keys sorted, so rows
+/// come back in index order as with MySQL's range access.
+fn eval_keys(
+    t: &TableDef,
+    idx: &IndexDef,
+    keys: &[Vec<Expr>],
+    outer: &[Value],
+    cx: &EvalCtx,
+) -> SqlResult<Vec<Vec<Value>>> {
+    let mut out = Vec::with_capacity(keys.len());
+    'keys: for k in keys {
+        let mut key = Vec::with_capacity(k.len());
+        for (i, e) in k.iter().enumerate() {
+            let v = e.eval(outer, cx)?;
+            if v.is_null() {
+                continue 'keys; // NULL never equals anything
+            }
+            match coerce_key_part(t.columns[idx.cols[i]].ty(), &v) {
+                Some(x) => key.push(x),
+                None => continue 'keys,
+            }
+        }
+        out.push(key);
+    }
+    out.sort_by(|a, b| key_cmp(a, b));
+    out.dedup_by(|a, b| key_cmp(a, b) == std::cmp::Ordering::Equal);
+    Ok(out)
+}
+
+/// Read several keys of one index with one storage call per shard (issue
+/// #10): each key goes to the shard it determines, or to every shard when
+/// it does not contain the shard key (secondary indexes are per shard).
+#[allow(clippy::too_many_arguments)]
+async fn fetch_keys(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    t: &TableDef,
+    idx: &IndexDef,
+    keys: Vec<Vec<Value>>,
+    unique: bool,
+    limit: Option<u32>,
+) -> SqlResult<Vec<Row>> {
+    let mut per_shard: BTreeMap<usize, Vec<Vec<Value>>> = BTreeMap::new();
+    for k in keys {
+        match route_prefix(cluster, t, idx, &k) {
+            Some(s) => per_shard.entry(s).or_default().push(k),
+            None => {
+                for s in 0..cluster.nshards() {
+                    per_shard.entry(s).or_default().push(k.clone());
+                }
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    match mode {
+        ReadMode::Auto { calls: made } => {
+            *made += per_shard.len();
+            if *made > 1 {
+                return Err(need_txn());
+            }
+            for (s, ks) in &per_shard {
+                let client = cluster.shards[*s].client(cluster).await?;
+                rows.extend(select_keys(&client, 0, t, idx.id, ks, limit, true, false).await?);
+            }
+        }
+        ReadMode::Txn(txn) => {
+            let mut futs = Vec::new();
+            for (s, ks) in &per_shard {
+                let st = txn.stream(cluster, *s).await?;
+                futs.push(async move { select_keys(&st.client, st.id, t, idx.id, ks, limit, false, st.begin).await });
+            }
+            for r in futures::future::join_all(futs).await {
+                match r {
+                    Ok(v) => rows.extend(v),
+                    Err(e) => {
+                        if e.code == 1213 {
+                            txn.doomed = Some(e.clone());
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            for (s, ks) in per_shard.iter() {
+                txn.mark_begun(*s);
+                for k in ks {
+                    if unique {
+                        txn.note_point(*s, t.space_id, idx.id, k.clone());
+                    } else {
+                        txn.note_range(
+                            *s,
+                            RangeRead {
+                                space: t.space_id,
+                                index: idx.id,
+                                lo: Some(k.clone()),
+                                hi: Some(k.clone()),
+                                lo_incl: true,
+                                hi_incl: true,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    if per_shard.len() > 1 {
+        // Index order across shards: by the index key, then the primary key.
+        let pk = &t.indexes[0].cols;
+        rows.sort_by(|a, b| {
+            idx.cols
+                .iter()
+                .chain(pk.iter())
+                .map(|&c| sort_cmp(&a[c], &b[c]))
+                .find(|o| *o != std::cmp::Ordering::Equal)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    Ok(rows)
+}
+
 /// Read the rows of one table access (for the outer row `outer`).
 pub async fn fetch(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    ta: &TableAccess,
+    outer: &[Value],
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
+    let rows = fetch_stored(cluster, mode, ta, outer, cx).await?;
+    Ok(overlay(mode, &ta.table, rows))
+}
+
+/// Rows of one table access as stored (without the transaction's own
+/// buffered writes).
+async fn fetch_stored(
     cluster: &Arc<Cluster>,
     mode: &mut ReadMode<'_>,
     ta: &TableAccess,
@@ -146,6 +290,73 @@ pub async fn fetch(
     let mut calls: Vec<Call> = Vec::new();
     let mut unique_point = false;
     match &ta.path {
+        AccessPath::Union(paths) => {
+            // Each lookup separately, then one row per primary key, in
+            // primary-key order (as MySQL's index_merge union).
+            let mut by_pk: BTreeMap<Vec<u8>, Row> = BTreeMap::new();
+            let pk = &t.indexes[0].cols;
+            let mut rows_all: Vec<Row> = Vec::new();
+            for p in paths {
+                let sub = TableAccess {
+                    path: p.clone(),
+                    limit: None,
+                    ..ta.clone()
+                };
+                let rows = Box::pin(fetch_stored(cluster, mode, &sub, outer, cx)).await?;
+                for r in rows {
+                    let k: Vec<Value> = pk.iter().map(|&c| r[c].clone()).collect();
+                    by_pk.entry(crate::txn::key_bytes(&k).to_vec()).or_insert(r);
+                }
+            }
+            rows_all.extend(by_pk.into_values());
+            rows_all.sort_by(|a, b| {
+                pk.iter()
+                    .map(|&c| sort_cmp(&a[c], &b[c]))
+                    .find(|o| *o != std::cmp::Ordering::Equal)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            return Ok(rows_all);
+        }
+        AccessPath::Point { index, keys } | AccessPath::Prefixes { index, keys } if keys.len() > 1 => {
+            let idx = index_def(t, *index);
+            let unique = matches!(ta.path, AccessPath::Point { .. });
+            let ks = eval_keys(t, idx, keys, outer, cx)?;
+            if ks.is_empty() {
+                return Ok(Vec::new());
+            }
+            let rows = fetch_keys(cluster, mode, t, idx, ks, unique, if unique { Some(1) } else { limit }).await?;
+            return Ok(rows);
+        }
+        AccessPath::Prefixes { index, keys } => {
+            // One prefix: an ordinary equality range.
+            let idx = index_def(t, *index);
+            let ks = eval_keys(t, idx, keys, outer, cx)?;
+            let Some(prefix) = ks.into_iter().next() else {
+                return Ok(Vec::new());
+            };
+            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
+                Some(s) => vec![s],
+                None => (0..cluster.nshards()).collect(),
+            };
+            let range = RangeRead {
+                space: t.space_id,
+                index: idx.id,
+                lo: Some(prefix.clone()),
+                hi: Some(prefix.clone()),
+                lo_incl: true,
+                hi_incl: true,
+            };
+            for s in shards {
+                calls.push(Call {
+                    shard: s,
+                    key: prefix.clone(),
+                    iter: Iter::Ge,
+                    limit,
+                    end: Some((prefix.clone(), true)),
+                    range: Some(range.clone()),
+                });
+            }
+        }
         AccessPath::Point { index, keys } => {
             let idx = index_def(t, *index);
             unique_point = true;
@@ -190,7 +401,7 @@ pub async fn fetch(
                 let v = e.eval(outer, cx)?;
                 match (v.is_null(), coerce_key_part(t.columns[idx.cols[i]].ty(), &v)) {
                     (false, Some(x)) => prefix.push(x),
-                    _ => return Ok(overlay(mode, t, Vec::new())),
+                    _ => return Ok(Vec::new()),
                 }
             }
             let next_ty = idx.cols.get(eq.len()).map(|&c| t.columns[c].ty());
@@ -210,7 +421,7 @@ pub async fn fetch(
             let lo_v = bound(lo)?;
             let hi_v = bound(hi)?;
             if matches!(lo_v, Some((Value::Null, false))) || matches!(hi_v, Some((Value::Null, false))) {
-                return Ok(overlay(mode, t, Vec::new()));
+                return Ok(Vec::new());
             }
             let (key, iter, lo_incl) = match &lo_v {
                 Some((v, incl)) => {
@@ -278,8 +489,10 @@ pub async fn fetch(
         }
     }
     let index = match &ta.path {
-        AccessPath::Point { index, .. } | AccessPath::Range { index, .. } => *index,
-        AccessPath::Full => 0,
+        AccessPath::Point { index, .. } | AccessPath::Range { index, .. } | AccessPath::Prefixes { index, .. } => {
+            *index
+        }
+        AccessPath::Full | AccessPath::Union(_) => 0,
     };
     let mut rows = Vec::new();
     match mode {
@@ -328,7 +541,7 @@ pub async fn fetch(
             }
         }
     }
-    Ok(overlay(mode, t, rows))
+    Ok(rows)
 }
 
 fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {

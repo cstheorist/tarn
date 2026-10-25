@@ -601,6 +601,10 @@ local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] 
 -- W lock on anything it covers; scan and lock check run without a yield in
 -- between, so they observe one state. Returns {'ok', tuples}.
 local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
+-- Scans longer than this many tuples yield inside stream transactions.
+local SCAN_CHUNK = 1000
+-- Fiber slice of a long autocommit scan, which may not yield (seconds).
+local LONG_SCAN_SLICE = {warn = 1.0, err = 30.0}
 
 function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin)
     -- First request of a stream: start the stream's transaction here (it
@@ -621,13 +625,25 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     local kd = index_key_def(space_id, index_id)
     local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
     local deadline = clock.monotonic() + M.cfg.lock_wait
+    local in_txn = box.is_in_txn()
+    local unbounded = limit == nil or limit > SCAN_CHUNK
+    if unbounded and not in_txn then
+        -- A long autocommit scan must be atomic, so it cannot yield: give it
+        -- time instead of failing with "fiber slice is exceeded" (#10).
+        fiber.set_slice(LONG_SCAN_SLICE)
+    end
     while true do
         local rows = {}
         local skip = (offset ~= nil) and offset or 0   -- msgpack nil arrives as box.NULL
-        if end_key == nil and (limit == nil or limit > 0) and skip == 0 then
+        if end_key == nil and (limit == nil or limit > 0) and skip == 0 and not (unbounded and in_txn) then
             rows = idx:select(key, {iterator = it, limit = limit})
         else
+            local seen = 0
             for _, t in idx:pairs(key, {iterator = it}) do
+                seen = seen + 1
+                -- Inside a stream transaction MVCC keeps the view consistent
+                -- across yields: let other requests run during long scans.
+                if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
                 if end_key ~= nil then
                     local c = kd:compare_with_key(t, end_key)
                     if reverse then
@@ -660,6 +676,61 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
             elseif reverse then lo, hi = last, first
             else lo, hi = first, last end
             h = range_w_locked('', space_id, index_id, lo, hi, true, true)
+        end
+        if h == nil then return {OK, rows} end
+        if clock.monotonic() > deadline then
+            return conflict('row locked by prepared transaction ' .. h)
+        end
+        M.stats.lock_waits = M.stats.lock_waits + 1
+        M.unlock_cond:wait(0.01)
+    end
+end
+
+-- Rows of several keys of one index in one call (issue #10: IN lists, ORs of
+-- equalities, row-value IN). For each key: the row with that key when it is
+-- a full key of a unique index, else every row whose index key starts with
+-- it (at most `limit` per key). Rows come back key by key. lock_check and
+-- begin as in tarn_select.
+function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
+    if begin == true and not box.is_in_txn() then
+        box.begin(BEGIN_STREAM)
+        note_stream_term()
+    end
+    if lock_check == true then lk_fresh() end
+    local space = box.space[space_id]
+    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    local idx = space.index[index_id]
+    local nparts = #idx.parts
+    local in_txn = box.is_in_txn()
+    local deadline = clock.monotonic() + M.cfg.lock_wait
+    while true do
+        local rows, n = {}, 0
+        for _, key in ipairs(keys) do
+            if idx.unique and #key == nparts then
+                local t = idx:get(key)
+                if t ~= nil then rows[#rows + 1] = t end
+            else
+                local got = 0
+                for _, t in idx:pairs(key, {iterator = 'EQ'}) do
+                    rows[#rows + 1] = t
+                    got = got + 1
+                    if limit ~= nil and got >= limit then break end
+                end
+            end
+            n = n + 1
+            -- Inside a stream transaction MVCC keeps the view consistent
+            -- across yields; let other requests run on long key lists.
+            if in_txn and n % 256 == 0 then fiber.yield() end
+        end
+        if lock_check ~= true or NLOCK == 0 then return {OK, rows} end
+        local h
+        for _, key in ipairs(keys) do
+            if idx.unique and #key == nparts then
+                h = point_w_locked('', space_id, index_id, key)
+            else
+                h = range_w_locked('', space_id, index_id, key, key, true, true)
+            end
+            if h ~= nil then break end
         end
         if h == nil then return {OK, rows} end
         if clock.monotonic() > deadline then

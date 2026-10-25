@@ -27,6 +27,11 @@ and by 2,000 randomly generated queries (`tests/sql/`).
   `OFFSET` (both syntaxes), `DISTINCT`, column aliases, ordinal `ORDER BY 2`.
 * Joins: `[INNER] JOIN`, `LEFT [OUTER] JOIN`, comma joins, `ON` / `USING`.
   Joins are nested loops with index lookups on the inner table.
+* Index access: equality and range predicates on an index prefix, and
+  multi-key lookups for `col IN (...)`, `OR`s of equalities and row-value
+  `IN` on any index (one storage call per shard, rows in index order). An
+  `OR` whose branches use different indexes becomes a union of lookups,
+  like MySQL's `index_merge`.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
 * Subqueries without outer references: `x IN (SELECT ...)`, `EXISTS (SELECT ...)`, scalar

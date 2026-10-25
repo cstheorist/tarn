@@ -700,6 +700,133 @@ fn independent_of(e: &Expr, lo: usize, hi: usize, max_allowed: usize) -> bool {
 
 /// Choose an access path for the table at [offset, offset+ncols) given
 /// conjuncts; columns below `offset` (tables to the left) are available.
+/// Upper bound on the keys of one multi-key lookup; beyond it the planner
+/// keeps its other paths.
+const MAX_KEYS: usize = 4096;
+
+/// Column equalities of one disjunct: (table column, value expression).
+type EqAlt = Vec<(usize, Expr)>;
+
+/// The equality alternatives a predicate imposes on the table's columns, one
+/// per disjunct (`c IN (1, 2)` -> [[c=1], [c=2]]; `(a=1 AND b=2) OR a=3` ->
+/// [[a=1, b=2], [a=3]]). Parts that are not equalities are dropped from a
+/// disjunct, which only widens it: the full predicate stays in the filter.
+/// None when some disjunct constrains nothing.
+fn eq_alternatives(
+    e: &Expr,
+    local: &dyn Fn(&Expr) -> Option<usize>,
+    indep: &dyn Fn(&Expr) -> bool,
+) -> Option<Vec<EqAlt>> {
+    match e {
+        Expr::Cmp(a, CmpOp::Eq, b) => match (local(a), local(b)) {
+            (Some(c), None) if indep(b) => Some(vec![vec![(c, (**b).clone())]]),
+            (None, Some(c)) if indep(a) => Some(vec![vec![(c, (**a).clone())]]),
+            _ => None,
+        },
+        Expr::InList(x, list, false) => {
+            let c = local(x)?;
+            if list.is_empty() || list.len() > MAX_KEYS || !list.iter().all(|v| v.is_constant()) {
+                return None;
+            }
+            Some(list.iter().map(|v| vec![(c, v.clone())]).collect())
+        }
+        Expr::Or(a, b) => {
+            let mut l = eq_alternatives(a, local, indep)?;
+            l.extend(eq_alternatives(b, local, indep)?);
+            (l.len() <= MAX_KEYS).then_some(l)
+        }
+        Expr::And(a, b) => match (eq_alternatives(a, local, indep), eq_alternatives(b, local, indep)) {
+            (Some(x), Some(y)) => cross(&x, &y),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        },
+        _ => None,
+    }
+}
+
+/// Every combination of one alternative from each side, or None if there
+/// would be more than MAX_KEYS.
+fn cross(x: &[EqAlt], y: &[EqAlt]) -> Option<Vec<EqAlt>> {
+    if x.len().saturating_mul(y.len()) > MAX_KEYS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(x.len() * y.len());
+    for a in x {
+        for b in y {
+            let mut ab = a.clone();
+            ab.extend(b.iter().cloned());
+            out.push(ab);
+        }
+    }
+    Some(out)
+}
+
+/// Alternatives of a conjunction: the cross product over its conjuncts
+/// (conjuncts that constrain nothing are skipped).
+fn conj_alternatives(
+    conj: &[Expr],
+    local: &dyn Fn(&Expr) -> Option<usize>,
+    indep: &dyn Fn(&Expr) -> bool,
+) -> Option<Vec<EqAlt>> {
+    let mut acc: Option<Vec<EqAlt>> = None;
+    for p in conj {
+        if let Some(a) = eq_alternatives(p, local, indep) {
+            acc = Some(match acc {
+                None => a,
+                Some(prev) => cross(&prev, &a)?,
+            });
+        }
+    }
+    acc
+}
+
+/// Index merge: when no index covers every alternative, look each one up
+/// through the index whose prefix it fixes best (a full unique key first,
+/// then the longest prefix), one lookup path per index. None if some
+/// alternative fixes no index prefix at all.
+fn union_path(table: &TableDef, alts: &[EqAlt]) -> Option<AccessPath> {
+    let mut groups: Vec<(u32, usize, bool, Vec<Vec<Expr>>)> = Vec::new();
+    for a in alts {
+        let mut pick: Option<(i32, &crate::catalog::IndexDef, usize)> = None;
+        for idx in &table.indexes {
+            let k = idx.cols.iter().take_while(|c| a.iter().any(|(x, _)| x == *c)).count();
+            if k == 0 {
+                continue;
+            }
+            let full = idx.unique && k == idx.cols.len();
+            let score = if full { 1000 } else { 10 * k as i32 } + if idx.id == 0 { 1 } else { 0 };
+            if pick.as_ref().is_none_or(|p| score > p.0) {
+                pick = Some((score, idx, k));
+            }
+        }
+        let (_, idx, k) = pick?;
+        let key: Vec<Expr> = idx.cols[..k]
+            .iter()
+            .map(|c| a.iter().find(|(x, _)| x == c).map(|(_, e)| e.clone()).unwrap())
+            .collect();
+        let full = idx.unique && k == idx.cols.len();
+        match groups.iter_mut().find(|g| g.0 == idx.id && g.1 == k) {
+            Some(g) => g.3.push(key),
+            None => groups.push((idx.id, k, full, vec![key])),
+        }
+    }
+    if groups.len() < 2 {
+        return None; // one index covers everything: the plain paths handle it
+    }
+    Some(AccessPath::Union(
+        groups
+            .into_iter()
+            .map(|(index, _, full, keys)| {
+                if full {
+                    AccessPath::Point { index, keys }
+                } else {
+                    AccessPath::Prefixes { index, keys }
+                }
+            })
+            .collect(),
+    ))
+}
+
 fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
     let hi = offset + table.columns.len();
     let mut preds: Vec<Vec<Pred>> = (0..table.columns.len()).map(|_| Vec::new()).collect();
@@ -746,7 +873,9 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
             }
             Expr::InList(x, list, false) => {
                 if let Some(c) = local(x) {
-                    if list.iter().all(|e| e.is_constant()) && !list.is_empty() {
+                    if list.len() == 1 && list[0].is_constant() {
+                        preds[c].push(Pred::Eq(list[0].clone()));
+                    } else if list.iter().all(|e| e.is_constant()) && !list.is_empty() {
                         preds[c].push(Pred::In(list.clone()));
                     }
                 }
@@ -755,6 +884,48 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
         }
     }
     let mut best: (i32, AccessPath) = (0, AccessPath::Full);
+    // Several equality keys (IN lists, ORs of equalities, row-value IN):
+    // look each one up instead of scanning (issue #10).
+    let indep = |e: &Expr| independent_of(e, offset, hi, offset);
+    if let Some(alts) = conj_alternatives(conj, &local, &indep) {
+        if alts.len() > 1 {
+            if let Some(u) = union_path(table, &alts) {
+                best = (8, u);
+            }
+            for idx in &table.indexes {
+                // Longest index prefix that every alternative fixes.
+                let k = alts
+                    .iter()
+                    .map(|a| idx.cols.iter().take_while(|c| a.iter().any(|(x, _)| x == *c)).count())
+                    .min()
+                    .unwrap_or(0);
+                if k == 0 {
+                    continue;
+                }
+                let keys: Vec<Vec<Expr>> = alts
+                    .iter()
+                    .map(|a| {
+                        idx.cols[..k]
+                            .iter()
+                            .map(|c| a.iter().find(|(x, _)| x == c).map(|(_, e)| e.clone()).unwrap())
+                            .collect()
+                    })
+                    .collect();
+                let pk_bonus = if idx.id == 0 { 1 } else { 0 };
+                let (score, path) = if idx.unique && k == idx.cols.len() {
+                    (900 + pk_bonus, AccessPath::Point { index: idx.id, keys })
+                } else {
+                    (
+                        10 * k as i32 - 1 + pk_bonus,
+                        AccessPath::Prefixes { index: idx.id, keys },
+                    )
+                };
+                if score > best.0 {
+                    best = (score, path);
+                }
+            }
+        }
+    }
     for idx in &table.indexes {
         let mut eq: Vec<Expr> = Vec::new();
         let mut in_list: Option<(usize, Vec<Expr>)> = None;
@@ -1785,6 +1956,44 @@ mod tests {
             Stmt::Select(s) => (*s).clone(),
             _ => panic!(),
         }
+    }
+
+    fn path_of(sql: &str) -> AccessPath {
+        match plan_sel(sql).source {
+            Source::Table(t) => t.path,
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn multi_key_paths() {
+        // issue #10: IN, OR and row-value IN become lookups, not scans
+        assert!(matches!(path_of("SELECT c FROM sbtest1 WHERE k IN (1, 2, 3)"),
+                         AccessPath::Prefixes { index: 1, keys } if keys.len() == 3));
+        assert!(matches!(path_of("SELECT c FROM sbtest1 WHERE k = 1 OR k = 2"),
+                         AccessPath::Prefixes { index: 1, keys } if keys.len() == 2));
+        assert!(
+            matches!(path_of("SELECT c FROM sbtest1 WHERE (id = 1 OR id = 9) AND k > 0"),
+                         AccessPath::Point { index: 0, keys } if keys.len() == 2)
+        );
+        assert!(
+            matches!(path_of("SELECT c FROM sbtest1 WHERE (id, k) IN ((1, 2), (3, 4))"),
+                         AccessPath::Point { index: 0, keys } if keys.len() == 2)
+        );
+        assert!(matches!(
+            path_of("SELECT c FROM sbtest1 WHERE k IN (5)"),
+            AccessPath::Range { index: 1, .. }
+        ));
+        // OR across indexes: index-merge union
+        match path_of("SELECT c FROM sbtest1 WHERE id = 1 OR k IN (2, 3)") {
+            AccessPath::Union(p) => assert_eq!(p.len(), 2),
+            other => panic!("{other:?}"),
+        }
+        // a disjunct that fixes no index prefix leaves a full scan
+        assert!(matches!(
+            path_of("SELECT c FROM sbtest1 WHERE k = 1 OR c = 'x'"),
+            AccessPath::Full
+        ));
     }
 
     #[test]

@@ -165,6 +165,33 @@ c[1]:call('tarn_apply', {'W4'})
 got = c[1]:call('tarn_read', {sid, 1, {'new@x'}, 'EQ', 1})
 check('read of new unique key after apply', got[1] == 'ok' and #got[2] == 1, got)
 
+print('multi-key reads (issue #10)')
+for id = 200, 205 do
+    c[1]:call('tarn_autocommit', {{{'replace', sid, {id, id, 'k' .. id .. '@x', 7 + id % 2}}}})
+end
+got = c[1]:call('tarn_select_keys', {sid, 0, {{201}, {203}, {999}}, nil, true, false})
+check('unique keys: one row per existing key, in key order',
+      got[1] == 'ok' and #got[2] == 2 and got[2][1][1] == 201 and got[2][2][1] == 203, got)
+got = c[1]:call('tarn_select_keys', {sid, 2, {{7}, {8}}, nil, true, false})
+local n78 = 0
+for _, t in ipairs(got[2] or {}) do if t[4] == 7 or t[4] == 8 then n78 = n78 + 1 end end
+check('non-unique keys: every row of each key', got[1] == 'ok' and n78 == #got[2] and n78 >= 6, got)
+got = c[1]:call('tarn_select_keys', {sid, 2, {{7}, {8}}, 1, true, false})
+check('... at most limit rows per key', got[1] == 'ok' and #got[2] == 2, got)
+v1 = prepare(1, 'W5', {{'replace', sid, {203, 1, 'k203@x', 8}}})
+got = nil
+f = fiber.create(function() got = c[1]:call('tarn_select_keys', {sid, 0, {{201}, {203}}, nil, true, false}) end)
+fiber.sleep(0.05)
+check('autocommit multi-key read waits for a W-locked key', got == nil)
+c[1]:call('tarn_apply', {'W5'})
+fiber.sleep(0.05)
+check('... and returns the applied row', got and got[1] == 'ok' and #got[2] == 2 and got[2][2][2] == 1, got)
+st = c[1]:new_stream()
+got = st:call('tarn_select_keys', {sid, 0, {{200}, {202}}, nil, false, true})
+check('a stream request begins the transaction',
+      got[1] == 'ok' and #got[2] == 2 and st:eval('return box.is_in_txn()') == true, got)
+st:rollback()
+
 print('recovery (coordinator crashed)')
 -- (a) both prepared, coordinator vanished: implicitly committed -> applied.
 s1 = c[1]:new_stream(); s1:begin(); a = s1.space['test.acct']:get{1}
