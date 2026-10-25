@@ -112,7 +112,9 @@ jobs:
           ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
           if grep -h "yielded inside" /tmp/tarn-cluster/*.log; then echo "::error title=vinyl::an atomic section yielded"; exit 1; fi
       - name: Fault injection
-        run: ci/annotate.sh faults tests/faults.sh
+        run: |
+          ci/annotate.sh faults tests/faults.sh
+          ci/annotate.sh ddlfaults tests/ddlfaults.sh
       - name: Failover (2 shards x 3 replicas)
         run: SECS=45 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
@@ -122,7 +124,7 @@ jobs:
       - name: Cluster logs
         if: failure()
         run: |
-          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log; do
+          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true
