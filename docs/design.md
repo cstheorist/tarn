@@ -48,7 +48,10 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
 * Table `db.t` is the Tarantool space `"db.t"` with one field per column (same
   order and names) followed by a `bucket_id` field. Index 0 (`primary`) is the
   primary key, secondary indexes follow, and a non-unique `bucket_id` index is
-  last: the layout vshard and crud expect.
+  last: the layout vshard and crud expect. `ALTER TABLE` keeps every stored
+  row as it is, so columns it adds get fields after `bucket_id` and the
+  fields of dropped columns stay, renamed `_dropped_<n>` (§2.10); readers
+  should go by field names.
 * Rows are placed by a shard key (default: the primary key; `PARTITION BY
   KEY(cols)` chooses others). `bucket_id = crc32c(key) % 3000 + 1` using
   vshard's `mpcrc32` definition (Tarantool's `digest.crc32`, strings hashed as
@@ -477,6 +480,93 @@ adding any), and the reads themselves are validated at commit as before; a
 serializable commit that finds such a lock lost aborts, which is always
 allowed.
 
+### 2.10 Schema changes
+
+`ALTER TABLE` (issue #16) changes a table while transactions read and write
+it, on every shard and with SQL servers whose catalogs lag behind, without
+rewriting rows.
+
+**Layout.** A column has a field number that never changes. Fields of
+columns created with the table are their positions; `bucket_id` follows;
+a column `ALTER TABLE` adds gets the next field after the last one, and a
+dropped column keeps its field (renamed `_dropped_<n>`, typed `any`, written
+as nil from then on). Rows written before a column existed end before its
+field and hold its *fill*: the default when it was added (MySQL fills
+existing rows the same way, with the type's zero value for `NOT NULL`
+without a default). A type change must keep the field's Tarantool type
+(integer and unsigned may change into each other), so the stored values
+stay valid; the SQL types may differ in ranges and lengths. Changes that
+would need every value converted (`INT` to `VARCHAR`, a different
+`DECIMAL` scale) are refused. The SQL servers map rows to fields
+(`TableDef::encode_tuple`, `Rd::row_of`), and update operations address
+fields by number, padding rows older than an added field with the fills.
+
+**Fences.** Every table definition has a version (`ver`): the catalog
+version of its last `ALTER TABLE`. Every commit request carries, for each
+table it writes, the version of the definition its writes were encoded
+with, and the shard refuses a request whose version is older than the
+table's fence with 1412 (`ER_TABLE_DEF_CHANGED`) before it applies
+anything. The check sits in every write path (CommitLocal, CommitRC,
+autocommit, PREPARE) right before the writes, with no yield in between.
+So a server that has not reloaded its catalog cannot write a row in an old
+layout -- which matters: an old-layout full-row write would drop the value
+of a newly added column. Its autocommit statements, and the first statement
+of a transaction, are re-planned and run again with the new catalog. A
+transaction that wrote a table cannot go on with a newer definition of it:
+the rows in its write buffer are in the old column order, so its next
+statement on that table fails with 1412 and the transaction rolls back (its
+commit would meet the fence anyway). One that only read the table goes on
+under READ COMMITTED, each statement decoding rows with its own definition;
+under SERIALIZABLE the ALTER's DDL aborts the stream transactions that read
+the table (memtx MVCC invalidates an altered space), which fail with 1213.
+
+**Protocol.** One SQL server drives a change to version V through three
+idempotent steps per shard (lua/tarn.lua "Schema changes"):
+
+1. PREPARE raises the table's fence to V in memory, waits until no local
+   commit that passed the check is still in flight (`wait_commits`) and no
+   prepared cross-shard transaction holds locks on the table (their writes
+   were encoded with the old definition and are applied by APPLY of the
+   commit protocol), checks the existing rows against the new types --
+   rows that end early by the column's fill -- and builds new indexes under
+   temporary names (a unique one fails on duplicates, 1062).
+2. When every shard has prepared, APPLY drops the indexes that go, changes
+   the space format, renames indexes and the space, and stores the new
+   definition, with `ver` = V, in `_tarn_catalog` (where the fence survives
+   restarts and leader changes: `FENCE` is rebuilt from it). An APPLY that
+   finds the in-memory fence gone (a restart or a new leader since PREPARE)
+   runs PREPARE again first.
+3. The catalog version is bumped; the other SQL servers reload within their
+   0.3 s poll, or at once when a statement meets the fence.
+
+If a PREPARE fails anywhere (a row does not fit, a duplicate, a timeout
+waiting for prepared transactions), every shard is ABORTed: temporary
+indexes are dropped and the fence returns to the stored version. The change
+is recorded first in a job record on the first shard, which also makes
+schema changes run one at a time; a job whose server stopped touching it
+for 30 s is finished (run again from step 1) by the next schema change or
+SQL server start.
+
+Writes wait (in the SQL server: the statement is retried, up to the lock
+wait timeout) from the moment PREPARE raises the fence until the servers
+have reloaded the new definition; reads do not wait. Index builds and row
+checks happen during that window, so on a large table an `ADD INDEX` holds
+up writes to that table for the length of the build -- the price of not
+keeping two layouts writable at once (F1 and TiDB step through
+intermediate schema states with leases instead).
+
+**Why the commit protocol model is unchanged.** The fence only makes
+participants refuse requests (a NO vote, a failed local commit) before
+they write, which the model already allows at any time; the change itself
+waits until no prepared transaction holds locks on the table, so no
+prepared write is applied in an old layout after APPLY. `tests/sql/
+ddltest.py` alters a table about 300 times in 20 s while two SQL servers
+write it (fast-path and read-modify-write autocommits, transfers,
+READ COMMITTED transactions) and checks that no acknowledged increment is
+lost or duplicated, and `lua/test/run.sh` checks the shard side (fences on
+every write path, waiting for prepared transactions, checks with fill
+values, temporary indexes, the job record).
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
@@ -522,13 +612,14 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks) | 118/118 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once) | 141/141 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
-| `tests/sql/difftest.py` | 174 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, errors | 174/174 identical |
+| `tests/sql/difftest.py` | 236 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors | 236/236 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 22/22 |
+| `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back) | 6/6 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
@@ -629,9 +720,13 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * SQL coverage is "sysbench-level plus": uncorrelated subqueries (`IN`,
   `EXISTS`, scalar) and `UNION [ALL]` work (the inner SELECTs run first,
   inside the statement's transaction); not supported are correlated
-  subqueries, derived tables, views, stored procedures, triggers, foreign
-  keys, `ALTER TABLE`, window functions, RIGHT/FULL joins.
+  subqueries, derived tables, views, stored procedures, triggers, enforced
+  foreign keys, window functions, RIGHT/FULL joins, `information_schema`.
   Joins are nested-loop with index lookups.
+* `ALTER TABLE` does not rewrite rows: conversions between type families
+  and `DECIMAL` scale changes are refused, dropped columns keep their
+  stored values (no space is reclaimed), and writes to the table wait while
+  a change prepares, including index builds (§2.10).
 * String comparison, ordering, grouping and unique indexes are binary (like
   `utf8mb4_bin`); MySQL's default collations are case-insensitive, so
   `WHERE name = 'ALICE'` does not match `'alice'` in Tarn.
@@ -673,8 +768,11 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   increasing per server, with gaps across servers (as in TiDB). An explicit id
   inserted through one server inside another server's cached block is not
   detected until that server reaches it (duplicate-key error then).
-* DDL is not transactional and assumes no concurrent DDL on the same table.
+* `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
+  transactional and do not run through the schema-change protocol; another
+  SQL server sees them within its catalog poll (statements that meet an
+  older catalog there are re-planned).
 * The bucket → shard map is static (no online resharding / bucket moves yet),
   so vshard compatibility is at the level of tuple layout and bucket hashing.
-* No TLS, no `COM_CHANGE_USER`, no multi-statement packets, users and
-  passwords come from the command line.
+* No TLS, no `COM_CHANGE_USER`; users and passwords come from the command
+  line.

@@ -144,9 +144,16 @@ pub struct Txn {
     pub writes: BTreeMap<(u32, Bytes), BufWrite>,
     pub rpoints: BTreeMap<usize, Vec<(u32, u32, Vec<Value>)>>,
     pub rranges: BTreeMap<usize, Vec<RangeRead>>,
+    /// Definition version (`TableDef::ver`) each table was written with,
+    /// by space id (see [`Txn::check_def`]).
+    pub defs: BTreeMap<u32, u64>,
     /// Set after an error that leaves the transaction unusable (e.g. a
     /// conflict detected mid-transaction); COMMIT then fails.
     pub doomed: Option<SqlError>,
+}
+
+pub fn definition_changed() -> SqlError {
+    SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
 }
 
 /// msgpack bytes of a key: the canonical identity of a row in the buffer
@@ -178,7 +185,23 @@ impl Txn {
             writes: BTreeMap::new(),
             rpoints: BTreeMap::new(),
             rranges: BTreeMap::new(),
+            defs: BTreeMap::new(),
             doomed: None,
+        }
+    }
+
+    /// Rows in the write buffer are in the column order of the definition
+    /// they were made with, so a statement planned with another definition
+    /// of the table (an ALTER TABLE committed since) must not see them: the
+    /// transaction has to start over (1412). Tables it only read need no
+    /// check: a statement decodes what it reads with its own definition, the
+    /// shards refuse writes made with a replaced one (the fence), and the
+    /// ALTER's DDL aborts the stream transactions that read the table there
+    /// (memtx MVCC invalidates an altered space).
+    pub fn check_def(&self, t: &TableDef) -> SqlResult<()> {
+        match self.defs.get(&t.space_id) {
+            Some(&v) if v != t.ver => Err(definition_changed()),
+            _ => Ok(()),
         }
     }
 
@@ -251,7 +274,7 @@ impl Txn {
                     rd.skip()?;
                     Locked::Granted
                 }
-                _ => Locked::Row(Some(rd.row(k.table.columns.len())?)),
+                _ => Locked::Row(Some(rd.row_of(&k.table)?)),
             });
         }
         Ok(out)
@@ -280,6 +303,21 @@ impl Txn {
     }
 
     /// Generation of this transaction's row locks on `shard` (nil if none).
+    /// For each table this transaction writes on `shard`: its space id and
+    /// the oldest definition version a write was encoded with (the shard
+    /// refuses writes made with a replaced definition, 1412).
+    fn encode_fence(&self, shard: usize, m: &mut Mp) {
+        let mut f: BTreeMap<u32, u64> = BTreeMap::new();
+        for w in self.writes.values().filter(|w| w.shard == shard) {
+            let v = f.entry(w.table.space_id).or_insert(w.table.ver);
+            *v = (*v).min(w.table.ver);
+        }
+        m.arr(f.len() * 2);
+        for (sid, ver) in f {
+            m.uint(sid as u64).uint(ver);
+        }
+    }
+
     fn encode_gen(&self, shard: usize, m: &mut Mp) {
         match self.plocks.get(&shard) {
             Some(l) => m.str(&l.gen),
@@ -344,7 +382,9 @@ impl Txn {
         self.rranges.entry(shard).or_default().push(r);
     }
 
-    pub fn buffer(&mut self, w: BufWrite) {
+    pub fn buffer(&mut self, w: BufWrite) -> SqlResult<()> {
+        self.check_def(&w.table)?;
+        self.defs.insert(w.table.space_id, w.table.ver);
         let k = (w.table.space_id, key_bytes(&w.pk));
         // An insert after a buffered delete of the same key is a replace.
         let w = match (self.writes.get(&k), w.op) {
@@ -353,6 +393,7 @@ impl Txn {
             _ => w,
         };
         self.writes.insert(k, w);
+        Ok(())
     }
 
     /// The buffered version of a row: Some(Some(row)) if written, Some(None)
@@ -418,12 +459,8 @@ impl Txn {
             m.uint(w.table.space_id as u64);
             match &w.row {
                 Some(r) if w.op != WOp::Delete => {
-                    m.arr(r.len() + 1);
-                    for v in r {
-                        m.val(v);
-                    }
                     let sk: Vec<Value> = w.table.shard_key.iter().map(|&c| r[c].clone()).collect();
-                    m.uint(cluster.bucket_of(&sk) as u64);
+                    w.table.encode_tuple(r, cluster.bucket_of(&sk) as u64, m);
                 }
                 _ => {
                     m.vals(&w.pk);
@@ -554,10 +591,11 @@ impl Txn {
             None => (self.conn(cluster, shard).await?, 0),
         };
         let mut m = Mp::new();
-        m.arr(5).str(&self.id);
+        m.arr(6).str(&self.id);
         self.encode_writes(cluster, shard, &mut m);
         self.encode_reads(shard, &mut m);
         self.encode_gen(shard, &mut m);
+        self.encode_fence(shard, &mut m);
         let shard_id = cluster.shards[shard].id;
         let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
             // The commit may have happened: report the outcome as unknown.
@@ -587,9 +625,10 @@ impl Txn {
             ));
         }
         let mut m = Mp::new();
-        m.arr(3).str(&self.id);
+        m.arr(4).str(&self.id);
         self.encode_writes(cluster, shard, &mut m);
         self.encode_gen(shard, &mut m);
+        self.encode_fence(shard, &mut m);
         let shard_id = cluster.shards[shard].id;
         let r = client.call(0, "tarn_commit_rc", &m.0).await.map_err(|e| match e {
             e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => ambiguous(shard_id, &e),
@@ -639,7 +678,7 @@ impl Txn {
         let mut futs = Vec::new();
         for (&p, (client, id)) in parts.iter().zip(targets) {
             let mut m = Mp::new();
-            m.arr(8).str(&self.id).uint(did as u64);
+            m.arr(9).str(&self.id).uint(did as u64);
             m.arr(part_ids.len());
             for &x in &part_ids {
                 m.uint(x as u64);
@@ -648,6 +687,7 @@ impl Txn {
             self.encode_reads(p, &mut m);
             m.f64(self.ts);
             self.encode_gen(p, &mut m);
+            self.encode_fence(p, &mut m);
             futs.push(async move {
                 match client.call(id, "tarn_prepare", &m.0).await {
                     Ok(r) => match r.data() {
@@ -861,7 +901,6 @@ pub async fn select_keys(
     lock_check: bool,
     begin: bool,
 ) -> SqlResult<Vec<Row>> {
-    let ncols = t.columns.len();
     let mut m = Mp::new();
     m.arr(6).uint(t.space_id as u64).uint(index as u64).arr(keys.len());
     for k in keys {
@@ -882,7 +921,7 @@ pub async fn select_keys(
     let n = rd.array()?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
-        out.push(rd.row(ncols)?);
+        out.push(rd.row_of(t)?);
     }
     Ok(out)
 }
@@ -902,7 +941,6 @@ pub async fn select_rows(
     lock_check: bool,
     begin: bool,
 ) -> SqlResult<Vec<Row>> {
-    let ncols = t.columns.len();
     // Unbounded point/prefix lookups inside a running stream transaction use
     // plain IPROTO SELECT.
     if end.is_none() && !lock_check && !begin {
@@ -914,7 +952,7 @@ pub async fn select_rows(
             .map_err(from_iproto_read)?;
         let mut out = Vec::new();
         for tup in r.tuples().map_err(crate::mpw::proto)? {
-            out.push(Rd::shared(&tup).row(ncols)?);
+            out.push(Rd::shared(&tup).row_of(t)?);
         }
         return Ok(out);
     }
@@ -950,7 +988,7 @@ pub async fn select_rows(
     let n = rd.array()?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
-        out.push(rd.row(ncols)?);
+        out.push(rd.row_of(t)?);
     }
     Ok(out)
 }

@@ -7,7 +7,7 @@
 //! instead of full scans.
 
 use crate::admin::Admin;
-use crate::catalog::{self, Catalog, ColumnDef, IndexDef, TableDef};
+use crate::catalog::{self, Catalog, ColumnDef, ForeignKeyDef, IndexDef, TableDef};
 use crate::expr::{column_expr_type, infer, CastTo, CmpOp, Expr, ExprType, Func};
 use crate::plan::*;
 use crate::types::{Arith, SqlType};
@@ -102,38 +102,22 @@ pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Stmt> {
     if let Some(a) = crate::admin::recognize(sql)? {
         return Ok(Stmt::Admin(a));
     }
+    if let Some(plans) = crate::alter::plan(sql, ctx)? {
+        return Ok(Stmt::Alter(plans));
+    }
     let (sql, partition_key) = extract_partition_by_key(sql);
+    let (sql, invisible) = if first_word_is(&sql, "CREATE") {
+        strip_index_visibility(&sql)
+    } else {
+        (sql, Vec::new())
+    };
     let stmt = parse_one(&sql)?;
     match stmt {
         A::Statement::Query(q) => Ok(Stmt::Select(Arc::new(plan_query(&q, ctx)?))),
         A::Statement::Insert(ins) => Ok(Stmt::Insert(Arc::new(plan_insert(&ins, ctx)?))),
         A::Statement::Update(u) => Ok(Stmt::Update(Arc::new(plan_update(&u, ctx)?))),
         A::Statement::Delete(d) => Ok(Stmt::Delete(Arc::new(plan_delete(&d, ctx)?))),
-        A::Statement::CreateTable(ct) => plan_create_table(&ct, partition_key, ctx),
-        A::Statement::CreateIndex(ci) => {
-            let (db, table) = table_name(&ci.table_name, ctx)?;
-            let name = ci
-                .name
-                .as_ref()
-                .map(|n| object_name_parts(n).last().cloned().unwrap_or_default())
-                .unwrap_or_else(|| format!("idx_{}", table));
-            let cols = ci
-                .columns
-                .iter()
-                .map(|c| match &c.column.expr {
-                    A::Expr::Identifier(i) => Ok(ident(i)),
-                    other => Err(SqlError::unsupported(format!("index expression {}", other))),
-                })
-                .collect::<SqlResult<Vec<_>>>()?;
-            Ok(Stmt::CreateIndex {
-                db,
-                table,
-                name,
-                cols,
-                unique: ci.unique,
-                if_not_exists: ci.if_not_exists,
-            })
-        }
+        A::Statement::CreateTable(ct) => plan_create_table(&ct, partition_key, &invisible, ctx),
         A::Statement::Drop {
             object_type,
             if_exists,
@@ -186,6 +170,12 @@ pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Stmt> {
         A::Statement::Rollback { .. } => Ok(Stmt::Admin(Admin::Rollback)),
         other => Err(SqlError::unsupported(statement_kind(&other))),
     }
+}
+
+fn first_word_is(sql: &str, w: &str) -> bool {
+    sql.trim_start()
+        .get(..w.len())
+        .is_some_and(|x| x.eq_ignore_ascii_case(w))
 }
 
 fn statement_kind(s: &A::Statement) -> String {
@@ -859,7 +849,7 @@ fn union_path(table: &TableDef, alts: &[EqAlt]) -> Option<AccessPath> {
     let mut groups: Vec<(u32, usize, bool, Vec<Vec<Expr>>)> = Vec::new();
     for a in alts {
         let mut pick: Option<(i32, &crate::catalog::IndexDef, usize)> = None;
-        for idx in &table.indexes {
+        for idx in table.usable_indexes() {
             let k = idx.cols.iter().take_while(|c| a.iter().any(|(x, _)| x == *c)).count();
             if k == 0 {
                 continue;
@@ -963,7 +953,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
             if let Some(u) = union_path(table, &alts) {
                 best = (8, u);
             }
-            for idx in &table.indexes {
+            for idx in table.usable_indexes() {
                 // Longest index prefix that every alternative fixes.
                 let k = alts
                     .iter()
@@ -997,7 +987,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
             }
         }
     }
-    for idx in &table.indexes {
+    for idx in table.usable_indexes() {
         let mut eq: Vec<Expr> = Vec::new();
         let mut in_list: Option<(usize, Vec<Expr>)> = None;
         let mut range: Option<(Option<(Expr, bool)>, Option<(Expr, bool)>)> = None;
@@ -1864,26 +1854,31 @@ fn plan_delete(d: &A::Delete, ctx: &PlanCtx) -> SqlResult<DeletePlan> {
 // DDL
 // ---------------------------------------------------------------------------
 
-fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ctx: &PlanCtx) -> SqlResult<Stmt> {
-    if ct.query.is_some() || ct.like.is_some() {
-        return Err(SqlError::unsupported("CREATE TABLE ... AS / LIKE"));
-    }
-    let (db, name) = table_name(&ct.name, ctx)?;
-    let mut columns: Vec<ColumnDef> = Vec::new();
-    let mut pk: Option<Vec<usize>> = None;
-    let mut secondary: Vec<(String, Vec<usize>, bool)> = Vec::new();
-    let mut auto_inc = None;
-    for (i, c) in ct.columns.iter().enumerate() {
-        let ty = SqlType::parse(&c.data_type.to_string())?;
-        let mut nullable = true;
-        let mut default = None;
-        let mut default_null = false;
-        let mut ai = false;
-        for o in &c.options {
-            match &o.option {
-                A::ColumnOption::NotNull => nullable = false,
-                A::ColumnOption::Null => nullable = true,
-                A::ColumnOption::Default(e) => match e {
+/// One column definition of CREATE TABLE or ALTER TABLE.
+pub(crate) struct ColumnSpec {
+    pub def: ColumnDef,
+    /// PRIMARY KEY column option
+    pub primary: bool,
+    /// UNIQUE column option
+    pub unique: bool,
+}
+
+/// Convert a parsed column definition.
+pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
+    let ty = SqlType::parse(&c.data_type.to_string())?;
+    let mut nullable = true;
+    let mut default = None;
+    let mut default_null = false;
+    let mut ai = false;
+    let (mut primary, mut unique) = (false, false);
+    for o in &c.options {
+        match &o.option {
+            A::ColumnOption::NotNull => nullable = false,
+            A::ColumnOption::Null => nullable = true,
+            A::ColumnOption::Default(e) => {
+                default = None;
+                default_null = false;
+                match e {
                     A::Expr::Value(v) if matches!(v.value, A::Value::Null) => default_null = true,
                     A::Expr::Value(v) => {
                         default = Some(match &v.value {
@@ -1905,49 +1900,308 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
                             return Err(SqlError::unsupported(format!("DEFAULT {}", other)));
                         }
                     }
-                },
-                A::ColumnOption::PrimaryKey(_) => {
-                    pk = Some(vec![i]);
-                    nullable = false;
                 }
-                A::ColumnOption::Unique(_) => secondary.push((c.name.value.to_string(), vec![i], true)),
-                A::ColumnOption::DialectSpecific(toks) => {
-                    let s: String = toks
-                        .iter()
-                        .map(|t| t.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        .to_ascii_uppercase();
-                    if s.contains("AUTO_INCREMENT") {
-                        ai = true;
-                    }
+            }
+            A::ColumnOption::PrimaryKey(_) => {
+                primary = true;
+                nullable = false;
+            }
+            A::ColumnOption::Unique(_) => unique = true,
+            A::ColumnOption::DialectSpecific(toks) => {
+                let s: String = toks
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_ascii_uppercase();
+                if s.contains("AUTO_INCREMENT") {
+                    ai = true;
                 }
-                A::ColumnOption::Comment(_)
-                | A::ColumnOption::CharacterSet(_)
-                | A::ColumnOption::Collation(_)
-                | A::ColumnOption::OnUpdate(_) => {}
-                other => return Err(SqlError::unsupported(format!("column option {}", other))),
             }
+            A::ColumnOption::Comment(_)
+            | A::ColumnOption::CharacterSet(_)
+            | A::ColumnOption::Collation(_)
+            | A::ColumnOption::OnUpdate(_) => {}
+            other => return Err(SqlError::unsupported(format!("column option {}", other))),
         }
-        if ai {
-            if !ty.is_integer() {
-                return Err(SqlError::new(
-                    1063,
-                    "42000",
-                    format!("Incorrect column specifier for column '{}'", c.name.value),
-                ));
-            }
-            auto_inc = Some(i);
+    }
+    if ai && !ty.is_integer() {
+        return Err(SqlError::new(
+            1063,
+            "42000",
+            format!("Incorrect column specifier for column '{}'", c.name.value),
+        ));
+    }
+    if let Some(d) = &default {
+        if d != "CURRENT_TIMESTAMP" {
+            ty.coerce(Value::str(d), &c.name.value)
+                .map_err(|_| SqlError::new(1067, "42000", format!("Invalid default value for '{}'", c.name.value)))?;
         }
-        columns.push(ColumnDef {
+    }
+    if default_null && !nullable {
+        return Err(SqlError::new(
+            1067,
+            "42000",
+            format!("Invalid default value for '{}'", c.name.value),
+        ));
+    }
+    Ok(ColumnSpec {
+        def: ColumnDef {
             name: c.name.value.clone(),
             ty: ty.display(),
             nullable,
             default,
             default_null,
             auto_increment: ai,
+            field: None,
+            storage_nullable: None,
+            fill: None,
             sql_type: Some(ty),
+        },
+        primary,
+        unique,
+    })
+}
+
+/// Column names of an index definition (`col(10)` prefixes index the
+/// whole column).
+pub(crate) fn index_col_names(list: &[A::IndexColumn]) -> SqlResult<Vec<String>> {
+    list.iter()
+        .map(|ic| match &ic.column.expr {
+            A::Expr::Identifier(i) => Ok(i.value.clone()),
+            A::Expr::Function(f) => Ok(object_name_parts(&f.name).join(".")),
+            other => Err(SqlError::unsupported(format!("index expression {}", other))),
+        })
+        .collect()
+}
+
+/// A FOREIGN KEY constraint as written (name None: generated).
+pub(crate) fn foreign_key_spec(
+    fk: &A::ForeignKeyConstraint,
+    ctx: &PlanCtx,
+) -> SqlResult<(Option<String>, ForeignKeyDef)> {
+    let (ref_db, ref_table) = table_name(&fk.foreign_table, ctx)?;
+    let action = |a: &Option<A::ReferentialAction>| a.as_ref().map(|a| a.to_string());
+    let name = fk.name.as_ref().or(fk.index_name.as_ref()).map(ident);
+    Ok((
+        name.clone(),
+        ForeignKeyDef {
+            name: name.unwrap_or_default(),
+            cols: fk.columns.iter().map(ident).collect(),
+            ref_db,
+            ref_table,
+            ref_cols: fk.referred_columns.iter().map(ident).collect(),
+            on_delete: action(&fk.on_delete),
+            on_update: action(&fk.on_update),
+        },
+    ))
+}
+
+/// MySQL's name for an index nobody named: its first column, made unique
+/// with _2, _3, ...
+pub(crate) fn generated_index_name(first_col: &str, taken: &dyn Fn(&str) -> bool) -> String {
+    if !taken(first_col) && !first_col.eq_ignore_ascii_case("PRIMARY") {
+        return first_col.to_string();
+    }
+    (2..)
+        .map(|i| format!("{}_{}", first_col, i))
+        .find(|n| !taken(n))
+        .expect("a free name")
+}
+
+/// Record a foreign key on `def`: names an unnamed one `<table>_ibfk_<n>`
+/// and, as MySQL does, adds an index on its columns unless one starts with
+/// them. Not enforced.
+pub(crate) fn add_foreign_key(def: &mut TableDef, name: Option<String>, mut fk: ForeignKeyDef) -> SqlResult<()> {
+    let mut cols = Vec::new();
+    for k in 0..fk.cols.len() {
+        let c = def.col_index(&fk.cols[k]).ok_or_else(|| {
+            SqlError::new(
+                1072,
+                "42000",
+                format!("Key column '{}' doesn't exist in table", fk.cols[k]),
+            )
+        })?;
+        fk.cols[k] = def.columns[c].name.clone();
+        cols.push(c);
+    }
+    fk.name = match name {
+        Some(n) => {
+            if def.foreign_keys.iter().any(|f| f.name.eq_ignore_ascii_case(&n)) {
+                return Err(SqlError::new(
+                    1826,
+                    "HY000",
+                    format!("Duplicate foreign key constraint name '{}'", n),
+                ));
+            }
+            n
+        }
+        None => {
+            let prefix = format!("{}_ibfk_", def.name);
+            let n = def
+                .foreign_keys
+                .iter()
+                .filter_map(|f| f.name.strip_prefix(&prefix).and_then(|x| x.parse::<u32>().ok()))
+                .max()
+                .unwrap_or(0);
+            format!("{}{}", prefix, n + 1)
+        }
+    };
+    let covered = def
+        .indexes
+        .iter()
+        .any(|ix| ix.cols.len() >= cols.len() && ix.cols[..cols.len()] == cols[..]);
+    if !covered {
+        let explicit = !fk.name.starts_with(&format!("{}_ibfk_", def.name));
+        let iname = if explicit && def.index_by_name(&fk.name).is_none() {
+            fk.name.clone()
+        } else {
+            let first = def.columns[cols[0]].name.clone();
+            generated_index_name(&first, &|n| def.index_by_name(n).is_some())
+        };
+        let id = next_index_id(def);
+        def.indexes.push(IndexDef {
+            name: iname,
+            id,
+            cols,
+            unique: false,
+            invisible: false,
         });
+    }
+    def.foreign_keys.push(fk);
+    Ok(())
+}
+
+/// Tarantool id for a new index: past every index id in use, including the
+/// bucket_id index.
+pub(crate) fn next_index_id(def: &TableDef) -> u32 {
+    let bucket_ix = def.bucket_index.unwrap_or(0);
+    def.indexes
+        .iter()
+        .map(|i| i.id)
+        .chain(std::iter::once(bucket_ix))
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+/// Remove MySQL's index visibility options (`KEY k (a) INVISIBLE`), which
+/// the parser does not know, from a CREATE TABLE; returns the text and the
+/// names of the invisible indexes.
+pub(crate) fn strip_index_visibility(sql: &str) -> (String, Vec<String>) {
+    let up = sql.to_ascii_uppercase();
+    if !up.contains("VISIBLE") {
+        return (sql.to_string(), Vec::new());
+    }
+    let b = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len());
+    let mut invisible = Vec::new();
+    let (mut i, mut copied, mut depth) = (0usize, 0usize, 0i32);
+    // Words of the current element of the table body (depth 1).
+    let mut elem: Vec<String> = Vec::new();
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\'' || c == b'"' || c == b'`' {
+            let q = c;
+            let mut j = i + 1;
+            while j < b.len() && b[j] != q {
+                if b[j] == b'\\' {
+                    j += 1;
+                }
+                j += 1;
+            }
+            if depth == 1 && q == b'`' {
+                elem.push(sql[i + 1..j.min(b.len())].to_string());
+            }
+            i = j + 1;
+            continue;
+        }
+        if c.is_ascii_alphanumeric() || c == b'_' {
+            let s0 = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'$') {
+                i += 1;
+            }
+            let w = &up[s0..i];
+            if depth == 1 {
+                let is_index = elem.first().is_some_and(|f| {
+                    matches!(
+                        f.to_ascii_uppercase().as_str(),
+                        "KEY" | "INDEX" | "UNIQUE" | "CONSTRAINT" | "FULLTEXT" | "SPATIAL" | "PRIMARY"
+                    )
+                });
+                if is_index && (w == "VISIBLE" || w == "INVISIBLE") {
+                    if w == "INVISIBLE" {
+                        // the name follows KEY / INDEX (UNIQUE [KEY|INDEX])
+                        let mut it = elem.iter().skip_while(|x| {
+                            matches!(
+                                x.to_ascii_uppercase().as_str(),
+                                "UNIQUE" | "KEY" | "INDEX" | "CONSTRAINT"
+                            )
+                        });
+                        if let Some(n) = it.next() {
+                            invisible.push(n.clone());
+                        }
+                    }
+                    out.push_str(&sql[copied..s0]);
+                    copied = i;
+                    continue;
+                }
+                elem.push(sql[s0..i].to_string());
+            }
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b',' if depth == 1 => elem.clear(),
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push_str(&sql[copied..]);
+    (out, invisible)
+}
+
+fn plan_create_table(
+    ct: &A::CreateTable,
+    partition_key: Option<Vec<String>>,
+    invisible: &[String],
+    ctx: &PlanCtx,
+) -> SqlResult<Stmt> {
+    if ct.query.is_some() || ct.like.is_some() {
+        return Err(SqlError::unsupported("CREATE TABLE ... AS / LIKE"));
+    }
+    let (db, name) = table_name(&ct.name, ctx)?;
+    let mut columns: Vec<ColumnDef> = Vec::new();
+    let mut pk: Option<Vec<usize>> = None;
+    let mut secondary: Vec<(Option<String>, Vec<usize>, bool)> = Vec::new();
+    let mut auto_inc = None;
+    for (i, c) in ct.columns.iter().enumerate() {
+        let spec = column_spec(c)?;
+        if columns.iter().any(|x| x.name.eq_ignore_ascii_case(&spec.def.name)) {
+            return Err(SqlError::new(
+                1060,
+                "42S21",
+                format!("Duplicate column name '{}'", spec.def.name),
+            ));
+        }
+        if spec.primary {
+            pk = Some(vec![i]);
+        }
+        if spec.unique {
+            secondary.push((Some(spec.def.name.clone()), vec![i], true));
+        }
+        if spec.def.auto_increment {
+            if auto_inc.is_some() {
+                return Err(SqlError::new(
+                    1075,
+                    "42000",
+                    "Incorrect table definition; there can be only one auto column and it must be defined as a key",
+                ));
+            }
+            auto_inc = Some(i);
+        }
+        columns.push(spec.def);
     }
     let col_ix = |n: &str, cols: &[ColumnDef]| -> SqlResult<usize> {
         cols.iter()
@@ -1955,35 +2209,25 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
             .ok_or_else(|| SqlError::new(1072, "42000", format!("Key column '{}' doesn't exist in table", n)))
     };
     let index_cols = |list: &[A::IndexColumn], cols: &[ColumnDef]| -> SqlResult<Vec<usize>> {
-        list.iter()
-            .map(|ic| match &ic.column.expr {
-                A::Expr::Identifier(i) => col_ix(&i.value, cols),
-                A::Expr::Function(f) => col_ix(&object_name_parts(&f.name).join("."), cols), // col(10) prefix
-                other => Err(SqlError::unsupported(format!("index expression {}", other))),
-            })
-            .collect()
+        index_col_names(list)?.iter().map(|n| col_ix(n, cols)).collect()
     };
+    let mut fks = Vec::new();
     for con in &ct.constraints {
         match con {
             A::TableConstraint::PrimaryKey(p) => pk = Some(index_cols(&p.columns, &columns)?),
             A::TableConstraint::Unique(u) => {
-                let name = u
-                    .name
-                    .as_ref()
-                    .or(u.index_name.as_ref())
-                    .map(|n| n.value.clone())
-                    .unwrap_or_else(|| format!("uniq_{}", secondary.len()));
+                let name = u.name.as_ref().or(u.index_name.as_ref()).map(|n| n.value.clone());
                 secondary.push((name, index_cols(&u.columns, &columns)?, true));
             }
             A::TableConstraint::Index(ix) => {
-                let name = ix
-                    .name
-                    .as_ref()
-                    .map(|n| n.value.clone())
-                    .unwrap_or_else(|| format!("idx_{}", secondary.len()));
-                secondary.push((name, index_cols(&ix.columns, &columns)?, false));
+                secondary.push((
+                    ix.name.as_ref().map(|n| n.value.clone()),
+                    index_cols(&ix.columns, &columns)?,
+                    false,
+                ));
             }
-            A::TableConstraint::ForeignKey(_) | A::TableConstraint::Check(_) => {} // accepted, not enforced
+            A::TableConstraint::ForeignKey(fk) => fks.push(foreign_key_spec(fk, ctx)?),
+            A::TableConstraint::Check(_) => {} // accepted, not enforced
             other => return Err(SqlError::unsupported(format!("table constraint {}", other))),
         }
     }
@@ -1996,13 +2240,27 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
         id: 0,
         cols: pk.clone(),
         unique: true,
+        invisible: false,
     }];
-    for (i, (n, cols, unique)) in secondary.into_iter().enumerate() {
+    for (n, cols, unique) in secondary.into_iter() {
+        let name = match n {
+            Some(n) => {
+                if indexes.iter().any(|i| i.name.eq_ignore_ascii_case(&n)) {
+                    return Err(SqlError::new(1061, "42000", format!("Duplicate key name '{}'", n)));
+                }
+                n
+            }
+            None => generated_index_name(&columns[cols[0]].name, &|x| {
+                indexes.iter().any(|i| i.name.eq_ignore_ascii_case(x))
+            }),
+        };
+        let invisible = invisible.iter().any(|x| x.eq_ignore_ascii_case(&name));
         indexes.push(IndexDef {
-            name: n,
-            id: (i + 1) as u32,
+            name,
+            id: indexes.len() as u32,
             cols,
             unique,
+            invisible,
         });
     }
     let shard_key = match partition_key {
@@ -2012,7 +2270,23 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
             .collect::<SqlResult<Vec<_>>>()?,
         None => pk.clone(),
     };
-    let def = TableDef {
+    let mut auto_increment = None;
+    let mut comment = String::new();
+    if let A::CreateTableOptions::Plain(opts) = &ct.table_options {
+        for o in opts {
+            match o {
+                A::SqlOption::KeyValue { key, value } if key.value.eq_ignore_ascii_case("AUTO_INCREMENT") => {
+                    auto_increment = value.to_string().trim_matches('\'').parse::<u64>().ok();
+                }
+                A::SqlOption::Comment(A::CommentDef::WithEq(c) | A::CommentDef::WithoutEq(c)) => comment = c.clone(),
+                _ => {}
+            }
+        }
+    }
+    if let Some(A::CommentDef::WithEq(c) | A::CommentDef::WithoutEq(c)) = &ct.comment {
+        comment = c.clone();
+    }
+    let mut def = TableDef {
         db,
         name,
         space_id: 0,
@@ -2020,12 +2294,42 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
         indexes,
         shard_key,
         auto_inc,
-        comment: String::new(),
+        comment,
+        ver: 0,
+        bucket: None,
+        dropped: Vec::new(),
+        foreign_keys: Vec::new(),
+        bucket_index: None,
+        layout: Default::default(),
     };
+    // Index ids so far are 0..n; the bucket_id index takes n at creation,
+    // so indexes a foreign key adds come after it.
+    def.bucket_index = Some(def.indexes.len() as u32);
+    let n_declared = def.indexes.len();
+    for (n, fk) in fks {
+        add_foreign_key(&mut def, n, fk)?;
+    }
+    // Implicit foreign key indexes are ordinary secondary indexes created
+    // with the table: renumber them before the bucket_id index.
+    for (k, ix) in def.indexes.iter_mut().enumerate().skip(n_declared) {
+        ix.id = k as u32;
+    }
+    def.bucket_index = None;
+    if let Some(ai) = def.auto_inc {
+        if !def.indexes.iter().any(|ix| ix.cols.first() == Some(&ai)) {
+            return Err(SqlError::new(
+                1075,
+                "42000",
+                "Incorrect table definition; there can be only one auto column and it must be defined as a key",
+            ));
+        }
+    }
+    def.resolve_types()?;
     catalog::validate(&def)?;
     Ok(Stmt::CreateTable {
-        def,
+        def: Box::new(def),
         if_not_exists: ct.if_not_exists,
+        auto_increment,
     })
 }
 
@@ -2047,7 +2351,7 @@ mod tests {
             panic!()
         };
         def.space_id = 512;
-        Catalog::new(1, vec!["sbtest".into()], vec![def])
+        Catalog::new(1, vec!["sbtest".into()], vec![*def])
     }
 
     fn plan_sel(sql: &str) -> SelectPlan {

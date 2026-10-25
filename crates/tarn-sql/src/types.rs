@@ -295,9 +295,24 @@ impl SqlType {
                     }
                     Value::Null => unreachable!(),
                 };
-                Ok(Value::Decimal(
-                    rescale_decimal(&s, scale).ok_or_else(|| bad("decimal"))?,
-                ))
+                let d = rescale_decimal(&s, scale).ok_or_else(|| bad("decimal"))?;
+                // At most precision - scale digits before the point.
+                let precision = self.len.unwrap_or(10);
+                let int_digits = d
+                    .trim_start_matches('-')
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('0')
+                    .len();
+                if int_digits as u32 > precision.saturating_sub(scale) {
+                    return Err(SqlError::new(
+                        1264,
+                        "22003",
+                        format!("Out of range value for column '{}' at row 1", col),
+                    ));
+                }
+                Ok(Value::Decimal(d))
             }
             Binary | VarBinary | Blob => Ok(match v {
                 Value::Str(b) | Value::Bin(b) => Value::Bin(b),

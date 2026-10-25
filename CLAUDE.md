@@ -14,6 +14,7 @@ scripts/cluster.sh start -n 2 -r 1 -p 4000 # local cluster for the SQL suites
 python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407   # MariaDB: bench/baselines.sh start mariadb
 python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321
 python3 tests/sql/rctest.py --tarn 127.0.0.1:4000    # READ COMMITTED, row locks
+python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001   # ALTER TABLE online, dumps (cluster.sh -s 2)
 tests/faults.sh && tests/failover.sh
 tla/check.sh                               # needs tla/tla2tools.jar
 ```
@@ -25,6 +26,11 @@ tla/check.sh                               # needs tla/tla2tools.jar
   (coordinator). Change `tla/TarnCommit.tla` with it and model-check; every
   protection has a `Bug*` switch with a `Bug_*` configuration that TLC must
   fail.
+- Every write carries the definition version of its table (`TableDef::ver`)
+  and the shards refuse older ones (1412): code that writes to a table goes
+  through the commit paths that send these fences. Stored tuples are not in
+  column order once a table was altered: encode and decode rows with
+  `TableDef::encode_tuple` and `Rd::row_of`.
 - Code in `crates/tarn-verified` must keep verifying with Verus (59 verified,
   0 errors); keep its Verus idioms.
 - SQL behaviour is defined by MariaDB 10.11: add cases to

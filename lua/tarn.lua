@@ -58,7 +58,8 @@ local M = {
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
-             plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0},
+             plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
+             stale_defs = 0, alters = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -303,6 +304,51 @@ local function lk_fresh()
     f:set_joinable(true)
     local ok, err = f:join()
     if not ok then error(err) end
+end
+
+-- Definition fences (online ALTER TABLE, see "Schema changes" below) ------
+-- FENCE[space_id] is the oldest table definition version a write may have
+-- been encoded with: the version of the table's last ALTER TABLE (`ver` in
+-- its _tarn_catalog entry), raised in memory by an ALTER in progress.
+local FENCE = {}
+local FENCE_STALE = true   -- rebuilt from _tarn_catalog before the next check
+
+local function fence_rebuild()
+    local f = {}
+    for _, t in box.space._tarn_catalog:pairs() do
+        local sp = box.space[t.name]
+        if sp ~= nil and t.def.ver ~= nil then f[sp.id] = t.def.ver end
+    end
+    FENCE, FENCE_STALE = f, false
+end
+
+-- Like lk_fresh: in a separate fiber, so that a caller inside a transaction
+-- gets no read trackers on _tarn_catalog.
+local function fence_fresh()
+    if not FENCE_STALE then return end
+    local f = fiber.new(fence_rebuild)
+    f:set_joinable(true)
+    local ok, err = f:join()
+    if not ok then error(err) end
+end
+
+local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
+
+-- The writes of a transaction name, per table, the definition version they
+-- were encoded with: fence = {space_id, ver, space_id, ver, ...}. Returns
+-- the 1412 status if one of them is older than the table's fence. Call
+-- fence_fresh() first: it may yield; this does not, so nothing can raise a
+-- fence between this check and the writes that follow it.
+local function stale_definition(fence)
+    if fence == nil or fence == box.NULL then return nil end
+    for i = 1, #fence, 2 do
+        local cur = FENCE[fence[i]]
+        if cur ~= nil and cur > fence[i + 1] then
+            M.stats.stale_defs = M.stats.stale_defs + 1
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+    end
+    return nil
 end
 
 local function range_locked(txid, sid, iid, key)
@@ -1003,10 +1049,12 @@ end
 -- MySQL's checks for an integer column changed by arithmetic (UPDATE ...
 -- SET c = c + d): the arithmetic is BIGINT -- BIGINT UNSIGNED for an
 -- unsigned column -- and fails with 1690 outside that domain; the result
--- must then fit the column type, else 1264. ranges: {{field, min, max}}.
+-- must then fit the column type, else 1264. ranges: {{field, min, max,
+-- column name}}.
 local function check_arith(old, ops, ranges)
     for _, r in ipairs(ranges) do
         local f, lo, hi = r[1], r[2], r[3]
+        local name = r[4] or f
         local v = old[f]
         for _, op in ipairs(ops) do
             if op[2] == f and v ~= nil then
@@ -1024,7 +1072,7 @@ local function check_arith(old, ops, ranges)
                     if bad then
                         error(box.error.new({code = 1690, reason = string.format(
                             "BIGINT%s value is out of range in '`%s` + %s'",
-                            unsigned and ' UNSIGNED' or '', tostring(f), tostring(op[3]))}))
+                            unsigned and ' UNSIGNED' or '', tostring(name), tostring(op[3]))}))
                     end
                 elseif op[1] == '=' then
                     v = op[3]
@@ -1040,7 +1088,7 @@ local function check_arith(old, ops, ranges)
             end
             if out then
                 error(box.error.new({code = 1264,
-                    reason = "Out of range value for column '" .. tostring(f) .. "' at row 1"}))
+                    reason = "Out of range value for column '" .. tostring(name) .. "' at row 1"}))
             end
         end
     end
@@ -1053,6 +1101,15 @@ local function apply_checked(txid, w)
     local old = space:get(pk)
     if w[1] == 'update' then
         if old == nil then return nil end
+        -- w[6]: {n, v1, v2, ...}: rows written before ALTER TABLE added the
+        -- fields past the n-th end early; they hold the values v1, v2, ...
+        local pad = w[6]
+        if pad ~= nil and pad ~= box.NULL and #old < #pad - 1 + pad[1] then
+            local t = old:totable()
+            for f = math.max(#t + 1, pad[1] + 1), #pad - 1 + pad[1] do t[f] = pad[f - pad[1] + 1] end
+            for f = 1, #t do if t[f] == nil then t[f] = box.NULL end end
+            old = box.tuple.new(t)
+        end
         -- w[5]: {{field, min, max}} for integer columns changed by arithmetic
         if w[5] ~= nil and #w[5] > 0 then check_arith(old, w[4], w[5]) end
         new = old:update(mysql_update_ops(old, w[4]))
@@ -1086,13 +1143,16 @@ end
 -- with lock checks, and commits; Tarantool's MVCC validates the reads
 -- themselves. Returns {'ok', n} or {status, code, message}; on failure the
 -- stream's transaction is rolled back.
-function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen)
+function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence)
     writable()
     local ok, res = pcall(function()
         lk_fresh()
+        fence_fresh()
         -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read
         -- under those locks, outside its stream: the locks must have survived.
         if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
+        local stale = stale_definition(fence)
+        if stale then return stale end
         -- Without reads on this shard the coordinator sends no stream: the
         -- commit is then its own local transaction.
         if not box.is_in_txn() then box.begin(RW) end
@@ -1212,6 +1272,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
+    if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
     key = key or {}
     local kd = index_key_def(space_id, index_id)
@@ -1292,6 +1353,7 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
+    if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     local nparts = #idx.parts
     local in_txn = box.is_in_txn()
     local deadline = clock.monotonic() + M.cfg.lock_wait
@@ -1344,6 +1406,7 @@ end
 function tarn_autocommit(writes, opts)
     lk_fresh()   -- raises ER_READONLY before anything is written
     pl_fresh()
+    local fence = opts and opts.fence
     local deadline = clock.monotonic() + M.cfg.lock_wait
     -- Rows held by another transaction's row lock: wait (holding nothing,
     -- so this cannot deadlock) up to the session's lock wait timeout, as an
@@ -1353,6 +1416,9 @@ function tarn_autocommit(writes, opts)
     local pl_deadline = clock.monotonic() + lock_timeout
     while true do
         local ok, res = pcall(function()
+            fence_fresh()
+            local stale = stale_definition(fence)
+            if stale then return stale end
             box.begin(RW)
             local n, last = 0, nil
             for _, w in ipairs(writes) do
@@ -1401,7 +1467,7 @@ end
 -- are waited out (bounded); the writes are applied in one local
 -- transaction, and the row locks are released once it has committed.
 -- Returns {'ok', n} or {status, code, message}.
-function tarn_commit_rc(txid, writes, gen)
+function tarn_commit_rc(txid, writes, gen, fence)
     writable()
     local ok, res = pcall(function()
         lk_fresh()
@@ -1411,6 +1477,12 @@ function tarn_commit_rc(txid, writes, gen)
         end
         local deadline = clock.monotonic() + M.cfg.lock_wait
         while true do
+            fence_fresh()
+            local stale = stale_definition(fence)
+            if stale then
+                pl_release_all(txid)
+                return stale
+            end
             box.begin(RW)
             local n, holder = 0, nil
             for _, w in ipairs(writes) do
@@ -1464,7 +1536,7 @@ local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
 -- Prepare requires t \notin expired), because a delayed or duplicated
 -- PREPARE may meet a participant whose records were already collected after
 -- the transaction committed. Raises ER_READONLY on a read-only instance.
-function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen)
+function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen, fence)
     writable()
     rpoints, rranges = rpoints or {}, rranges or {}
     local function vote_no(code, msg)
@@ -1500,9 +1572,12 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
             return {'expired', 1213, 'transaction too old'}
         end
         lk_fresh()
+        fence_fresh()
         -- RC transactions: their row locks must have survived (TarnCommit:
         -- Prepare.readsOK for t \in RC).
         if not pl_intact(txid, lock_gen) then return vote_no(1213, BROKEN_MSG) end
+        -- Writes encoded with a table definition an ALTER TABLE replaced.
+        if stale_definition(fence) then return vote_no(1412, STALE_DEF_MSG) end
         -- readsOK: no W lock of another prepared txn on anything we read.
         local h = reads_w_locked(txid, rpoints, rranges)
         if h then return vote_no(1213, 'read row locked by ' .. h) end
@@ -1572,7 +1647,9 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
             box.space._tarn_rlocks:replace{txid, i, r[1], r[2], r[3], r[4], lo_incl, hi_incl}
         end
         box.space._tarn_part:insert{txid, 'prepared', dshard, parts, now(), expiry()}
-        box.commit()   -- MVCC validates every read this stream made; may raise conflict
+        -- MVCC validates every read this stream made; may raise conflict.
+        -- Tracked: an ALTER TABLE waits for PREPAREs that passed its fence.
+        tracked_commit()
         M.stats.prepare_yes = M.stats.prepare_yes + 1
         return {'yes'}
     end)
@@ -2019,23 +2096,255 @@ function tarn_drop_table(name)
     return {OK}
 end
 
-function tarn_create_index(name, idx)
-    local s = box.space[name]
-    if s == nil then return {'error', 1146, 'no such table ' .. name} end
-    s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts,
-                              id = idx.id, if_not_exists = true})
-    invalidate_key_defs()
+-------------------------------------------------------------------------------
+-- Schema changes (ALTER TABLE, RENAME TABLE, CREATE / DROP INDEX)
+-------------------------------------------------------------------------------
+-- No stored row changes: ALTER TABLE adds fields after the last one (rows
+-- written before hold the column's fill value, which the SQL servers know),
+-- keeps the fields of dropped columns, and changes names, types and indexes.
+-- What makes it safe while transactions run is the table's definition
+-- version (`ver`): writes carry the version of the definition they were
+-- encoded with (FENCE above), and an ALTER TABLE to version V runs on every
+-- shard in two steps, driven by one SQL server:
+--   PREPARE  raise the fence to V (writes made with an older definition are
+--            refused from now on), wait for the local commits already past
+--            the check and for the prepared cross-shard transactions holding
+--            locks on the table, check the existing rows against the new
+--            column types, and build the new indexes (under temporary names);
+--   APPLY    once every shard has prepared: drop the replaced indexes,
+--            change the format, rename indexes and the table, and store the
+--            new definition (version V, so the fence survives restarts).
+-- A failed PREPARE anywhere is undone everywhere (ABORT). Each step can be
+-- repeated; an APPLY that finds its fence gone (restart, new leader)
+-- prepares again first.
+
+local function catalog_ver(name)
+    local r = box.space._tarn_catalog:get{name}
+    return r and r.def.ver or 0
+end
+
+local function tmp_index_name(id) return '_tarn_tmp_' .. id end
+
+local function has_locks(sid)
+    for _, i in pairs(LK[sid] or {}) do if next(i) ~= nil then return true end end
+    for _, i in pairs(RL[sid] or {}) do if next(i) ~= nil then return true end end
+    return false
+end
+
+-- Wait until no commit that passed the fence check is in flight and no
+-- prepared transaction holds locks on space sid.
+local function drain(sid, deadline)
+    if not wait_commits(deadline) then return false end
+    while true do
+        lk_fresh()
+        if not has_locks(sid) then return true end
+        local left = deadline - clock.monotonic()
+        if left <= 0 then return false end
+        M.unlock_cond:wait(math.min(left, 0.05))
+    end
+end
+
+-- Digits before the decimal point of a decimal (0 for |d| < 1).
+local function int_digits(d)
+    local ip = tostring(decimal.abs(d)):match('^(%d+)') or ''
+    return #(ip:gsub('^0+', ''))
+end
+
+-- One check of an existing value against a new column type:
+--   {field, column, 'notnull'}         no NULL            (else 1265)
+--   {field, column, 'chars', n}        <= n characters    (else 1265)
+--   {field, column, 'range', lo, hi}   integer in range   (else 1264)
+--   {field, column, 'digits', n}       decimal with <= n digits before the point (else 1264)
+-- with the column's fill value as the 6th element: the value of rows whose
+-- tuple ends before the field.
+local function check_value(c, v)
+    local kind = c[3]
+    if v == nil or v == box.NULL then
+        return kind == 'notnull' and 1265 or nil
+    end
+    if kind == 'chars' then
+        if type(v) == 'string' and (utf8.len(v) or #v) > c[4] then return 1265 end
+    elseif kind == 'range' then
+        if (type(v) == 'number' or type(v) == 'cdata') and not decimal.is_decimal(v)
+            and (int_lt(v, c[4]) or int_lt(c[5], v)) then return 1264 end
+    elseif kind == 'digits' then
+        if decimal.is_decimal(v) and int_digits(v) > c[4] then return 1264 end
+    end
+    return nil
+end
+
+local function run_checks(sp, checks)
+    if checks == nil or checks == box.NULL or #checks == 0 then return nil end
+    local n = 0
+    for _, t in sp.index[0]:pairs() do
+        n = n + 1
+        for _, c in ipairs(checks) do
+            local v
+            if #t < c[1] then v = c[6] else v = t[c[1]] end
+            local code = check_value(c, v)
+            if code == 1265 then
+                return {'error', 1265, string.format("Data truncated for column '%s' at row %d", c[2], n)}
+            elseif code then
+                return {'error', 1264, string.format("Out of range value for column '%s' at row %d", c[2], n)}
+            end
+        end
+        -- The table takes no writes meanwhile (fenced): yielding is safe.
+        if n % 1000 == 0 then fiber.yield() end
+    end
+    return nil
+end
+
+-- New indexes {id, name, unique, parts}, built under temporary names; a
+-- unique one fails on duplicates (1062).
+local function build_indexes(sp, builds)
+    for _, b in ipairs(builds or {}) do
+        if sp.index[b[1]] == nil then
+            local ok, err = pcall(sp.create_index, sp, tmp_index_name(b[1]),
+                {id = b[1], type = 'tree', unique = b[3], parts = b[4]})
+            if not ok then
+                if type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND then
+                    return {'duplicate', 1062, "Duplicate entry for key '" .. b[2] .. "'"}
+                end
+                return failure(err)
+            end
+        end
+    end
+    return nil
+end
+
+local function drop_built(sp, builds)
+    for _, b in ipairs(builds or {}) do
+        local idx = sp.index[b[1]]
+        if idx ~= nil and idx.name == tmp_index_name(b[1]) then idx:drop() end
+    end
+end
+
+local function alter_space(name, a)
+    return box.space[name] or (a.rename ~= nil and a.rename ~= box.NULL and box.space[a.rename]) or nil
+end
+
+-- a: {ver, checks, builds, timeout, drop = {index ids}, renames = {{id, name}},
+--     format = new format or nil, rename = new space name or nil, def = catalog entry}
+function tarn_alter_prepare(name, a)
+    writable()
+    local sp = alter_space(name, a)
+    if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
+    local cur = catalog_ver(sp.name)
+    if cur >= a.ver then return {OK, 'applied'} end
+    fence_fresh()
+    if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    local function undo(res)
+        drop_built(sp, a.builds)
+        FENCE[sp.id] = cur > 0 and cur or nil
+        return res
+    end
+    local deadline = clock.monotonic() + (a.timeout or 50)
+    if not drain(sp.id, deadline) then
+        M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+        return undo({'timeout', 1205, LOCK_TIMEOUT_MSG})
+    end
+    local bad = run_checks(sp, a.checks)
+    if bad then return undo(bad) end
+    bad = build_indexes(sp, a.builds)
+    if bad then return undo(bad) end
     return {OK}
 end
 
--- Replace the Tarn-side JSON definition stored with a table.
-function tarn_set_def_json(name, json)
-    local r = box.space._tarn_catalog:get{name}
-    if r == nil then return {'error', 1146, 'no such table ' .. name} end
-    local copy = table.deepcopy(r.def)
-    copy.json = json
-    box.space._tarn_catalog:replace{name, copy}
+function tarn_alter_apply(name, a)
+    writable()
+    local sp = alter_space(name, a)
+    if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
+    if catalog_ver(sp.name) >= a.ver then return {OK, 'applied'} end
+    fence_fresh()
+    if (FENCE[sp.id] or 0) < a.ver then
+        -- The fence PREPARE raised is gone (restart, new leader): again.
+        local r = tarn_alter_prepare(sp.name, a)
+        if r[1] ~= OK then return r end
+    end
+    local old_name = sp.name
+    for _, id in ipairs(a.drop or {}) do
+        if sp.index[id] ~= nil then sp.index[id]:drop() end
+    end
+    if a.format ~= nil and a.format ~= box.NULL then sp:format(a.format) end
+    for _, r in ipairs(a.renames or {}) do
+        local idx = sp.index[r[1]]
+        if idx ~= nil and idx.name ~= r[2] then idx:rename(r[2]) end
+    end
+    for _, b in ipairs(a.builds or {}) do
+        local idx = sp.index[b[1]]
+        if idx ~= nil and idx.name ~= b[2] then idx:rename(b[2]) end
+    end
+    if a.rename ~= nil and a.rename ~= box.NULL and sp.name ~= a.rename then sp:rename(a.rename) end
+    box.begin()
+    if old_name ~= sp.name then box.space._tarn_catalog:delete{old_name} end
+    box.space._tarn_catalog:replace{sp.name, a.def}
+    box.commit()
+    FENCE[sp.id] = a.ver
+    invalidate_key_defs()
+    M.stats.alters = M.stats.alters + 1
     return {OK}
+end
+
+function tarn_alter_abort(name, a)
+    writable()
+    local sp = alter_space(name, a)
+    if sp == nil then return {OK} end
+    local cur = catalog_ver(sp.name)
+    if cur >= a.ver then return {OK, 'applied'} end
+    drop_built(sp, a.builds)
+    fence_fresh()
+    FENCE[sp.id] = cur > 0 and cur or nil
+    return {OK}
+end
+
+-- The schema change in progress (on the first shard): at most one at a
+-- time; a SQL server that finds one abandoned finishes it.
+--   job = {owner, space, ver, a}
+function tarn_ddl_begin(job)
+    -- Read-committed: a job that another call inserted and that still waits
+    -- for its WAL write is invisible to a read-confirmed read, and the
+    -- insert below would then fail on the key instead of reporting busy.
+    local cur
+    local ok = pcall(function()
+        box.begin({txn_isolation = 'read-committed'})
+        cur = box.space._tarn_meta:get{'ddl:job'}
+        if cur == nil then
+            box.space._tarn_meta:insert{'ddl:job', {owner = job[1], ts = clock.realtime(),
+                                                    space = job[2], ver = job[3], a = job[4]}}
+        end
+        box.commit()
+    end)
+    if box.is_in_txn() then box.rollback() end
+    if not ok then return {'busy', '', 0} end   -- another job began at the same moment
+    if cur ~= nil then
+        return {'busy', cur.value.owner, clock.realtime() - cur.value.ts}
+    end
+    return {OK}
+end
+
+-- Keep the job alive (owner), or take over an abandoned one (owner, from).
+function tarn_ddl_touch(owner, from)
+    local cur = box.space._tarn_meta:get{'ddl:job'}
+    if cur == nil then return {'gone'} end
+    local v = table.deepcopy(cur.value)
+    if v.owner ~= (from or owner) then return {'busy', v.owner, clock.realtime() - v.ts} end
+    v.owner, v.ts = owner, clock.realtime()
+    box.space._tarn_meta:replace{'ddl:job', v}
+    return {OK}
+end
+
+function tarn_ddl_end(owner)
+    local cur = box.space._tarn_meta:get{'ddl:job'}
+    if cur ~= nil and cur.value.owner == owner then box.space._tarn_meta:delete{'ddl:job'} end
+    return {OK}
+end
+
+-- {OK, owner, age, space, ver, a} or {OK} when no schema change is pending.
+function tarn_ddl_job()
+    local cur = box.space._tarn_meta:get{'ddl:job'}
+    if cur == nil then return {OK} end
+    local v = cur.value
+    return {OK, v.owner, clock.realtime() - v.ts, v.space, v.ver, v.a}
 end
 
 function tarn_truncate(name)
@@ -2046,7 +2355,9 @@ end
 function tarn_catalog()
     local out = {}
     for _, t in box.space._tarn_catalog:pairs() do
-        out[#out + 1] = {t.name, box.space[t.name] and box.space[t.name].id or 0, t.def.json or ''}
+        local s = box.space[t.name]
+        local bix = s and s.index.bucket_id and s.index.bucket_id.id or box.NULL
+        out[#out + 1] = {t.name, s and s.id or 0, t.def.json or '', bix}
     end
     return out
 end
@@ -2115,8 +2426,9 @@ function M.init(cfg)
     box.space._space:on_replace(function() invalidate_key_defs() end)
     -- The lock index is maintained only while this instance is the leader;
     -- any election state change makes it stale (rebuilt before next use).
-    box.ctl.on_election(function() LK_STALE = true; pl_fresh() end)
-    box.watch('box.status', function() LK_STALE = true; pl_fresh() end)   -- read-only changes
+    box.ctl.on_election(function() LK_STALE = true; FENCE_STALE = true; pl_fresh() end)
+    box.watch('box.status', function() LK_STALE = true; FENCE_STALE = true; pl_fresh() end)   -- read-only changes
+    box.space._index:on_replace(function() invalidate_key_defs() end)
     box.session.on_disconnect(pl_on_disconnect)
     if not box.info.ro then lk_reload() end
     M.start_recovery()

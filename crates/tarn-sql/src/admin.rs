@@ -61,7 +61,24 @@ pub enum Admin {
         db: Option<String>,
         table: String,
     },
+    LockTables,
     Noop,
+}
+
+impl Admin {
+    /// A statement that reports table definitions from the catalog.
+    pub fn reads_catalog(&self) -> bool {
+        matches!(
+            self,
+            Admin::ShowDatabases { .. }
+                | Admin::ShowTables { .. }
+                | Admin::ShowColumns { .. }
+                | Admin::ShowCreateTable { .. }
+                | Admin::ShowIndex { .. }
+                | Admin::ShowTableStatus { .. }
+                | Admin::Describe { .. }
+        )
+    }
 }
 
 pub const SERVER_VERSION_COMMENT: &str = "Tarn: distributed MySQL on Tarantool";
@@ -130,7 +147,15 @@ pub enum SetItem {
     Isolation(VarScope, Isolation),
     /// innodb_lock_wait_timeout in seconds; None: DEFAULT.
     LockWaitTimeout(VarScope, Option<f64>),
-    UserVar(String, Value),
+    /// Any other assignment: a user variable (`name` starts with `@`) or a
+    /// system variable (lower-cased, without `@@` and scope; `names` for SET
+    /// NAMES / CHARACTER SET), with the assigned expression as written. The
+    /// session evaluates it.
+    Var {
+        scope: VarScope,
+        name: String,
+        rhs: String,
+    },
 }
 
 /// Session state that system variables report.
@@ -139,18 +164,28 @@ pub struct SessionVars<'a> {
     pub db: Option<&'a str>,
     pub isolation: Isolation,
     pub lock_wait_timeout: f64,
+    /// Values the session SET for variables Tarn reports but does not act
+    /// on (character sets, sql_mode, time_zone, foreign_key_checks, ...).
+    pub overrides: Option<&'a std::collections::HashMap<String, Value>>,
+}
+
+/// A system variable name without `@@` and scope prefix, lower-cased.
+pub fn sysvar_name(name: &str) -> String {
+    let n = name.trim_start_matches('@').to_ascii_lowercase();
+    n.strip_prefix("session.")
+        .or_else(|| n.strip_prefix("global."))
+        .or_else(|| n.strip_prefix("local."))
+        .unwrap_or(&n)
+        .to_string()
 }
 
 /// Variables reported by SELECT @@x / SHOW VARIABLES.
 pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
     let (autocommit, db) = (sv.autocommit, sv.db);
-    let n = name.trim_start_matches('@').to_ascii_lowercase();
-    let n = n
-        .strip_prefix("session.")
-        .or_else(|| n.strip_prefix("global."))
-        .or_else(|| n.strip_prefix("local."))
-        .unwrap_or(&n)
-        .to_string();
+    let n = sysvar_name(name);
+    if let Some(v) = sv.overrides.and_then(|o| o.get(&n)) {
+        return Some(v.clone());
+    }
     Some(match n.as_str() {
         "version" => Value::str(crate::SERVER_VERSION),
         "version_comment" => Value::str(SERVER_VERSION_COMMENT),
@@ -200,6 +235,9 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         "server_id" => Value::Int(1),
         "warning_count" | "error_count" => Value::Int(0),
         "default_authentication_plugin" => Value::str("mysql_native_password"),
+        "sql_notes" | "sql_warnings" => Value::Int(1),
+        "sql_safe_updates" | "sql_big_selects" => Value::Int(0),
+        "max_execution_time" => Value::Int(0),
         _ => return None,
     })
 }
@@ -237,12 +275,15 @@ pub const SHOWN_VARIABLES: &[&str] = &[
 
 struct Toks {
     t: Vec<String>,
+    /// Byte range of each token in the text.
+    pos: Vec<(usize, usize)>,
     i: usize,
 }
 
 impl Toks {
     fn new(sql: &str) -> Toks {
         let mut t = Vec::new();
+        let mut pos = Vec::new();
         let b = sql.as_bytes();
         let mut i = 0;
         while i < b.len() {
@@ -262,6 +303,7 @@ impl Toks {
                     j += 1;
                 }
                 t.push(s);
+                pos.push((i, (j + 1).min(b.len())));
                 i = j + 1;
             } else if c.is_ascii_alphanumeric() || c == b'_' || c == b'@' || c == b'$' || c == b'.' || c >= 0x80 {
                 let mut j = i;
@@ -276,13 +318,19 @@ impl Toks {
                     j += 1;
                 }
                 t.push(sql[i..j].to_string());
+                pos.push((i, j));
                 i = j;
             } else {
                 t.push((c as char).to_string());
+                pos.push((i, i + 1));
                 i += 1;
             }
         }
-        Toks { t, i: 0 }
+        Toks { t, pos, i: 0 }
+    }
+    /// Byte offset where token `k` starts (the text length past the end).
+    fn offset(&self, k: usize, len: usize) -> usize {
+        self.pos.get(k).map(|p| p.0).unwrap_or(len)
     }
     fn peek_up(&self, k: usize) -> String {
         self.t
@@ -411,7 +459,7 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
         }
         "SET" => {
             t.i += 1;
-            parse_set(&mut t)?
+            parse_set(&mut t, sql)?
         }
         "SHOW" => {
             t.i += 1;
@@ -426,6 +474,9 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             Some(v) => Admin::SelectVars(v),
             None => return Ok(None),
         },
+        // LOCK TABLES commits the open transaction, as in MySQL; the table
+        // locks themselves are not taken (as TiDB without table locks).
+        "LOCK" if matches!(t.peek_up(1).as_str(), "TABLE" | "TABLES") => Admin::LockTables,
         "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
@@ -475,7 +526,7 @@ fn isolation_level(t: &mut Toks) -> SqlResult<Isolation> {
     Ok(lvl)
 }
 
-fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
+fn parse_set(t: &mut Toks, sql: &str) -> SqlResult<Admin> {
     let mut items = Vec::new();
     loop {
         if t.done() {
@@ -483,7 +534,7 @@ fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
         }
         let mut scope = VarScope::Session;
         let mut scoped = false;
-        if t.is("GLOBAL") || t.is("@@GLOBAL") {
+        if t.is("GLOBAL") || t.is("@@GLOBAL") || t.is("PERSIST") || t.is("PERSIST_ONLY") {
             scope = VarScope::Global;
             scoped = true;
         } else if t.is("SESSION") || t.is("LOCAL") || t.is("@@SESSION") || t.is("@@LOCAL") {
@@ -513,23 +564,42 @@ fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
             break;
         }
         if matches!(w.as_str(), "NAMES" | "CHARACTER" | "CHARSET") {
+            // SET NAMES cs [COLLATE co] | SET CHARACTER SET cs | SET CHARSET cs
+            t.i += 1;
+            if w == "CHARACTER" {
+                let _ = t.is("SET");
+            }
+            let from = t.offset(t.i, sql.len());
             skip_assignment(t);
+            let to = t.offset(t.i, sql.len());
+            items.push(SetItem::Var {
+                scope: VarScope::Session,
+                name: "names".into(),
+                rhs: sql[from..to].trim().to_string(),
+            });
             if !t.is(",") {
                 break;
             }
             continue;
         }
-        let name = match t.next() {
+        let mut name = match t.next() {
             Some(n) => n,
             None => break,
         };
+        if name == "@" {
+            // @`quoted name`, @'quoted name'
+            let q = t.next().ok_or_else(|| SqlError::parse("syntax error near SET @"))?;
+            name = format!("@{}", unquote(&q));
+        }
         let lower = name.to_ascii_lowercase();
         let user_var = lower.starts_with('@') && !lower.starts_with("@@");
         // `SET @@transaction_isolation = ...` (no scope at all) sets the
         // next transaction's level, as SET TRANSACTION does (MySQL 8.0).
         let bare_sysvar = lower.starts_with("@@") && !scoped && !lower.contains('.');
         let mut n = lower.trim_start_matches('@').to_string();
-        if let Some(rest) = n.strip_prefix("global.") {
+        if user_var {
+            n = name[1..].to_ascii_lowercase();
+        } else if let Some(rest) = n.strip_prefix("global.").or_else(|| n.strip_prefix("persist.")) {
             scope = VarScope::Global;
             n = rest.to_string();
         } else if let Some(rest) = n.strip_prefix("session.").or_else(|| n.strip_prefix("local.")) {
@@ -543,53 +613,85 @@ fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
         {
             return Err(SqlError::parse(format!("syntax error near SET {}", name)));
         }
-        let raw = t.t.get(t.i).cloned().unwrap_or_default();
-        let val = t.next().map(|s| literal_value(&s)).unwrap_or(Value::Null);
-        if user_var {
-            items.push(SetItem::UserVar(format!("@{}", n), val));
-        } else {
-            match n.as_str() {
-                "autocommit" => {
-                    let on = match &val {
-                        Value::Int(i) => *i != 0,
-                        Value::Str(s) => s.eq_ignore_ascii_case(b"on") || s.as_ref() == b"1",
-                        _ => true,
-                    };
-                    items.push(SetItem::Autocommit(on));
-                }
-                "transaction_isolation" | "tx_isolation" => {
-                    let txt = val.to_string();
-                    let lvl = Isolation::parse(&txt).ok_or_else(|| bad_value(&n, &unquote(&raw)))?;
-                    items.push(SetItem::Isolation(
-                        if bare_sysvar { VarScope::Next } else { scope },
-                        lvl,
-                    ));
-                }
-                "innodb_lock_wait_timeout" => {
-                    // An integer, clamped to 0..=1073741824 (0: do not wait),
-                    // as MariaDB does.
-                    let secs = if matches!(val, Value::Null) {
-                        None
-                    } else {
-                        let neg = raw == "-";
-                        let num = if neg { t.next().unwrap_or_default() } else { raw.clone() };
-                        let v = num.parse::<i64>().map_err(|_| {
-                            SqlError::new(1232, "42000", format!("Incorrect argument type to variable '{}'", n))
-                        })?;
-                        Some((if neg { -v } else { v }).clamp(0, 1_073_741_824) as f64)
-                    };
-                    items.push(SetItem::LockWaitTimeout(scope, secs));
-                }
-                _ => {}
-            }
-        }
-        // skip the rest of this assignment (expressions are not evaluated)
+        let first = t.i;
+        let from = t.offset(first, sql.len());
         skip_assignment(t);
+        let to = t.offset(t.i, sql.len());
+        let rhs = sql[from..to].trim().to_string();
+        // A single literal token (or - number): typed here; anything else
+        // (expressions, variables) is evaluated by the session.
+        let ntok = t.i - first;
+        let simple = (ntok == 1 && !t.t[first].starts_with('@'))
+            || (ntok == 2 && t.t[first] == "-" && t.t[first + 1].bytes().all(|c| c.is_ascii_digit()));
+        if user_var {
+            items.push(SetItem::Var {
+                scope: VarScope::Session,
+                name: format!("@{}", n),
+                rhs,
+            });
+        } else if simple
+            && matches!(
+                n.as_str(),
+                "autocommit" | "transaction_isolation" | "tx_isolation" | "innodb_lock_wait_timeout"
+            )
+        {
+            let val = if ntok == 2 {
+                Value::str(&rhs)
+            } else {
+                literal_value(&t.t[first])
+            };
+            items.push(typed_item(scope, &n, &val, bare_sysvar)?.expect("typed variable"));
+        } else {
+            items.push(SetItem::Var { scope, name: n, rhs });
+        }
         if !t.is(",") {
             break;
         }
     }
     Ok(Admin::Set(items))
+}
+
+/// The typed SET item for a variable Tarn acts on, from its value; None
+/// for other variables. `bare_sysvar`: written `@@name` without a scope.
+pub fn typed_item(scope: VarScope, name: &str, val: &Value, bare_sysvar: bool) -> SqlResult<Option<SetItem>> {
+    let raw = match val {
+        Value::Null => "NULL".to_string(),
+        v => v.to_string(),
+    };
+    Ok(Some(match name {
+        "autocommit" => {
+            let on = match val {
+                Value::Int(i) => *i != 0,
+                Value::UInt(u) => *u != 0,
+                Value::Str(s) => s.eq_ignore_ascii_case(b"on") || s.as_ref() == b"1",
+                Value::Null => return Err(bad_value(name, "NULL")),
+                _ => true,
+            };
+            SetItem::Autocommit(on)
+        }
+        "transaction_isolation" | "tx_isolation" => {
+            let lvl = Isolation::parse(&raw).ok_or_else(|| bad_value(name, &raw))?;
+            SetItem::Isolation(if bare_sysvar { VarScope::Next } else { scope }, lvl)
+        }
+        "innodb_lock_wait_timeout" => {
+            // An integer, clamped to 0..=1073741824 (0: do not wait), as
+            // MariaDB does; NULL / DEFAULT: the default.
+            let secs = match val {
+                Value::Null => None,
+                Value::Int(i) => Some((*i).clamp(0, 1_073_741_824) as f64),
+                Value::UInt(u) => Some((*u).min(1_073_741_824) as f64),
+                Value::Str(s) if s.eq_ignore_ascii_case(b"default") => None,
+                _ => {
+                    let v = raw.trim().replace(' ', "").parse::<i64>().map_err(|_| {
+                        SqlError::new(1232, "42000", format!("Incorrect argument type to variable '{}'", name))
+                    })?;
+                    Some(v.clamp(0, 1_073_741_824) as f64)
+                }
+            };
+            SetItem::LockWaitTimeout(scope, secs)
+        }
+        _ => return Ok(None),
+    }))
 }
 
 fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
@@ -699,9 +801,32 @@ mod tests {
             recognize("SET @@session.autocommit = ON").unwrap(),
             Some(Admin::Set(vec![SetItem::Autocommit(true)]))
         );
-        assert_eq!(recognize("SET NAMES utf8mb4").unwrap(), Some(Admin::Set(vec![])));
         use Isolation::*;
         use VarScope::*;
+        let var = |scope, name: &str, rhs: &str| SetItem::Var {
+            scope,
+            name: name.into(),
+            rhs: rhs.into(),
+        };
+        assert_eq!(
+            recognize("SET NAMES utf8mb4").unwrap(),
+            Some(Admin::Set(vec![var(Session, "names", "utf8mb4")]))
+        );
+        assert_eq!(
+            recognize("SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO', @`b c` := 1 + 2").unwrap(),
+            Some(Admin::Set(vec![
+                var(Session, "@old_sql_mode", "@@SQL_MODE"),
+                var(Session, "sql_mode", "'NO_AUTO_VALUE_ON_ZERO'"),
+                var(Session, "@b c", "1 + 2"),
+            ]))
+        );
+        assert_eq!(
+            recognize("SET character_set_client = @saved_cs_client, GLOBAL time_zone = '+00:00'").unwrap(),
+            Some(Admin::Set(vec![
+                var(Session, "character_set_client", "@saved_cs_client"),
+                var(Global, "time_zone", "'+00:00'"),
+            ]))
+        );
         assert_eq!(
             recognize("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap(),
             Some(Admin::Set(vec![SetItem::Isolation(Session, ReadCommitted)]))
@@ -723,6 +848,9 @@ mod tests {
             )
             .unwrap(),
             Some(Admin::Set(vec![
+                var(Session, "names", "utf8mb4 COLLATE utf8mb4_unicode_ci"),
+                var(Session, "sql_mode", "CONCAT(@@sql_mode, ',STRICT_ALL_TABLES')"),
+                var(Session, "sql_auto_is_null", "0"),
                 SetItem::Isolation(Session, ReadCommitted),
                 SetItem::LockWaitTimeout(Session, Some(7.0))
             ]))

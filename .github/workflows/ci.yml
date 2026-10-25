@@ -88,21 +88,23 @@ jobs:
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
       - name: Storage protocol tests
-        run: lua/test/run.sh
-      - name: Start a 2-shard cluster
-        run: scripts/cluster.sh start -n 2 -r 1 -p 4000
+        run: ci/annotate.sh storage lua/test/run.sh
+      - name: Start a 2-shard cluster (two SQL servers)
+        run: scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
         run: |
-          python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
-          python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
+          ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
       - name: Transaction tests
-        run: python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
+        run: ci/annotate.sh txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
       - name: READ COMMITTED tests
-        run: python3 tests/sql/rctest.py --tarn 127.0.0.1:4000
+        run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000
+      - name: Schema changes and dumps
+        run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
       - name: Fault injection
-        run: tests/faults.sh
+        run: ci/annotate.sh faults tests/faults.sh
       - name: Failover (2 shards x 3 replicas)
-        run: SECS=45 tests/failover.sh
+        run: SECS=45 ci/annotate.sh failover tests/failover.sh
       - name: Cluster logs
         if: failure()
         run: |

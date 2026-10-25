@@ -7,6 +7,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod admin;
+pub mod alter;
 pub mod catalog;
 pub mod cluster;
 pub mod complex;
@@ -16,6 +17,7 @@ pub mod mpw;
 pub mod normalize;
 pub mod plan;
 pub mod planner;
+pub mod prep;
 pub mod route;
 pub mod session;
 pub mod txn;

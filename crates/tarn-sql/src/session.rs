@@ -69,9 +69,156 @@ pub struct Session {
     next_isolation: Option<Isolation>,
     /// innodb_lock_wait_timeout, seconds.
     pub lock_wait_timeout: f64,
+    /// User-defined variables (`@name`, lower-cased).
+    user_vars: HashMap<String, Value>,
+    /// System variables the session set that Tarn reports but does not act
+    /// on (character sets, sql_mode, foreign_key_checks, ...).
+    sys_vars: HashMap<String, Value>,
+    /// sql_mode contains NO_AUTO_VALUE_ON_ZERO: an explicit 0 in an
+    /// AUTO_INCREMENT column is stored, not replaced by a generated value.
+    no_auto_value_on_zero: bool,
 }
 
 const MAX_RETRIES: usize = 20;
+
+/// Statements that met a stale catalog: a table definition an ALTER TABLE
+/// replaced (1412; the shards refuse writes made with it while the ALTER
+/// runs and afterwards), or a table, column or database another server
+/// created (1146 / 1054 / 1049 from a catalog older than the shards').
+/// Outside a transaction, or as the first statement of one, nothing that
+/// depends on the old catalog took effect, so the statement runs again with
+/// the new catalog -- for 1412 until the ALTER is done, up to the lock wait
+/// timeout, as MySQL waits for a metadata lock. Later statements of a
+/// transaction end it with 1412.
+struct StaleRetry {
+    deadline: std::time::Instant,
+    attempt: u32,
+    /// Catalog version when the current attempt started.
+    seen: u64,
+}
+
+impl StaleRetry {
+    fn new(lock_wait_timeout: f64) -> StaleRetry {
+        StaleRetry {
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs_f64(lock_wait_timeout.max(1.0)),
+            attempt: 0,
+            seen: 0,
+        }
+    }
+
+    /// Call before each attempt.
+    fn start(&mut self, cluster: &Cluster) {
+        self.seen = cluster.catalog().version;
+    }
+
+    async fn again<T>(&mut self, cluster: &Cluster, r: &SqlResult<T>, autocommit: bool) -> SqlResult<Stale> {
+        let Err(e) = r else { return Ok(Stale::Done) };
+        match e.code {
+            1412 => {
+                cluster.refresh_catalog().await?;
+                if !autocommit || std::time::Instant::now() > self.deadline {
+                    return Ok(Stale::Done);
+                }
+                self.attempt += 1;
+                cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
+                let ms = (5u64 << self.attempt.min(4)).min(100);
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                Ok(Stale::Retry)
+            }
+            1146 | 1054 | 1049 => {
+                // The attempt met a catalog older than the shards': one that
+                // the background reload may already have replaced.
+                let newer = cluster.catalog().version > self.seen || cluster.refresh_if_newer().await?;
+                if !newer {
+                    return Ok(Stale::Done);
+                }
+                self.attempt += 1;
+                // A catalog that keeps changing: report it as such (1412)
+                // rather than the error the stale one produced.
+                Ok(if autocommit && self.attempt <= 3 {
+                    Stale::Retry
+                } else {
+                    Stale::Changed
+                })
+            }
+            _ => Ok(Stale::Done),
+        }
+    }
+}
+
+enum Stale {
+    /// run the statement again
+    Retry,
+    /// return its result
+    Done,
+    /// inside a transaction: the catalog changed under it (1412)
+    Changed,
+}
+
+/// The transaction state a statement started in (see [`Session::restart`]).
+struct Restart {
+    /// The statement runs outside any transaction.
+    autocommit: bool,
+    /// It is the first statement of its transaction: nothing the transaction
+    /// did depends on the catalog it met, so it may start over.
+    first: bool,
+    /// The transaction's settings (explicit, isolation, lock wait timeout).
+    txn: Option<(bool, TxnMode, f64)>,
+    next_isolation: Option<Isolation>,
+}
+
+impl Restart {
+    fn can_retry(&self) -> bool {
+        self.autocommit || self.first
+    }
+}
+
+/// The tables a SELECT reads.
+fn select_tables(p: &SelectPlan) -> Vec<&TableDef> {
+    p.source.tables().into_iter().map(|a| &*a.table).collect()
+}
+
+/// The tables a DML statement reads or writes.
+fn stmt_tables(stmt: &Stmt) -> Vec<&TableDef> {
+    match stmt {
+        Stmt::Select(p) => select_tables(p),
+        Stmt::Insert(p) => {
+            let mut v = vec![&*p.table];
+            if let InsertSource::Select(s, _) = &p.source {
+                v.extend(select_tables(s));
+            }
+            v
+        }
+        Stmt::Update(p) => vec![&*p.access.table],
+        Stmt::Delete(p) => vec![&*p.access.table],
+        _ => Vec::new(),
+    }
+}
+
+/// A statement inside a transaction must use the definitions its earlier
+/// writes were made with (see [`Txn::check_def`]).
+fn check_defs(txn: &Txn, tables: Vec<&TableDef>) -> SqlResult<()> {
+    tables.into_iter().try_for_each(|t| txn.check_def(t))
+}
+
+/// Character sets a client may declare for its connection: Tarn stores and
+/// sends text as UTF-8, so only encodings that agree with it on the bytes a
+/// client sends are accepted.
+fn utf8_compatible_charset(cs: &str) -> bool {
+    matches!(
+        cs.to_ascii_lowercase()
+            .trim_matches(|c| c == '\'' || c == '"' || c == '`'),
+        "utf8mb4" | "utf8mb3" | "utf8" | "ascii" | "binary" | "default" | "null"
+    )
+}
+
+/// Time zones that agree with Tarn's clock and storage (UTC).
+fn utc_time_zone(tz: &str) -> bool {
+    matches!(
+        tz.to_ascii_uppercase().as_str(),
+        "+00:00" | "-00:00" | "+0:00" | "-0:00" | "UTC" | "GMT" | "ETC/UTC" | "ETC/GMT" | "Z" | "SYSTEM"
+    )
+}
 
 /// First keyword of a statement, skipping whitespace and comments.
 fn first_keyword(sql: &str) -> &str {
@@ -139,6 +286,9 @@ impl Session {
             isolation,
             next_isolation: None,
             lock_wait_timeout,
+            user_vars: HashMap::new(),
+            sys_vars: HashMap::new(),
+            no_auto_value_on_zero: false,
         }
     }
 
@@ -159,7 +309,169 @@ impl Session {
             db: self.db.as_deref(),
             isolation: self.isolation,
             lock_wait_timeout: self.lock_wait_timeout,
+            overrides: Some(&self.sys_vars),
         }
+    }
+
+    /// Replace `@user` and `@@system` variable references by literals
+    /// (`keep_targets`: not the variables a SET assigns). An unknown system
+    /// variable is error 1193. None when the text has no references.
+    fn substitute_vars(&self, sql: &str, keep_targets: bool) -> SqlResult<Option<String>> {
+        if !crate::prep::has_var_refs(sql) {
+            return Ok(None);
+        }
+        let sv = self.session_vars();
+        let mut unknown: Option<String> = None;
+        let out = crate::prep::substitute_vars(sql, keep_targets, &mut |r| match r {
+            crate::prep::VarRef::User(n) => Some(crate::prep::literal(self.user_vars.get(n).unwrap_or(&Value::Null))),
+            crate::prep::VarRef::System(n) => match admin::system_var(n, &sv) {
+                Some(v) => Some(crate::prep::literal(&v)),
+                None => {
+                    unknown.get_or_insert_with(|| admin::sysvar_name(n));
+                    None
+                }
+            },
+        });
+        if let Some(n) = unknown {
+            return Err(SqlError::new(1193, "HY000", format!("Unknown system variable '{}'", n)));
+        }
+        Ok(out)
+    }
+
+    /// The value of the expression a SET assigns. `sysvar`: assigned to a
+    /// system variable, where a bare word is a string (SET sql_mode =
+    /// TRADITIONAL). Returns None for DEFAULT.
+    async fn eval_set_value(&mut self, rhs: &str, sysvar: bool) -> SqlResult<Option<Value>> {
+        let rhs = rhs.trim();
+        if sysvar && rhs.eq_ignore_ascii_case("DEFAULT") {
+            return Ok(None);
+        }
+        let text = self.substitute_vars(rhs, false)?.unwrap_or_else(|| rhs.to_string());
+        let t = text.trim();
+        let word = !t.is_empty() && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
+        if word {
+            let u = t.to_ascii_uppercase();
+            return Ok(Some(match u.as_str() {
+                "ON" | "TRUE" => Value::Int(1),
+                "OFF" | "FALSE" => Value::Int(0),
+                "NULL" => Value::Null,
+                _ if t.bytes().all(|c| c.is_ascii_digit()) => t
+                    .parse::<i64>()
+                    .map(Value::Int)
+                    .unwrap_or_else(|_| Value::Decimal(t.into())),
+                _ if sysvar => Value::str(t),
+                _ => {
+                    return Err(SqlError::new(
+                        1054,
+                        "42S22",
+                        format!("Unknown column '{}' in 'field list'", t),
+                    ))
+                }
+            }));
+        }
+        // Anything else is evaluated as a SELECT expression.
+        let out = Box::pin(self.query(&format!("SELECT {}", t))).await?;
+        Ok(Some(match out {
+            Output::Rows { rows, .. } => rows
+                .into_iter()
+                .next()
+                .and_then(|r| r.into_iter().next())
+                .unwrap_or(Value::Null),
+            Output::Ok { .. } => Value::Null,
+        }))
+    }
+
+    /// SET of a variable Tarn does not type itself (see `SetItem::Var`).
+    async fn set_var(&mut self, scope: VarScope, name: &str, rhs: &str) -> SqlResult<()> {
+        if let Some(user) = name.strip_prefix('@') {
+            let v = self.eval_set_value(rhs, false).await?.unwrap_or(Value::Null);
+            self.user_vars.insert(user.to_string(), v);
+            return Ok(());
+        }
+        if name == "names" {
+            // SET NAMES charset [COLLATE collation]
+            let mut words = rhs.split_whitespace();
+            let cs = words
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c| c == '\'' || c == '"' || c == '`')
+                .to_string();
+            if !utf8_compatible_charset(&cs) {
+                return Err(SqlError::unsupported(format!(
+                    "character set '{}' (connections are utf8mb4)",
+                    cs
+                )));
+            }
+            if cs.eq_ignore_ascii_case("default") {
+                for v in [
+                    "character_set_client",
+                    "character_set_connection",
+                    "character_set_results",
+                    "collation_connection",
+                ] {
+                    self.sys_vars.remove(v);
+                }
+                return Ok(());
+            }
+            for v in [
+                "character_set_client",
+                "character_set_connection",
+                "character_set_results",
+            ] {
+                self.sys_vars.insert(v.into(), Value::str(&cs));
+            }
+            if words.next().is_some_and(|w| w.eq_ignore_ascii_case("COLLATE")) {
+                if let Some(co) = words.next() {
+                    let co = co.trim_matches(|c| c == '\'' || c == '"' || c == '`');
+                    self.sys_vars.insert("collation_connection".into(), Value::str(co));
+                }
+            }
+            return Ok(());
+        }
+        let value = self.eval_set_value(rhs, true).await?;
+        let bare = false;
+        if let Some(item) = admin::typed_item(scope, name, value.as_ref().unwrap_or(&Value::Null), bare)? {
+            return Box::pin(self.run_admin(Admin::Set(vec![item]))).await.map(|_| ());
+        }
+        let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
+        match name {
+            n if n.starts_with("character_set_") && n != "character_set_system" => {
+                if value.is_some() && !matches!(value, Some(Value::Null)) && !utf8_compatible_charset(&text) {
+                    return Err(SqlError::unsupported(format!(
+                        "character set '{}' (connections are utf8mb4)",
+                        text
+                    )));
+                }
+            }
+            "time_zone" => {
+                if value.is_some() && !utc_time_zone(&text) {
+                    return Err(SqlError::unsupported(format!(
+                        "time zone '{}' (Tarn runs in UTC)",
+                        text
+                    )));
+                }
+            }
+            "sql_mode" => {
+                self.no_auto_value_on_zero = value.is_some()
+                    && text
+                        .split(',')
+                        .any(|m| m.trim().eq_ignore_ascii_case("NO_AUTO_VALUE_ON_ZERO"));
+            }
+            _ => {}
+        }
+        if scope == VarScope::Global {
+            // Only the variables typed above have server-wide defaults.
+            return Ok(());
+        }
+        match value {
+            None => {
+                self.sys_vars.remove(name);
+            }
+            Some(v) => {
+                self.sys_vars.insert(name.to_string(), v);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn has_txn(&self) -> bool {
@@ -183,13 +495,75 @@ impl Session {
         Ok(())
     }
 
+    /// USE / the database of a new connection: a database another server
+    /// has just created may not be in this server's catalog yet.
+    pub async fn use_db_fresh(&mut self, db: &str) -> SqlResult<()> {
+        match self.use_db(db) {
+            Err(e) if e.code == 1049 && self.cluster.refresh_if_newer().await? => self.use_db(db),
+            r => r,
+        }
+    }
+
     // ---- entry points -------------------------------------------------------
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
-        if let Some(a) = admin::recognize(sql)? {
+        // A statement outside any transaction that met a table definition an
+        // ALTER TABLE replaced (1412) took no effect: re-plan and run it
+        // again with the new catalog.
+        let rp = self.restart_point();
+        let mut retry = StaleRetry::new(self.lock_wait_timeout);
+        loop {
+            retry.start(&self.cluster);
+            let r = self.query_once(sql).await;
+            match retry.again(&self.cluster, &r, rp.can_retry()).await? {
+                Stale::Retry => self.restart(&rp),
+                Stale::Done => return r,
+                Stale::Changed => return Err(self.definition_changed()),
+            }
+        }
+    }
+
+    fn restart_point(&self) -> Restart {
+        Restart {
+            autocommit: !self.txn_needed(),
+            first: self.txn.as_ref().is_none_or(|t| t.is_empty()),
+            txn: self.txn.as_ref().map(|t| (t.explicit, t.mode, t.lock_timeout)),
+            next_isolation: self.next_isolation,
+        }
+    }
+
+    /// Before the first statement of a transaction runs again: undo what it
+    /// did, in a fresh transaction with the same settings.
+    fn restart(&mut self, rp: &Restart) {
+        if rp.autocommit {
+            return;
+        }
+        if let Some(t) = self.txn.take() {
+            t.rollback(&self.cluster);
+        }
+        self.next_isolation = rp.next_isolation;
+        self.txn = rp
+            .txn
+            .map(|(explicit, mode, lock_timeout)| Txn::with_mode(&self.cluster, explicit, mode, lock_timeout));
+    }
+
+    /// A statement of a transaction met a table definition newer than the
+    /// one its transaction started with: the transaction ends (1412).
+    fn definition_changed(&mut self) -> SqlError {
+        if let Some(t) = self.txn.take() {
+            t.rollback(&self.cluster);
+        }
+        SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
+    }
+
+    async fn query_once(&mut self, sql: &str) -> SqlResult<Output> {
+        let sql = crate::prep::expand_comments(sql);
+        if let Some(a) = admin::recognize(&sql)? {
             return self.run_admin(a).await;
         }
+        let substituted = self.substitute_vars(&sql, false)?;
+        let sql: &str = substituted.as_deref().unwrap_or(&sql);
         if crate::complex::may_need(sql) {
             if let Some(stmt) = crate::complex::parse_if_needed(sql)? {
                 return self.run_complex(stmt).await;
@@ -206,6 +580,8 @@ impl Session {
     }
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
+        let sql = crate::prep::expand_comments(sql);
+        let sql: &str = &sql;
         if let Some(a) = admin::recognize(sql)? {
             self.prepared.insert(
                 id,
@@ -219,6 +595,9 @@ impl Session {
                 },
             );
             return Ok((0, Arc::from(Vec::new())));
+        }
+        if crate::prep::has_var_refs(sql) {
+            return Err(SqlError::unsupported("variables in prepared statements"));
         }
         let n = normalize(sql, Mode::Placeholders)?;
         if crate::complex::may_need(&n.template) {
@@ -259,6 +638,20 @@ impl Session {
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        let rp = self.restart_point();
+        let mut retry = StaleRetry::new(self.lock_wait_timeout);
+        loop {
+            retry.start(&self.cluster);
+            let r = self.execute_once(id, params).await;
+            match retry.again(&self.cluster, &r, rp.can_retry()).await? {
+                Stale::Retry => self.restart(&rp),
+                Stale::Done => return r,
+                Stale::Changed => return Err(self.definition_changed()),
+            }
+        }
+    }
+
+    async fn execute_once(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         if let Some(c) = self.prepared.get(&id).and_then(|p| p.complex.clone()) {
             if params.len() != self.prepared[&id].n_params {
                 return Err(SqlError::new(
@@ -396,14 +789,17 @@ impl Session {
         if self.txn_needed() {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
-            let res = {
-                let cx = self.cx(params, &now);
-                if txn.mode == TxnMode::ReadCommitted {
-                    let mut mode = ReadMode::Committed(&mut txn);
-                    run_select(&self.cluster, &mut mode, p, &cx).await
-                } else {
-                    let mut mode = ReadMode::Txn(&mut txn);
-                    run_select(&self.cluster, &mut mode, p, &cx).await
+            let res = match check_defs(&txn, select_tables(p)) {
+                Err(e) => Err(e),
+                Ok(()) => {
+                    let cx = self.cx(params, &now);
+                    if txn.mode == TxnMode::ReadCommitted {
+                        let mut mode = ReadMode::Committed(&mut txn);
+                        run_select(&self.cluster, &mut mode, p, &cx).await
+                    } else {
+                        let mut mode = ReadMode::Txn(&mut txn);
+                        run_select(&self.cluster, &mut mode, p, &cx).await
+                    }
                 }
             };
             return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
@@ -478,9 +874,12 @@ impl Session {
         if self.txn_needed() {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
-            let res = {
-                let cx = self.cx(params, &now);
-                exec::run_locking_select(&self.cluster, &mut txn, p, &cx, lock).await
+            let res = match check_defs(&txn, select_tables(p)) {
+                Err(e) => Err(e),
+                Ok(()) => {
+                    let cx = self.cx(params, &now);
+                    exec::run_locking_select(&self.cluster, &mut txn, p, &cx, lock).await
+                }
             };
             if let Ok(rows) = &res {
                 self.found_rows = rows.len() as u64;
@@ -522,7 +921,7 @@ impl Session {
     /// a conflict ends the transaction (as a MySQL deadlock does).
     fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
         match res {
-            Err(e) if e.code == 1213 || txn.doomed.is_some() => {
+            Err(e) if e.code == 1213 || e.code == 1412 || txn.doomed.is_some() => {
                 txn.rollback(&self.cluster);
                 Err(e)
             }
@@ -541,7 +940,10 @@ impl Session {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
             let snapshot = txn.writes.clone();
-            let res = self.dml_in_txn(&mut txn, stmt, params, &now, None).await;
+            let res = match check_defs(&txn, stmt_tables(stmt)) {
+                Err(e) => Err(e),
+                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None).await,
+            };
             if res.is_err() {
                 txn.writes = snapshot; // statement atomicity
             }
@@ -604,7 +1006,7 @@ impl Session {
         pre: Option<&(Vec<Row>, Option<u64>)>,
     ) -> SqlResult<Option<Output>> {
         let cx = self.cx(params, now);
-        let (shard, writes, insert_id) = match stmt {
+        let (shard, writes, insert_id, table) = match stmt {
             // REPLACE on a table with another unique key may have to delete
             // other rows (those it collides with on that key): not here.
             Stmt::Insert(p)
@@ -634,7 +1036,7 @@ impl Session {
                         .uint(p.table.space_id as u64);
                     self.encode_tuple(&p.table, r, &mut m);
                 }
-                (shard, m, id)
+                (shard, m, id, p.table.clone())
             }
             Stmt::Update(p) => {
                 let Some((pk, ops)) = self.simple_update(p, &cx)? else {
@@ -644,10 +1046,13 @@ impl Session {
                 let idx = &t.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, t, idx, &pk).unwrap_or(0);
                 let mut m = Mp::new();
-                m.arr(2).arr(1).arr(5).str("update").uint(t.space_id as u64).vals(&pk);
+                m.arr(2).arr(1).arr(6).str("update").uint(t.space_id as u64).vals(&pk);
+                // Fields by number (1-based): rows written before an ALTER
+                // TABLE carry their old format, whose names may differ.
+                let fieldno = |name: &str| t.col_index(name).map(|c| t.layout.col_field[c] as u64 + 1).unwrap_or(0);
                 m.arr(ops.len());
                 for (op, field, v) in &ops {
-                    m.arr(3).str(op).str(field).val(v);
+                    m.arr(3).str(op).uint(fieldno(field)).val(v);
                 }
                 // Range of every integer column changed by an arithmetic op:
                 // the storage side refuses results outside it (MySQL error 1264).
@@ -660,7 +1065,7 @@ impl Session {
                     .collect();
                 m.arr(ranges.len());
                 for (f, (lo, hi)) in ranges {
-                    m.arr(3).str(f);
+                    m.arr(4).uint(fieldno(f));
                     if lo < 0 {
                         m.int(lo.max(i64::MIN as i128) as i64);
                     } else {
@@ -671,8 +1076,22 @@ impl Session {
                     } else {
                         m.int(hi as i64);
                     }
+                    m.str(f);
                 }
-                (shard, m, None)
+                // Rows older than an added column end early: their values
+                // of the later fields, for the update to fill in.
+                match t.update_pad() {
+                    Some((n, pad)) => {
+                        m.arr(pad.len() + 1).uint(n as u64);
+                        for v in &pad {
+                            m.val(v);
+                        }
+                    }
+                    None => {
+                        m.nil();
+                    }
+                }
+                (shard, m, None, t.clone())
             }
             Stmt::Delete(p) => {
                 let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, &cx)? else {
@@ -687,14 +1106,16 @@ impl Session {
                     .str("delete")
                     .uint(p.access.table.space_id as u64)
                     .vals(&pk);
-                (shard, m, None)
+                (shard, m, None, p.access.table.clone())
             }
             _ => return Ok(None),
         };
         // Rows under another transaction's row lock are waited for, up to
-        // the session's innodb_lock_wait_timeout (then 1205).
+        // the session's innodb_lock_wait_timeout (then 1205); the shard
+        // refuses writes made with a replaced table definition (1412).
         let mut writes = writes;
-        writes.map(1).str("lock_timeout").f64(self.lock_wait_timeout);
+        writes.map(2).str("lock_timeout").f64(self.lock_wait_timeout);
+        writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
         let mut attempt = 0;
         loop {
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
@@ -819,12 +1240,8 @@ impl Session {
     }
 
     fn encode_tuple(&self, t: &TableDef, r: &Row, m: &mut Mp) {
-        m.arr(r.len() + 1);
-        for v in r {
-            m.val(v);
-        }
         let sk: Vec<Value> = t.shard_key.iter().map(|&c| r[c].clone()).collect();
-        m.uint(self.cluster.bucket_of(&sk) as u64);
+        t.encode_tuple(r, self.cluster.bucket_of(&sk) as u64, m);
     }
 
     /// Materialize INSERT rows: defaults, AUTO_INCREMENT, type coercion.
@@ -861,14 +1278,16 @@ impl Session {
             }
             _ => return Err(SqlError::internal("INSERT ... SELECT without rows")),
         }
-        // AUTO_INCREMENT: missing, NULL or 0 get generated values
+        // AUTO_INCREMENT: missing, NULL or 0 (unless NO_AUTO_VALUE_ON_ZERO)
+        // get generated values
         let mut first_id = None;
+        let zero_generates = !self.no_auto_value_on_zero;
         if let Some(ai) = t.auto_inc {
             let need = raw
                 .iter()
                 .filter(|r| match &r[ai] {
                     None | Some(Value::Null) => true,
-                    Some(v) => v.as_i64() == Some(0),
+                    Some(v) => zero_generates && v.as_i64() == Some(0),
                 })
                 .count() as u64;
             let mut next = if need > 0 {
@@ -880,7 +1299,7 @@ impl Session {
             for r in raw.iter_mut() {
                 let gen = match &r[ai] {
                     None | Some(Value::Null) => true,
-                    Some(v) => v.as_i64() == Some(0),
+                    Some(v) => zero_generates && v.as_i64() == Some(0),
                 };
                 if gen {
                     first_id.get_or_insert(next);
@@ -984,7 +1403,7 @@ impl Session {
                             op: WOp::Insert,
                             row: Some(row),
                             pk,
-                        });
+                        })?;
                         affected += 1;
                     }
                     return Ok((affected, id));
@@ -1029,7 +1448,7 @@ impl Session {
                                         op: WOp::Delete,
                                         row: None,
                                         pk: rpk,
-                                    });
+                                    })?;
                                     deleted += 1;
                                 }
                             }
@@ -1040,7 +1459,7 @@ impl Session {
                                 op,
                                 row: Some(row),
                                 pk,
-                            });
+                            })?;
                             affected += 1 + deleted + pk_row.is_some() as u64;
                         }
                         Some(_) if p.ignore => {}
@@ -1064,7 +1483,7 @@ impl Session {
                                 op: WOp::Insert,
                                 row: Some(row),
                                 pk,
-                            });
+                            })?;
                             affected += 1;
                         }
                     }
@@ -1114,7 +1533,7 @@ impl Session {
                         op: WOp::Delete,
                         row: None,
                         pk,
-                    });
+                    })?;
                 }
                 Ok((n, None))
             }
@@ -1145,7 +1564,7 @@ impl Session {
                         op: WOp::Delete,
                         row: None,
                         pk,
-                    });
+                    })?;
                 }
                 Ok((n, None))
             }
@@ -1379,7 +1798,7 @@ impl Session {
                 op: WOp::Replace,
                 row: Some(new),
                 pk: new_pk,
-            });
+            })?;
             return Ok(());
         }
         // primary key (and possibly shard) changes: delete + insert
@@ -1414,14 +1833,14 @@ impl Session {
             op: WOp::Delete,
             row: None,
             pk: old_pk,
-        });
+        })?;
         txn.buffer(BufWrite {
             shard: new_shard,
             table: t.clone(),
             op: WOp::Insert,
             row: Some(new),
             pk: new_pk,
-        });
+        })?;
         Ok(())
     }
 
@@ -1430,15 +1849,16 @@ impl Session {
     async fn run_ddl(&mut self, stmt: &Stmt) -> SqlResult<Output> {
         let c = self.cluster.clone();
         match stmt {
-            Stmt::CreateTable { def, if_not_exists } => c.create_table(def.clone(), *if_not_exists).await?,
-            Stmt::CreateIndex {
-                db,
-                table,
-                name,
-                cols,
-                unique,
+            Stmt::CreateTable {
+                def,
                 if_not_exists,
-            } => c.create_index(db, table, name, cols, *unique, *if_not_exists).await?,
+                auto_increment,
+            } => c.create_table((**def).clone(), *if_not_exists, *auto_increment).await?,
+            Stmt::Alter(plans) => {
+                for p in plans {
+                    c.alter_table(p, self.lock_wait_timeout).await?;
+                }
+            }
             Stmt::DropTable { tables, if_exists } => c.drop_tables(tables, *if_exists).await?,
             Stmt::Truncate { db, table } => c.truncate(db, table).await?,
             Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
@@ -1457,6 +1877,11 @@ impl Session {
     // ---- session statements --------------------------------------------------
 
     async fn run_admin(&mut self, a: Admin) -> SqlResult<Output> {
+        if a.reads_catalog() {
+            // A schema change that returned on another SQL server is visible
+            // here at once, as in MySQL (not only after the next poll).
+            self.cluster.refresh_if_newer().await?;
+        }
         let catalog = self.cluster.catalog();
         let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| Ok(Output::Rows { columns, rows });
         match a {
@@ -1510,7 +1935,7 @@ impl Session {
                                 txn.lock_timeout = t;
                             }
                         }
-                        SetItem::UserVar(..) => {}
+                        SetItem::Var { scope, name, rhs } => self.set_var(scope, &name, &rhs).await?,
                     }
                 }
                 Ok(Output::ok(0))
@@ -1552,8 +1977,12 @@ impl Session {
                 Ok(Output::ok(0))
             }
             Admin::Noop => Ok(Output::ok(0)),
+            Admin::LockTables => {
+                self.implicit_commit().await?;
+                Ok(Output::ok(0))
+            }
             Admin::Use(db) => {
-                self.use_db(&db)?;
+                self.use_db_fresh(&db).await?;
                 Ok(Output::ok(0))
             }
             Admin::SelectVars(vars) => {
@@ -1671,7 +2100,7 @@ impl Session {
                             Value::str("TREE"),
                             Value::str(""),
                             Value::str(""),
-                            Value::str("YES"),
+                            Value::str(if ix.invisible { "NO" } else { "YES" }),
                             Value::Null,
                         ]);
                     }
@@ -1693,7 +2122,17 @@ impl Session {
                     "Visible",
                     "Expression",
                 ];
-                let c: Vec<(&str, ColumnType)> = names.iter().map(|n| (*n, ColumnType::VarString)).collect();
+                let c: Vec<(&str, ColumnType)> = names
+                    .iter()
+                    .map(|n| {
+                        let ty = if matches!(*n, "Non_unique" | "Seq_in_index") {
+                            ColumnType::LongLong
+                        } else {
+                            ColumnType::VarString
+                        };
+                        (*n, ty)
+                    })
+                    .collect();
                 rows_out(cols(&c), rows)
             }
             Admin::ShowVariables { like } => {
@@ -1966,12 +2405,34 @@ fn show_create(t: &TableDef) -> String {
             lines.push(format!("  PRIMARY KEY ({})", colnames.join(",")));
         } else {
             lines.push(format!(
-                "  {}KEY `{}` ({})",
+                "  {}KEY `{}` ({}){}",
                 if ix.unique { "UNIQUE " } else { "" },
                 ix.name,
-                colnames.join(",")
+                colnames.join(","),
+                if ix.invisible { " /*!80000 INVISIBLE */" } else { "" }
             ));
         }
+    }
+    let quoted = |v: &[String]| v.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+    for fk in &t.foreign_keys {
+        let mut l = format!(
+            "  CONSTRAINT `{}` FOREIGN KEY ({}) REFERENCES `{}` ({})",
+            fk.name,
+            quoted(&fk.cols),
+            if fk.ref_db.eq_ignore_ascii_case(&t.db) {
+                fk.ref_table.clone()
+            } else {
+                format!("{}`.`{}", fk.ref_db, fk.ref_table)
+            },
+            quoted(&fk.ref_cols)
+        );
+        if let Some(a) = &fk.on_delete {
+            l.push_str(&format!(" ON DELETE {}", a));
+        }
+        if let Some(a) = &fk.on_update {
+            l.push_str(&format!(" ON UPDATE {}", a));
+        }
+        lines.push(l);
     }
     s.push_str(&lines.join(",\n"));
     let sk: Vec<String> = t
@@ -1979,10 +2440,11 @@ fn show_create(t: &TableDef) -> String {
         .iter()
         .map(|&c| format!("`{}`", t.columns[c].name))
         .collect();
-    s.push_str(&format!(
-        "\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n/*!50100 PARTITION BY KEY ({}) */",
-        sk.join(",")
-    ));
+    s.push_str("\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    if !t.comment.is_empty() {
+        s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));
+    }
+    s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
     s
 }
 
