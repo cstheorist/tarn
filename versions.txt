@@ -1,0 +1,4 @@
+mariadb: 10.11.19-MariaDB-ubu2204
+tarn: 61ceb63 on Tarantool 3.9.0-0-g8b9a0f5
+tidb: 8.0.11-TiDB-v8.5.8
+mariadb: 10.11.19-MariaDB-ubu2204

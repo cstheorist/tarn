@@ -1,0 +1,4 @@
+@@transaction_isolation	@@tidb_txn_mode
+REPEATABLE-READ	pessimistic
+Type	Instance	Name	Value
+pd	127.0.0.1:2379	replication.max-replicas	1
