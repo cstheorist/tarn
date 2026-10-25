@@ -27,3 +27,19 @@ Starting... (2026-10-25 00:36:18)
 Computing initial states...
 Finished computing initial states: 1 distinct state generated at 2026-10-25 00:36:18.
 Progress(10) at 2026-10-25 00:36:21: 33,396 states generated (33,396 s/min), 9,955 distinct states found (9,955 ds/min), 5,529 states left on queue.
+Progress(17) at 2026-10-25 00:37:21: 4,273,949 states generated (4,240,553 s/min), 744,684 distinct states found (734,729 ds/min), 264,503 states left on queue.
+Progress(19) at 2026-10-25 00:38:21: 8,766,941 states generated (4,492,992 s/min), 1,411,418 distinct states found (666,734 ds/min), 423,282 states left on queue.
+Progress(20) at 2026-10-25 00:39:21: 13,249,395 states generated (4,482,454 s/min), 2,016,513 distinct states found (605,095 ds/min), 506,782 states left on queue.
+Progress(21) at 2026-10-25 00:40:21: 17,948,147 states generated (4,698,752 s/min), 2,605,842 distinct states found (589,329 ds/min), 535,421 states left on queue.
+Progress(22) at 2026-10-25 00:41:21: 22,664,604 states generated (4,716,457 s/min), 3,169,084 distinct states found (563,242 ds/min), 514,349 states left on queue.
+Progress(23) at 2026-10-25 00:42:21: 27,328,375 states generated (4,663,771 s/min), 3,686,427 distinct states found (517,343 ds/min), 431,112 states left on queue.
+Progress(25) at 2026-10-25 00:43:21: 31,995,521 states generated (4,667,146 s/min), 4,142,408 distinct states found (455,981 ds/min), 248,065 states left on queue.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 7.1E-6
+  based on the actual fingerprints:  val = 1.2E-6
+34755383 states generated, 4325065 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 28.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 12 and the 95th percentile is 3).
+Finished in 07min 38s at (2026-10-25 00:43:56)

@@ -413,8 +413,8 @@ guarantees and must fail. Each workload has three transactions on two
 shards with one or two faults, so these are bounded checks: small, but
 exhaustive within those bounds. Two caveats. `Skew_GC_ROValidate`, the
 largest workload with garbage collection, a crash and a lost message, did
-not finish in the time available: TLC explored 47.8 million distinct states
-(all states up to depth 23) without finding a violation;
+not finish in the time available: TLC explored 47.8 million distinct states,
+breadth-first into depth 23, without finding a violation;
 `SkewTimeout_GC_ROValidate` checks the same workload exhaustively with
 recovery racing the coordinator but without crashes or message loss. And
 the configurations without GC and ApplyMarksCommitted were checked before
@@ -436,12 +436,12 @@ of distinct states).
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12218 | 45049 | 11 | 02s | 11 |
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 19356 | 70996 | 12 | 04s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10736 | 37525 | 11 | 04s | 11 |
-| Frac | no errors | 1182650 | 9419404 | 23 | 01min 57s |  |
+| Frac | no errors | 1182650 | 9429589 | 23 | 03min 29s |  |
 | FracFailover | no errors | 2715768 | 21065756 | 25 | 04min 39s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 49s |  |
 | Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 02min 54s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 12s |  |
-| Local | no errors | 710975 | 5538922 | 23 | 01min 08s |  |
+| Local | no errors | 710975 | 5545010 | 23 | 02min 04s |  |
 | LocalFailover | no errors | 1881011 | 14423765 | 25 | 03min 14s |  |
 | LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 38s |  |
 | Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 01min 53s |  |
@@ -452,10 +452,11 @@ of distinct states).
 | Recov_GC | no errors | 1136892 | 8123071 | 23 | 01min 36s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
-| SkewFailover_ROValidate | no errors | 4519985 | 36314837 | 28 | 09min 57s |  |
+| SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 07min 38s |  |
+| SkewTimeout_GC_ROValidate | no errors | 4509135 | 40415963 | 34 | 08min 18s |  |
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
-| Skew_GC_ROValidate | incomplete | 6250650 | 42322905 | - | - |  |
-| Skew_ROValidate | no errors | 2085494 | 17591232 | 26 | 23min 00s |  |
+| Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |
+| Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 06min 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 546 | 957 | 7 | 00s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 2236 | 6582 | 8 | 01s | 8 |
 
