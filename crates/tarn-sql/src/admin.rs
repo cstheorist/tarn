@@ -62,7 +62,27 @@ pub enum Admin {
         table: String,
     },
     LockTables,
+    /// SQL-level prepared statements (`PREPARE name FROM ...`, `EXECUTE name
+    /// [USING @a, ...]`, `{DEALLOCATE | DROP} PREPARE name`), distinct from
+    /// the binary protocol's COM_STMT_PREPARE. Names are lower-cased.
+    Prepare {
+        name: String,
+        source: PrepareSource,
+    },
+    Execute {
+        name: String,
+        /// User variables (lower-cased, without `@`) bound to the `?` markers.
+        using: Vec<String>,
+    },
+    Deallocate(String),
     Noop,
+}
+
+/// The text of a `PREPARE`: a string literal or a user variable.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PrepareSource {
+    Text(String),
+    Var(String),
 }
 
 impl Admin {
@@ -477,10 +497,69 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
         // LOCK TABLES commits the open transaction, as in MySQL; the table
         // locks themselves are not taken (as TiDB without table locks).
         "LOCK" if matches!(t.peek_up(1).as_str(), "TABLE" | "TABLES") => Admin::LockTables,
+        "PREPARE" => {
+            t.i += 1;
+            let name = statement_name(&mut t)?;
+            if !t.is("FROM") {
+                return Err(SqlError::parse("PREPARE needs FROM 'statement' or FROM @variable"));
+            }
+            let k = t.i;
+            let tok = t.next().ok_or_else(|| SqlError::parse("PREPARE needs a statement"))?;
+            let source = if let Some(v) = tok.strip_prefix('@').filter(|v| !v.starts_with('@')) {
+                if !t.done() {
+                    return Err(SqlError::parse("unexpected text after PREPARE ... FROM @variable"));
+                }
+                PrepareSource::Var(unquote(v).to_ascii_lowercase())
+            } else {
+                // the rest of the text is one literal ('it''s' is one token
+                // here, not two)
+                let rest = sql[t.pos[k].0..].trim_end().trim_end_matches(';').trim_end();
+                PrepareSource::Text(
+                    crate::prep::string_literal(rest)
+                        .ok_or_else(|| SqlError::parse("PREPARE needs FROM 'statement' or FROM @variable"))?,
+                )
+            };
+            Admin::Prepare { name, source }
+        }
+        "EXECUTE" => {
+            t.i += 1;
+            let name = statement_name(&mut t)?;
+            let mut using = Vec::new();
+            if t.is("USING") {
+                loop {
+                    let v = t.next().unwrap_or_default();
+                    match v.strip_prefix('@').filter(|v| !v.is_empty() && !v.starts_with('@')) {
+                        Some(v) => using.push(unquote(v).to_ascii_lowercase()),
+                        None => return Err(SqlError::parse("EXECUTE ... USING takes user variables")),
+                    }
+                    if !t.is(",") {
+                        break;
+                    }
+                }
+            }
+            if !t.done() {
+                return Err(SqlError::parse("unexpected text after EXECUTE"));
+            }
+            Admin::Execute { name, using }
+        }
+        "DEALLOCATE" | "DROP" if t.peek_up(1) == "PREPARE" => {
+            t.i += 2;
+            Admin::Deallocate(statement_name(&mut t)?)
+        }
         "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
     Ok(Some(r))
+}
+
+/// The name of an SQL-level prepared statement (case-insensitive).
+fn statement_name(t: &mut Toks) -> SqlResult<String> {
+    match t.next() {
+        Some(n) if !n.starts_with('\'') && !n.starts_with('"') && !n.starts_with('@') => {
+            Ok(unquote(&n).to_ascii_lowercase())
+        }
+        _ => Err(SqlError::parse("expected a prepared statement name")),
+    }
 }
 
 fn bad_value(var: &str, v: &str) -> SqlError {
@@ -785,6 +864,56 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sql_prepared_statements() {
+        // issue #34: what mysqldump writes around its MyRocks probes
+        assert_eq!(
+            recognize("PREPARE s FROM @rocksdb_get_is_supported").unwrap(),
+            Some(Admin::Prepare {
+                name: "s".into(),
+                source: PrepareSource::Var("rocksdb_get_is_supported".into())
+            })
+        );
+        assert_eq!(
+            recognize("prepare `St` from 'SELECT ?, ''x'''").unwrap(),
+            Some(Admin::Prepare {
+                name: "st".into(),
+                source: PrepareSource::Text("SELECT ?, 'x'".into())
+            })
+        );
+        assert_eq!(
+            recognize("EXECUTE s").unwrap(),
+            Some(Admin::Execute {
+                name: "s".into(),
+                using: vec![]
+            })
+        );
+        assert_eq!(
+            recognize("EXECUTE s USING @A, @b").unwrap(),
+            Some(Admin::Execute {
+                name: "s".into(),
+                using: vec!["a".into(), "b".into()]
+            })
+        );
+        assert_eq!(
+            recognize("DEALLOCATE PREPARE s").unwrap(),
+            Some(Admin::Deallocate("s".into()))
+        );
+        assert_eq!(
+            recognize("DROP PREPARE S").unwrap(),
+            Some(Admin::Deallocate("s".into()))
+        );
+        assert_eq!(recognize("DROP TABLE s").unwrap(), None);
+        for bad in [
+            "PREPARE s",
+            "PREPARE s FROM 1",
+            "EXECUTE s USING 1",
+            "PREPARE 'x' FROM 'SELECT 1'",
+        ] {
+            assert_eq!(recognize(bad).err().map(|e| e.code), Some(1064), "{bad}");
+        }
+    }
 
     #[test]
     fn recognizes() {
