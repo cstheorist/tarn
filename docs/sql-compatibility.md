@@ -77,9 +77,14 @@ servers write to it (`tests/sql/`).
   options (`CHARSET`, `ROW_FORMAT`, ...) are accepted and ignored.
 * `ALTER TABLE`, online (below), `RENAME TABLE`, `CREATE [UNIQUE] INDEX`,
   `DROP INDEX ... ON`, `DROP TABLE`, `TRUNCATE TABLE`.
-* Every table needs a primary key, and every unique key must include the
-  shard key (by default the primary key), so that uniqueness is enforced on
-  one shard.
+* A table without a `PRIMARY KEY` is keyed as InnoDB keys it: by its first
+  `UNIQUE` key whose columns are all `NOT NULL` (which keeps its name), or
+  else by a hidden row id, `DB_ROW_ID`, drawn from a counter, which `SELECT
+  *`, `INSERT` without a column list, `DESCRIBE`, `SHOW INDEX` and `SHOW
+  CREATE TABLE` leave out and statements cannot name. No column may be
+  called `DB_ROW_ID` (1166).
+* Every unique key must include the shard key (by default the primary key),
+  so that uniqueness is enforced on one shard.
 * `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
   transactional; another SQL server sees their result within its catalog
   poll (0.3 s), and a statement that meets an older catalog there is run
