@@ -46,10 +46,13 @@ clients or on the storage machines.
 | `TARN_SHARD_ID` | `1` | shard number, 1..N |
 | `TARN_LISTEN` | `127.0.0.1:3301` | IPROTO listen address |
 | `TARN_LISTEN_UNIX` | | optional Unix socket to listen on as well |
-| `TARN_WORKDIR` | `data` | data directory (WAL and snapshots) |
+| `TARN_WORKDIR` | `data` | data directory: WAL, snapshots and vinyl's files |
 | `TARN_REPLICAS` | `[]` | JSON list of every replica URI of this shard; more than one enables synchronous replication and elections |
 | `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber) |
-| `TARN_MEMORY_MB` | `1024` | memtx memory; the data set must fit in RAM |
+| `TARN_MEMORY_MB` | `1024` | memtx memory: memtx tables, the protocol's records and the system spaces |
+| `TARN_VINYL_MEMORY_MB` | `128` | vinyl's in-memory level: recent writes of vinyl tables, dumped to disk when full |
+| `TARN_VINYL_CACHE_MB` | `128` | vinyl's cache of recently read rows |
+| `TARN_VINYL_READ_THREADS`, `TARN_VINYL_WRITE_THREADS`, `TARN_VINYL_PAGE_SIZE`, `TARN_VINYL_RANGE_SIZE`, `TARN_VINYL_BLOOM_FPR` | Tarantool's | the `vinyl_*` options of those names: threads for disk reads and for dumps and compaction, page and range size of new indexes, bloom filter false-positive rate |
 | `TARN_WAL_MODE` | `write` | `write` (no fsync per commit, like `innodb_flush_log_at_trx_commit=2`), `fsync`, or `none` |
 | `TARN_IPROTO_THREADS` | `1` | Tarantool network threads |
 | `TARN_LOG_LEVEL` | `5` | Tarantool log level |
@@ -94,6 +97,62 @@ The storage user is `tarn` with password `tarn`, created by the module with
 full privileges. Change it (`tarn.init{user=..., password=...}` in
 `storage.lua`, and `user`/`password` in `cluster.json`) for anything but
 local experiments.
+
+### Sizing
+
+**memtx.** `TARN_MEMORY_MB` holds every row of the memtx tables, the
+protocol's records (see above) and the system spaces.
+
+**vinyl.** The rows of a vinyl table are on disk. Besides memtx, a storage
+node's RAM holds:
+
+| What | Size | Set with |
+|---|---|---|
+| Recent writes, dumped to disk when full (the in-memory level) | fixed | `TARN_VINYL_MEMORY_MB`, 128 MB |
+| Recently read rows (the cache) | fixed | `TARN_VINYL_CACHE_MB`, 128 MB |
+| The page index and bloom filters of every file on disk | grows with the data | `TARN_VINYL_PAGE_SIZE`, `TARN_VINYL_BLOOM_FPR` |
+
+Measured on two shards holding four sysbench tables of 500,000 rows each
+(`oltp_common`: an `INT` primary key, a secondary index on `k`, a `CHAR(120)`
+and a `CHAR(60)` column), loaded through SQL with the default vinyl
+settings, then checkpointed:
+
+| One shard, 1,000,000 rows | |
+|---|---:|
+| Rows (the primary index), uncompressed | 201 MB |
+| The secondary index, uncompressed, with page indexes and bloom filters | 50 MB |
+| Files on disk | 131 MB |
+| Page indexes in RAM | 1.6 MB |
+| Bloom filters in RAM | 1.0 MB |
+| Resident memory of the storage process | 213 and 229 MB |
+
+* **RAM grows with the data** by the page indexes and bloom filters: 2.6 MB
+  per million rows here, about 1% of the uncompressed rows and 2% of the
+  files on disk. A shard holding a billion such rows needs about 2.6 GB for
+  them before any cache. The page index has an entry per page
+  (`TARN_VINYL_PAGE_SIZE`, 8 KB by default); the bloom filters grow with the
+  number of keys (`TARN_VINYL_BLOOM_FPR`, a 5% false-positive rate by
+  default). Larger pages shrink the page index but make each point read
+  fetch more from disk; a higher false-positive rate shrinks the filters but
+  sends more lookups of absent keys to disk. Both settings apply to indexes
+  created afterwards.
+* **The cache decides how many reads go to disk.** A read that misses it
+  reads a page from disk on one of `TARN_VINYL_READ_THREADS` (1 by default).
+  Raise it when the rows a workload reads do not fit the cache and the disk
+  serves parallel reads.
+* **Disk.** Vinyl compresses pages (zstd) when it compacts them. Dumps are
+  written uncompressed, so recent writes take more space until compaction
+  merges them. Compaction writes a range's new files before dropping the old
+  ones, and Tarantool deletes dropped files only once no checkpoint it keeps
+  uses them: Tarn checkpoints hourly and Tarantool keeps the last two. The
+  WAL also keeps every write since the oldest kept checkpoint. Leave free
+  space of about the size of the data, plus the WAL of two hours of writes.
+* **CPU.** A shard runs its transactions on one thread. Dumps and
+  compaction, compression included, run on `TARN_VINYL_WRITE_THREADS` (4 by
+  default). Give each shard leader a core for its transactions and leave
+  cores for these threads.
+* **Replicas** each hold a full copy of their shard: size every replica like
+  its leader.
 
 ## tarn-server
 

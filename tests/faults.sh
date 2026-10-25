@@ -3,6 +3,7 @@
 # after an autocommit UPDATE was executed but before its reply arrived. The
 # statement must be reported as having an unknown outcome (1180 / SQLSTATE
 # 40003) and must have been applied exactly once -- never silently re-sent.
+# ENGINE=vinyl runs it on a vinyl table.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=${TARANTOOL:-tarantool}
@@ -18,7 +19,8 @@ for _ in $(seq 50); do "$T" "$ROOT/scripts/probe.lua" "tarn:tarn@127.0.0.1:$SP" 
 python3 "$ROOT/tests/proxy.py" $PP $SP > "$W/proxy.log" 2>&1 &
 echo $! > "$W/proxy.pid"
 sleep 0.3
-TARN_LOG=warn "$TARN" --shard 127.0.0.1:$PP --listen 127.0.0.1:$QP --allow-all > "$W/tarn.log" 2>&1 &
+TARN_LOG=warn "$TARN" --shard 127.0.0.1:$PP --listen 127.0.0.1:$QP --allow-all \
+  ${ENGINE:+--default-engine "$ENGINE"} > "$W/tarn.log" 2>&1 &
 echo $! > "$W/tarn.pid"
 for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/$QP) 2>/dev/null && break; sleep 0.1; done
 python3 - $QP <<'PY'
