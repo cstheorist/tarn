@@ -130,7 +130,7 @@ impl ColumnType {
             16 => Bit,
             245 => Json,
             246 => NewDecimal,
-            249 | 250 | 251 | 252 => Blob,
+            249..=252 => Blob,
             253 => VarString,
             254 => String,
             _ => return None,
@@ -215,25 +215,36 @@ pub struct SqlError {
 
 impl SqlError {
     pub fn new(code: u16, sqlstate: &str, message: impl Into<String>) -> SqlError {
-        let mut s = [b'H', b'Y', b'0', b'0', b'0'];
+        let mut s = *b"HY000";
         if sqlstate.len() == 5 {
             s.copy_from_slice(sqlstate.as_bytes());
         }
-        SqlError { code, sqlstate: s, message: message.into() }
+        SqlError {
+            code,
+            sqlstate: s,
+            message: message.into(),
+        }
     }
     /// ER_LOCK_DEADLOCK: the conventional "retry your transaction" signal.
     pub fn conflict(detail: impl Into<String>) -> SqlError {
         SqlError::new(
             1213,
             "40001",
-            format!("Deadlock found when trying to get lock; try restarting transaction ({})", detail.into()),
+            format!(
+                "Deadlock found when trying to get lock; try restarting transaction ({})",
+                detail.into()
+            ),
         )
     }
     pub fn parse(msg: impl Into<String>) -> SqlError {
         SqlError::new(1064, "42000", msg)
     }
     pub fn unsupported(msg: impl Into<String>) -> SqlError {
-        SqlError::new(1235, "42000", format!("This version of Tarn doesn't yet support '{}'", msg.into()))
+        SqlError::new(
+            1235,
+            "42000",
+            format!("This version of Tarn doesn't yet support '{}'", msg.into()),
+        )
     }
     pub fn no_table(db: &str, t: &str) -> SqlError {
         SqlError::new(1146, "42S02", format!("Table '{}.{}' doesn't exist", db, t))

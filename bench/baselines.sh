@@ -11,8 +11,8 @@ BASE=${BASELINE_DIR:-/tmp/tarn-baselines}
 ISO=${ISOLATION:-REPEATABLE-READ}
 mkdir -p "$BASE"
 case $WHICH in
-  mariadb) PORT=3407; BIN=/usr/sbin/mariadbd; CLIENT=/usr/bin/mariadb;;
-  mysql)   PORT=3408; BIN=/opt/mysql/bin/mysqld; CLIENT=/usr/bin/mariadb;;
+  mariadb) PORT=3407; BIN=${MARIADBD:-/usr/sbin/mariadbd}; CLIENT=${MYSQL_CLIENT:-mariadb};;
+  mysql)   PORT=3408; BIN=${MYSQLD:-/opt/mysql/bin/mysqld}; CLIENT=${MYSQL_CLIENT:-mariadb};;
   *) echo "mariadb or mysql"; exit 2;;
 esac
 D=$BASE/$WHICH
@@ -58,10 +58,15 @@ case $CMD in
       fi
     fi
     "$BIN" --defaults-file="$D/my.cnf" > "$D/server.log" 2>&1 &
-    for _ in $(seq 300); do [ -S "$SOCK" ] && break; sleep 0.1; done
-    sleep 0.5
-    "$CLIENT" -S "$SOCK" -u root -e "CREATE USER IF NOT EXISTS 'sb'@'%' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'%'; CREATE USER IF NOT EXISTS 'sb'@'localhost' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'localhost';" \
-      || { tail "$D/server.log"; exit 1; }
+    # Wait until the server accepts connections (up to 60 s), then add user sb.
+    ok=0
+    for _ in $(seq 120); do
+      if "$CLIENT" -S "$SOCK" -u root -e "CREATE USER IF NOT EXISTS 'sb'@'%' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'%'; CREATE USER IF NOT EXISTS 'sb'@'localhost' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'localhost';" 2>/dev/null; then
+        ok=1; break
+      fi
+      sleep 0.5
+    done
+    [ $ok = 1 ] || { echo "$WHICH did not start"; tail "$D/server.log"; exit 1; }
     echo "$WHICH up on 127.0.0.1:$PORT ($("$CLIENT" -S "$SOCK" -u root -N -e 'select version()'), isolation $ISO)"
     ;;
   stop)

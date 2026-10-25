@@ -5,7 +5,7 @@
 # 40003) and must have been applied exactly once -- never silently re-sent.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-T=${TARANTOOL:-/opt/src/tarantool/build/src/tarantool}
+T=${TARANTOOL:-tarantool}
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
 W=$(mktemp -d /tmp/tarn-faults.XXXX)
 SP=${SP:-3641}; PP=${PP:-3642}; QP=${QP:-4641}

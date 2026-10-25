@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.tla linguist-language=TLA
+*.cfg linguist-language=TLA
+tla/out/*.out linguist-generated=true
+bench/results*.csv linguist-generated=true

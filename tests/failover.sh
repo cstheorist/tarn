@@ -13,7 +13,7 @@
 # committing after each event.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-T=${TARANTOOL:-/opt/src/tarantool/build/src/tarantool}
+T=${TARANTOOL:-tarantool}
 DIR=${DIR:-/tmp/tarn-failover}
 BASE=${BASE:-3500}
 PORT=${PORT:-4100}
@@ -43,9 +43,11 @@ kill_leader() {
   local j=$(( (p - BASE - 10 * s) ))
   echo "$(date +%T) killing shard $s leader on port $p (s$s.$j)"
   kill -9 "$(cat "$DIR/s$s.$j.pid")"
-  local t0; t0=$(date +%s.%N)
+  local t0; t0=$(date +%s%N)
   for _ in $(seq 200); do
-    local np; np=$(leader_of "$s") && { echo "$(date +%T) shard $s new leader on $np after $(echo "$(date +%s.%N) - $t0" | bc | cut -c1-4) s"; return 0; }
+    local np; np=$(leader_of "$s") && {
+      local ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+      echo "$(date +%T) shard $s new leader on $np after $((ms / 1000)).$(printf '%03d' $((ms % 1000))) s"; return 0; }
     sleep 0.1
   done
   echo "shard $s: no new leader after 20 s"; return 1

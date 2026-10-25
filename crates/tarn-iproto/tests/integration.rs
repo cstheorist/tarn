@@ -82,9 +82,15 @@ async fn greeting_id_auth_and_ping() {
 async fn readonly_reply_marks_connection_stale() {
     let t = Tarantool::start();
     let c = t.client().await;
-    assert_eq!(server_code(c.eval(0, "box.error(box.error.NO_SUCH_SPACE, 'x')", &[]).await), 36);
+    assert_eq!(
+        server_code(c.eval(0, "box.error(box.error.NO_SUCH_SPACE, 'x')", &[]).await),
+        36
+    );
     assert!(!c.is_stale());
-    assert_eq!(server_code(c.eval(0, "box.error(box.error.READONLY)", &[]).await), ER_READONLY);
+    assert_eq!(
+        server_code(c.eval(0, "box.error(box.error.READONLY)", &[]).await),
+        ER_READONLY
+    );
     assert!(c.is_stale() && !c.is_closed());
     c.ping().await.unwrap();
     let d = t.client().await;
@@ -196,16 +202,28 @@ async fn select_every_iterator_with_limit_and_offset() {
 
     // Whole tuples, zero-copy raw tuples, schema version.
     let r = c.select(0, ITER, 0, Iter::Ge, 0, 2, &key(9)).await.unwrap();
-    assert_eq!(r.rows().unwrap(), vec![vec![int(9), int(0), s("v9")], vec![int(10), int(1), s("v10")]]);
+    assert_eq!(
+        r.rows().unwrap(),
+        vec![vec![int(9), int(0), s("v9")], vec![int(10), int(1), s("v10")]]
+    );
     let raw = r.tuples().unwrap();
     assert_eq!(raw.len(), 2);
     assert_eq!(decode_array(&raw[1]), vec![int(10), int(1), s("v10")]);
     assert!(r.schema_version > 0);
 
     // Errors.
-    assert_eq!(server_code(c.select(0, 9999, 0, Iter::All, 0, 1, &[]).await), ER_NO_SUCH_SPACE);
-    assert_eq!(server_code(c.select(0, ITER, 7, Iter::All, 0, 1, &[]).await), ER_NO_SUCH_INDEX_ID);
-    assert_eq!(server_code(c.select(0, ITER, 0, Iter::Eq, 0, 1, &tuple(&[s("x")])).await), ER_KEY_PART_TYPE);
+    assert_eq!(
+        server_code(c.select(0, 9999, 0, Iter::All, 0, 1, &[]).await),
+        ER_NO_SUCH_SPACE
+    );
+    assert_eq!(
+        server_code(c.select(0, ITER, 7, Iter::All, 0, 1, &[]).await),
+        ER_NO_SUCH_INDEX_ID
+    );
+    assert_eq!(
+        server_code(c.select(0, ITER, 0, Iter::Eq, 0, 1, &tuple(&[s("x")])).await),
+        ER_KEY_PART_TYPE
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -238,26 +256,47 @@ async fn insert_replace_update_delete() {
     let ops = update_ops(&[vec![s("-"), int(-2), int(5)], vec![s("!"), int(4), s("tail")]]);
     let r = c.update(0, TEST, 0, &key(1), &ops).await.unwrap();
     assert_eq!(r.rows().unwrap(), vec![vec![int(1), int(16), s("x"), s("tail")]]);
-    let r = c.update(0, TEST, 0, &key(1), &update_ops(&[vec![s("#"), int(4), int(1)]])).await.unwrap();
+    let r = c
+        .update(0, TEST, 0, &key(1), &update_ops(&[vec![s("#"), int(4), int(1)]]))
+        .await
+        .unwrap();
     assert_eq!(r.rows().unwrap(), vec![vec![int(1), int(16), s("x")]]);
     // No such key: empty data.
-    let r = c.update(0, TEST, 0, &key(404), &update_ops(&[vec![s("+"), int(2), int(1)]])).await.unwrap();
+    let r = c
+        .update(0, TEST, 0, &key(404), &update_ops(&[vec![s("+"), int(2), int(1)]]))
+        .await
+        .unwrap();
     assert!(r.rows().unwrap().is_empty());
     // Arithmetic on a string field.
     let bad = update_ops(&[vec![s("+"), int(3), int(1)]]);
-    assert_eq!(server_code(c.update(0, TEST, 0, &key(1), &bad).await), ER_UPDATE_ARG_TYPE);
+    assert_eq!(
+        server_code(c.update(0, TEST, 0, &key(1), &bad).await),
+        ER_UPDATE_ARG_TYPE
+    );
     // Changing the primary key.
     let bad = update_ops(&[vec![s("="), int(1), int(2)]]);
-    assert_eq!(server_code(c.update(0, TEST, 0, &key(1), &bad).await), ER_CANT_UPDATE_PRIMARY_KEY);
+    assert_eq!(
+        server_code(c.update(0, TEST, 0, &key(1), &bad).await),
+        ER_CANT_UPDATE_PRIMARY_KEY
+    );
 
     let r = c.delete(0, TEST, 0, &key(1)).await.unwrap();
     assert_eq!(r.rows().unwrap(), vec![vec![int(1), int(16), s("x")]]);
     let r = c.delete(0, TEST, 0, &key(1)).await.unwrap();
     assert!(r.rows().unwrap().is_empty());
-    assert!(c.select(0, TEST, 0, Iter::All, 0, 100, &[]).await.unwrap().rows().unwrap().is_empty());
+    assert!(c
+        .select(0, TEST, 0, Iter::All, 0, 100, &[])
+        .await
+        .unwrap()
+        .rows()
+        .unwrap()
+        .is_empty());
 
     assert_eq!(server_code(c.insert(0, TEST, &tuple(&[s("str")])).await), ER_FIELD_TYPE);
-    assert_eq!(server_code(c.insert(0, 9999, &tuple(&[int(1)])).await), ER_NO_SUCH_SPACE);
+    assert_eq!(
+        server_code(c.insert(0, 9999, &tuple(&[int(1)])).await),
+        ER_NO_SUCH_SPACE
+    );
 
     // Without IPROTO_INDEX_BASE the server counts update fields from 0.
     c.replace(0, TEST, &tuple(&[int(3), int(30), s("z")])).await.unwrap();
@@ -294,7 +333,9 @@ async fn call_and_eval() {
     let vals = returned(&r);
     assert_eq!(vals.len(), 4);
     assert_eq!(vals[..2], [int(1), s("two")]);
-    let Value::Bin(table) = &vals[2] else { panic!("{vals:?}") };
+    let Value::Bin(table) = &vals[2] else {
+        panic!("{vals:?}")
+    };
     assert_eq!(decode_array(table), vec![int(3), int(4)]);
     let Value::Bin(tup) = &vals[3] else { panic!("{vals:?}") };
     assert_eq!(decode_array(tup), vec![int(5), s("six")]);
@@ -310,7 +351,14 @@ async fn call_and_eval() {
     assert_eq!(mp::decode_tuple(&mut p).unwrap(), vec![int(1), int(1), s("v1")]);
 
     // Arguments arrive intact.
-    let args = vec![int(-5), s("x"), Value::Null, Value::Float(1.5), Value::Decimal("3.14".into()), Value::UInt(u64::MAX)];
+    let args = vec![
+        int(-5),
+        s("x"),
+        Value::Null,
+        Value::Float(1.5),
+        Value::Decimal("3.14".into()),
+        Value::UInt(u64::MAX),
+    ];
     let r = c.call(0, "echo", &tuple(&args)).await.unwrap();
     assert_eq!(returned(&r), args);
 
@@ -336,7 +384,10 @@ async fn call_and_eval() {
 
     let r = c.eval(0, "return ...", &tuple(&[int(1), s("a")])).await.unwrap();
     assert_eq!(returned(&r), vec![int(1), s("a")]);
-    let r = c.eval(0, "local a, b = ... return a + b", &tuple(&[int(40), int(2)])).await.unwrap();
+    let r = c
+        .eval(0, "local a, b = ... return a + b", &tuple(&[int(40), int(2)]))
+        .await
+        .unwrap();
     assert_eq!(returned(&r), vec![int(42)]);
     let r = c.eval(0, "return box.info.ro", &[0x90]).await.unwrap();
     assert_eq!(returned(&r), vec![int(0)]);
@@ -361,17 +412,39 @@ async fn stream_writes_are_invisible_until_commit() {
     let inside = a.select(sid, TEST, 0, Iter::Eq, 0, 1, &key(7)).await.unwrap();
     assert_eq!(inside.rows().unwrap(), vec![vec![int(7), int(1), s("txn")]]);
     // Not visible to another connection, nor to this one outside the stream.
-    assert!(b.select(0, TEST, 0, Iter::Eq, 0, 1, &key(7)).await.unwrap().rows().unwrap().is_empty());
-    assert!(a.select(0, TEST, 0, Iter::Eq, 0, 1, &key(7)).await.unwrap().rows().unwrap().is_empty());
+    assert!(b
+        .select(0, TEST, 0, Iter::Eq, 0, 1, &key(7))
+        .await
+        .unwrap()
+        .rows()
+        .unwrap()
+        .is_empty());
+    assert!(a
+        .select(0, TEST, 0, Iter::Eq, 0, 1, &key(7))
+        .await
+        .unwrap()
+        .rows()
+        .unwrap()
+        .is_empty());
     a.commit(sid).await.unwrap();
     let after = b.select(0, TEST, 0, Iter::Eq, 0, 1, &key(7)).await.unwrap();
     assert_eq!(after.rows().unwrap(), vec![vec![int(7), int(1), s("txn")]]);
 
     // The same stream can run another transaction; rollback discards it.
-    a.begin(sid, Some(5.0), Some(TxnIsolation::ReadCommitted)).await.unwrap();
-    a.replace(sid, TEST, &tuple(&[int(7), int(2), s("second")])).await.unwrap();
+    a.begin(sid, Some(5.0), Some(TxnIsolation::ReadCommitted))
+        .await
+        .unwrap();
+    a.replace(sid, TEST, &tuple(&[int(7), int(2), s("second")]))
+        .await
+        .unwrap();
     a.delete(sid, TEST, 0, &key(7)).await.unwrap();
-    assert!(a.select(sid, TEST, 0, Iter::Eq, 0, 1, &key(7)).await.unwrap().rows().unwrap().is_empty());
+    assert!(a
+        .select(sid, TEST, 0, Iter::Eq, 0, 1, &key(7))
+        .await
+        .unwrap()
+        .rows()
+        .unwrap()
+        .is_empty());
     a.rollback(sid).await.unwrap();
     let after = b.select(0, TEST, 0, Iter::Eq, 0, 1, &key(7)).await.unwrap();
     assert_eq!(after.rows().unwrap(), vec![vec![int(7), int(1), s("txn")]]);
@@ -390,7 +463,10 @@ async fn stream_writes_are_invisible_until_commit() {
     r2.unwrap();
     r3.unwrap();
     r4.unwrap();
-    assert_eq!(ids(&b.select(0, TEST, 0, Iter::Ge, 0, 10, &key(8)).await.unwrap()), vec![8, 9]);
+    assert_eq!(
+        ids(&b.select(0, TEST, 0, Iter::Ge, 0, 10, &key(8)).await.unwrap()),
+        vec![8, 9]
+    );
 }
 
 #[tokio::test]
@@ -398,7 +474,10 @@ async fn transaction_errors_isolation_and_timeout() {
     let t = Tarantool::start();
     let a = t.client().await;
     // Transaction control outside a stream is rejected.
-    assert_eq!(server_code(a.begin(0, None, None).await), ER_UNABLE_TO_PROCESS_OUT_OF_STREAM);
+    assert_eq!(
+        server_code(a.begin(0, None, None).await),
+        ER_UNABLE_TO_PROCESS_OUT_OF_STREAM
+    );
     assert_eq!(server_code(a.commit(0).await), ER_UNABLE_TO_PROCESS_OUT_OF_STREAM);
     assert_eq!(server_code(a.rollback(0).await), ER_UNABLE_TO_PROCESS_OUT_OF_STREAM);
     // Nested BEGIN.
@@ -411,7 +490,12 @@ async fn transaction_errors_isolation_and_timeout() {
     a.rollback(sid).await.unwrap();
 
     // Each isolation level reaches the server.
-    for iso in [TxnIsolation::Default, TxnIsolation::ReadCommitted, TxnIsolation::ReadConfirmed, TxnIsolation::BestEffort] {
+    for iso in [
+        TxnIsolation::Default,
+        TxnIsolation::ReadCommitted,
+        TxnIsolation::ReadConfirmed,
+        TxnIsolation::BestEffort,
+    ] {
         let sid = a.next_stream_id();
         a.begin(sid, Some(10.0), Some(iso)).await.unwrap();
         a.select(sid, TEST, 0, Iter::All, 0, 1, &[]).await.unwrap();
@@ -421,7 +505,10 @@ async fn transaction_errors_isolation_and_timeout() {
     // serve linearizable reads -- proof that the level was applied.
     let sid = a.next_stream_id();
     a.begin(sid, None, Some(TxnIsolation::Linearizable)).await.unwrap();
-    assert_eq!(server_code(a.select(sid, TEST, 0, Iter::All, 0, 1, &[]).await), ER_UNSUPPORTED);
+    assert_eq!(
+        server_code(a.select(sid, TEST, 0, Iter::All, 0, 1, &[]).await),
+        ER_UNSUPPORTED
+    );
     a.rollback(sid).await.unwrap();
 
     // BEGIN timeout: the server aborts the transaction.
@@ -429,9 +516,18 @@ async fn transaction_errors_isolation_and_timeout() {
     a.begin(sid, Some(0.1), None).await.unwrap();
     a.insert(sid, TEST, &tuple(&[int(1)])).await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(server_code(a.insert(sid, TEST, &tuple(&[int(2)])).await), ER_TRANSACTION_TIMEOUT);
+    assert_eq!(
+        server_code(a.insert(sid, TEST, &tuple(&[int(2)])).await),
+        ER_TRANSACTION_TIMEOUT
+    );
     assert_eq!(server_code(a.commit(sid).await), ER_TRANSACTION_TIMEOUT);
-    assert!(a.select(0, TEST, 0, Iter::All, 0, 10, &[]).await.unwrap().rows().unwrap().is_empty());
+    assert!(a
+        .select(0, TEST, 0, Iter::All, 0, 10, &[])
+        .await
+        .unwrap()
+        .rows()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -502,7 +598,13 @@ async fn dropping_the_client_rolls_back_its_streams() {
         assert!(Instant::now() < deadline, "stream/connection not released: {v:?}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(b.select(0, TEST, 0, Iter::All, 0, 10, &[]).await.unwrap().rows().unwrap().is_empty());
+    assert!(b
+        .select(0, TEST, 0, Iter::All, 0, 10, &[])
+        .await
+        .unwrap()
+        .rows()
+        .unwrap()
+        .is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -565,10 +667,12 @@ async fn pipelining_20k_concurrent_requests() {
     assert_eq!(returned(&r), vec![int(1000 + 50 * 200)]);
 
     // One task with thousands of in-flight futures (no spawning).
-    let futs: Vec<_> = (1..=3000i64).map(|k| {
-        let c = &c;
-        async move { (k, c.select(0, KV, 0, Iter::Eq, 0, 1, &key(k % 1000 + 1)).await) }
-    }).collect();
+    let futs: Vec<_> = (1..=3000i64)
+        .map(|k| {
+            let c = &c;
+            async move { (k, c.select(0, KV, 0, Iter::Eq, 0, 1, &key(k % 1000 + 1)).await) }
+        })
+        .collect();
     for (k, r) in join_all(futs).await {
         let k = k % 1000 + 1;
         assert_eq!(r.unwrap().rows().unwrap()[0][..2], [int(k), int(2 * k)]);
@@ -605,11 +709,24 @@ async fn large_requests_and_responses() {
     let c = t.client().await;
     let big = "q".repeat(3 << 20);
     let blob = Value::Bin(Bytes::from(vec![0xabu8; 1 << 20]));
-    c.replace(0, VALS, &tuple(&[int(1), s(&big), blob.clone()])).await.unwrap();
-    let rows = c.select(0, VALS, 0, Iter::Eq, 0, 1, &key(1)).await.unwrap().rows().unwrap();
+    c.replace(0, VALS, &tuple(&[int(1), s(&big), blob.clone()]))
+        .await
+        .unwrap();
+    let rows = c
+        .select(0, VALS, 0, Iter::Eq, 0, 1, &key(1))
+        .await
+        .unwrap()
+        .rows()
+        .unwrap();
     assert_eq!(rows, vec![vec![int(1), s(&big), blob]]);
 
-    c.eval(0, "for i = 2, 20001 do box.space.vals:replace{i, string.rep('x', 100)} end", &[]).await.unwrap();
+    c.eval(
+        0,
+        "for i = 2, 20001 do box.space.vals:replace{i, string.rep('x', 100)} end",
+        &[],
+    )
+    .await
+    .unwrap();
     // A ~2.3 MB reply while small requests keep flowing on the same connection.
     let c2 = c.clone();
     let small = tokio::spawn(async move {
@@ -660,7 +777,11 @@ async fn server_death_fails_pending_and_new_requests() {
     })
     .await
     .expect("requests hung after the server died");
-    eprintln!("all {} requests failed {:?} after the kill", results.len(), t0.elapsed());
+    eprintln!(
+        "all {} requests failed {:?} after the kill",
+        results.len(),
+        t0.elapsed()
+    );
     assert_eq!(results.len(), 58);
     for r in results {
         assert!(matches!(r, Err(Error::Closed)), "{r:?}");
@@ -668,7 +789,10 @@ async fn server_death_fails_pending_and_new_requests() {
     assert!(c.is_closed());
     let t1 = Instant::now();
     assert!(matches!(c.ping().await, Err(Error::Closed)));
-    assert!(matches!(c.select(0, KV, 0, Iter::All, 0, 1, &[]).await, Err(Error::Closed)));
+    assert!(matches!(
+        c.select(0, KV, 0, Iter::All, 0, 1, &[]).await,
+        Err(Error::Closed)
+    ));
     assert!(t1.elapsed() < Duration::from_millis(100));
     // Reconnecting to a dead server fails cleanly.
     assert!(matches!(Client::connect(&t.opts()).await, Err(Error::Io(_))));
@@ -682,7 +806,10 @@ async fn explicit_close_fails_pending_requests() {
     let pending = tokio::spawn(async move { c2.call(0, "nap", &tuple(&[Value::Float(30.0)])).await });
     tokio::time::sleep(Duration::from_millis(100)).await;
     c.close();
-    let r = tokio::time::timeout(Duration::from_secs(2), pending).await.expect("pending request hung").unwrap();
+    let r = tokio::time::timeout(Duration::from_secs(2), pending)
+        .await
+        .expect("pending request hung")
+        .unwrap();
     assert!(matches!(r, Err(Error::Closed)), "{r:?}");
     assert!(c.is_closed());
     assert!(matches!(c.ping().await, Err(Error::Closed)));
@@ -765,9 +892,13 @@ async fn every_value_variant_round_trips_through_tarantool() {
     assert_eq!(r.rows().unwrap(), vec![row]);
 
     // NaN survives (compare bits).
-    c.replace(0, VALS, &tuple(&[int(2000), Value::Float(f64::NAN)])).await.unwrap();
+    c.replace(0, VALS, &tuple(&[int(2000), Value::Float(f64::NAN)]))
+        .await
+        .unwrap();
     let r = c.select(0, VALS, 0, Iter::Eq, 0, 1, &key(2000)).await.unwrap();
-    let Value::Float(f) = r.rows().unwrap()[0][1] else { panic!() };
+    let Value::Float(f) = r.rows().unwrap()[0][1] else {
+        panic!()
+    };
     assert!(f.is_nan());
     cases.clear();
 }
@@ -785,13 +916,19 @@ async fn decimals_and_datetimes_written_by_tarantool() {
         ("1000", "1000".into()),
         ("1E+3", "1000".into()),
         ("1.5e3", "1500".into()),
-        ("123456789012345678901234567890.123456", "123456789012345678901234567890.123456".into()),
+        (
+            "123456789012345678901234567890.123456",
+            "123456789012345678901234567890.123456".into(),
+        ),
         ("0.0000001", "0.0000001".into()),
         ("-1", "-1".into()),
         ("99", "99".into()),
         ("1234", "1234".into()),
         ("-0.5", "-0.5".into()),
-        ("3.1415926535897932384626433832795028841", "3.1415926535897932384626433832795028841".into()),
+        (
+            "3.1415926535897932384626433832795028841",
+            "3.1415926535897932384626433832795028841".into(),
+        ),
         ("1e-30", "0.000000000000000000000000000001".into()),
         ("-4.2E+10", "-42000000000".into()),
         (nines.as_str(), nines.clone()),
@@ -801,21 +938,42 @@ async fn decimals_and_datetimes_written_by_tarantool() {
         let id = i as i64 + 1;
         c.eval(0, put, &tuple(&[int(id), s(lit)])).await.unwrap();
         let r = c.select(0, VALS, 0, Iter::Eq, 0, 1, &key(id)).await.unwrap();
-        assert_eq!(r.rows().unwrap()[0][1], Value::Decimal(canon.clone()), "decimal.new('{lit}')");
+        assert_eq!(
+            r.rows().unwrap()[0][1],
+            Value::Decimal(canon.clone()),
+            "decimal.new('{lit}')"
+        );
         // Our encoding of the canonical text equals Tarantool's value.
         let mine = id + 100;
-        c.replace(0, VALS, &tuple(&[int(mine), Value::Decimal(canon.clone())])).await.unwrap();
+        c.replace(0, VALS, &tuple(&[int(mine), Value::Decimal(canon.clone())]))
+            .await
+            .unwrap();
         let eq = c
-            .eval(0, "local a, b = ... return box.space.vals:get(a)[2] == box.space.vals:get(b)[2]", &tuple(&[int(id), int(mine)]))
+            .eval(
+                0,
+                "local a, b = ... return box.space.vals:get(a)[2] == box.space.vals:get(b)[2]",
+                &tuple(&[int(id), int(mine)]),
+            )
             .await
             .unwrap();
         assert_eq!(returned(&eq), vec![int(1)], "{lit} vs {canon}");
     }
     // Arithmetic results.
-    let r = c.eval(0, "local d = require('decimal') return d.new('1.10') * 3, d.new(1) / 8, -d.new('0.10')", &[]).await.unwrap();
+    let r = c
+        .eval(
+            0,
+            "local d = require('decimal') return d.new('1.10') * 3, d.new(1) / 8, -d.new('0.10')",
+            &[],
+        )
+        .await
+        .unwrap();
     assert_eq!(
         returned(&r),
-        vec![Value::Decimal("3.30".into()), Value::Decimal("0.125".into()), Value::Decimal("-0.10".into())]
+        vec![
+            Value::Decimal("3.30".into()),
+            Value::Decimal("0.125".into()),
+            Value::Decimal("-0.10".into())
+        ]
     );
 
     // Datetimes: UTC, timezone ignored, microseconds when non-zero.
@@ -840,9 +998,13 @@ async fn decimals_and_datetimes_written_by_tarantool() {
             s("2026-10-24 15:00:00"),
         ]
     );
-    c.eval(0, "box.space.vals:replace{500, require('datetime').new{year=2001, month=9, day=9, hour=1, min=46, sec=40}}", &[])
-        .await
-        .unwrap();
+    c.eval(
+        0,
+        "box.space.vals:replace{500, require('datetime').new{year=2001, month=9, day=9, hour=1, min=46, sec=40}}",
+        &[],
+    )
+    .await
+    .unwrap();
     let r = c.select(0, VALS, 0, Iter::Eq, 0, 1, &key(500)).await.unwrap();
     assert_eq!(r.rows().unwrap()[0][1], s("2001-09-09 01:46:40"));
 
@@ -862,7 +1024,12 @@ async fn decimals_and_datetimes_written_by_tarantool() {
     assert_eq!(v[3], Value::Bin(Bytes::from_static(&[0x92, 0x01, 0x91, 0x02])));
     assert_eq!(v[4], Value::Bin(Bytes::from_static(&[0x81, 0xa1, b'a', 0x01])));
     let mut uuid = vec![0xd8, 0x02];
-    uuid.extend([0xf8, 0x1d, 0x4f, 0xae, 0x7d, 0xec, 0x11, 0xd0, 0xa7, 0x65, 0x00, 0xa0, 0xc9, 0x1e, 0x6b, 0xf6]);
+    uuid.extend([
+        0xf8, 0x1d, 0x4f, 0xae, 0x7d, 0xec, 0x11, 0xd0, 0xa7, 0x65, 0x00, 0xa0, 0xc9, 0x1e, 0x6b, 0xf6,
+    ]);
     assert_eq!(v[5], Value::Bin(Bytes::from(uuid)));
-    assert_eq!(v[6], Value::Bin(Bytes::from_static(&[0xc7, 0x05, 0x06, 0x02, 0x00, 0x01, 0x08, 0x01])));
+    assert_eq!(
+        v[6],
+        Value::Bin(Bytes::from_static(&[0xc7, 0x05, 0x06, 0x02, 0x00, 0x01, 0x08, 0x01]))
+    );
 }

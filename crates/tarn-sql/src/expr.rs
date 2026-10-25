@@ -168,7 +168,10 @@ pub struct EvalCtx<'a> {
 }
 
 pub fn now_string() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     format_datetime(secs as i64)
 }
 
@@ -186,7 +189,15 @@ pub fn format_datetime(secs: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
 }
 
 fn text(v: &Value) -> Option<Bytes> {
@@ -194,7 +205,9 @@ fn text(v: &Value) -> Option<Bytes> {
 }
 
 fn text_str(v: &Value) -> String {
-    v.to_text().map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+    v.to_text()
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
 }
 
 fn int_arg(v: &Value) -> Option<i64> {
@@ -266,16 +279,21 @@ impl Expr {
             Expr::Col(_) => false,
             Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => true,
             Expr::Func(f, args) => !matches!(f, Func::Rand) && args.iter().all(|a| a.is_constant()),
-            Expr::Cmp(a, _, b) | Expr::Arith(a, _, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) | Expr::Like(a, b, _) => {
-                a.is_constant() && b.is_constant()
+            Expr::Cmp(a, _, b)
+            | Expr::Arith(a, _, b)
+            | Expr::And(a, b)
+            | Expr::Or(a, b)
+            | Expr::Xor(a, b)
+            | Expr::Like(a, b, _) => a.is_constant() && b.is_constant(),
+            Expr::Not(a) | Expr::Neg(a) | Expr::IsNull(a, _) | Expr::IsTrue(a, _, _) | Expr::Cast(a, _) => {
+                a.is_constant()
             }
-            Expr::Not(a) | Expr::Neg(a) | Expr::IsNull(a, _) | Expr::IsTrue(a, _, _) | Expr::Cast(a, _) => a.is_constant(),
             Expr::InList(a, l, _) => a.is_constant() && l.iter().all(|x| x.is_constant()),
             Expr::Between(a, b, c, _) => a.is_constant() && b.is_constant() && c.is_constant(),
             Expr::Case(o, w, e) => {
-                o.as_ref().map_or(true, |x| x.is_constant())
+                o.as_ref().is_none_or(|x| x.is_constant())
                     && w.iter().all(|(a, b)| a.is_constant() && b.is_constant())
-                    && e.as_ref().map_or(true, |x| x.is_constant())
+                    && e.as_ref().is_none_or(|x| x.is_constant())
             }
         }
     }
@@ -313,11 +331,18 @@ impl Expr {
         match self {
             Expr::Col(i) => out.push(*i),
             Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => {}
-            Expr::Cmp(a, _, b) | Expr::Arith(a, _, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) | Expr::Like(a, b, _) => {
+            Expr::Cmp(a, _, b)
+            | Expr::Arith(a, _, b)
+            | Expr::And(a, b)
+            | Expr::Or(a, b)
+            | Expr::Xor(a, b)
+            | Expr::Like(a, b, _) => {
                 a.columns(out);
                 b.columns(out);
             }
-            Expr::Not(a) | Expr::Neg(a) | Expr::IsNull(a, _) | Expr::IsTrue(a, _, _) | Expr::Cast(a, _) => a.columns(out),
+            Expr::Not(a) | Expr::Neg(a) | Expr::IsNull(a, _) | Expr::IsTrue(a, _, _) | Expr::Cast(a, _) => {
+                a.columns(out)
+            }
             Expr::InList(a, l, _) => {
                 a.columns(out);
                 l.iter().for_each(|x| x.columns(out));
@@ -407,7 +432,10 @@ impl Expr {
             Expr::Not(a) => bool_val(truth(&a.eval(row, cx)?).map(|b| !b)),
             Expr::Neg(a) => match a.eval(row, cx)? {
                 Value::Null => Value::Null,
-                Value::Int(i) => Value::Int(i.checked_neg().ok_or_else(|| SqlError::new(1690, "22003", "BIGINT value is out of range"))?),
+                Value::Int(i) => Value::Int(
+                    i.checked_neg()
+                        .ok_or_else(|| SqlError::new(1690, "22003", "BIGINT value is out of range"))?,
+                ),
                 Value::UInt(u) => {
                     if u <= i64::MAX as u64 + 1 {
                         Value::Int((u as i128).wrapping_neg() as i64)
@@ -551,9 +579,7 @@ fn cast(v: Value, to: CastTo) -> SqlResult<Value> {
 
 fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<Value> {
     use Func::*;
-    let arg = |i: usize| -> SqlResult<Value> {
-        args.get(i).map(|a| a.eval(row, cx)).unwrap_or(Ok(Value::Null))
-    };
+    let arg = |i: usize| -> SqlResult<Value> { args.get(i).map(|a| a.eval(row, cx)).unwrap_or(Ok(Value::Null)) };
     let all = || -> SqlResult<Vec<Value>> { args.iter().map(|a| a.eval(row, cx)).collect() };
     Ok(match f {
         Concat => {
@@ -599,11 +625,21 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             let chars: Vec<char> = text_str(&s).chars().collect();
             let pos = int_arg(&arg(1)?).unwrap_or(1);
             let n = chars.len() as i64;
-            let start = if pos > 0 { pos - 1 } else if pos < 0 { n + pos } else { return Ok(Value::str("")) };
+            let start = if pos > 0 {
+                pos - 1
+            } else if pos < 0 {
+                n + pos
+            } else {
+                return Ok(Value::str(""));
+            };
             if start < 0 || start >= n {
                 return Ok(Value::str(""));
             }
-            let len = if args.len() > 2 { int_arg(&arg(2)?).unwrap_or(0).max(0) } else { n - start };
+            let len = if args.len() > 2 {
+                int_arg(&arg(2)?).unwrap_or(0).max(0)
+            } else {
+                n - start
+            };
             let end = (start + len).min(n);
             Value::str(&chars[start as usize..end as usize].iter().collect::<String>())
         }
@@ -649,7 +685,11 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             if v.is_null() {
                 return Ok(Value::Null);
             }
-            let d = if args.len() > 1 { int_arg(&arg(1)?).unwrap_or(0) } else { 0 };
+            let d = if args.len() > 1 {
+                int_arg(&arg(1)?).unwrap_or(0)
+            } else {
+                0
+            };
             match v {
                 Value::Int(_) | Value::UInt(_) if d >= 0 => v,
                 Value::Decimal(s) => Value::Decimal(crate::types::rescale_decimal(&s, d.max(0) as u32).unwrap_or(s)),
@@ -715,7 +755,10 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
         Now => Value::str(cx.now),
         CurDate => Value::str(&cx.now[..10]),
         UnixTimestamp => Value::Int(
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
         ),
         Database => cx.db.map(Value::str).unwrap_or(Value::Null),
         Version => Value::str(crate::SERVER_VERSION),
@@ -727,7 +770,13 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             Value::Null => Value::Null,
             Value::Int(i) => Value::str(&format!("{:X}", i)),
             Value::UInt(u) => Value::str(&format!("{:X}", u)),
-            v => Value::str(&v.to_text().unwrap_or_default().iter().map(|b| format!("{:02X}", b)).collect::<String>()),
+            v => Value::str(
+                &v.to_text()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|b| format!("{:02X}", b))
+                    .collect::<String>(),
+            ),
         },
         Left | Right => {
             let s = arg(0)?;
@@ -736,7 +785,11 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
                 (false, Some(n)) => {
                     let chars: Vec<char> = text_str(&s).chars().collect();
                     let n = (n.max(0) as usize).min(chars.len());
-                    let slice = if f == Left { &chars[..n] } else { &chars[chars.len() - n..] };
+                    let slice = if f == Left {
+                        &chars[..n]
+                    } else {
+                        &chars[chars.len() - n..]
+                    };
                     Value::str(&slice.iter().collect::<String>())
                 }
                 _ => Value::Null,
@@ -770,7 +823,13 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             }
         }
         Sign => match to_num(&arg(0)?) {
-            Some(x) => Value::Int(if x > 0.0 { 1 } else if x < 0.0 { -1 } else { 0 }),
+            Some(x) => Value::Int(if x > 0.0 {
+                1
+            } else if x < 0.0 {
+                -1
+            } else {
+                0
+            }),
             None => Value::Null,
         },
         Sqrt => match to_num(&arg(0)?) {
@@ -787,7 +846,11 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
                 return Ok(Value::Null);
             }
             let (needle, hay) = (text_str(&a), text_str(&b));
-            Value::Int(hay.find(&needle).map(|i| hay[..i].chars().count() as i64 + 1).unwrap_or(0))
+            Value::Int(
+                hay.find(&needle)
+                    .map(|i| hay[..i].chars().count() as i64 + 1)
+                    .unwrap_or(0),
+            )
         }
         Ascii => match text(&arg(0)?) {
             Some(b) => Value::Int(b.first().copied().unwrap_or(0) as i64),
@@ -822,10 +885,15 @@ pub struct ExprType {
 
 impl ExprType {
     pub fn of(ty: ColumnType) -> ExprType {
-        ExprType { ty, sql: None, nullable: true, decimals: match ty {
-            ColumnType::Double | ColumnType::Float => 31,
-            _ => 0,
-        } }
+        ExprType {
+            ty,
+            sql: None,
+            nullable: true,
+            decimals: match ty {
+                ColumnType::Double | ColumnType::Float => 31,
+                _ => 0,
+            },
+        }
     }
 }
 
@@ -834,10 +902,21 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
     match e {
         Expr::Col(i) => input.get(*i).cloned().unwrap_or_else(|| ExprType::of(C::VarString)),
         Expr::Lit(v) => value_type(v),
-        Expr::Param(i) => params.get(*i).map(value_type).unwrap_or_else(|| ExprType::of(C::VarString)),
+        Expr::Param(i) => params
+            .get(*i)
+            .map(value_type)
+            .unwrap_or_else(|| ExprType::of(C::VarString)),
         Expr::Var(_) => ExprType::of(C::VarString),
-        Expr::Cmp(..) | Expr::And(..) | Expr::Or(..) | Expr::Xor(..) | Expr::Not(_) | Expr::IsNull(..) | Expr::IsTrue(..)
-        | Expr::InList(..) | Expr::Between(..) | Expr::Like(..) => ExprType::of(C::LongLong),
+        Expr::Cmp(..)
+        | Expr::And(..)
+        | Expr::Or(..)
+        | Expr::Xor(..)
+        | Expr::Not(_)
+        | Expr::IsNull(..)
+        | Expr::IsTrue(..)
+        | Expr::InList(..)
+        | Expr::Between(..)
+        | Expr::Like(..) => ExprType::of(C::LongLong),
         Expr::Arith(a, op, b) => {
             let (x, y) = (infer(a, input, params), infer(b, input, params));
             let int = |t: &ExprType| matches!(t.ty, C::Tiny | C::Short | C::Long | C::LongLong | C::Int24 | C::Year);
@@ -873,15 +952,17 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
         Expr::Func(f, args) => {
             use Func::*;
             match f {
-                Length | CharLength | ConnectionId | LastInsertId | UnixTimestamp | Locate | Ascii | Sign | FoundRows | RowCount => {
-                    ExprType::of(C::LongLong)
-                }
+                Length | CharLength | ConnectionId | LastInsertId | UnixTimestamp | Locate | Ascii | Sign
+                | FoundRows | RowCount => ExprType::of(C::LongLong),
                 Ceil | Floor => ExprType::of(C::LongLong),
                 Abs | Round | Mod | Greatest | Least | Coalesce | IfNull | NullIf => args
                     .first()
                     .map(|a| infer(a, input, params))
                     .unwrap_or_else(|| ExprType::of(C::VarString)),
-                If => args.get(1).map(|a| infer(a, input, params)).unwrap_or_else(|| ExprType::of(C::VarString)),
+                If => args
+                    .get(1)
+                    .map(|a| infer(a, input, params))
+                    .unwrap_or_else(|| ExprType::of(C::VarString)),
                 Rand | Sqrt | Pow => ExprType::of(C::Double),
                 Now => ExprType::of(C::DateTime),
                 CurDate => ExprType::of(C::Date),
@@ -895,16 +976,36 @@ pub fn value_type(v: &Value) -> ExprType {
     use ColumnType as C;
     match v {
         Value::Null => ExprType::of(C::Null),
-        Value::Int(_) | Value::UInt(_) => ExprType { ty: C::LongLong, sql: None, nullable: false, decimals: 0 },
-        Value::Float(_) => ExprType { ty: C::Double, sql: None, nullable: false, decimals: 31 },
+        Value::Int(_) | Value::UInt(_) => ExprType {
+            ty: C::LongLong,
+            sql: None,
+            nullable: false,
+            decimals: 0,
+        },
+        Value::Float(_) => ExprType {
+            ty: C::Double,
+            sql: None,
+            nullable: false,
+            decimals: 31,
+        },
         Value::Decimal(d) => ExprType {
             ty: C::NewDecimal,
             sql: None,
             nullable: false,
             decimals: d.split_once('.').map(|(_, f)| f.len() as u8).unwrap_or(0),
         },
-        Value::Str(_) => ExprType { ty: C::VarString, sql: None, nullable: false, decimals: 0 },
-        Value::Bin(_) => ExprType { ty: C::Blob, sql: None, nullable: false, decimals: 0 },
+        Value::Str(_) => ExprType {
+            ty: C::VarString,
+            sql: None,
+            nullable: false,
+            decimals: 0,
+        },
+        Value::Bin(_) => ExprType {
+            ty: C::Blob,
+            sql: None,
+            nullable: false,
+            decimals: 0,
+        },
     }
 }
 
@@ -926,7 +1027,16 @@ mod tests {
     use super::*;
 
     fn cx<'a>(p: &'a [Value]) -> EvalCtx<'a> {
-        EvalCtx { params: p, db: Some("d"), user: "u", conn_id: 7, last_insert_id: 0, found_rows: 0, row_count: 0, now: "2026-01-02 03:04:05" }
+        EvalCtx {
+            params: p,
+            db: Some("d"),
+            user: "u",
+            conn_id: 7,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        }
     }
 
     #[test]
@@ -945,10 +1055,27 @@ mod tests {
         let null = Expr::Lit(Value::Null);
         let t = Expr::Lit(Value::Int(1));
         let f = Expr::Lit(Value::Int(0));
-        assert_eq!(Expr::And(Box::new(null.clone()), Box::new(f.clone())).eval(&[], &c).unwrap(), Value::Int(0));
-        assert_eq!(Expr::Or(Box::new(null.clone()), Box::new(t.clone())).eval(&[], &c).unwrap(), Value::Int(1));
-        assert_eq!(Expr::And(Box::new(null.clone()), Box::new(t)).eval(&[], &c).unwrap(), Value::Null);
-        let inl = Expr::InList(Box::new(Expr::Lit(Value::Int(3))), vec![Expr::Lit(Value::Int(1)), null], false);
+        assert_eq!(
+            Expr::And(Box::new(null.clone()), Box::new(f.clone()))
+                .eval(&[], &c)
+                .unwrap(),
+            Value::Int(0)
+        );
+        assert_eq!(
+            Expr::Or(Box::new(null.clone()), Box::new(t.clone()))
+                .eval(&[], &c)
+                .unwrap(),
+            Value::Int(1)
+        );
+        assert_eq!(
+            Expr::And(Box::new(null.clone()), Box::new(t)).eval(&[], &c).unwrap(),
+            Value::Null
+        );
+        let inl = Expr::InList(
+            Box::new(Expr::Lit(Value::Int(3))),
+            vec![Expr::Lit(Value::Int(1)), null],
+            false,
+        );
         assert_eq!(inl.eval(&[], &c).unwrap(), Value::Null);
     }
 
@@ -956,13 +1083,35 @@ mod tests {
     fn functions() {
         let p = [];
         let c = cx(&p);
-        let call = |f: Func, a: Vec<Value>| Expr::Func(f, a.into_iter().map(Expr::Lit).collect()).eval(&[], &c).unwrap();
-        assert_eq!(call(Func::Concat, vec![Value::str("a"), Value::Int(1)]), Value::str("a1"));
-        assert_eq!(call(Func::Substring, vec![Value::str("abcdef"), Value::Int(2), Value::Int(3)]), Value::str("bcd"));
-        assert_eq!(call(Func::Substring, vec![Value::str("abcdef"), Value::Int(-2)]), Value::str("ef"));
+        let call = |f: Func, a: Vec<Value>| {
+            Expr::Func(f, a.into_iter().map(Expr::Lit).collect())
+                .eval(&[], &c)
+                .unwrap()
+        };
+        assert_eq!(
+            call(Func::Concat, vec![Value::str("a"), Value::Int(1)]),
+            Value::str("a1")
+        );
+        assert_eq!(
+            call(
+                Func::Substring,
+                vec![Value::str("abcdef"), Value::Int(2), Value::Int(3)]
+            ),
+            Value::str("bcd")
+        );
+        assert_eq!(
+            call(Func::Substring, vec![Value::str("abcdef"), Value::Int(-2)]),
+            Value::str("ef")
+        );
         assert_eq!(call(Func::Coalesce, vec![Value::Null, Value::Int(5)]), Value::Int(5));
-        assert_eq!(call(Func::Round, vec![Value::Float(2.567), Value::Int(1)]), Value::Float(2.6));
-        assert_eq!(call(Func::Lpad, vec![Value::str("7"), Value::Int(3), Value::str("0")]), Value::str("007"));
+        assert_eq!(
+            call(Func::Round, vec![Value::Float(2.567), Value::Int(1)]),
+            Value::Float(2.6)
+        );
+        assert_eq!(
+            call(Func::Lpad, vec![Value::str("7"), Value::Int(3), Value::str("0")]),
+            Value::str("007")
+        );
     }
 
     #[test]

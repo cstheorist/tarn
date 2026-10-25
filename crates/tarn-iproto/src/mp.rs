@@ -1032,7 +1032,9 @@ mod tests {
     use super::*;
 
     fn hex(s: &str) -> Vec<u8> {
-        s.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
+        s.split_whitespace()
+            .map(|b| u8::from_str_radix(b, 16).unwrap())
+            .collect()
     }
 
     fn enc(v: &Value) -> Vec<u8> {
@@ -1099,8 +1101,14 @@ mod tests {
             ("12e2", "1200"),
             ("0e5", "0"),
             ("  42 ", "42"),
-            ("99999999999999999999999999999999999999", "99999999999999999999999999999999999999"),
-            ("-0.00000000000000000000000000000000000001", "-0.00000000000000000000000000000000000001"),
+            (
+                "99999999999999999999999999999999999999",
+                "99999999999999999999999999999999999999",
+            ),
+            (
+                "-0.00000000000000000000000000000000000001",
+                "-0.00000000000000000000000000000000000001",
+            ),
         ];
         for (text, canon) in cases {
             let bytes = enc(&Value::Decimal(text.into()));
@@ -1122,7 +1130,18 @@ mod tests {
 
     #[test]
     fn bad_decimals_fall_back_to_string() {
-        for bad in ["", "-", ".", "1.2.3", "abc", "1e", "1e+", "--1", "1,5", &"1".repeat(DECIMAL_MAX_DIGITS + 1)] {
+        for bad in [
+            "",
+            "-",
+            ".",
+            "1.2.3",
+            "abc",
+            "1e",
+            "1e+",
+            "--1",
+            "1,5",
+            &"1".repeat(DECIMAL_MAX_DIGITS + 1),
+        ] {
             let mut out = Vec::new();
             assert!(encode_decimal(&mut out, bad).is_err(), "{bad:?}");
             assert!(out.is_empty());
@@ -1229,7 +1248,12 @@ mod tests {
         // Invalid UTF-8 in a str becomes Bin.
         assert_eq!(dec(&hex("a2 ff fe")), Value::Bin(Bytes::from_static(b"\xff\xfe")));
         // Arrays, maps and unknown extensions come back as raw MessagePack.
-        for raw in ["92 01 a1 61", "81 a1 6b 93 01 02 03", "dc 00 01 c0", "d8 02 f8 1d 4f ae 7d ec 11 d0 a7 65 00 a0 c9 1e 6b f6"] {
+        for raw in [
+            "92 01 a1 61",
+            "81 a1 6b 93 01 02 03",
+            "dc 00 01 c0",
+            "d8 02 f8 1d 4f ae 7d ec 11 d0 a7 65 00 a0 c9 1e 6b f6",
+        ] {
             assert_eq!(dec(&hex(raw)), Value::Bin(Bytes::from(hex(raw))), "{raw}");
         }
     }

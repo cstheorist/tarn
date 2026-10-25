@@ -10,7 +10,7 @@ MySQL wire-codec code is verified in Verus.
 
 This document describes the architecture, the protocol and its verification,
 the test suites, the benchmarks on this machine and the known limitations.
-`README.md` covers building and running.
+The [README](../README.md) and [getting started](getting-started.md) cover building and running.
 
 ## 1. Architecture
 
@@ -462,7 +462,7 @@ of distinct states).
 
 ### 5.2 Benchmarks
 
-See [bench/RESULTS.md](bench/RESULTS.md) for the full tables, setup and
+See [bench/RESULTS.md](../bench/RESULTS.md) for the full tables, setup and
 discussion. In short, on this 2-vCPU machine (load generator included):
 
 <!-- BENCH -->

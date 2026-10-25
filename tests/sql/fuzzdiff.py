@@ -7,7 +7,7 @@ compare results with difftest.py's comparison rules.
     tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 [-n 2000] [--seed 1]
 
 String data is lowercase ASCII so the reference's case-insensitive default
-collation and Tarn's binary comparison agree (see DESIGN.md, limitations).
+collation and Tarn's binary comparison agree (see docs/design.md, limitations).
 """
 import argparse
 import random

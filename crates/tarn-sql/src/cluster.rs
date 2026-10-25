@@ -161,12 +161,20 @@ impl Shard {
                     }
                 }
             }
-            let pool = Arc::new(Pool { addr: addr.clone(), clients, next: AtomicUsize::new(0) });
+            let pool = Arc::new(Pool {
+                addr: addr.clone(),
+                clients,
+                next: AtomicUsize::new(0),
+            });
             *self.leader.write() = Some(pool);
             tracing::info!(shard = self.id, leader = %addr, "connected to shard leader");
             return Ok(c);
         }
-        Err(SqlError::new(2003, "HY000", format!("shard {} has no reachable leader ({})", self.id, last_err)))
+        Err(SqlError::new(
+            2003,
+            "HY000",
+            format!("shard {} has no reachable leader ({})", self.id, last_err),
+        ))
     }
 }
 
@@ -268,7 +276,12 @@ impl Cluster {
     }
 
     pub fn new_txid(&self) -> String {
-        format!("{}-{:08x}-{}", self.cfg.node_id, self.boot, self.txn_seq.fetch_add(1, Ordering::Relaxed))
+        format!(
+            "{}-{:08x}-{}",
+            self.cfg.node_id,
+            self.boot,
+            self.txn_seq.fetch_add(1, Ordering::Relaxed)
+        )
     }
 
     /// Shard index (0-based position in `shards`) owning a row/key, given the
@@ -370,7 +383,11 @@ impl Cluster {
 
     pub fn cached_plan(&self, db: &str, template: &str) -> Option<Arc<CachedPlan>> {
         let v = self.catalog.read().version;
-        let p = self.plans.read().get(&(db.to_string(), template.to_string())).cloned()?;
+        let p = self
+            .plans
+            .read()
+            .get(&(db.to_string(), template.to_string()))
+            .cloned()?;
         if p.version == v {
             self.stats.plan_cache_hits.fetch_add(1, Ordering::Relaxed);
             Some(p)
@@ -402,7 +419,11 @@ impl Cluster {
             if if_not_exists {
                 return Ok(());
             }
-            return Err(SqlError::new(1007, "HY000", format!("Can't create database '{}'; database exists", name)));
+            return Err(SqlError::new(
+                1007,
+                "HY000",
+                format!("Can't create database '{}'; database exists", name),
+            ));
         }
         let mut a = Mp::new();
         a.arr(1).str(name);
@@ -416,7 +437,11 @@ impl Cluster {
             if if_exists {
                 return Ok(0);
             }
-            return Err(SqlError::new(1008, "HY000", format!("Can't drop database '{}'; database doesn't exist", name)));
+            return Err(SqlError::new(
+                1008,
+                "HY000",
+                format!("Can't drop database '{}'; database doesn't exist", name),
+            ));
         }
         let tables = cat.tables_in(name);
         for t in &tables {
@@ -438,12 +463,18 @@ impl Cluster {
             if if_not_exists {
                 return Ok(());
             }
-            return Err(SqlError::new(1050, "42S01", format!("Table '{}' already exists", def.name)));
+            return Err(SqlError::new(
+                1050,
+                "42S01",
+                format!("Table '{}' already exists", def.name),
+            ));
         }
         for &c in &def.shard_key {
             let t = def.columns[c].ty();
             if !(t.is_integer() || matches!(t.tarantool_type(), "string" | "varbinary")) {
-                return Err(SqlError::unsupported("shard key columns other than integer and string types"));
+                return Err(SqlError::unsupported(
+                    "shard key columns other than integer and string types",
+                ));
             }
         }
         let mut a = Mp::new();
@@ -459,13 +490,31 @@ impl Cluster {
         m.str("id").uint(ld.id as u64);
         m.str("format").arr(ld.format.len());
         for (n, t, nullable) in &ld.format {
-            m.map(3).str("name").str(n).str("type").str(t).str("is_nullable").bool(*nullable);
+            m.map(3)
+                .str("name")
+                .str(n)
+                .str("type")
+                .str(t)
+                .str("is_nullable")
+                .bool(*nullable);
         }
         m.str("indexes").arr(ld.indexes.len());
         for (n, unique, parts) in &ld.indexes {
-            m.map(3).str("name").str(n).str("unique").bool(*unique).str("parts").arr(parts.len());
+            m.map(3)
+                .str("name")
+                .str(n)
+                .str("unique")
+                .bool(*unique)
+                .str("parts")
+                .arr(parts.len());
             for (f, t, nullable) in parts {
-                m.map(3).str("field").str(f).str("type").str(t).str("is_nullable").bool(*nullable);
+                m.map(3)
+                    .str("field")
+                    .str(f)
+                    .str("type")
+                    .str(t)
+                    .str("is_nullable")
+                    .bool(*nullable);
             }
         }
         m.str("json").str(&ld.json);
@@ -500,7 +549,10 @@ impl Cluster {
     }
 
     pub async fn truncate(&self, db: &str, table: &str) -> SqlResult<()> {
-        let def = self.catalog().get(db, table).ok_or_else(|| SqlError::no_table(db, table))?;
+        let def = self
+            .catalog()
+            .get(db, table)
+            .ok_or_else(|| SqlError::no_table(db, table))?;
         let mut a = Mp::new();
         a.arr(1).str(&def.space_name());
         for d in self.call_all("tarn_truncate", &a.0).await? {
@@ -509,8 +561,19 @@ impl Cluster {
         Ok(())
     }
 
-    pub async fn create_index(&self, db: &str, table: &str, name: &str, cols: &[String], unique: bool, if_not_exists: bool) -> SqlResult<()> {
-        let def = self.catalog().get(db, table).ok_or_else(|| SqlError::no_table(db, table))?;
+    pub async fn create_index(
+        &self,
+        db: &str,
+        table: &str,
+        name: &str,
+        cols: &[String],
+        unique: bool,
+        if_not_exists: bool,
+    ) -> SqlResult<()> {
+        let def = self
+            .catalog()
+            .get(db, table)
+            .ok_or_else(|| SqlError::no_table(db, table))?;
         if def.index_by_name(name).is_some() {
             if if_not_exists {
                 return Ok(());
@@ -519,27 +582,52 @@ impl Cluster {
         }
         let mut ix = Vec::new();
         for c in cols {
-            ix.push(def.col_index(c).ok_or_else(|| SqlError::new(1072, "42000", format!("Key column '{}' doesn't exist in table", c)))?);
+            ix.push(
+                def.col_index(c).ok_or_else(|| {
+                    SqlError::new(1072, "42000", format!("Key column '{}' doesn't exist in table", c))
+                })?,
+            );
         }
         let mut nd = (*def).clone();
         // the bucket_id index occupies the last Tarantool index id; new
         // secondary indexes get ids after it
         let id = nd.indexes.len() as u32 + 1;
-        nd.indexes.push(catalog::IndexDef { name: name.to_string(), id, cols: ix.clone(), unique });
+        nd.indexes.push(catalog::IndexDef {
+            name: name.to_string(),
+            id,
+            cols: ix.clone(),
+            unique,
+        });
         catalog::validate(&nd)?;
         let mut m = Mp::new();
         m.arr(2).str(&def.space_name());
-        m.map(4).str("name").str(name).str("id").uint(id as u64).str("unique").bool(unique).str("parts").arr(ix.len());
+        m.map(4)
+            .str("name")
+            .str(name)
+            .str("id")
+            .uint(id as u64)
+            .str("unique")
+            .bool(unique)
+            .str("parts")
+            .arr(ix.len());
         for &c in &ix {
             let col = &def.columns[c];
-            m.map(3).str("field").str(&col.name).str("type").str(col.ty().tarantool_type()).str("is_nullable").bool(col.nullable);
+            m.map(3)
+                .str("field")
+                .str(&col.name)
+                .str("type")
+                .str(col.ty().tarantool_type())
+                .str("is_nullable")
+                .bool(col.nullable);
         }
         for d in self.call_all("tarn_create_index", &m.0).await? {
             lua_status(&d)?;
         }
         // store the updated definition
         let mut j = Mp::new();
-        j.arr(2).str(&def.space_name()).str(&serde_json::to_string(&nd).unwrap());
+        j.arr(2)
+            .str(&def.space_name())
+            .str(&serde_json::to_string(&nd).unwrap());
         for d in self.call_all("tarn_set_def_json", &j.0).await? {
             lua_status(&d)?;
         }

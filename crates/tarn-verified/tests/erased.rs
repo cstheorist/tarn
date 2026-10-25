@@ -8,12 +8,29 @@ use tarn_verified::wire;
 
 #[test]
 fn lenenc_boundaries_round_trip() {
-    for &n in &[0u64, 1, 250, 251, 252, 0xFFFF, 0x1_0000, 0xFF_FFFF, 0x100_0000, u32::MAX as u64, u64::MAX] {
+    for &n in &[
+        0u64,
+        1,
+        250,
+        251,
+        252,
+        0xFFFF,
+        0x1_0000,
+        0xFF_FFFF,
+        0x100_0000,
+        u32::MAX as u64,
+        u64::MAX,
+    ] {
         let mut out = Vec::new();
         wire::write_lenenc_int(&mut out, n);
         assert_eq!(out.len(), wire::lenenc_int_len(n));
         out.extend_from_slice(&[0xAB, 0xCD]);
-        assert_eq!(wire::read_lenenc_int(&out), Some((n, wire::lenenc_int_len(n))), "n={}", n);
+        assert_eq!(
+            wire::read_lenenc_int(&out),
+            Some((n, wire::lenenc_int_len(n))),
+            "n={}",
+            n
+        );
     }
     assert_eq!(wire::read_lenenc_int(&[0xFB]), None);
     assert_eq!(wire::read_lenenc_int(&[0xFF]), None);
@@ -70,16 +87,37 @@ fn coordinator_decisions() {
     assert!(matches!(coord::decide(&[Vote::Unknown, Vote::No]), Decision::Abort));
     assert!(matches!(coord::decide(&[Vote::Yes, Vote::Unknown]), Decision::Unknown));
     use PartState::*;
-    assert!(matches!(coord::resolve_step(RecStatus::Staging, &[Prepared, Applied], false), Step::DecideCommit));
-    assert!(matches!(coord::resolve_step(RecStatus::Staging, &[Prepared, Aborted], false), Step::DecideAbort));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::Staging, &[Prepared, Applied], false),
+        Step::DecideCommit
+    ));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::Staging, &[Prepared, Aborted], false),
+        Step::DecideAbort
+    ));
     match coord::resolve_step(RecStatus::Staging, &[Prepared, None, None], true) {
         Step::FenceParticipants(m) => assert_eq!(m, vec![1, 2]),
         other => panic!("{:?}", other),
     }
-    assert!(matches!(coord::resolve_step(RecStatus::None, &[Prepared], false), Step::FenceRecord));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::None, &[Prepared], false),
+        Step::FenceRecord
+    ));
     // expired: fence a missing record only while someone is still prepared
-    assert!(matches!(coord::resolve_step(RecStatus::None, &[Prepared, None], true), Step::FenceRecord));
-    assert!(matches!(coord::resolve_step(RecStatus::None, &[Applied, None], true), Step::Gone));
-    assert!(matches!(coord::resolve_step(RecStatus::None, &[None, None], false), Step::FenceRecord));
-    assert!(matches!(coord::resolve_step(RecStatus::Committed, &[None, Applied], true), Step::Committed));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::None, &[Prepared, None], true),
+        Step::FenceRecord
+    ));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::None, &[Applied, None], true),
+        Step::Gone
+    ));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::None, &[None, None], false),
+        Step::FenceRecord
+    ));
+    assert!(matches!(
+        coord::resolve_step(RecStatus::Committed, &[None, Applied], true),
+        Step::Committed
+    ));
 }

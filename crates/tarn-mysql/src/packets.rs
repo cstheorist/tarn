@@ -168,10 +168,26 @@ pub fn parse_handshake_response(p: &[u8]) -> Option<HandshakeResponse<'_>> {
     } else {
         r.cstr()
     };
-    let database = if caps & cap::CONNECT_WITH_DB != 0 && !r.is_empty() { Some(r.cstr()) } else { None };
-    let plugin = if caps & cap::PLUGIN_AUTH != 0 && !r.is_empty() { Some(r.cstr()) } else { None };
+    let database = if caps & cap::CONNECT_WITH_DB != 0 && !r.is_empty() {
+        Some(r.cstr())
+    } else {
+        None
+    };
+    let plugin = if caps & cap::PLUGIN_AUTH != 0 && !r.is_empty() {
+        Some(r.cstr())
+    } else {
+        None
+    };
     // CLIENT_CONNECT_ATTRS: lenenc-length block of key/value pairs, ignored.
-    Some(HandshakeResponse { caps, max_packet, collation, user, auth, database, plugin })
+    Some(HandshakeResponse {
+        caps,
+        max_packet,
+        collation,
+        user,
+        auth,
+        database,
+        plugin,
+    })
 }
 
 /// Protocol::AuthSwitchRequest to mysql_native_password.
@@ -342,7 +358,10 @@ fn as_i64(v: &Value) -> i64 {
         Value::Decimal(d) => d.trim().parse::<f64>().map(|f| f.round() as i64).unwrap_or(0),
         Value::Str(b) | Value::Bin(b) => {
             let s = std::str::from_utf8(b).unwrap_or("").trim();
-            s.parse::<i64>().ok().or_else(|| s.parse::<f64>().ok().map(|f| f.round() as i64)).unwrap_or(0)
+            s.parse::<i64>()
+                .ok()
+                .or_else(|| s.parse::<f64>().ok().map(|f| f.round() as i64))
+                .unwrap_or(0)
         }
         Value::Null => 0,
     }
@@ -555,9 +574,17 @@ pub fn long_data_value(t: u8, data: Vec<u8>) -> Value {
 fn decode_date(r: &mut Reader, t: u8) -> Option<Value> {
     let len = r.u8()? as usize;
     let d = r.take(len)?;
-    let (y, mo, da) = if len >= 4 { (u16::from_le_bytes([d[0], d[1]]), d[2], d[3]) } else { (0, 0, 0) };
+    let (y, mo, da) = if len >= 4 {
+        (u16::from_le_bytes([d[0], d[1]]), d[2], d[3])
+    } else {
+        (0, 0, 0)
+    };
     let (h, mi, s) = if len >= 7 { (d[4], d[5], d[6]) } else { (0, 0, 0) };
-    let us = if len >= 11 { u32::from_le_bytes([d[7], d[8], d[9], d[10]]) } else { 0 };
+    let us = if len >= 11 {
+        u32::from_le_bytes([d[7], d[8], d[9], d[10]])
+    } else {
+        0
+    };
     let text = if t == ColumnType::Date as u8 {
         format!("{:04}-{:02}-{:02}", y, mo, da)
     } else if us != 0 {
@@ -577,7 +604,11 @@ fn decode_time(r: &mut Reader) -> Option<Value> {
     let neg = d[0] != 0;
     let days = u32::from_le_bytes([d[1], d[2], d[3], d[4]]);
     let hours = days as u64 * 24 + d[5] as u64;
-    let us = if len >= 12 { u32::from_le_bytes([d[8], d[9], d[10], d[11]]) } else { 0 };
+    let us = if len >= 12 {
+        u32::from_le_bytes([d[8], d[9], d[10], d[11]])
+    } else {
+        0
+    };
     let mut s = format!("{}{:02}:{:02}:{:02}", if neg { "-" } else { "" }, hours, d[6], d[7]);
     if us != 0 {
         s.push_str(&format!(".{:06}", us));
@@ -637,7 +668,7 @@ pub fn decode_params(
     if n == 0 {
         return Some(Vec::new());
     }
-    let bitmap = r.take((n + 7) / 8)?;
+    let bitmap = r.take(n.div_ceil(8))?;
     let bound = r.u8()?;
     if bound == 1 {
         types.clear();
@@ -684,8 +715,12 @@ mod tests {
     #[test]
     fn handshake_response_parsing() {
         let mut p = Vec::new();
-        let caps = cap::PROTOCOL_41 | cap::SECURE_CONNECTION | cap::PLUGIN_AUTH | cap::CONNECT_WITH_DB
-            | cap::PLUGIN_AUTH_LENENC_CLIENT_DATA | cap::CONNECT_ATTRS;
+        let caps = cap::PROTOCOL_41
+            | cap::SECURE_CONNECTION
+            | cap::PLUGIN_AUTH
+            | cap::CONNECT_WITH_DB
+            | cap::PLUGIN_AUTH_LENENC_CLIENT_DATA
+            | cap::CONNECT_ATTRS;
         p.extend_from_slice(&caps.to_le_bytes());
         p.extend_from_slice(&(1u32 << 24).to_le_bytes());
         p.push(45);
@@ -708,7 +743,17 @@ mod tests {
         let n = 9;
         p.extend_from_slice(&[0b0100_0000, 0]); // param 6 is NULL
         p.push(1);
-        for (t, f) in [(1u8, 0u8), (2, 0x80), (3, 0), (8, 0x80), (5, 0), (253, 0), (3, 0), (12, 0), (246, 0)] {
+        for (t, f) in [
+            (1u8, 0u8),
+            (2, 0x80),
+            (3, 0),
+            (8, 0x80),
+            (5, 0),
+            (253, 0),
+            (3, 0),
+            (12, 0),
+            (246, 0),
+        ] {
             p.extend_from_slice(&[t, f]);
         }
         p.push(0xFF); // TINY -1
@@ -760,7 +805,17 @@ mod tests {
         ]
         .into();
         let mut out = Vec::new();
-        binary_row(&mut out, &cols, &[Value::Int(5), Value::Null, Value::Int(2), Value::str("2024-01-02 03:04:05"), Value::str("12")]);
+        binary_row(
+            &mut out,
+            &cols,
+            &[
+                Value::Int(5),
+                Value::Null,
+                Value::Int(2),
+                Value::str("2024-01-02 03:04:05"),
+                Value::str("12"),
+            ],
+        );
         assert_eq!(out[0], 0);
         assert_eq!(out[1], 0b0000_1000); // (5 + 9) / 8 = 1 bitmap byte; column 1 (bit 3) is NULL
         assert_eq!(&out[2..10], &5i64.to_le_bytes());
@@ -773,14 +828,21 @@ mod tests {
     #[test]
     fn text_rows() {
         let mut out = Vec::new();
-        text_row(&mut out, 4, &[Value::Int(-42), Value::Null, Value::UInt(7), Value::Float(1.5)]);
+        text_row(
+            &mut out,
+            4,
+            &[Value::Int(-42), Value::Null, Value::UInt(7), Value::Float(1.5)],
+        );
         assert_eq!(out, b"\x03-42\xfb\x017\x031.5");
     }
 
     #[test]
     fn datetime_parsing() {
         assert_eq!(parse_datetime(b"2024-01-02"), Some((2024, 1, 2, 0, 0, 0, 0)));
-        assert_eq!(parse_datetime(b"2024-01-02 10:20:30.5"), Some((2024, 1, 2, 10, 20, 30, 500000)));
+        assert_eq!(
+            parse_datetime(b"2024-01-02 10:20:30.5"),
+            Some((2024, 1, 2, 10, 20, 30, 500000))
+        );
         assert_eq!(parse_datetime(b"garbage"), None);
         assert_eq!(parse_time(b"-25:00:01"), Some((true, 1, 1, 0, 1, 0)));
     }

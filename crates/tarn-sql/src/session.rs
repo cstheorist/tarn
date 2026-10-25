@@ -21,13 +21,24 @@ use tarn_iproto::Iter;
 
 #[derive(Debug)]
 pub enum Output {
-    Ok { affected: u64, last_insert_id: u64, info: String },
-    Rows { columns: Arc<[Column]>, rows: Vec<Vec<Value>> },
+    Ok {
+        affected: u64,
+        last_insert_id: u64,
+        info: String,
+    },
+    Rows {
+        columns: Arc<[Column]>,
+        rows: Vec<Vec<Value>>,
+    },
 }
 
 impl Output {
     fn ok(affected: u64) -> Output {
-        Output::Ok { affected, last_insert_id: 0, info: String::new() }
+        Output::Ok {
+            affected,
+            last_insert_id: 0,
+            info: String::new(),
+        }
     }
 }
 
@@ -63,10 +74,9 @@ fn first_keyword(sql: &str) -> &str {
     loop {
         s = s.trim_start();
         if let Some(r) = s.strip_prefix("/*") {
-            if r.starts_with('!') {
+            if let Some(body) = r.strip_prefix('!') {
                 // MySQL versioned comment: its content is executable SQL
-                let r = r[1..].trim_start_matches(|c: char| c.is_ascii_digit());
-                s = r;
+                s = body.trim_start_matches(|c: char| c.is_ascii_digit());
                 continue;
             }
             match r.find("*/") {
@@ -88,7 +98,9 @@ fn first_keyword(sql: &str) -> &str {
 
 fn is_ddl(sql: &str) -> bool {
     let k = first_keyword(sql);
-    ["CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"].iter().any(|d| k.eq_ignore_ascii_case(d))
+    ["CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"]
+        .iter()
+        .any(|d| k.eq_ignore_ascii_case(d))
 }
 
 fn cols(names: &[(&str, ColumnType)]) -> Arc<[Column]> {
@@ -128,7 +140,7 @@ impl Session {
     }
 
     pub fn in_transaction(&self) -> bool {
-        self.txn.as_ref().map_or(false, |t| t.explicit)
+        self.txn.as_ref().is_some_and(|t| t.explicit)
     }
 
     pub fn use_db(&mut self, db: &str) -> SqlResult<()> {
@@ -163,7 +175,17 @@ impl Session {
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
         if let Some(a) = admin::recognize(sql)? {
-            self.prepared.insert(id, Prepared { template: sql.into(), n_params: 0, columns: Arc::from(Vec::new()), plan: None, admin: Some(a), complex: None });
+            self.prepared.insert(
+                id,
+                Prepared {
+                    template: sql.into(),
+                    n_params: 0,
+                    columns: Arc::from(Vec::new()),
+                    plan: None,
+                    admin: Some(a),
+                    complex: None,
+                },
+            );
             return Ok((0, Arc::from(Vec::new())));
         }
         let n = normalize(sql, Mode::Placeholders)?;
@@ -191,7 +213,14 @@ impl Session {
         let version = self.cluster.catalog().version;
         self.prepared.insert(
             id,
-            Prepared { template: n.template, n_params: n.n_params, columns: columns.clone(), plan: Some((version, stmt)), admin: None, complex: None },
+            Prepared {
+                template: n.template,
+                n_params: n.n_params,
+                columns: columns.clone(),
+                plan: Some((version, stmt)),
+                admin: None,
+                complex: None,
+            },
         );
         Ok((n.n_params, columns))
     }
@@ -200,14 +229,25 @@ impl Session {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if let Some(c) = self.prepared.get(&id).and_then(|p| p.complex.clone()) {
             if params.len() != self.prepared[&id].n_params {
-                return Err(SqlError::new(1210, "HY000", "Incorrect arguments to mysqld_stmt_execute"));
+                return Err(SqlError::new(
+                    1210,
+                    "HY000",
+                    "Incorrect arguments to mysqld_stmt_execute",
+                ));
             }
             return self.run_complex(crate::complex::bind_params(c, params)).await;
         }
         let (admin, stmt) = {
-            let p = self.prepared.get(&id).ok_or_else(|| SqlError::new(1243, "HY000", format!("Unknown prepared statement handler ({})", id)))?;
+            let p = self
+                .prepared
+                .get(&id)
+                .ok_or_else(|| SqlError::new(1243, "HY000", format!("Unknown prepared statement handler ({})", id)))?;
             if params.len() != p.n_params {
-                return Err(SqlError::new(1210, "HY000", "Incorrect arguments to mysqld_stmt_execute"));
+                return Err(SqlError::new(
+                    1210,
+                    "HY000",
+                    "Incorrect arguments to mysqld_stmt_execute",
+                ));
             }
             let version = self.cluster.catalog().version;
             let stmt = match &p.plan {
@@ -260,10 +300,24 @@ impl Session {
             return Ok(p.stmt.clone());
         }
         let catalog = self.cluster.catalog();
-        let ctx = PlanCtx { catalog: &catalog, db: self.db.as_deref(), params };
+        let ctx = PlanCtx {
+            catalog: &catalog,
+            db: self.db.as_deref(),
+            params,
+        };
         let stmt = planner::plan(template, &ctx)?;
-        if matches!(stmt, Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)) {
-            self.cluster.cache_plan(&db, template, Arc::new(CachedPlan { version: catalog.version, stmt: stmt.clone() }));
+        if matches!(
+            stmt,
+            Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
+        ) {
+            self.cluster.cache_plan(
+                &db,
+                template,
+                Arc::new(CachedPlan {
+                    version: catalog.version,
+                    stmt: stmt.clone(),
+                }),
+            );
         }
         Ok(stmt)
     }
@@ -440,7 +494,11 @@ impl Session {
             self.last_insert_id = id;
         }
         self.row_count = affected as i64;
-        Output::Ok { affected, last_insert_id: insert_id.unwrap_or(0), info: String::new() }
+        Output::Ok {
+            affected,
+            last_insert_id: insert_id.unwrap_or(0),
+            info: String::new(),
+        }
     }
 
     /// Single-shard autocommit DML that needs no read round trip: one call to
@@ -455,7 +513,9 @@ impl Session {
         let cx = self.cx(params, now);
         let (shard, writes, insert_id) = match stmt {
             Stmt::Insert(p) if p.on_dup.is_empty() && !p.ignore => {
-                let InsertSource::Values(_) = &p.source else { return Ok(None) };
+                let InsertSource::Values(_) = &p.source else {
+                    return Ok(None);
+                };
                 let (rows, id) = match pre {
                     Some((r, id)) => (r.clone(), *id),
                     None => self.insert_rows(p, &cx, None).await?,
@@ -470,13 +530,17 @@ impl Session {
                 let mut m = Mp::new();
                 m.arr(1).arr(rows.len());
                 for r in &rows {
-                    m.arr(3).str(if p.replace { "replace" } else { "insert" }).uint(p.table.space_id as u64);
+                    m.arr(3)
+                        .str(if p.replace { "replace" } else { "insert" })
+                        .uint(p.table.space_id as u64);
                     self.encode_tuple(&p.table, r, &mut m);
                 }
                 (shard, m, id)
             }
             Stmt::Update(p) => {
-                let Some((pk, ops)) = self.simple_update(p, &cx)? else { return Ok(None) };
+                let Some((pk, ops)) = self.simple_update(p, &cx)? else {
+                    return Ok(None);
+                };
                 let t = &p.access.table;
                 let idx = &t.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, t, idx, &pk).unwrap_or(0);
@@ -510,11 +574,18 @@ impl Session {
                 (shard, m, None)
             }
             Stmt::Delete(p) => {
-                let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, &cx)? else { return Ok(None) };
+                let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, &cx)? else {
+                    return Ok(None);
+                };
                 let idx = &p.access.table.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, &p.access.table, idx, &pk).unwrap_or(0);
                 let mut m = Mp::new();
-                m.arr(1).arr(1).arr(3).str("delete").uint(p.access.table.space_id as u64).vals(&pk);
+                m.arr(1)
+                    .arr(1)
+                    .arr(3)
+                    .str("delete")
+                    .uint(p.access.table.space_id as u64)
+                    .vals(&pk);
                 (shard, m, None)
             }
             _ => return Ok(None),
@@ -540,8 +611,16 @@ impl Session {
 
     /// The primary key targeted by an UPDATE/DELETE whose WHERE clause is
     /// exactly an equality on every primary-key column.
-    fn simple_pk_target(&self, access: &TableAccess, filter: &Option<Expr>, order: &[(Expr, bool)], cx: &EvalCtx) -> SqlResult<Option<Vec<Value>>> {
-        let AccessPath::Point { index: 0, keys } = &access.path else { return Ok(None) };
+    fn simple_pk_target(
+        &self,
+        access: &TableAccess,
+        filter: &Option<Expr>,
+        order: &[(Expr, bool)],
+        cx: &EvalCtx,
+    ) -> SqlResult<Option<Vec<Value>>> {
+        let AccessPath::Point { index: 0, keys } = &access.path else {
+            return Ok(None);
+        };
         if keys.len() != 1 || !order.is_empty() {
             return Ok(None);
         }
@@ -581,12 +660,18 @@ impl Session {
 
     /// UPDATE t SET c = const | c = c +/- const WHERE pk = ...: Tarantool
     /// update ops applied in one local transaction, no read round trip.
-    fn simple_update(&self, p: &UpdatePlan, cx: &EvalCtx) -> SqlResult<Option<(Vec<Value>, Vec<(&'static str, String, Value)>)>> {
+    fn simple_update(
+        &self,
+        p: &UpdatePlan,
+        cx: &EvalCtx,
+    ) -> SqlResult<Option<(Vec<Value>, Vec<(&'static str, String, Value)>)>> {
         let t = &p.access.table;
         if p.limit.is_some() {
             return Ok(None);
         }
-        let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, cx)? else { return Ok(None) };
+        let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, cx)? else {
+            return Ok(None);
+        };
         let mut ops = Vec::new();
         for (c, e) in &p.set {
             if t.is_pk_col(*c) || t.shard_key.contains(c) {
@@ -595,7 +680,9 @@ impl Session {
             let col = &t.columns[*c];
             let ty = col.ty();
             match e {
-                Expr::Arith(a, op @ (Arith::Add | Arith::Sub), b) if matches!(&**a, Expr::Col(x) if x == c) && b.is_constant() && ty.is_integer() => {
+                Expr::Arith(a, op @ (Arith::Add | Arith::Sub), b)
+                    if matches!(&**a, Expr::Col(x) if x == c) && b.is_constant() && ty.is_integer() =>
+                {
                     let d = b.eval(&[], cx)?;
                     let Some(d) = d.as_i64() else { return Ok(None) };
                     let d = if *op == Arith::Sub { -d } else { d };
@@ -604,7 +691,11 @@ impl Session {
                 e if e.is_constant() => {
                     let v = ty.coerce(e.eval(&[], cx)?, &col.name)?;
                     if v.is_null() && !col.nullable {
-                        return Err(SqlError::new(1048, "23000", format!("Column '{}' cannot be null", col.name)));
+                        return Err(SqlError::new(
+                            1048,
+                            "23000",
+                            format!("Column '{}' cannot be null", col.name),
+                        ));
                     }
                     ops.push(("=", col.name.clone(), v));
                 }
@@ -624,7 +715,12 @@ impl Session {
     }
 
     /// Materialize INSERT rows: defaults, AUTO_INCREMENT, type coercion.
-    async fn insert_rows(&self, p: &InsertPlan, cx: &EvalCtx<'_>, from_select: Option<Vec<Row>>) -> SqlResult<(Vec<Row>, Option<u64>)> {
+    async fn insert_rows(
+        &self,
+        p: &InsertPlan,
+        cx: &EvalCtx<'_>,
+        from_select: Option<Vec<Row>>,
+    ) -> SqlResult<(Vec<Row>, Option<u64>)> {
         let t = &p.table;
         let ncols = t.columns.len();
         let mut raw: Vec<Vec<Option<Value>>> = Vec::new();
@@ -662,7 +758,11 @@ impl Session {
                     Some(v) => v.as_i64() == Some(0),
                 })
                 .count() as u64;
-            let mut next = if need > 0 { self.cluster.next_auto_inc(t, need).await? } else { 0 };
+            let mut next = if need > 0 {
+                self.cluster.next_auto_inc(t, need).await?
+            } else {
+                0
+            };
             let mut max_explicit = 0u64;
             for r in raw.iter_mut() {
                 let gen = match &r[ai] {
@@ -689,12 +789,20 @@ impl Session {
                 let v = match v {
                     Some(v) => v,
                     None => t.default_value(c).ok_or_else(|| {
-                        SqlError::new(1364, "HY000", format!("Field '{}' doesn't have a default value", col.name))
+                        SqlError::new(
+                            1364,
+                            "HY000",
+                            format!("Field '{}' doesn't have a default value", col.name),
+                        )
                     })?,
                 };
                 let v = col.ty().coerce(v, &col.name)?;
                 if v.is_null() && !col.nullable {
-                    return Err(SqlError::new(1048, "23000", format!("Column '{}' cannot be null", col.name)));
+                    return Err(SqlError::new(
+                        1048,
+                        "23000",
+                        format!("Column '{}' cannot be null", col.name),
+                    ));
                 }
                 row.push(v);
             }
@@ -752,7 +860,13 @@ impl Session {
                             return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
                         }
                         let shard = shard_of_row(&self.cluster, t, &row);
-                        txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Insert, row: Some(row), pk });
+                        txn.buffer(BufWrite {
+                            shard,
+                            table: t.clone(),
+                            op: WOp::Insert,
+                            row: Some(row),
+                            pk,
+                        });
                         affected += 1;
                     }
                     return Ok((affected, id));
@@ -761,7 +875,12 @@ impl Session {
                 // requests pipelined, then apply the per-row logic in order.
                 let keyed: Vec<(Vec<Value>, usize)> = rows
                     .iter()
-                    .map(|row| (pk_cols.iter().map(|&c| row[c].clone()).collect(), shard_of_row(&self.cluster, t, row)))
+                    .map(|row| {
+                        (
+                            pk_cols.iter().map(|&c| row[c].clone()).collect(),
+                            shard_of_row(&self.cluster, t, row),
+                        )
+                    })
                     .collect();
                 let mut found: HashMap<Bytes, Option<Row>> = HashMap::new();
                 {
@@ -804,7 +923,13 @@ impl Session {
                             }
                         }
                         Some(_) if p.replace => {
-                            txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Replace, row: Some(row), pk });
+                            txn.buffer(BufWrite {
+                                shard,
+                                table: t.clone(),
+                                op: WOp::Replace,
+                                row: Some(row),
+                                pk,
+                            });
                             affected += 2;
                         }
                         Some(_) if p.ignore => {}
@@ -813,7 +938,13 @@ impl Session {
                             return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
                         }
                         None => {
-                            txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Insert, row: Some(row), pk });
+                            txn.buffer(BufWrite {
+                                shard,
+                                table: t.clone(),
+                                op: WOp::Insert,
+                                row: Some(row),
+                                pk,
+                            });
                             affected += 1;
                         }
                     }
@@ -830,7 +961,11 @@ impl Session {
                         let col = &t.columns[*c];
                         let v = col.ty().coerce(e.eval(&new, &cx)?, &col.name)?;
                         if v.is_null() && !col.nullable {
-                            return Err(SqlError::new(1048, "23000", format!("Column '{}' cannot be null", col.name)));
+                            return Err(SqlError::new(
+                                1048,
+                                "23000",
+                                format!("Column '{}' cannot be null", col.name),
+                            ));
                         }
                         new[*c] = v;
                     }
@@ -849,7 +984,13 @@ impl Session {
                 for old in rows {
                     let pk: Vec<Value> = t.indexes[0].cols.iter().map(|&c| old[c].clone()).collect();
                     let shard = shard_of_row(&self.cluster, t, &old);
-                    txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Delete, row: None, pk });
+                    txn.buffer(BufWrite {
+                        shard,
+                        table: t.clone(),
+                        op: WOp::Delete,
+                        row: None,
+                        pk,
+                    });
                 }
                 Ok((n, None))
             }
@@ -857,12 +998,25 @@ impl Session {
         }
     }
 
-    async fn buffer_row_change(&self, txn: &mut Txn, t: &Arc<TableDef>, old: &Row, new: Row, shard: usize) -> SqlResult<()> {
+    async fn buffer_row_change(
+        &self,
+        txn: &mut Txn,
+        t: &Arc<TableDef>,
+        old: &Row,
+        new: Row,
+        shard: usize,
+    ) -> SqlResult<()> {
         let pk_cols = &t.indexes[0].cols;
         let old_pk: Vec<Value> = pk_cols.iter().map(|&c| old[c].clone()).collect();
         let new_pk: Vec<Value> = pk_cols.iter().map(|&c| new[c].clone()).collect();
         if key_bytes(&old_pk) == key_bytes(&new_pk) {
-            txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Replace, row: Some(new), pk: new_pk });
+            txn.buffer(BufWrite {
+                shard,
+                table: t.clone(),
+                op: WOp::Replace,
+                row: Some(new),
+                pk: new_pk,
+            });
             return Ok(());
         }
         // primary key (and possibly shard) changes: delete + insert
@@ -871,8 +1025,20 @@ impl Session {
             let shown: Vec<String> = new_pk.iter().map(|v| v.to_string()).collect();
             return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
         }
-        txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Delete, row: None, pk: old_pk });
-        txn.buffer(BufWrite { shard: new_shard, table: t.clone(), op: WOp::Insert, row: Some(new), pk: new_pk });
+        txn.buffer(BufWrite {
+            shard,
+            table: t.clone(),
+            op: WOp::Delete,
+            row: None,
+            pk: old_pk,
+        });
+        txn.buffer(BufWrite {
+            shard: new_shard,
+            table: t.clone(),
+            op: WOp::Insert,
+            row: Some(new),
+            pk: new_pk,
+        });
         Ok(())
     }
 
@@ -882,15 +1048,20 @@ impl Session {
         let c = self.cluster.clone();
         match stmt {
             Stmt::CreateTable { def, if_not_exists } => c.create_table(def.clone(), *if_not_exists).await?,
-            Stmt::CreateIndex { db, table, name, cols, unique, if_not_exists } => {
-                c.create_index(db, table, name, cols, *unique, *if_not_exists).await?
-            }
+            Stmt::CreateIndex {
+                db,
+                table,
+                name,
+                cols,
+                unique,
+                if_not_exists,
+            } => c.create_index(db, table, name, cols, *unique, *if_not_exists).await?,
             Stmt::DropTable { tables, if_exists } => c.drop_tables(tables, *if_exists).await?,
             Stmt::Truncate { db, table } => c.truncate(db, table).await?,
             Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
             Stmt::DropDatabase { name, if_exists } => {
                 let n = c.drop_database(name, *if_exists).await?;
-                if self.db.as_deref().map_or(false, |d| d.eq_ignore_ascii_case(name)) {
+                if self.db.as_deref().is_some_and(|d| d.eq_ignore_ascii_case(name)) {
                     self.db = None;
                 }
                 return Ok(Output::ok(n));
@@ -980,7 +1151,9 @@ impl Session {
             }
             Admin::ShowColumns { db, table, .. } | Admin::Describe { db, table } => {
                 let db = self.resolve_db(db)?;
-                let t = catalog.get(&db, &table).ok_or_else(|| SqlError::no_table(&db, &table))?;
+                let t = catalog
+                    .get(&db, &table)
+                    .ok_or_else(|| SqlError::no_table(&db, &table))?;
                 let mut rows = Vec::new();
                 for (i, c) in t.columns.iter().enumerate() {
                     let key = if t.is_pk_col(i) {
@@ -1015,15 +1188,22 @@ impl Session {
             }
             Admin::ShowCreateTable { db, table } => {
                 let db = self.resolve_db(db)?;
-                let t = catalog.get(&db, &table).ok_or_else(|| SqlError::no_table(&db, &table))?;
+                let t = catalog
+                    .get(&db, &table)
+                    .ok_or_else(|| SqlError::no_table(&db, &table))?;
                 rows_out(
-                    cols(&[("Table", ColumnType::VarString), ("Create Table", ColumnType::VarString)]),
+                    cols(&[
+                        ("Table", ColumnType::VarString),
+                        ("Create Table", ColumnType::VarString),
+                    ]),
                     vec![vec![Value::str(&t.name), Value::str(&show_create(&t))]],
                 )
             }
             Admin::ShowIndex { db, table } => {
                 let db = self.resolve_db(db)?;
-                let t = catalog.get(&db, &table).ok_or_else(|| SqlError::no_table(&db, &table))?;
+                let t = catalog
+                    .get(&db, &table)
+                    .ok_or_else(|| SqlError::no_table(&db, &table))?;
                 let mut rows = Vec::new();
                 for ix in &t.indexes {
                     for (seq, &c) in ix.cols.iter().enumerate() {
@@ -1047,8 +1227,21 @@ impl Session {
                     }
                 }
                 let names = [
-                    "Table", "Non_unique", "Key_name", "Seq_in_index", "Column_name", "Collation", "Cardinality", "Sub_part",
-                    "Packed", "Null", "Index_type", "Comment", "Index_comment", "Visible", "Expression",
+                    "Table",
+                    "Non_unique",
+                    "Key_name",
+                    "Seq_in_index",
+                    "Column_name",
+                    "Collation",
+                    "Cardinality",
+                    "Sub_part",
+                    "Packed",
+                    "Null",
+                    "Index_type",
+                    "Comment",
+                    "Index_comment",
+                    "Visible",
+                    "Expression",
                 ];
                 let c: Vec<(&str, ColumnType)> = names.iter().map(|n| (*n, ColumnType::VarString)).collect();
                 rows_out(cols(&c), rows)
@@ -1061,12 +1254,22 @@ impl Session {
                         rows.push(vec![Value::str(name), Value::Str(v.to_text().unwrap_or_default())]);
                     }
                 }
-                rows_out(cols(&[("Variable_name", ColumnType::VarString), ("Value", ColumnType::VarString)]), rows)
+                rows_out(
+                    cols(&[
+                        ("Variable_name", ColumnType::VarString),
+                        ("Value", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
             }
             Admin::ShowStatus { like } => Ok(self.show_status(&like)),
             Admin::ShowTarnStatus => Ok(self.show_status(&None)),
             Admin::ShowWarnings => rows_out(
-                cols(&[("Level", ColumnType::VarString), ("Code", ColumnType::Long), ("Message", ColumnType::VarString)]),
+                cols(&[
+                    ("Level", ColumnType::VarString),
+                    ("Code", ColumnType::Long),
+                    ("Message", ColumnType::VarString),
+                ]),
                 vec![],
             ),
             Admin::ShowEngines => rows_out(
@@ -1088,27 +1291,83 @@ impl Session {
                 ]],
             ),
             Admin::ShowCollation => rows_out(
-                cols(&[("Collation", ColumnType::VarString), ("Charset", ColumnType::VarString), ("Id", ColumnType::LongLong), ("Default", ColumnType::VarString), ("Compiled", ColumnType::VarString), ("Sortlen", ColumnType::LongLong)]),
-                vec![vec![Value::str("utf8mb4_bin"), Value::str("utf8mb4"), Value::Int(46), Value::str("Yes"), Value::str("Yes"), Value::Int(1)]],
+                cols(&[
+                    ("Collation", ColumnType::VarString),
+                    ("Charset", ColumnType::VarString),
+                    ("Id", ColumnType::LongLong),
+                    ("Default", ColumnType::VarString),
+                    ("Compiled", ColumnType::VarString),
+                    ("Sortlen", ColumnType::LongLong),
+                ]),
+                vec![vec![
+                    Value::str("utf8mb4_bin"),
+                    Value::str("utf8mb4"),
+                    Value::Int(46),
+                    Value::str("Yes"),
+                    Value::str("Yes"),
+                    Value::Int(1),
+                ]],
             ),
             Admin::ShowCharset => rows_out(
-                cols(&[("Charset", ColumnType::VarString), ("Description", ColumnType::VarString), ("Default collation", ColumnType::VarString), ("Maxlen", ColumnType::LongLong)]),
-                vec![vec![Value::str("utf8mb4"), Value::str("UTF-8 Unicode"), Value::str("utf8mb4_bin"), Value::Int(4)]],
+                cols(&[
+                    ("Charset", ColumnType::VarString),
+                    ("Description", ColumnType::VarString),
+                    ("Default collation", ColumnType::VarString),
+                    ("Maxlen", ColumnType::LongLong),
+                ]),
+                vec![vec![
+                    Value::str("utf8mb4"),
+                    Value::str("UTF-8 Unicode"),
+                    Value::str("utf8mb4_bin"),
+                    Value::Int(4),
+                ]],
             ),
             Admin::ShowProcesslist => rows_out(
-                cols(&[("Id", ColumnType::LongLong), ("User", ColumnType::VarString), ("Host", ColumnType::VarString), ("db", ColumnType::VarString), ("Command", ColumnType::VarString), ("Time", ColumnType::LongLong), ("State", ColumnType::VarString), ("Info", ColumnType::VarString)]),
-                vec![vec![Value::UInt(self.conn_id as u64), Value::str(&self.user), Value::str("client"), self.db.as_deref().map(Value::str).unwrap_or(Value::Null), Value::str("Query"), Value::Int(0), Value::str(""), Value::str("SHOW PROCESSLIST")]],
+                cols(&[
+                    ("Id", ColumnType::LongLong),
+                    ("User", ColumnType::VarString),
+                    ("Host", ColumnType::VarString),
+                    ("db", ColumnType::VarString),
+                    ("Command", ColumnType::VarString),
+                    ("Time", ColumnType::LongLong),
+                    ("State", ColumnType::VarString),
+                    ("Info", ColumnType::VarString),
+                ]),
+                vec![vec![
+                    Value::UInt(self.conn_id as u64),
+                    Value::str(&self.user),
+                    Value::str("client"),
+                    self.db.as_deref().map(Value::str).unwrap_or(Value::Null),
+                    Value::str("Query"),
+                    Value::Int(0),
+                    Value::str(""),
+                    Value::str("SHOW PROCESSLIST"),
+                ]],
             ),
             Admin::ShowTableStatus { db, like } => {
                 let db = self.resolve_db(db)?;
                 let mut rows = Vec::new();
                 for t in catalog.tables_in(&db) {
                     if like_ci(&t.name, &like) {
-                        rows.push(vec![Value::str(&t.name), Value::str("memtx"), Value::Int(10), Value::str("Fixed"), Value::Null, Value::Null]);
+                        rows.push(vec![
+                            Value::str(&t.name),
+                            Value::str("memtx"),
+                            Value::Int(10),
+                            Value::str("Fixed"),
+                            Value::Null,
+                            Value::Null,
+                        ]);
                     }
                 }
                 rows_out(
-                    cols(&[("Name", ColumnType::VarString), ("Engine", ColumnType::VarString), ("Version", ColumnType::LongLong), ("Row_format", ColumnType::VarString), ("Rows", ColumnType::LongLong), ("Comment", ColumnType::VarString)]),
+                    cols(&[
+                        ("Name", ColumnType::VarString),
+                        ("Engine", ColumnType::VarString),
+                        ("Version", ColumnType::LongLong),
+                        ("Row_format", ColumnType::VarString),
+                        ("Rows", ColumnType::LongLong),
+                        ("Comment", ColumnType::VarString),
+                    ]),
                     rows,
                 )
             }
@@ -1129,12 +1388,22 @@ impl Session {
             ("Tarn_shards", self.cluster.nshards() as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));
-        let rows = stats.into_iter().map(|(n, v)| vec![Value::str(n), Value::str(&v.to_string())]).collect();
-        Output::Rows { columns: cols(&[("Variable_name", ColumnType::VarString), ("Value", ColumnType::VarString)]), rows }
+        let rows = stats
+            .into_iter()
+            .map(|(n, v)| vec![Value::str(n), Value::str(&v.to_string())])
+            .collect();
+        Output::Rows {
+            columns: cols(&[
+                ("Variable_name", ColumnType::VarString),
+                ("Value", ColumnType::VarString),
+            ]),
+            rows,
+        }
     }
 
     fn resolve_db(&self, db: Option<String>) -> SqlResult<String> {
-        db.or_else(|| self.db.clone()).ok_or_else(|| SqlError::new(1046, "3D000", "No database selected"))
+        db.or_else(|| self.db.clone())
+            .ok_or_else(|| SqlError::new(1046, "3D000", "No database selected"))
     }
 }
 
@@ -1150,7 +1419,11 @@ fn split(e: &Expr, out: &mut Vec<Expr>) {
 
 async fn backoff(attempt: usize) {
     let base = 200u64 << attempt.min(6);
-    let jitter = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0) as u64) % base.max(1);
+    let jitter = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0) as u64)
+        % base.max(1);
     tokio::time::sleep(std::time::Duration::from_micros(base + jitter)).await;
 }
 
@@ -1181,12 +1454,24 @@ fn show_create(t: &TableDef) -> String {
         if ix.id == 0 {
             lines.push(format!("  PRIMARY KEY ({})", colnames.join(",")));
         } else {
-            lines.push(format!("  {}KEY `{}` ({})", if ix.unique { "UNIQUE " } else { "" }, ix.name, colnames.join(",")));
+            lines.push(format!(
+                "  {}KEY `{}` ({})",
+                if ix.unique { "UNIQUE " } else { "" },
+                ix.name,
+                colnames.join(",")
+            ));
         }
     }
     s.push_str(&lines.join(",\n"));
-    let sk: Vec<String> = t.shard_key.iter().map(|&c| format!("`{}`", t.columns[c].name)).collect();
-    s.push_str(&format!("\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
+    let sk: Vec<String> = t
+        .shard_key
+        .iter()
+        .map(|&c| format!("`{}`", t.columns[c].name))
+        .collect();
+    s.push_str(&format!(
+        "\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n/*!50100 PARTITION BY KEY ({}) */",
+        sk.join(",")
+    ));
     s
 }
 

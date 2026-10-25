@@ -1,0 +1,147 @@
+# Verification
+
+Tarn's correctness argument has three layers, each catching a different
+kind of mistake:
+
+| Layer | Checks | Where |
+|---|---|---|
+| TLA+ model, checked with TLC | the commit protocol as a design: strict serializability, atomicity, recovery and record garbage collection under crashes, lost and re-delivered messages, and leader failover | `tla/` |
+| Verus proofs | that specific Rust functions do what their specifications say, for every input | `crates/tarn-verified/` |
+| Tests | that the implementation matches the model and MySQL: storage protocol, SQL semantics against MariaDB, transaction anomalies, failover, faults | `lua/test/`, `tests/`, `crates/*/tests` |
+
+What each layer found, and how the findings were fixed, is described in the
+[design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5 and §2.8).
+
+## TLA+ model
+
+`tla/TarnCommit.tla` specifies the protocol: shards, keys with owners, three
+transactions with fixed read and write sets, direct (non-SQL) readers, and
+the actions of execution, single-shard commit, read-only validation,
+PREPARE, APPLY, ABORT, coordinator decisions, timeout-driven recovery,
+record expiry and garbage collection. Faults are coordinator crashes, lost
+and re-delivered messages, and shard leader failover (durable state
+survives, the MVCC read tracking of open streams does not).
+
+Invariants checked in every configuration:
+
+| Invariant | Meaning |
+|---|---|
+| `TypeOK` | well-formed state |
+| `AppliedOnlyIfCommitted` | no participant applies a transaction that is not committed |
+| `NoAbortAfterCommit` | a committed transaction is never aborted anywhere |
+| `PlainOnlyCommitted` | the plain Tarantool spaces only ever hold committed values |
+| `DirectReadsClean` | direct key/value readers never see uncommitted data |
+| `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
+| `StrictSerializable` | the committed transactions have a serial order, consistent with real time, that explains every value they read |
+
+`StrictSerializable` is checked constructively: the spec records the order in
+which writes reached each key and each transaction's real-time
+predecessors, and the invariant searches for a witness order.
+
+### Configurations
+
+`tla/MC.tla` defines four workloads on two shards (`Skew`, `Local`, `Frac`,
+`Recov`), and `tla/gen_cfgs.sh` generates one `.cfg` per combination of
+workload, fault budget and options. The names say what is checked:
+
+| Name | Meaning |
+|---|---|
+| `Skew`, `Local`, `Frac`, `Recov` | the protocol with PREPARE-based read-only commits and records kept forever |
+| `*Failover` | a shard leader fails over during execution (with a direct reader) |
+| `*_AckOnPrepare` | clients are acknowledged after PREPARE instead of after APPLY |
+| `*_ROValidate` | the implementation's commit paths: cross-shard read-only transactions validate instead of preparing, and the decision shard's APPLY records COMMITTED |
+| `*_GC` | additionally, transactions expire and protocol records are garbage-collected |
+| `Bug_*` | one protection switched off; TLC **must find a violation** |
+| `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
+
+The full results table (states, depth, time, outcome) is in
+[design §5.1](design.md#51-model-checking), generated from the TLC logs in
+`tla/out/`.
+
+### Running TLC
+
+You need Java 11+ and `tla2tools.jar`:
+
+```sh
+curl -fsSL -o tla/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+
+tla/check.sh                                    # the fast configurations, outcomes checked (as in CI)
+WORKERS=4 tla/run_all.sh Recov_GC Bug_NoTombstone   # any configurations; logs in tla/out/
+python3 tla/summarize.py                        # table of every result in tla/out/
+```
+
+`run_all.sh` honours `TLA2TOOLS` (path to the jar), `WORKERS` (default 1)
+and `TLC_HEAP` (default 3g). The large configurations (`Skew*`) take from
+minutes to an hour; `Skew_GC_ROValidate` did not finish within two hours
+(47.8 million states explored without a violation).
+
+To add a protection switch: add a `Bug*` constant to `TarnCommit.tla`, guard
+the protection with it, add a flag to `gen_cfgs.sh`, and add a `Bug_*`
+configuration that TLC must fail.
+
+## Verus proofs
+
+`crates/tarn-verified` is ordinary Rust inside `verus!` blocks: `cargo`
+builds it with the specifications and proofs erased, and the server uses the
+result. Verus proves:
+
+* **Routing** (`route.rs`): the CRC-32C used for bucket hashing equals a
+  bitwise specification for every input; bucket and shard numbers are in
+  range; the bucket-to-shard map is monotone and onto.
+* **Coordinator decisions** (`coord.rs`): `decide` commits exactly on
+  unanimous YES and aborts exactly when some vote is NO; `resolve_step`
+  (one step of recovery) decides COMMIT only when the states it is given
+  mean "committed", decides ABORT only when a participant is tombstoned,
+  fences only participants without a record while the record is STAGING,
+  and fences a missing record only before expiry or while some participant
+  is prepared.
+* **MySQL wire codec** (`wire.rs`): length-encoded integers and strings
+  encode to the byte-level specification and decode back without reading
+  out of bounds; packet framing produces exactly MySQL's multi-packet
+  format (including the empty terminator after a payload that is a multiple
+  of 16 MiB) and deframing inverts it. No function can panic.
+
+The proofs are about single functions given their inputs. Protocol-level
+facts they rely on, such as "a missing participant record under a STAGING
+decision record means the participant never prepared", are checked by TLC.
+
+Running Verus needs the release the proofs were written for and the Rust
+toolchain it is built with (1.98.1, the version in `rust-toolchain.toml`):
+
+```sh
+rustup toolchain install 1.98.1
+curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
+unzip -q verus.zip -d ~/verus
+cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
+# verification results:: 59 verified, 0 errors
+```
+
+`crates/tarn-verified/tests/erased.rs` exercises the erased code with
+concrete inputs (codec boundaries, CRC check value, decision cases).
+
+## Test suites
+
+| Suite | Command | Needs | Checks |
+|---|---|---|---|
+| Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, coordinator decisions, IPROTO client against a real Tarantool |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum |
+| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 99 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents |
+| SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
+| Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
+| Failover | `tests/failover.sh` | Tarantool | 2 shards × 3 replicas under the bank workload: a live leader change, then two leader kills; every check must hold |
+| Faults | `tests/faults.sh` | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
+
+`bench/baselines.sh start mariadb` starts a local MariaDB on port 3407 with
+a `sb` user for the differential tests (or point `--ref` at any MariaDB
+10.11). `scripts/cluster.sh start -n 2 -r 1 -p 4000` starts a cluster.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+* **lint**: `cargo fmt --check` and `cargo clippy -D warnings`;
+* **test**: unit and integration tests, storage protocol tests, the SQL
+  suites against MariaDB 10.11, the fault-injection and failover tests;
+* **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
+  fail, the fast correct configurations must pass);
+* **verus**: the Verus proofs.

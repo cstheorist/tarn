@@ -41,7 +41,10 @@ struct Scope {
 
 impl Scope {
     fn width(&self) -> usize {
-        self.tables.last().map(|t| t.offset + t.table.columns.len()).unwrap_or(0)
+        self.tables
+            .last()
+            .map(|t| t.offset + t.table.columns.len())
+            .unwrap_or(0)
     }
     fn types(&self) -> Vec<ExprType> {
         let mut v = Vec::new();
@@ -71,7 +74,9 @@ fn table_name(n: &A::ObjectName, ctx: &PlanCtx) -> SqlResult<(String, String)> {
     let parts = object_name_parts(n);
     match parts.as_slice() {
         [t] => Ok((
-            ctx.db.ok_or_else(|| SqlError::new(1046, "3D000", "No database selected"))?.to_string(),
+            ctx.db
+                .ok_or_else(|| SqlError::new(1046, "3D000", "No database selected"))?
+                .to_string(),
             t.clone(),
         )),
         [d, t] => Ok((d.clone(), t.clone())),
@@ -120,28 +125,56 @@ pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Stmt> {
                     other => Err(SqlError::unsupported(format!("index expression {}", other))),
                 })
                 .collect::<SqlResult<Vec<_>>>()?;
-            Ok(Stmt::CreateIndex { db, table, name, cols, unique: ci.unique, if_not_exists: ci.if_not_exists })
+            Ok(Stmt::CreateIndex {
+                db,
+                table,
+                name,
+                cols,
+                unique: ci.unique,
+                if_not_exists: ci.if_not_exists,
+            })
         }
-        A::Statement::Drop { object_type, if_exists, names, .. } => match object_type {
+        A::Statement::Drop {
+            object_type,
+            if_exists,
+            names,
+            ..
+        } => match object_type {
             A::ObjectType::Table => {
-                let tables = names.iter().map(|n| table_name(n, ctx)).collect::<SqlResult<Vec<_>>>()?;
+                let tables = names
+                    .iter()
+                    .map(|n| table_name(n, ctx))
+                    .collect::<SqlResult<Vec<_>>>()?;
                 Ok(Stmt::DropTable { tables, if_exists })
             }
             A::ObjectType::Schema | A::ObjectType::Database => {
-                let name = names.first().map(|n| object_name_parts(n).join(".")).unwrap_or_default();
+                let name = names
+                    .first()
+                    .map(|n| object_name_parts(n).join("."))
+                    .unwrap_or_default();
                 Ok(Stmt::DropDatabase { name, if_exists })
             }
             other => Err(SqlError::unsupported(format!("DROP {}", other))),
         },
         A::Statement::Truncate(t) => {
-            let target = t.table_names.first().ok_or_else(|| SqlError::parse("TRUNCATE needs a table"))?;
+            let target = t
+                .table_names
+                .first()
+                .ok_or_else(|| SqlError::parse("TRUNCATE needs a table"))?;
             let (db, table) = table_name(&target.name, ctx)?;
             Ok(Stmt::Truncate { db, table })
         }
-        A::Statement::CreateDatabase { db_name, if_not_exists, .. } => {
-            Ok(Stmt::CreateDatabase { name: object_name_parts(&db_name).join("."), if_not_exists })
-        }
-        A::Statement::CreateSchema { schema_name, if_not_exists, .. } => {
+        A::Statement::CreateDatabase {
+            db_name, if_not_exists, ..
+        } => Ok(Stmt::CreateDatabase {
+            name: object_name_parts(&db_name).join("."),
+            if_not_exists,
+        }),
+        A::Statement::CreateSchema {
+            schema_name,
+            if_not_exists,
+            ..
+        } => {
             let name = match schema_name {
                 A::SchemaName::Simple(n) | A::SchemaName::NamedAuthorization(n, _) => object_name_parts(&n).join("."),
                 A::SchemaName::UnnamedAuthorization(i) => ident(&i),
@@ -164,7 +197,9 @@ fn statement_kind(s: &A::Statement) -> String {
 /// does not parse MySQL partitioning, so it is cut out of the text first.
 fn extract_partition_by_key(sql: &str) -> (String, Option<Vec<String>>) {
     let up = sql.to_ascii_uppercase();
-    let Some(pos) = up.find("PARTITION BY") else { return (sql.to_string(), None) };
+    let Some(pos) = up.find("PARTITION BY") else {
+        return (sql.to_string(), None);
+    };
     let rest = &up[pos + "PARTITION BY".len()..];
     let rest_trim = rest.trim_start();
     let kw_len = if rest_trim.starts_with("LINEAR KEY") {
@@ -175,8 +210,12 @@ fn extract_partition_by_key(sql: &str) -> (String, Option<Vec<String>>) {
         return (sql.to_string(), None);
     };
     let start = pos + "PARTITION BY".len() + (rest.len() - rest_trim.len()) + kw_len;
-    let Some(open) = sql[start..].find('(') else { return (sql.to_string(), None) };
-    let Some(close) = sql[start + open..].find(')') else { return (sql.to_string(), None) };
+    let Some(open) = sql[start..].find('(') else {
+        return (sql.to_string(), None);
+    };
+    let Some(close) = sql[start + open..].find(')') else {
+        return (sql.to_string(), None);
+    };
     let cols: Vec<String> = sql[start + open + 1..start + open + close]
         .split(',')
         .map(|c| c.trim().trim_matches('`').to_string())
@@ -215,7 +254,12 @@ fn unknown_col(name: &str) -> SqlError {
 
 impl<'a, 'c> Binder<'a, 'c> {
     fn new(scope: &'a Scope, ctx: &'a PlanCtx<'c>) -> Self {
-        Binder { scope, ctx, aggs: None, values_offset: None }
+        Binder {
+            scope,
+            ctx,
+            aggs: None,
+            values_offset: None,
+        }
     }
 
     fn resolve(&self, table: Option<&str>, col: &str) -> SqlResult<usize> {
@@ -228,15 +272,21 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             if let Some(c) = t.table.col_index(col) {
                 if found.is_some() {
-                    return Err(SqlError::new(1052, "23000", format!("Column '{}' in field list is ambiguous", col)));
+                    return Err(SqlError::new(
+                        1052,
+                        "23000",
+                        format!("Column '{}' in field list is ambiguous", col),
+                    ));
                 }
                 found = Some(t.offset + c);
             }
         }
-        found.ok_or_else(|| unknown_col(&match table {
-            Some(t) => format!("{}.{}", t, col),
-            None => col.to_string(),
-        }))
+        found.ok_or_else(|| {
+            unknown_col(&match table {
+                Some(t) => format!("{}.{}", t, col),
+                None => col.to_string(),
+            })
+        })
     }
 
     fn bind(&mut self, e: &A::Expr) -> SqlResult<Expr> {
@@ -253,10 +303,14 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             E::Value(v) => self.bind_value(&v.value)?,
             E::Nested(inner) => self.bind(inner)?,
-            E::BinaryOp { left, op: op @ (A::BinaryOperator::Eq | A::BinaryOperator::NotEq), right }
-                if matches!(**left, E::Tuple(_)) && matches!(**right, E::Tuple(_)) =>
-            {
-                let (E::Tuple(l), E::Tuple(r)) = (&**left, &**right) else { unreachable!() };
+            E::BinaryOp {
+                left,
+                op: op @ (A::BinaryOperator::Eq | A::BinaryOperator::NotEq),
+                right,
+            } if matches!(**left, E::Tuple(_)) && matches!(**right, E::Tuple(_)) => {
+                let (E::Tuple(l), E::Tuple(r)) = (&**left, &**right) else {
+                    unreachable!()
+                };
                 let lhs: Vec<Expr> = l.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
                 let rhs: Vec<&A::Expr> = r.iter().collect();
                 let e = self.row_eq(&lhs, &rhs)?;
@@ -336,30 +390,59 @@ impl<'a, 'c> Binder<'a, 'c> {
                 list.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?,
                 *negated,
             ),
-            E::Between { expr, negated, low, high } => Expr::Between(
+            E::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => Expr::Between(
                 Box::new(self.bind(expr)?),
                 Box::new(self.bind(low)?),
                 Box::new(self.bind(high)?),
                 *negated,
             ),
-            E::Like { negated, expr, pattern, .. } | E::ILike { negated, expr, pattern, .. } => {
-                Expr::Like(Box::new(self.bind(expr)?), Box::new(self.bind(pattern)?), *negated)
+            E::Like {
+                negated, expr, pattern, ..
             }
-            E::Case { operand, conditions, else_result, .. } => Expr::Case(
+            | E::ILike {
+                negated, expr, pattern, ..
+            } => Expr::Like(Box::new(self.bind(expr)?), Box::new(self.bind(pattern)?), *negated),
+            E::Case {
+                operand,
+                conditions,
+                else_result,
+                ..
+            } => Expr::Case(
                 match operand {
                     Some(o) => Some(Box::new(self.bind(o)?)),
                     None => None,
                 },
-                conditions.iter().map(|w| Ok((self.bind(&w.condition)?, self.bind(&w.result)?))).collect::<SqlResult<_>>()?,
+                conditions
+                    .iter()
+                    .map(|w| Ok((self.bind(&w.condition)?, self.bind(&w.result)?)))
+                    .collect::<SqlResult<_>>()?,
                 match else_result {
                     Some(x) => Some(Box::new(self.bind(x)?)),
                     None => None,
                 },
             ),
-            E::Cast { expr, data_type, .. } => Expr::Cast(Box::new(self.bind(expr)?), cast_target(&data_type.to_string())?),
-            E::Convert { expr, data_type: Some(dt), .. } => Expr::Cast(Box::new(self.bind(expr)?), cast_target(&dt.to_string())?),
-            E::Convert { expr, data_type: None, .. } => self.bind(expr)?,
-            E::Substring { expr, substring_from, substring_for, .. } => {
+            E::Cast { expr, data_type, .. } => {
+                Expr::Cast(Box::new(self.bind(expr)?), cast_target(&data_type.to_string())?)
+            }
+            E::Convert {
+                expr,
+                data_type: Some(dt),
+                ..
+            } => Expr::Cast(Box::new(self.bind(expr)?), cast_target(&dt.to_string())?),
+            E::Convert {
+                expr, data_type: None, ..
+            } => self.bind(expr)?,
+            E::Substring {
+                expr,
+                substring_from,
+                substring_for,
+                ..
+            } => {
                 let mut args = vec![self.bind(expr)?];
                 args.push(match substring_from {
                     Some(f) => self.bind(f)?,
@@ -370,7 +453,12 @@ impl<'a, 'c> Binder<'a, 'c> {
                 }
                 Expr::Func(Func::Substring, args)
             }
-            E::Trim { expr, trim_where, trim_what, .. } => {
+            E::Trim {
+                expr,
+                trim_where,
+                trim_what,
+                ..
+            } => {
                 if trim_what.is_some() {
                     return Err(SqlError::unsupported("TRIM(... FROM ...)"));
                 }
@@ -402,11 +490,15 @@ impl<'a, 'c> Binder<'a, 'c> {
                 .ok()
                 .and_then(|n| n.params.into_iter().next())
                 .unwrap_or_else(|| Value::Decimal(s.clone())),
-            V::SingleQuotedString(s) | V::DoubleQuotedString(s) | V::NationalStringLiteral(s) | V::EscapedStringLiteral(s) => {
-                Value::str(s)
-            }
+            V::SingleQuotedString(s)
+            | V::DoubleQuotedString(s)
+            | V::NationalStringLiteral(s)
+            | V::EscapedStringLiteral(s) => Value::str(s),
             V::HexStringLiteral(h) => Value::Bin(
-                (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()).collect::<Vec<u8>>().into(),
+                (0..h.len() / 2)
+                    .filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok())
+                    .collect::<Vec<u8>>()
+                    .into(),
             ),
             V::Boolean(b) => Value::Int(*b as i64),
             V::Null => Value::Null,
@@ -441,7 +533,11 @@ impl<'a, 'c> Binder<'a, 'c> {
     /// `(l1, l2, ...) = (r1, r2, ...)` as a conjunction of comparisons.
     fn row_eq(&mut self, lhs: &[Expr], rhs: &[&A::Expr]) -> SqlResult<Expr> {
         if lhs.len() != rhs.len() {
-            return Err(SqlError::new(1241, "21000", format!("Operand should contain {} column(s)", lhs.len())));
+            return Err(SqlError::new(
+                1241,
+                "21000",
+                format!("Operand should contain {} column(s)", lhs.len()),
+            ));
         }
         let mut conj: Option<Expr> = None;
         for (l, r) in lhs.iter().zip(rhs) {
@@ -481,7 +577,11 @@ impl<'a, 'c> Binder<'a, 'c> {
     }
 
     fn bind_function(&mut self, f: &A::Function) -> SqlResult<Expr> {
-        let name = object_name_parts(&f.name).last().cloned().unwrap_or_default().to_ascii_uppercase();
+        let name = object_name_parts(&f.name)
+            .last()
+            .cloned()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
         let agg = match name.as_str() {
             "COUNT" => Some(AggFunc::Count),
             "SUM" => Some(AggFunc::Sum),
@@ -501,7 +601,11 @@ impl<'a, 'c> Binder<'a, 'c> {
             let r = self.func_args(f).and_then(|a| Ok((a, self.agg_clauses(f)?)));
             self.aggs = saved;
             let ((mut args, star, distinct), (order, sep)) = r?;
-            let func = if func == AggFunc::Count && (star || args.is_empty()) { AggFunc::CountStar } else { func };
+            let func = if func == AggFunc::Count && (star || args.is_empty()) {
+                AggFunc::CountStar
+            } else {
+                func
+            };
             let arg = if func == AggFunc::GroupConcat && args.len() > 1 {
                 // GROUP_CONCAT(a, b, ...) concatenates its arguments per row
                 Some(Expr::Func(Func::Concat, std::mem::take(&mut args)))
@@ -509,7 +613,13 @@ impl<'a, 'c> Binder<'a, 'c> {
                 args.into_iter().next()
             };
             let aggs = self.aggs.as_mut().unwrap();
-            aggs.push(AggCall { func, arg, distinct, order, sep });
+            aggs.push(AggCall {
+                func,
+                arg,
+                distinct,
+                order,
+                sep,
+            });
             return Ok(Expr::Col(AGG_BASE + aggs.len() - 1));
         }
         if name == "VALUES" {
@@ -520,7 +630,11 @@ impl<'a, 'c> Binder<'a, 'c> {
             return Err(SqlError::unsupported("VALUES() outside ON DUPLICATE KEY UPDATE"));
         }
         let func = Func::lookup(&name).ok_or_else(|| {
-            SqlError::new(1305, "42000", format!("FUNCTION {} does not exist", name.to_ascii_lowercase()))
+            SqlError::new(
+                1305,
+                "42000",
+                format!("FUNCTION {} does not exist", name.to_ascii_lowercase()),
+            )
         })?;
         let (args, _, _) = self.func_args(f)?;
         Ok(Expr::Func(func, args))
@@ -529,25 +643,27 @@ impl<'a, 'c> Binder<'a, 'c> {
 
 fn cast_target(t: &str) -> SqlResult<CastTo> {
     let u = t.to_ascii_uppercase();
-    Ok(if u.starts_with("SIGNED") || u.starts_with("INT") || u.starts_with("BIGINT") {
-        CastTo::Signed
-    } else if u.starts_with("UNSIGNED") {
-        CastTo::Unsigned
-    } else if u.starts_with("CHAR") || u.starts_with("VARCHAR") || u.starts_with("NCHAR") || u.starts_with("TEXT") {
-        CastTo::Char
-    } else if u.starts_with("DECIMAL") || u.starts_with("NUMERIC") {
-        CastTo::Decimal(SqlType::parse(t).ok().and_then(|s| s.scale).unwrap_or(0))
-    } else if u.starts_with("DOUBLE") || u.starts_with("FLOAT") || u.starts_with("REAL") {
-        CastTo::Double
-    } else if u.starts_with("DATETIME") || u.starts_with("TIMESTAMP") {
-        CastTo::DateTime
-    } else if u.starts_with("DATE") {
-        CastTo::Date
-    } else if u.starts_with("BINARY") {
-        CastTo::Binary
-    } else {
-        return Err(SqlError::unsupported(format!("CAST AS {}", t)));
-    })
+    Ok(
+        if u.starts_with("SIGNED") || u.starts_with("INT") || u.starts_with("BIGINT") {
+            CastTo::Signed
+        } else if u.starts_with("UNSIGNED") {
+            CastTo::Unsigned
+        } else if u.starts_with("CHAR") || u.starts_with("VARCHAR") || u.starts_with("NCHAR") || u.starts_with("TEXT") {
+            CastTo::Char
+        } else if u.starts_with("DECIMAL") || u.starts_with("NUMERIC") {
+            CastTo::Decimal(SqlType::parse(t).ok().and_then(|s| s.scale).unwrap_or(0))
+        } else if u.starts_with("DOUBLE") || u.starts_with("FLOAT") || u.starts_with("REAL") {
+            CastTo::Double
+        } else if u.starts_with("DATETIME") || u.starts_with("TIMESTAMP") {
+            CastTo::DateTime
+        } else if u.starts_with("DATE") {
+            CastTo::Date
+        } else if u.starts_with("BINARY") {
+            CastTo::Binary
+        } else {
+            return Err(SqlError::unsupported(format!("CAST AS {}", t)));
+        },
+    )
 }
 
 fn split_and(e: Expr, out: &mut Vec<Expr>) {
@@ -686,13 +802,25 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
                     })
                     .collect(),
             };
-            (if in_list.is_some() { 900 } else { 1000 } + pk_bonus, AccessPath::Point { index: idx.id, keys })
+            (
+                if in_list.is_some() { 900 } else { 1000 } + pk_bonus,
+                AccessPath::Point { index: idx.id, keys },
+            )
         } else if in_list.is_some() {
             continue; // IN on a non-unique / partial key: fall back to other paths
         } else if !eq.is_empty() || range.is_some() {
             let (lo, hi2) = range.unwrap_or((None, None));
             let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus;
-            (s, AccessPath::Range { index: idx.id, eq, lo, hi: hi2, reverse: false })
+            (
+                s,
+                AccessPath::Range {
+                    index: idx.id,
+                    eq,
+                    lo,
+                    hi: hi2,
+                    reverse: false,
+                },
+            )
         } else {
             continue;
         };
@@ -714,7 +842,10 @@ fn build_scope(from: &[A::TableWithJoins], ctx: &PlanCtx) -> SqlResult<(Scope, V
         match tf {
             A::TableFactor::Table { name, alias, .. } => {
                 let table = lookup_table(name, ctx)?;
-                let alias = alias.as_ref().map(|a| ident(&a.name)).unwrap_or_else(|| table.name.clone());
+                let alias = alias
+                    .as_ref()
+                    .map(|a| ident(&a.name))
+                    .unwrap_or_else(|| table.name.clone());
                 let offset = scope.width();
                 scope.tables.push(ScopeTable { alias, table, offset });
                 Ok(())
@@ -731,10 +862,17 @@ fn build_scope(from: &[A::TableWithJoins], ctx: &PlanCtx) -> SqlResult<(Scope, V
         for j in &twj.joins {
             add(&j.relation, &mut scope)?;
             let (kind, cons) = match &j.join_operator {
-                A::JoinOperator::Join(c) | A::JoinOperator::Inner(c) | A::JoinOperator::StraightJoin(c) => (JoinKind::Inner, c),
+                A::JoinOperator::Join(c) | A::JoinOperator::Inner(c) | A::JoinOperator::StraightJoin(c) => {
+                    (JoinKind::Inner, c)
+                }
                 A::JoinOperator::Left(c) | A::JoinOperator::LeftOuter(c) => (JoinKind::Left, c),
                 A::JoinOperator::CrossJoin(c) => (JoinKind::Inner, c),
-                other => return Err(SqlError::unsupported(format!("join {:?}", std::mem::discriminant(other)))),
+                other => {
+                    return Err(SqlError::unsupported(format!(
+                        "join {:?}",
+                        std::mem::discriminant(other)
+                    )))
+                }
             };
             let on = match cons {
                 A::JoinConstraint::On(e) => Some(e.clone()),
@@ -844,7 +982,10 @@ fn post_agg(e: &Expr, groups: &[Expr], aggs: &mut Vec<AggCall>) -> Expr {
                 Expr::Func(f, args) => Expr::Func(*f, args.iter().map(|x| post_agg(x, groups, aggs)).collect()),
                 Expr::Case(o, w, el) => {
                     let o2 = o.as_ref().map(|x| Box::new(post_agg(x, groups, aggs)));
-                    let w2 = w.iter().map(|(a, b)| (post_agg(a, groups, aggs), post_agg(b, groups, aggs))).collect();
+                    let w2 = w
+                        .iter()
+                        .map(|(a, b)| (post_agg(a, groups, aggs), post_agg(b, groups, aggs)))
+                        .collect();
                     let e2 = el.as_ref().map(|x| Box::new(post_agg(x, groups, aggs)));
                     Expr::Case(o2, w2, e2)
                 }
@@ -900,7 +1041,12 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
     let mut proj: Vec<Expr> = Vec::new();
     let mut names: Vec<(String, Option<(Arc<TableDef>, usize)>)> = Vec::new();
     {
-        let mut pb = Binder { scope: &scope, ctx, aggs: Some(&mut aggs), values_offset: None };
+        let mut pb = Binder {
+            scope: &scope,
+            ctx,
+            aggs: Some(&mut aggs),
+            values_offset: None,
+        };
         for item in &sel.projection {
             match item {
                 A::SelectItem::Wildcard(_) => {
@@ -913,7 +1059,9 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
                 }
                 A::SelectItem::QualifiedWildcard(kind, _) => {
                     let qual = match kind {
-                        A::SelectItemQualifiedWildcardKind::ObjectName(n) => object_name_parts(n).last().cloned().unwrap_or_default(),
+                        A::SelectItemQualifiedWildcardKind::ObjectName(n) => {
+                            object_name_parts(n).last().cloned().unwrap_or_default()
+                        }
                         other => other.to_string(),
                     };
                     let t = scope
@@ -970,9 +1118,20 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
     let mut having = None;
     let mut order: Vec<(Expr, bool)> = Vec::new();
     {
-        let mut hb = Binder { scope: &scope, ctx, aggs: Some(&mut aggs), values_offset: None };
+        let mut hb = Binder {
+            scope: &scope,
+            ctx,
+            aggs: Some(&mut aggs),
+            values_offset: None,
+        };
         if let Some(h) = &sel.having {
-            having = Some(resolve_alias_or_position(h, &sel.projection, &proj, &mut hb, &mut Some(()))?);
+            having = Some(resolve_alias_or_position(
+                h,
+                &sel.projection,
+                &proj,
+                &mut hb,
+                &mut Some(()),
+            )?);
         }
         if let Some(ob) = &q.order_by {
             if let A::OrderByKind::Expressions(list) = &ob.kind {
@@ -991,11 +1150,17 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         let mut all_aggs = aggs.clone();
         let proj2: Vec<Expr> = proj.iter().map(|e| post_agg(e, &groups, &mut all_aggs)).collect();
         let having2 = having.as_ref().map(|h| post_agg(h, &groups, &mut all_aggs));
-        let order2: Vec<(Expr, bool)> = order.iter().map(|(e, d)| (post_agg(e, &groups, &mut all_aggs), *d)).collect();
+        let order2: Vec<(Expr, bool)> = order
+            .iter()
+            .map(|(e, d)| (post_agg(e, &groups, &mut all_aggs), *d))
+            .collect();
         proj = proj2;
         having = having2;
         order = order2;
-        agg_plan = Some(AggPlan { group: groups, aggs: all_aggs });
+        agg_plan = Some(AggPlan {
+            group: groups,
+            aggs: all_aggs,
+        });
     } else if having.is_some() {
         // HAVING without aggregation behaves like WHERE on the projection
     }
@@ -1124,9 +1289,10 @@ fn resolve_alias_or_position(
     if let A::Expr::Value(v) = e {
         if let A::Value::Number(n, _) = &v.value {
             let pos: usize = n.parse().map_err(|_| SqlError::parse("bad ORDER BY position"))?;
-            return proj.get(pos.wrapping_sub(1)).cloned().ok_or_else(|| {
-                SqlError::new(1054, "42S22", format!("Unknown column '{}' in 'order clause'", pos))
-            });
+            return proj
+                .get(pos.wrapping_sub(1))
+                .cloned()
+                .ok_or_else(|| SqlError::new(1054, "42S22", format!("Unknown column '{}' in 'order clause'", pos)));
         }
     }
     if let A::Expr::Identifier(i) = e {
@@ -1174,7 +1340,12 @@ fn subst_aliases(e: &A::Expr, items: &[A::SelectItem], b: &Binder) -> A::Expr {
     e
 }
 
-fn build_source(scope: &Scope, joins: &[(JoinKind, Option<A::Expr>)], on: &[Option<Expr>], conj: &[Expr]) -> SqlResult<Source> {
+fn build_source(
+    scope: &Scope,
+    joins: &[(JoinKind, Option<A::Expr>)],
+    on: &[Option<Expr>],
+    conj: &[Expr],
+) -> SqlResult<Source> {
     if scope.tables.is_empty() {
         return Ok(Source::Dual);
     }
@@ -1200,7 +1371,13 @@ fn build_source(scope: &Scope, joins: &[(JoinKind, Option<A::Expr>)], on: &[Opti
         let path = choose_path(&t.table, t.offset, &cands);
         src = Source::Join {
             left: Box::new(src),
-            right: TableAccess { table: t.table.clone(), alias: t.alias.clone(), path, offset: t.offset, limit: None },
+            right: TableAccess {
+                table: t.table.clone(),
+                alias: t.alias.clone(),
+                path,
+                offset: t.offset,
+                limit: None,
+            },
             kind,
             on: on_e,
         };
@@ -1213,7 +1390,13 @@ fn build_source(scope: &Scope, joins: &[(JoinKind, Option<A::Expr>)], on: &[Opti
 // ---------------------------------------------------------------------------
 
 fn single_table_scope(table: Arc<TableDef>, alias: Option<String>) -> Scope {
-    Scope { tables: vec![ScopeTable { alias: alias.unwrap_or_else(|| table.name.clone()), table, offset: 0 }] }
+    Scope {
+        tables: vec![ScopeTable {
+            alias: alias.unwrap_or_else(|| table.name.clone()),
+            table,
+            offset: 0,
+        }],
+    }
 }
 
 fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
@@ -1243,7 +1426,11 @@ fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
                 for r in &v.rows {
                     let vals = &r.content;
                     if vals.len() != targets.len() {
-                        return Err(SqlError::new(1136, "21S01", "Column count doesn't match value count at row 1"));
+                        return Err(SqlError::new(
+                            1136,
+                            "21S01",
+                            "Column count doesn't match value count at row 1",
+                        ));
                     }
                     let mut row: Vec<Option<Expr>> = vec![None; ncols];
                     for (k, e) in vals.iter().enumerate() {
@@ -1257,7 +1444,11 @@ fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
             _ => {
                 let sp = plan_query(q, ctx)?;
                 if sp.project.len() != targets.len() {
-                    return Err(SqlError::new(1136, "21S01", "Column count doesn't match value count at row 1"));
+                    return Err(SqlError::new(
+                        1136,
+                        "21S01",
+                        "Column count doesn't match value count at row 1",
+                    ));
                 }
                 InsertSource::Select(Box::new(sp), targets.clone())
             }
@@ -1279,13 +1470,24 @@ fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
     let mut on_dup = Vec::new();
     if let Some(A::OnInsert::DuplicateKeyUpdate(assigns)) = &ins.on {
         let scope = single_table_scope(table.clone(), None);
-        let mut b = Binder { scope: &scope, ctx, aggs: None, values_offset: Some(ncols) };
+        let mut b = Binder {
+            scope: &scope,
+            ctx,
+            aggs: None,
+            values_offset: Some(ncols),
+        };
         for a in assigns {
             let c = assignment_col(&table, &a.target)?;
             on_dup.push((c, b.bind(&a.value)?));
         }
     }
-    Ok(InsertPlan { table, source, replace: ins.replace_into, ignore: ins.ignore, on_dup })
+    Ok(InsertPlan {
+        table,
+        source,
+        replace: ins.replace_into,
+        ignore: ins.ignore,
+        on_dup,
+    })
 }
 
 fn assignment_col(table: &TableDef, t: &A::AssignmentTarget) -> SqlResult<usize> {
@@ -1299,7 +1501,9 @@ fn assignment_col(table: &TableDef, t: &A::AssignmentTarget) -> SqlResult<usize>
 }
 
 fn order_by_list(list: &[A::OrderByExpr], b: &mut Binder) -> SqlResult<Vec<(Expr, bool)>> {
-    list.iter().map(|o| Ok((b.bind(&o.expr)?, matches!(o.options.sort, Some(A::OrderBySort::Desc))))).collect()
+    list.iter()
+        .map(|o| Ok((b.bind(&o.expr)?, matches!(o.options.sort, Some(A::OrderBySort::Desc)))))
+        .collect()
 }
 
 fn plan_update(u: &A::Update, ctx: &PlanCtx) -> SqlResult<UpdatePlan> {
@@ -1328,7 +1532,13 @@ fn plan_update(u: &A::Update, ctx: &PlanCtx) -> SqlResult<UpdatePlan> {
     };
     let path = choose_path(&table, 0, &conj);
     Ok(UpdatePlan {
-        access: TableAccess { table: table.clone(), alias: alias.unwrap_or_else(|| table.name.clone()), path, offset: 0, limit: None },
+        access: TableAccess {
+            table: table.clone(),
+            alias: alias.unwrap_or_else(|| table.name.clone()),
+            path,
+            offset: 0,
+            limit: None,
+        },
         filter: join_and(conj),
         set,
         order,
@@ -1360,7 +1570,13 @@ fn plan_delete(d: &A::Delete, ctx: &PlanCtx) -> SqlResult<DeletePlan> {
     };
     let path = choose_path(&table, 0, &conj);
     Ok(DeletePlan {
-        access: TableAccess { table: table.clone(), alias: alias.unwrap_or_else(|| table.name.clone()), path, offset: 0, limit: None },
+        access: TableAccess {
+            table: table.clone(),
+            alias: alias.unwrap_or_else(|| table.name.clone()),
+            path,
+            offset: 0,
+            limit: None,
+        },
         filter: join_and(conj),
         order,
         limit,
@@ -1400,7 +1616,10 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
                             other => other.to_string(),
                         })
                     }
-                    A::Expr::UnaryOp { op: A::UnaryOperator::Minus, expr } => default = Some(format!("-{}", expr)),
+                    A::Expr::UnaryOp {
+                        op: A::UnaryOperator::Minus,
+                        expr,
+                    } => default = Some(format!("-{}", expr)),
                     other => {
                         let s = other.to_string().to_ascii_uppercase();
                         if s.starts_with("CURRENT_TIMESTAMP") || s.starts_with("NOW") {
@@ -1414,20 +1633,32 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
                     pk = Some(vec![i]);
                     nullable = false;
                 }
-                A::ColumnOption::Unique(_) => secondary.push((format!("{}", c.name.value), vec![i], true)),
+                A::ColumnOption::Unique(_) => secondary.push((c.name.value.to_string(), vec![i], true)),
                 A::ColumnOption::DialectSpecific(toks) => {
-                    let s: String = toks.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" ").to_ascii_uppercase();
+                    let s: String = toks
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_ascii_uppercase();
                     if s.contains("AUTO_INCREMENT") {
                         ai = true;
                     }
                 }
-                A::ColumnOption::Comment(_) | A::ColumnOption::CharacterSet(_) | A::ColumnOption::Collation(_) | A::ColumnOption::OnUpdate(_) => {}
+                A::ColumnOption::Comment(_)
+                | A::ColumnOption::CharacterSet(_)
+                | A::ColumnOption::Collation(_)
+                | A::ColumnOption::OnUpdate(_) => {}
                 other => return Err(SqlError::unsupported(format!("column option {}", other))),
             }
         }
         if ai {
             if !ty.is_integer() {
-                return Err(SqlError::new(1063, "42000", format!("Incorrect column specifier for column '{}'", c.name.value)));
+                return Err(SqlError::new(
+                    1063,
+                    "42000",
+                    format!("Incorrect column specifier for column '{}'", c.name.value),
+                ));
             }
             auto_inc = Some(i);
         }
@@ -1442,9 +1673,9 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
         });
     }
     let col_ix = |n: &str, cols: &[ColumnDef]| -> SqlResult<usize> {
-        cols.iter().position(|c| c.name.eq_ignore_ascii_case(n)).ok_or_else(|| {
-            SqlError::new(1072, "42000", format!("Key column '{}' doesn't exist in table", n))
-        })
+        cols.iter()
+            .position(|c| c.name.eq_ignore_ascii_case(n))
+            .ok_or_else(|| SqlError::new(1072, "42000", format!("Key column '{}' doesn't exist in table", n)))
     };
     let index_cols = |list: &[A::IndexColumn], cols: &[ColumnDef]| -> SqlResult<Vec<usize>> {
         list.iter()
@@ -1459,11 +1690,20 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
         match con {
             A::TableConstraint::PrimaryKey(p) => pk = Some(index_cols(&p.columns, &columns)?),
             A::TableConstraint::Unique(u) => {
-                let name = u.name.as_ref().or(u.index_name.as_ref()).map(|n| n.value.clone()).unwrap_or_else(|| format!("uniq_{}", secondary.len()));
+                let name = u
+                    .name
+                    .as_ref()
+                    .or(u.index_name.as_ref())
+                    .map(|n| n.value.clone())
+                    .unwrap_or_else(|| format!("uniq_{}", secondary.len()));
                 secondary.push((name, index_cols(&u.columns, &columns)?, true));
             }
             A::TableConstraint::Index(ix) => {
-                let name = ix.name.as_ref().map(|n| n.value.clone()).unwrap_or_else(|| format!("idx_{}", secondary.len()));
+                let name = ix
+                    .name
+                    .as_ref()
+                    .map(|n| n.value.clone())
+                    .unwrap_or_else(|| format!("idx_{}", secondary.len()));
                 secondary.push((name, index_cols(&ix.columns, &columns)?, false));
             }
             A::TableConstraint::ForeignKey(_) | A::TableConstraint::Check(_) => {} // accepted, not enforced
@@ -1474,17 +1714,42 @@ fn plan_create_table(ct: &A::CreateTable, partition_key: Option<Vec<String>>, ct
     for &c in &pk {
         columns[c].nullable = false;
     }
-    let mut indexes = vec![IndexDef { name: "PRIMARY".into(), id: 0, cols: pk.clone(), unique: true }];
+    let mut indexes = vec![IndexDef {
+        name: "PRIMARY".into(),
+        id: 0,
+        cols: pk.clone(),
+        unique: true,
+    }];
     for (i, (n, cols, unique)) in secondary.into_iter().enumerate() {
-        indexes.push(IndexDef { name: n, id: (i + 1) as u32, cols, unique });
+        indexes.push(IndexDef {
+            name: n,
+            id: (i + 1) as u32,
+            cols,
+            unique,
+        });
     }
     let shard_key = match partition_key {
-        Some(names) => names.iter().map(|n| col_ix(n, &columns)).collect::<SqlResult<Vec<_>>>()?,
+        Some(names) => names
+            .iter()
+            .map(|n| col_ix(n, &columns))
+            .collect::<SqlResult<Vec<_>>>()?,
         None => pk.clone(),
     };
-    let def = TableDef { db, name, space_id: 0, columns, indexes, shard_key, auto_inc, comment: String::new() };
+    let def = TableDef {
+        db,
+        name,
+        space_id: 0,
+        columns,
+        indexes,
+        shard_key,
+        auto_inc,
+        comment: String::new(),
+    };
     catalog::validate(&def)?;
-    Ok(Stmt::CreateTable { def, if_not_exists: ct.if_not_exists })
+    Ok(Stmt::CreateTable {
+        def,
+        if_not_exists: ct.if_not_exists,
+    })
 }
 
 #[cfg(test)]
@@ -1496,8 +1761,14 @@ mod tests {
         let ct = "CREATE TABLE sbtest1 (id INTEGER NOT NULL AUTO_INCREMENT, k INTEGER DEFAULT '0' NOT NULL, \
                   c CHAR(120) DEFAULT '' NOT NULL, pad CHAR(60) DEFAULT '' NOT NULL, PRIMARY KEY (id), KEY k_1 (k))";
         let c0 = Catalog::default();
-        let ctx = PlanCtx { catalog: &c0, db: Some("sbtest"), params: &[] };
-        let Stmt::CreateTable { mut def, .. } = plan(ct, &ctx).unwrap() else { panic!() };
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("sbtest"),
+            params: &[],
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(ct, &ctx).unwrap() else {
+            panic!()
+        };
         def.space_id = 512;
         Catalog::new(1, vec!["sbtest".into()], vec![def])
     }
@@ -1505,7 +1776,11 @@ mod tests {
     fn plan_sel(sql: &str) -> SelectPlan {
         let cat = catalog();
         let n = normalize(sql, Mode::Literals).unwrap();
-        let ctx = PlanCtx { catalog: &cat, db: Some("sbtest"), params: &n.params };
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("sbtest"),
+            params: &n.params,
+        };
         match plan(&n.template, &ctx).unwrap() {
             Stmt::Select(s) => (*s).clone(),
             _ => panic!(),
@@ -1536,7 +1811,15 @@ mod tests {
     fn range_and_agg() {
         let p = plan_sel("SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 1 AND 100");
         match &p.source {
-            Source::Table(t) => assert!(matches!(&t.path, AccessPath::Range { index: 0, lo: Some(_), hi: Some(_), .. })),
+            Source::Table(t) => assert!(matches!(
+                &t.path,
+                AccessPath::Range {
+                    index: 0,
+                    lo: Some(_),
+                    hi: Some(_),
+                    ..
+                }
+            )),
             _ => panic!(),
         }
         assert!(p.agg.is_some());
@@ -1557,11 +1840,17 @@ mod tests {
 
     #[test]
     fn partition_by_key() {
-        let (sql, key) = extract_partition_by_key("CREATE TABLE o (shop_id INT, id INT, PRIMARY KEY (shop_id, id)) PARTITION BY KEY (shop_id) PARTITIONS 16");
+        let (sql, key) = extract_partition_by_key(
+            "CREATE TABLE o (shop_id INT, id INT, PRIMARY KEY (shop_id, id)) PARTITION BY KEY (shop_id) PARTITIONS 16",
+        );
         assert_eq!(key, Some(vec!["shop_id".to_string()]));
         assert!(!sql.to_uppercase().contains("PARTITION"));
         let c0 = Catalog::default();
-        let ctx = PlanCtx { catalog: &c0, db: Some("d"), params: &[] };
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+        };
         let bad = "CREATE TABLE o (shop_id INT, id INT, email VARCHAR(10), PRIMARY KEY (shop_id, id), UNIQUE KEY (email)) PARTITION BY KEY (shop_id)";
         assert!(plan(bad, &ctx).is_err());
     }

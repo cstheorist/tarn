@@ -146,7 +146,7 @@ about 2 aborts per 100 committed `read_write` transactions at 16 threads and
 READ; InnoDB's SERIALIZABLE (lock-based) performs like its REPEATABLE READ at
 this low contention and rarely aborts.
 
-**Another host.** The sandbox moved to a different host during the project.
+**Another host.** The development VM moved to a different host during the project.
 The same matrix on the first host (Intel Xeon @ 2.30 GHz, previous code
 without the review fixes) gave MariaDB 84k, MySQL 62k and Tarn 42k/55k
 point-select QPS, and Tarn's single-row writes were roughly level with MySQL
@@ -158,7 +158,7 @@ between Tarn and MySQL on single-row statements depends on the machine.
 **The lock index fix.** The first full run (on the first host) exposed a
 performance bug: lock checks read the lock spaces inside transactions, so
 concurrent PREPAREs that locked *different* rows conflicted through MVCC
-(DESIGN.md §2.5). `oltp_read_write` then collapsed under concurrency:
+([design §2.5](../docs/design.md#25-the-lock-index-correct-but-slow-found-by-benchmarking)). `oltp_read_write` then collapsed under concurrency:
 
 | oltp_read_write, Tarn 2 shards | 1 thread | 16 threads | 64 threads |
 |---|---:|---:|---:|
@@ -167,7 +167,7 @@ concurrent PREPAREs that locked *different* rows conflicted through MVCC
 
 ## Comparison with published TiDB and YugabyteDB results
 
-TiDB and YugabyteDB cannot run in this sandbox, so the only comparison
+TiDB and YugabyteDB could not be run on the development VM, so the only comparison
 available is with their published sysbench results, normalized per vCPU of
 database servers. This is an indication, not a head-to-head benchmark: the
 published runs use real networks, 3-way replication, TLS (YugabyteDB),

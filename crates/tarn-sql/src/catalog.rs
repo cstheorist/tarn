@@ -121,9 +121,21 @@ impl TableDef {
                     (col.name.clone(), col.ty().tarantool_type().to_string(), col.nullable)
                 })
                 .collect();
-            indexes.push((if idx.id == 0 { "primary".to_string() } else { idx.name.clone() }, idx.unique, parts));
+            indexes.push((
+                if idx.id == 0 {
+                    "primary".to_string()
+                } else {
+                    idx.name.clone()
+                },
+                idx.unique,
+                parts,
+            ));
         }
-        indexes.push((BUCKET_FIELD.to_string(), false, vec![(BUCKET_FIELD.to_string(), "unsigned".to_string(), false)]));
+        indexes.push((
+            BUCKET_FIELD.to_string(),
+            false,
+            vec![(BUCKET_FIELD.to_string(), "unsigned".to_string(), false)],
+        ));
         LuaDef {
             name: self.space_name(),
             id: self.space_id,
@@ -163,13 +175,24 @@ impl Catalog {
         for d in defs {
             tables.insert((d.db.to_ascii_lowercase(), d.name.to_ascii_lowercase()), Arc::new(d));
         }
-        Catalog { version, databases, tables }
+        Catalog {
+            version,
+            databases,
+            tables,
+        }
     }
     pub fn get(&self, db: &str, table: &str) -> Option<Arc<TableDef>> {
-        self.tables.get(&(db.to_ascii_lowercase(), table.to_ascii_lowercase())).cloned()
+        self.tables
+            .get(&(db.to_ascii_lowercase(), table.to_ascii_lowercase()))
+            .cloned()
     }
     pub fn tables_in(&self, db: &str) -> Vec<Arc<TableDef>> {
-        let mut v: Vec<_> = self.tables.values().filter(|t| t.db.eq_ignore_ascii_case(db)).cloned().collect();
+        let mut v: Vec<_> = self
+            .tables
+            .values()
+            .filter(|t| t.db.eq_ignore_ascii_case(db))
+            .cloned()
+            .collect();
         v.sort_by(|a, b| a.name.cmp(&b.name));
         v
     }
@@ -219,7 +242,10 @@ pub fn validate(def: &TableDef) -> SqlResult<()> {
             return Err(SqlError::new(
                 1503,
                 "HY000",
-                format!("A UNIQUE INDEX must include all columns in the table's partitioning function ({})", idx.name),
+                format!(
+                    "A UNIQUE INDEX must include all columns in the table's partitioning function ({})",
+                    idx.name
+                ),
             ));
         }
     }

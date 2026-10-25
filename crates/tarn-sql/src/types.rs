@@ -43,7 +43,12 @@ pub struct SqlType {
 
 impl SqlType {
     pub fn new(base: BaseType) -> SqlType {
-        SqlType { base, unsigned: false, len: None, scale: None }
+        SqlType {
+            base,
+            unsigned: false,
+            len: None,
+            scale: None,
+        }
     }
 
     /// Parse a MySQL type as rendered by sqlparser, e.g. "INT(11) UNSIGNED",
@@ -51,7 +56,7 @@ impl SqlType {
     pub fn parse(text: &str) -> SqlResult<SqlType> {
         let up = text.trim().to_ascii_uppercase();
         let unsigned = up.contains("UNSIGNED");
-        let name_end = up.find(|c: char| c == '(' || c == ' ').unwrap_or(up.len());
+        let name_end = up.find(['(', ' ']).unwrap_or(up.len());
         let name = &up[..name_end];
         let (mut len, mut scale) = (None, None);
         if let (Some(a), Some(b)) = (up.find('('), up.find(')')) {
@@ -93,9 +98,19 @@ impl SqlType {
             other => return Err(SqlError::unsupported(format!("column type {}", other))),
         };
         if name == "SERIAL" {
-            return Ok(SqlType { base, unsigned: true, len, scale });
+            return Ok(SqlType {
+                base,
+                unsigned: true,
+                len,
+                scale,
+            });
         }
-        Ok(SqlType { base, unsigned, len, scale })
+        Ok(SqlType {
+            base,
+            unsigned,
+            len,
+            scale,
+        })
     }
 
     pub fn is_integer(&self) -> bool {
@@ -185,9 +200,7 @@ impl SqlType {
         let mut c = Column::new(name, self.column_type());
         c.table = table.to_string();
         c.length = match self.base {
-            BaseType::Char | BaseType::VarChar | BaseType::Binary | BaseType::VarBinary => {
-                self.len.unwrap_or(255) * 4
-            }
+            BaseType::Char | BaseType::VarChar | BaseType::Binary | BaseType::VarBinary => self.len.unwrap_or(255) * 4,
             BaseType::Decimal => self.len.unwrap_or(10) + 2,
             _ => c.length,
         };
@@ -218,7 +231,11 @@ impl SqlType {
         }
         let shown = v.to_string();
         let bad = |what: &str| {
-            SqlError::new(1366, "HY000", format!("Incorrect {} value: '{}' for column '{}'", what, shown, col))
+            SqlError::new(
+                1366,
+                "HY000",
+                format!("Incorrect {} value: '{}' for column '{}'", what, shown, col),
+            )
         };
         use BaseType::*;
         match self.base {
@@ -248,7 +265,11 @@ impl SqlType {
                         format!("Out of range value for column '{}' at row 1", col),
                     ));
                 }
-                Ok(if self.unsigned { Value::UInt(i as u64) } else { Value::Int(i as i64) })
+                Ok(if self.unsigned {
+                    Value::UInt(i as u64)
+                } else {
+                    Value::Int(i as i64)
+                })
             }
             Float | Double => match &v {
                 Value::Str(b) | Value::Bin(b) => std::str::from_utf8(b)
@@ -274,7 +295,9 @@ impl SqlType {
                     }
                     Value::Null => unreachable!(),
                 };
-                Ok(Value::Decimal(rescale_decimal(&s, scale).ok_or_else(|| bad("decimal"))?))
+                Ok(Value::Decimal(
+                    rescale_decimal(&s, scale).ok_or_else(|| bad("decimal"))?,
+                ))
             }
             Binary | VarBinary | Blob => Ok(match v {
                 Value::Str(b) | Value::Bin(b) => Value::Bin(b),
@@ -301,7 +324,9 @@ impl SqlType {
                     }
                 }
                 let b = match self.base {
-                    Date | DateTime | Timestamp => normalize_datetime(&b, self.base == Date).ok_or_else(|| bad("datetime"))?,
+                    Date | DateTime | Timestamp => {
+                        normalize_datetime(&b, self.base == Date).ok_or_else(|| bad("datetime"))?
+                    }
                     _ => b,
                 };
                 Ok(Value::Str(b))
@@ -375,7 +400,11 @@ pub fn rescale_decimal(s: &str, scale: u32) -> Option<String> {
     let int_len = all.len() - scale;
     let mut ints = String::from_utf8(all[..int_len].to_vec()).ok()?;
     let trimmed = ints.trim_start_matches('0');
-    ints = if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() };
+    ints = if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    };
     let fracs = String::from_utf8(all[int_len..].to_vec()).ok()?;
     let zero = ints == "0" && fracs.chars().all(|c| c == '0');
     let mut out = String::new();
@@ -695,9 +724,18 @@ mod tests {
 
     #[test]
     fn arithmetic() {
-        assert_eq!(arith(Arith::Div, &Value::Int(1), &Value::Int(3)).unwrap(), Value::Decimal("0.3333".into()));
-        assert_eq!(arith(Arith::Div, &Value::Int(-2), &Value::Int(3)).unwrap(), Value::Decimal("-0.6667".into()));
-        assert_eq!(arith(Arith::Add, &Value::Int(2), &Value::Int(3)).unwrap(), Value::Int(5));
+        assert_eq!(
+            arith(Arith::Div, &Value::Int(1), &Value::Int(3)).unwrap(),
+            Value::Decimal("0.3333".into())
+        );
+        assert_eq!(
+            arith(Arith::Div, &Value::Int(-2), &Value::Int(3)).unwrap(),
+            Value::Decimal("-0.6667".into())
+        );
+        assert_eq!(
+            arith(Arith::Add, &Value::Int(2), &Value::Int(3)).unwrap(),
+            Value::Int(5)
+        );
         assert!(arith(Arith::Mul, &Value::Int(i64::MAX), &Value::Int(2)).is_err());
         assert_eq!(arith(Arith::Div, &Value::Int(1), &Value::Int(0)).unwrap(), Value::Null);
     }
@@ -707,7 +745,10 @@ mod tests {
         assert_eq!(compare(&Value::Int(10), &Value::str("9")), Some(Ordering::Greater));
         assert_eq!(compare(&Value::str("10"), &Value::str("9")), Some(Ordering::Less));
         assert_eq!(compare(&Value::Null, &Value::Int(1)), None);
-        assert_eq!(compare(&Value::UInt(u64::MAX), &Value::Int(-1)), Some(Ordering::Greater));
+        assert_eq!(
+            compare(&Value::UInt(u64::MAX), &Value::Int(-1)),
+            Some(Ordering::Greater)
+        );
     }
 
     #[test]
@@ -720,6 +761,9 @@ mod tests {
         let t = SqlType::parse("VARCHAR(3)").unwrap();
         assert!(t.coerce(Value::str("abcd"), "c").is_err());
         let t = SqlType::parse("DATETIME").unwrap();
-        assert_eq!(t.coerce(Value::str("2024-01-02"), "c").unwrap(), Value::str("2024-01-02 00:00:00"));
+        assert_eq!(
+            t.coerce(Value::str("2024-01-02"), "c").unwrap(),
+            Value::str("2024-01-02 00:00:00")
+        );
     }
 }

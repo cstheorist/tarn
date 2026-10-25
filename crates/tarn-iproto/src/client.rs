@@ -26,8 +26,8 @@ use base64::Engine as _;
 use bytes::{Buf, Bytes, BytesMut};
 use parking_lot::Mutex;
 use sha1::{Digest, Sha1};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{oneshot, Notify};
 use tokio::task::AbortHandle;
@@ -78,9 +78,15 @@ struct Reply {
 impl Reply {
     fn into_response(self) -> Result<Response, Error> {
         if self.rtype & iproto::TYPE_ERROR != 0 {
-            Err(Error::Server { code: self.rtype & 0x7fff, message: error_message(&self.body) })
+            Err(Error::Server {
+                code: self.rtype & 0x7fff,
+                message: error_message(&self.body),
+            })
         } else {
-            Ok(Response { schema_version: self.schema_version, body: self.body })
+            Ok(Response {
+                schema_version: self.schema_version,
+                body: self.body,
+            })
         }
     }
 }
@@ -401,7 +407,12 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     }
     let hdr_len = pkt.len() - p.len();
     let body = pkt.slice(hdr_len..);
-    Ok(Some(Frame { rtype, sync, schema_version, body }))
+    Ok(Some(Frame {
+        rtype,
+        sync,
+        schema_version,
+        body,
+    }))
 }
 
 async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: R, mut buf: BytesMut) {
@@ -432,7 +443,11 @@ async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: R, mut b
                 }
             }
             for (tx, f) in ready.drain(..) {
-                let _ = tx.send(Reply { rtype: f.rtype, schema_version: f.schema_version, body: f.body });
+                let _ = tx.send(Reply {
+                    rtype: f.rtype,
+                    schema_version: f.schema_version,
+                    body: f.body,
+                });
             }
         }
         if buf.capacity() - buf.len() < READ_MIN_FREE {
@@ -486,7 +501,10 @@ async fn writer_task<W: AsyncWrite + Unpin>(shared: Arc<Shared>, mut wr: W) {
             break;
         }
         shared.counters.write_batches.fetch_add(1, Ordering::Relaxed);
-        shared.counters.bytes_written.fetch_add(buf.len() as u64, Ordering::Relaxed);
+        shared
+            .counters
+            .bytes_written
+            .fetch_add(buf.len() as u64, Ordering::Relaxed);
         buf.clear();
         if buf.capacity() > WRITE_RETAIN_MAX {
             buf = Vec::with_capacity(WRITE_INITIAL);
@@ -585,7 +603,10 @@ impl Client {
     async fn connect_inner(opts: &Opts) -> Result<Client, Error> {
         // "unix/:/path" (Tarantool's notation) or a bare absolute path
         // selects a Unix domain socket; anything else is host:port.
-        let unix_path = opts.addr.strip_prefix("unix/:").or_else(|| opts.addr.starts_with('/').then_some(opts.addr.as_str()));
+        let unix_path = opts
+            .addr
+            .strip_prefix("unix/:")
+            .or_else(|| opts.addr.starts_with('/').then_some(opts.addr.as_str()));
         if let Some(path) = unix_path {
             let (rd, wr) = UnixStream::connect(path).await?.into_split();
             return Self::start(opts, rd, wr).await;
@@ -647,9 +668,17 @@ impl Client {
             }
         }
 
-        let mut info = ServerInfo { version, auth_type: "chap-sha1".into(), ..Default::default() };
+        let mut info = ServerInfo {
+            version,
+            auth_type: "chap-sha1".into(),
+            ..Default::default()
+        };
         let id = id_reply.expect("loop exits only with an ID reply");
-        let id = Reply { rtype: id.rtype, schema_version: id.schema_version, body: id.body };
+        let id = Reply {
+            rtype: id.rtype,
+            schema_version: id.schema_version,
+            body: id.body,
+        };
         match id.into_response() {
             Ok(r) => parse_id_body(&r.body, &mut info)?,
             // Pre-2.10 servers do not know IPROTO_ID; carry on without
@@ -658,7 +687,12 @@ impl Client {
             Err(e) => return Err(e),
         }
         if let Some(a) = auth_reply {
-            Reply { rtype: a.rtype, schema_version: a.schema_version, body: a.body }.into_response()?;
+            Reply {
+                rtype: a.rtype,
+                schema_version: a.schema_version,
+                body: a.body,
+            }
+            .into_response()?;
         }
 
         let shared = Arc::new(Shared {
@@ -678,7 +712,13 @@ impl Client {
         let r = tokio::spawn(reader_task(shared.clone(), rd, buf));
         let w = tokio::spawn(writer_task(shared.clone(), wr));
         shared.tasks.lock().extend([r.abort_handle(), w.abort_handle()]);
-        Ok(Client { inner: Arc::new(Inner { shared, next_stream: AtomicU64::new(1), info }) })
+        Ok(Client {
+            inner: Arc::new(Inner {
+                shared,
+                next_stream: AtomicU64::new(1),
+                info,
+            }),
+        })
     }
 
     /// Handshake information (server version, protocol version, features).
@@ -770,7 +810,11 @@ impl Client {
         match rx.await {
             Ok(reply) => {
                 let r = reply.into_response();
-                if let Err(Error::Server { code: crate::ER_READONLY, .. }) = &r {
+                if let Err(Error::Server {
+                    code: crate::ER_READONLY,
+                    ..
+                }) = &r
+                {
                     self.inner.shared.stale.store(true, Ordering::Release);
                 }
                 r
@@ -782,7 +826,8 @@ impl Client {
     /// Send an arbitrary request. `body` is a pre-encoded MessagePack map
     /// (or empty for no body); `stream_id` 0 means no stream.
     pub async fn request(&self, req_type: u32, stream_id: u64, body: Bytes) -> Result<Response, Error> {
-        self.roundtrip(req_type, stream_id, |out| out.extend_from_slice(&body)).await
+        self.roundtrip(req_type, stream_id, |out| out.extend_from_slice(&body))
+            .await
     }
 
     pub async fn ping(&self) -> Result<(), Error> {

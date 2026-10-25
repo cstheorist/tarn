@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fill generated sections of DESIGN.md: <!-- TLC --> (model-checking table
+"""Fill generated sections of docs/design.md: <!-- TLC --> (model-checking table
 from tla/out) and <!-- BENCH --> (headline benchmark numbers)."""
 import csv
 import os
@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-design = os.path.join(ROOT, "DESIGN.md")
+design = os.path.join(ROOT, "docs", "design.md")
 tlc = subprocess.run([sys.executable, os.path.join(ROOT, "tla", "summarize.py")],
                      capture_output=True, text=True, check=True).stdout.strip()
 
@@ -46,4 +46,4 @@ md = open(design).read()
 md = re.sub(r"<!-- TLC -->.*?(?=\n### 5\.2)", "<!-- TLC -->\n" + tlc + "\n", md, flags=re.S)
 md = re.sub(r"<!-- BENCH -->.*?(?=\n## 6\.)", "<!-- BENCH -->\n" + bench + "\n", md, flags=re.S)
 open(design, "w").write(md)
-print("DESIGN.md updated")
+print("docs/design.md updated")
