@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Row-value comparisons `(a, b) < | <= | > | >= | <=> (x, y)`, with MySQL's
+  NULL semantics; a keyset cursor `(a, b) > (?, ?)` on an index reads from
+  the cursor instead of the whole index prefix. They failed with 1235
+  ([#40](https://github.com/cstheorist/tarn/issues/40)).
 - SQL-level prepared statements: `PREPARE name FROM 'text' | @var`,
   `EXECUTE name [USING @a, ...]`, `DEALLOCATE | DROP PREPARE name`. Every
   MySQL 8 dump runs them around its MyRocks bulk-load probes; they failed
