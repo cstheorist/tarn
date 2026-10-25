@@ -95,13 +95,15 @@ struct Args {
     node_id: u32,
     isolation: Option<String>,
     lock_wait_timeout: Option<f64>,
+    default_engine: Option<String>,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: tarn-server (--config FILE | --shard ADDR[,ADDR..] ...) [--listen HOST:PORT] \
          [--threads N] [--user NAME:PASSWORD]... [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N] \
-         [--isolation READ-COMMITTED|REPEATABLE-READ|SERIALIZABLE] [--lock-wait-timeout SECONDS]"
+         [--isolation READ-COMMITTED|REPEATABLE-READ|SERIALIZABLE] [--lock-wait-timeout SECONDS] \
+         [--default-engine memtx|vinyl]"
     );
     std::process::exit(2)
 }
@@ -119,6 +121,7 @@ fn parse_args() -> Args {
         node_id: std::process::id(),
         isolation: None,
         lock_wait_timeout: None,
+        default_engine: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -139,6 +142,7 @@ fn parse_args() -> Args {
             "--node-id" => a.node_id = val().parse().unwrap_or_else(|_| usage()),
             "--isolation" => a.isolation = Some(val()),
             "--lock-wait-timeout" => a.lock_wait_timeout = Some(val().parse().unwrap_or_else(|_| usage())),
+            "--default-engine" => a.default_engine = Some(val()),
             "-h" | "--help" => usage(),
             _ => {
                 eprintln!("unknown argument {arg}");
@@ -196,6 +200,12 @@ fn load_config(a: &Args) -> ClusterConfig {
     }
     if let Some(t) = a.lock_wait_timeout {
         cfg.lock_wait_timeout = t;
+    }
+    if let Some(e) = &a.default_engine {
+        cfg.default_engine = tarn_sql::catalog::Engine::parse(e).unwrap_or_else(|| {
+            eprintln!("--default-engine: memtx or vinyl, not {e}");
+            std::process::exit(2)
+        });
     }
     cfg
 }

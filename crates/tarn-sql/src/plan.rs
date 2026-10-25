@@ -201,6 +201,8 @@ pub enum Stmt {
         if_not_exists: bool,
         /// AUTO_INCREMENT = n table option: the first generated value.
         auto_increment: Option<u64>,
+        /// ENGINE = memtx | vinyl; None: the cluster's default engine.
+        engine: Option<crate::catalog::Engine>,
     },
     /// ALTER TABLE, RENAME TABLE (one plan per table), CREATE / DROP INDEX
     Alter(Vec<crate::alter::AlterPlan>),

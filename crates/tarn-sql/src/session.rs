@@ -2,7 +2,7 @@
 //! and implicit transactions, DML fast paths, SHOW/SET handling and DDL.
 
 use crate::admin::{self, Admin, Isolation, SetItem, VarScope};
-use crate::catalog::TableDef;
+use crate::catalog::{Engine, TableDef};
 use crate::cluster::{CachedPlan, Cluster};
 use crate::exec::{self, matching_rows, run_select, shard_of_row, ReadMode, NEED_TXN};
 use crate::expr::{now_string, EvalCtx, Expr};
@@ -126,9 +126,10 @@ impl StaleRetry {
                 Ok(Stale::Retry)
             }
             1146 | 1054 | 1049 => {
-                // The attempt met a catalog older than the shards': one that
-                // the background reload may already have replaced.
-                let newer = cluster.catalog().version > self.seen || cluster.refresh_if_newer().await?;
+                // The attempt was planned with catalog `seen`: when the
+                // shards' (or one another reload installed since) is newer,
+                // the statement runs again with it.
+                let newer = cluster.catalog().version > self.seen || cluster.catch_up(self.seen).await?;
                 if !newer {
                     return Ok(Stale::Done);
                 }
@@ -1853,7 +1854,12 @@ impl Session {
                 def,
                 if_not_exists,
                 auto_increment,
-            } => c.create_table((**def).clone(), *if_not_exists, *auto_increment).await?,
+                engine,
+            } => {
+                let mut def = (**def).clone();
+                def.engine = engine.unwrap_or(c.cfg.default_engine);
+                c.create_table(def, *if_not_exists, *auto_increment).await?
+            }
             Stmt::Alter(plans) => {
                 for p in plans {
                     c.alter_table(p, self.lock_wait_timeout).await?;
@@ -2170,14 +2176,26 @@ impl Session {
                     ("XA", ColumnType::VarString),
                     ("Savepoints", ColumnType::VarString),
                 ]),
-                vec![vec![
-                    Value::str("memtx"),
-                    Value::str("DEFAULT"),
-                    Value::str("Tarantool in-memory engine, sharded, serializable"),
-                    Value::str("YES"),
-                    Value::str("NO"),
-                    Value::str("NO"),
-                ]],
+                [
+                    (Engine::Memtx, "Tarantool in-memory engine, sharded"),
+                    (Engine::Vinyl, "Tarantool on-disk LSM engine, sharded"),
+                ]
+                .iter()
+                .map(|&(e, comment)| {
+                    vec![
+                        Value::str(e.name()),
+                        Value::str(if e == self.cluster.cfg.default_engine {
+                            "DEFAULT"
+                        } else {
+                            "YES"
+                        }),
+                        Value::str(comment),
+                        Value::str("YES"),
+                        Value::str("NO"),
+                        Value::str("YES"),
+                    ]
+                })
+                .collect(),
             ),
             Admin::ShowCollation => rows_out(
                 cols(&[
@@ -2240,7 +2258,7 @@ impl Session {
                     if like_ci(&t.name, &like) {
                         rows.push(vec![
                             Value::str(&t.name),
-                            Value::str("memtx"),
+                            Value::str(t.engine.name()),
                             Value::Int(10),
                             Value::str("Fixed"),
                             Value::Null,
@@ -2440,7 +2458,10 @@ fn show_create(t: &TableDef) -> String {
         .iter()
         .map(|&c| format!("`{}`", t.columns[c].name))
         .collect();
-    s.push_str("\n) ENGINE=memtx DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    s.push_str(&format!(
+        "\n) ENGINE={} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        t.engine.name()
+    ));
     if !t.comment.is_empty() {
         s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));
     }

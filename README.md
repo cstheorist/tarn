@@ -7,10 +7,10 @@
 [![Rust 1.98](https://img.shields.io/badge/rust-1.98-orange.svg)](rust-toolchain.toml)
 
 Tarn speaks the MySQL protocol, stores every SQL table as an ordinary
-sharded Tarantool space, and commits transactions that span shards with
-**strict serializability**. Because rows are plain Tarantool tuples,
-applications can also skip SQL entirely and read them as **key/value**, at
-in-memory speed.
+sharded Tarantool space -- in RAM (memtx) or on disk (vinyl) -- and commits
+transactions that span shards with **strict serializability**. Because rows
+are plain Tarantool tuples, applications can also skip SQL entirely and
+read them as **key/value**.
 
 > **Status: research prototype (v0.1).** The commit protocol is model-checked
 > and the core is tested hard, but Tarn lacks much of what production use
@@ -29,7 +29,8 @@ in-memory speed.
   refused by the shards and redone.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
-  sharded with vshard's bucket function.
+  sharded with vshard's bucket function and live in RAM (memtx) or, with
+  `ENGINE=vinyl`, on disk; one transaction may span both.
 * **Strictly serializable transactions** across shards: lock-aware reads,
   MVCC-validated single-shard commits, and a parallel-commit two-phase commit
   whose recovery survives coordinator crashes and leader failover.

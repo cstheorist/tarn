@@ -98,9 +98,19 @@ jobs:
       - name: Transaction tests
         run: ci/annotate.sh txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
       - name: READ COMMITTED tests
-        run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000
+        run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Schema changes and dumps
         run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+      - name: The same suites with vinyl tables, read from disk
+        run: |
+          scripts/cluster.sh stop
+          TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_CHECK_YIELDS=1 \
+            scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2 -e vinyl
+          ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
+          ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
+          ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+          if grep -h "yielded inside" /tmp/tarn-cluster/*.log; then echo "::error title=vinyl::an atomic section yielded"; exit 1; fi
       - name: Fault injection
         run: ci/annotate.sh faults tests/faults.sh
       - name: Failover (2 shards x 3 replicas)

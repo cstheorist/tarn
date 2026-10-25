@@ -106,6 +106,8 @@ pub enum AlterOp {
     },
     AutoIncrement(u64),
     Comment(String),
+    /// ENGINE = memtx | vinyl
+    Engine(crate::catalog::Engine),
     /// ADD / DROP PRIMARY KEY: the primary key decides where rows live
     PrimaryKey,
     /// Accepted without effect (ENGINE, ALGORITHM, LOCK, DISABLE KEYS, ...)
@@ -700,6 +702,18 @@ fn alteration(sql: &str, spec: &[Tok], ctx: &PlanCtx, out: &mut Vec<AlterOp>) ->
                 _ => return Err(c.syntax()),
             }
         }
+        "ENGINE" => {
+            c.i += 1;
+            c.eq();
+            let name = c.ident()?;
+            // memtx and vinyl name an engine; MySQL's own names (InnoDB,
+            // ...) are accepted without effect, as `ALTER TABLE t
+            // ENGINE=InnoDB` is MySQL's way to rebuild a table.
+            match crate::catalog::Engine::from_option(&name)? {
+                Some(e) => out.push(AlterOp::Engine(e)),
+                None => out.push(AlterOp::Ignored),
+            }
+        }
         "CONVERT" => {
             // CONVERT TO CHARACTER SET cs [COLLATE co]: text is utf8mb4
             let words: Vec<String> = spec
@@ -723,11 +737,11 @@ fn alteration(sql: &str, spec: &[Tok], ctx: &PlanCtx, out: &mut Vec<AlterOp>) ->
             }
             out.push(AlterOp::Ignored);
         }
-        "DEFAULT" | "CHARACTER" | "CHARSET" | "COLLATE" | "ENGINE" | "ROW_FORMAT" | "KEY_BLOCK_SIZE"
-        | "AVG_ROW_LENGTH" | "CHECKSUM" | "PAGE_CHECKSUM" | "COMPRESSION" | "DELAY_KEY_WRITE" | "ENCRYPTION"
-        | "INSERT_METHOD" | "MAX_ROWS" | "MIN_ROWS" | "PACK_KEYS" | "STATS_AUTO_RECALC" | "STATS_PERSISTENT"
-        | "STATS_SAMPLE_PAGES" | "TRANSACTIONAL" | "ALGORITHM" | "LOCK" | "FORCE" | "ORDER" | "DISABLE" | "ENABLE"
-        | "WITH" | "WITHOUT" | "TABLESPACE" => {
+        "DEFAULT" | "CHARACTER" | "CHARSET" | "COLLATE" | "ROW_FORMAT" | "KEY_BLOCK_SIZE" | "AVG_ROW_LENGTH"
+        | "CHECKSUM" | "PAGE_CHECKSUM" | "COMPRESSION" | "DELAY_KEY_WRITE" | "ENCRYPTION" | "INSERT_METHOD"
+        | "MAX_ROWS" | "MIN_ROWS" | "PACK_KEYS" | "STATS_AUTO_RECALC" | "STATS_PERSISTENT" | "STATS_SAMPLE_PAGES"
+        | "TRANSACTIONAL" | "ALGORITHM" | "LOCK" | "FORCE" | "ORDER" | "DISABLE" | "ENABLE" | "WITH" | "WITHOUT"
+        | "TABLESPACE" => {
             if (first == "DISABLE" || first == "ENABLE") && !c.peek_kw_at(1, "KEYS") {
                 return Err(SqlError::unsupported(format!("ALTER TABLE {}", span(sql, spec))));
             }
@@ -1562,6 +1576,15 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 nd.comment = c.clone();
                 changed = true;
             }
+            AlterOp::Engine(e) => {
+                if *e != nd.engine {
+                    return Err(SqlError::unsupported(format!(
+                        "moving a table from {} to {} (it would rewrite every row)",
+                        nd.engine.name(),
+                        e.name()
+                    )));
+                }
+            }
         }
     }
     if let Some(name) = became_auto_inc {
@@ -1718,9 +1741,10 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     };
     // The catalog entry, as tarn_create_table stores it.
     let ld = ch.def.lua_def();
-    m.str("def").map(6);
+    m.str("def").map(7);
     m.str("name").str(&ld.name);
     m.str("id").uint(ch.def.space_id as u64);
+    m.str("engine").str(ld.engine);
     m.str("format");
     format_list(&mut m, &ld.format);
     m.str("indexes").arr(ld.indexes.len());
@@ -2057,6 +2081,15 @@ mod tests {
         );
         let ch = alter(&def, &cat, "ALTER TABLE t ENGINE=InnoDB, DISABLE KEYS").unwrap();
         assert!(!ch.changed);
+        // The table's own engine is accepted; moving to the other one is not.
+        assert!(!alter(&def, &cat, "ALTER TABLE t ENGINE = memtx").unwrap().changed);
+        assert_eq!(alter(&def, &cat, "ALTER TABLE t ENGINE=vinyl").unwrap_err().code, 1235);
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("db"),
+            params: &[],
+        };
+        assert_eq!(plan("ALTER TABLE t ENGINE=Falcon", &ctx).unwrap_err().code, 1286);
     }
 
     #[test]

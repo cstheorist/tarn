@@ -66,10 +66,15 @@ servers write to it (`tests/sql/`).
 * `CREATE TABLE` with column types (below), `NOT NULL`, `DEFAULT`,
   `AUTO_INCREMENT`, `PRIMARY KEY`, `UNIQUE [KEY]`, `KEY` / `INDEX` (with
   `VISIBLE` / `INVISIBLE`), `FOREIGN KEY` (recorded, not enforced, below),
-  the table options `AUTO_INCREMENT = n` and `COMMENT`, and the shard key
-  clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the partition count is
-  ignored: rows are spread over the cluster's buckets). Other table options
-  (`ENGINE`, `CHARSET`, `ROW_FORMAT`, ...) are accepted and ignored.
+  the table options `AUTO_INCREMENT = n`, `COMMENT` and `ENGINE`, and the
+  shard key clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the
+  partition count is ignored: rows are spread over the cluster's buckets).
+  `ENGINE = memtx` keeps the table in RAM, `ENGINE = vinyl` on disk (an LSM
+  tree with a RAM cache, for data larger than RAM); `MEMORY` means memtx,
+  and the engines MySQL names (`InnoDB`, `MyISAM`, ...) mean the cluster's
+  default (`--default-engine`, memtx unless set); any other name fails with
+  1286. One transaction may span tables of both engines. Other table
+  options (`CHARSET`, `ROW_FORMAT`, ...) are accepted and ignored.
 * `ALTER TABLE`, online (below), `RENAME TABLE`, `CREATE [UNIQUE] INDEX`,
   `DROP INDEX ... ON`, `DROP TABLE`, `TRUNCATE TABLE`.
 * Every table needs a primary key, and every unique key must include the
@@ -103,7 +108,8 @@ left half done is finished by the next schema change or server start.
 | `ADD [UNIQUE] INDEX / KEY`, `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062 |
 | `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
 | `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
-| `ENGINE`, `[DEFAULT] CHARSET`, `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS`, `CHECK` constraints | accepted and ignored |
+| `ENGINE` | the table's own engine, or one MySQL names (`InnoDB`, ...): accepted and ignored; moving a table between memtx and vinyl rewrites every row: refused (1235) |
+| `[DEFAULT] CHARSET`, `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS`, `CHECK` constraints | accepted and ignored |
 | Not supported (1235) | conversions that need every row rewritten (`INT` to `VARCHAR`, a different `DECIMAL` scale, `VARCHAR` to `DATETIME`), changing or dropping the primary key, `FULLTEXT` / `SPATIAL` indexes, partition maintenance, invisible columns |
 
 #### Loading dumps
