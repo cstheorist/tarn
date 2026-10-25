@@ -25,6 +25,8 @@ SCHEMA = [
     "CREATE TABLE t3 (k1 INT, k2 VARCHAR(10), v INT, PRIMARY KEY (k1, k2))",
     "CREATE TABLE ai (id BIGINT AUTO_INCREMENT PRIMARY KEY, v VARCHAR(10))",
     "CREATE TABLE u (id INT PRIMARY KEY, email VARCHAR(40), n INT, UNIQUE KEY ue (email, id))",
+    "CREATE TABLE sgn (id BIGINT PRIMARY KEY, n BIGINT NOT NULL, u BIGINT UNSIGNED NOT NULL, i INT NOT NULL, "
+    "ui INT UNSIGNED NOT NULL DEFAULT 0)",
 ]
 
 
@@ -43,6 +45,8 @@ def seed():
     s.append("INSERT INTO t2 (id, t1_id, name, qty) VALUES " + ", ".join(rows))
     rows = [f"({i % 6}, 'k{i}', {i * 10})" for i in range(1, 25)]
     s.append("INSERT INTO t3 VALUES " + ", ".join(rows))
+    s.append("INSERT INTO sgn (id, n, u, i) VALUES (1, 0, 0, 0), (2, 5, 5, 2147483647), "
+             "(3, -9223372036854775807, 18446744073709551615, -2147483648)")
     return s
 
 
@@ -165,6 +169,24 @@ CASES = [
     ("INSERT INTO u VALUES (1, 'c@x', 3)", "err"),
     ("UPDATE u SET n = n * 10", "dml:u"),
     ("TRUNCATE TABLE t2", "dml:t2"),
+    # integer arithmetic in UPDATE (issue #11): BIGINT / BIGINT UNSIGNED
+    # domains (1690) and column ranges (1264), single-row and multi-row
+    ("UPDATE sgn SET n = n - 1 WHERE id = 1", "dml:sgn"),
+    ("UPDATE sgn SET n = n - 10 WHERE id = 2", "dml:sgn"),
+    ("UPDATE sgn SET i = i + 1 WHERE id = 2", "err"),
+    ("UPDATE sgn SET i = i - 1 WHERE id = 3", "err"),
+    ("UPDATE sgn SET u = u - 1 WHERE id = 1", "err"),
+    ("UPDATE sgn SET ui = ui - 1 WHERE id = 1", "err"),
+    ("UPDATE sgn SET u = u + 1 WHERE id = 3", "err"),
+    ("UPDATE sgn SET n = n - 2 WHERE id = 3", "err"),
+    ("UPDATE sgn SET n = n - 1 WHERE id = 3", "dml:sgn"),
+    ("UPDATE sgn SET u = u - 5 WHERE id = 3", "dml:sgn"),
+    ("UPDATE sgn SET u = u - 1 WHERE id > 0", "err"),
+    ("UPDATE sgn SET ui = ui - 1 WHERE id > 1", "err"),
+    ("UPDATE sgn SET n = n + 1 WHERE id > 0", "dml:sgn"),
+    ("UPDATE sgn SET u = u + 10, ui = ui + 3 WHERE id = 2", "dml:sgn"),
+    ("SELECT u - 1 FROM sgn WHERE id = 1", "err"),
+    ("SELECT id, u + 0, u * 2, ui - 0, n - 1, i + 1 FROM sgn ORDER BY id", "q"),
 ]
 
 

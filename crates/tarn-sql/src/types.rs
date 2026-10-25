@@ -555,6 +555,35 @@ pub enum Arith {
     Div,
     IntDiv,
     Mod,
+    /// `+`, `-`, `*` with an unsigned integer operand: MySQL computes these
+    /// in BIGINT UNSIGNED and fails with 1690 when the result is negative.
+    UAdd,
+    USub,
+    UMul,
+}
+
+impl Arith {
+    /// The operation without the unsigned domain.
+    pub fn base(self) -> Arith {
+        match self {
+            Arith::UAdd => Arith::Add,
+            Arith::USub => Arith::Sub,
+            Arith::UMul => Arith::Mul,
+            o => o,
+        }
+    }
+    pub fn is_unsigned(self) -> bool {
+        matches!(self, Arith::UAdd | Arith::USub | Arith::UMul)
+    }
+    /// `self` in the unsigned domain (only `+`, `-` and `*` have one).
+    pub fn unsigned(self) -> Arith {
+        match self {
+            Arith::Add => Arith::UAdd,
+            Arith::Sub => Arith::USub,
+            Arith::Mul => Arith::UMul,
+            o => o,
+        }
+    }
 }
 
 /// MySQL arithmetic. Integer + - * stay integral (error on overflow), `/`
@@ -563,6 +592,25 @@ pub enum Arith {
 pub fn arith(op: Arith, a: &Value, b: &Value) -> SqlResult<Value> {
     if a.is_null() || b.is_null() {
         return Ok(Value::Null);
+    }
+    if op.is_unsigned() {
+        let int = |v: &Value| match v {
+            Value::Int(i) => Some(*i as i128),
+            Value::UInt(u) => Some(*u as i128),
+            _ => None,
+        };
+        if let (Some(x), Some(y)) = (int(a), int(b)) {
+            let r = match op.base() {
+                Arith::Add => Some(x + y),
+                Arith::Sub => Some(x - y),
+                _ => x.checked_mul(y),
+            };
+            return match r {
+                Some(r) if (0..=u64::MAX as i128).contains(&r) => Ok(Value::UInt(r as u64)),
+                _ => Err(SqlError::new(1690, "22003", "BIGINT UNSIGNED value is out of range")),
+            };
+        }
+        return arith(op.base(), a, b);
     }
     let ints = |v: &Value| -> Option<i128> {
         match v {
@@ -574,7 +622,7 @@ pub fn arith(op: Arith, a: &Value, b: &Value) -> SqlResult<Value> {
     let overflow = || SqlError::new(1690, "22003", "BIGINT value is out of range");
     if let (Some(x), Some(y)) = (ints(a), ints(b)) {
         let unsigned = matches!(a, Value::UInt(_)) || matches!(b, Value::UInt(_));
-        let r: i128 = match op {
+        let r: i128 = match op.base() {
             Arith::Add => x + y,
             Arith::Sub => x - y,
             Arith::Mul => x.checked_mul(y).ok_or_else(overflow)?,
@@ -600,6 +648,7 @@ pub fn arith(op: Arith, a: &Value, b: &Value) -> SqlResult<Value> {
                 let q = if q >= 0 { (q + 5) / 10 } else { (q - 5) / 10 };
                 return Ok(Value::Decimal(fmt_scaled(q, 4)));
             }
+            _ => unreachable!("base() is never unsigned"),
         };
         if unsigned && r >= 0 && r <= u64::MAX as i128 && r > i64::MAX as i128 {
             return Ok(Value::UInt(r as u64));
@@ -612,7 +661,7 @@ pub fn arith(op: Arith, a: &Value, b: &Value) -> SqlResult<Value> {
     let decimal_involved = matches!(a, Value::Decimal(_)) || matches!(b, Value::Decimal(_));
     let float_involved = matches!(a, Value::Float(_)) || matches!(b, Value::Float(_));
     let (x, y) = (to_num(a).unwrap_or(0.0), to_num(b).unwrap_or(0.0));
-    let r = match op {
+    let r = match op.base() {
         Arith::Add => x + y,
         Arith::Sub => x - y,
         Arith::Mul => x * y,
@@ -634,15 +683,16 @@ pub fn arith(op: Arith, a: &Value, b: &Value) -> SqlResult<Value> {
             }
             x % y
         }
+        _ => unreachable!("base() is never unsigned"),
     };
     if decimal_involved && !float_involved {
         let sa = dec_scale(a);
         let sb = dec_scale(b);
-        let scale = match op {
+        let scale = match op.base() {
             Arith::Add | Arith::Sub | Arith::Mod => sa.max(sb),
             Arith::Mul => sa + sb,
             Arith::Div => sa + 4,
-            Arith::IntDiv => 0,
+            _ => 0,
         };
         return Ok(Value::Decimal(format!("{:.*}", scale as usize, r)));
     }
@@ -737,6 +787,30 @@ mod tests {
             Value::Int(5)
         );
         assert!(arith(Arith::Mul, &Value::Int(i64::MAX), &Value::Int(2)).is_err());
+        // issue #11: signed results may be negative; unsigned ones may not
+        assert_eq!(
+            arith(Arith::Sub, &Value::UInt(0), &Value::Int(1)).unwrap(),
+            Value::Int(-1)
+        );
+        assert_eq!(
+            arith(Arith::USub, &Value::UInt(5), &Value::Int(1)).unwrap(),
+            Value::UInt(4)
+        );
+        assert_eq!(
+            arith(Arith::USub, &Value::UInt(0), &Value::Int(1)).unwrap_err().code,
+            1690
+        );
+        assert_eq!(
+            arith(Arith::UAdd, &Value::UInt(u64::MAX), &Value::Int(1))
+                .unwrap_err()
+                .code,
+            1690
+        );
+        assert_eq!(
+            arith(Arith::UAdd, &Value::UInt(i64::MAX as u64), &Value::Int(1)).unwrap(),
+            Value::UInt(i64::MAX as u64 + 1)
+        );
+        assert_eq!(arith(Arith::UMul, &Value::UInt(3), &Value::Null).unwrap(), Value::Null);
         assert_eq!(arith(Arith::Div, &Value::Int(1), &Value::Int(0)).unwrap(), Value::Null);
     }
 

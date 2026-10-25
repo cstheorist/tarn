@@ -15,6 +15,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scans no longer fail with "fiber slice is exceeded"
   ([#10](https://github.com/cstheorist/tarn/issues/10)).
 
+### Fixed
+
+- `UPDATE ... SET c = c - 1` failed with 1264 when a signed `BIGINT` result
+  was negative. Arithmetic on an unsigned integer now fails with 1690 below
+  zero and BIGINT overflow with 1690, as in MySQL
+  ([#11](https://github.com/cstheorist/tarn/issues/11)).
+
 ## [0.1.0] - 2026-10-25
 
 First public release: a research prototype.
