@@ -117,6 +117,7 @@ lua/test/run.sh
 
 # SQL tests against a running cluster (and MariaDB for the differential test)
 python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 2000
 python3 tests/sql/txntest.py  --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321
 tests/failover.sh                               # kills shard leaders under load
 ```
