@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
+  on any index, batched into one storage call per shard, and an `OR` across
+  indexes is a union of lookups (MySQL's `index_merge`); they used to scan
+  the whole table. Long scans inside transactions yield, and autocommit
+  scans no longer fail with "fiber slice is exceeded"
+  ([#10](https://github.com/cstheorist/tarn/issues/10)).
+
 ## [0.1.0] - 2026-10-25
 
 First public release: a research prototype.
