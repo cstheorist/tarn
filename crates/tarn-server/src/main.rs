@@ -40,8 +40,9 @@ fn convert(o: Output) -> QueryResult {
 }
 
 impl Backend for Conn {
-    async fn on_connect(&mut self, user: &str, database: Option<&str>) -> SqlResult<()> {
+    async fn on_connect(&mut self, user: &str, database: Option<&str>, found_rows: bool) -> SqlResult<()> {
         self.s.user = user.to_string();
+        self.s.found_rows_flag = found_rows;
         if let Some(db) = database {
             if !db.is_empty() {
                 self.s.use_db_fresh(db).await?;
