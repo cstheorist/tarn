@@ -841,7 +841,8 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   PREPARE (space ids are never reused), while a `TRUNCATE` that runs between
   a transaction's PREPARE and its APPLY leaves that transaction's rows in
   the table. Nor are they atomic across shards: when a shard cannot be
-  reached, the statement fails after the other shards have run it.
+  reached, the statement fails after the other shards have run it (issue
+  #30).
 * The bucket → shard map is static (no online resharding / bucket moves yet),
   so vshard compatibility is at the level of tuple layout and bucket hashing.
 * No TLS, no `COM_CHANGE_USER`; users and passwords come from the command
