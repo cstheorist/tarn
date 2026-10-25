@@ -182,6 +182,51 @@ class T:
             self.check(f"k_{i}" in keys, f"cd{i} has its index: {keys}")
             self.check(q(c, f"SELECT SUM(w) FROM cd{i}")[0][0] == 14, f"cd{i} has its column")
 
+    def test_fresh_tables(self):
+        """A table one server just created is usable through the other at
+        once, while schema changes on another table keep bumping the catalog
+        version (a statement meets the catalog it was planned with replaced
+        by a newer one: it must run again, not fail)."""
+        c = self.c()
+        q(c, "DROP TABLE IF EXISTS fr_churn")
+        q(c, "CREATE TABLE fr_churn (id INT PRIMARY KEY, v INT)")
+        stop = threading.Event()
+        churn_errors = []
+
+        def churn():
+            d = self.c()
+            k = 0
+            while not stop.is_set():
+                k += 1
+                try:
+                    q(d, f"ALTER TABLE fr_churn ADD COLUMN c{k} INT")
+                    q(d, f"ALTER TABLE fr_churn DROP COLUMN c{k}")
+                except pymysql.MySQLError as e:
+                    churn_errors.append(str(e))
+
+        t = threading.Thread(target=churn, daemon=True)
+        t.start()
+        a, b = self.c(0), self.c(1)
+        errors = []
+        try:
+            for i in range(100):
+                q(a, "DROP TABLE IF EXISTS fr")
+                q(a, "CREATE TABLE fr (id INT PRIMARY KEY, v INT)")
+                q(a, "INSERT INTO fr VALUES (1, 1)")
+                try:
+                    q(b, "SELECT * FROM fr WHERE id = 1")
+                    q(b, "BEGIN")
+                    q(b, "UPDATE fr SET v = v + 1 WHERE id = 1")
+                    q(b, "COMMIT")
+                except pymysql.MySQLError as e:
+                    errors.append(f"{i}: {e}")
+                    code(lambda: q(b, "ROLLBACK"))
+        finally:
+            stop.set()
+            t.join(30)
+        self.check(not errors, f"statements on a fresh table: {errors[:5]}")
+        self.check(not churn_errors, f"schema changes: {churn_errors[:5]}")
+
     def test_txn_across_alter(self):
         """A transaction that wrote a table cannot use a newer definition of
         it: rows in its write buffer are in the old column order. Its next

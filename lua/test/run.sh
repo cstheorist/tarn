@@ -9,7 +9,8 @@ PEERS="{\"1\":[\"tarn:tarn@127.0.0.1:$P1\"],\"2\":[\"tarn:tarn@127.0.0.1:$P2\"]}
 for i in 1 2; do
   port=$([ $i = 1 ] && echo $P1 || echo $P2)
   TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$port TARN_WORKDIR=$WORK/s$i TARN_PEERS="$PEERS" \
-  TARN_MEMORY_MB=256 TARN_LOG_LEVEL=4 $T "$DIR/storage.lua" > "$WORK/s$i.log" 2>&1 &
+  TARN_MEMORY_MB=256 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 \
+  $T "$DIR/storage.lua" > "$WORK/s$i.log" 2>&1 &
   echo $! > "$WORK/s$i.pid"
 done
 for p in $P1 $P2; do for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null && break; sleep 0.1; done; done

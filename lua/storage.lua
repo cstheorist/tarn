@@ -7,9 +7,14 @@
 --   TARN_REPLICAS      JSON list of all replica URIs of this shard ("" = single node)
 --   TARN_PEERS         JSON map shard_id -> [replica URIs] of every shard (for recovery)
 --   TARN_MEMORY_MB     memtx memory (default 1024)
+--   TARN_VINYL_MEMORY_MB  vinyl in-memory level of the LSM trees (default 128)
+--   TARN_VINYL_CACHE_MB   vinyl tuple cache (default 128)
 --   TARN_WAL_MODE      write | fsync | none (default write)
 --   TARN_IPROTO_THREADS (default 1)
 --   TARN_LISTEN_UNIX   optional Unix socket path to listen on as well
+--   TARN_CHECK_YIELDS, TARN_TEST_HOOKS  (tests) see lua/tarn.lua "Yields"
+--   TARN_DUMP_EVERY    (tests) checkpoint every N seconds, so that vinyl rows
+--                      go to disk and reads of them yield
 local json = require('json')
 local fio = require('fio')
 
@@ -41,6 +46,8 @@ box.cfg{
     work_dir = workdir,
     memtx_memory = tonumber(env('TARN_MEMORY_MB', '1024')) * 1024 * 1024,
     memtx_use_mvcc_engine = true,
+    vinyl_memory = tonumber(env('TARN_VINYL_MEMORY_MB', '128')) * 1024 * 1024,
+    vinyl_cache = tonumber(env('TARN_VINYL_CACHE_MB', '128')) * 1024 * 1024,
     -- Plain (direct) reads must never observe data that a failover could
     -- still roll back.
     txn_isolation = 'read-confirmed',
@@ -77,8 +84,23 @@ if replicated then
     end
 end
 
+if env('TARN_DUMP_EVERY', '') ~= '' then
+    local fiber = require('fiber')
+    local every = tonumber(env('TARN_DUMP_EVERY', '2'))
+    fiber.create(function()
+        while true do
+            fiber.sleep(every)
+            pcall(box.snapshot)
+        end
+    end)
+end
+
 require('tarn').init{
     shard_id = shard_id,
     peers = peers,
     sync = replicated,
+    -- Tests: fail a protocol step that yields inside its atomic section, and
+    -- let tests hold a step at its yield points (lua/tarn.lua "Yields").
+    check_yields = env('TARN_CHECK_YIELDS', '') ~= '',
+    test_hooks = env('TARN_TEST_HOOKS', '') ~= '',
 }

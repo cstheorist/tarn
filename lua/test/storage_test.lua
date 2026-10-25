@@ -575,5 +575,144 @@ check('two schema changes beginning at once: one runs, the other is told busy', 
 c[1]:call('tarn_ddl_end', {'o3'})
 c[1]:call('tarn_ddl_end', {'o4'})
 
+print('DROP TABLE under a prepared transaction')
+-- A table dropped between a transaction's PREPARE and its APPLY: the APPLY
+-- still lands the transaction's other writes and releases its locks (it
+-- used to fail on the missing space at every attempt, holding them).
+local gdef = table.deepcopy(def)
+gdef.name = 'test.gone'
+c[1]:call('tarn_create_table', {gdef})
+c[1]:reload_schema()
+local gsid = c[1].space['test.gone'].id
+r = prepare(1, 'XG', {{'replace', gsid, {1, 1, box.NULL, 1}}, {'replace', sid, {9001, 7, box.NULL, 1}}})
+check('a transaction prepared with writes to two tables', r[1] == 'yes', r)
+check('one of them dropped', c[1]:call('tarn_drop_table', {'test.gone'})[1] == 'ok')
+r = c[1]:call('tarn_apply', {'XG'})
+check('... APPLY lands the write to the other one', r[1] == 'ok' and bal(1, 9001) == 7, {r, bal(1, 9001)})
+check('... and releases the locks', c[1]:eval("return box.space._tarn_locks.index.txid:count{'XG'}") == 0)
+
+print('vinyl tables: commit steps that yield')
+-- A vinyl read can yield; tarn_test_hook holds a step at such a point
+-- (lua/tarn.lua "Yields") while another step runs. The storage instances run
+-- with TARN_CHECK_YIELDS: an atomic section that yields fails its step.
+local vfmt = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
+              {name = 'u', type = 'string', is_nullable = true}, {name = 'bucket_id', type = 'unsigned'}}
+local vidx = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+              {name = 'u', unique = true, parts = {{field = 'u', type = 'string', is_nullable = true}}},
+              {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}
+for i = 1, 2 do
+    c[i]:call('tarn_create_table', {{name = 'test.vy', engine = 'vinyl', format = vfmt, indexes = vidx}})
+end
+c[1]:reload_schema()
+local vsid = c[1].space['test.vy'].id
+check('a vinyl space', c[1]:eval('return box.space["test.vy"].engine') == 'vinyl')
+r = c[1]:call('tarn_autocommit', {{{'insert', vsid, {1, 10, box.NULL, 1}}, {'insert', vsid, {2, 20, box.NULL, 1}},
+                                   {'insert', vsid, {3, 30, box.NULL, 1}}}})
+check('autocommit into a vinyl table', r[1] == 'ok' and r[2] == 3, r)
+-- On disk, with no cache: reads now yield for real.
+c[1]:eval('box.snapshot() box.cfg{vinyl_cache = 0}')
+local function vget(id) local t = c[1]:eval('return box.space["test.vy"]:get{...}', {id}) return t and t[2] end
+local function hook(name, action) return c[1]:call('tarn_test_hook', {name, action}) end
+local function async(fn, args) return c[1]:call(fn, args, {is_async = true}) end
+local function result(f)
+    local ok, res, err = pcall(f.wait_result, f, 10)
+    if not ok then return {'raised', tostring(res)} end
+    if res == nil then return {'raised', tostring(err)} end
+    return res[1]
+end
+local function vprepare(txid, writes, stream)
+    return {'tarn_prepare', {txid, 1, {1}, writes, {}, {}, fiber.time()}}
+end
+
+-- Two PREPAREs of one row: the first, held after its read, finds the
+-- second's W lock in its atomic section and votes NO.
+hook('prepare', 'hold')
+local fa = async(unpack(vprepare('VA', {{'replace', vsid, {1, 11, box.NULL, 1}}})))
+hook('prepare', 'reached')
+r = c[1]:call(unpack(vprepare('VB', {{'replace', vsid, {1, 12, box.NULL, 1}}})))
+hook('prepare', 'release')
+local ra = result(fa)
+check('two PREPAREs of one vinyl row: the second votes yes ...', r[1] == 'yes', r)
+check('... and the first, held after its read, votes no', ra[1] == 'no' and ra[2] == 1213, ra)
+c[1]:call('tarn_apply', {'VB'})
+check('... and the row holds the second one', vget(1) == 12, vget(1))
+
+-- A local commit held after its read while a PREPARE locks the row: the
+-- commit finds the W lock in its atomic section and fails.
+hook('write', 'hold')
+local fl = async('tarn_commit_local', {'VL1', {{'replace', vsid, {2, 21, box.NULL, 1}}}})
+hook('write', 'reached')
+r = c[1]:call(unpack(vprepare('VC', {{'replace', vsid, {2, 22, box.NULL, 1}}})))
+hook('write', 'release')
+local rl = result(fl)
+check('a local commit that meets a W lock taken while it read fails', r[1] == 'yes' and rl[1] == 'conflict', {r, rl})
+c[1]:call('tarn_apply', {'VC'})
+check('... and the prepared write is applied', vget(2) == 22, vget(2))
+
+-- An autocommit write held after its read while a row lock is requested on
+-- the row: the lock grant waits for the commit in flight, which then finds
+-- the row lock and waits for it in turn.
+hook('write', 'hold')
+local fw = async('tarn_autocommit', {{{'update', vsid, {3}, {{'+', 2, 1}}}}, {lock_timeout = 5}})
+hook('write', 'reached')
+local fk = async('tarn_lock', {'VK1', {{vsid, 0, {3}}}, 'X', {read = true, timeout = 5}})
+fiber.sleep(0.2)
+check('a row lock waits for an autocommit write in flight', not fk:is_ready())
+hook('write', 'release')
+local rk = result(fk)
+check('... then reads the row as it was', rk[1] == 'ok' and rk[3][1][2] == 30, rk)
+fiber.sleep(0.1)
+check('... while the write waits for the row lock', not fw:is_ready())
+c[1]:call('tarn_unlock', {'VK1'})
+local rw = result(fw)
+check('... and is applied once it is released', rw[1] == 'ok' and vget(3) == 31, {rw, vget(3)})
+
+-- A schema change while a local commit made with the old definition is held
+-- after its read: PREPARE of the change waits for it, and the commit fails
+-- its fence check in the atomic section (1412).
+local function vargs(ver)
+    return {ver = ver, timeout = 5, checks = {}, builds = {}, drop = {}, renames = {},
+            def = {name = 'test.vy', id = vsid, format = vfmt, indexes = vidx, json = '{}', ver = ver}}
+end
+hook('write', 'hold')
+local fc = async('tarn_commit_local', {'VL2', {{'replace', vsid, {1, 13, box.NULL, 1}}}, {}, {}, box.NULL, {vsid, 0}})
+hook('write', 'reached')
+local fp = async('tarn_alter_prepare', {'test.vy', vargs(3)})
+fiber.sleep(0.2)
+check('PREPARE of a schema change waits for a commit in flight', not fp:is_ready())
+hook('write', 'release')
+local rc = result(fc)
+local rp = result(fp)
+check('... which fails its fence check (1412)', rc[1] == 'error' and rc[2] == 1412, rc)
+check('... and the change is prepared', rp[1] == 'ok', rp)
+c[1]:call('tarn_alter_abort', {'test.vy', vargs(3)})
+check('... and the row is unchanged', vget(1) == 12, vget(1))
+
+-- Autocommit reads of vinyl tables (checked_read): a cross-shard
+-- transaction that writes the row while the read is held after its scan --
+-- prepared and applied in the meantime, or only prepared -- makes the read
+-- run again (or wait), so it returns the applied row.
+local function vread(id) return async('tarn_select', {vsid, 0, {id}, 'EQ', 1, box.NULL, box.NULL, true}) end
+hook('scan', 'hold')
+local fr = vread(2)
+hook('scan', 'reached')
+c[1]:call(unpack(vprepare('VD', {{'replace', vsid, {2, 23, box.NULL, 1}}})))
+c[1]:call('tarn_apply', {'VD'})
+hook('scan', 'release')
+local rr = result(fr)
+check('a read whose row was written by a cross-shard commit while it ran reads again',
+      rr[1] == 'ok' and rr[2][1][2] == 23, rr)
+hook('scan', 'hold')
+fr = vread(2)
+hook('scan', 'reached')
+c[1]:call(unpack(vprepare('VE', {{'replace', vsid, {2, 24, box.NULL, 1}}})))
+hook('scan', 'release')
+fiber.sleep(0.1)
+check('... and one that meets a W lock taken meanwhile waits for it', not fr:is_ready())
+c[1]:call('tarn_apply', {'VE'})
+rr = result(fr)
+check('... then reads the applied row', rr[1] == 'ok' and rr[2][1][2] == 24, rr)
+check('no atomic section yielded on vinyl', c[1]:eval('return true'))
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

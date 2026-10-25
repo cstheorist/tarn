@@ -2272,6 +2272,7 @@ fn plan_create_table(
     };
     let mut auto_increment = None;
     let mut comment = String::new();
+    let mut engine = None;
     if let A::CreateTableOptions::Plain(opts) = &ct.table_options {
         for o in opts {
             match o {
@@ -2279,6 +2280,11 @@ fn plan_create_table(
                     auto_increment = value.to_string().trim_matches('\'').parse::<u64>().ok();
                 }
                 A::SqlOption::Comment(A::CommentDef::WithEq(c) | A::CommentDef::WithoutEq(c)) => comment = c.clone(),
+                A::SqlOption::NamedParenthesizedList(l) if l.key.value.eq_ignore_ascii_case("ENGINE") => {
+                    if let Some(n) = &l.name {
+                        engine = crate::catalog::Engine::from_option(&n.value)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -2295,6 +2301,7 @@ fn plan_create_table(
         shard_key,
         auto_inc,
         comment,
+        engine: engine.unwrap_or_default(),
         ver: 0,
         bucket: None,
         dropped: Vec::new(),
@@ -2330,6 +2337,7 @@ fn plan_create_table(
         def: Box::new(def),
         if_not_exists: ct.if_not_exists,
         auto_increment,
+        engine,
     })
 }
 
@@ -2352,6 +2360,37 @@ mod tests {
         };
         def.space_id = 512;
         Catalog::new(1, vec!["sbtest".into()], vec![*def])
+    }
+
+    #[test]
+    fn create_table_engine() {
+        use crate::catalog::Engine;
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+        };
+        let engine = |sql: &str| match plan(sql, &ctx) {
+            Ok(Stmt::CreateTable { engine, .. }) => Ok(engine),
+            Ok(_) => panic!("not CREATE TABLE"),
+            Err(e) => Err(e.code),
+        };
+        assert_eq!(engine("CREATE TABLE t (id INT PRIMARY KEY)"), Ok(None));
+        assert_eq!(engine("CREATE TABLE t (id INT PRIMARY KEY) ENGINE=InnoDB"), Ok(None));
+        assert_eq!(
+            engine("CREATE TABLE t (id INT PRIMARY KEY) ENGINE = vinyl"),
+            Ok(Some(Engine::Vinyl))
+        );
+        assert_eq!(
+            engine("CREATE TABLE t (id INT PRIMARY KEY) ENGINE=MEMTX"),
+            Ok(Some(Engine::Memtx))
+        );
+        assert_eq!(
+            engine("CREATE TABLE t (id INT PRIMARY KEY) ENGINE=MEMORY"),
+            Ok(Some(Engine::Memtx))
+        );
+        assert_eq!(engine("CREATE TABLE t (id INT PRIMARY KEY) ENGINE=Falcon"), Err(1286));
     }
 
     fn plan_sel(sql: &str) -> SelectPlan {
