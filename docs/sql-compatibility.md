@@ -5,7 +5,7 @@ Tarn speaks the MySQL client/server protocol and parses SQL with
 covers what OLTP applications and sysbench use, plus joins, aggregates,
 subqueries without outer references, and `UNION`, at two isolation levels:
 strictly serializable (the default) and READ COMMITTED as InnoDB implements
-it. Behaviour is checked against MariaDB 10.11 by a differential test (236
+it. Behaviour is checked against MariaDB 10.11 by a differential test (465
 cases, compared exactly) and by 2,000 randomly generated queries, the
 locking behaviour of READ COMMITTED by concurrent tests, and online schema
 changes by a test that alters a table hundreds of times while two SQL
@@ -76,8 +76,10 @@ servers write to it (`tests/sql/`).
   tree with a RAM cache, for data larger than RAM); `MEMORY` means memtx,
   and the engines MySQL names (`InnoDB`, `MyISAM`, ...) mean the cluster's
   default (`--default-engine`, memtx unless set); any other name fails with
-  1286. One transaction may span tables of both engines. Other table
-  options (`CHARSET`, `ROW_FORMAT`, ...) are accepted and ignored.
+  1286. One transaction may span tables of both engines. `[DEFAULT]
+  CHARSET` and `COLLATE` set the table's default collation
+  ([Collations](#collations)); other table options (`ROW_FORMAT`, ...) are
+  accepted and ignored.
 * `ALTER TABLE`, online (below), `RENAME TABLE`, `CREATE [UNIQUE] INDEX`,
   `DROP INDEX ... ON`, `DROP TABLE`, `TRUNCATE TABLE`.
 * A table without a `PRIMARY KEY` is keyed as InnoDB keys it: by its first
@@ -117,7 +119,10 @@ left half done is finished by the next schema change or server start.
 | `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
 | `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
 | `ENGINE` | the table's own engine, or one MySQL names (`InnoDB`, ...): accepted and ignored; moving a table between memtx and vinyl rewrites every row: refused (1235) |
-| `[DEFAULT] CHARSET`, `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS`, `CHECK` constraints | accepted and ignored |
+| `[DEFAULT] CHARSET`, `COLLATE` | the default collation of columns added later |
+| `CONVERT TO CHARACTER SET utf8mb4 [COLLATE c]`, `MODIFY` / `CHANGE` to another collation | for columns no index orders by; changing the collation of an indexed column would reorder its index: refused (1235) |
+| `ADD INDEX` (or a foreign key's index) on a case-insensitive column | for a column that is already in an index (it has a weight field, see [Collations](#collations)) or that the same statement adds; on any other existing case-insensitive column its rows would have to be rewritten: refused (1235) |
+| `ROW_FORMAT`, `ALGORITHM`, `LOCK`, `FORCE`, `DISABLE` / `ENABLE KEYS`, `CHECK` constraints | accepted and ignored |
 | Not supported (1235) | conversions that need every row rewritten (`INT` to `VARCHAR`, a different `DECIMAL` scale, `VARCHAR` to `DATETIME`), changing or dropping the primary key, `FULLTEXT` / `SPATIAL` indexes, partition maintenance, invisible columns |
 
 #### Loading dumps
@@ -235,10 +240,67 @@ read stay validated at commit.
 | `BOOL`, `BOOLEAN`, `TINYINT(1)` | `integer` | |
 | `FLOAT`, `DOUBLE` | `double` | |
 | `DECIMAL(p, s)` | `decimal` | exact; precision checked on write (1264) |
-| `CHAR`, `VARCHAR`, `TEXT` | `string` | binary comparison (see below) |
+| `CHAR`, `VARCHAR`, `TEXT` | `string` | compared under the column's collation ([below](#collations)) |
 | `BINARY`, `VARBINARY`, `BLOB` | `varbinary` | |
 | `DATE`, `DATETIME[(fsp)]`, `TIMESTAMP[(fsp)]`, `TIME`, `YEAR` | `string` / `integer` | MySQL text formats; dates and datetimes are stored in one spelling per value (`YYYY-MM-DD HH:MM:SS` with exactly `fsp` fractional digits, rounded as MySQL 8 rounds), so they sort, group and index in time order, and a constant compared with such a column compares by value: `'2025-01-01 00:00:01'` equals a stored `'2025-01-01 00:00:01.000000'` |
 | `JSON` | `string` | stored as text, not validated or indexed |
+
+## Collations
+
+Text compares, sorts, groups and is unique under its collation, as in
+MariaDB 10.11. Tarn implements four collations exactly, from MariaDB's own
+weight tables, and `utf8mb4_bin` with one difference:
+
+| Collation | Compares |
+|---|---|
+| `utf8mb4_bin` | bytes; **trailing spaces count** (`'a' <> 'a '`), unlike MySQL's PAD SPACE `_bin` |
+| `utf8mb4_general_ci` | one weight per character: case- and accent-insensitive (`'é' = 'E'`, `'ß' = 's'`), characters above U+FFFF all equal; trailing spaces ignored |
+| `utf8mb4_unicode_ci` | UCA 4.0.0 primary weights (`'ß' = 'ss'`, `'œ' = 'oe'`, ignorable characters ignored); trailing spaces ignored |
+| `utf8mb4_general_nopad_ci`, `utf8mb4_unicode_nopad_ci` | as above, trailing spaces count |
+
+Other names map to the closest of these and are shown as declared:
+`utf8_*` / `utf8mb3_*` to their utf8mb4 counterparts; `_bin`, `_cs` and
+`_as_cs` collations to `utf8mb4_bin`; MySQL 8's `utf8mb4_0900_ai_ci` to
+`utf8mb4_unicode_nopad_ci`; the other UCA-based `_ci` collations
+(`unicode_520`, `uca1400`, language variants) to `utf8mb4_unicode_ci`; the
+remaining `_ci` collations (`latin1_swedish_ci`, ...) to
+`utf8mb4_general_ci`. These approximations differ from the originals on the
+characters their tables weigh differently. An unknown name fails with 1273.
+
+* **Columns** take the collation they declare (`COLLATE c`, or the default
+  collation of `CHARACTER SET cs`: `utf8mb4_general_ci` for utf8mb4), else
+  the table's (`DEFAULT CHARSET` / `COLLATE` options), else the server's:
+  `--default-collation`, `utf8mb4_bin` unless set (`@@collation_server`).
+  Tables created before collations existed are `utf8mb4_bin`.
+  `CREATE DATABASE ... COLLATE` is accepted and ignored.
+* **Literals** take `collation_connection`: the collation the client's
+  handshake asks for (most drivers ask for `utf8mb4_general_ci`), changed by
+  `SET NAMES cs [COLLATE c]` and `SET collation_connection`.
+* **Comparisons** (`=`, `<`, `IN`, `BETWEEN`, `LIKE`, `CASE`, `NULLIF`,
+  `GREATEST`, `LEAST`, `LOCATE`), `ORDER BY`, `GROUP BY`, `DISTINCT`,
+  `MIN`/`MAX`, `COUNT(DISTINCT)`, `UNION` and joins use MySQL's coercibility
+  rules: an explicit `COLLATE` wins over a column, a column over a literal;
+  between two columns, a `_bin` one wins, and two other different
+  collations fail with 1267 (Illegal mix of collations). `LIKE` matches
+  character by character by weight, with no padding.
+* **Indexes and unique keys** order and compare by the collation, so a
+  unique key refuses `'a'` next to `'A'` under a `_ci` collation, lookups
+  and ranges through it find every equal value, and a case-insensitive
+  primary key routes `'a'` and `'A'` to the same shard (an indexed
+  case-insensitive column is stored with its weight string,
+  [design §1.3](design.md#13-collations)).
+* `COLLATION()`, `COERCIBILITY()`, `CHARSET()` and `WEIGHT_STRING()` report
+  what Tarn uses.
+* Which of several equal values `DISTINCT`, `GROUP BY`, `MIN` and `MAX`
+  return (`'Alice'` or `'ALICE'`) depends on the order rows are read in,
+  which across shards is not MySQL's.
+* A string ending in a character below the space (a tab, a newline) sorts
+  after the same string without it; MySQL sorts it before.
+* User variables are replaced by literals before a statement is planned:
+  `@v` takes `collation_connection` and a literal's coercibility, where
+  MySQL keeps the collation it was assigned with at a column's
+  coercibility. Compared with a column of another case-insensitive
+  collation, `@v` takes the column's, where MySQL fails with 1267.
 
 ## Expressions and functions
 
@@ -254,7 +316,8 @@ read stay validated at commit.
   `FLOOR`, `ROUND`, `MOD`, `SIGN`, `SQRT`, `POW`, `RAND`, `GREATEST`,
   `LEAST`, `COALESCE`, `IFNULL`, `NULLIF`, `IF`, `NOW`, `CURDATE`,
   `UNIX_TIMESTAMP`, `DATABASE`, `VERSION`, `CONNECTION_ID`,
-  `LAST_INSERT_ID`, `USER`, `FOUND_ROWS`, `ROW_COUNT`.
+  `LAST_INSERT_ID`, `USER`, `FOUND_ROWS`, `ROW_COUNT`, `COLLATION`,
+  `COERCIBILITY`, `CHARSET`, `WEIGHT_STRING`; `expr COLLATE name`.
 
 ## Differences from MySQL
 
@@ -271,8 +334,11 @@ read stay validated at commit.
 * **Outcome unknown:** if the connection to a shard breaks while a commit is
   in flight, the statement fails with 1180 and SQLSTATE 40003: it may or may
   not have been applied. Tarn never re-sends such a write.
-* **Collation:** string comparison, ordering, grouping and unique indexes
-  are binary (like `utf8mb4_bin`), so `'ALICE' = 'alice'` is false.
+* **Collations** ([above](#collations)): the server's default is
+  `utf8mb4_bin` (MySQL's is case-insensitive) unless `--default-collation`
+  says otherwise; `utf8mb4_bin` counts trailing spaces; collations other
+  than `utf8mb4_bin`, `utf8mb4_general_ci` and `utf8mb4_unicode_ci` (and
+  their NO PAD forms) compare like the closest of those.
 * **AUTO_INCREMENT:** values are allocated in blocks per SQL server; they are
   unique and increasing per server, with gaps across servers (as in TiDB).
 * **Transaction lifetime:** a serializable transaction must commit within

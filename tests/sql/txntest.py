@@ -249,6 +249,57 @@ class T:
         q(c, "COMMIT")
         self.check(q(c, "SELECT COUNT(*) FROM dup")[0][0] == 2, "txn continues after statement error")
 
+    def test_case_insensitive_keys(self):
+        """Case variants of a key under utf8mb4_general_ci are one key
+        everywhere (issue #13): in the unique index, in the locks of
+        concurrent transactions and in the shard the key routes to (by its
+        weight string). Of two cross-shard transactions inserting 'userK'
+        and 'USERK' at once, exactly one commits, serializable or READ
+        COMMITTED."""
+        c = self.fresh("cik", "CREATE TABLE cik (handle VARCHAR(20) PRIMARY KEY, v INT) COLLATE utf8mb4_general_ci",
+                       [])
+        self.fresh("cio", "CREATE TABLE cio (id INT PRIMARY KEY, v INT)", [f"({i}, 0)" for i in range(1, 9)])
+        bad = []
+        for iso, tag in (("REPEATABLE-READ", "s"), ("READ-COMMITTED", "c")):
+            for k in range(10):
+                key = f"user{tag}{k}"
+                variants = [key.lower(), key.upper()]
+                res = [None, None]
+                barrier = threading.Barrier(2)
+
+                def worker(i):
+                    conn = connect(self.args.tarn)
+                    q(conn, f"SET SESSION tx_isolation = '{iso}'")
+                    try:
+                        q(conn, "BEGIN")
+                        # rows on every shard, apart from the other worker's
+                        q(conn, f"UPDATE cio SET v = v + 1 WHERE id IN ({i + 1}, {i + 3}, {i + 5}, {i + 7})")
+                        barrier.wait(20)
+                        q(conn, "INSERT INTO cik VALUES (%s, %s)", (variants[i], i))
+                        q(conn, "COMMIT")
+                        res[i] = "ok"
+                    except pymysql.MySQLError as e:
+                        res[i] = e.args[0]
+                        try:
+                            q(conn, "ROLLBACK")
+                        except pymysql.MySQLError:
+                            pass
+                    except threading.BrokenBarrierError:
+                        res[i] = "barrier"
+
+                ths = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+                for th in ths:
+                    th.start()
+                for th in ths:
+                    th.join(60)
+                rows = q(c, "SELECT handle, v FROM cik WHERE handle = %s", (key.upper(),))
+                same = q(c, "SELECT handle, v FROM cik WHERE handle = %s", (key.lower(),))
+                losers = [r for r in res if r != "ok"]
+                if not (res.count("ok") == 1 and losers[0] in (1062, CONFLICT) and len(rows) == 1 and rows == same):
+                    bad.append((iso, key, res, rows))
+        self.check(not bad, f"one of two inserts of case variants commits, the other fails: {bad[:3]}")
+        self.check(q(c, "SELECT COUNT(*) FROM cik")[0][0] == 20, "one row per key")
+
     def test_select_for_update(self):
         # FOR UPDATE takes a row lock (as in InnoDB): a concurrent writer
         # waits for the transaction instead of making it abort.

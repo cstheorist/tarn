@@ -8,6 +8,25 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Collations ([#13](https://github.com/cstheorist/tarn/issues/13)): text
+  columns compare, sort, group and are unique under the collation they
+  declare (`COLLATE`, `CHARACTER SET`), the table's (`DEFAULT CHARSET` /
+  `COLLATE`) or the server's (`--default-collation`, `utf8mb4_bin` unless
+  set). `utf8mb4_general_ci` and `utf8mb4_unicode_ci` (and their NO PAD
+  forms) behave exactly as in MariaDB 10.11, from its weight tables; other
+  collation names map to the closest one. A unique key refuses `'a'` next
+  to `'A'` under a `_ci` collation, `WHERE handle = 'Foo'` finds `'foo'`
+  through the index, and a case-insensitive primary key routes both to the
+  same shard: such a column, when indexed, gets a weight field that its
+  indexes and the shard key use. Literals take `collation_connection` from
+  the client's handshake or `SET NAMES`; `COLLATE`, MySQL's coercibility
+  rules (1267 for an illegal mix), `COLLATION()`, `COERCIBILITY()`,
+  `CHARSET()` and `WEIGHT_STRING()` are supported, and `SHOW CREATE TABLE`,
+  `SHOW FULL COLUMNS` and `SHOW COLLATION` report collations. `ALTER TABLE`
+  refuses (1235) an index on an existing case-insensitive column that is in
+  no index yet and a collation change of an indexed column. Upgrade every
+  SQL server before creating tables with indexed case-insensitive columns:
+  older servers do not write weight fields.
 - Row-value comparisons `(a, b) < | <= | > | >= | <=> (x, y)`, with MySQL's
   NULL semantics; a keyset cursor `(a, b) > (?, ?)` on an index reads from
   the cursor instead of the whole index prefix. They failed with 1235

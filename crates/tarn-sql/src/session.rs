@@ -4,6 +4,7 @@
 use crate::admin::{self, Admin, Isolation, SetItem, VarScope};
 use crate::catalog::{Engine, TableDef};
 use crate::cluster::{CachedPlan, Cluster};
+use crate::collation::Collation;
 use crate::exec::{self, matching_rows, run_select, shard_of_row, ReadMode, NEED_TXN};
 use crate::expr::{now_string, EvalCtx, Expr};
 use crate::mpw::{lua_status, Mp, Rd};
@@ -83,6 +84,26 @@ pub struct Session {
     /// sql_mode contains NO_AUTO_VALUE_ON_ZERO: an explicit 0 in an
     /// AUTO_INCREMENT column is stored, not replaced by a generated value.
     no_auto_value_on_zero: bool,
+    /// collation_connection (the collation of literals): the one the client
+    /// asked for in its handshake, until SET NAMES / SET collation_connection.
+    collation_connection: String,
+    client_collation: String,
+}
+
+/// Name of the collation a handshake asks for by id (MySQL / MariaDB ids of
+/// utf8 collations; others: the server's default).
+fn client_collation_name(id: u8) -> Option<&'static str> {
+    Some(match id {
+        33 => "utf8mb3_general_ci",
+        45 => "utf8mb4_general_ci",
+        46 => "utf8mb4_bin",
+        83 => "utf8mb3_bin",
+        192 => "utf8mb3_unicode_ci",
+        224 => "utf8mb4_unicode_ci",
+        246 => "utf8mb4_unicode_520_ci",
+        255 => "utf8mb4_0900_ai_ci",
+        _ => return None,
+    })
 }
 
 const MAX_RETRIES: usize = 20;
@@ -280,7 +301,6 @@ impl Session {
             (g.isolation, g.lock_wait_timeout)
         };
         Session {
-            cluster,
             db: None,
             user: "root".into(),
             conn_id,
@@ -298,6 +318,18 @@ impl Session {
             sql_prepared: HashMap::new(),
             sys_vars: HashMap::new(),
             no_auto_value_on_zero: false,
+            collation_connection: cluster.cfg.default_collation.clone(),
+            client_collation: cluster.cfg.default_collation.clone(),
+            cluster,
+        }
+    }
+
+    /// The character set and collation id from the client's handshake:
+    /// literals compare under that collation (collation_connection).
+    pub fn set_client_collation(&mut self, id: u8) {
+        if let Some(n) = client_collation_name(id) {
+            self.client_collation = n.to_string();
+            self.collation_connection = n.to_string();
         }
     }
 
@@ -319,6 +351,8 @@ impl Session {
             isolation: self.isolation,
             lock_wait_timeout: self.lock_wait_timeout,
             overrides: Some(&self.sys_vars),
+            collation_connection: &self.collation_connection,
+            collation_server: &self.cluster.cfg.default_collation,
         }
     }
 
@@ -416,11 +450,19 @@ impl Session {
                     "character_set_client",
                     "character_set_connection",
                     "character_set_results",
-                    "collation_connection",
                 ] {
                     self.sys_vars.remove(v);
                 }
+                self.collation_connection = self.client_collation.clone();
                 return Ok(());
+            }
+            let mut co = planner::charset_default_collation(&cs)
+                .unwrap_or("utf8mb4_general_ci")
+                .to_string();
+            if words.next().is_some_and(|w| w.eq_ignore_ascii_case("COLLATE")) {
+                if let Some(c) = words.next() {
+                    co = planner::known_collation(c)?;
+                }
             }
             for v in [
                 "character_set_client",
@@ -429,12 +471,7 @@ impl Session {
             ] {
                 self.sys_vars.insert(v.into(), Value::str(&cs));
             }
-            if words.next().is_some_and(|w| w.eq_ignore_ascii_case("COLLATE")) {
-                if let Some(co) = words.next() {
-                    let co = co.trim_matches(|c| c == '\'' || c == '"' || c == '`');
-                    self.sys_vars.insert("collation_connection".into(), Value::str(co));
-                }
-            }
+            self.collation_connection = co;
             return Ok(());
         }
         let value = self.eval_set_value(rhs, true).await?;
@@ -451,6 +488,30 @@ impl Session {
                         text
                     )));
                 }
+                if n == "character_set_connection" && scope != VarScope::Global {
+                    self.collation_connection = match value.as_ref() {
+                        Some(Value::Null) | None => self.client_collation.clone(),
+                        _ => planner::charset_default_collation(&text)
+                            .unwrap_or("utf8mb4_general_ci")
+                            .to_string(),
+                    };
+                }
+            }
+            "collation_connection" => {
+                if scope != VarScope::Global {
+                    self.collation_connection = match value.as_ref() {
+                        Some(Value::Null) | None => self.client_collation.clone(),
+                        _ => planner::known_collation(&text)?,
+                    };
+                }
+                return Ok(());
+            }
+            "collation_server" | "collation_database" => {
+                // per table, from its definition: accepted, not kept
+                if value.is_some() && !matches!(value, Some(Value::Null)) {
+                    planner::known_collation(&text)?;
+                }
+                return Ok(());
             }
             "time_zone" => {
                 if value.is_some() && !utc_time_zone(&text) {
@@ -759,7 +820,9 @@ impl Session {
 
     fn plan_cached(&self, template: &str, params: &[Value]) -> SqlResult<Stmt> {
         let db = self.db.clone().unwrap_or_default();
-        if let Some(p) = self.cluster.cached_plan(&db, template) {
+        // Plans depend on collation_connection (literals compare under it).
+        let key = format!("{}\0{}", self.collation_connection, template);
+        if let Some(p) = self.cluster.cached_plan(&db, &key) {
             return Ok(p.stmt.clone());
         }
         let catalog = self.cluster.catalog();
@@ -767,6 +830,8 @@ impl Session {
             catalog: &catalog,
             db: self.db.as_deref(),
             params,
+            conn_coll: &self.collation_connection,
+            default_coll: &self.cluster.cfg.default_collation,
         };
         let stmt = planner::plan(template, &ctx)?;
         if matches!(
@@ -775,7 +840,7 @@ impl Session {
         ) {
             self.cluster.cache_plan(
                 &db,
-                template,
+                &key,
                 Arc::new(CachedPlan {
                     version: catalog.version,
                     stmt: stmt.clone(),
@@ -1088,9 +1153,22 @@ impl Session {
                 // Fields by number (1-based): rows written before an ALTER
                 // TABLE carry their old format, whose names may differ.
                 let fieldno = |name: &str| t.col_index(name).map(|c| t.layout.col_field[c] as u64 + 1).unwrap_or(0);
-                m.arr(ops.len());
+                // An assigned case-insensitive column in an index: its
+                // weight field too.
+                let weights: Vec<(u64, Value)> = ops
+                    .iter()
+                    .filter(|(op, _, _)| *op == "=")
+                    .filter_map(|(_, f, v)| {
+                        let c = t.col_index(f)?;
+                        t.layout.col_weight[c].map(|w| (w as u64 + 1, t.key_part(c, v)))
+                    })
+                    .collect();
+                m.arr(ops.len() + weights.len());
                 for (op, field, v) in &ops {
                     m.arr(3).str(op).uint(fieldno(field)).val(v);
+                }
+                for (field, v) in &weights {
+                    m.arr(3).str("=").uint(*field).val(v);
                 }
                 // Range of every integer column changed by an arithmetic op:
                 // the storage side refuses results outside it (MySQL error 1264).
@@ -1200,12 +1278,16 @@ impl Session {
         }
         for c in &conj {
             match c {
-                Expr::Cmp(a, crate::expr::CmpOp::Eq, b) => {
+                Expr::Cmp(a, crate::expr::CmpOp::Eq, b, coll) => {
                     let col = match (&**a, &**b) {
                         (Expr::Col(x), o) | (o, Expr::Col(x)) if o.is_constant() => *x,
                         _ => return Ok(None),
                     };
                     if !pk_cols.contains(&col) {
+                        return Ok(None);
+                    }
+                    // Nothing re-checks the row: the lookup must match exactly.
+                    if t.columns[col].ty().is_text() && t.layout.colls[col] != *coll {
                         return Ok(None);
                     }
                 }
@@ -1215,7 +1297,7 @@ impl Session {
         let mut key = Vec::new();
         for (i, e) in keys[0].iter().enumerate() {
             let v = e.eval(&[], cx)?;
-            match exec::coerce_key_part(t.columns[pk_cols[i]].ty(), &v) {
+            match t.lookup_part(pk_cols[i], &v) {
                 Some(x) if !x.is_null() => key.push(x),
                 _ => return Ok(None),
             }
@@ -1279,8 +1361,7 @@ impl Session {
     }
 
     fn encode_tuple(&self, t: &TableDef, r: &Row, m: &mut Mp) {
-        let sk: Vec<Value> = t.shard_key.iter().map(|&c| r[c].clone()).collect();
-        t.encode_tuple(r, self.cluster.bucket_of(&sk) as u64, m);
+        t.encode_tuple(r, self.cluster.bucket_of(&t.shard_key_of(r)) as u64, m);
     }
 
     /// Materialize INSERT rows: defaults, AUTO_INCREMENT, type coercion.
@@ -1439,9 +1520,9 @@ impl Session {
                     // PREPARE votes NO with 1062), failing the statement as a
                     // whole -- no read round trip per row.
                     for row in rows {
-                        let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
+                        let pk = t.pk_key(&row);
                         if txn.buffered(t.space_id, &pk).is_some() {
-                            let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
+                            let shown: Vec<String> = pk_cols.iter().map(|&c| row[c].to_string()).collect();
                             return Err(SqlError::dup_key(&shown.join("-"), &t.pk().name));
                         }
                         let shard = shard_of_row(&self.cluster, t, &row);
@@ -1462,7 +1543,7 @@ impl Session {
                 // COMMITTED: concurrent inserts of one value wait).
                 let stored = self.stored_conflicts(txn, t, &rows).await?;
                 for (row, st) in rows.into_iter().zip(stored) {
-                    let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
+                    let pk = t.pk_key(&row);
                     let shard = shard_of_row(&self.cluster, t, &row);
                     let (pk_row, uniq) = current_conflicts(txn, t, &row, &pk, st);
                     let conflict = pk_row.clone().or_else(|| uniq.first().map(|(_, r)| r.clone()));
@@ -1490,7 +1571,7 @@ impl Session {
                             // REPLACE deletes every row it collides with.
                             let mut deleted = 0;
                             for (_, r) in &uniq {
-                                let rpk: Vec<Value> = pk_cols.iter().map(|&c| r[c].clone()).collect();
+                                let rpk = t.pk_key(r);
                                 if rpk != pk {
                                     txn.buffer(BufWrite {
                                         shard: shard_of_row(&self.cluster, t, r),
@@ -1516,7 +1597,7 @@ impl Session {
                         Some(_) => {
                             return Err(match (&pk_row, uniq.first()) {
                                 (Some(_), _) | (None, None) => {
-                                    let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
+                                    let shown: Vec<String> = pk_cols.iter().map(|&c| row[c].to_string()).collect();
                                     SqlError::dup_key(&shown.join("-"), &t.pk().name)
                                 }
                                 (None, Some((ix, _))) => {
@@ -1568,7 +1649,7 @@ impl Session {
                     .await?;
                 let n = rows.len() as u64;
                 for old in rows {
-                    let pk: Vec<Value> = t.indexes[0].cols.iter().map(|&c| old[c].clone()).collect();
+                    let pk = t.pk_key(&old);
                     let shard = shard_of_row(&self.cluster, t, &old);
                     txn.buffer(BufWrite {
                         shard,
@@ -1600,7 +1681,7 @@ impl Session {
                 let rows = matching_rows(&self.cluster, txn, &p.access, &p.filter, &p.order, &p.limit, &cx).await?;
                 let n = rows.len() as u64;
                 for old in rows {
-                    let pk: Vec<Value> = t.indexes[0].cols.iter().map(|&c| old[c].clone()).collect();
+                    let pk = t.pk_key(&old);
                     let shard = shard_of_row(&self.cluster, t, &old);
                     txn.buffer(BufWrite {
                         shard,
@@ -1643,20 +1724,17 @@ impl Session {
         t: &Arc<TableDef>,
         rows: &[Row],
     ) -> SqlResult<Vec<StoredConflicts>> {
-        let pk_cols = &t.indexes[0].cols;
         let uniq: Vec<usize> = (1..t.indexes.len()).filter(|&i| t.indexes[i].unique).collect();
         // (row, slot: 0 = primary key, k = uniq[k - 1]) -> lookup
         let mut lookups: Vec<(usize, usize, usize, u32, Vec<Value>)> = Vec::new(); // row, slot, shard, index, key
         for (i, row) in rows.iter().enumerate() {
             let shard = shard_of_row(&self.cluster, t, row);
-            let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
-            lookups.push((i, 0, shard, 0, pk));
+            lookups.push((i, 0, shard, 0, t.pk_key(row)));
             for (k, &ix) in uniq.iter().enumerate() {
-                let key: Vec<Value> = t.indexes[ix].cols.iter().map(|&c| row[c].clone()).collect();
-                if key.iter().any(|v| v.is_null()) {
+                if t.indexes[ix].cols.iter().any(|&c| row[c].is_null()) {
                     continue; // NULLs never collide in a unique index
                 }
-                lookups.push((i, k + 1, shard, t.indexes[ix].id, key));
+                lookups.push((i, k + 1, shard, t.indexes[ix].id, t.index_key(&t.indexes[ix], row)));
             }
         }
         let mut out: Vec<StoredConflicts> = rows
@@ -1746,16 +1824,18 @@ impl Session {
         new: &Row,
         old_pk: &[Value],
     ) -> SqlResult<Option<usize>> {
+        // (A value that changes only in case keeps its key under a
+        // case-insensitive collation.)
         let changed: Vec<usize> = (1..t.indexes.len())
             .filter(|&i| t.indexes[i].unique)
-            .filter(|&i| t.indexes[i].cols.iter().any(|&c| old[c] != new[c]))
+            .filter(|&i| t.index_key(&t.indexes[i], old) != t.index_key(&t.indexes[i], new))
             .filter(|&i| t.indexes[i].cols.iter().all(|&c| !new[c].is_null()))
             .collect();
         if changed.is_empty() {
             return Ok(None);
         }
         let shard = shard_of_row(&self.cluster, t, new);
-        let key_of = |i: usize| -> Vec<Value> { t.indexes[i].cols.iter().map(|&c| new[c].clone()).collect() };
+        let key_of = |i: usize| -> Vec<Value> { t.index_key(&t.indexes[i], new) };
         let mut stored: Vec<Option<Row>> = Vec::with_capacity(changed.len());
         if txn.mode == TxnMode::ReadCommitted {
             let keys: Vec<LockKey> = changed
@@ -1789,11 +1869,9 @@ impl Session {
                 stored.push(rows.into_iter().next());
             }
         }
-        let pk_cols = &t.indexes[0].cols;
-        let pk_of = |r: &Row| -> Vec<Value> { pk_cols.iter().map(|&c| r[c].clone()).collect() };
+        let pk_of = |r: &Row| -> Vec<Value> { t.pk_key(r) };
         for (&i, holder) in changed.iter().zip(stored) {
-            let cols = &t.indexes[i].cols;
-            let same = |r: &Row| cols.iter().all(|&c| r[c] == new[c]);
+            let same = |r: &Row| t.same_key(&t.indexes[i], r, new);
             // A row this transaction wrote with that value ...
             let mine = txn
                 .writes
@@ -1854,8 +1932,8 @@ impl Session {
         shard: usize,
     ) -> SqlResult<()> {
         let pk_cols = &t.indexes[0].cols;
-        let old_pk: Vec<Value> = pk_cols.iter().map(|&c| old[c].clone()).collect();
-        let new_pk: Vec<Value> = pk_cols.iter().map(|&c| new[c].clone()).collect();
+        let old_pk = t.pk_key(old);
+        let new_pk = t.pk_key(&new);
         if let Some(ix) = self.changed_unique_conflict(txn, t, old, &new, &old_pk).await? {
             let idx = &t.indexes[ix];
             let shown: Vec<String> = idx.cols.iter().map(|&c| new[c].to_string()).collect();
@@ -1894,7 +1972,7 @@ impl Session {
             self.row_exists(txn, t, &new_pk, new_shard).await?.is_some()
         };
         if exists {
-            let shown: Vec<String> = new_pk.iter().map(|v| v.to_string()).collect();
+            let shown: Vec<String> = pk_cols.iter().map(|&c| new[c].to_string()).collect();
             return Err(SqlError::dup_key(&shown.join("-"), &t.pk().name));
         }
         txn.buffer(BufWrite {
@@ -2169,42 +2247,21 @@ impl Session {
                 };
                 rows_out(c, rows)
             }
-            Admin::ShowColumns { db, table, .. } | Admin::Describe { db, table } => {
+            Admin::ShowColumns { db, table, full } => {
                 let db = self.resolve_db(db)?;
                 let t = catalog
                     .get(&db, &table)
                     .ok_or_else(|| SqlError::no_table(&db, &table))?;
-                let mut rows = Vec::new();
-                for (i, c) in t.visible_columns() {
-                    let key = if t.is_pk_col(i) {
-                        "PRI"
-                    } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i) && ix.unique) {
-                        "UNI"
-                    } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i)) {
-                        "MUL"
-                    } else {
-                        ""
-                    };
-                    rows.push(vec![
-                        Value::str(&c.name),
-                        Value::str(&c.ty().display()),
-                        Value::str(if c.nullable { "YES" } else { "NO" }),
-                        Value::str(key),
-                        c.default.as_deref().map(Value::str).unwrap_or(Value::Null),
-                        Value::str(if c.auto_increment { "auto_increment" } else { "" }),
-                    ]);
-                }
-                rows_out(
-                    cols(&[
-                        ("Field", ColumnType::VarString),
-                        ("Type", ColumnType::VarString),
-                        ("Null", ColumnType::VarString),
-                        ("Key", ColumnType::VarString),
-                        ("Default", ColumnType::VarString),
-                        ("Extra", ColumnType::VarString),
-                    ]),
-                    rows,
-                )
+                let out = describe(&t, full);
+                rows_out(out.0, out.1)
+            }
+            Admin::Describe { db, table } => {
+                let db = self.resolve_db(db)?;
+                let t = catalog
+                    .get(&db, &table)
+                    .ok_or_else(|| SqlError::no_table(&db, &table))?;
+                let out = describe(&t, false);
+                rows_out(out.0, out.1)
             }
             Admin::ShowCreateTable { db, table } => {
                 let db = self.resolve_db(db)?;
@@ -2345,14 +2402,30 @@ impl Session {
                     ("Compiled", ColumnType::VarString),
                     ("Sortlen", ColumnType::LongLong),
                 ]),
-                vec![vec![
-                    Value::str("utf8mb4_bin"),
-                    Value::str("utf8mb4"),
-                    Value::Int(46),
-                    Value::str("Yes"),
-                    Value::str("Yes"),
-                    Value::Int(1),
-                ]],
+                [
+                    Collation::General { pad: true },
+                    Collation::Utf8Bin,
+                    Collation::Unicode { pad: true },
+                    Collation::General { pad: false },
+                    Collation::Unicode { pad: false },
+                    Collation::Binary,
+                ]
+                .iter()
+                .map(|c| {
+                    vec![
+                        Value::str(c.name()),
+                        Value::str(if *c == Collation::Binary { "binary" } else { "utf8mb4" }),
+                        Value::Int(c.id() as i64),
+                        Value::str(if matches!(c, Collation::General { pad: true } | Collation::Binary) {
+                            "Yes"
+                        } else {
+                            ""
+                        }),
+                        Value::str("Yes"),
+                        Value::Int(if matches!(c, Collation::Unicode { .. }) { 8 } else { 1 }),
+                    ]
+                })
+                .collect(),
             ),
             Admin::ShowCharset => rows_out(
                 cols(&[
@@ -2364,7 +2437,7 @@ impl Session {
                 vec![vec![
                     Value::str("utf8mb4"),
                     Value::str("UTF-8 Unicode"),
-                    Value::str("utf8mb4_bin"),
+                    Value::str("utf8mb4_general_ci"),
                     Value::Int(4),
                 ]],
             ),
@@ -2483,21 +2556,18 @@ fn current_conflicts(
     pk: &[Value],
     st: StoredConflicts,
 ) -> (Option<Row>, Vec<(usize, Row)>) {
-    let pk_cols = &t.indexes[0].cols;
     let pk_row = match txn.buffered(t.space_id, pk) {
         Some(b) => b.cloned(),
         None => st.pk,
     };
     let mut uniq: Vec<(usize, Row)> = Vec::new();
-    let pk_of = |r: &Row| -> Vec<Value> { pk_cols.iter().map(|&c| r[c].clone()).collect() };
+    let pk_of = |r: &Row| -> Vec<Value> { t.pk_key(r) };
     for (slot, stored) in st.uniq.into_iter().enumerate() {
         let ix = (1..t.indexes.len()).filter(|&i| t.indexes[i].unique).nth(slot).unwrap();
-        let cols = &t.indexes[ix].cols;
-        let val: Vec<&Value> = cols.iter().map(|&c| &row[c]).collect();
-        if val.iter().any(|v| v.is_null()) {
+        if t.indexes[ix].cols.iter().any(|&c| row[c].is_null()) {
             continue;
         }
-        let same = |r: &Row| cols.iter().zip(&val).all(|(&c, v)| r[c] == **v);
+        let same = |r: &Row| t.same_key(&t.indexes[ix], r, row);
         // A live row this transaction wrote with that value comes first.
         let mut found = txn
             .writes
@@ -2535,11 +2605,80 @@ async fn backoff(attempt: usize) {
     tokio::time::sleep(std::time::Duration::from_micros(base + jitter)).await;
 }
 
+/// SHOW [FULL] COLUMNS: (columns, rows).
+fn describe(t: &TableDef, full: bool) -> (Arc<[Column]>, Vec<Vec<Value>>) {
+    let mut rows = Vec::new();
+    for (i, c) in t.visible_columns() {
+        let key = if t.is_pk_col(i) {
+            "PRI"
+        } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i) && ix.unique) {
+            "UNI"
+        } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i)) {
+            "MUL"
+        } else {
+            ""
+        };
+        let mut r = vec![Value::str(&c.name), Value::str(&c.ty().display())];
+        if full {
+            r.push(if c.ty().is_text() {
+                Value::str(c.collation_name())
+            } else {
+                Value::Null
+            });
+        }
+        r.extend([
+            Value::str(if c.nullable { "YES" } else { "NO" }),
+            Value::str(key),
+            c.default.as_deref().map(Value::str).unwrap_or(Value::Null),
+            Value::str(if c.auto_increment { "auto_increment" } else { "" }),
+        ]);
+        if full {
+            r.push(Value::str("select,insert,update,references"));
+            r.push(Value::str(""));
+        }
+        rows.push(r);
+    }
+    let mut names = vec![("Field", ColumnType::VarString), ("Type", ColumnType::VarString)];
+    if full {
+        names.push(("Collation", ColumnType::VarString));
+    }
+    names.extend([
+        ("Null", ColumnType::VarString),
+        ("Key", ColumnType::VarString),
+        ("Default", ColumnType::VarString),
+        ("Extra", ColumnType::VarString),
+    ]);
+    if full {
+        names.push(("Privileges", ColumnType::VarString));
+        names.push(("Comment", ColumnType::VarString));
+    }
+    (cols(&names), rows)
+}
+
+/// Character set of a collation name ("utf8mb4_bin" -> "utf8mb4").
+fn charset_of(collation: &str) -> &str {
+    match collation {
+        "binary" => "binary",
+        c => match c.split('_').next() {
+            Some("utf8") => "utf8mb3",
+            Some("uca1400") | None => "utf8mb4",
+            Some(cs) => cs,
+        },
+    }
+}
+
 fn show_create(t: &TableDef) -> String {
     let mut s = format!("CREATE TABLE `{}` (\n", t.name);
     let mut lines = Vec::new();
+    let table_coll = t.collation_name();
     for (_, c) in t.visible_columns() {
         let mut l = format!("  `{}` {}", c.name, c.ty().display());
+        if c.ty().is_text() && !c.collation_name().eq_ignore_ascii_case(table_coll) {
+            if charset_of(c.collation_name()) != charset_of(table_coll) {
+                l.push_str(&format!(" CHARACTER SET {}", charset_of(c.collation_name())));
+            }
+            l.push_str(&format!(" COLLATE {}", c.collation_name()));
+        }
         if !c.nullable {
             l.push_str(" NOT NULL");
         }
@@ -2602,8 +2741,10 @@ fn show_create(t: &TableDef) -> String {
         .map(|&c| format!("`{}`", t.columns[c].name))
         .collect();
     s.push_str(&format!(
-        "\n) ENGINE={} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-        t.engine.name()
+        "\n) ENGINE={} DEFAULT CHARSET={} COLLATE={}",
+        t.engine.name(),
+        charset_of(table_coll),
+        table_coll
     ));
     if !t.comment.is_empty() {
         s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));

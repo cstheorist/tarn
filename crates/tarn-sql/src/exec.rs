@@ -7,7 +7,7 @@ use crate::cluster::Cluster;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
 use crate::txn::{select_keys, select_rows, LockKey, LockOpts, Locked, RangeRead, Row, Txn};
-use crate::types::{key_val, sort_cmp, to_num, BaseType, KeyVal, SqlType};
+use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -114,8 +114,7 @@ pub fn route_prefix(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[V
 }
 
 pub fn shard_of_row(cluster: &Cluster, t: &TableDef, row: &[Value]) -> usize {
-    let sk: Vec<Value> = t.shard_key.iter().map(|&c| row[c].clone()).collect();
-    cluster.shard_of(&sk)
+    cluster.shard_of(&t.shard_key_of(row))
 }
 
 pub(crate) fn eval_limit(e: &Option<Expr>, cx: &EvalCtx) -> SqlResult<Option<u64>> {
@@ -138,7 +137,8 @@ struct Call {
     range: Option<RangeRead>,
 }
 
-/// Lexicographic order of index keys (as Tarantool orders them).
+/// Lexicographic order of index keys as the index holds them (as
+/// Tarantool orders them: a case-insensitive part is a binary weight string).
 fn key_cmp(a: &[Value], b: &[Value]) -> std::cmp::Ordering {
     for (x, y) in a.iter().zip(b) {
         let o = sort_cmp(x, y);
@@ -167,7 +167,7 @@ fn eval_keys(
             if v.is_null() {
                 continue 'keys; // NULL never equals anything
             }
-            match coerce_key_part(t.columns[idx.cols[i]].ty(), &v) {
+            match t.lookup_part(idx.cols[i], &v) {
                 Some(x) => key.push(x),
                 None => continue 'keys,
             }
@@ -271,7 +271,7 @@ async fn fetch_keys(
             idx.cols
                 .iter()
                 .chain(pk.iter())
-                .map(|&c| sort_cmp(&a[c], &b[c]))
+                .map(|&c| t.key_cmp(c, &a[c], &b[c]))
                 .find(|o| *o != std::cmp::Ordering::Equal)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -348,7 +348,7 @@ async fn fetch_stored_from(
             rows_all.extend(by_pk.into_values());
             rows_all.sort_by(|a, b| {
                 pk.iter()
-                    .map(|&c| sort_cmp(&a[c], &b[c]))
+                    .map(|&c| t.key_cmp(c, &a[c], &b[c]))
                     .find(|o| *o != std::cmp::Ordering::Equal)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
@@ -410,7 +410,7 @@ async fn fetch_stored_from(
                     if v.is_null() {
                         continue 'keys; // NULL never equals anything
                     }
-                    match coerce_key_part(t.columns[idx.cols[i]].ty(), &v) {
+                    match t.lookup_part(idx.cols[i], &v) {
                         Some(x) => key.push(x),
                         None => continue 'keys,
                     }
@@ -440,21 +440,21 @@ async fn fetch_stored_from(
             let mut prefix = Vec::with_capacity(eq.len() + 1);
             for (i, e) in eq.iter().enumerate() {
                 let v = e.eval(outer, cx)?;
-                match (v.is_null(), coerce_key_part(t.columns[idx.cols[i]].ty(), &v)) {
+                match (v.is_null(), t.lookup_part(idx.cols[i], &v)) {
                     (false, Some(x)) => prefix.push(x),
                     _ => return Ok(Vec::new()),
                 }
             }
-            let next_ty = idx.cols.get(eq.len()).map(|&c| t.columns[c].ty());
+            let next_col = idx.cols.get(eq.len()).copied();
             let bound = |b: &Option<(Expr, bool)>| -> SqlResult<Option<(Value, bool)>> {
-                match (b, next_ty) {
-                    (Some((e, incl)), Some(ty)) => {
+                match (b, next_col) {
+                    (Some((e, incl)), Some(c)) => {
                         let v = e.eval(outer, cx)?;
                         if v.is_null() {
                             return Ok(Some((Value::Null, false))); // comparisons with NULL match nothing
                         }
                         // An inexact bound is dropped: the residual filter keeps exact semantics.
-                        Ok(coerce_key_part(ty, &v).map(|x| (x, *incl)))
+                        Ok(t.lookup_part(c, &v).map(|x| (x, *incl)))
                     }
                     _ => Ok(None),
                 }
@@ -696,7 +696,7 @@ impl AggState {
         }
     }
 
-    fn add(&mut self, func: AggFunc, v: Option<Value>) {
+    fn add(&mut self, func: AggFunc, coll: crate::collation::Collation, v: Option<Value>) {
         let v = match (func, v) {
             (AggFunc::CountStar, _) => {
                 if let AggState::Count(n) = self {
@@ -746,12 +746,12 @@ impl AggState {
                 }
             }
             AggState::Min(m) => {
-                if m.as_ref().is_none_or(|x| sort_cmp(&v, x).is_lt()) {
+                if m.as_ref().is_none_or(|x| sort_cmp_coll(&v, x, coll).is_lt()) {
                     *m = Some(v);
                 }
             }
             AggState::Max(m) => {
-                if m.as_ref().is_none_or(|x| sort_cmp(&v, x).is_gt()) {
+                if m.as_ref().is_none_or(|x| sort_cmp_coll(&v, x, coll).is_gt()) {
                     *m = Some(v);
                 }
             }
@@ -834,7 +834,11 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
     let mut groups: HashMap<Vec<KeyVal>, (Vec<Value>, Vec<AggState>, Vec<HashSet<KeyVal>>)> = HashMap::new();
     for row in &rows {
         let gv: Vec<Value> = ap.group.iter().map(|g| g.eval(row, cx)).collect::<SqlResult<_>>()?;
-        let gk: Vec<KeyVal> = gv.iter().map(key_val).collect();
+        let gk: Vec<KeyVal> = gv
+            .iter()
+            .zip(&ap.group_coll)
+            .map(|(v, c)| key_val_coll(v, *c))
+            .collect();
         let entry = groups.entry(gk.clone()).or_insert_with(|| {
             order.push(gk);
             (
@@ -850,7 +854,7 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
             };
             if a.distinct {
                 if let Some(x) = &v {
-                    if x.is_null() || !entry.2[i].insert(key_val(x)) {
+                    if x.is_null() || !entry.2[i].insert(key_val_coll(x, a.coll)) {
                         continue;
                     }
                 }
@@ -867,7 +871,7 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
                 }
                 continue;
             }
-            entry.1[i].add(a.func, v);
+            entry.1[i].add(a.func, a.coll, v);
         }
     }
     if groups.is_empty() && ap.group.is_empty() {
@@ -996,7 +1000,14 @@ fn finish_select(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlRes
     let mut skipped = 0usize;
     for r in rows {
         let pr: Row = p.project.iter().map(|e| e.eval(&r, cx)).collect::<SqlResult<_>>()?;
-        if p.distinct && !seen.insert(pr.iter().map(key_val).collect()) {
+        if p.distinct
+            && !seen.insert(
+                pr.iter()
+                    .enumerate()
+                    .map(|(i, v)| key_val_coll(v, p.distinct_coll.get(i).copied().unwrap_or_default()))
+                    .collect(),
+            )
+        {
             continue;
         }
         if skipped < offset {
@@ -1033,8 +1044,14 @@ fn sort_rows(rows: &mut [Row], order: &[(Expr, bool)], cx: &EvalCtx<'_>) {
     });
 }
 
+/// Primary key of the row of `t` at `offset` in `row`, as the index holds
+/// it (row locks, the write buffer).
 fn pk_of(t: &TableDef, row: &[Value], offset: usize) -> Vec<Value> {
-    t.indexes[0].cols.iter().map(|&c| row[offset + c].clone()).collect()
+    t.indexes[0]
+        .cols
+        .iter()
+        .map(|&c| t.key_part(c, &row[offset + c]))
+        .collect()
 }
 
 /// One lock request of a batch: which candidate and table it belongs to.
@@ -1475,7 +1492,15 @@ impl Pager {
         // columns in order, ascending.
         let mut next = prefix.len();
         for (e, desc) in order {
-            let Expr::Col(c) = e else { return Ok(None) };
+            // (a case-insensitive column sorts by its key, as its index does)
+            let c = match e {
+                Expr::Col(c) => c,
+                Expr::Key(k, coll) => match &**k {
+                    Expr::Col(c) if t.layout.colls.get(*c) == Some(coll) => c,
+                    _ => return Ok(None),
+                },
+                _ => return Ok(None),
+            };
             match idx.cols.iter().position(|x| x == c) {
                 Some(pos) if pos < prefix.len() => {}
                 Some(pos) if pos == next && !desc => next += 1,
@@ -1519,7 +1544,7 @@ impl Pager {
         let t = &self.ta.table;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let key: Vec<Value> = self.key_cols.iter().map(|&c| r[c].clone()).collect();
+            let key: Vec<Value> = self.key_cols.iter().map(|&c| t.key_part(c, &r[c])).collect();
             let pk_vals = pk_of(t, &r, 0);
             let pk = crate::txn::key_bytes(&pk_vals);
             let deleted = txn.buffered(t.space_id, &pk_vals).is_some();
