@@ -62,8 +62,11 @@ jobs:
           python-version: "3.12"
       - name: Install Python packages
         run: pip install PyMySQL
-      - name: Cache Tarantool
-        uses: actions/cache@v6
+      # Restore and save separately, so that the (slow) Tarantool build is
+      # cached even when a later step fails.
+      - name: Restore Tarantool
+        id: tarantool-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.local/tarantool
           key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
@@ -71,6 +74,12 @@ jobs:
         run: |
           ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
           echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - name: Save Tarantool
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
       - name: Create the MariaDB test user
         run: mysql -h 127.0.0.1 -P 3407 -u root -e "CREATE USER 'sb'@'%' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'%';"
       - uses: Swatinem/rust-cache@v2
