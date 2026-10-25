@@ -550,12 +550,14 @@ impl Session {
                 for (op, field, v) in &ops {
                     m.arr(3).str(op).str(field).val(v);
                 }
-                // Range of every column changed by an arithmetic op: the
-                // storage side refuses results outside it (MySQL error 1264).
+                // Range of every integer column changed by an arithmetic op:
+                // the storage side refuses results outside it (MySQL error 1264).
                 let ranges: Vec<(&String, (i128, i128))> = ops
                     .iter()
                     .filter(|(op, _, _)| *op == "+")
-                    .filter_map(|(_, f, _)| t.col_index(f).map(|c| (f, crate::types::int_range(t.columns[c].ty()))))
+                    .filter_map(|(_, f, _)| t.col_index(f).map(|c| (f, t.columns[c].ty())))
+                    .filter(|(_, ty)| ty.is_integer())
+                    .map(|(f, ty)| (f, crate::types::int_range(ty)))
                     .collect();
                 m.arr(ranges.len());
                 for (f, (lo, hi)) in ranges {
@@ -680,12 +682,20 @@ impl Session {
             let col = &t.columns[*c];
             let ty = col.ty();
             match e {
-                Expr::Arith(a, op @ (Arith::Add | Arith::Sub), b)
-                    if matches!(&**a, Expr::Col(x) if x == c) && b.is_constant() && ty.is_integer() =>
+                Expr::Arith(a, op, b)
+                    if matches!(op.base(), Arith::Add | Arith::Sub)
+                        && matches!(&**a, Expr::Col(x) if x == c)
+                        && b.is_constant()
+                        && ty.is_integer() =>
                 {
                     let d = b.eval(&[], cx)?;
                     let Some(d) = d.as_i64() else { return Ok(None) };
-                    let d = if *op == Arith::Sub { -d } else { d };
+                    let d = if op.base() == Arith::Sub {
+                        let Some(n) = d.checked_neg() else { return Ok(None) };
+                        n
+                    } else {
+                        d
+                    };
                     ops.push(("+", col.name.clone(), Value::Int(d)));
                 }
                 e if e.is_constant() => {
