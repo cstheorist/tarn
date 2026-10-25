@@ -199,6 +199,45 @@ check('a stream request begins the transaction',
       got[1] == 'ok' and #got[2] == 2 and st:eval('return box.is_in_txn()') == true, got)
 st:rollback()
 
+print('counts in storage (issue #52)')
+for id = 300, 309 do
+    local email = (id % 3 ~= 0) and ('n' .. id .. '@x') or box.NULL
+    c[1]:call('tarn_autocommit', {{{'replace', sid, {id, id % 4, email, 9}}}})
+end
+-- tarn_count(space, index, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin)
+local function count(...) local r = c[1]:call('tarn_count', {...}); return r[1] == 'ok' and r[2] or r end
+local by_bucket = #c[1].space['test.acct'].index[2]:select({9})
+check('an equality prefix is counted by the index', count(sid, 2, {9}, 'EQ', box.NULL, true, {}, {}, true, false) == by_bucket)
+check('a whole index', count(sid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false) == c[1]:eval('return box.space[...]:count()', {sid}))
+check('a bounded range', count(sid, 0, {302}, 'GE', {306}, false, {}, {}, true, false) == 4)
+check('residual comparisons', count(sid, 0, {300}, 'GE', {309}, true, {{2, 'ge', 2, box.NULL, true}}, {}, true, false) == 4)
+check('NULL and NOT NULL', count(sid, 0, {300}, 'GE', {309}, true, {{3, 'null', box.NULL, box.NULL, false}}, {}, true, false) == 4
+      and count(sid, 0, {300}, 'GE', {309}, true, {{3, 'notnull', box.NULL, box.NULL, false}}, {}, true, false) == 6)
+check('a comparison with a NULL field never holds',
+      count(sid, 0, {300}, 'GE', {309}, true, {{3, 'ne', 'zzz', box.NULL, false}}, {}, true, false) == 6)
+check('IN lists', count(sid, 0, {300}, 'GE', {309}, true, {{2, 'in', {0, 3}, box.NULL, true}}, {}, true, false) == 5)
+check('a field past the end of the tuple takes its fill value',
+      count(sid, 0, {300}, 'GE', {309}, true, {{9, 'eq', 5, 5, true}}, {}, true, false) == 10)
+check('excluded rows are left out where the scan covers them',
+      count(sid, 2, {9}, 'EQ', box.NULL, true, {}, {{301}, {302}, {1}}, true, false) == by_bucket - 2
+      and count(sid, 0, {300}, 'GE', {309}, true, {{2, 'eq', 1, box.NULL, true}}, {{301}, {302}}, true, false) == 2)
+v1 = prepare(1, 'W6', {{'replace', sid, {304, 1, 'n304@x', 9}}})
+got = nil
+f = fiber.create(function() got = c[1]:call('tarn_count', {sid, 2, {9}, 'EQ', box.NULL, true, {}, {}, true, false}) end)
+fiber.sleep(0.05)
+check('an autocommit count waits for a W lock in its range', got == nil)
+c[1]:call('tarn_apply', {'W6'})
+fiber.sleep(0.05)
+check('... and then counts', got and got[1] == 'ok' and got[2] == by_bucket, got)
+st = c[1]:new_stream()
+got = st:call('tarn_count', {sid, 0, {300}, 'GE', {309}, true, {}, {}, false, true})
+check('a stream count begins the transaction',
+      got[1] == 'ok' and got[2] == 10 and st:eval('return box.is_in_txn()') == true, got)
+c[1]:call('tarn_autocommit', {{{'delete', sid, {300}}}})
+got = st:call('tarn_count', {sid, 0, {300}, 'GE', {309}, true, {}, {}, false, false})
+check('... and counts in its snapshot', got[1] == 'ok' and got[2] == 10, got)
+st:rollback()
+
 print('recovery (coordinator crashed)')
 -- (a) both prepared, coordinator vanished: implicitly committed -> applied.
 s1 = c[1]:new_stream(); s1:begin(); a = s1.space['test.acct']:get{1}
@@ -817,6 +856,26 @@ check('... and one that meets a W lock taken meanwhile waits for it', not fr:is_
 c[1]:call('tarn_apply', {'VE'})
 rr = result(fr)
 check('... then reads the applied row', rr[1] == 'ok' and rr[2][1][2] == 24, rr)
+local function vcount(preds)
+    return async('tarn_count', {vsid, 0, {}, 'ALL', box.NULL, true, preds or {}, {}, true, false})
+end
+local n0 = c[1]:call('tarn_count', {vsid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false})[2]
+hook('scan', 'hold')
+fr = vcount()
+hook('scan', 'reached')
+c[1]:call(unpack(vprepare('VF', {{'replace', vsid, {9, 90, box.NULL, 1}}})))
+c[1]:call('tarn_apply', {'VF'})
+hook('scan', 'release')
+rr = result(fr)
+check('a vinyl count whose range a cross-shard commit wrote while it ran counts again',
+      rr[1] == 'ok' and rr[2] == n0 + 1, {rr, n0})
+rr = c[1]:call('tarn_count', {vsid, 0, {}, 'ALL', box.NULL, true, {{2, 'ge', 20, box.NULL, true}}, {}, true, false})
+local want = c[1]:eval('local n = 0 for _, t in box.space["test.vy"]:pairs() do if t[2] >= 20 then n = n + 1 end end return n')
+check('a vinyl count with a residual', rr[1] == 'ok' and rr[2] == want, {rr, want})
+local svc = c[1]:new_stream()
+rr = svc:call('tarn_count', {vsid, 0, {}, 'ALL', box.NULL, true, {}, {{9}, {2}, {777}}, false, true})
+check('a vinyl count in a stream leaves out the rows the caller wrote', rr[1] == 'ok' and rr[2] == n0 - 1, {rr, n0})
+svc:rollback()
 check('no atomic section yielded on vinyl', c[1]:eval('return true'))
 
 print('jobs: one record per table name')
@@ -903,6 +962,10 @@ check('... and a row lock with a read waits', not fk2:is_ready())
 c[1]:call('tarn_apply', {'TX1'})
 fiber.sleep(0.1)
 check('... until the transaction is applied: then it prepares', got and got[1] == 'ok', got)
+t0 = fiber.clock()
+r = c[1]:call('tarn_count', {crsid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false})
+check('an autocommit count of the held table waits (no row lock left), then fails',
+      r[1] == 'conflict' and fiber.clock() - t0 >= 0.9, r)
 local sr = c[1]:new_stream()
 sr:call('tarn_select', {crsid, 0, {1}, 'EQ', 1, box.NULL, box.NULL, false, box.NULL, true})
 r = sr:call('tarn_validate', {'TV1', {{crsid, 0, {1}}}, {}, true})

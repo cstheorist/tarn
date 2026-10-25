@@ -143,6 +143,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shard, without reading candidates first: a read-modify-write transaction
   of two such updates makes 3 storage calls instead of 5
   ([#48](https://github.com/cstheorist/tarn/issues/48)).
+- `SELECT COUNT(*)` (and `COUNT(col)`, `COUNT(1)`) of one table without
+  `GROUP BY` is counted by the shards, which return one number each instead
+  of every matching row, when the `WHERE` clause is an index range plus
+  simple comparisons, `IN` lists and `IS [NULL | NOT NULL]` tests of integer
+  and character columns; an equality prefix alone is counted by the index
+  ([#52](https://github.com/cstheorist/tarn/issues/52)). Counts see the
+  transaction's own writes and are validated at commit as reads of their
+  ranges. Counting a 300,000-row prefix takes 85 ms instead of 305 ms with
+  a residual condition, and 0.2 ms instead of 330 ms without one.
+  `SHOW STATUS` reports them as `Tarn_storage_counts`.
 - `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
   on any index, batched into one storage call per shard, and an `OR` across
   indexes is a union of lookups (MySQL's `index_merge`); they used to scan
