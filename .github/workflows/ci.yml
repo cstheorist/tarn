@@ -29,7 +29,7 @@ jobs:
     name: Format and clippy
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
@@ -54,16 +54,19 @@ jobs:
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
           --health-interval=5s --health-timeout=5s --health-retries=30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Python packages
         run: pip install PyMySQL
-      - name: Cache Tarantool
-        uses: actions/cache@v4
+      # Restore and save separately, so that the (slow) Tarantool build is
+      # cached even when a later step fails.
+      - name: Restore Tarantool
+        id: tarantool-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.local/tarantool
           key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
@@ -71,6 +74,12 @@ jobs:
         run: |
           ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
           echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - name: Save Tarantool
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
       - name: Create the MariaDB test user
         run: mysql -h 127.0.0.1 -P 3407 -u root -e "CREATE USER 'sb'@'%' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'%';"
       - uses: Swatinem/rust-cache@v2
@@ -105,8 +114,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -119,7 +128,7 @@ jobs:
     name: Verus proofs
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the Rust toolchain of the Verus release
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - name: Download Verus
