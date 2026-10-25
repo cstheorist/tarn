@@ -4,9 +4,11 @@ with waits, lock wait timeouts and deadlocks, semi-consistent writes, SKIP
 LOCKED / NOWAIT, unique keys locked by value, savepoints and statement
 rollback -- each checked against what InnoDB does at READ COMMITTED.
 
-    tests/sql/rctest.py --tarn 127.0.0.1:4000 [--only NAME] [--threads 8]
+    tests/sql/rctest.py --tarn 127.0.0.1:4000[,127.0.0.1:4001...] [--only NAME] [--threads 8]
 
 Needs a cluster with at least two shards (scripts/cluster.sh start -n 2).
+The tests connect to the first server; list every SQL server of the cluster,
+since any of them may break a cross-shard deadlock (and count it).
 """
 import argparse
 import random
@@ -130,8 +132,9 @@ class T:
         return c
 
     def status(self, name):
-        c = connect(self.args.tarn)
-        return int(dict(q(c, f"SHOW STATUS LIKE '{name}'"))[name])
+        """A status counter summed over the cluster's SQL servers."""
+        return sum(int(dict(q(connect(hp), f"SHOW STATUS LIKE '{name}'"))[name])
+                   for hp in self.args.servers)
 
     # ------------------------------------------------------------------
     def test_00_shard_helper(self):
@@ -804,13 +807,15 @@ class T:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tarn", required=True)
+    ap.add_argument("--tarn", required=True, help="host:port[,host:port...]: the cluster's SQL servers")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--rounds", type=int, default=60, help="transactions per thread in the counter test")
     ap.add_argument("--bank-seconds", type=float, default=8, help="length of the transfer workload (0: skip)")
     ap.add_argument("--only", default="")
     ap.add_argument("--default-isolation", default="SERIALIZABLE")
     args = ap.parse_args()
+    args.servers = args.tarn.split(",")
+    args.tarn = args.servers[0]
     c = connect(args.tarn, db=None)
     q(c, f"DROP DATABASE IF EXISTS {DB}")
     q(c, f"CREATE DATABASE {DB}")

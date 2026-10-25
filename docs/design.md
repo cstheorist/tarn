@@ -29,7 +29,7 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
  │ shard 1     │ │ shard 2     │  ...   ◄────────────────────────┘
  │ leader +    │ │ leader +    │   each shard: 1 or more Tarantool 3.9 instances,
  │ replicas    │ │ replicas    │   synchronous replication + Raft leader election,
- │ (lua/tarn)  │ │ (lua/tarn)  │   memtx engine with MVCC
+ │ (lua/tarn)  │ │ (lua/tarn)  │   memtx (RAM) or vinyl (disk) tables, MVCC
  └─────────────┘ └─────────────┘
 ```
 
@@ -567,6 +567,65 @@ lost or duplicated, and `lua/test/run.sh` checks the shard side (fences on
 every write path, waiting for prepared transactions, checks with fill
 values, temporary indexes, the job record).
 
+### 2.11 Tables on disk (vinyl)
+
+A table is a memtx space (every row in RAM) or, with `ENGINE=vinyl`, a vinyl
+space: an LSM tree on disk with a RAM cache, for data larger than RAM
+(issue #23). `--default-engine` decides what `ENGINE=InnoDB` and tables
+without the option get. The commit protocol's own spaces stay in memtx:
+since Tarantool 3, one transaction may write memtx and vinyl spaces when
+memtx MVCC is on, and checked on Tarn's build, a transaction that either
+engine moves into a read view refuses writes in both, and its reads stay
+consistent across them. So PREPARE, APPLY and the local commits write
+their records and the rows in one local transaction whatever the engine,
+and `tarn_validate`'s probe write detects overwritten vinyl reads as it
+does memtx ones (§2.4).
+
+**Yields.** What vinyl changes is that a read which misses the cache yields
+while the page is read, and so may a write (an insert's duplicate check).
+The model takes each commit step -- CommitLocal, CommitRC, autocommit
+writes, Prepare -- as one atomic action, and on memtx the implementation
+was atomic simply because nothing in it yielded before `box.commit()`. Each
+step is now split (lua/tarn.lua "Yields"):
+
+1. the storage reads and writes, inside the step's local transaction: they
+   may yield, and MVCC aborts the commit if anything they read is changed
+   by another commit before this one is prepared;
+2. then, in one section that does not yield (`atomic`), the checks --
+   definition fence, row locks, prepared transactions' locks, unique values
+   -- the lock-index updates and the start of `box.commit()`, which
+   prepares the transaction before it waits for the WAL.
+
+The step's atomic action in the model is at the second part: the checks see
+the state the commit is prepared in, and the reads are still current then
+(else MVCC aborts it). Local commits also register as in flight before the
+first part, so that a row-lock grant or a schema change that starts while
+one runs waits for it. The storage tests run with `TARN_CHECK_YIELDS`, which
+makes an atomic section that yields fail its step, and hold steps at their
+yield points (`tarn_test_hook`) to run another step in between: two PREPAREs
+of one row, a local commit and a PREPARE, an autocommit write and a row
+lock, a local commit and a schema change.
+
+**Autocommit reads.** A memtx scan and its W-lock check see one state
+(SnapshotRead). A vinyl scan may yield, so it runs inside a read-only
+transaction instead: MVCC gives it one snapshot, taken at some moment while
+it ran. Its check then covers the W locks held now and every W lock taken or
+released while it ran (a history the lock index keeps while such a read is
+in progress). When none covered what the scan read, no prepared transaction
+held a lock on those rows at any moment of the scan, so the snapshot is a
+state in which SnapshotRead could have read the same rows; otherwise the
+read waits for the lock and runs again. Checking the current locks only
+would not do: a cross-shard transaction prepared and applied here during
+the scan may have been read by another transaction that this read also
+sees, while its write here is missing from the snapshot.
+
+**Not yet.** `ALTER TABLE` builds indexes and checks rows while writes to the
+table wait (§2.10): seconds on memtx, hours on a large vinyl table, so
+builds will move ahead of the fence. Replica bootstrap and backups copy a
+shard's whole data set. Sizing (`TARN_VINYL_MEMORY_MB`, `TARN_VINYL_CACHE_MB`)
+and benchmarks with data larger than the cache are issue #23's remaining
+steps.
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
@@ -612,14 +671,14 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once) | 141/141 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan | 164/164 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 236 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors | 236/236 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 22/22 |
-| `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back) | 6/6 |
+| `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog | 7/7 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
@@ -726,7 +785,13 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * `ALTER TABLE` does not rewrite rows: conversions between type families
   and `DECIMAL` scale changes are refused, dropped columns keep their
   stored values (no space is reclaimed), and writes to the table wait while
-  a change prepares, including index builds (§2.10).
+  a change prepares, including index builds (§2.10) -- on a large vinyl
+  table, for as long as the build takes. A table cannot move between memtx
+  and vinyl.
+* Vinyl tables (§2.11): an autocommit read whose range a cross-shard
+  transaction writes again and again while it scans runs again each time,
+  and fails with 1213 after `lock_wait` (1 s); tuning and benchmarks with
+  data larger than the cache are still to come (#23).
 * String comparison, ordering, grouping and unique indexes are binary (like
   `utf8mb4_bin`); MySQL's default collations are case-insensitive, so
   `WHERE name = 'ALICE'` does not match `'alice'` in Tarn.
@@ -768,10 +833,15 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   increasing per server, with gaps across servers (as in TiDB). An explicit id
   inserted through one server inside another server's cached block is not
   detected until that server reaches it (duplicate-key error then).
-* `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
-  transactional and do not run through the schema-change protocol; another
-  SQL server sees them within its catalog poll (statements that meet an
-  older catalog there are re-planned).
+* `CREATE` / `DROP TABLE`, `TRUNCATE` and `CREATE` / `DROP DATABASE` are
+  not transactional and do not run through the schema-change protocol;
+  another SQL server sees them within its catalog poll (statements that meet
+  an older catalog there are re-planned). They do not wait for prepared
+  transactions: an APPLY skips the writes to a table dropped since its
+  PREPARE (space ids are never reused), while a `TRUNCATE` that runs between
+  a transaction's PREPARE and its APPLY leaves that transaction's rows in
+  the table. Nor are they atomic across shards: when a shard cannot be
+  reached, the statement fails after the other shards have run it.
 * The bucket → shard map is static (no online resharding / bucket moves yet),
   so vshard compatibility is at the level of tuple layout and bucket hashing.
 * No TLS, no `COM_CHANGE_USER`; users and passwords come from the command

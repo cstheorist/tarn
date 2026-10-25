@@ -54,12 +54,14 @@ local M = {
         max_txn_age = 120.0,     -- PREPAREs of transactions older than this are refused
         clock_skew = 60.0,       -- assumed bound on clock differences between nodes
         gc_batch = 500,          -- records deleted per GC transaction
+        check_yields = false,    -- tests: an atomic section that yields is an error
+        test_hooks = false,      -- tests: tarn_test_hook may hold yield points
     },
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
-             stale_defs = 0, alters = 0},
+             stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -164,6 +166,15 @@ end
 --   a reader conflicts with W locks on the keys / within the ranges it read.
 
 -- Index keys of a tuple for every secondary index: {{index_id, key, unique}}.
+-- A unique key with a NULL part takes no value: MySQL lets any number of
+-- rows have NULL there (and an index lookup with a NULL part is an error).
+local function has_null(key)
+    for i = 1, #key do
+        if key[i] == nil then return true end   -- also box.NULL
+    end
+    return false
+end
+
 local function secondary_keys(space, tuple, out)
     if tuple == nil then return out end
     for id, idx in pairs(space.index) do
@@ -207,12 +218,30 @@ local BYTX = {}     -- BYTX[txid] = {{sid, iid, kbin} | {sid, iid}, ...}
 local NLOCK = 0     -- point + range locks currently held
 local LK_STALE = true
 
+-- W-lock history, for autocommit reads of vinyl tables (checked_read): while
+-- one runs (VY_SCANS > 0), every W lock taken or released is logged, so that
+-- a read whose scan yielded can tell whether a W lock covered what it read
+-- at any moment of the scan. A ring of LOG_N entries; entries before
+-- LOG_FLOOR are gone (overwritten, or the lock index was rebuilt).
+local LOG_N = 8192
+local LOG_SID, LOG_IID, LOG_KB = {}, {}, {}
+local LOG_SEQ, LOG_FLOOR = 0, 1
+local VY_SCANS = 0
+
+local function lk_log(sid, iid, kb)
+    LOG_SEQ = LOG_SEQ + 1
+    local slot = LOG_SEQ % LOG_N
+    LOG_SID[slot], LOG_IID[slot], LOG_KB[slot] = sid, iid, kb
+    if LOG_SEQ - LOG_N >= LOG_FLOOR then LOG_FLOOR = LOG_SEQ - LOG_N + 1 end
+end
+
 local function lk_point(txid, sid, iid, kb, mode)
     local s = LK[sid]; if s == nil then s = {}; LK[sid] = s end
     local i = s[iid]; if i == nil then i = {}; s[iid] = i end
     local e = i[kb]; if e == nil then e = {}; i[kb] = e end
     if e[txid] == nil then NLOCK = NLOCK + 1 end
     if e[txid] ~= 'W' then e[txid] = mode end
+    if mode == 'W' and VY_SCANS > 0 then lk_log(sid, iid, kb) end
     local b = BYTX[txid]; if b == nil then b = {}; BYTX[txid] = b end
     b[#b + 1] = {sid, iid, kb}
 end
@@ -236,6 +265,7 @@ local function lk_release(txid)
             local i = LK[x[1]] and LK[x[1]][x[2]]
             local e = i and i[x[3]]
             if e ~= nil and e[txid] ~= nil then
+                if e[txid] == 'W' and VY_SCANS > 0 then lk_log(x[1], x[2], x[3]) end
                 e[txid] = nil
                 NLOCK = NLOCK - 1
                 if next(e) == nil then i[x[3]] = nil end
@@ -269,6 +299,10 @@ end
 
 local function lk_reload()
     writable()
+    -- Reads in progress cannot trust the history: it starts again here.
+    LOG_SEQ = LOG_SEQ + 1
+    LOG_SID[LOG_SEQ % LOG_N] = nil
+    LOG_FLOOR = LOG_SEQ + 1
     local p1, r1 = lk_scan('read-confirmed')
     local p2, r2 = lk_scan('read-committed')
     LK, RL, BYTX, NLOCK = {}, {}, {}, 0
@@ -415,7 +449,8 @@ local function write_conflict(txid, space, pk, old, new)
     local nold = #keys
     secondary_keys(space, new, keys)
     for n, k in ipairs(keys) do
-        local any_mode = k[3] and n > nold     -- unique key claimed by the new tuple
+        -- a unique key the new tuple claims (a NULL part claims nothing)
+        local any_mode = k[3] and n > nold and not has_null(k[2])
         local ee = s and s[k[1]] and s[k[1]][kbin(k[2])]
         if ee ~= nil then
             for t, m in pairs(ee) do
@@ -543,15 +578,87 @@ local INFLIGHT = {}     -- INFLIGHT[seq] = true while that local commit is in fl
 local INFLIGHT_SEQ = 0
 local INFLIGHT_COND = fiber.cond()
 
--- box.commit() of a local transaction that wrote user rows.
-local function tracked_commit()
+-- A local commit that writes user rows is in flight from before its first
+-- check to the end of its box.commit(): whatever starts meanwhile and must
+-- not miss its writes (a row lock grant, a schema change) waits for it.
+local function inflight_begin()
     INFLIGHT_SEQ = INFLIGHT_SEQ + 1
-    local seq = INFLIGHT_SEQ
-    INFLIGHT[seq] = true
+    INFLIGHT[INFLIGHT_SEQ] = true
+    return INFLIGHT_SEQ
+end
+
+local function inflight_end(seq)
+    if INFLIGHT[seq] then
+        INFLIGHT[seq] = nil
+        INFLIGHT_COND:broadcast()
+    end
+end
+
+-- box.commit() of a local transaction that wrote user rows and registered
+-- nothing earlier.
+local function tracked_commit()
+    local seq = inflight_begin()
     local ok, err = pcall(box.commit)
-    INFLIGHT[seq] = nil
-    INFLIGHT_COND:broadcast()
+    inflight_end(seq)
     if not ok then error(err) end
+end
+
+-- Yields ----------------------------------------------------------------------
+-- A vinyl read that misses the cache yields while the page is read, and so
+-- may a vinyl write (an insert's duplicate check, the old tuple a secondary
+-- index needs). TarnCommit takes each commit step (CommitLocal, CommitRC,
+-- autocommit writes, Prepare) as one atomic action, so each is split:
+--   1. the storage reads and writes, which may yield -- inside the step's
+--      local transaction, so MVCC aborts the commit if anything it read is
+--      changed by another commit before this one is prepared;
+--   2. the checks (definition fence, row locks, prepared transactions'
+--      locks), the lock-index updates and the start of box.commit(), in one
+--      section that does not yield (`atomic`): the checks see the state the
+--      commit is prepared in, as in the model.
+-- Local commits register as in flight before step 1 (inflight_begin).
+-- `check_yields` makes a yield inside an atomic section an error (tests);
+-- `yield_point` marks the places step 1 may yield, where tests can hold a
+-- step (tarn_test_hook) to run another one in between.
+local YIELD_HOOKS = {}   -- tests: name -> {cond = fiber.cond(), held = true}
+
+local function yield_point(name)
+    local h = YIELD_HOOKS[name]
+    if h == nil then return end
+    h.reached = h.reached + 1
+    h.cond:broadcast()
+    if h.reached > 1 then return end   -- only the first step to get here is held
+    local deadline = clock.monotonic() + 10
+    while h.held and clock.monotonic() < deadline do h.cond:wait(0.05) end
+end
+
+local function atomic(what, fn, ...)
+    if not M.cfg.check_yields then return fn(...) end
+    local f = fiber.self()
+    local c0 = f:csw()
+    local r = fn(...)
+    if f:csw() ~= c0 then error('tarn: ' .. what .. ' yielded inside its atomic section') end
+    return r
+end
+
+-- tarn_test_hook(name, 'hold' | 'release' | 'reached'): tests only. 'hold'
+-- holds the next step that reaches yield point `name` there (later ones pass)
+-- until 'release'; 'reached' waits until one has.
+function tarn_test_hook(name, action)
+    if not M.cfg.test_hooks then return {'error', 0, 'test hooks are off'} end
+    local h = YIELD_HOOKS[name]
+    if action == 'hold' then
+        YIELD_HOOKS[name] = {cond = fiber.cond(), held = true, reached = 0}
+    elseif action == 'release' and h ~= nil then
+        YIELD_HOOKS[name] = nil
+        h.held = false
+        h.cond:broadcast()
+    elseif action == 'reached' then
+        -- wait (up to 5 s) until a step reached the held point
+        local deadline = clock.monotonic() + 5
+        while h ~= nil and (h.reached or 0) == 0 and clock.monotonic() < deadline do h.cond:wait(0.05) end
+        return {'ok', h ~= nil and h.reached or 0}
+    end
+    return {'ok'}
 end
 
 -- Wait until every local commit in flight now has ended (false: deadline).
@@ -1094,33 +1201,59 @@ local function check_arith(old, ops, ranges)
     end
 end
 
-local function apply_checked(txid, w)
+-- Step 1 of one write (see "Yields"): read the row it replaces, work out the
+-- tuple it leaves and apply it in the current transaction; may yield.
+-- Returns its plan {space, pk, old, new, res, skip} (indexes P_*): `res` is
+-- what the write returned, `skip` marks an update of a missing row (nothing
+-- written).
+local P_SPACE, P_PK, P_OLD, P_NEW, P_RES, P_SKIP = 1, 2, 3, 4, 5, 6
+
+local function write_step(w)
     local space = box.space[w[2]]
     if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
     local pk, new = write_target(space, w)
     local old = space:get(pk)
-    if w[1] == 'update' then
-        if old == nil then return nil end
-        -- w[6]: {n, v1, v2, ...}: rows written before ALTER TABLE added the
-        -- fields past the n-th end early; they hold the values v1, v2, ...
-        local pad = w[6]
-        if pad ~= nil and pad ~= box.NULL and #old < #pad - 1 + pad[1] then
-            local t = old:totable()
-            for f = math.max(#t + 1, pad[1] + 1), #pad - 1 + pad[1] do t[f] = pad[f - pad[1] + 1] end
-            for f = 1, #t do if t[f] == nil then t[f] = box.NULL end end
-            old = box.tuple.new(t)
-        end
-        -- w[5]: {{field, min, max}} for integer columns changed by arithmetic
-        if w[5] ~= nil and #w[5] > 0 then check_arith(old, w[4], w[5]) end
-        new = old:update(mysql_update_ops(old, w[4]))
-        local holder = write_conflict(txid, space, pk, old, new)
-        if holder then return nil, holder end
-        return space:replace(new), nil, old
+    yield_point('write')
+    if w[1] ~= 'update' then
+        return {space, pk, old, new, apply_write(w), false}
     end
-    local holder = write_conflict(txid, space, pk, old, new)
-    if holder then return nil, holder end
-    return apply_write(w), nil, old
+    if old == nil then return {space, pk, nil, nil, nil, true} end
+    -- w[6]: {n, v1, v2, ...}: rows written before ALTER TABLE added the
+    -- fields past the n-th end early; they hold the values v1, v2, ...
+    local pad = w[6]
+    if pad ~= nil and pad ~= box.NULL and #old < #pad - 1 + pad[1] then
+        local t = old:totable()
+        for f = math.max(#t + 1, pad[1] + 1), #pad - 1 + pad[1] do t[f] = pad[f - pad[1] + 1] end
+        for f = 1, #t do if t[f] == nil then t[f] = box.NULL end end
+        old = box.tuple.new(t)
+    end
+    -- w[5]: {{field, min, max}} for integer columns changed by arithmetic
+    if w[5] ~= nil and #w[5] > 0 then check_arith(old, w[4], w[5]) end
+    new = old:update(mysql_update_ops(old, w[4]))
+    return {space, pk, old, new, space:replace(new), false}
 end
+
+-- Step 2 (no yield): the holder of a lock that one of the writes conflicts
+-- with -- a row lock, or a prepared transaction's lock (TarnCommit:
+-- writesOK) -- or nil.
+local function writes_locked(txid, plans)
+    for i = 1, #plans do
+        local p = plans[i]
+        if not p[P_SKIP] then
+            local h = write_conflict(txid, p[P_SPACE], p[P_PK], p[P_OLD], p[P_NEW])
+            if h then return h end
+        end
+    end
+    return nil
+end
+
+-- The lock index and the fences were current when the step began (lk_fresh,
+-- fence_fresh); a leader change since then makes them stale.
+local function still_fresh()
+    writable()
+    return not LK_STALE and not FENCE_STALE
+end
+local FRESH_MSG = 'shard leadership changed during the commit'
 
 -- MySQL affected-rows convention for one write: REPLACE of a different row
 -- counts 2, an UPDATE or REPLACE that changes nothing counts 0 / 1.
@@ -1143,32 +1276,49 @@ end
 -- with lock checks, and commits; Tarantool's MVCC validates the reads
 -- themselves. Returns {'ok', n} or {status, code, message}; on failure the
 -- stream's transaction is rolled back.
+-- Step 2 of CommitLocal (see "Yields"): its checks, on the state the commit
+-- is prepared in.
+local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plans)
+    if not still_fresh() then return conflict(FRESH_MSG) end
+    -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read under
+    -- those locks, outside its stream: the locks must have survived.
+    if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
+    local stale = stale_definition(fence)
+    if stale then return stale end
+    local h = reads_w_locked(txid, rpoints, rranges)
+    if h then return conflict('read row locked by prepared transaction ' .. h) end
+    h = writes_locked(txid, plans)
+    if h then return conflict('row locked by prepared transaction ' .. h) end
+    return nil
+end
+
 function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence)
     writable()
+    local seq = inflight_begin()
     local ok, res = pcall(function()
         lk_fresh()
         fence_fresh()
-        -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read
-        -- under those locks, outside its stream: the locks must have survived.
+        -- Checked again below, where it counts; here to fail before writing.
         if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
         local stale = stale_definition(fence)
         if stale then return stale end
         -- Without reads on this shard the coordinator sends no stream: the
         -- commit is then its own local transaction.
         if not box.is_in_txn() then box.begin(RW) end
-        local h = reads_w_locked(txid, rpoints, rranges)
-        if h then return conflict('read row locked by prepared transaction ' .. h) end
-        local n = 0
-        for _, w in ipairs(writes) do
-            local res, holder = apply_checked(txid, w)
-            if holder then return conflict('row locked by prepared transaction ' .. holder) end
-            if res ~= nil then n = n + 1 end
+        local plans, n = {}, 0
+        for i = 1, #writes do
+            local p = write_step(writes[i])
+            plans[i] = p
+            if p[P_RES] ~= nil then n = n + 1 end
         end
+        local r = atomic('CommitLocal', commit_local_checks, txid, lock_gen, fence, rpoints, rranges, plans)
+        if r ~= nil then return r end
         box.on_commit(function() pl_release_all(txid) end)
-        tracked_commit()
+        box.commit()
         M.stats.commit_local = M.stats.commit_local + 1
         return {OK, n}
     end)
+    inflight_end(seq)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
@@ -1246,17 +1396,147 @@ M.unlock_cond = fiber.cond()
 
 local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] = 'GE', [6] = 'GT'}
 
--- Bounded index scan: rows from `key` in `iterator` order, stopping after
--- `limit` rows or once past `end_key` (inclusive if end_incl). Inside a
--- stream the reads are tracked by MVCC. With lock_check (autocommit reads,
--- TarnCommit!SnapshotRead), the scan waits while another transaction holds a
--- W lock on anything it covers; scan and lock check run without a yield in
--- between, so they observe one state. Returns {'ok', tuples}.
+-- tarn_select: a bounded index scan, rows from `key` in `iterator` order,
+-- stopping after `limit` rows or once past `end_key` (inclusive if
+-- end_incl). Inside a stream the reads are tracked by MVCC. With lock_check
+-- (autocommit reads, TarnCommit!SnapshotRead), the scan waits while another
+-- transaction holds a W lock on anything it covers; on memtx, scan and lock
+-- check run without a yield in between, so they observe one state (vinyl:
+-- checked_read). Returns {'ok', tuples}.
 local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
 -- Scans longer than this many tuples yield inside stream transactions.
 local SCAN_CHUNK = 1000
 -- Fiber slice of a long autocommit scan, which may not yield (seconds).
 local LONG_SCAN_SLICE = {warn = 1.0, err = 30.0}
+
+-- Whether a W lock was taken or released on a key of [lo, hi] of the index
+-- since history entry `since` (an autocommit read of a vinyl table): true,
+-- or 'gone' when that history is no longer complete.
+local function w_logged_since(since, sid, iid, kd, lo, hi, lo_incl, hi_incl)
+    if since + 1 < LOG_FLOOR then return 'gone' end
+    for seq = since + 1, LOG_SEQ do
+        local slot = seq % LOG_N
+        if LOG_SID[slot] == sid and LOG_IID[slot] == iid
+                and in_range(kd, msgpack.decode(LOG_KB[slot]), lo, hi, lo_incl, hi_incl) then
+            return true
+        end
+    end
+    return false
+end
+
+-- An autocommit read of a vinyl table, with the lock check (TarnCommit!
+-- SnapshotRead): the rows `scan()` returns, read in a state in which no
+-- prepared transaction holds a W lock on anything they cover. A memtx scan
+-- does not yield, so it and its check see one state (tarn_select). A vinyl
+-- scan may (see "Yields"): it runs inside a read-only transaction, so MVCC
+-- gives it one snapshot, taken at some moment while it ran, and
+-- `locked(rows, since)` covers every W lock taken or released meanwhile (a
+-- table) as well as those held now (the holder). When none covered what it
+-- read at any moment of the scan, the snapshot is a state in which
+-- SnapshotRead could have read the same rows. Otherwise the read waits for
+-- the lock and runs again (bounded by lock_wait).
+local function checked_read(scan, locked)
+    local deadline = clock.monotonic() + M.cfg.lock_wait
+    while true do
+        VY_SCANS = VY_SCANS + 1
+        local s0 = LOG_SEQ
+        local ok, rows = pcall(function()
+            box.begin({txn_isolation = 'read-confirmed'})
+            return scan()
+        end)
+        if box.is_in_txn() then box.rollback() end
+        VY_SCANS = VY_SCANS - 1
+        if not ok then error(rows) end
+        local h = atomic('SnapshotRead', function()
+            if LK_STALE then return {'stale'} end
+            if NLOCK == 0 and LOG_SEQ == s0 then return nil end
+            return locked(rows, s0)
+        end)
+        if h == nil then return {OK, rows} end
+        if type(h) == 'table' and h[1] == 'stale' then
+            lk_fresh()   -- a leader change meanwhile (raises ER_READONLY if demoted)
+        elseif type(h) == 'table' then
+            -- A cross-shard transaction wrote what the scan covers while it
+            -- ran: read again (its locks, if still held, are waited out).
+            if clock.monotonic() > deadline then
+                return conflict('rows changed by a cross-shard transaction during the read')
+            end
+            M.stats.vy_rereads = M.stats.vy_rereads + 1
+        else
+            if clock.monotonic() > deadline then
+                return conflict('row locked by prepared transaction ' .. h)
+            end
+            M.stats.lock_waits = M.stats.lock_waits + 1
+            M.unlock_cond:wait(0.01)
+        end
+    end
+end
+
+-- Bounded index scan of tarn_select: rows from `key` in `it` order, stopping
+-- after `limit` rows or once past `end_key`, skipping `offset` rows.
+local function select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+    local in_txn = box.is_in_txn()
+    local unbounded = limit == nil or limit > SCAN_CHUNK
+    if unbounded and not in_txn then
+        -- A long autocommit scan must be atomic, so it cannot yield: give it
+        -- time instead of failing with "fiber slice is exceeded" (#10).
+        fiber.set_slice(LONG_SCAN_SLICE)
+    end
+    local skip = (offset ~= nil) and offset or 0   -- msgpack nil arrives as box.NULL
+    if end_key == nil and (limit == nil or limit > 0) and skip == 0 and not (unbounded and in_txn) then
+        local rows = idx:select(key, {iterator = it, limit = limit})
+        yield_point('scan')
+        return rows
+    end
+    local rows, seen = {}, 0
+    for _, t in idx:pairs(key, {iterator = it}) do
+        seen = seen + 1
+        -- Inside a transaction MVCC keeps the view consistent across yields:
+        -- let other requests run during long scans.
+        if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
+        if end_key ~= nil then
+            local c = kd:compare_with_key(t, end_key)
+            if reverse then
+                if c < 0 or (c == 0 and not end_incl) then break end
+            else
+                if c > 0 or (c == 0 and not end_incl) then break end
+            end
+        end
+        if skip > 0 then skip = skip - 1
+        else
+            rows[#rows + 1] = t
+            if limit ~= nil and #rows >= limit then break end
+        end
+    end
+    return rows
+end
+
+-- The holder of a W lock on what a tarn_select scan covered, a table when a
+-- W lock was there at some moment since history entry `since` (vinyl), or
+-- nil. Covered: from the start key to the end key, or to the last row
+-- returned when the limit cut the scan short.
+local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
+    local lo, hi, h
+    if (it == 'EQ' or it == 'REQ') and idx.unique and #key == #idx.parts then
+        lo, hi = key, key
+        h = point_w_locked('', space_id, index_id, key)
+    else
+        local first = (#key > 0) and key or nil
+        local last = end_key
+        if limit ~= nil and #rows >= limit and #rows > 0 then
+            last = kd:extract_key(rows[#rows]):totable()
+        end
+        if it == 'EQ' or it == 'REQ' then lo, hi = first, first
+        elseif reverse then lo, hi = last, first
+        else lo, hi = first, last end
+        h = range_w_locked('', space_id, index_id, lo, hi, true, true)
+    end
+    if h == nil and since ~= nil then
+        local w = w_logged_since(since, space_id, index_id, kd, lo, hi, true, true)
+        if w then return {w} end
+    end
+    return h
+end
 
 function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin)
     -- First request of a stream: start the stream's transaction here (it
@@ -1277,59 +1557,22 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     key = key or {}
     local kd = index_key_def(space_id, index_id)
     local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
-    local deadline = clock.monotonic() + M.cfg.lock_wait
-    local in_txn = box.is_in_txn()
-    local unbounded = limit == nil or limit > SCAN_CHUNK
-    if unbounded and not in_txn then
-        -- A long autocommit scan must be atomic, so it cannot yield: give it
-        -- time instead of failing with "fiber slice is exceeded" (#10).
-        fiber.set_slice(LONG_SCAN_SLICE)
+    if lock_check ~= true then
+        return {OK, select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)}
     end
+    if space.engine == 'vinyl' and not box.is_in_txn() then
+        return checked_read(
+            function() return select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse) end,
+            function(rows, since)
+                return select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
+            end)
+    end
+    -- memtx: scan and check without a yield in between observe one state.
+    local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
-        local rows = {}
-        local skip = (offset ~= nil) and offset or 0   -- msgpack nil arrives as box.NULL
-        if end_key == nil and (limit == nil or limit > 0) and skip == 0 and not (unbounded and in_txn) then
-            rows = idx:select(key, {iterator = it, limit = limit})
-        else
-            local seen = 0
-            for _, t in idx:pairs(key, {iterator = it}) do
-                seen = seen + 1
-                -- Inside a stream transaction MVCC keeps the view consistent
-                -- across yields: let other requests run during long scans.
-                if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
-                if end_key ~= nil then
-                    local c = kd:compare_with_key(t, end_key)
-                    if reverse then
-                        if c < 0 or (c == 0 and not end_incl) then break end
-                    else
-                        if c > 0 or (c == 0 and not end_incl) then break end
-                    end
-                end
-                if skip > 0 then skip = skip - 1
-                else
-                    rows[#rows + 1] = t
-                    if limit ~= nil and #rows >= limit then break end
-                end
-            end
-        end
-        if lock_check ~= true or NLOCK == 0 then return {OK, rows} end
-        local h
-        if (it == 'EQ' or it == 'REQ') and idx.unique and #key == #idx.parts then
-            h = point_w_locked('', space_id, index_id, key)
-        else
-            -- Covered range: from the start key to the end key, or to the last
-            -- row returned when the limit cut the scan short.
-            local lo, hi = nil, nil
-            local first = (#key > 0) and key or nil
-            local last = end_key
-            if limit ~= nil and #rows >= limit and #rows > 0 then
-                last = kd:extract_key(rows[#rows]):totable()
-            end
-            if it == 'EQ' or it == 'REQ' then lo, hi = first, first
-            elseif reverse then lo, hi = last, first
-            else lo, hi = first, last end
-            h = range_w_locked('', space_id, index_id, lo, hi, true, true)
-        end
+        local rows = select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+        if NLOCK == 0 then return {OK, rows} end
+        local h = select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, nil)
         if h == nil then return {OK, rows} end
         if clock.monotonic() > deadline then
             return conflict('row locked by prepared transaction ' .. h)
@@ -1344,6 +1587,48 @@ end
 -- a full key of a unique index, else every row whose index key starts with
 -- it (at most `limit` per key). Rows come back key by key. lock_check and
 -- begin as in tarn_select.
+local function keys_scan(idx, keys, limit)
+    local in_txn = box.is_in_txn()
+    local nparts = #idx.parts
+    local rows, n = {}, 0
+    for _, key in ipairs(keys) do
+        if idx.unique and #key == nparts then
+            local t = idx:get(key)
+            if t ~= nil then rows[#rows + 1] = t end
+        else
+            local got = 0
+            for _, t in idx:pairs(key, {iterator = 'EQ'}) do
+                rows[#rows + 1] = t
+                got = got + 1
+                if limit ~= nil and got >= limit then break end
+            end
+        end
+        n = n + 1
+        -- Inside a transaction MVCC keeps the view consistent across yields;
+        -- let other requests run on long key lists.
+        if in_txn and n % 256 == 0 then fiber.yield() end
+    end
+    return rows
+end
+
+local function keys_locked(space_id, index_id, idx, kd, keys, since)
+    local nparts = #idx.parts
+    for _, key in ipairs(keys) do
+        local h
+        if idx.unique and #key == nparts then
+            h = point_w_locked('', space_id, index_id, key)
+        else
+            h = range_w_locked('', space_id, index_id, key, key, true, true)
+        end
+        if h ~= nil then return h end
+        if since ~= nil then
+            local w = w_logged_since(since, space_id, index_id, kd, key, key, true, true)
+            if w then return {w} end
+        end
+    end
+    return nil
+end
+
 function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     if begin == true and not box.is_in_txn() then
         box.begin(BEGIN_STREAM)
@@ -1354,38 +1639,18 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
-    local nparts = #idx.parts
-    local in_txn = box.is_in_txn()
+    if lock_check ~= true then return {OK, keys_scan(idx, keys, limit)} end
+    if space.engine == 'vinyl' and not box.is_in_txn() then
+        local kd = index_key_def(space_id, index_id)
+        return checked_read(
+            function() return keys_scan(idx, keys, limit) end,
+            function(_, since) return keys_locked(space_id, index_id, idx, kd, keys, since) end)
+    end
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
-        local rows, n = {}, 0
-        for _, key in ipairs(keys) do
-            if idx.unique and #key == nparts then
-                local t = idx:get(key)
-                if t ~= nil then rows[#rows + 1] = t end
-            else
-                local got = 0
-                for _, t in idx:pairs(key, {iterator = 'EQ'}) do
-                    rows[#rows + 1] = t
-                    got = got + 1
-                    if limit ~= nil and got >= limit then break end
-                end
-            end
-            n = n + 1
-            -- Inside a stream transaction MVCC keeps the view consistent
-            -- across yields; let other requests run on long key lists.
-            if in_txn and n % 256 == 0 then fiber.yield() end
-        end
-        if lock_check ~= true or NLOCK == 0 then return {OK, rows} end
-        local h
-        for _, key in ipairs(keys) do
-            if idx.unique and #key == nparts then
-                h = point_w_locked('', space_id, index_id, key)
-            else
-                h = range_w_locked('', space_id, index_id, key, key, true, true)
-            end
-            if h ~= nil then break end
-        end
+        local rows = keys_scan(idx, keys, limit)
+        if NLOCK == 0 then return {OK, rows} end
+        local h = keys_locked(space_id, index_id, idx, nil, keys, nil)
         if h == nil then return {OK, rows} end
         if clock.monotonic() > deadline then
             return conflict('row locked by prepared transaction ' .. h)
@@ -1395,9 +1660,26 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     end
 end
 
--- Kept for the protocol tests: autocommit lock-aware select.
 function tarn_read(space_id, index_id, key, iterator, limit, offset)
     return tarn_select(space_id, index_id, key, iterator, limit, nil, true, true, offset)
+end
+
+-- Step 2 of an autocommit write (see "Yields"). 'plocked': a row lock is in
+-- the way (wait for it); 'locked': a prepared transaction's lock.
+local function autocommit_checks(fence, plans)
+    if not still_fresh() then return conflict(FRESH_MSG) end
+    local st = stale_definition(fence)
+    if st then return st end
+    if PL_N > 0 then
+        for i = 1, #plans do
+            local p = plans[i]
+            local ph = write_plocked('', p[P_SPACE], p[P_PK], p[P_NEW])
+            if ph then return {'plocked', ph} end
+        end
+    end
+    local h = writes_locked('', plans)
+    if h then return {'locked', h} end
+    return nil
 end
 
 -- Autocommit DML outside any stream: one local transaction. Waits (bounded)
@@ -1415,27 +1697,29 @@ function tarn_autocommit(writes, opts)
     if lock_timeout == nil or lock_timeout == box.NULL then lock_timeout = 50 end
     local pl_deadline = clock.monotonic() + lock_timeout
     while true do
+        local seq = inflight_begin()
         local ok, res = pcall(function()
             fence_fresh()
             local stale = stale_definition(fence)
             if stale then return stale end
             box.begin(RW)
-            local n, last = 0, nil
-            for _, w in ipairs(writes) do
-                local space = box.space[w[2]]
-                if space ~= nil and PL_N > 0 then
-                    local pk, new = write_target(space, w)
-                    local ph = write_plocked('', space, pk, new)
-                    if ph then box.rollback(); return {'plocked', ph} end
-                end
-                local t, holder, old = apply_checked('', w)
-                if holder then box.rollback(); return {'locked', holder} end
-                n = n + affected(w[1], old, t)
-                if t ~= nil then last = t end
+            local plans, n, last = {}, 0, nil
+            for i = 1, #writes do
+                local w = writes[i]
+                local p = write_step(w)
+                plans[i] = p
+                n = n + affected(w[1], p[P_OLD], p[P_RES])
+                if p[P_RES] ~= nil then last = p[P_RES] end
             end
-            tracked_commit()
+            local r = atomic('autocommit', autocommit_checks, fence, plans)
+            if r ~= nil then
+                box.rollback()
+                return r
+            end
+            box.commit()
             return {OK, n, last}
         end)
+        inflight_end(seq)
         if not ok then
             if box.is_in_txn() then box.rollback() end
             reraise_readonly(res)
@@ -1461,6 +1745,17 @@ function tarn_autocommit(writes, opts)
     end
 end
 
+-- Step 2 of CommitRC (see "Yields").
+local function commit_rc_checks(txid, gen, fence, plans)
+    if not still_fresh() then return conflict(FRESH_MSG) end
+    if not pl_intact(txid, gen) then return {'error', 1213, BROKEN_MSG} end
+    local st = stale_definition(fence)
+    if st then return st end
+    local h = writes_locked(txid, plans)
+    if h then return {'locked', h} end
+    return nil
+end
+
 -- TarnCommit!CommitRC: the commit of a READ COMMITTED transaction whose
 -- writes are all on this shard. Its row locks must have survived (same
 -- generation, not broken); prepared transactions' locks on what it writes
@@ -1469,6 +1764,7 @@ end
 -- Returns {'ok', n} or {status, code, message}.
 function tarn_commit_rc(txid, writes, gen, fence)
     writable()
+    local seq   -- the attempt in flight, if any
     local ok, res = pcall(function()
         lk_fresh()
         if not pl_intact(txid, gen) then
@@ -1483,27 +1779,37 @@ function tarn_commit_rc(txid, writes, gen, fence)
                 pl_release_all(txid)
                 return stale
             end
+            seq = inflight_begin()
             box.begin(RW)
-            local n, holder = 0, nil
-            for _, w in ipairs(writes) do
-                local r, h = apply_checked(txid, w)
-                if h then holder = h; break end
-                if r ~= nil then n = n + 1 end
+            local plans, n = {}, 0
+            for i = 1, #writes do
+                local p = write_step(writes[i])
+                plans[i] = p
+                if p[P_RES] ~= nil then n = n + 1 end
             end
-            if holder == nil then
+            local r = atomic('CommitRC', commit_rc_checks, txid, gen, fence, plans)
+            if r == nil then
                 box.on_commit(function() pl_release_all(txid) end)
-                tracked_commit()
+                local okc, cerr = pcall(box.commit)
+                inflight_end(seq)
+                if not okc then error(cerr) end
                 M.stats.commit_rc = M.stats.commit_rc + 1
                 return {OK, n}
             end
             box.rollback()
+            inflight_end(seq)
+            if r[1] ~= 'locked' then
+                if r[2] == 1213 or r[2] == 1412 then pl_release_all(txid) end
+                return r
+            end
             if clock.monotonic() > deadline then
-                return conflict('row locked by prepared transaction ' .. holder)
+                return conflict('row locked by prepared transaction ' .. r[2])
             end
             M.stats.lock_waits = M.stats.lock_waits + 1
             M.unlock_cond:wait(0.01)
         end
     end)
+    if seq then inflight_end(seq) end
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
@@ -1536,6 +1842,63 @@ local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
 -- Prepare requires t \notin expired), because a delayed or duplicated
 -- PREPARE may meet a participant whose records were already collected after
 -- the transaction committed. Raises ER_READONLY on a read-only instance.
+-- Step 2 of Prepare (see "Yields"): readsOK, writesOK and recOK on the state
+-- the PREPARE is prepared in, then the locks and the records. Returns
+-- {code, message} for a NO vote, or nil.
+local P_KEYS = 7
+local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock_gen, fence, plans)
+    if not still_fresh() then return {1213, FRESH_MSG} end
+    if not pl_intact(txid, lock_gen) then return {1213, BROKEN_MSG} end
+    if stale_definition(fence) then return {1412, STALE_DEF_MSG} end
+    -- readsOK: no W lock of another prepared txn on anything we read.
+    local h = reads_w_locked(txid, rpoints, rranges)
+    if h then return {1213, 'read row locked by ' .. h} end
+    -- writesOK
+    h = writes_locked(txid, plans)
+    if h then return {1213, 'write row locked by ' .. h} end
+    -- recOK: the decision shard must not have a record yet (fenced => abort).
+    if dshard == M.cfg.shard_id then
+        if box.space._tarn_txn:get{txid} ~= nil then
+            return {1213, 'transaction already resolved by recovery'}
+        end
+        box.space._tarn_txn:insert{txid, 'staging', parts, now(), expiry()}
+    end
+    -- If this local transaction does not commit, its locks never existed.
+    -- Registered before the first index entry: any error from here on rolls
+    -- the transaction back (vote_no), which undoes the entries.
+    box.on_rollback(function() lk_release(txid) end)
+    local L = box.space._tarn_locks
+    local wlocked = {}
+    for i, w in ipairs(writes) do
+        local p = plans[i]
+        local sid = p[P_SPACE].id
+        local pkb = kbin(p[P_PK])
+        wlocked[sid .. ':0:' .. pkb] = true
+        lk_point(txid, sid, 0, pkb, 'W')
+        L:replace{sid, 0, pkb, txid, 'W', w[1], w[1] ~= 'delete' and w[3] or msgpack.NULL}
+        for _, k in ipairs(p[P_KEYS]) do
+            local kb = kbin(k[2])
+            wlocked[sid .. ':' .. k[1] .. ':' .. kb] = true
+            lk_point(txid, sid, k[1], kb, 'W')
+            L:replace{sid, k[1], kb, txid, 'W', msgpack.NULL, msgpack.NULL}
+        end
+    end
+    for _, r in ipairs(rpoints) do
+        local kb = kbin(r[3])
+        if not wlocked[r[1] .. ':' .. r[2] .. ':' .. kb] then
+            lk_point(txid, r[1], r[2], kb, 'R')
+            L:replace{r[1], r[2], kb, txid, 'R', msgpack.NULL, msgpack.NULL}
+        end
+    end
+    for i, r in ipairs(rranges) do
+        local lo_incl, hi_incl = r[5] ~= false, r[6] ~= false
+        lk_range(txid, r[1], r[2], r[3], r[4], lo_incl, hi_incl)
+        box.space._tarn_rlocks:replace{txid, i, r[1], r[2], r[3], r[4], lo_incl, hi_incl}
+    end
+    box.space._tarn_part:insert{txid, 'prepared', dshard, parts, now(), expiry()}
+    return nil
+end
+
 function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen, fence)
     writable()
     rpoints, rranges = rpoints or {}, rranges or {}
@@ -1573,23 +1936,22 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         end
         lk_fresh()
         fence_fresh()
+        -- The checks below run again in the atomic section, where they
+        -- count; here they fail the PREPARE before it reads anything.
         -- RC transactions: their row locks must have survived (TarnCommit:
         -- Prepare.readsOK for t \in RC).
         if not pl_intact(txid, lock_gen) then return vote_no(1213, BROKEN_MSG) end
         -- Writes encoded with a table definition an ALTER TABLE replaced.
         if stale_definition(fence) then return vote_no(1412, STALE_DEF_MSG) end
-        -- readsOK: no W lock of another prepared txn on anything we read.
-        local h = reads_w_locked(txid, rpoints, rranges)
-        if h then return vote_no(1213, 'read row locked by ' .. h) end
-        -- writesOK, plus uniqueness of the new tuples (tracked reads).
+        -- Reads (may yield, see "Yields"): the rows the writes replace and the
+        -- holders of the unique values the new rows take (tracked by MVCC).
         local plans = {}
         for i, w in ipairs(writes) do
             local space = box.space[w[2]]
             if space == nil then return vote_no(1146, 'no such space ' .. tostring(w[2])) end
             local pk, new = write_target(space, w)
             local old = space:get(pk)
-            h = write_conflict(txid, space, pk, old, new)
-            if h then return vote_no(1213, 'write row locked by ' .. h) end
+            yield_point('prepare')
             if w[1] == 'insert' and old ~= nil then
                 return vote_no(1062, 'Duplicate entry for key PRIMARY')
             end
@@ -1598,7 +1960,7 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
             if new ~= nil then
                 local pkd = index_key_def(space.id, 0)
                 for _, k in ipairs(keys) do
-                    if k[3] then
+                    if k[3] and not has_null(k[2]) then
                         local cur = space.index[k[1]]:get(k[2])
                         if cur ~= nil and pkd:compare_keys(pkd:extract_key(cur):totable(), pk) ~= 0 then
                             return vote_no(1062, 'Duplicate entry for key ' .. space.index[k[1]].name)
@@ -1606,47 +1968,13 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
                     end
                 end
             end
-            plans[i] = {space.id, pk, keys}
+            plans[i] = {space, pk, old, new, nil, false, keys}
         end
-        -- recOK: the decision shard must not have a record yet (fenced => abort).
-        if dshard == M.cfg.shard_id then
-            if box.space._tarn_txn:get{txid} ~= nil then
-                return vote_no(1213, 'transaction already resolved by recovery')
-            end
-            box.space._tarn_txn:insert{txid, 'staging', parts, now(), expiry()}
-        end
-        -- If this local transaction does not commit, its locks never existed.
-        -- Registered before the first index entry: any error from here on
-        -- rolls the transaction back (vote_no), which undoes the entries.
-        box.on_rollback(function() lk_release(txid) end)
-        local L = box.space._tarn_locks
-        local wlocked = {}
-        for i, w in ipairs(writes) do
-            local sid, pk, keys = plans[i][1], plans[i][2], plans[i][3]
-            local pkb = kbin(pk)
-            wlocked[sid .. ':0:' .. pkb] = true
-            lk_point(txid, sid, 0, pkb, 'W')
-            L:replace{sid, 0, pkb, txid, 'W', w[1], w[1] ~= 'delete' and w[3] or msgpack.NULL}
-            for _, k in ipairs(keys) do
-                local kb = kbin(k[2])
-                wlocked[sid .. ':' .. k[1] .. ':' .. kb] = true
-                lk_point(txid, sid, k[1], kb, 'W')
-                L:replace{sid, k[1], kb, txid, 'W', msgpack.NULL, msgpack.NULL}
-            end
-        end
-        for _, r in ipairs(rpoints) do
-            local kb = kbin(r[3])
-            if not wlocked[r[1] .. ':' .. r[2] .. ':' .. kb] then
-                lk_point(txid, r[1], r[2], kb, 'R')
-                L:replace{r[1], r[2], kb, txid, 'R', msgpack.NULL, msgpack.NULL}
-            end
-        end
-        for i, r in ipairs(rranges) do
-            local lo_incl, hi_incl = r[5] ~= false, r[6] ~= false
-            lk_range(txid, r[1], r[2], r[3], r[4], lo_incl, hi_incl)
-            box.space._tarn_rlocks:replace{txid, i, r[1], r[2], r[3], r[4], lo_incl, hi_incl}
-        end
-        box.space._tarn_part:insert{txid, 'prepared', dshard, parts, now(), expiry()}
+        -- TarnCommit!Prepare: the checks and the locks, then the commit, with
+        -- no yield in between.
+        local no = atomic('Prepare', prepare_locks, txid, dshard, parts, writes, rpoints, rranges,
+                          lock_gen, fence, plans)
+        if no ~= nil then return vote_no(no[1], no[2]) end
         -- MVCC validates every read this stream made; may raise conflict.
         -- Tracked: an ALTER TABLE waits for PREPAREs that passed its fence.
         tracked_commit()
@@ -1716,11 +2044,17 @@ function tarn_apply(txid)
             end
         end
         -- Deletes first: a new row may reuse a deleted row's unique values.
+        -- A table dropped since the PREPARE took its rows with it, and space
+        -- ids are never reused: its writes have nothing left to change (the
+        -- transaction is ordered before the DROP TABLE), while the others
+        -- must still land.
         for _, pass in ipairs({'delete', 'write'}) do
             for _, l in box.space._tarn_locks.index.txid:pairs({txid}, {iterator = 'EQ'}) do
                 if l.mode == 'W' and l.op ~= nil and (l.op == 'delete') == (pass == 'delete') then
                     local space = box.space[l.space_id]
-                    if l.op == 'delete' then space:delete(msgpack.decode(l.key))
+                    if space == nil then
+                        M.stats.apply_dropped = M.stats.apply_dropped + 1
+                    elseif l.op == 'delete' then space:delete(msgpack.decode(l.key))
                     else space:replace(l.tuple) end
                 end
             end
