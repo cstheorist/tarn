@@ -1,0 +1,3516 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 64
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 5 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 4 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 4 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id=$1
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest3 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT SUM(k) FROM sbtest4 WHERE id BETWEEN $1 AND $2
+                           ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 ORDER BY c
+                      ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest1 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest3 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: SELECT DISTINCT c FROM sbtest4 WHERE id BETWEEN $1 AND $2 OR...
+                               ^
+
+Threads started!
+

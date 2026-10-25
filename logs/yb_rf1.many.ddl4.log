@@ -1,0 +1,1 @@
+psql:/tmp/tmp.SMPSusezZH/ddl4.sql:62: ERROR:  Invalid table definition: Error creating index sbmany.t0430_k on the master: The requested number of tablet replicas (1) would cause the total running tablet replica count (878) to exceed the safe system maximum (877)

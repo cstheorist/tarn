@@ -1,0 +1,407 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 64
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 18 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 3 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 3 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 3 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest1" does not exist
+LINE 1: UPDATE sbtest1 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 7 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 6 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 3 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 11 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 3 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 6 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 1 times)
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest3" does not exist
+LINE 1: UPDATE sbtest3 SET k=k+1 WHERE id=$1
+               ^
+
+FATAL: PQprepare() failed: ERROR:  relation "sbtest4" does not exist
+LINE 1: UPDATE sbtest4 SET k=k+1 WHERE id=$1
+               ^
+
+(last message repeated 2 times)
+Threads started!
+

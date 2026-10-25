@@ -1,0 +1,125 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 64
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+Threads started!
+
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (65615, '04566988217-59342972233-72789260216-35438057705-66476936836-18311580550-34762693357-28484224839-41378047982-26692625377', '11620868962-16629002540-76119843097-07148833907-45605273052')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (86404, '84807135513-94637494006-40685826084-39437742170-88251832612-75686249067-82982198181-42078704523-20446155207-22051286167', '99446592597-61686947715-44461951910-97125915859-53726774759')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (15596, '49159354222-93711740890-12458303767-66861197677-21271658516-87437088334-64683445241-83157859176-16114036452-62442813340', '83262459604-90069882987-64045512361-11389584472-40717514828')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (42464, '30206149688-98642464655-99957988228-02710787070-68861839402-75703482384-92967343755-56692450732-78890040277-08453397374', '23652426950-32403860129-22674563021-40259391827-25343034114')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (44085, '74766184000-45896477096-27043287138-70482879856-68177973529-28856365717-13156276828-40333661392-49060473223-29591543160', '33331338899-72057280316-90586851426-64170738308-13218489117')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (13196, '61925681938-65907096147-81730363243-83988048954-19599295212-20750412197-78793137120-46447973550-87909396495-44461159496', '39188144270-55120647503-00733138141-48210312186-44186599014')
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (4923, '44554663222-26641304804-04858932160-18241971455-97111149902-41445459846-13602523228-07093651454-91890567736-91765629383', '51957920642-46378722011-78286380465-34980108303-98371890521')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+(last message repeated 1 times)
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (32707, '11809606824-51251849669-68380925267-12158646194-93827541442-81618788742-73778969631-20397527796-63253092826-57799071295', '79178844655-37711378577-07576369654-80773908729-33024290018')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (61232, '69531530876-48961680514-83796175032-58597165098-29825672420-69139380072-14942652778-48958140218-23700485847-29033580435', '14032555225-42280420631-25858416887-20963543487-03964757114')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (56769, '29653968614-09180308500-18842367819-49352421502-65267127598-49616425985-29024288883-23125228803-93390775805-94832465382', '05107105385-45092774850-99212093221-57300678069-37298299272')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (59328, '01646865353-74570488792-03915733266-25782519539-68993450764-17091302482-82972568986-28485032775-17184547366-71660738454', '60841108201-97368441729-68862498109-44340815702-86788193659')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (39215, '52495205448-44972693308-62015135280-75430893438-18288733688-01175984303-27954320019-74639370111-72976511022-56340057964', '93654560325-80677225157-95633870149-90710986298-29175384159')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (18327, '50179559839-59956687658-63736009321-52668869490-13025688228-43834567849-90582236353-41754510154-10531041123-76983499065', '63545062855-53662992429-89453432021-28284489816-65460053546')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (90947, '67442093027-74421332653-45866288041-21355634905-52451730062-99989278390-88419407398-36690065160-16256675999-94746964176', '50991255773-78552231234-19579943830-37000223382-29702122738')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (82903, '57953860353-02332422256-69976898785-07965476734-27462519134-38768219191-01948314490-22207399208-61635814552-84365981265', '06331781061-66594148924-41261201821-42761510663-11306355918')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (44700, '91935531786-08836059040-32437619586-16657686951-15879239283-23890432986-13117200892-85723582956-95017940950-23906008884', '03560698062-24604134867-98191038324-90082987148-07060085277')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (93235, '53069122444-21544220033-45273824420-09284295415-05720146013-16307462927-38808134185-80327551260-05317310699-52525201132', '51055857954-68274672544-82082439198-30497964633-34396187571')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (20685, '49311243896-59764631796-23005052449-92138123022-85898380671-40637255679-44907593110-66158216085-91043185913-27740352892', '05730020196-46632713884-33366529996-54337548074-72496411506')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (5823, '74860132394-83384119498-09024546804-72277462495-01105072337-00777558365-40398316974-60356622181-69940052793-02103638505', '99981629298-53407366176-29854495551-31760530852-24297195442')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (64849, '75664073230-54264272052-85081628130-20931742106-57722341099-00532090625-03347975674-98548417282-37706627927-94477766705', '36929839924-60969276757-26139069245-14585656907-04433151807')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (5636, '20182098460-01607681208-86593401149-71326584493-05443668786-99084665176-80786460228-88565020104-39167372891-81770097385', '79256286811-72776083673-58955030265-40446886470-12110296630')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (13547, '55300173926-13746265979-09445734981-97430288885-33657094348-73930424969-44359449831-41802164669-88538532519-93399295303', '81004688188-61862783346-39950854517-61371947546-57918054056')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (11314, '85722029999-51648686639-57433715349-64992855741-26980623525-57926904974-56910680585-21251212922-43745772082-59112944954', '39404407122-52058616497-04151291323-41826251929-02162287427')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (20837, '11801716847-87143271457-02897182813-27556467450-36211703400-35462953368-78087788295-88849536552-30942431087-02078316007', '25210207108-40132544117-30996807096-32071084407-44771862119')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (24984, '63058777940-59296004263-73544444846-01667343629-17874817827-21124444837-76660314336-51912771948-39021884326-84173730515', '23397831340-01956414810-60394077650-79623341228-09804392744')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (49013, '30149318367-01094434362-36225024064-00948811656-87769423827-87859305187-04416189357-11435823712-15485360872-79666683987', '68155349467-60130418336-62147320135-48080522228-98761450286')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (29802, '34853154887-16501223041-76761946048-60714455932-00793562347-51700774596-25748087633-12145218124-92831720926-68086471764', '82497063515-32625066785-56618528611-46721255609-70582487935')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (538, '53204289392-07029163443-46722094295-19151458428-41300541238-01667073637-07510390574-42354946671-27403603045-94266263890', '67086979532-59661286095-01184586603-75377179804-65908301321')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (78389, '52808674971-21949319649-65365782919-47202323997-71872492314-64667491442-45195019118-85547551587-45122579871-40929102766', '12793815793-48536821090-69841175004-09762316055-27669676647')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (48112, '38118938796-79400470326-75597222727-18217270447-08532793705-69589151525-53924718616-51744429502-80807353050-29566191540', '01750783115-38923545469-87546161516-28712984627-60501699878')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (28652, '71895130484-66931921616-31753936206-43049375415-31415936449-49790606167-17927350473-85094503509-19535978038-46802123034', '44243449608-99237591802-61059229511-65724158037-03244542922')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (5557, '80838043573-32754229789-64994449126-81078232445-93847240374-35009312778-93036058336-38690192485-20019064524-88314706473', '68009025466-45121718690-39636686541-76057692206-74601204887')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (64821, '49281994278-52528907665-84015952628-88506054975-80718163753-17205515536-14567287547-09512733646-86623708034-53723851702', '44354006869-48372699547-46339453161-52659112091-52693864773')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (74116, '75368675077-88399233129-95335159345-30533270538-63628430575-25959534876-09459272527-82579586206-52305858662-74574322897', '86114441960-66977915497-35181228666-42982218088-51688237534')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (25699, '26820211291-84839151702-96564078446-88055795523-02193525897-83092425146-38591597140-64127262249-81204121773-27072389989', '84217140040-78635643890-12365426923-32416401065-73153728506')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (80467, '83728941138-97971042474-61520278592-22212212341-61291083498-38501263362-06855709738-45969165402-86643268062-60857744893', '37542361649-24313565158-42884060633-46179358485-45600015744')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest3" does not exist
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (29380, '57319723183-08301304717-99246471932-50445752548-63847413744-18669509311-11509532154-55294959470-06678928650-87766290716', '04495951103-78144735420-17459841657-95271410132-89433852737')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest3" does not exist
+FATAL: PQexec() failed: 7 relation "sbtest4" does not exist
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (86119, '50840261765-27646909010-76134701543-88175474834-31672428093-68797610774-54686863069-84158363324-03084092009-07551799621', '60946445916-36102064875-78697811809-14308946986-77876990636')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest4" does not exist

@@ -1,0 +1,14 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 1
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+Threads started!
+
+FATAL: PQexec() failed: 7 relation "sbtest1" does not exist
+FATAL: failed query was: INSERT INTO sbtest1 (k, c, pad) VALUES (5557, '80838043573-32754229789-64994449126-81078232445-93847240374-35009312778-93036058336-38690192485-20019064524-88314706473', '68009025466-45121718690-39636686541-76057692206-74601204887')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = '42P01': relation "sbtest1" does not exist
