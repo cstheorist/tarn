@@ -12,6 +12,7 @@ use crate::plan::*;
 use crate::planner::{self, PlanCtx};
 use crate::txn::{key_bytes, select_rows, BufWrite, Row, Txn, WOp};
 use crate::types::Arith;
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -36,6 +37,9 @@ pub struct Prepared {
     pub columns: Arc<[Column]>,
     plan: Option<(u64, Stmt)>,
     admin: Option<Admin>,
+    /// Statement with subqueries/UNION: the parsed template (placeholders
+    /// ?1..?N), bound and run through `run_complex` at execute time.
+    complex: Option<sqlparser::ast::Statement>,
 }
 
 pub struct Session {
@@ -114,6 +118,15 @@ impl Session {
         }
     }
 
+    pub(crate) fn has_txn(&self) -> bool {
+        self.txn.is_some()
+    }
+
+    /// Install (or take) the current transaction; returns the previous one.
+    pub(crate) fn set_txn(&mut self, t: Option<Txn>) -> Option<Txn> {
+        std::mem::replace(&mut self.txn, t)
+    }
+
     pub fn in_transaction(&self) -> bool {
         self.txn.as_ref().map_or(false, |t| t.explicit)
     }
@@ -133,6 +146,11 @@ impl Session {
         if let Some(a) = admin::recognize(sql)? {
             return self.run_admin(a).await;
         }
+        if crate::complex::may_need(sql) {
+            if let Some(stmt) = crate::complex::parse_if_needed(sql)? {
+                return self.run_complex(stmt).await;
+            }
+        }
         if is_ddl(sql) {
             // Literals in DDL are syntax (VARCHAR(20), DEFAULT '0'), not values.
             let stmt = self.plan_cached(sql, &[])?;
@@ -145,10 +163,26 @@ impl Session {
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
         if let Some(a) = admin::recognize(sql)? {
-            self.prepared.insert(id, Prepared { template: sql.into(), n_params: 0, columns: Arc::from(Vec::new()), plan: None, admin: Some(a) });
+            self.prepared.insert(id, Prepared { template: sql.into(), n_params: 0, columns: Arc::from(Vec::new()), plan: None, admin: Some(a), complex: None });
             return Ok((0, Arc::from(Vec::new())));
         }
         let n = normalize(sql, Mode::Placeholders)?;
+        if crate::complex::may_need(&n.template) {
+            if let Some(stmt) = crate::complex::parse_if_needed(&n.template)? {
+                self.prepared.insert(
+                    id,
+                    Prepared {
+                        template: n.template,
+                        n_params: n.n_params,
+                        columns: Arc::from(Vec::new()),
+                        plan: None,
+                        admin: None,
+                        complex: Some(stmt),
+                    },
+                );
+                return Ok((n.n_params, Arc::from(Vec::new())));
+            }
+        }
         let stmt = self.plan_cached(&n.template, &[])?;
         let columns = match &stmt {
             Stmt::Select(p) => p.columns.clone(),
@@ -157,13 +191,19 @@ impl Session {
         let version = self.cluster.catalog().version;
         self.prepared.insert(
             id,
-            Prepared { template: n.template, n_params: n.n_params, columns: columns.clone(), plan: Some((version, stmt)), admin: None },
+            Prepared { template: n.template, n_params: n.n_params, columns: columns.clone(), plan: Some((version, stmt)), admin: None, complex: None },
         );
         Ok((n.n_params, columns))
     }
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        if let Some(c) = self.prepared.get(&id).and_then(|p| p.complex.clone()) {
+            if params.len() != self.prepared[&id].n_params {
+                return Err(SqlError::new(1210, "HY000", "Incorrect arguments to mysqld_stmt_execute"));
+            }
+            return self.run_complex(crate::complex::bind_params(c, params)).await;
+        }
         let (admin, stmt) = {
             let p = self.prepared.get(&id).ok_or_else(|| SqlError::new(1243, "HY000", format!("Unknown prepared statement handler ({})", id)))?;
             if params.len() != p.n_params {
@@ -437,13 +477,35 @@ impl Session {
             }
             Stmt::Update(p) => {
                 let Some((pk, ops)) = self.simple_update(p, &cx)? else { return Ok(None) };
-                let idx = &p.access.table.indexes[0];
-                let shard = exec::route_prefix(&self.cluster, &p.access.table, idx, &pk).unwrap_or(0);
+                let t = &p.access.table;
+                let idx = &t.indexes[0];
+                let shard = exec::route_prefix(&self.cluster, t, idx, &pk).unwrap_or(0);
                 let mut m = Mp::new();
-                m.arr(1).arr(1).arr(4).str("update").uint(p.access.table.space_id as u64).vals(&pk);
+                m.arr(1).arr(1).arr(5).str("update").uint(t.space_id as u64).vals(&pk);
                 m.arr(ops.len());
                 for (op, field, v) in &ops {
                     m.arr(3).str(op).str(field).val(v);
+                }
+                // Range of every column changed by an arithmetic op: the
+                // storage side refuses results outside it (MySQL error 1264).
+                let ranges: Vec<(&String, (i128, i128))> = ops
+                    .iter()
+                    .filter(|(op, _, _)| *op == "+")
+                    .filter_map(|(_, f, _)| t.col_index(f).map(|c| (f, crate::types::int_range(t.columns[c].ty()))))
+                    .collect();
+                m.arr(ranges.len());
+                for (f, (lo, hi)) in ranges {
+                    m.arr(3).str(f);
+                    if lo < 0 {
+                        m.int(lo.max(i64::MIN as i128) as i64);
+                    } else {
+                        m.uint(lo as u64);
+                    }
+                    if hi > i64::MAX as i128 {
+                        m.uint(hi.min(u64::MAX as i128) as u64);
+                    } else {
+                        m.int(hi as i64);
+                    }
                 }
                 (shard, m, None)
             }
@@ -646,6 +708,7 @@ impl Session {
         }
         let st = txn.stream(&self.cluster, shard).await?;
         let rows = select_rows(&st.client, st.id, t, 0, pk, Iter::Eq, Some(1), None, false, st.begin).await?;
+        txn.mark_begun(shard);
         txn.note_point(shard, t.space_id, 0, pk.to_vec());
         Ok(rows.into_iter().next())
     }
@@ -675,10 +738,54 @@ impl Session {
                 };
                 let pk_cols = &t.indexes[0].cols;
                 let mut affected = 0;
-                for row in rows {
-                    let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
-                    let shard = shard_of_row(&self.cluster, t, &row);
-                    let existing = self.row_exists(txn, t, &pk, shard).await?;
+                let plain = p.on_dup.is_empty() && !p.replace && !p.ignore;
+                if plain && !txn.explicit {
+                    // A single-statement transaction: the shards refuse an
+                    // existing key when the INSERT commits (local commit or
+                    // PREPARE votes NO with 1062), failing the statement as a
+                    // whole -- no read round trip per row.
+                    for row in rows {
+                        let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
+                        if txn.buffered(t.space_id, &pk).is_some() {
+                            let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
+                            return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
+                        }
+                        let shard = shard_of_row(&self.cluster, t, &row);
+                        txn.buffer(BufWrite { shard, table: t.clone(), op: WOp::Insert, row: Some(row), pk });
+                        affected += 1;
+                    }
+                    return Ok((affected, id));
+                }
+                // Look up every key not written by this transaction yet, all
+                // requests pipelined, then apply the per-row logic in order.
+                let keyed: Vec<(Vec<Value>, usize)> = rows
+                    .iter()
+                    .map(|row| (pk_cols.iter().map(|&c| row[c].clone()).collect(), shard_of_row(&self.cluster, t, row)))
+                    .collect();
+                let mut found: HashMap<Bytes, Option<Row>> = HashMap::new();
+                {
+                    let mut lookups = Vec::new();
+                    for (pk, shard) in &keyed {
+                        if txn.buffered(t.space_id, pk).is_none() {
+                            lookups.push((pk.clone(), *shard, txn.stream(&self.cluster, *shard).await?));
+                        }
+                    }
+                    let futs = lookups.iter().map(|(pk, _, st)| {
+                        select_rows(&st.client, st.id, t, 0, pk, Iter::Eq, Some(1), None, false, st.begin)
+                    });
+                    let results = futures::future::join_all(futs).await;
+                    for ((pk, shard, _), r) in lookups.into_iter().zip(results) {
+                        let r = r?;
+                        txn.mark_begun(shard);
+                        found.insert(crate::txn::key_bytes(&pk), r.into_iter().next());
+                        txn.note_point(shard, t.space_id, 0, pk);
+                    }
+                }
+                for (row, (pk, shard)) in rows.into_iter().zip(keyed) {
+                    let existing = match txn.buffered(t.space_id, &pk) {
+                        Some(b) => b.cloned(),
+                        None => found.get(&crate::txn::key_bytes(&pk)).cloned().flatten(),
+                    };
                     match existing {
                         Some(old) if !p.on_dup.is_empty() => {
                             // ON DUPLICATE KEY UPDATE: expressions see old row ++ proposed row

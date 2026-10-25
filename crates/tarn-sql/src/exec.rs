@@ -149,6 +149,8 @@ pub async fn fetch(
         AccessPath::Point { index, keys } => {
             let idx = index_def(t, *index);
             unique_point = true;
+            // `col IN (1, 1, 2)` must still return each row once.
+            let mut seen: std::collections::HashSet<Bytes> = std::collections::HashSet::new();
             'keys: for k in keys {
                 let mut key = Vec::with_capacity(k.len());
                 for (i, e) in k.iter().enumerate() {
@@ -160,6 +162,9 @@ pub async fn fetch(
                         Some(x) => key.push(x),
                         None => continue 'keys,
                     }
+                }
+                if keys.len() > 1 && !seen.insert(crate::txn::key_bytes(&key)) {
+                    continue;
                 }
                 let shard = route_prefix(cluster, t, idx, &key).unwrap_or(0);
                 calls.push(Call { shard, key, iter: Iter::Eq, limit: Some(1), end: None, range: None });
@@ -273,6 +278,7 @@ pub async fn fetch(
                 }
             }
             for c in calls {
+                txn.mark_begun(c.shard);
                 if unique_point {
                     txn.note_point(c.shard, t.space_id, index, c.key);
                 } else if let Some(r) = c.range {

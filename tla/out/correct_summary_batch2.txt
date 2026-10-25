@@ -1,0 +1,3 @@
+Local_ROValidate             no errors                                     69500 distinct states found  depth=19       8s
+LocalFailover_ROValidate     no errors                                     407273 distinct states found depth=21      41s
+Skew_ROValidate              no errors                                     2085494 distinct states found depth=26    1381s

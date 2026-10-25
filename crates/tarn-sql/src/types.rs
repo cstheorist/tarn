@@ -310,7 +310,7 @@ impl SqlType {
     }
 }
 
-fn int_range(t: &SqlType) -> (i128, i128) {
+pub fn int_range(t: &SqlType) -> (i128, i128) {
     use BaseType::*;
     let bits = match t.base {
         TinyInt | Bool => 8,

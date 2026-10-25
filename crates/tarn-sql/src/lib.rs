@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod catalog;
 pub mod cluster;
+pub mod complex;
 pub mod exec;
 pub mod expr;
 pub mod mpw;

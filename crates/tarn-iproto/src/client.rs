@@ -27,8 +27,8 @@ use bytes::{Buf, Bytes, BytesMut};
 use parking_lot::Mutex;
 use sha1::{Digest, Sha1};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{oneshot, Notify};
 use tokio::task::AbortHandle;
 
@@ -400,7 +400,7 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     Ok(Some(Frame { rtype, sync, schema_version, body }))
 }
 
-async fn reader_task(shared: Arc<Shared>, mut rd: OwnedReadHalf, mut buf: BytesMut) {
+async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: R, mut buf: BytesMut) {
     let mut done: Vec<Frame> = Vec::with_capacity(64);
     let mut ready: Vec<(oneshot::Sender<Reply>, Frame)> = Vec::with_capacity(64);
     let why: Error = 'outer: loop {
@@ -446,7 +446,7 @@ async fn reader_task(shared: Arc<Shared>, mut rd: OwnedReadHalf, mut buf: BytesM
     shared.close(&why);
 }
 
-async fn writer_task(shared: Arc<Shared>, mut wr: OwnedWriteHalf) {
+async fn writer_task<W: AsyncWrite + Unpin>(shared: Arc<Shared>, mut wr: W) {
     let mut buf: Vec<u8> = Vec::with_capacity(WRITE_INITIAL);
     loop {
         shared.write_ready.notified().await;
@@ -579,10 +579,26 @@ impl Client {
     }
 
     async fn connect_inner(opts: &Opts) -> Result<Client, Error> {
-        let mut stream = TcpStream::connect(opts.addr.as_str()).await?;
+        // "unix/:/path" (Tarantool's notation) or a bare absolute path
+        // selects a Unix domain socket; anything else is host:port.
+        let unix_path = opts.addr.strip_prefix("unix/:").or_else(|| opts.addr.starts_with('/').then_some(opts.addr.as_str()));
+        if let Some(path) = unix_path {
+            let (rd, wr) = UnixStream::connect(path).await?.into_split();
+            return Self::start(opts, rd, wr).await;
+        }
+        let stream = TcpStream::connect(opts.addr.as_str()).await?;
         stream.set_nodelay(true)?;
+        let (rd, wr) = stream.into_split();
+        Self::start(opts, rd, wr).await
+    }
+
+    async fn start<R, W>(opts: &Opts, mut rd: R, mut wr: W) -> Result<Client, Error>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let mut greeting = [0u8; iproto::GREETING_SIZE];
-        stream.read_exact(&mut greeting).await?;
+        rd.read_exact(&mut greeting).await?;
         let (version, salt) = parse_greeting(&greeting)?;
 
         let mut out = Vec::with_capacity(256);
@@ -608,7 +624,7 @@ impl Client {
                 mp::write_str(o, &scramble);
             });
         }
-        stream.write_all(&out).await?;
+        wr.write_all(&out).await?;
 
         let mut buf = BytesMut::with_capacity(READ_CHUNK);
         let mut id_reply: Option<Frame> = None;
@@ -620,7 +636,7 @@ impl Client {
                 Some(f) if f.sync == SYNC_AUTH => auth_reply = Some(f),
                 Some(_) => {}
                 None => {
-                    if stream.read_buf(&mut buf).await? == 0 {
+                    if rd.read_buf(&mut buf).await? == 0 {
                         return Err(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
                     }
                 }
@@ -641,7 +657,6 @@ impl Client {
             Reply { rtype: a.rtype, schema_version: a.schema_version, body: a.body }.into_response()?;
         }
 
-        let (rd, wr) = stream.into_split();
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 wbuf: Vec::with_capacity(WRITE_INITIAL),

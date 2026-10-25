@@ -24,8 +24,15 @@ leader_of() {  # shard -> port of its current writable node
   return 1
 }
 
+check_alive() {
+  local f dead=""
+  for f in "$DIR"/s*.pid; do kill -0 "$(cat "$f")" 2>/dev/null || dead="$dead $(basename "$f" .pid)"; done
+  [ -n "$dead" ] && echo "$(date +%T) NOT RUNNING:$dead"
+}
+
 kill_leader() {
   local s=$1 p
+  check_alive
   p=$(leader_of "$s") || { echo "shard $s: no leader found"; return 1; }
   local j=$(( (p - BASE - 10 * s) ))
   echo "$(date +%T) killing shard $s leader on port $p (s$s.$j)"
@@ -63,6 +70,12 @@ print("direct KV sum on new leaders:", total)
 sys.exit(0 if total == 64000 else 1)
 EOF
 kv=$?
-grep -h -E "recover|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
-"$ROOT/scripts/cluster.sh" stop -d "$DIR"
-if [ $rc -eq 0 ] && [ $kv -eq 0 ]; then echo "FAILOVER TEST PASSED"; else echo "FAILOVER TEST FAILED (bank rc=$rc kv=$kv)"; exit 1; fi
+grep -h -E "tarn recovery|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
+if [ $rc -eq 0 ] && [ $kv -eq 0 ]; then
+  "$ROOT/scripts/cluster.sh" stop -d "$DIR"
+  echo "FAILOVER TEST PASSED"
+else
+  KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR"
+  echo "FAILOVER TEST FAILED (bank rc=$rc kv=$kv); logs kept in $DIR"
+  exit 1
+fi

@@ -9,6 +9,7 @@
 --   TARN_MEMORY_MB     memtx memory (default 1024)
 --   TARN_WAL_MODE      write | fsync | none (default write)
 --   TARN_IPROTO_THREADS (default 1)
+--   TARN_LISTEN_UNIX   optional Unix socket path to listen on as well
 local json = require('json')
 local fio = require('fio')
 
@@ -29,8 +30,14 @@ local peers = json.decode(env('TARN_PEERS', '{}'))
 fio.mktree(workdir)
 
 local replicated = #replicas > 1
+-- Optionally also listen on a Unix socket (co-located SQL servers use it to
+-- skip the TCP stack).
+local listen_cfg = listen
+if env('TARN_LISTEN_UNIX', '') ~= '' then
+    listen_cfg = {listen, 'unix/:' .. env('TARN_LISTEN_UNIX', '')}
+end
 box.cfg{
-    listen = listen,
+    listen = listen_cfg,
     work_dir = workdir,
     memtx_memory = tonumber(env('TARN_MEMORY_MB', '1024')) * 1024 * 1024,
     memtx_use_mvcc_engine = true,
