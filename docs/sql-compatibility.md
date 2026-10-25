@@ -237,7 +237,7 @@ read stay validated at commit.
 | `DECIMAL(p, s)` | `decimal` | exact; precision checked on write (1264) |
 | `CHAR`, `VARCHAR`, `TEXT` | `string` | binary comparison (see below) |
 | `BINARY`, `VARBINARY`, `BLOB` | `varbinary` | |
-| `DATE`, `DATETIME`, `TIMESTAMP`, `TIME`, `YEAR` | `string` / `integer` | MySQL text formats |
+| `DATE`, `DATETIME[(fsp)]`, `TIMESTAMP[(fsp)]`, `TIME`, `YEAR` | `string` / `integer` | MySQL text formats; dates and datetimes are stored in one spelling per value (`YYYY-MM-DD HH:MM:SS` with exactly `fsp` fractional digits, rounded as MySQL 8 rounds), so they sort, group and index in time order, and a constant compared with such a column compares by value: `'2025-01-01 00:00:01'` equals a stored `'2025-01-01 00:00:01.000000'` |
 | `JSON` | `string` | stored as text, not validated or indexed |
 
 ## Expressions and functions
