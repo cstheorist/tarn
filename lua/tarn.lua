@@ -54,6 +54,7 @@ local M = {
         max_txn_age = 120.0,     -- PREPAREs of transactions older than this are refused
         clock_skew = 60.0,       -- assumed bound on clock differences between nodes
         gc_batch = 500,          -- records deleted per GC transaction
+        alter_check_rows = 1000000, -- ALTER TABLE refuses to check more existing rows than this per shard
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
     },
@@ -61,7 +62,7 @@ local M = {
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
-             stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0},
+             stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -522,11 +523,35 @@ end
 local function reraise_readonly(e)
     if type(e) == 'cdata' and e.code == box.error.READONLY then error(e) end
 end
+-- Indexes that an ALTER TABLE is building, under temporary names (see
+-- "Schema changes"): PENDING_NAME[space_id .. '/' .. index_id] = the name
+-- they will get, for error messages.
+local PENDING_NAME = {}
+local TMP_PREFIX = '_tarn_tmp_'
+
+local function pending_label(msg)
+    return (msg:gsub('"(' .. TMP_PREFIX .. '(%d+))" in space "([^"]+)"', function(tmp, iid, space)
+        local sp = box.space[space]
+        local name = sp and PENDING_NAME[sp.id .. '/' .. iid]
+        return '"' .. (name or tmp) .. '" in space "' .. space .. '"'
+    end))
+end
+
+-- The index under construction (temporary name) that refused a write of
+-- space sp with `err` (TUPLE_FOUND), if one did: its id.
+local function refused_by_pending(sp, err)
+    if type(err) ~= 'cdata' or err.code ~= box.error.TUPLE_FOUND then return nil end
+    local iid = tonumber(tostring(err.message):match('"' .. TMP_PREFIX .. '(%d+)"'))
+    local idx = iid and sp.index[iid]
+    if idx == nil or idx.name ~= TMP_PREFIX .. iid then return nil end
+    return iid
+end
+
 local function failure(e)
     if type(e) == 'cdata' or type(e) == 'table' then
         local code = e.code or 0
         if code == box.error.TRANSACTION_CONFLICT then return conflict(tostring(e.message)) end
-        if code == box.error.TUPLE_FOUND then return {'duplicate', 1062, tostring(e.message)} end
+        if code == box.error.TUPLE_FOUND then return {'duplicate', 1062, pending_label(tostring(e.message))} end
         return {'error', code, tostring(e.message or e)}
     end
     return {'error', 0, tostring(e)}
@@ -1963,7 +1988,9 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
                     if k[3] and not has_null(k[2]) then
                         local cur = space.index[k[1]]:get(k[2])
                         if cur ~= nil and pkd:compare_keys(pkd:extract_key(cur):totable(), pk) ~= 0 then
-                            return vote_no(1062, 'Duplicate entry for key ' .. space.index[k[1]].name)
+                            local idx = space.index[k[1]]
+                            return vote_no(1062, 'Duplicate entry for key '
+                                .. (PENDING_NAME[space.id .. '/' .. k[1]] or idx.name))
                         end
                     end
                 end
@@ -2012,8 +2039,9 @@ end
 -- before any participant record can be garbage-collected.
 -- Returns {'ok', 'applied'} (now or earlier), {'ok', 'none'} (no record: it
 -- was applied and then garbage-collected), or an error status.
-function tarn_apply(txid)
+function tarn_apply(txid, retries)
     writable()
+    local refused   -- {space id, index id} of an index under construction that refused a row
     local ok, res = pcall(function()
         box.begin(RW)
         local p = box.space._tarn_part:get{txid}
@@ -2055,7 +2083,14 @@ function tarn_apply(txid)
                     if space == nil then
                         M.stats.apply_dropped = M.stats.apply_dropped + 1
                     elseif l.op == 'delete' then space:delete(msgpack.decode(l.key))
-                    else space:replace(l.tuple) end
+                    else
+                        local wok, err = pcall(space.replace, space, l.tuple)
+                        if not wok then
+                            local iid = refused_by_pending(space, err)
+                            if iid ~= nil then refused = {space.id, iid} end
+                            error(err)
+                        end
+                    end
                 end
             end
         end
@@ -2068,6 +2103,23 @@ function tarn_apply(txid)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
+        retries = retries or 0
+        if refused ~= nil and retries < 8 then
+            -- A decided transaction writes a row that a unique index an
+            -- ALTER TABLE builds refuses: the schema change loses (see
+            -- "Schema changes"). Drop the index, outside the transaction,
+            -- and apply again.
+            local sp = box.space[refused[1]]
+            local idx = sp and sp.index[refused[2]]
+            if idx ~= nil and idx.name == TMP_PREFIX .. refused[2] then
+                log.warn('tarn: APPLY of %s writes a row that index %s of %s, which ALTER TABLE is building, '
+                         .. 'refuses: dropping the index (the schema change will fail on the duplicate)',
+                         txid, PENDING_NAME[sp.id .. '/' .. refused[2]] or idx.name, sp.name)
+                idx:drop()
+                M.stats.alter_conflicts = M.stats.alter_conflicts + 1
+            end
+            return tarn_apply(txid, retries + 1)
+        end
         return failure(res)
     end
     return res
@@ -2439,25 +2491,38 @@ end
 -- What makes it safe while transactions run is the table's definition
 -- version (`ver`): writes carry the version of the definition they were
 -- encoded with (FENCE above), and an ALTER TABLE to version V runs on every
--- shard in two steps, driven by one SQL server:
+-- shard in three steps, driven by one SQL server:
+--   BUILD    on a vinyl table, build the new indexes under temporary names
+--            while writes go on (vinyl keeps an index current while it
+--            builds it): no write waits for it, however large the table. A
+--            memtx table builds in PREPARE: with memtx MVCC, a write
+--            committed while an index build yields aborts the build, and
+--            memtx builds at memory speed anyway;
 --   PREPARE  raise the fence to V (writes made with an older definition are
 --            refused from now on), wait for the local commits already past
 --            the check and for the prepared cross-shard transactions holding
 --            locks on the table, check the existing rows against the new
---            column types, and build the new indexes (under temporary names);
+--            column types (refused above alter_check_rows rows: writes wait
+--            for the scan), and build what BUILD has not;
 --   APPLY    once every shard has prepared: drop the replaced indexes,
 --            change the format, rename indexes and the table, and store the
 --            new definition (version V, so the fence survives restarts).
--- A failed PREPARE anywhere is undone everywhere (ABORT). Each step can be
+-- A failed step anywhere is undone everywhere (ABORT). Each step can be
 -- repeated; an APPLY that finds its fence gone (restart, new leader)
 -- prepares again first.
+-- From BUILD on, a new unique index refuses rows that would break it
+-- (1062), as TiDB's write-only index state does: a write that the schema
+-- change would make fail fails now. A decided one cannot fail: an APPLY
+-- that such an index refuses drops it and runs again (tarn_apply), and
+-- PREPARE then builds it again under the fence, where the duplicate fails
+-- the schema change instead.
 
 local function catalog_ver(name)
     local r = box.space._tarn_catalog:get{name}
     return r and r.def.ver or 0
 end
 
-local function tmp_index_name(id) return '_tarn_tmp_' .. id end
+local function tmp_index_name(id) return TMP_PREFIX .. id end
 
 local function has_locks(sid)
     for _, i in pairs(LK[sid] or {}) do if next(i) ~= nil then return true end end
@@ -2529,9 +2594,10 @@ local function run_checks(sp, checks)
 end
 
 -- New indexes {id, name, unique, parts}, built under temporary names; a
--- unique one fails on duplicates (1062).
+-- unique one fails on duplicates (1062). May take long and yields.
 local function build_indexes(sp, builds)
     for _, b in ipairs(builds or {}) do
+        PENDING_NAME[sp.id .. '/' .. b[1]] = b[2]
         if sp.index[b[1]] == nil then
             local ok, err = pcall(sp.create_index, sp, tmp_index_name(b[1]),
                 {id = b[1], type = 'tree', unique = b[3], parts = b[4]})
@@ -2550,8 +2616,10 @@ local function drop_built(sp, builds)
     for _, b in ipairs(builds or {}) do
         local idx = sp.index[b[1]]
         if idx ~= nil and idx.name == tmp_index_name(b[1]) then idx:drop() end
+        PENDING_NAME[sp.id .. '/' .. b[1]] = nil
     end
 end
+
 
 local function alter_space(name, a)
     return box.space[name] or (a.rename ~= nil and a.rename ~= box.NULL and box.space[a.rename]) or nil
@@ -2559,12 +2627,37 @@ end
 
 -- a: {ver, checks, builds, timeout, drop = {index ids}, renames = {{id, name}},
 --     format = new format or nil, rename = new space name or nil, def = catalog entry}
+function tarn_alter_build(name, a)
+    writable()
+    local sp = alter_space(name, a)
+    if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
+    if catalog_ver(sp.name) >= a.ver or sp.engine ~= 'vinyl' then return {OK} end
+    local bad = build_indexes(sp, a.builds)
+    if bad then
+        drop_built(sp, a.builds)
+        return bad
+    end
+    return {OK}
+end
+
 function tarn_alter_prepare(name, a)
     writable()
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
+    if a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0 then
+        -- Writes to the table wait while the rows are checked; vinyl's
+        -- count is an estimate, which is enough for a limit.
+        local rows = sp.index[0]:len()
+        if rows > M.cfg.alter_check_rows then
+            return {'error', 1846, string.format(
+                "Checking the existing rows of '%s' is not supported. Reason: a shard holds about %d rows "
+                .. "of it (limit %d, tarn.cfg.alter_check_rows), and writes to the table would wait for "
+                .. "the whole scan. Try a change that needs no check, such as a wider type or a "
+                .. "nullable column", sp.name, rows, M.cfg.alter_check_rows)}
+        end
+    end
     fence_fresh()
     if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
     local function undo(res)
@@ -2595,6 +2688,10 @@ function tarn_alter_apply(name, a)
         local r = tarn_alter_prepare(sp.name, a)
         if r[1] ~= OK then return r end
     end
+    -- (PREPARE built them; an index dropped since is built again here,
+    -- behind the fence.)
+    local bad = build_indexes(sp, a.builds)
+    if bad then return bad end
     local old_name = sp.name
     for _, id in ipairs(a.drop or {}) do
         if sp.index[id] ~= nil then sp.index[id]:drop() end
@@ -2607,6 +2704,7 @@ function tarn_alter_apply(name, a)
     for _, b in ipairs(a.builds or {}) do
         local idx = sp.index[b[1]]
         if idx ~= nil and idx.name ~= b[2] then idx:rename(b[2]) end
+        PENDING_NAME[sp.id .. '/' .. b[1]] = nil
     end
     if a.rename ~= nil and a.rename ~= box.NULL and sp.name ~= a.rename then sp:rename(a.rename) end
     box.begin()
