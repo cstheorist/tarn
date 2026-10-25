@@ -61,7 +61,7 @@ pub struct Session {
     pub autocommit: bool,
     txn: Option<Txn>,
     pub last_insert_id: u64,
-    found_rows: u64,
+    pub(crate) found_rows: u64,
     row_count: i64,
     prepared: HashMap<u32, Prepared>,
     /// Session isolation level (transaction_isolation).
@@ -202,7 +202,7 @@ impl Restart {
 }
 
 /// The tables a SELECT reads.
-fn select_tables(p: &SelectPlan) -> Vec<&TableDef> {
+pub(crate) fn select_tables(p: &SelectPlan) -> Vec<&TableDef> {
     p.source.tables().into_iter().map(|a| &*a.table).collect()
 }
 
@@ -225,7 +225,7 @@ fn stmt_tables(stmt: &Stmt) -> Vec<&TableDef> {
 
 /// A statement inside a transaction must use the definitions its earlier
 /// writes were made with (see [`Txn::check_def`]).
-fn check_defs(txn: &Txn, tables: Vec<&TableDef>) -> SqlResult<()> {
+pub(crate) fn check_defs(txn: &Txn, tables: Vec<&TableDef>) -> SqlResult<()> {
     tables.into_iter().try_for_each(|t| txn.check_def(t))
 }
 
@@ -818,7 +818,7 @@ impl Session {
         f
     }
 
-    fn plan_cached(&self, template: &str, params: &[Value]) -> SqlResult<Stmt> {
+    pub(crate) fn plan_cached(&self, template: &str, params: &[Value]) -> SqlResult<Stmt> {
         let db = self.db.clone().unwrap_or_default();
         // Plans depend on collation_connection (literals compare under it).
         let key = format!("{}\0{}", self.collation_connection, template);
@@ -871,11 +871,11 @@ impl Session {
         Ok(())
     }
 
-    fn txn_needed(&self) -> bool {
+    pub(crate) fn txn_needed(&self) -> bool {
         self.txn.is_some() || !self.autocommit
     }
 
-    fn ensure_txn(&mut self) {
+    pub(crate) fn ensure_txn(&mut self) {
         if self.txn.is_none() {
             self.txn = Some(self.new_txn(true));
         }
@@ -1007,7 +1007,7 @@ impl Session {
         }
     }
 
-    fn cx<'a>(&'a self, params: &'a [Value], now: &'a str) -> EvalCtx<'a> {
+    pub(crate) fn cx<'a>(&'a self, params: &'a [Value], now: &'a str) -> EvalCtx<'a> {
         EvalCtx {
             params,
             db: self.db.as_deref(),
@@ -1022,7 +1022,7 @@ impl Session {
 
     /// After a statement inside an explicit/implicit-long transaction:
     /// a conflict ends the transaction (as a MySQL deadlock does).
-    fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
+    pub(crate) fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
         match res {
             Err(e) if e.code == 1213 || e.code == 1412 || txn.doomed.is_some() => {
                 txn.rollback(&self.cluster);

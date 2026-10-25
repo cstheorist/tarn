@@ -4,11 +4,13 @@
 
 use crate::catalog::{IndexDef, TableDef};
 use crate::cluster::Cluster;
+use crate::collation::Collation;
 use crate::expr::CmpOp;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
 use crate::txn::{
-    count_rows, select_keys, select_rows, LockKey, LockOpts, Locked, PredOp, RangeRead, Row, StoragePred, Txn,
+    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Row, StoragePred,
+    Txn,
 };
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
@@ -1726,6 +1728,9 @@ pub async fn run_locking_select(
     cx: &EvalCtx<'_>,
     lock: RowLock,
 ) -> SqlResult<Vec<Row>> {
+    if let Some(mut rows) = run_locking_selects(cluster, txn, &[(p, cx, lock)]).await? {
+        return Ok(rows.pop().unwrap_or_default());
+    }
     let rc = txn.mode == crate::txn::Mode::ReadCommitted;
     let plain = p.agg.is_none() && p.having.is_none() && !p.distinct;
     let want = if plain {
@@ -1868,6 +1873,216 @@ pub async fn run_locking_select(
         unlock_items(cluster, txn, release).await;
     }
     finish_select(accepted, p, cx)
+}
+
+/// The locking reads of one transaction's statements (one, or the parts of a
+/// UNION ALL) in as few storage calls as possible, when each is a READ
+/// COMMITTED `WHERE <primary key prefix> [ORDER BY <primary key>] LIMIT n
+/// FOR ...` that `tarn_lock_range` does on its own (issue #49): the ranges
+/// of one shard with the same options go in one call, in statement order,
+/// and calls to different shards run concurrently when none of them waits
+/// (`Txn::lock_ranges`). None when any of them needs the general path.
+pub async fn run_locking_selects(
+    cluster: &Arc<Cluster>,
+    txn: &mut Txn,
+    parts: &[(&SelectPlan, &EvalCtx<'_>, RowLock)],
+) -> SqlResult<Option<Vec<Vec<Row>>>> {
+    let mut ranges = Vec::with_capacity(parts.len());
+    for &(p, cx, lock) in parts {
+        match lock_range_of(cluster, txn, p, cx, lock)? {
+            Some(r) => ranges.push(r),
+            None => return Ok(None),
+        }
+    }
+    // The ranges of one shard with the same options share a call, in
+    // statement order. (Ranges of different calls lock independently: a
+    // statement's parts may take their locks in any order, as concurrent
+    // statements do.)
+    let mut reqs: Vec<(usize, LockOpts, Vec<LockRange>)> = Vec::new();
+    let mut at = Vec::with_capacity(ranges.len());
+    for (s, o, r) in &ranges {
+        let i = match reqs.iter().position(|(rs, ro, _)| rs == s && ro == o) {
+            Some(i) => i,
+            None => {
+                reqs.push((*s, *o, Vec::new()));
+                reqs.len() - 1
+            }
+        };
+        at.push((i, reqs[i].2.len()));
+        reqs[i].2.push(r.clone());
+    }
+    let mut got = txn.lock_ranges(cluster, &reqs).await?;
+    let mut out = Vec::with_capacity(parts.len());
+    for (k, &(p, cx, _)) in parts.iter().enumerate() {
+        let (i, j) = at[k];
+        let rows = got
+            .get_mut(i)
+            .and_then(|g| g.get_mut(j))
+            .map(std::mem::take)
+            .unwrap_or_default();
+        let (shard, _, r) = &ranges[k];
+        out.push(finish_range_lock(cluster, txn, p, cx, *shard, &r.table, rows).await?);
+    }
+    Ok(Some(out))
+}
+
+/// The most rows one `tarn_lock_range` call locks: a call runs on the
+/// shard's transaction thread, yielding only between pages.
+const RANGE_LOCK_MAX: usize = 256;
+
+/// The `tarn_lock_range` request of a locking read, if it can do it: READ
+/// COMMITTED; one table, read by an equality prefix of its primary key that
+/// routes to one shard; a WHERE clause of nothing but that prefix (so that
+/// no row the statement would not read is locked, or waited for); ORDER BY,
+/// if any, the primary key's order; a LIMIT (with OFFSET) of at most
+/// `RANGE_LOCK_MAX`; and no rows of the table
+/// inserted or changed by the transaction (rows it deleted are left out).
+fn lock_range_of(
+    cluster: &Cluster,
+    txn: &Txn,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+    lock: RowLock,
+) -> SqlResult<Option<(usize, LockOpts, LockRange)>> {
+    if txn.mode != crate::txn::Mode::ReadCommitted || p.agg.is_some() || p.having.is_some() || p.distinct {
+        return Ok(None);
+    }
+    let Some(limit) = eval_limit(&p.limit, cx)? else {
+        return Ok(None);
+    };
+    let n = limit as usize + eval_limit(&p.offset, cx)?.unwrap_or(0) as usize;
+    if n > RANGE_LOCK_MAX {
+        return Ok(None); // a long locking read pages from here, a batch per call
+    }
+    let Source::Table(ta) = &p.source else {
+        return Ok(None);
+    };
+    let t = &ta.table;
+    let eq = match &ta.path {
+        AccessPath::Range {
+            index: 0,
+            eq,
+            lo: None,
+            hi: None,
+            reverse: false,
+        } => eq,
+        AccessPath::Prefixes { index: 0, keys } if keys.len() == 1 => &keys[0],
+        _ => return Ok(None),
+    };
+    let idx = index_def(t, 0);
+    let Some(prefix) = eval_keys(t, idx, std::slice::from_ref(eq), &[], cx)?.pop() else {
+        return Ok(None);
+    };
+    let text_colls: Vec<Option<Collation>> = t.columns.iter().map(|c| c.ty().is_text().then(|| c.coll())).collect();
+    if n == 0 || prefix.is_empty() || !only_prefix(&p.filter, &idx.cols[..prefix.len()], &text_colls) {
+        return Ok(None);
+    }
+    let Some(shard) = route_prefix(cluster, t, idx, &prefix) else {
+        return Ok(None);
+    };
+    let mut next = prefix.len();
+    for (e, desc) in &p.order {
+        let Expr::Col(c) = e else { return Ok(None) };
+        match idx.cols.iter().position(|x| x == c) {
+            Some(pos) if pos < prefix.len() => {}
+            Some(pos) if pos == next && !desc => next += 1,
+            _ => return Ok(None),
+        }
+    }
+    let mut skip = Vec::new();
+    for (_, w) in txn
+        .writes
+        .range((t.space_id, Bytes::new())..)
+        .take_while(|((sp, _), _)| *sp == t.space_id)
+    {
+        if w.row.is_some() {
+            return Ok(None);
+        }
+        skip.push(w.pk.clone());
+    }
+    let o = LockOpts {
+        exclusive: lock.exclusive,
+        nowait: lock.nowait,
+        skip: lock.skip,
+        read: true,
+    };
+    Ok(Some((
+        shard,
+        o,
+        LockRange {
+            table: t.clone(),
+            prefix,
+            n,
+            skip,
+        },
+    )))
+}
+
+/// Is the WHERE clause only equalities of the columns `cols` with constants,
+/// each column once,
+/// a text column compared under its own collation (`colls[c]`, None for
+/// other columns: a comparison that only narrows the index range, as
+/// `x = 'a' COLLATE utf8mb4_bin` on a case-insensitive column does, would
+/// leave rows to lock that it then filters out)?
+fn only_prefix(filter: &Option<Expr>, cols: &[usize], colls: &[Option<Collation>]) -> bool {
+    fn conj(e: &Expr, cols: &[usize], colls: &[Option<Collation>], seen: &mut Vec<usize>) -> bool {
+        match e {
+            Expr::And(a, b) => conj(a, cols, colls, seen) && conj(b, cols, colls, seen),
+            Expr::Cmp(a, CmpOp::Eq, b, coll) => match (&**a, &**b) {
+                (Expr::Col(c), k) | (k, Expr::Col(c)) => {
+                    // A column fixed twice (`k = 1 AND k = 2`) is left to the
+                    // general path, which locks nothing for it.
+                    let once = !seen.contains(c);
+                    seen.push(*c);
+                    once && cols.contains(c)
+                        && k.is_constant()
+                        && colls.get(*c).copied().flatten().is_none_or(|own| own == *coll)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+    filter.as_ref().is_none_or(|f| conj(f, cols, colls, &mut Vec::new()))
+}
+
+/// The rows `tarn_lock_range` locked for a statement: WHERE checked again on
+/// the versions read under the locks (a row that no longer matches is
+/// unlocked), then ORDER BY, projection and LIMIT.
+async fn finish_range_lock(
+    cluster: &Arc<Cluster>,
+    txn: &mut Txn,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+    shard: usize,
+    t: &Arc<TableDef>,
+    locked: Vec<Row>,
+) -> SqlResult<Vec<Row>> {
+    let mut kept = Vec::with_capacity(locked.len());
+    let mut release = Vec::new();
+    for row in locked {
+        let ok = match &p.filter {
+            Some(f) => f.eval_bool(&row, cx)?,
+            None => true,
+        };
+        if ok {
+            kept.push(row);
+        } else {
+            let key = pk_of(t, &row, 0);
+            if txn.buffered(t.space_id, &key).is_none() {
+                release.push((
+                    shard,
+                    LockKey {
+                        table: t.clone(),
+                        index: 0,
+                        key,
+                    },
+                ));
+            }
+        }
+    }
+    unlock_items(cluster, txn, release).await;
+    finish_select(kept, p, cx)
 }
 
 /// Paged candidates of a locking read: a forward scan of one index range on
@@ -2165,5 +2380,54 @@ mod tests {
         assert_eq!(path_atoms(&t, &path).len(), 3, "with a lower bound it is");
         // A bound the scan could not use exactly stays a residual.
         assert_eq!(preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id > 2.5"), None);
+    }
+
+    fn eq(c: usize, v: i64) -> Expr {
+        Expr::Cmp(
+            Box::new(Expr::Col(c)),
+            CmpOp::Eq,
+            Box::new(Expr::Lit(Value::Int(v))),
+            Collation::default(),
+        )
+    }
+
+    fn cmp(a: Expr, op: CmpOp, b: Expr) -> Expr {
+        Expr::Cmp(Box::new(a), op, Box::new(b), Collation::default())
+    }
+
+    #[test]
+    fn only_prefix_accepts_equalities_of_the_prefix_columns() {
+        assert!(only_prefix(&None, &[0], &[]));
+        assert!(only_prefix(&Some(eq(0, 1)), &[0], &[]));
+        let both = Expr::And(
+            Box::new(eq(0, 1)),
+            Box::new(cmp(Expr::Param(0), CmpOp::Eq, Expr::Col(1))),
+        );
+        assert!(only_prefix(&Some(both), &[0, 1], &[]));
+    }
+
+    #[test]
+    fn only_prefix_refuses_anything_else() {
+        // another column, a comparison other than =, a column on both sides, OR
+        assert!(!only_prefix(&Some(eq(2, 1)), &[0, 1], &[]));
+        let lt = cmp(Expr::Col(0), CmpOp::Lt, Expr::Lit(Value::Int(1)));
+        assert!(!only_prefix(&Some(lt), &[0], &[]));
+        let cols = cmp(Expr::Col(0), CmpOp::Eq, Expr::Col(1));
+        assert!(!only_prefix(&Some(cols), &[0, 1], &[]));
+        assert!(!only_prefix(
+            &Some(Expr::Or(Box::new(eq(0, 1)), Box::new(eq(0, 2)))),
+            &[0],
+            &[]
+        ));
+        let partial = Expr::And(Box::new(eq(0, 1)), Box::new(eq(3, 2)));
+        assert!(!only_prefix(&Some(partial), &[0], &[]));
+        // a collation other than the column's own
+        let ci = Collation::from_id(224).unwrap();
+        assert!(only_prefix(&Some(eq(0, 1)), &[0], &[Some(Collation::default())]));
+        assert!(!only_prefix(&Some(eq(0, 1)), &[0], &[Some(ci)]));
+        assert!(only_prefix(&Some(eq(0, 1)), &[0], &[None]));
+        // a column fixed twice
+        let twice = Expr::And(Box::new(eq(0, 1)), Box::new(eq(0, 2)));
+        assert!(!only_prefix(&Some(twice), &[0], &[]));
     }
 }

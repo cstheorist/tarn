@@ -281,6 +281,21 @@ CASES = [
     ("SELECT id, b FROM t1 WHERE id = 9 FOR UPDATE NOWAIT", "q"),
     ("SELECT t1.id, t2.id FROM t1 JOIN t2 ON t2.t1_id = t1.id WHERE t1.id < 8 ORDER BY t2.id LOCK IN SHARE MODE", "q"),
     ("SELECT COUNT(*) FROM t1 WHERE a = 1 FOR UPDATE", "q"),
+    # a primary-key prefix with LIMIT: one storage call per shard (issue #49)
+    ("SELECT k1, k2, v FROM t3 WHERE k1 = 2 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED", "q"),
+    ("SELECT k2 FROM t3 WHERE k1 = 3 ORDER BY k1, k2 LIMIT 1 OFFSET 1 FOR UPDATE", "q"),
+    ("SELECT k2 FROM t3 WHERE k1 = 3 ORDER BY k2 LIMIT 0 FOR UPDATE", "q"),
+    ("SELECT k2 FROM t3 WHERE k1 = 3 AND k1 = 2 LIMIT 1 FOR UPDATE", "q"),
+    ("SELECT k2, v FROM t3 WHERE k1 = 9 LIMIT 5 LOCK IN SHARE MODE NOWAIT", "q"),
+    ("BEGIN", "q"),
+    ("SELECT k1, k2, v FROM t3 WHERE k1 = 2 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED", "q"),
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 1 FOR UPDATE SKIP LOCKED) UNION ALL "
+     "(SELECT k1, k2 FROM t3 WHERE k1 = 4 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED)", "q"),
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 1 FOR UPDATE) UNION ALL "
+     "(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 2 FOR UPDATE) ORDER BY 2 DESC", "q"),
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 LIMIT 3 FOR UPDATE) UNION ALL "
+     "(SELECT id, b FROM t1 WHERE id = 3 FOR UPDATE)", "q"),
+    ("COMMIT", "q"),
     ("UPDATE uk SET n = n * 2 WHERE name IN ('a', 'c')", "dml:uk"),
     ("DELETE FROM uk WHERE n > 10", "dml:uk"),
     # savepoints and statement-level rollback inside a transaction
@@ -588,6 +603,9 @@ CASES = [
     ("REPLACE INTO cih VALUES ('bob', 8)", "dml:cih"),
     ("SELECT handle, n FROM cih WHERE handle IN ('ALICE', 'alice', 'BOB', 'zoe') ORDER BY n", "q"),
     ("SELECT handle FROM cih ORDER BY handle LIMIT 2", "q"),
+    # a locking read of a case-insensitive primary key: one call, the column's collation
+    ("SELECT handle, n FROM cih WHERE handle = 'ALICE' LIMIT 1 FOR UPDATE SKIP LOCKED", "q"),
+    ("SELECT handle, n FROM cih WHERE handle = 'ALICE' COLLATE utf8mb4_bin LIMIT 1 FOR UPDATE", "q"),
     ("UPDATE cih SET handle = 'ALICE' WHERE handle = 'alice'", "dml:cih"),
     ("UPDATE cih SET handle = 'bob' WHERE handle = 'alice'", "err"),
     ("UPDATE cih SET n = n + 1 WHERE handle = 'BOB'", "dml:cih"),
