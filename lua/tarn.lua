@@ -677,9 +677,19 @@ end
 -- so the only commits that can touch a row whose lock was just granted are
 -- those already in flight. tarn_lock waits for them before it reads
 -- (wait_commits): otherwise it would return a version about to be replaced,
--- and a write computed from it would erase that commit's update.
+-- and a write computed from it would erase that commit's update. Only the
+-- commits that write the locked key matter (TarnCommit: InFlight(k)): once a
+-- commit has done its writes it records them (inflight_writes), and a grant
+-- waits only for the commits whose writes touch its key, or that have not
+-- recorded theirs yet.
 
-local INFLIGHT = {}     -- INFLIGHT[seq] = true while that local commit is in flight
+-- A write's plan: its space, primary key, old and new tuple, result, and
+-- whether it is skipped (an UPDATE of a missing row).
+local P_SPACE, P_PK, P_OLD, P_NEW, P_RES, P_SKIP = 1, 2, 3, 4, 5, 6
+
+-- INFLIGHT[seq], while that local commit is in flight: the plans of its
+-- writes, or true while they are not known (it may write anything).
+local INFLIGHT = {}
 local INFLIGHT_SEQ = 0
 local INFLIGHT_COND = fiber.cond()
 
@@ -690,6 +700,17 @@ local function inflight_begin()
     INFLIGHT_SEQ = INFLIGHT_SEQ + 1
     INFLIGHT[INFLIGHT_SEQ] = true
     return INFLIGHT_SEQ
+end
+
+-- The commit `seq` has done all its writes (`plans`): from now on only lock
+-- grants on what they write wait for it.
+local yield_point
+local function inflight_writes(seq, plans)
+    if INFLIGHT[seq] then
+        INFLIGHT[seq] = plans
+        INFLIGHT_COND:broadcast()
+    end
+    yield_point('written')
 end
 
 local function inflight_end(seq)
@@ -726,7 +747,7 @@ end
 -- step (tarn_test_hook) to run another one in between.
 local YIELD_HOOKS = {}   -- tests: name -> {cond = fiber.cond(), held = true}
 
-local function yield_point(name)
+function yield_point(name)
     local h = YIELD_HOOKS[name]
     if h == nil then return end
     h.reached = h.reached + 1
@@ -766,13 +787,40 @@ function tarn_test_hook(name, action)
     return {'ok'}
 end
 
--- Wait until every local commit in flight now has ended (false: deadline).
-local function wait_commits(deadline)
+-- Does the in-flight commit `e` (INFLIGHT entry) write a row whose key in
+-- index iid of space sid is `key` (before or after the write)? A tuple the
+-- key definition cannot compare (written before ALTER TABLE added the
+-- index's fields) counts as a match.
+local function key_is(kd, t, key)
+    if t == nil then return false end
+    local ok, c = pcall(kd.compare_with_key, kd, t, key)
+    return not ok or c == 0
+end
+
+local function writes_key(e, sid, iid, key)
+    if e == true then return true end
+    local kd
+    for i = 1, #e do
+        local p = e[i]
+        if p[P_SPACE].id == sid then
+            kd = kd or index_key_def(sid, iid)
+            if key_is(kd, p[P_OLD], key) or key_is(kd, p[P_NEW], key) then return true end
+        end
+    end
+    return false
+end
+
+-- Wait until every local commit in flight now has ended -- with sid, every
+-- one of them that writes `key` of index iid of that space (false: deadline).
+local function wait_commits(deadline, sid, iid, key)
     local upto = INFLIGHT_SEQ
     while true do
         local busy = false
-        for seq in pairs(INFLIGHT) do
-            if seq <= upto then busy = true; break end
+        for seq, e in pairs(INFLIGHT) do
+            if seq <= upto and (sid == nil or writes_key(e, sid, iid, key)) then
+                busy = true
+                break
+            end
         end
         if not busy then return true end
         local left = deadline - clock.monotonic()
@@ -1122,7 +1170,7 @@ function tarn_lock(txid, keys, mode, opts)
         elseif r ~= 'granted' then
             return pl_failed(txid, r)
         else
-            if not wait_commits(deadline) then
+            if not wait_commits(deadline, sid, iid, key) then
                 M.stats.lock_timeouts = M.stats.lock_timeouts + 1
                 return pl_failed(txid, {'timeout', 1205, LOCK_TIMEOUT_MSG})
             end
@@ -1334,7 +1382,6 @@ end
 -- Returns its plan {space, pk, old, new, res, skip} (indexes P_*): `res` is
 -- what the write returned, `skip` marks an update of a missing row (nothing
 -- written).
-local P_SPACE, P_PK, P_OLD, P_NEW, P_RES, P_SKIP = 1, 2, 3, 4, 5, 6
 
 local function write_step(w)
     local space = box.space[w[2]]
@@ -1444,6 +1491,7 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence)
             plans[i] = p
             if p[P_RES] ~= nil then n = n + 1 end
         end
+        inflight_writes(seq, plans)
         local r = atomic('CommitLocal', commit_local_checks, txid, lock_gen, fence, rpoints, rranges, plans)
         if r ~= nil then return r end
         box.on_commit(function() pl_release_all(txid) end)
@@ -1849,6 +1897,7 @@ function tarn_autocommit(writes, opts)
                 n = n + affected(w[1], p[P_OLD], p[P_RES], found_rows)
                 if p[P_RES] ~= nil then last = p[P_RES] end
             end
+            inflight_writes(seq, plans)
             local r = atomic('autocommit', autocommit_checks, fence, plans)
             if r ~= nil then
                 box.rollback()
@@ -1925,6 +1974,7 @@ function tarn_commit_rc(txid, writes, gen, fence)
                 plans[i] = p
                 if p[P_RES] ~= nil then n = n + 1 end
             end
+            inflight_writes(seq, plans)
             local r = atomic('CommitRC', commit_rc_checks, txid, gen, fence, plans)
             if r == nil then
                 box.on_commit(function() pl_release_all(txid) end)
