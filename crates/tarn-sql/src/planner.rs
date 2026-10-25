@@ -57,6 +57,40 @@ impl Scope {
     }
 }
 
+/// `(a1, a2, ...) op (b1, b2, ...)` for `<`, `<=`, `>`, `>=` and `<=>`, as
+/// MySQL compares row values: lexicographically, NULL when a part that
+/// decides is NULL. `<` becomes `a1 < b1 OR (a1 = b1 AND (a2 < b2 OR ...))`,
+/// whose three-valued result is MySQL's. For the planner, the implied bound
+/// `a1 <= b1` (or `>=`) is added as a conjunct: it never changes the result
+/// (the comparison is NULL or FALSE whenever the bound is not TRUE), and it
+/// lets a keyset cursor `(a, b) > (?, ?)` start an index range at `a`.
+fn row_compare(lhs: &[Expr], op: CmpOp, rhs: &[Expr]) -> Expr {
+    let cmp = |a: &Expr, o: CmpOp, b: &Expr| Expr::Cmp(Box::new(a.clone()), o, Box::new(b.clone()));
+    let n = lhs.len();
+    if op == CmpOp::NullSafeEq {
+        return (1..n).fold(cmp(&lhs[0], op, &rhs[0]), |acc, i| {
+            Expr::And(Box::new(acc), Box::new(cmp(&lhs[i], op, &rhs[i])))
+        });
+    }
+    let strict = match op {
+        CmpOp::Lt | CmpOp::LtEq => CmpOp::Lt,
+        _ => CmpOp::Gt,
+    };
+    // innermost: the last part takes the operator itself
+    let mut e = cmp(&lhs[n - 1], op, &rhs[n - 1]);
+    for i in (0..n - 1).rev() {
+        e = Expr::Or(
+            Box::new(cmp(&lhs[i], strict, &rhs[i])),
+            Box::new(Expr::And(Box::new(cmp(&lhs[i], CmpOp::Eq, &rhs[i])), Box::new(e))),
+        );
+    }
+    if n == 1 {
+        return e;
+    }
+    let bound = if strict == CmpOp::Lt { CmpOp::LtEq } else { CmpOp::GtEq };
+    Expr::And(Box::new(cmp(&lhs[0], bound, &rhs[0])), Box::new(e))
+}
+
 fn ident(i: &A::Ident) -> String {
     i.value.clone()
 }
@@ -388,6 +422,41 @@ impl<'a, 'c> Binder<'a, 'c> {
                 } else {
                     e
                 }
+            }
+            E::BinaryOp {
+                left,
+                op:
+                    op @ (A::BinaryOperator::Lt
+                    | A::BinaryOperator::LtEq
+                    | A::BinaryOperator::Gt
+                    | A::BinaryOperator::GtEq
+                    | A::BinaryOperator::Spaceship),
+                right,
+            } if matches!(**left, E::Tuple(_)) || matches!(**right, E::Tuple(_)) => {
+                let row = |e: &A::Expr| -> Vec<A::Expr> {
+                    match e {
+                        E::Tuple(items) => items.clone(),
+                        other => vec![other.clone()],
+                    }
+                };
+                let (l, r) = (row(left), row(right));
+                if l.len() != r.len() {
+                    return Err(SqlError::new(
+                        1241,
+                        "21000",
+                        format!("Operand should contain {} column(s)", l.len()),
+                    ));
+                }
+                let lhs: Vec<Expr> = l.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
+                let rhs: Vec<Expr> = r.iter().map(|x| self.bind(x)).collect::<SqlResult<_>>()?;
+                let op = match op {
+                    A::BinaryOperator::Lt => CmpOp::Lt,
+                    A::BinaryOperator::LtEq => CmpOp::LtEq,
+                    A::BinaryOperator::Gt => CmpOp::Gt,
+                    A::BinaryOperator::GtEq => CmpOp::GtEq,
+                    _ => CmpOp::NullSafeEq,
+                };
+                row_compare(&lhs, op, &rhs)
             }
             E::BinaryOp { left, op, right } => {
                 let (l, r) = (Box::new(self.bind(left)?), Box::new(self.bind(right)?));
@@ -2691,6 +2760,65 @@ mod tests {
         );
         assert_eq!(code("DELETE FROM information_schema.tables"), Some(1044));
         assert_eq!(code("UPDATE information_schema.tables SET engine = 'x'"), Some(1044));
+    }
+
+    #[test]
+    fn row_value_comparisons() {
+        // issue #40: (a, b) op (x, y), lexicographic with MySQL's NULLs
+        let cx = crate::expr::EvalCtx {
+            params: &[],
+            db: None,
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-01 00:00:00",
+        };
+        let lit = |v: Option<i64>| Expr::Lit(v.map(Value::Int).unwrap_or(Value::Null));
+        let ev = |l: [Option<i64>; 2], op, r: [Option<i64>; 2]| {
+            let e = row_compare(&l.map(lit), op, &r.map(lit));
+            match e.eval(&[], &cx).unwrap() {
+                Value::Null => None,
+                v => Some(v.as_i64().unwrap() != 0),
+            }
+        };
+        use CmpOp::*;
+        let (s, n) = (Some, None);
+        assert_eq!(ev([s(1), s(3)], Gt, [s(1), s(2)]), Some(true));
+        assert_eq!(ev([s(2), s(0)], Gt, [s(1), s(2)]), Some(true));
+        assert_eq!(ev([s(1), s(2)], Gt, [s(1), s(2)]), Some(false));
+        assert_eq!(ev([s(1), s(2)], GtEq, [s(1), s(2)]), Some(true));
+        assert_eq!(ev([s(0), s(9)], Gt, [s(1), s(2)]), Some(false));
+        assert_eq!(ev([s(0), s(9)], Lt, [s(1), s(2)]), Some(true));
+        assert_eq!(ev([s(1), s(2)], LtEq, [s(1), s(2)]), Some(true));
+        // NULL only where it decides
+        assert_eq!(ev([s(2), n], Gt, [s(1), s(2)]), Some(true));
+        assert_eq!(ev([s(0), n], Gt, [s(1), s(2)]), Some(false));
+        assert_eq!(ev([s(1), n], Gt, [s(1), s(2)]), None);
+        assert_eq!(ev([n, s(2)], Gt, [s(1), s(2)]), None);
+        assert_eq!(ev([n, s(2)], NullSafeEq, [n, s(2)]), Some(true));
+        assert_eq!(ev([n, s(2)], NullSafeEq, [s(1), s(2)]), Some(false));
+
+        // a keyset cursor on the primary key starts a range scan
+        assert!(matches!(
+            path_of("SELECT c FROM sbtest1 WHERE (id, k) > (5, 3) ORDER BY id, k LIMIT 10"),
+            AccessPath::Range {
+                index: 0,
+                lo: Some((_, true)),
+                ..
+            }
+        ));
+        let cat = catalog();
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("sbtest"),
+            params: &[],
+        };
+        let code = |sql: &str| plan(sql, &ctx).err().map(|e| e.code);
+        assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) > (1, 2, 3)"), Some(1241));
+        assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) < 1"), Some(1241));
+        assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) <=> (1, 2)"), None);
     }
 
     #[test]
