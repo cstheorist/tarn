@@ -227,6 +227,56 @@ class T:
         self.check(not errors, f"statements on a fresh table: {errors[:5]}")
         self.check(not churn_errors, f"schema changes: {churn_errors[:5]}")
 
+    def test_index_build_ahead(self):
+        """ADD INDEX on a vinyl table builds the index before it fences the
+        table's writes: writes go on during the build and wait only for the
+        short switch at the end. (A memtx table builds behind the fence, at
+        memory speed: there only the outcome is checked.)"""
+        c = self.c()
+        q(c, "DROP TABLE IF EXISTS bigt")
+        q(c, "CREATE TABLE bigt (id INT PRIMARY KEY, k INT, v INT, pad VARCHAR(100))")
+        vinyl = q(c, "SHOW TABLE STATUS LIKE 'bigt'")[0][1].lower() == "vinyl"
+        rows = 300_000 if vinyl else 100_000
+        pad = "p" * 80
+        for start in range(0, rows, 1000):
+            q(c, "INSERT INTO bigt VALUES " + ", ".join(
+                f"({i}, {(i * 7919) % rows}, 0, '{pad}')" for i in range(start, start + 1000)))
+        done = threading.Event()
+        lat, errors = [], []
+
+        def writer():
+            w = self.c(1)
+            i = 0
+            while not done.is_set():
+                i += 1
+                t0 = time.time()
+                try:
+                    q(w, f"UPDATE bigt SET v = v + 1 WHERE id = {(i * 104729) % rows}")
+                except pymysql.MySQLError as e:
+                    errors.append(str(e))
+                lat.append((t0, time.time()))
+
+        t = threading.Thread(target=writer, daemon=True)
+        t.start()
+        time.sleep(0.5)
+        a0 = time.time()
+        q(c, "ALTER TABLE bigt ADD INDEX kk (k)")
+        a1 = time.time()
+        time.sleep(0.2)
+        done.set()
+        t.join(30)
+        within = sum(1 for (s0, s1) in lat if a0 <= s0 and s1 <= a1)
+        worst = max((s1 - s0 for (s0, s1) in lat if s0 <= a1 and s1 >= a0), default=0.0)
+        print(f"    ADD INDEX on {rows} {'vinyl' if vinyl else 'memtx'} rows: {a1 - a0:.2f} s; "
+              f"{within} writes during it, the slowest overlapping one {worst * 1000:.0f} ms")
+        self.check(not errors, f"writes during the index build: {errors[:3]}")
+        if vinyl:
+            self.check(within >= 10, f"writes went on during the index build ({within})")
+            self.check(worst < max(0.3, (a1 - a0) / 2),
+                       f"no write waited for the build ({worst:.2f} s of {a1 - a0:.2f} s)")
+        self.check(q(c, "SELECT COUNT(*) FROM bigt WHERE k = 7919")[0][0] == 1, "the new index answers")
+        q(c, "DROP TABLE bigt")
+
     def test_txn_across_alter(self):
         """A transaction that wrote a table cannot use a newer definition of
         it: rows in its write buffer are in the old column order. Its next
