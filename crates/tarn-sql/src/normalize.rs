@@ -11,6 +11,9 @@
 //! normalizer therefore leaves literals alone wherever a literal is not a
 //! value: positional `ORDER BY 1` / `GROUP BY 2`, and after keywords that take
 //! a literal as syntax (`INTERVAL`, `COLLATE`, `CHARACTER SET` ...).
+//!
+//! It also rewrites MySQL's older `LOCK IN SHARE MODE` to `FOR SHARE`, which
+//! the parser knows.
 
 use bytes::Bytes;
 use tarn_common::{SqlError, SqlResult, Value};
@@ -51,6 +54,9 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
     let mut in_by = false;
     let mut paren_depth: i32 = 0;
     let mut by_depth: i32 = 0;
+    // The keywords just emitted (with their offsets in `out`) since the last
+    // other token, for the LOCK IN SHARE MODE rewrite.
+    let mut recent: Vec<(String, usize)> = Vec::new();
     let push_param = |out: &mut String, n_params: &mut usize| {
         *n_params += 1;
         out.push('?');
@@ -121,6 +127,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
                 val.push(d);
                 j += 1;
             }
+            recent.clear();
             let keep = mode == Mode::Placeholders
                 || in_by
                 || KEEP_AFTER.contains(&last_word.as_str())
@@ -137,6 +144,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         }
         // backquoted identifiers
         if c == b'`' {
+            recent.clear();
             let mut j = i + 1;
             while j < n && b[j] != b'`' {
                 j += 1;
@@ -149,6 +157,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         }
         // placeholders
         if c == b'?' {
+            recent.clear();
             if mode == Mode::Literals {
                 return Err(SqlError::parse(
                     "'?' placeholders are only allowed in prepared statements",
@@ -163,6 +172,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         // Identifier characters are consumed whole by the identifier branch, so a
         // digit seen here always starts a token.
         if starts_number {
+            recent.clear();
             let mut j = i;
             let hex = c == b'0' && matches!(b.get(i + 1), Some(b'x') | Some(b'X'));
             if hex {
@@ -235,6 +245,22 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
             {
                 in_by = false;
             }
+            if word == "MODE"
+                && recent.len() >= 3
+                && recent[recent.len() - 3..]
+                    .iter()
+                    .map(|(w, _)| w.as_str())
+                    .eq(["LOCK", "IN", "SHARE"])
+            {
+                out.truncate(recent[recent.len() - 3].1);
+                out.push_str("FOR SHARE");
+                recent.clear();
+                prev_word = "FOR".into();
+                last_word = "SHARE".into();
+                i = j;
+                continue;
+            }
+            recent.push((word.clone(), out.len()));
             out.push_str(&sql[i..j]);
             prev_word = std::mem::take(&mut last_word);
             last_word = word;
@@ -254,6 +280,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         }
         if !c.is_ascii_whitespace() {
             last_word.clear();
+            recent.clear();
         }
         // copy one UTF-8 character
         let len = utf8_len(c);
@@ -360,6 +387,18 @@ mod tests {
         assert_eq!(n.template, "SELECT c FROM t WHERE id BETWEEN ?1 AND ?2 AND c <> 'a?b'");
         assert_eq!(n.n_params, 2);
         assert!(normalize("SELECT ?", Mode::Literals).is_err());
+        let n = normalize(
+            "SELECT a FROM t WHERE b = 'lock in share mode' LOCK  IN\nSHARE MODE",
+            Mode::Literals,
+        )
+        .unwrap();
+        assert_eq!(n.template, "SELECT a FROM t WHERE b = ?1 FOR SHARE");
+        let n = normalize(
+            "SELECT a FROM t WHERE b = 'LOCK IN SHARE MODE' lock in share mode",
+            Mode::Placeholders,
+        )
+        .unwrap();
+        assert_eq!(n.template, "SELECT a FROM t WHERE b = 'LOCK IN SHARE MODE' FOR SHARE");
     }
 
     #[test]

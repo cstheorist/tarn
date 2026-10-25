@@ -28,11 +28,15 @@ in-memory speed.
 * **Strictly serializable transactions** across shards: lock-aware reads,
   MVCC-validated single-shard commits, and a parallel-commit two-phase commit
   whose recovery survives coordinator crashes and leader failover.
+* **READ COMMITTED as InnoDB does it**, per session: row locks with wait
+  queues, lock wait timeouts and deadlock detection, `SKIP LOCKED` and
+  `NOWAIT`, unique keys locked by value, savepoints. Hot-row updates wait
+  instead of aborting, and commits stay atomic across shards.
 * **Key/value fast path.** Committed rows are ordinary tuples
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (33 configurations, including 10 deliberately
+  and model-checked with TLC (44 configurations, including 15 deliberately
   broken variants that TLC must catch). Shard routing, commit decisions and
   the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
   and compiled into the server.

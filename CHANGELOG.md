@@ -6,6 +6,36 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- READ COMMITTED with InnoDB's locking behaviour, chosen per session, per
+  transaction or globally (`transaction_isolation` / `tx_isolation`,
+  `SET [GLOBAL | SESSION] TRANSACTION ISOLATION LEVEL`, `--isolation`); strict
+  serializability stays the default
+  ([#17](https://github.com/cstheorist/tarn/issues/17)). Plain reads see the
+  latest committed data per statement and never cause an abort. Writes and
+  locking reads take row locks with FIFO wait queues; `innodb_lock_wait_timeout`
+  (1205), deadlock detection on each shard and across shards (1213); `UPDATE`
+  and `DELETE` re-read and re-check each row under its lock, so `SET n = n - 1`
+  waits instead of aborting and loses nothing; `INSERT`, `REPLACE` and upserts
+  lock unique-key values, so concurrent inserts of one value wait for each
+  other. Commits stay atomic across shards, durable on a quorum and visible in
+  real time. The TLA+ model covers it, with five new protection switches.
+- `FOR UPDATE`, `FOR SHARE` and `LOCK IN SHARE MODE` lock rows, with `NOWAIT`
+  (3572) and `SKIP LOCKED`, which skips rows other transactions hold and keeps
+  scanning until `LIMIT` is filled
+  ([#12](https://github.com/cstheorist/tarn/issues/12)). At SERIALIZABLE the
+  rows read this way stay validated at commit.
+- `SAVEPOINT`, `ROLLBACK TO [SAVEPOINT]` and `RELEASE SAVEPOINT`, and
+  statement-level rollback inside transactions
+  ([#15](https://github.com/cstheorist/tarn/issues/15)).
+- MySQL 8.0.19's row alias in upserts, `INSERT ... VALUES (...) AS new [(cols)]
+  ON DUPLICATE KEY UPDATE c = new.c`, which Rails' `upsert_all` sends to
+  servers that report MySQL 8 (as Tarn does).
+- `tests/sql/rctest.py`: concurrent tests of READ COMMITTED against InnoDB's
+  behaviour; `bench/locking.py`, a contention benchmark;
+  `Tarn_cross_shard_deadlocks` in `SHOW TARN STATUS`.
+
 ### Changed
 
 - `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
@@ -17,6 +47,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `REPLACE` into a table with a unique key besides the primary key failed
+  with 1062 when the new row collided with another row on that key; it now
+  deletes that row, as MySQL does. Commits apply deletes before inserts, so
+  a new row can take over a deleted row's unique value.
 - `UPDATE ... SET c = c - 1` failed with 1264 when a signed `BIGINT` result
   was negative. Arithmetic on an unsigned integer now fails with 1690 below
   zero and BIGINT overflow with 1690, as in MySQL

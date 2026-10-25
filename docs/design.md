@@ -127,7 +127,14 @@ re-sends the request.
 ### 2.1 Guarantees
 
 * SQL transactions (explicit or implicit, single- or cross-shard) are
-  **strictly serializable**: there is a serial order consistent with real time.
+  **strictly serializable** by default: there is a serial order consistent
+  with real time.
+* Sessions may choose **READ COMMITTED** instead, with InnoDB's semantics
+  (§2.9): plain reads see the latest committed data per statement and never
+  abort; writes and locking reads take pessimistic row locks; no update is
+  lost. Commits stay atomic across shards, durable on a quorum and visible in
+  real time, and the writes of READ COMMITTED transactions are ordered as
+  under strict two-phase locking, also against serializable transactions.
 * Direct Key/Value readers see only committed data (`read-confirmed`
   isolation: in replicated shards, only data acknowledged by a quorum), and a
   direct read issued after an SQL COMMIT returned sees that commit (except
@@ -148,7 +155,8 @@ reads, single-shard commit, snapshot reads, read-only validation, PREPARE
 participants, decide), re-delivered PREPAREs, and faults: coordinator crashes,
 message loss, and **shard leader failover**, which keeps durable state
 (quorum-replicated) but destroys the MVCC read tracking of streams still
-executing. Local Tarantool transactions are atomic steps. Two options model
+executing. Local Tarantool transactions are atomic steps (with one
+exception that matters to row locks, §2.9). Two options model
 the record lifecycle of the implementation: `ApplyMarksCommitted` (the
 decision shard's APPLY records COMMITTED) and `GC` (transactions expire,
 after which their PREPAREs are refused, and records are garbage-collected
@@ -164,7 +172,9 @@ Invariants checked in every configuration:
 | `PlainOnlyCommitted` | the plain spaces only ever contain committed values |
 | `DirectReadsClean` | direct readers never observe uncommitted data |
 | `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
-| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read |
+| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock) |
+| `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
+| `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
 
 `StrictSerializable` is checked constructively: the spec records the order in
 which writes reached each key and the real-time predecessors of each
@@ -176,7 +186,7 @@ cross-shard reader), *Local* (single-shard blind write racing a cross-shard
 transaction, observed by a cross-shard reader), *Frac* (cross-shard blind
 writer, cross-shard reader, single-shard read-modify-write), *Recov* (cross-
 shard read-modify-write under crashes and message loss, plus single-shard
-writer and reader).
+writer and reader). Three more workloads exercise READ COMMITTED (§2.9).
 
 ### 2.3 What TLC found
 
@@ -343,6 +353,130 @@ collected and votes NO, and a slow coordinator aborts the committed
 transaction on that participant. Expired PREPAREs now get a third answer,
 "expired", that the coordinator treats as unknown.
 
+### 2.9 READ COMMITTED and row locks
+
+Sessions pick their isolation level as in MySQL (`transaction_isolation`,
+`SET [GLOBAL | SESSION] TRANSACTION ISOLATION LEVEL`, the next-transaction
+forms; the server default is SERIALIZABLE). READ UNCOMMITTED and READ
+COMMITTED run as READ COMMITTED; REPEATABLE READ and SERIALIZABLE run
+strictly serializable. READ COMMITTED follows InnoDB:
+
+* **Plain reads** are autocommit-style storage reads of the latest committed
+  state, one per statement, overlaid with the transaction's own buffered
+  writes. They take no locks, record no read set and are never validated, so
+  they never cause an abort. Like autocommit reads they wait while a
+  prepared cross-shard transaction W-locks what they read, because that
+  transaction may already be committed and acknowledged (`RCRead`).
+* **Row locks** (`tarn_lock`) are taken by writes and locking reads and held
+  until the transaction ends. A lock is named by (space, index, key): a row
+  by its primary key, or a value of a unique key. Modes are S and X; a
+  request that conflicts with a holder or an earlier waiter queues in FIFO
+  order (an S→X upgrade goes first). It fails with 1205 after
+  `innodb_lock_wait_timeout` (the statement is rolled back, the transaction
+  kept, as with InnoDB's default `innodb_rollback_on_timeout=OFF`), at once
+  with 3572 under NOWAIT, or is skipped under SKIP LOCKED. A granted request
+  waits out prepared transactions' W locks on the key and then returns the
+  latest committed row: the read under the lock (`RCLock`). A locking read
+  with LIMIT over one index range, in index order, reads its candidates a
+  page at a time and locks as it goes, like InnoDB, so `SKIP LOCKED` over a
+  long queue stops at the first free rows (`bench/RESULTS.md` has the
+  numbers).
+* **Writes re-read under the lock.** UPDATE and DELETE take candidates from
+  the latest committed state, lock each in order (in batches, as far as
+  LIMIT needs) and re-check WHERE on the version read under the lock.
+  Rows that no longer match are unlocked at once; the new values are
+  computed from the locked version, so `SET n = n - 1` never loses a
+  concurrent decrement. A row that starts to match after the candidate scan
+  is not seen: like InnoDB at READ COMMITTED there are no gap locks.
+* **Unique keys are locked by value.** INSERT, REPLACE and upserts lock the
+  primary key and every unique-key value of each new row, exclusively, and
+  read the row holding that value under the lock. Concurrent inserts of one
+  value queue; the loser sees the winner's row (1062, its ON DUPLICATE KEY
+  UPDATE branch, or nothing with IGNORE), or goes ahead if the winner rolls
+  back.
+* **Deadlocks.** A shard fails a request with 1213 at once if waiting would
+  close a cycle in its own wait-for graph. Cycles through several shards are
+  found by each SQL server every `deadlock_interval` (1 s): it collects the
+  shards' wait-for edges (`tarn_lock_waits`: waiter, wait id, holders),
+  finds the cycles, collects again and keeps the cycles whose waits are all
+  still pending with the same wait ids. Each such wait was pending from its
+  first observation to its second, so all of them were pending at the same
+  time, and a transaction blocked in a lock wait releases nothing, so the
+  cycle was real. Its transaction with the largest id (the same choice on
+  every SQL server) is failed with 1213 where it waits (`tarn_lock_victim`)
+  and rolled back.
+* **Commit.** An RC transaction that wrote on one shard commits with one
+  local transaction (`tarn_commit_rc`, `CommitRC`); across shards it uses
+  the same PREPARE/APPLY as serializable transactions. Either way the row
+  locks are released only once the commit is confirmed (`box.on_commit`),
+  and a read-only RC transaction just releases its locks. Its PREPAREs carry
+  the time its commit started, so RC transactions have no `max_txn_age`
+  limit (an RC transaction keeps no stream open).
+* **Savepoints and statement rollback** (both levels): a savepoint is a
+  copy of the transaction's write buffer, and so is the start of each
+  statement; ROLLBACK TO restores the buffer and keeps the row locks taken
+  since, as InnoDB does. 1205 and 3572 keep the transaction, 1213 ends it.
+* **Serializable transactions** respect row locks: their commits refuse to
+  write a row (or claim a unique value) that another transaction has locked
+  (1213; `BugIgnorePLocks`), and autocommit writes wait for the lock. Their
+  FOR UPDATE / FOR SHARE also take row locks, but read through the stream as
+  before, so those reads stay validated at commit.
+
+**The lock table is volatile.** It lives in the shard leader's memory: a
+leader change empties it, and the connection between an SQL server and a
+shard owns the locks taken over it, which are released when it closes. A
+transaction's later lock requests and its commit on a shard go over the
+connection its first lock request used there. Each commit carries the
+*generation* of the locks it took on each shard (the lock table's id and
+that connection's storage session), and the shard refuses the commit (1213)
+if the table was reset or the session is gone; a lock request over a new
+session returns a new generation, which the SQL server treats the same way.
+A write is never applied after its lock was lost (`BugRCNoLockCheck`).
+
+**A gap between the model and the implementation, found by testing.**
+TarnCommit takes a local commit as one atomic step. In Tarantool,
+`box.commit()` yields until the WAL (and, with synchronous replication, the
+quorum) has the transaction, and until then readers outside it still see the
+previous versions of its rows. The first implementation of `tarn_lock`
+granted a lock and read the row at once; when an autocommit `UPDATE ... SET
+n = n - 1` had checked for row locks, applied its change in memory and was
+waiting for the WAL at that moment, the lock read the old value, and the
+READ COMMITTED transaction's write then erased the autocommit update. The
+concurrent counter test (`tests/sql/rctest.py`) lost 3 to 17 of 3,200
+decrements per run. Writers that hold no row lock check for row locks before
+they write, so only commits already in flight when a lock is granted can
+still change the row: `tarn_lock` now waits for every local commit that was
+in flight at the grant (`wait_commits`) before it reads, and the counter
+test loses nothing. The model splits the local commit's confirmation off
+(`infl`, `ConfirmLocal`: other readers still see the old value until then)
+and blocks `RCLock` while a commit to the key is in flight; with
+`BugRCLockReadsInFlight` TLC finds the lost update in a 5-step trace.
+
+The model's READ COMMITTED transactions (the set `RC`) have a set `LSet` of
+keys they lock and read under the lock (their writes are among them); their
+plain reads are `RCRead`. A serial order must explain only the values they
+read under locks, which orders their writes as under strict two-phase
+locking. `NoLostUpdate` checks that every RC write lands on the value read
+under its lock, and `RCReadsSeeAcked` that a plain read sees every
+transaction acknowledged before it started. Workloads: `Counter` (an RC
+read-modify-write of x on one shard, another across both shards, and a
+serializable cross-shard read-modify-write of x and y), `Mixed` (an RC
+writer of x that reads y, a serializable cross-shard read-modify-write of y,
+and an RC transaction that locks y FOR UPDATE), and `Local` (two RC
+read-modify-writes of x, one of them across shards, racing a serializable
+single-shard one whose local commit may be in flight). Every protection has a switch that TLC must catch:
+`BugRCNoLockCheck` (commit without checking that the locks survived: a
+failover empties the table and another transaction's write is overwritten),
+`BugRCLockIgnoresWLocks` (lock granted while a prepared transaction W-locks
+the key), `BugRCReadBeforeLock` (write computed from the plain read made
+before locking), `BugIgnorePLocks` (serializable commits ignore row locks)
+and `BugRCLockReadsInFlight`. The model gives serializable transactions no
+row locks. Those their locking reads take in the implementation only make
+other transactions wait, fail or abort (which removes behaviours rather than
+adding any), and the reads themselves are validated at commit as before; a
+serializable commit that finds such a lock lost aborts, which is always
+allowed.
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
@@ -388,13 +522,14 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum | 74/74 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks) | 118/118 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
-| `tests/sql/difftest.py` | 99 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents; access paths, expressions, aggregates, joins, subqueries, UNION, DML, errors | 99/99 identical |
+| `tests/sql/difftest.py` | 174 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, errors | 174/174 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
-| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
+| `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 22/22 |
+| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
 ## 5. Results
@@ -417,11 +552,13 @@ not finish in the time available: TLC explored 47.8 million distinct states,
 breadth-first into depth 23, without finding a violation;
 `SkewTimeout_GC_ROValidate` checks the same workload exhaustively with
 recovery racing the coordinator but without crashes or message loss. And
-the configurations without GC and ApplyMarksCommitted were checked before
-those options existed: with both off, the new actions are disabled and the
-new variable stays constant, so the behaviour is unchanged, as re-running
-`Recov`, `Local` and `Frac` with the final spec confirms (identical numbers
-of distinct states).
+`Skew`, `SkewFailover` and `Skew_AckOnPrepare` (up to an hour each) were
+last checked before the GC, ApplyMarksCommitted and READ COMMITTED
+extensions of the spec existed: with those options off and no READ
+COMMITTED transactions, the new actions are disabled and the new variables
+stay constant, so the behaviour is unchanged, as re-running every other
+configuration with the final spec confirms (identical numbers of distinct
+states).
 
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
@@ -482,7 +619,7 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   `EXISTS`, scalar) and `UNION [ALL]` work (the inner SELECTs run first,
   inside the statement's transaction); not supported are correlated
   subqueries, derived tables, views, stored procedures, triggers, foreign
-  keys, savepoints, `ALTER TABLE`, window functions, RIGHT/FULL joins.
+  keys, `ALTER TABLE`, window functions, RIGHT/FULL joins.
   Joins are nested-loop with index lookups.
 * String comparison, ordering, grouping and unique indexes are binary (like
   `utf8mb4_bin`); MySQL's default collations are case-insensitive, so
@@ -492,9 +629,22 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * Serializable OCC: long read-only transactions that span shards can starve
   under heavy concurrent writes to what they read (they abort and retry);
   explicit transactions surface 1213 to the client like any serializable
-  database.
-* Transactions must commit within `max_txn_age` (120 s) of their first
-  statement (stream transactions already time out after 60 s); protocol
+  database. Sessions that need InnoDB's behaviour instead can use READ
+  COMMITTED.
+* READ COMMITTED: row locks are kept in the shard leaders' memory, so a
+  leader change, or a lost connection between an SQL server and a shard,
+  rolls back the transactions holding locks there (1213). There are no gap
+  or next-key locks (as in InnoDB at READ COMMITTED). A serializable
+  autocommit statement that must read before writing does not wait for a
+  row lock: it retries briefly and then fails with 1213. Waits on prepared
+  cross-shard transactions' W locks are bounded by timeouts but are not part
+  of the deadlock detector's graph. A row lock costs about 400 bytes of
+  Lua memory on the shard leader (InnoDB keeps a bit per row in a page
+  bitmap), so a transaction that locks millions of rows should be split, as
+  its write buffer in the SQL server already requires.
+* Serializable transactions must commit within `max_txn_age` (120 s) of
+  their first statement (stream transactions already time out after 60 s;
+  READ COMMITTED transactions have no limit); protocol
   records are kept for about 3 minutes, which at several thousand
   cross-shard commits per second costs on the order of 100 MB of memtx
   memory per shard.

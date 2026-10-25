@@ -92,6 +92,8 @@ tarn-server (--config cluster.json | --shard ADDR[,ADDR..] ...)
             [--ack-on-prepare]        acknowledge cross-shard commits after PREPARE (see below)
             [--pool N]                connections per shard leader (default 4)
             [--node-id N]             distinguishes servers in transaction ids (default: pid)
+            [--isolation LEVEL]       default level of new sessions (default SERIALIZABLE)
+            [--lock-wait-timeout S]   default innodb_lock_wait_timeout, seconds (default 50)
 ```
 
 `--shard` takes the comma-separated replica addresses of one shard and may
@@ -109,13 +111,22 @@ options:
   "pool_size": 4,
   "node_id": 1,
   "ack_on_prepare": false,
-  "max_txn_age": 120
+  "max_txn_age": 120,
+  "isolation": "SERIALIZABLE",
+  "lock_wait_timeout": 50,
+  "deadlock_interval": 1.0
 }
 ```
 
 Replica addresses may be `unix/:/path/to/socket`. Logging uses
 `tracing` filters from `TARN_LOG` (default `info`), e.g.
 `TARN_LOG=tarn_sql=debug`.
+
+`isolation` and `lock_wait_timeout` are the initial global values of
+`transaction_isolation` and `innodb_lock_wait_timeout` (`SET GLOBAL` changes
+them per SQL server until it restarts). `deadlock_interval` is how often, in
+seconds, each SQL server looks for deadlocks that span shards (0 turns the
+detector off; cycles within one shard are always detected at once).
 
 **Ack-on-prepare** acknowledges a cross-shard commit as soon as every
 participant has prepared (one round trip instead of two) and applies it in
@@ -144,13 +155,15 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 
 * `SHOW TARN STATUS` (or `SHOW STATUS LIKE 'Tarn%'`) on any SQL connection:
   statements, local / read-only / two-phase commits, conflicts, internal
-  retries, plan-cache hits and misses, number of shards.
+  retries, plan-cache hits and misses, deadlocks across shards broken by
+  this server, number of shards.
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
-  collection, and counters (`prepare_yes`, `prepare_no`, `apply`, `abort`,
-  `conflicts`, `lock_waits`, `recovered`, `gc_part`, `gc_txn`,
-  `validate_changed`).
+  collection, row locks held (`row_locks`), and counters (`prepare_yes`,
+  `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `recovered`,
+  `gc_part`, `gc_txn`, `validate_changed`; for row locks `plock_waits`,
+  `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`).
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted
@@ -162,6 +175,7 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 |---|---|
 | Shard leader dies | A replica is elected in about 2–3 s. Statements on that shard fail meanwhile with 2003 (no reachable leader) or 1213; afterwards `tarn-server` uses the new leader. Committed data survives (quorum-replicated). |
 | Leader demoted while connections stay open | The old leader answers `ER_READONLY`; `tarn-server` drops those connections and finds the new leader; open transactions abort with 1213. |
+| Leader change or lost SQL-server connection while READ COMMITTED transactions hold row locks | The row locks live in the leader's memory and are released; each transaction that held some is rolled back with 1213 at its next statement on that shard or at commit, never committed without them. |
 | `tarn-server` dies during a cross-shard commit | The storage nodes' recovery fiber finishes or aborts the transaction after `recovery_after`; its locks block conflicting statements until then. |
 | Connection lost while a commit is in flight | The client gets 1180 / SQLSTATE 40003: the outcome is unknown, and the write is not re-sent. |
 | A shard is down for a while | Transactions that touch it fail; rows of transactions that committed but were not yet applied there stay locked until it returns and recovery applies them. |
@@ -171,7 +185,12 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 
 | Code | SQLSTATE | Meaning | Client action |
 |---|---|---|---|
-| 1213 | 40001 | serialization conflict, leader change, or connection lost before anything was written | retry the transaction |
+| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
+| 1205 | HY000 | lock wait timeout (`innodb_lock_wait_timeout`); only the statement was rolled back | retry the statement or roll back |
+| 3572 | HY000 | `NOWAIT` and the row is locked; only the statement was rolled back | |
+| 1305 | 42000 | no such savepoint | |
+| 1568 | 25001 | `SET TRANSACTION` inside a transaction | |
+| 1231 / 1232 | 42000 | bad value / type for a system variable | |
 | 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |

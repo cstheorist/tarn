@@ -3,9 +3,11 @@
 Tarn speaks the MySQL client/server protocol and parses SQL with
 [sqlparser](https://crates.io/crates/sqlparser) in its MySQL dialect. It
 covers what OLTP applications and sysbench use, plus joins, aggregates,
-subqueries without outer references, and `UNION`. Behaviour is checked
-against MariaDB 10.11 by a differential test (99 cases, compared exactly)
-and by 2,000 randomly generated queries (`tests/sql/`).
+subqueries without outer references, and `UNION`, at two isolation levels:
+strictly serializable (the default) and READ COMMITTED as InnoDB implements
+it. Behaviour is checked against MariaDB 10.11 by a differential test (174
+cases, compared exactly) and by 2,000 randomly generated queries, and the
+locking behaviour of READ COMMITTED by concurrent tests (`tests/sql/`).
 
 ## Protocol
 
@@ -38,14 +40,18 @@ and by 2,000 randomly generated queries (`tests/sql/`).
   `(SELECT ...)`, in `SELECT`, `UPDATE` and `DELETE`. The inner query runs
   first, inside the statement's transaction.
 * `UNION` and `UNION ALL`, with `ORDER BY` / `LIMIT` on the result.
-* `SELECT ... FOR UPDATE` (accepted; every transaction is serializable anyway).
+* Locking reads: `FOR UPDATE`, `FOR SHARE` / `LOCK IN SHARE MODE`, each with
+  `NOWAIT` or `SKIP LOCKED` (see [Isolation and locking](#isolation-and-locking)).
 * `SELECT @@variable`, `SELECT DATABASE()`, `SELECT VERSION()`, and other
   constant queries.
 
 ### Data modification
 
 * `INSERT ... VALUES` (multi-row), `INSERT ... SELECT`, `INSERT IGNORE`,
-  `INSERT ... ON DUPLICATE KEY UPDATE` (with `VALUES(col)`), `REPLACE`.
+  `INSERT ... ON DUPLICATE KEY UPDATE` (with `VALUES(col)`, or MySQL 8's row
+  alias `VALUES (...) AS new [(c1, ...)] ... UPDATE c = new.c`), `REPLACE`; a
+  row that collides on a unique key other than the primary key is the one
+  `ON DUPLICATE KEY UPDATE` updates and `REPLACE` deletes.
 * Single-table `UPDATE` and `DELETE`, with `WHERE`, `ORDER BY` and `LIMIT`.
 * Affected-row counts follow MySQL (an `UPDATE` that changes nothing counts
   0, a `REPLACE` of an existing row counts 2).
@@ -67,14 +73,78 @@ and by 2,000 randomly generated queries (`tests/sql/`).
 ### Transactions and sessions
 
 * `BEGIN`, `START TRANSACTION`, `COMMIT`, `ROLLBACK`, `SET autocommit = 0|1`.
-* `SET` of session variables is accepted (`SET NAMES`, `SET SESSION ...`);
-  `SET TRANSACTION ISOLATION LEVEL ...` is accepted and ignored: every
-  transaction is strictly serializable.
+* `SAVEPOINT name`, `ROLLBACK [WORK] TO [SAVEPOINT] name`, `RELEASE SAVEPOINT
+  name` (error 1305 for an unknown name). Rolling back to a savepoint undoes
+  the writes made since and keeps the row locks taken since, as InnoDB does.
+* Statement-level rollback: a statement that fails inside a transaction
+  leaves none of its writes behind; the transaction goes on, except after a
+  deadlock (1213), which rolls the whole transaction back.
+* Isolation level and lock wait timeout, per session or globally: see
+  [Isolation and locking](#isolation-and-locking). Other `SET`s of session
+  variables are accepted (`SET NAMES`, `SET SESSION ...`).
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
   VARIABLES | STATUS | WARNINGS | ENGINES | COLLATION | CHARACTER SET |
   PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
 * `LOCK`, `UNLOCK`, `FLUSH`, `ANALYZE`, `OPTIMIZE`, `CHECKSUM`, `DO` are
   accepted and do nothing.
+
+## Isolation and locking
+
+| Setting | Statements |
+|---|---|
+| Session level | `SET [SESSION] transaction_isolation = 'READ-COMMITTED'` (also `tx_isolation`, `@@SESSION.`), `SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED` |
+| Next transaction only | `SET TRANSACTION ISOLATION LEVEL ...`, `SET @@transaction_isolation = ...` (error 1568 inside a transaction) |
+| Default for new sessions | `SET GLOBAL ...` (same forms), `--isolation` / the `isolation` config key; initially `SERIALIZABLE` |
+| Lock wait timeout | `innodb_lock_wait_timeout`: session or global, whole seconds, clamped to 0..1073741824 as in MariaDB (0: do not wait); `--lock-wait-timeout` / `lock_wait_timeout`; default 50 |
+
+`READ UNCOMMITTED` and `READ COMMITTED` run as READ COMMITTED; `REPEATABLE
+READ` and `SERIALIZABLE` run strictly serializable (stronger than asked).
+`@@transaction_isolation` reports the level that was set.
+
+**SERIALIZABLE** (strictly serializable): transactions are optimistic.
+Reads are validated at commit; a transaction whose reads changed, or that
+would overwrite a row another transaction has locked, aborts with 1213
+(`ER_LOCK_DEADLOCK`, SQLSTATE 40001). Autocommit statements are retried
+internally; explicit transactions should be retried by the client.
+`FOR UPDATE` / `FOR SHARE` additionally take row locks (below), and the rows
+read stay validated at commit.
+
+**READ COMMITTED**, as in InnoDB:
+
+* A plain `SELECT` sees the latest committed data as of the statement (and
+  the transaction's own writes). It takes no locks and never causes an
+  abort; it does not wait for row locks.
+* Writes and locking reads take row locks, held until the transaction ends:
+  exclusive for `UPDATE`, `DELETE`, `INSERT`, `REPLACE`, upserts and `FOR
+  UPDATE`, shared for `FOR SHARE` / `LOCK IN SHARE MODE`. A row is locked by
+  its primary key; `INSERT`, `REPLACE` and upserts also lock each unique-key
+  value they insert, so concurrent inserts of one value wait for each other
+  and the loser sees the winner's row (1062, the `ON DUPLICATE KEY UPDATE`
+  branch, or nothing for `INSERT IGNORE`) or proceeds if the winner rolls
+  back.
+* A conflicting request waits in a queue. It fails with 1205
+  (`ER_LOCK_WAIT_TIMEOUT`) after `innodb_lock_wait_timeout`, which rolls
+  back the statement only; with `NOWAIT` it fails at once with 3572
+  (`ER_LOCK_NOWAIT`), also keeping the transaction; with `SKIP LOCKED` the
+  row is left out and the scan goes on until `LIMIT` rows are returned.
+* Deadlocks are detected: a wait that would close a cycle on one shard
+  fails at once, a cycle through several shards within about a second; the
+  victim gets 1213 and its transaction is rolled back.
+* `UPDATE` and `DELETE` read each row again under its lock and re-check
+  `WHERE` on that version, so `SET n = n - 1` always starts from the newest
+  committed value, and a row that stopped matching is left alone (InnoDB's
+  "semi-consistent" read). There are no gap locks, as in InnoDB at READ
+  COMMITTED: a row that starts to match while a statement runs may be missed.
+* Autocommit statements wait for row locks too. (At SERIALIZABLE, an
+  autocommit statement that has to read before it writes, such as `UPDATE
+  ... SET a = a * 2` or one with a multi-row `WHERE`, retries for a fraction
+  of a second and then fails with 1213 instead.)
+* Commits stay atomic across shards and durable on a quorum, and a commit is
+  visible to every statement that starts after it was acknowledged.
+* Row locks live in the memory of each shard's leader. A leader change, or a
+  lost connection between an SQL server and a shard, releases them; a
+  transaction that lost locks it held is rolled back at its next statement
+  or at commit (1213).
 
 ## Types
 
@@ -105,12 +175,16 @@ and by 2,000 randomly generated queries (`tests/sql/`).
 
 ## Differences from MySQL
 
-* **Isolation:** strict serializability for every transaction (MySQL's
-  default is REPEATABLE READ). Conflicting transactions abort with 1213
-  (`ER_LOCK_DEADLOCK`, SQLSTATE 40001); autocommit statements are retried
-  internally, explicit transactions should be retried by the client, as with
-  any serializable database. Long cross-shard read-only transactions can be
-  starved by heavy concurrent writes to what they read.
+* **Isolation:** the default is strict serializability (MySQL's default is
+  REPEATABLE READ, which Tarn runs strictly serializable). Conflicting
+  serializable transactions abort with 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE
+  40001); autocommit statements are retried internally, explicit
+  transactions should be retried by the client, as with any serializable
+  database. Long cross-shard read-only transactions can be starved by heavy
+  concurrent writes to what they read. READ COMMITTED behaves as in InnoDB
+  ([above](#isolation-and-locking)), without gap locks or next-key locks.
+* **`UPDATE` that changes nothing:** at SERIALIZABLE it writes and locks
+  nothing (InnoDB still locks the rows it matched).
 * **Outcome unknown:** if the connection to a shard breaks while a commit is
   in flight, the statement fails with 1180 and SQLSTATE 40003: it may or may
   not have been applied. Tarn never re-sends such a write.
@@ -118,8 +192,9 @@ and by 2,000 randomly generated queries (`tests/sql/`).
   are binary (like `utf8mb4_bin`), so `'ALICE' = 'alice'` is false.
 * **AUTO_INCREMENT:** values are allocated in blocks per SQL server; they are
   unique and increasing per server, with gaps across servers (as in TiDB).
-* **Transaction lifetime:** a transaction must commit within 120 s
-  (`max_txn_age`) of its first statement.
+* **Transaction lifetime:** a serializable transaction must commit within
+  120 s (`max_txn_age`) of its first statement; READ COMMITTED transactions
+  have no such limit.
 * **Hash sharding:** range predicates on the shard key and lookups through
   non-unique secondary indexes are sent to every shard.
 
@@ -127,7 +202,7 @@ and by 2,000 randomly generated queries (`tests/sql/`).
 
 Subqueries that reference the outer query, derived tables (`FROM (SELECT
 ...)`), views, stored procedures and functions, triggers, events, foreign
-keys, savepoints, `ALTER TABLE`, window functions, common table expressions,
+keys, `ALTER TABLE`, window functions, common table expressions,
 `RIGHT` / `FULL` / `NATURAL` joins, multi-table `UPDATE` / `DELETE`,
 `CREATE TABLE ... AS` / `LIKE`, user management statements, and online
 resharding. Unsupported syntax fails with error 1235

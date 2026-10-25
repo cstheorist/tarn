@@ -93,12 +93,15 @@ struct Args {
     ack_on_prepare: bool,
     pool_size: Option<usize>,
     node_id: u32,
+    isolation: Option<String>,
+    lock_wait_timeout: Option<f64>,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: tarn-server (--config FILE | --shard ADDR[,ADDR..] ...) [--listen HOST:PORT] \
-         [--threads N] [--user NAME:PASSWORD]... [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N]"
+         [--threads N] [--user NAME:PASSWORD]... [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N] \
+         [--isolation READ-COMMITTED|REPEATABLE-READ|SERIALIZABLE] [--lock-wait-timeout SECONDS]"
     );
     std::process::exit(2)
 }
@@ -114,6 +117,8 @@ fn parse_args() -> Args {
         ack_on_prepare: false,
         pool_size: None,
         node_id: std::process::id(),
+        isolation: None,
+        lock_wait_timeout: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -132,6 +137,8 @@ fn parse_args() -> Args {
             "--ack-on-prepare" => a.ack_on_prepare = true,
             "--pool" => a.pool_size = Some(val().parse().unwrap_or_else(|_| usage())),
             "--node-id" => a.node_id = val().parse().unwrap_or_else(|_| usage()),
+            "--isolation" => a.isolation = Some(val()),
+            "--lock-wait-timeout" => a.lock_wait_timeout = Some(val().parse().unwrap_or_else(|_| usage())),
             "-h" | "--help" => usage(),
             _ => {
                 eprintln!("unknown argument {arg}");
@@ -183,6 +190,12 @@ fn load_config(a: &Args) -> ClusterConfig {
     }
     if cfg.node_id == 0 {
         cfg.node_id = a.node_id;
+    }
+    if let Some(i) = &a.isolation {
+        cfg.isolation = i.clone();
+    }
+    if let Some(t) = a.lock_wait_timeout {
+        cfg.lock_wait_timeout = t;
     }
     cfg
 }

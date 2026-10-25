@@ -14,6 +14,15 @@
 //!   `tarn_apply` (TarnCommit!Prepare, ApplyAt). The client is acknowledged
 //!   after APPLY unless `ack_on_prepare` is set.
 //!
+//! READ COMMITTED transactions (`Mode::ReadCommitted`, issue #17) read the
+//! latest committed state outside any stream and record no read set. Their
+//! writes and locking reads take row locks on the owning shard (`lock`,
+//! `tarn_lock`), which queue behind other holders and read the latest
+//! version under the lock. They commit with `tarn_commit_rc` (one shard) or
+//! the same 2PC (several), passing the generation of their locks on each
+//! shard (see [`ShardLocks`]) so that a write is never applied after its
+//! lock was lost (TarnCommit: CommitRC, Prepare for t \in RC).
+//!
 //! The pure decision logic (what to do with a set of votes, when it is safe
 //! to apply/abort) is `tarn_verified::coord`, proven in Verus to only decide
 //! COMMIT on unanimous YES and never to decide both ways.
@@ -74,10 +83,63 @@ pub struct StreamRef {
     pub begin: bool,
 }
 
+/// How a transaction isolates itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Strictly serializable: optimistic, reads validated at commit.
+    Serializable,
+    /// READ COMMITTED as InnoDB implements it (issue #17).
+    ReadCommitted,
+}
+
+/// A row lock to take: a row by primary key (`index` 0) or a unique-key value.
+pub struct LockKey {
+    pub table: Arc<TableDef>,
+    pub index: u32,
+    pub key: Vec<Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LockOpts {
+    pub exclusive: bool,
+    pub nowait: bool,
+    pub skip: bool,
+    /// Return the latest committed row under each lock.
+    pub read: bool,
+}
+
+/// Row locks a transaction holds on one shard. The shard ties row locks to
+/// the session (connection) that took them -- they are released when it
+/// closes -- so every later lock request and the commit of the transaction
+/// on that shard go over the same connection, and `gen` (the lock table's
+/// generation and that session) lets the commit check that they survived.
+pub struct ShardLocks {
+    pub client: Client,
+    pub gen: String,
+}
+
+/// Outcome of one requested lock.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Locked {
+    /// Granted; with `read`, the latest committed row (None: no such row).
+    Row(Option<Row>),
+    /// Granted, nothing read.
+    Granted,
+    /// Held by another transaction (SKIP LOCKED).
+    Skipped,
+}
+
 pub struct Txn {
     pub id: String,
     pub ts: f64,
     pub explicit: bool,
+    pub mode: Mode,
+    /// Lock wait timeout (innodb_lock_wait_timeout), seconds.
+    pub lock_timeout: f64,
+    /// Shards where this transaction holds row locks.
+    pub plocks: BTreeMap<usize, ShardLocks>,
+    /// SAVEPOINTs: name and the write buffer when it was set.
+    pub savepoints: Vec<(String, BTreeMap<(u32, Bytes), BufWrite>)>,
     pub streams: BTreeMap<usize, Stream>,
     pub writes: BTreeMap<(u32, Bytes), BufWrite>,
     pub rpoints: BTreeMap<usize, Vec<(u32, u32, Vec<Value>)>>,
@@ -97,6 +159,10 @@ pub fn key_bytes(key: &[Value]) -> Bytes {
 
 impl Txn {
     pub fn new(cluster: &Cluster, explicit: bool) -> Txn {
+        Txn::with_mode(cluster, explicit, Mode::Serializable, 50.0)
+    }
+
+    pub fn with_mode(cluster: &Cluster, explicit: bool, mode: Mode, lock_timeout: f64) -> Txn {
         Txn {
             id: cluster.new_txid(),
             ts: std::time::SystemTime::now()
@@ -104,6 +170,10 @@ impl Txn {
                 .map(|d| d.as_secs_f64())
                 .unwrap_or(0.0),
             explicit,
+            mode,
+            lock_timeout,
+            plocks: BTreeMap::new(),
+            savepoints: Vec::new(),
             streams: BTreeMap::new(),
             writes: BTreeMap::new(),
             rpoints: BTreeMap::new(),
@@ -113,7 +183,120 @@ impl Txn {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.streams.is_empty() && self.writes.is_empty()
+        self.streams.is_empty() && self.writes.is_empty() && self.plocks.is_empty()
+    }
+
+    /// Take row locks on one shard, in order (`tarn_lock`). With `read`, each
+    /// granted lock comes with the latest committed row. Errors: 1205 (lock
+    /// wait timeout), 1213 (deadlock, or the transaction's locks were lost),
+    /// 3572 (NOWAIT). Locks granted before an error stay held.
+    pub async fn lock(
+        &mut self,
+        cluster: &Arc<Cluster>,
+        shard: usize,
+        keys: &[LockKey],
+        o: LockOpts,
+    ) -> SqlResult<Vec<Locked>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let client = self.conn(cluster, shard).await?;
+        let mut m = Mp::new();
+        m.arr(4).str(&self.id).arr(keys.len());
+        for k in keys {
+            m.arr(3).uint(k.table.space_id as u64).uint(k.index as u64).vals(&k.key);
+        }
+        m.str(if o.exclusive { "X" } else { "S" });
+        m.map(4)
+            .str("timeout")
+            .f64(self.lock_timeout)
+            .str("nowait")
+            .bool(o.nowait)
+            .str("skip")
+            .bool(o.skip)
+            .str("read")
+            .bool(o.read);
+        // Lock requests change nothing that a resend could duplicate: a lost
+        // reply just fails the statement (the locks are released with the
+        // transaction).
+        let r = client.call(0, "tarn_lock", &m.0).await.map_err(from_iproto_read)?;
+        let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+        let (_, rd) = lua_status(&d)?;
+        let mut rd = Rd::shared_at(&d, rd);
+        let gen = rd.string()?;
+        match self.plocks.get(&shard) {
+            Some(l) if l.gen != gen => {
+                return Err(SqlError::conflict(
+                    "the transaction lost its row locks (shard leader change or lost connection)",
+                ))
+            }
+            Some(_) => {}
+            None => {
+                self.plocks.insert(shard, ShardLocks { client, gen });
+            }
+        }
+        let n = rd.array()?;
+        let mut out = Vec::with_capacity(n);
+        for k in keys.iter().take(n) {
+            out.push(match rd.buf.first() {
+                Some(0xc0) => {
+                    rd.skip()?;
+                    Locked::Row(None)
+                }
+                Some(0xc2) => {
+                    rd.skip()?;
+                    Locked::Skipped
+                }
+                Some(0xc3) => {
+                    rd.skip()?;
+                    Locked::Granted
+                }
+                _ => Locked::Row(Some(rd.row(k.table.columns.len())?)),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Release some row locks early (rows that turned out not to match).
+    pub async fn unlock(&self, cluster: &Arc<Cluster>, shard: usize, keys: &[LockKey]) {
+        if keys.is_empty() {
+            return;
+        }
+        let mut m = Mp::new();
+        m.arr(2).str(&self.id).arr(keys.len());
+        for k in keys {
+            m.arr(3).uint(k.table.space_id as u64).uint(k.index as u64).vals(&k.key);
+        }
+        let _ = cluster.call(shard, "tarn_unlock", &m.0).await;
+    }
+
+    /// Release every row lock of this transaction (best effort).
+    async fn release_plocks(&mut self, cluster: &Arc<Cluster>) {
+        let shards: Vec<usize> = std::mem::take(&mut self.plocks).into_keys().collect();
+        let mut m = Mp::new();
+        m.arr(1).str(&self.id);
+        let futs = shards.iter().map(|&s| cluster.call(s, "tarn_unlock", &m.0));
+        let _ = futures::future::join_all(futs).await;
+    }
+
+    /// Generation of this transaction's row locks on `shard` (nil if none).
+    fn encode_gen(&self, shard: usize, m: &mut Mp) {
+        match self.plocks.get(&shard) {
+            Some(l) => m.str(&l.gen),
+            None => m.nil(),
+        };
+    }
+
+    /// The connection for this transaction's requests to `shard`: the one
+    /// its stream or row locks there use (see [`ShardLocks`]), else any.
+    async fn conn(&self, cluster: &Cluster, shard: usize) -> SqlResult<Client> {
+        if let Some(s) = self.streams.get(&shard) {
+            return Ok(s.client.clone());
+        }
+        if let Some(l) = self.plocks.get(&shard) {
+            return Ok(l.client.clone());
+        }
+        cluster.shards[shard].client(cluster).await
     }
 
     /// Stream on `shard`. A fresh stream has no transaction yet: the first
@@ -129,7 +312,7 @@ impl Txn {
                 begin: !s.begun,
             });
         }
-        let client = cluster.shards[shard].client(cluster).await?;
+        let client = self.conn(cluster, shard).await?;
         let id = client.next_stream_id();
         self.streams.insert(
             shard,
@@ -214,11 +397,16 @@ impl Txn {
         for w in self.writes.values() {
             p.insert(w.shard);
         }
+        // Shards holding row locks check at commit that the locks survived.
+        p.extend(self.plocks.keys().copied());
         p
     }
 
     fn encode_writes(&self, cluster: &Cluster, shard: usize, m: &mut Mp) {
-        let ws: Vec<&BufWrite> = self.writes.values().filter(|w| w.shard == shard).collect();
+        // Deletes first: a row inserted in place of a deleted one (REPLACE
+        // over a unique key, delete-then-insert) may reuse its unique values.
+        let mut ws: Vec<&BufWrite> = self.writes.values().filter(|w| w.shard == shard).collect();
+        ws.sort_by_key(|w| w.op != WOp::Delete);
         m.arr(ws.len());
         for w in ws {
             m.arr(3);
@@ -258,31 +446,56 @@ impl Txn {
         }
     }
 
-    /// Roll back every open stream (best effort, nothing to wait for).
-    pub fn rollback(self) {
+    /// Roll back every open stream and release the row locks (best effort,
+    /// nothing to wait for).
+    pub fn rollback(self, cluster: &Arc<Cluster>) {
         for (_, s) in self.streams {
             tokio::spawn(async move {
                 let _ = s.client.rollback(s.id).await;
+            });
+        }
+        if !self.plocks.is_empty() {
+            let c = cluster.clone();
+            let id = self.id.clone();
+            let shards: Vec<usize> = self.plocks.into_keys().collect();
+            tokio::spawn(async move {
+                let mut m = Mp::new();
+                m.arr(1).str(&id);
+                let futs = shards.iter().map(|&s| c.call(s, "tarn_unlock", &m.0));
+                let _ = futures::future::join_all(futs).await;
             });
         }
     }
 
     pub async fn commit(mut self, cluster: &Arc<Cluster>) -> SqlResult<()> {
         if let Some(e) = self.doomed.take() {
-            self.rollback();
+            self.rollback(cluster);
             return Err(e);
         }
         let parts = self.participants();
         if parts.is_empty() {
             return Ok(());
         }
-        let res = if self.writes.is_empty() {
+        let res = if self.mode == Mode::ReadCommitted && self.writes.is_empty() {
+            // Nothing to validate: just end the locks.
+            self.release_plocks(cluster).await;
+            Ok(())
+        } else if self.writes.is_empty() {
             self.commit_read_only(cluster, &parts).await
+        } else if parts.len() == 1 && self.mode == Mode::ReadCommitted {
+            self.commit_rc(cluster, *parts.iter().next().unwrap()).await
         } else if parts.len() == 1 {
             self.commit_local(cluster, *parts.iter().next().unwrap()).await
         } else {
             self.commit_2pc(cluster, &parts).await
         };
+        if res.is_ok() {
+            // Every commit path releases the row locks on the shards
+            // (tarn_commit_local/_rc, tarn_validate, APPLY).
+            self.plocks.clear();
+        } else if !self.plocks.is_empty() {
+            self.release_plocks(cluster).await;
+        }
         if let Err(e) = &res {
             if e.code == 1213 {
                 cluster.stats.conflicts.fetch_add(1, Ordering::Relaxed);
@@ -295,12 +508,16 @@ impl Txn {
         let mut futs = Vec::new();
         let cross = parts.len() > 1;
         for &p in parts {
-            let s = self.streams.get(&p).expect("read-only participants have streams");
+            // A shard where the transaction only holds row locks has no stream.
+            let (client, id) = match self.streams.get(&p) {
+                Some(s) => (s.client.clone(), s.id),
+                None => (self.conn(cluster, p).await?, 0),
+            };
             let mut m = Mp::new();
-            m.arr(4).str(&self.id);
+            m.arr(5).str(&self.id);
             self.encode_reads(p, &mut m);
             m.bool(cross);
-            let (client, id) = (s.client.clone(), s.id);
+            self.encode_gen(p, &mut m);
             futs.push(async move {
                 // Read-only: a lost connection or a demoted leader just
                 // means "retry" (nothing was written).
@@ -334,12 +551,13 @@ impl Txn {
         // then runs as its own local transaction (no BEGIN round trip).
         let (client, id) = match self.streams.get(&shard) {
             Some(s) => (s.client.clone(), s.id),
-            None => (cluster.shards[shard].client(cluster).await?, 0),
+            None => (self.conn(cluster, shard).await?, 0),
         };
         let mut m = Mp::new();
-        m.arr(4).str(&self.id);
+        m.arr(5).str(&self.id);
         self.encode_writes(cluster, shard, &mut m);
         self.encode_reads(shard, &mut m);
+        self.encode_gen(shard, &mut m);
         let shard_id = cluster.shards[shard].id;
         let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
             // The commit may have happened: report the outcome as unknown.
@@ -357,8 +575,42 @@ impl Txn {
         }
     }
 
+    /// READ COMMITTED, one shard: `tarn_commit_rc` checks that the row locks
+    /// survived, applies the writes and releases the locks.
+    async fn commit_rc(&mut self, cluster: &Arc<Cluster>, shard: usize) -> SqlResult<()> {
+        let client = self.conn(cluster, shard).await?;
+        if client.is_closed() {
+            // The shard released this transaction's row locks with the
+            // connection; nothing was sent, so nothing was written.
+            return Err(SqlError::conflict(
+                "the transaction lost its row locks (connection to the shard lost)",
+            ));
+        }
+        let mut m = Mp::new();
+        m.arr(3).str(&self.id);
+        self.encode_writes(cluster, shard, &mut m);
+        self.encode_gen(shard, &mut m);
+        let shard_id = cluster.shards[shard].id;
+        let r = client.call(0, "tarn_commit_rc", &m.0).await.map_err(|e| match e {
+            e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => ambiguous(shard_id, &e),
+            e => from_iproto(e),
+        });
+        cluster.stats.commits_local.fetch_add(1, Ordering::Relaxed);
+        let d = r?.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+        lua_status(&d).map(|_| ())?;
+        self.plocks.remove(&shard); // released by the commit
+        Ok(())
+    }
+
     async fn commit_2pc(&mut self, cluster: &Arc<Cluster>, parts: &BTreeSet<usize>) -> SqlResult<()> {
         cluster.stats.commits_2pc.fetch_add(1, Ordering::Relaxed);
+        // A READ COMMITTED transaction holds no stream transactions and may
+        // run (and wait for locks) for long: its PREPAREs carry the time its
+        // commit starts. The expiry only needs a timestamp fixed before the
+        // first PREPARE (TarnCommit: Expire may happen at any moment).
+        if self.mode == Mode::ReadCommitted {
+            self.ts = now_secs();
+        }
         // Participants refuse PREPAREs older than max_txn_age; do not start
         // a commit that they would refuse.
         if now_secs() - self.ts > cluster.cfg.max_txn_age {
@@ -380,14 +632,14 @@ impl Txn {
         for &p in parts {
             targets.push(match self.streams.get(&p) {
                 Some(s) => (s.client.clone(), s.id),
-                None => (cluster.shards[p].client(cluster).await?, 0),
+                None => (self.conn(cluster, p).await?, 0),
             });
         }
         // PREPARE everywhere in parallel.
         let mut futs = Vec::new();
         for (&p, (client, id)) in parts.iter().zip(targets) {
             let mut m = Mp::new();
-            m.arr(7).str(&self.id).uint(did as u64);
+            m.arr(8).str(&self.id).uint(did as u64);
             m.arr(part_ids.len());
             for &x in &part_ids {
                 m.uint(x as u64);
@@ -395,6 +647,7 @@ impl Txn {
             self.encode_writes(cluster, p, &mut m);
             self.encode_reads(p, &mut m);
             m.f64(self.ts);
+            self.encode_gen(p, &mut m);
             futs.push(async move {
                 match client.call(id, "tarn_prepare", &m.0).await {
                     Ok(r) => match r.data() {

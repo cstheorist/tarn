@@ -165,6 +165,42 @@ concurrent PREPAREs that locked *different* rows conflicted through MVCC
 | before (TPS / errors) | 234 / 0 | 168 / 5,300 | 63 / 8,672 |
 | after (TPS / errors) | 234 / 0 | 456 / 186 | 549 / 843 |
 
+## Contention: READ COMMITTED against SERIALIZABLE
+
+`bench/locking.py` runs two contended workloads with 32 PyMySQL clients
+for 15 s each, on the same 2-vCPU VM (clients included), at both isolation
+levels, against Tarn (2 shards, one tarn-server) and MariaDB 10.11:
+*reserve* is the reservation transaction of
+[issue #12](https://github.com/cstheorist/tarn/issues/12) (per cart item,
+`SELECT ... ORDER BY unit LIMIT 1 FOR UPDATE SKIP LOCKED` over 20,000 free
+units, then `DELETE` it and `INSERT` a hold, all in one transaction; carts
+draw from 4 items); *counter* is `UPDATE ... SET n = n - 1` on one of 4 hot
+rows in an explicit transaction. 1213 and 1205 are retried up to 50 times.
+
+| Workload | System, isolation | Transactions/s | p50 ms | p99 ms | Retries | Gave up |
+|---|---|---:|---:|---:|---:|---:|
+| reserve, 1 item/cart | Tarn, SERIALIZABLE | 255 | 80 | 606 | 19,631 | 0 |
+| | Tarn, READ COMMITTED | 1,627 | 17 | 63 | 0 | 0 |
+| | MariaDB, SERIALIZABLE | 1,640 | 16 | 67 | 0 | 0 |
+| | MariaDB, READ COMMITTED | 2,520 | 11 | 38 | 0 | 0 |
+| reserve, 2 items/cart | Tarn, SERIALIZABLE | 78 | 273 | 1,577 | 14,003 | 18 |
+| | Tarn, READ COMMITTED | 761 | 40 | 77 | 0 | 0 |
+| | MariaDB, SERIALIZABLE | 852 | 31 | 137 | 28 | 0 |
+| | MariaDB, READ COMMITTED | 1,466 | 20 | 52 | 0 | 0 |
+| counter, 4 hot rows | Tarn, SERIALIZABLE | 1,067 | 21 | 134 | 39,998 | 0 |
+| | Tarn, READ COMMITTED | 3,338 | 8 | 30 | 0 | 0 |
+| | MariaDB, SERIALIZABLE | 3,757 | 6 | 29 | 0 | 0 |
+| | MariaDB, READ COMMITTED | 3,724 | 7 | 28 | 0 | 0 |
+
+Under contention, optimistic strict serializability turns waiting into
+aborts and retries: every reservation in a burst picks the same free unit,
+and every counter update in a burst reads the same version. READ COMMITTED
+with row locks makes the losers wait instead (zero retries) and gives 3 to
+10 times the throughput, at 52-90% of MariaDB's READ COMMITTED on the same
+machine. The reservation also depends on reading the queue a page at a time:
+`SKIP LOCKED` with `LIMIT` stops at the first free rows instead of reading
+all 20,000 units of the item.
+
 ## Comparison with published TiDB and YugabyteDB results
 
 TiDB and YugabyteDB could not be run on the development VM, so the only comparison

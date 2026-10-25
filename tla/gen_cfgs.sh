@@ -2,7 +2,8 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable";
+    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked";
+    local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE;
     for b in "$@";
     do
         case $b in 
@@ -54,6 +55,30 @@ mk ()
             NORD)
                 RD=NoReaders; RK=NoRKeys
             ;;
+            RCC)
+                RCS=RCCounter; LS=LSetCounter
+            ;;
+            RCM)
+                RCS=RCMixed; LS=LSetMixed
+            ;;
+            RNL)
+                RNL=TRUE
+            ;;
+            RIW)
+                RIW=TRUE
+            ;;
+            RRB)
+                RRB=TRUE
+            ;;
+            IPL)
+                IPL=TRUE
+            ;;
+            RIF)
+                RIF=TRUE
+            ;;
+            RCL)
+                RCS=RCLocal; LS=LSetRCLocal
+            ;;
         esac;
     done;
     cat > $name.cfg <<EOF
@@ -85,6 +110,13 @@ CONSTANTS
   BugGCIgnoresDecision = $BGD
   BugGCNoExpiry = $BNE
   BugFenceAfterExpiry = $BFE
+  RC <- $RCS
+  LSet <- $LS
+  BugRCNoLockCheck = $RNL
+  BugRCLockIgnoresWLocks = $RIW
+  BugRCReadBeforeLock = $RRB
+  BugIgnorePLocks = $IPL
+  BugRCLockReadsInFlight = $RIF
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
@@ -132,6 +164,20 @@ mk Bug_ROValidateNoReadCheck  RSetFrac  WSetFrac  0 0 0 ROV NRC
 mk Bug_GCIgnoresDecision      RSetRecov WSetRecov 0 1 1 NORD GC BGD
 mk Bug_GCNoExpiry             RSetRecov WSetRecov 0 1 1 NORD GC BNE
 mk Bug_FenceAfterExpiry       RSetRecov WSetRecov 0 1 1 NORD GC BFE
+# READ COMMITTED with pessimistic locks: RC read-modify-writes race each
+# other and serializable transactions, through local commits and PREPARE/APPLY,
+# under commit-phase faults and leader failovers (which empty the lock table).
+mk RC_Counter          RSetCounter WSetCounter 0 1 1 NORD RCC AMC
+mk RC_CounterFailover  RSetCounter WSetCounter 1 0 0 NORD RCC AMC
+mk RC_Counter_AckOnPrepare RSetCounter WSetCounter 0 0 1 NORD RCC AMC AOP
+mk RC_Mixed            RSetMixed   WSetMixed   0 1 1 NORD RCM AMC
+mk RC_MixedFailover    RSetMixed   WSetMixed   1 0 0 RCM AMC
+mk RC_Local            RSetRCLocal WSetRCLocal 0 1 1 NORD RCL AMC
+mk Bug_RCNoLockCheck       RSetCounter WSetCounter 1 0 0 NORD RCC AMC RNL
+mk Bug_RCLockIgnoresWLocks RSetCounter WSetCounter 0 0 0 NORD RCC AMC RIW
+mk Bug_RCReadBeforeLock    RSetCounter WSetCounter 0 0 0 NORD RCC AMC RRB
+mk Bug_IgnorePLocks        RSetCounter WSetCounter 0 0 0 NORD RCC AMC IPL
+mk Bug_RCLockReadsInFlight RSetRCLocal WSetRCLocal 0 0 0 NORD RCL AMC RIF
 # Documented trade-offs (expected to be violated):
 mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
 mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW
