@@ -55,7 +55,10 @@ for t in tests:
                 vals.append("-"); lats.append("-")
                 continue
             vals.append(fmt(r["tps"]))
-            lats.append(r["lat_p95_ms"] or "-")
+            try:
+                lats.append(f"{float(r['lat_p95_ms']):.2f}")
+            except (TypeError, ValueError):
+                lats.append("-")
             try:
                 errs.append(int(float(r["errors"] or 0)))
             except ValueError:

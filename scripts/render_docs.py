@@ -12,14 +12,16 @@ design = os.path.join(ROOT, "DESIGN.md")
 tlc = subprocess.run([sys.executable, os.path.join(ROOT, "tla", "summarize.py")],
                      capture_output=True, text=True, check=True).stdout.strip()
 
-best = {}
+last = {}
 for r in csv.DictReader(open(os.path.join(ROOT, "bench", "results.csv"))):
+    last[(r["label"], r["test"], r["threads"])] = r   # later runs replace earlier ones
+best = {}
+for (label, test, _), r in last.items():
     try:
         v = float(r["tps"])
     except ValueError:
         continue
-    k = (r["label"], r["test"])
-    best[k] = max(best.get(k, 0.0), v)
+    best[(label, test)] = max(best.get((label, test), 0.0), v)
 
 def b(label, test):
     v = best.get((label, test))

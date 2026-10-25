@@ -95,31 +95,54 @@ validated at commit; conflicting transactions abort with 1213 and retry).
 
 | System | 1 thr ops/s | 16 thr ops/s | 64 thr ops/s | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Tarn 2 shards (strict serializable) | 15,962 | 147,051 | 363,233 | .100 | .176 | .303 | 0 |
+| Tarn 2 shards (strict serializable) | 15,962 | 147,051 | 363,233 | 0.10 | 0.18 | 0.30 | 0 |
 
 ## Reading the numbers
 
 **Direct Key/Value reads are the fast path.** Reading SQL rows straight from
 Tarantool by primary key (with the same bucket routing the SQL layer uses,
-`crates/tarn-sql/examples/kvbench.rs`) reaches several times the best SQL
-point-select throughput of any system here, on the same two vCPUs.
+`crates/tarn-sql/examples/kvbench.rs`) reaches about 363k reads/s at 64
+tasks, over four times the best SQL point-select rate of any system here,
+on the same two vCPUs.
 
-**SQL point reads and writes:** one SQL point select is one round trip to
-the owning shard, an autocommit single-row write is one round trip and one
-local Tarantool transaction. On one small machine Tarn pays for two network
-hops (client → SQL server → shard) where MariaDB pays for one, so it
-trails single-node MariaDB/MySQL here; the gap narrows at high concurrency.
-Profiling `tarn-server` under load (perf) shows the time dominated by the
-kernel's loopback TCP path and wake-ups (≈50% of all CPU in the kernel),
-not by SQL processing; Unix sockets for the internal hop did not change the
-picture.
+**Single-row SQL statements.** A point select is one round trip to the
+owning shard; an autocommit single-row write is one round trip and one local
+Tarantool transaction. At 64 threads Tarn's single-row writes are ahead of
+MySQL 9.7 or within 10% of it (`update_index` 26.1k vs 24.9k TPS,
+`update_non_index` 26.5k vs 29.5k, `insert` 24.3k vs 26.6k) and reach 53–65%
+of MariaDB. At 64 threads point selects reach 42.5k (2 shards) and 54.6k QPS
+(1 shard), against 51k for MySQL and 71k for MariaDB (whose peaks, at 16
+threads, are 62k and 84k). At one thread Tarn is 2–3× slower than MySQL and
+3–5× slower than MariaDB: it pays for two network hops (client → SQL server →
+shard) where they pay for one, and each hop crosses Tarantool's network and
+transaction threads. Profiling
+`tarn-server` under load (perf) shows about half of all CPU in the kernel's
+loopback TCP path and wake-ups, not in SQL processing; Unix sockets for the
+internal hop did not change that.
+
+**One shard beats two on this box.** The 3-replica single-shard
+configuration is faster than two unreplicated shards for everything except
+writes: on two vCPUs fewer active processes means less context switching,
+range queries do not fan out, and transactions commit locally instead of
+through two-phase commit. Synchronous replication roughly halves single-row
+write throughput (every commit waits for a second replica's acknowledgment
+and three instances share two vCPUs). On real hardware each shard leader
+would have its own machine, and more shards add capacity.
 
 **Multi-statement transactions** (`read_only`, `read_write`, `write_only`)
-issue 10–20 storage round trips each, and with two shards almost every
+issue 10–20 storage round trips each; with two shards almost every
 `read_write`/`write_only` transaction is a cross-shard two-phase commit
-(PREPARE + APPLY, each a durable local transaction on both shards). The
-range queries of `read_only`/`read_write` go to both shards because tables
-are hash-partitioned by primary key.
+(PREPARE and APPLY, each a durable local transaction on both shards), and the
+four range queries go to both shards because tables are hash-partitioned by
+primary key. Here Tarn reaches a quarter to a third of MariaDB's
+throughput. Ack-on-prepare takes one round trip off the commit: about 18%
+lower `read_write` latency at one thread and 21% more `write_only`
+throughput at 64 threads, but no gain for `read_write` at 64 threads, where
+the reads already saturate the CPU. Strict serializability costs retries
+(`errors` column, total over a 15 s run): about 3 aborts per 100 committed
+`read_write` transactions at 16 threads and 10 per 100 at 64 threads, versus
+none for REPEATABLE READ. InnoDB's SERIALIZABLE (lock-based) performs like
+its REPEATABLE READ at this low contention and rarely aborts.
 
 **The lock index fix.** The first full run exposed a performance bug: lock
 checks read the lock spaces inside transactions, so concurrent PREPAREs that
@@ -150,7 +173,7 @@ configuration has no replication.
 | oltp_update_index | 20,377 | 255 | 260 | 11 | 26,056 | 13,028 | 14,651 | 7,325 | 43,426 | 21,713 |
 | oltp_update_non_index | 34,011 | 425 | – | – | 26,480 | 13,240 | – | – | 53,659 | 26,829 |
 | oltp_insert | 37,247 | 466 | – | – | 24,255 | 12,127 | 14,560 | 7,280 | 45,461 | 22,731 |
-| direct KV point read | – | – | – | – | 366,436 | 183,218 | – | – | – | – |
+| direct KV point read | – | – | – | – | 363,233 | 181,616 | – | – | – | – |
 
 Sources: [TiDB Cloud v7.5.0 sysbench report](https://docs.pingcap.com/tidbcloud/v7.5-performance-benchmarking-with-sysbench/)
 (2 TiDB nodes × 16 vCPU + 3 TiKV nodes × 16 vCPU = 80 vCPU, 32 tables ×

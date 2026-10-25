@@ -15,14 +15,16 @@ tables = subprocess.run([sys.executable, os.path.join(HERE, "summarize.py"), csv
                         capture_output=True, text=True, check=True).stdout.strip()
 
 rows = list(csv.DictReader(open(csv_path)))
+last = {}
+for r in rows:  # later runs of the same (label, test, threads) replace earlier ones
+    last[(r["label"], r["test"], r["threads"])] = r
 best = {}
-for r in rows:
-    k = (r["label"], r["test"])
+for (label, test, _), r in last.items():
     try:
         v = float(r["tps"])
     except ValueError:
         continue
-    best[k] = max(best.get(k, 0.0), v)
+    best[(label, test)] = max(best.get((label, test), 0.0), v)
 
 # Published results (TPS; point select: QPS) and their database vCPUs.
 TIDB = {"vcpu": 80, "oltp_point_select": 118651, "oltp_read_write": 3169, "oltp_update_index": 20377,
