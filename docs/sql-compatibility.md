@@ -39,6 +39,14 @@ servers write to it (`tests/sql/`).
   like MySQL's `index_merge`.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
+  `COUNT(*)`, `COUNT(constant)` and `COUNT(col)` of one table without
+  `GROUP BY` are counted by the shards, which return one number each
+  instead of the rows, when the `WHERE` clause is an index range plus
+  comparisons, `IN` lists and `IS [NOT] NULL` tests of integer and
+  character columns against constants, compared by bytes (an equality
+  prefix with no other condition is counted by the index itself); other
+  counts, including comparisons under a case-insensitive collation, read
+  the rows.
 * Subqueries without outer references: `x IN (SELECT ...)`, `EXISTS (SELECT ...)`, scalar
   `(SELECT ...)`, in `SELECT`, `UPDATE` and `DELETE`. The inner query runs
   first, inside the statement's transaction.

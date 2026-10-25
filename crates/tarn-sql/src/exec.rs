@@ -4,9 +4,12 @@
 
 use crate::catalog::{IndexDef, TableDef};
 use crate::cluster::Cluster;
+use crate::expr::CmpOp;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
-use crate::txn::{select_keys, select_rows, LockKey, LockOpts, Locked, RangeRead, Row, Txn};
+use crate::txn::{
+    count_rows, select_keys, select_rows, LockKey, LockOpts, Locked, PredOp, RangeRead, Row, StoragePred, Txn,
+};
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -364,39 +367,8 @@ async fn fetch_stored_from(
             let rows = fetch_keys(cluster, mode, t, idx, ks, unique, if unique { Some(1) } else { limit }).await?;
             return Ok(rows);
         }
-        AccessPath::Prefixes { index, keys } => {
-            // One prefix: an ordinary equality range.
-            let idx = index_def(t, *index);
-            let ks = eval_keys(t, idx, keys, outer, cx)?;
-            let Some(prefix) = ks.into_iter().next() else {
-                return Ok(Vec::new());
-            };
-            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
-                Some(s) => vec![s],
-                None => (0..cluster.nshards()).collect(),
-            };
-            let range = RangeRead {
-                space: t.space_id,
-                index: idx.id,
-                lo: Some(prefix.clone()),
-                hi: Some(prefix.clone()),
-                lo_incl: true,
-                hi_incl: true,
-            };
-            let (key, iter) = match resume {
-                Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
-                None => (prefix.clone(), Iter::Ge),
-            };
-            for s in shards {
-                calls.push(Call {
-                    shard: s,
-                    key: key.clone(),
-                    iter,
-                    limit,
-                    end: Some((prefix.clone(), true)),
-                    range: Some(range.clone()),
-                });
-            }
+        AccessPath::Prefixes { .. } | AccessPath::Range { .. } | AccessPath::Full => {
+            calls = range_calls(cluster, t, &ta.path, outer, cx, resume, limit)?;
         }
         AccessPath::Point { index, keys } => {
             let idx = index_def(t, *index);
@@ -429,6 +401,129 @@ async fn fetch_stored_from(
                 });
             }
         }
+    }
+    let index = path_index(&ta.path);
+    let mut rows = Vec::new();
+    match mode {
+        ReadMode::Auto { calls: made } => {
+            *made += calls.len();
+            if *made > 1 {
+                return Err(need_txn());
+            }
+            for c in calls {
+                let client = cluster.shards[c.shard].client(cluster).await?;
+                let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                rows.extend(select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await?);
+            }
+        }
+        ReadMode::Committed(_) => {
+            let mut futs = Vec::new();
+            for c in &calls {
+                let client = cluster.shards[c.shard].client(cluster).await?;
+                futs.push(async move {
+                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                    select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await
+                });
+            }
+            for r in futures::future::join_all(futs).await {
+                rows.extend(r?);
+            }
+        }
+        ReadMode::Txn(txn) => {
+            let mut futs = Vec::new();
+            for c in &calls {
+                let st = txn.stream(cluster, c.shard).await?;
+                futs.push(async move {
+                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                    select_rows(
+                        &st.client, st.id, t, index, &c.key, c.iter, c.limit, end, false, st.begin,
+                    )
+                    .await
+                });
+            }
+            let results = futures::future::join_all(futs).await;
+            for r in results {
+                match r {
+                    Ok(v) => rows.extend(v),
+                    Err(e) => {
+                        if e.code == 1213 {
+                            txn.doomed = Some(e.clone());
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            for c in calls {
+                txn.mark_begun(c.shard);
+                if unique_point {
+                    txn.note_point(c.shard, t.space_id, index, c.key);
+                } else if let Some(r) = c.range {
+                    txn.note_range(c.shard, r);
+                }
+            }
+        }
+    }
+    Ok(rows)
+}
+
+fn path_index(path: &AccessPath) -> u32 {
+    match path {
+        AccessPath::Point { index, .. } | AccessPath::Range { index, .. } | AccessPath::Prefixes { index, .. } => {
+            *index
+        }
+        AccessPath::Full | AccessPath::Union(_) => 0,
+    }
+}
+
+/// The index scans of a range access (`Range`, a `Prefixes` path with one
+/// key, `Full`): one per shard it may touch, none when no row can match. A
+/// scan starts at `resume` (index key, inclusive?) instead of its lower
+/// bound when given.
+fn range_calls(
+    cluster: &Arc<Cluster>,
+    t: &TableDef,
+    path: &AccessPath,
+    outer: &[Value],
+    cx: &EvalCtx<'_>,
+    resume: Option<(&[Value], bool)>,
+    limit: Option<u32>,
+) -> SqlResult<Vec<Call>> {
+    let mut calls = Vec::new();
+    match path {
+        AccessPath::Prefixes { index, keys } => {
+            // One prefix: an ordinary equality range.
+            let idx = index_def(t, *index);
+            let ks = eval_keys(t, idx, keys, outer, cx)?;
+            let Some(prefix) = ks.into_iter().next() else {
+                return Ok(calls);
+            };
+            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
+                Some(s) => vec![s],
+                None => (0..cluster.nshards()).collect(),
+            };
+            let range = RangeRead {
+                space: t.space_id,
+                index: idx.id,
+                lo: Some(prefix.clone()),
+                hi: Some(prefix.clone()),
+                lo_incl: true,
+                hi_incl: true,
+            };
+            let (key, iter) = match resume {
+                Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
+                None => (prefix.clone(), Iter::Ge),
+            };
+            for s in shards {
+                calls.push(Call {
+                    shard: s,
+                    key: key.clone(),
+                    iter,
+                    limit,
+                    end: Some((prefix.clone(), true)),
+                    range: Some(range.clone()),
+                });
+            }
+        }
         AccessPath::Range {
             index,
             eq,
@@ -442,7 +537,7 @@ async fn fetch_stored_from(
                 let v = e.eval(outer, cx)?;
                 match (v.is_null(), t.lookup_part(idx.cols[i], &v)) {
                     (false, Some(x)) => prefix.push(x),
-                    _ => return Ok(Vec::new()),
+                    _ => return Ok(calls),
                 }
             }
             let next_col = idx.cols.get(eq.len()).copied();
@@ -462,7 +557,7 @@ async fn fetch_stored_from(
             let lo_v = bound(lo)?;
             let hi_v = bound(hi)?;
             if matches!(lo_v, Some((Value::Null, false))) || matches!(hi_v, Some((Value::Null, false))) {
-                return Ok(Vec::new());
+                return Ok(calls);
             }
             let (key, iter, lo_incl) = match &lo_v {
                 Some((v, incl)) => {
@@ -532,74 +627,9 @@ async fn fetch_stored_from(
                 });
             }
         }
+        AccessPath::Point { .. } | AccessPath::Union(_) => unreachable!("not a range access"),
     }
-    let index = match &ta.path {
-        AccessPath::Point { index, .. } | AccessPath::Range { index, .. } | AccessPath::Prefixes { index, .. } => {
-            *index
-        }
-        AccessPath::Full | AccessPath::Union(_) => 0,
-    };
-    let mut rows = Vec::new();
-    match mode {
-        ReadMode::Auto { calls: made } => {
-            *made += calls.len();
-            if *made > 1 {
-                return Err(need_txn());
-            }
-            for c in calls {
-                let client = cluster.shards[c.shard].client(cluster).await?;
-                let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                rows.extend(select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await?);
-            }
-        }
-        ReadMode::Committed(_) => {
-            let mut futs = Vec::new();
-            for c in &calls {
-                let client = cluster.shards[c.shard].client(cluster).await?;
-                futs.push(async move {
-                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await
-                });
-            }
-            for r in futures::future::join_all(futs).await {
-                rows.extend(r?);
-            }
-        }
-        ReadMode::Txn(txn) => {
-            let mut futs = Vec::new();
-            for c in &calls {
-                let st = txn.stream(cluster, c.shard).await?;
-                futs.push(async move {
-                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    select_rows(
-                        &st.client, st.id, t, index, &c.key, c.iter, c.limit, end, false, st.begin,
-                    )
-                    .await
-                });
-            }
-            let results = futures::future::join_all(futs).await;
-            for r in results {
-                match r {
-                    Ok(v) => rows.extend(v),
-                    Err(e) => {
-                        if e.code == 1213 {
-                            txn.doomed = Some(e.clone());
-                        }
-                        return Err(e);
-                    }
-                }
-            }
-            for c in calls {
-                txn.mark_begun(c.shard);
-                if unique_point {
-                    txn.note_point(c.shard, t.space_id, index, c.key);
-                } else if let Some(r) = c.range {
-                    txn.note_range(c.shard, r);
-                }
-            }
-        }
-    }
-    Ok(rows)
+    Ok(calls)
 }
 
 fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
@@ -940,6 +970,395 @@ pub fn render_name(s: &str, params: &[Value]) -> String {
     out
 }
 
+/// The kind of comparison a shard can evaluate for a column of type `ty`
+/// against `v` exactly as [`crate::types::compare`] would: integers
+/// (`Some(true)`) or strings by bytes (`Some(false)`).
+fn storage_cmp_kind(ty: &SqlType, v: &Value) -> Option<bool> {
+    use BaseType::*;
+    if ty.is_integer() {
+        return matches!(v, Value::Int(_) | Value::UInt(_)).then_some(true);
+    }
+    // Binary columns are left out (Lua sees their fields as varbinary), and
+    // so are temporal ones, whose comparisons are not plain byte order.
+    let text = matches!(ty.base, Char | VarChar | Text);
+    (text && matches!(v, Value::Str(_))).then_some(false)
+}
+
+/// One comparison of a WHERE conjunct: column, operator, operand.
+struct Atom<'e> {
+    col: usize,
+    op: CmpOp,
+    arg: &'e Expr,
+}
+
+/// The comparisons a conjunct consists of, if it is a column compared with
+/// constants by bytes (not under a case-insensitive collation); `IS [NOT]
+/// NULL` and `IN` lists come back as storage predicates directly.
+fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Option<(usize, bool, &'e [Expr])>)> {
+    let col = |x: &Expr| match x {
+        Expr::Col(c) if *c < ncols => Some(*c),
+        _ => None,
+    };
+    match e {
+        Expr::Cmp(a, op, b, coll) if !coll.is_ci() => {
+            let (c, arg, op) = match (col(a), col(b)) {
+                (Some(c), None) if b.is_constant() => (c, &**b, *op),
+                (None, Some(c)) if a.is_constant() => (
+                    c,
+                    &**a,
+                    match op {
+                        CmpOp::Lt => CmpOp::Gt,
+                        CmpOp::LtEq => CmpOp::GtEq,
+                        CmpOp::Gt => CmpOp::Lt,
+                        CmpOp::GtEq => CmpOp::LtEq,
+                        o => *o,
+                    },
+                ),
+                _ => return None,
+            };
+            Some((vec![Atom { col: c, op, arg }], None))
+        }
+        Expr::Between(x, lo, hi, false, coll) if !coll.is_ci() && lo.is_constant() && hi.is_constant() => {
+            let c = col(x)?;
+            Some((
+                vec![
+                    Atom {
+                        col: c,
+                        op: CmpOp::GtEq,
+                        arg: lo,
+                    },
+                    Atom {
+                        col: c,
+                        op: CmpOp::LtEq,
+                        arg: hi,
+                    },
+                ],
+                None,
+            ))
+        }
+        Expr::InList(x, list, false, coll) if !coll.is_ci() && list.iter().all(|v| v.is_constant()) => {
+            let c = col(x)?;
+            if list.len() == 1 {
+                return Some((
+                    vec![Atom {
+                        col: c,
+                        op: CmpOp::Eq,
+                        arg: &list[0],
+                    }],
+                    None,
+                ));
+            }
+            Some((Vec::new(), Some((c, false, list.as_slice()))))
+        }
+        Expr::IsNull(x, negated) => Some((Vec::new(), Some((col(x)?, *negated, &[][..])))),
+        _ => None,
+    }
+}
+
+/// The comparisons the index scans of a range access stand for: equality
+/// on the prefix columns, the bounds on the next one.
+fn path_atoms<'e>(t: &TableDef, path: &'e AccessPath) -> Vec<Atom<'e>> {
+    let mut out = Vec::new();
+    let (index, eq, lo, hi) = match path {
+        AccessPath::Range { index, eq, lo, hi, .. } => (*index, eq.as_slice(), lo.as_ref(), hi.as_ref()),
+        AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, keys[0].as_slice(), None, None),
+        _ => return out,
+    };
+    let idx = index_def(t, index);
+    for (i, e) in eq.iter().enumerate() {
+        out.push(Atom {
+            col: idx.cols[i],
+            op: CmpOp::Eq,
+            arg: e,
+        });
+    }
+    if let Some(&c) = idx.cols.get(eq.len()) {
+        if let Some((e, incl)) = lo {
+            let op = if *incl { CmpOp::GtEq } else { CmpOp::Gt };
+            out.push(Atom { col: c, op, arg: e });
+        }
+        // Without a lower bound the scan starts at the prefix, and NULLs,
+        // which the index orders first, are inside it: the upper bound
+        // selects them out only when the column cannot hold one.
+        let col = &t.columns[c];
+        let nullable = col.nullable || col.storage_nullable();
+        if let (Some((e, incl)), false) = (hi, lo.is_none() && nullable) {
+            let op = if *incl { CmpOp::LtEq } else { CmpOp::Lt };
+            out.push(Atom { col: c, op, arg: e });
+        }
+    }
+    out
+}
+
+/// The storage side of a count pushed down to the shards (issue #52): the
+/// predicates each shard evaluates on the rows its scans cover, or None
+/// when the statement is not such a count. It is one when the SELECT reads
+/// one table through a range access, has no GROUP BY, computes only
+/// `COUNT(*)`, `COUNT(constant)` or `COUNT(col)` (all the same count), and
+/// every WHERE conjunct either is what the index scan already selects or a
+/// column compared with constants that the shard can evaluate exactly as
+/// SQL does here (integers, and strings by bytes).
+fn count_preds(p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<Vec<StoragePred>>> {
+    let (Some(ap), Source::Table(ta), None) = (&p.agg, &p.source, p.lock) else {
+        return Ok(None);
+    };
+    if !ap.group.is_empty()
+        || ap.aggs.is_empty()
+        || !matches!(ta.path, AccessPath::Range { .. } | AccessPath::Full)
+            && !matches!(&ta.path, AccessPath::Prefixes { keys, .. } if keys.len() == 1)
+    {
+        return Ok(None);
+    }
+    let t = &ta.table;
+    if t.is_virtual() {
+        return Ok(None); // information_schema: rows from the catalog, not the shards
+    }
+    let ncols = t.columns.len();
+    // The column every aggregate needs non-NULL, if any (COUNT of a
+    // nullable column).
+    let mut counted: Option<Option<usize>> = None;
+    for a in &ap.aggs {
+        let need = match (a.func, &a.arg, a.distinct) {
+            (AggFunc::CountStar, _, _) => None,
+            (AggFunc::Count, Some(e), false) if e.is_constant() && !e.eval(&[], cx)?.is_null() => None,
+            (AggFunc::Count, Some(Expr::Col(c)), false) if *c < ncols => {
+                let col = &t.columns[*c];
+                (col.nullable || col.storage_nullable()).then_some(*c)
+            }
+            _ => return Ok(None),
+        };
+        if counted.is_some_and(|x| x != need) {
+            return Ok(None);
+        }
+        counted = Some(need);
+    }
+    let mut preds = Vec::new();
+    if let Some(Some(c)) = counted {
+        preds.push(StoragePred {
+            col: c,
+            op: PredOp::NotNull,
+            int: false,
+        });
+    }
+    let mut conj = Vec::new();
+    if let Some(f) = &p.filter {
+        split_conj(f, &mut conj);
+    }
+    let covered = path_atoms(t, &ta.path);
+    for e in conj {
+        let Some((atoms, other)) = conjunct_atoms(e, ncols) else {
+            return Ok(None);
+        };
+        if let Some((c, not_null, list)) = other {
+            if list.is_empty() {
+                let op = if not_null { PredOp::NotNull } else { PredOp::IsNull };
+                preds.push(StoragePred { col: c, op, int: false });
+                continue;
+            }
+            let ty = t.columns[c].ty();
+            let mut vs = Vec::with_capacity(list.len());
+            let mut int = None;
+            for x in list {
+                let v = x.eval(&[], cx)?;
+                if v.is_null() {
+                    continue; // never equal; the row matches by another value or not at all
+                }
+                match storage_cmp_kind(ty, &v) {
+                    Some(k) if int.is_none_or(|i| i == k) => int = Some(k),
+                    _ => return Ok(None),
+                }
+                vs.push(v);
+            }
+            let Some(int) = int else { return Ok(None) };
+            preds.push(StoragePred {
+                col: c,
+                op: PredOp::In(vs),
+                int,
+            });
+            continue;
+        }
+        for a in atoms {
+            let v = a.arg.eval(&[], cx)?;
+            if a.op == CmpOp::NullSafeEq && v.is_null() {
+                preds.push(StoragePred {
+                    col: a.col,
+                    op: PredOp::IsNull,
+                    int: false,
+                });
+                continue;
+            }
+            let Some(int) = storage_cmp_kind(t.columns[a.col].ty(), &v) else {
+                return Ok(None);
+            };
+            let op = match a.op {
+                CmpOp::Eq | CmpOp::NullSafeEq => "eq",
+                CmpOp::NotEq => "ne",
+                CmpOp::Lt => "lt",
+                CmpOp::LtEq => "le",
+                CmpOp::Gt => "gt",
+                CmpOp::GtEq => "ge",
+            };
+            // What the index scan selects needs no second look: its key is
+            // this very value, which the column's type holds exactly (an
+            // inexact bound is dropped from the scan).
+            let same_op = |x: CmpOp| x == a.op || (x == CmpOp::Eq && a.op == CmpOp::NullSafeEq);
+            // (A case-insensitive index holds weight strings, and an equality
+            // compared by bytes may use it: its scan is wider than the test.)
+            let exact = coerce_key_part(t.columns[a.col].ty(), &v).is_some() && !t.layout.colls[a.col].is_ci();
+            if exact
+                && covered
+                    .iter()
+                    .any(|k| k.col == a.col && same_op(k.op) && format!("{:?}", k.arg) == format!("{:?}", a.arg))
+            {
+                continue;
+            }
+            preds.push(StoragePred {
+                col: a.col,
+                op: PredOp::Cmp(op, v),
+                int,
+            });
+        }
+    }
+    Ok(Some(preds))
+}
+
+fn split_conj<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+    match e {
+        Expr::And(a, b) => {
+            split_conj(a, out);
+            split_conj(b, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// A count computed by the shards (see [`count_preds`]), or None when the
+/// statement must read its rows. Each shard counts what its index scans
+/// cover; the transaction's own buffered writes are counted here: the
+/// shards leave out the stored versions of the rows it wrote, and the rows
+/// it wrote count when they satisfy the WHERE clause, as with the rows
+/// [`Txn::overlay`] adds. Inside a transaction the scanned ranges are
+/// recorded for validation, as reading the rows would.
+async fn storage_count(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Option<u64>> {
+    let Some(preds) = count_preds(p, cx)? else {
+        return Ok(None);
+    };
+    let Source::Table(ta) = &p.source else { unreachable!() };
+    let t = &ta.table;
+    let index = path_index(&ta.path);
+    let mut calls = range_calls(cluster, t, &ta.path, &[], cx, None, None)?;
+    let called = !calls.is_empty();
+    for c in &mut calls {
+        // A scan of one equality prefix: the shard counts it in its index.
+        if c.iter == Iter::Ge && c.end.as_ref().is_some_and(|(k, incl)| *incl && *k == c.key) {
+            c.iter = Iter::Eq;
+            c.end = None;
+        }
+    }
+    let (mut n, written): (u64, Vec<(usize, Vec<Value>)>) = match mode {
+        ReadMode::Txn(txn) | ReadMode::Committed(txn) => {
+            let mut mine = Vec::new();
+            let mut n = 0;
+            for (_, w) in txn
+                .writes
+                .range((t.space_id, Bytes::new())..)
+                .take_while(|((s, _), _)| *s == t.space_id)
+            {
+                mine.push((w.shard, w.pk.clone()));
+                if let Some(r) = &w.row {
+                    let counted = match &p.filter {
+                        Some(f) => f.eval_bool(r, cx)?,
+                        None => true,
+                    };
+                    if counted && preds.iter().all(|q| q.op != PredOp::NotNull || !r[q.col].is_null()) {
+                        n += 1;
+                    }
+                }
+            }
+            (n, mine)
+        }
+        ReadMode::Auto { .. } => (0, Vec::new()),
+    };
+    let exclude = |shard: usize| -> Vec<&[Value]> {
+        written
+            .iter()
+            .filter(|(s, _)| *s == shard)
+            .map(|(_, pk)| pk.as_slice())
+            .collect()
+    };
+    let excl: Vec<Vec<&[Value]>> = calls.iter().map(|c| exclude(c.shard)).collect();
+    match mode {
+        ReadMode::Auto { calls: made } => {
+            *made += calls.len();
+            if *made > 1 {
+                return Err(need_txn());
+            }
+            for c in &calls {
+                let client = cluster.shards[c.shard].client(cluster).await?;
+                let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                n += count_rows(&client, 0, t, index, &c.key, c.iter, end, &preds, &[], true, false).await?;
+            }
+        }
+        ReadMode::Committed(_) => {
+            let mut futs = Vec::new();
+            for (c, ex) in calls.iter().zip(&excl) {
+                let client = cluster.shards[c.shard].client(cluster).await?;
+                let preds = &preds;
+                futs.push(async move {
+                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                    count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false).await
+                });
+            }
+            for r in futures::future::join_all(futs).await {
+                n += r?;
+            }
+        }
+        ReadMode::Txn(txn) => {
+            let mut futs = Vec::new();
+            for (c, ex) in calls.iter().zip(&excl) {
+                let st = txn.stream(cluster, c.shard).await?;
+                let preds = &preds;
+                futs.push(async move {
+                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+                    count_rows(
+                        &st.client, st.id, t, index, &c.key, c.iter, end, preds, ex, false, st.begin,
+                    )
+                    .await
+                });
+            }
+            for r in futures::future::join_all(futs).await {
+                match r {
+                    Ok(k) => n += k,
+                    Err(e) => {
+                        if e.code == 1213 {
+                            txn.doomed = Some(e.clone());
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            for c in calls {
+                txn.mark_begun(c.shard);
+                if let Some(r) = c.range {
+                    txn.note_range(c.shard, r);
+                }
+            }
+        }
+    }
+    if called {
+        cluster
+            .stats
+            .storage_counts
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(Some(n))
+}
+
 /// Execute a SELECT and return its projected rows.
 pub async fn run_select(
     cluster: &Arc<Cluster>,
@@ -947,6 +1366,11 @@ pub async fn run_select(
     p: &SelectPlan,
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Vec<Row>> {
+    if let Some(n) = storage_count(cluster, mode, p, cx).await? {
+        let ap = p.agg.as_ref().expect("a count is an aggregate");
+        let row: Row = ap.aggs.iter().map(|_| Value::Int(n as i64)).collect();
+        return finish_aggregated(vec![row], p, cx);
+    }
     let mut rows = source_rows(cluster, mode, &p.source, cx).await?;
     if let Some(f) = &p.filter {
         let mut kept = Vec::with_capacity(rows.len());
@@ -966,6 +1390,12 @@ fn finish_select(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlRes
     if let Some(ap) = &p.agg {
         rows = aggregate(rows, ap, cx)?;
     }
+    finish_aggregated(rows, p, cx)
+}
+
+/// `finish_select` after aggregation: HAVING, ORDER BY, projection,
+/// DISTINCT, OFFSET/LIMIT.
+fn finish_aggregated(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Vec<Row>> {
     if let Some(h) = &p.having {
         let mut kept = Vec::with_capacity(rows.len());
         for r in rows {
@@ -1609,4 +2039,131 @@ pub async fn matching_rows(
     // keep deterministic shard grouping for the write buffer
     let _ = BTreeMap::<usize, ()>::new();
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::Catalog;
+    use crate::normalize::{normalize, Mode};
+    use crate::planner::{plan, PlanCtx};
+
+    fn catalog() -> Catalog {
+        let ct = "CREATE TABLE o (shop_id BIGINT NOT NULL, id BIGINT NOT NULL, closed_at DATETIME DEFAULT NULL, \
+                  is_deleted TINYINT(1) NOT NULL DEFAULT '0', status VARCHAR(20), note VARCHAR(20) NOT NULL DEFAULT '', \
+                  price DECIMAL(10,2), PRIMARY KEY (shop_id, id), KEY st (shop_id, closed_at, is_deleted))";
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Ok(Stmt::CreateTable { mut def, .. }) = plan(ct, &ctx) else {
+            panic!()
+        };
+        def.space_id = 512;
+        Catalog::new(1, vec!["d".into()], vec![*def])
+    }
+
+    /// The storage predicates of a pushed-down count, or None.
+    fn preds(sql: &str) -> Option<Vec<StoragePred>> {
+        let cat = catalog();
+        let n = normalize(sql, Mode::Literals).unwrap();
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &n.params,
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Ok(Stmt::Select(p)) = plan(&n.template, &ctx) else {
+            panic!()
+        };
+        let cx = EvalCtx {
+            params: &n.params,
+            db: Some("d"),
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        };
+        count_preds(&p, &cx).unwrap()
+    }
+
+    #[test]
+    fn count_pushdown() {
+        // The index scan selects everything: nothing left for the shard.
+        assert_eq!(preds("SELECT COUNT(*) FROM o WHERE shop_id = 1"), Some(vec![]));
+        assert_eq!(preds("SELECT COUNT(*) FROM o"), Some(vec![]));
+        assert_eq!(
+            preds("SELECT COUNT(id), COUNT(1) FROM o WHERE shop_id = 1 AND id > 5"),
+            Some(vec![])
+        );
+        // Residuals the shard evaluates.
+        let p = preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND is_deleted = 0").unwrap();
+        assert_eq!(p.len(), 1);
+        assert!(p[0].col == 3 && p[0].int && p[0].op == PredOp::Cmp("eq", Value::Int(0)));
+        let p =
+            preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND closed_at IS NULL AND status IN ('a', 'b')").unwrap();
+        assert_eq!(p.len(), 2);
+        assert!(
+            p[0].op == PredOp::IsNull && p[1].op == PredOp::In(vec![Value::str("a"), Value::str("b")]) && !p[1].int
+        );
+        let p = preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND 'x' < note").unwrap();
+        assert!(p[0].col == 5 && p[0].op == PredOp::Cmp("gt", Value::str("x")));
+        // COUNT(nullable column) counts non-NULL values.
+        let p = preds("SELECT COUNT(status) FROM o WHERE shop_id = 1").unwrap();
+        assert!(p.len() == 1 && p[0].col == 4 && p[0].op == PredOp::NotNull);
+        // Anything else reads the rows.
+        for sql in [
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 GROUP BY is_deleted",
+            "SELECT COUNT(DISTINCT status) FROM o WHERE shop_id = 1",
+            "SELECT COUNT(*), SUM(id) FROM o WHERE shop_id = 1",
+            "SELECT COUNT(status), COUNT(*) FROM o WHERE shop_id = 1",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND status LIKE 'a%'",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND (status = 'a' OR id = 3)",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND is_deleted = '0'",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND price > 3",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id + 1 = 3",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id = shop_id",
+            "SELECT COUNT(*) FROM o WHERE shop_id IN (1, 2)",
+            "SELECT COUNT(*) FROM o WHERE shop_id = 1 FOR UPDATE",
+            "SELECT id FROM o WHERE shop_id = 1",
+        ] {
+            assert_eq!(preds(sql), None, "{sql}");
+        }
+        // NULLs sort first in an index: an upper bound alone on a nullable
+        // column stays a residual (a NOT NULL one is the scan's).
+        let p = preds("SELECT COUNT(*) FROM o WHERE shop_id < 3").unwrap();
+        assert!(p.is_empty(), "shop_id is NOT NULL: {p:?}");
+        let cat = catalog();
+        let t = cat.get("d", "o").unwrap();
+        let k = Expr::Lit(Value::Int(5));
+        let path = AccessPath::Range {
+            index: t.index_by_name("st").unwrap().id,
+            eq: vec![k.clone()],
+            lo: None,
+            hi: Some((Expr::Lit(Value::str("2025-01-01")), false)),
+            reverse: false,
+        };
+        assert_eq!(
+            path_atoms(&t, &path).len(),
+            1,
+            "an upper bound alone on nullable closed_at is not covered"
+        );
+        let path = AccessPath::Range {
+            index: t.index_by_name("st").unwrap().id,
+            eq: vec![k],
+            lo: Some((Expr::Lit(Value::str("2024-01-01")), true)),
+            hi: Some((Expr::Lit(Value::str("2025-01-01")), false)),
+            reverse: false,
+        };
+        assert_eq!(path_atoms(&t, &path).len(), 3, "with a lower bound it is");
+        // A bound the scan could not use exactly stays a residual.
+        assert_eq!(preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id > 2.5"), None);
+    }
 }
