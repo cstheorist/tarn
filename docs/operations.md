@@ -59,6 +59,19 @@ The bootstrap enables memtx MVCC, sets the default isolation to
 back), and in replicated shards uses `election_mode = 'candidate'`,
 `election_fencing_mode = 'strict'` and `replication_synchro_timeout = 5`.
 
+Start every replica of a new shard before sending it traffic. Tarantool 3.9
+stops a joining replica ("can't initialize storage: timed out") when its
+first checkpoint waits longer than `replication_synchro_timeout` for the
+confirmation of a synchronous transaction it received while joining. This
+happened to replicas joining a newly started shard: when the leader's first
+write could not reach its quorum because the replicas were still joining,
+and once when a workload was already writing. (A replica joining an
+established shard under 9,600 synchronous writes a second joined normally
+in a local test.) Restart such a replica with an empty data directory. The
+leader of a new shard waits (up to a minute) for its replicas to join
+before its first synchronous write, and `scripts/cluster.sh start` returns
+only once every replica has joined.
+
 Protocol tunables live in `lua/tarn.lua` (`tarn.cfg`), and can be changed
 at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
 
