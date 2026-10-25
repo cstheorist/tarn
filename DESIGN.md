@@ -411,7 +411,17 @@ recording COMMITTED, and keep records forever. `Bug_*` configurations switch
 off one protection each and must fail; `Tradeoff_*` check documented weaker
 guarantees and must fail. Each workload has three transactions on two
 shards with one or two faults, so these are bounded checks: small, but
-exhaustive within those bounds.
+exhaustive within those bounds. Two caveats. `Skew_GC_ROValidate`, the
+largest workload with garbage collection, a crash and a lost message, did
+not finish in the time available: TLC explored 47.8 million distinct states
+(all states up to depth 23) without finding a violation;
+`SkewTimeout_GC_ROValidate` checks the same workload exhaustively with
+recovery racing the coordinator but without crashes or message loss. And
+the configurations without GC and ApplyMarksCommitted were checked before
+those options existed: with both off, the new actions are disabled and the
+new variable stays constant, so the behaviour is unchanged, as re-running
+`Recov`, `Local` and `Frac` with the final spec confirms (identical numbers
+of distinct states).
 
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |

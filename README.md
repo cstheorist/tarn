@@ -30,7 +30,7 @@ crates/tarn-verified  Verus-verified routing, coordinator logic, wire codec
 crates/tarn-common    shared value/column/error types
 lua/                  storage-node module (tarn.lua) and instance bootstrap (storage.lua)
 tla/                  TarnCommit.tla, model configs, TLC results (tla/out)
-tests/                SQL differential tests, transaction tests, failover test
+tests/                SQL differential tests, transaction tests, failover and fault-injection tests
 bench/                sysbench harness, baselines, results
 scripts/cluster.sh    start/stop a local cluster
 ```
@@ -111,8 +111,8 @@ each shard is discovered automatically and re-discovered after failover
 ## Verification and tests
 
 ```sh
-# TLA+: model-check one configuration (or several)
-tla/run_all.sh Recov Frac_GC_ROValidate Bug_GCIgnoresDecision
+# TLA+: model-check one configuration (or several); TLA2TOOLS defaults to /opt/tla/tla2tools.jar
+TLA2TOOLS=/path/to/tla2tools.jar WORKERS=2 tla/run_all.sh Recov Frac_GC_ROValidate Bug_GCIgnoresDecision
 python3 tla/summarize.py                       # table of all results in tla/out
 
 # Verus (from crates/tarn-verified)
