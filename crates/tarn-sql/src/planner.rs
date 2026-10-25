@@ -262,6 +262,34 @@ impl<'a, 'c> Binder<'a, 'c> {
         }
     }
 
+    /// Is `e` an unsigned integer: an UNSIGNED integer column, an unsigned
+    /// literal above BIGINT's range, CAST(... AS UNSIGNED), or unsigned
+    /// arithmetic?
+    fn unsigned_int(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Col(i) => {
+                let mut i = *i;
+                let width = self.scope.width();
+                if i >= width {
+                    match self.values_offset {
+                        Some(off) if i >= off => i -= off,
+                        _ => return false,
+                    }
+                }
+                self.scope.tables.iter().any(|t| {
+                    i >= t.offset
+                        && i < t.offset + t.table.columns.len()
+                        && t.table.columns[i - t.offset].ty().is_integer()
+                        && t.table.columns[i - t.offset].ty().unsigned
+                })
+            }
+            Expr::Lit(Value::UInt(u)) => *u > i64::MAX as u64,
+            Expr::Cast(_, CastTo::Unsigned) => true,
+            Expr::Arith(_, op, _) => op.is_unsigned(),
+            _ => false,
+        }
+    }
+
     fn resolve(&self, table: Option<&str>, col: &str) -> SqlResult<usize> {
         let mut found = None;
         for t in &self.scope.tables {
@@ -322,11 +350,20 @@ impl<'a, 'c> Binder<'a, 'c> {
             }
             E::BinaryOp { left, op, right } => {
                 let (l, r) = (Box::new(self.bind(left)?), Box::new(self.bind(right)?));
+                // MySQL: + - * with an unsigned operand are BIGINT UNSIGNED.
+                let dom = |o: Arith| {
+                    if self.unsigned_int(&l) || self.unsigned_int(&r) {
+                        o.unsigned()
+                    } else {
+                        o
+                    }
+                };
+                let (add, sub, mul) = (dom(Arith::Add), dom(Arith::Sub), dom(Arith::Mul));
                 use A::BinaryOperator as B;
                 match op {
-                    B::Plus => Expr::Arith(l, Arith::Add, r),
-                    B::Minus => Expr::Arith(l, Arith::Sub, r),
-                    B::Multiply => Expr::Arith(l, Arith::Mul, r),
+                    B::Plus => Expr::Arith(l, add, r),
+                    B::Minus => Expr::Arith(l, sub, r),
+                    B::Multiply => Expr::Arith(l, mul, r),
                     B::Divide => Expr::Arith(l, Arith::Div, r),
                     B::Modulo => Expr::Arith(l, Arith::Mod, r),
                     B::MyIntegerDivide | B::DuckIntegerDivide => Expr::Arith(l, Arith::IntDiv, r),

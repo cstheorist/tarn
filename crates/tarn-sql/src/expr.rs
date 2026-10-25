@@ -921,16 +921,22 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
             let (x, y) = (infer(a, input, params), infer(b, input, params));
             let int = |t: &ExprType| matches!(t.ty, C::Tiny | C::Short | C::Long | C::LongLong | C::Int24 | C::Year);
             let dbl = |t: &ExprType| matches!(t.ty, C::Double | C::Float | C::VarString | C::String | C::Blob);
-            if *op == Arith::IntDiv {
+            if op.base() == Arith::IntDiv {
                 ExprType::of(C::LongLong)
             } else if dbl(&x) || dbl(&y) {
                 ExprType::of(C::Double)
-            } else if *op == Arith::Div {
+            } else if op.base() == Arith::Div {
                 let mut t = ExprType::of(C::NewDecimal);
                 t.decimals = (x.decimals + 4).min(30);
                 t
             } else if int(&x) && int(&y) {
-                ExprType::of(C::LongLong)
+                let mut t = ExprType::of(C::LongLong);
+                if op.is_unsigned() {
+                    let mut ty = crate::types::SqlType::new(crate::types::BaseType::BigInt);
+                    ty.unsigned = true;
+                    t.sql = Some(ty);
+                }
+                t
             } else {
                 let mut t = ExprType::of(C::NewDecimal);
                 t.decimals = x.decimals.max(y.decimals);

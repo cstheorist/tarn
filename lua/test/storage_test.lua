@@ -327,5 +327,28 @@ check('resolve of a vanished transaction writes nothing',
       c[1]:eval("return tarn.resolve('GONE1', 1, {1, 2})") == 'gone' and c[1]:call('tarn_txn_status', {'GONE1'}) == 'none')
 for i = 1, 2 do c[i]:eval('tarn.cfg.max_txn_age = 120; tarn.cfg.clock_skew = 60; tarn.cfg.recovery_after = 2') end
 
+print('arithmetic updates keep MySQL integer semantics (issue #11)')
+c[1]:call('tarn_autocommit', {{{'replace', sid, {90, 0, 'a90@x', 1}}}})
+-- BIGINT bounds arrive as int64 / uint64 cdata, as the SQL layer encodes them.
+local BIG = {'bal', -9223372036854775807LL - 1, 9223372036854775807ULL}
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {90}, {{'+', 'bal', -1}}, {BIG}}}})
+check('signed BIGINT may go negative', r[1] == 'ok' and bal(1, 90) == -1, r)
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {90}, {{'+', 'bal', -9223372036854775807LL}}, {BIG}}}})
+check('... down to the minimum', r[1] == 'ok' and bal(1, 90) == -9223372036854775807LL - 1, r)
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {90}, {{'+', 'bal', -1}}, {BIG}}}})
+check('BIGINT overflow is 1690', r[1] == 'error' and r[2] == 1690 and bal(1, 90) == -9223372036854775807LL - 1, r)
+c[1]:call('tarn_autocommit', {{{'replace', sid, {90, 0, 'a90@x', 1}}}})
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {90}, {{'+', 'bal', -1}}, {{'bal', 0, 18446744073709551615ULL}}}}})
+check('an unsigned column cannot go below zero: 1690', r[1] == 'error' and r[2] == 1690 and bal(1, 90) == 0, r)
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {90}, {{'+', 'bal', 128}}, {{'bal', -128, 127}}}}})
+check('TINYINT range is 1264', r[1] == 'error' and r[2] == 1264 and bal(1, 90) == 0, r)
+r = c[1]:call('tarn_autocommit', {{{'update', sid, {90}, {{'+', 'bal', 127}}, {{'bal', -128, 127}}}}})
+check('... and its maximum fits', r[1] == 'ok' and bal(1, 90) == 127, r)
+check('int_lt compares signed and unsigned exactly', c[1]:eval([[
+    local lt = tarn.int_lt
+    return lt(-1, 9223372036854775807ULL) and not lt(9223372036854775807ULL, -1)
+       and lt(-9223372036854775807LL, 0) and lt(5, 18446744073709551615ULL)
+       and not lt(18446744073709551615ULL, 5) and lt(-2LL, -1) and not lt(3, 3)]]))
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
