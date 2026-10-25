@@ -578,6 +578,14 @@ impl Txn {
         self.writes.get(&(space, key_bytes(pk))).map(|w| w.row.as_ref())
     }
 
+    /// The live rows this transaction wrote (inserted or changed) in a table.
+    pub fn own_rows(&self, space: u32) -> impl Iterator<Item = &Row> {
+        self.writes
+            .range((space, Bytes::new())..)
+            .take_while(move |((s, _), _)| *s == space)
+            .filter_map(|(_, w)| w.row.as_ref())
+    }
+
     /// Apply this transaction's writes to rows read from storage for table
     /// `t`: drop rows it overwrote/deleted, add every live row it wrote.
     /// Callers re-check predicates, so including extra rows is harmless.

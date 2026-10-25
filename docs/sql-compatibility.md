@@ -36,7 +36,10 @@ servers write to it (`tests/sql/`).
   multi-key lookups for `col IN (...)`, `OR`s of equalities and row-value
   `IN` on any index (one storage call per shard, rows in index order). An
   `OR` whose branches use different indexes becomes a union of lookups,
-  like MySQL's `index_merge`.
+  like MySQL's `index_merge`. With `LIMIT`, an index whose columns after
+  the equality prefix match `ORDER BY` is preferred, and the single-table
+  read then goes through it a page at a time, filtering as it goes, and
+  stops once `LIMIT` (+ `OFFSET`) rows qualify.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
   `COUNT(*)`, `COUNT(constant)` and `COUNT(col)` of one table without
