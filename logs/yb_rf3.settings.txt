@@ -1,0 +1,3 @@
+read committed
+read committed
+{"version":2,"replicationInfo":{"liveReplicas":{"numReplicas":3,"placementBlocks":[{"cloudInfo":{"placementCloud":"cloud1","placementRegion":"datacenter1","placementZone":"rack1"},"minNumReplicas":3}],"placementUuid":"Y2I0ZWQwODItZjJhMy00NGZlLTk0NGEtZGNmMTVmZDMxYmU4"}},"clusterUuid":"9d16b31d-819b-41eb-8e10-741aa4b95db2","universeUuid":"36970343-7889-4f2c-ad54-4c0803ac6eb7"}

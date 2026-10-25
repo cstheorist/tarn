@@ -1,0 +1,14 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 1
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+Threads started!
+
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (16526, '04907944205-05693477652-44897737882-26878983170-10556927182-04074539578-29248932873-35833334408-20188133228-93458071441', '85257334837-44289302839-68262039900-09610822986-26237569612')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space

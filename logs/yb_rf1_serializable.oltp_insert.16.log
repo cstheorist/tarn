@@ -1,0 +1,59 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 16
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+Threads started!
+
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (70891, '22302274210-14205499285-28459557828-45185088784-46854834874-50999772485-60134321862-40190101303-56988313719-01069974957', '92300527011-87967830112-37272536030-23857172228-68201704867')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (5300, '65264465548-58004098089-46523763765-71992090945-79804410521-21558826578-11852181679-85513741132-94795602940-09668278734', '95392191320-36102923438-01822006559-90758190126-84111980807')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (5596, '99136952638-59763956499-78941867141-17770335992-13421080436-76464664725-61607602657-82087145137-16560666943-50242458567', '60462209905-17172174302-70783231367-15544282961-27798888412')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (90663, '18764705539-34516096838-46789153911-19139648521-17320894667-53480345261-38800858695-70041509977-49896871065-22777691115', '29437004181-18696857494-82556803604-48885299527-18576128464')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (16526, '04907944205-05693477652-44897737882-26878983170-10556927182-04074539578-29248932873-35833334408-20188133228-93458071441', '85257334837-44289302839-68262039900-09610822986-26237569612')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (73254, '39250229331-01779403944-70236631229-16252990869-63033532475-16626895888-60546480148-50404596789-39677755635-33747283753', '33799200869-26569249981-46118688789-25715970220-94770861890')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (24728, '96777944331-74441196131-47188021003-07589672468-26010808896-49920720011-91474672646-64863748361-32733030574-25274530964', '49256970701-90233666762-78593747465-56199797885-16124712942')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (18823, '40329128128-27936254871-35328017091-18480899207-35755844497-00074086736-67243406490-80644734885-71810522458-28837615146', '97324909532-51153672642-69564683814-15593075964-95607247403')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (42677, '87891525394-23492429525-35612072927-92709518103-13961968636-60343358287-77841278457-65048081535-64875262887-92001358633', '93735842151-02442606695-53565425266-73420598302-06893052680')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (81098, '64588846567-14023856255-79004561353-10841622398-76953052867-23595101604-36103305922-46110878906-26425141498-07123685690', '01817148648-92594527494-52439575117-70421443136-11939838091')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (32148, '02713747390-81841348875-54428007215-48165747774-65614523778-29123614764-26115647990-57417163987-50321345924-90776648314', '69694629321-94566928161-74138600760-86553534213-49050650900')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest2 (k, c, pad) VALUES (25009, '90781763714-16642028335-55056692445-44244187476-41866914070-95068309242-93076878521-31646643561-10158740800-94123939170', '66377664899-57117736403-94237385794-54061851649-77378609091')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (52883, '75118403559-49556849881-28732392131-57834501306-44325646342-16317022768-68948596992-28659363950-58242930508-88551587756', '96734261099-39014791714-89439910769-41625952555-21229625631')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest3 (k, c, pad) VALUES (67652, '71337695843-91073168295-13305825913-69896659515-12299128563-29997861152-39892141941-79962987131-18555464116-22143322138', '95480228892-13800957147-33808296785-18605529995-66941244539')
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (46414, '23475263966-73300229429-04617595861-60785259616-37429718605-73014804354-30303141529-38524020183-44638650313-65596294742', '08228788008-05338574833-59819727142-84403037048-60540987153')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: PQexec() failed: 7 Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: failed query was: INSERT INTO sbtest4 (k, c, pad) VALUES (52072, '62701825954-81895439250-76683423643-16673070061-61104418528-43104840993-30937807852-21138892924-44833027478-62496554857', '02111752281-93329976831-71716108818-58413588864-29225077004')
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_insert.lua:50: SQL error, errno = 0, state = 'XX000': Write to tablet 4ad4b106e9f84fc0a34cf598706b5c90 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space

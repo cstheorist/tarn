@@ -1,0 +1,139 @@
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 64
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+Threads started!
+
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+(last message repeated 1 times)
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet f414b727274d420f8d90b6004b919c7f rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet e61b41d75b0743479c098d8c0b31c2e0 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet a2473f60181549d0bc27882f8313beec rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: PQexecPrepared() failed: 7 Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space
+FATAL: `thread_run' function failed: /usr/share/sysbench/oltp_common.lua:469: SQL error, errno = 0, state = 'XX000': Write to tablet 9226857617f44921ac3d187df4f28d26 rejected. Node 6c17968c5b3d41fa9e1d8b3b8d667780 has insufficient disk space

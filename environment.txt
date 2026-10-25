@@ -1,0 +1,11 @@
+date: 2026-10-25T11:19:20Z
+kernel: 6.17.0-1022-azure
+CPU(s):                                  4
+Model name:                              AMD EPYC 9V45 96-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+Socket(s):                               1
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1108       10813          48        4461       14880
+sysbench: sysbench 1.0.20
+settings: TABLES=4 SIZE=100000 THREADS='1 16 64' TIME=15 MANY=1000

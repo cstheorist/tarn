@@ -1,0 +1,5 @@
+mariadb: 10.11.19-MariaDB-ubu2204
+tarn: 25619b8 on Tarantool 3.9.0-0-g8b9a0f5
+tidb: 8.0.11-TiDB-v8.5.8
+yugabytedb: PostgreSQL 15.12-YB-2026.1.2.0-b0 on x86_64-pc-linux-gnu, compiled by clang version 21.1.1 (https://github.com/yugabyte/llvm-project.git efca861cc42178cc4c555d605b36c79d7d121cc1), 64-bit
+mariadb: 10.11.19-MariaDB-ubu2204

@@ -1,0 +1,16 @@
+config,status,seconds
+mariadb,ok,326
+tarn_2x1,ok,326
+tarn_2x1_rc,ok,327
+tarn_2x3,ok,332
+tidb_rf1,ok,364
+tidb_rf1_rc,ok,346
+tidb_rf3,ok,355
+yb_rf1,ok,391
+yb_rf1_ser,ok,5700
+yb_rf3,FAILED,15
+many_tarn,ok,45
+many_tidb,ok,76
+many_yb,FAILED,415
+many_yb_colocated,FAILED,416
+many_mariadb,ok,43

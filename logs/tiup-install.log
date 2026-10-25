@@ -1,0 +1,12 @@
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100 4710k  100 4710k    0     0  6335k      0 --:--:-- --:--:-- --:--:-- 6339k
+Successfully set mirror to https://tiup-mirrors.pingcap.com
+Detected shell: bash
+Shell profile:  /home/runner/.bash_profile
+/home/runner/.bash_profile has been modified to add tiup to PATH
+open a new terminal or source /home/runner/.bash_profile to use it
+Installed path: /home/runner/.tiup/bin/tiup
+===============================================
+Have a try:     tiup playground
+===============================================
