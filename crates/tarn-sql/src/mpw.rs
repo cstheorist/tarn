@@ -256,6 +256,14 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
                 1264 => SqlError::new(1264, "22003", msg),
                 1690 => SqlError::new(1690, "22003", msg),
                 1146 => SqlError::new(1146, "42S02", msg),
+                // Tarantool's errors from a write to a table or an index
+                // dropped meanwhile: the same as from_iproto's
+                c if c == tarn_iproto::errcode::ER_NO_SUCH_SPACE as i64 => {
+                    SqlError::new(1146, "42S02", format!("Table does not exist ({})", msg))
+                }
+                c if c == tarn_iproto::errcode::ER_NO_SUCH_INDEX_ID as i64 => {
+                    SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
+                }
                 0 => SqlError::internal(msg),
                 c if c < 1000 => SqlError::internal(format!("storage error {}: {}", c, msg)),
                 c => SqlError::new(c as u16, "HY000", msg),

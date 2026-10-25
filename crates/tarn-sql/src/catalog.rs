@@ -23,6 +23,52 @@ use tarn_common::{SqlError, SqlResult, Value};
 
 pub const BUCKET_FIELD: &str = "bucket_id";
 
+/// The Tarantool storage engine of a table: memtx keeps every row in RAM,
+/// vinyl is an LSM tree on disk with a RAM cache (issue #23). One
+/// Tarantool transaction may write both (memtx MVCC is on), so the commit
+/// protocol's own spaces stay in memtx whatever the tables use.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    #[default]
+    Memtx,
+    Vinyl,
+}
+
+impl Engine {
+    pub fn name(self) -> &'static str {
+        match self {
+            Engine::Memtx => "memtx",
+            Engine::Vinyl => "vinyl",
+        }
+    }
+
+    /// The engine a table option `ENGINE = name` asks for: Tarantool's own
+    /// names, MySQL's in-memory engine as memtx, and the engines MySQL
+    /// dumps name (InnoDB, MyISAM, ...) as the cluster's default (None).
+    /// Anything else is MySQL's 1286.
+    pub fn from_option(name: &str) -> SqlResult<Option<Engine>> {
+        match name.to_ascii_lowercase().as_str() {
+            "memtx" | "memory" | "heap" => Ok(Some(Engine::Memtx)),
+            "vinyl" => Ok(Some(Engine::Vinyl)),
+            "innodb" | "myisam" | "aria" | "rocksdb" | "tokudb" | "default" => Ok(None),
+            _ => Err(SqlError::new(
+                1286,
+                "42000",
+                format!("Unknown storage engine '{}'", name),
+            )),
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Engine> {
+        match name.to_ascii_lowercase().as_str() {
+            "memtx" => Some(Engine::Memtx),
+            "vinyl" => Some(Engine::Vinyl),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ColumnDef {
     pub name: String,
@@ -126,6 +172,8 @@ pub struct TableDef {
     pub auto_inc: Option<usize>,
     #[serde(default)]
     pub comment: String,
+    #[serde(default)]
+    pub engine: Engine,
     /// Catalog version of the last ALTER TABLE: the shards refuse writes
     /// made with an older definition (1412).
     #[serde(default)]
@@ -328,6 +376,7 @@ impl TableDef {
         LuaDef {
             name: self.space_name(),
             id: self.space_id,
+            engine: self.engine.name(),
             format,
             indexes,
             json: serde_json::to_string(self).expect("table def serializes"),
@@ -339,6 +388,7 @@ impl TableDef {
 pub struct LuaDef {
     pub name: String,
     pub id: u32,
+    pub engine: &'static str,
     /// (field name, tarantool type, nullable)
     pub format: Vec<(String, String, bool)>,
     /// (index name, unique, parts (field, type, nullable))

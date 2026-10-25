@@ -8,6 +8,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Tables on disk: `CREATE TABLE ... ENGINE=vinyl` stores a table in
+  Tarantool's vinyl engine (an LSM tree with a RAM cache) instead of memtx,
+  for data larger than RAM; `--default-engine` sets what `ENGINE=InnoDB`
+  and tables without the option get
+  ([#23](https://github.com/cstheorist/tarn/issues/23)). One transaction may
+  span both engines. The commit steps that the TLA+ model takes as atomic
+  now read and write first and check and lock in one step that does not
+  yield, since vinyl reads yield; autocommit reads of vinyl tables check the
+  history of W locks taken while they ran. `SHOW CREATE TABLE`,
+  `SHOW TABLE STATUS` and `SHOW ENGINES` report the engine.
+  `TARN_VINYL_MEMORY_MB` and `TARN_VINYL_CACHE_MB` size vinyl's memory.
+
 - READ COMMITTED with InnoDB's locking behaviour, chosen per session, per
   transaction or globally (`transaction_isolation` / `tx_isolation`,
   `SET [GLOBAL | SESSION] TRANSACTION ISOLATION LEVEL`, `--isolation`); strict
@@ -79,12 +91,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   write, and creates the schema in the background, retrying, so that a
   leadership change or a timeout during bootstrap no longer stops it.
   `scripts/cluster.sh start` returns once every replica has joined.
+- `DROP TABLE` between a cross-shard transaction's PREPARE and its APPLY left
+  the transaction unfinished for good: APPLY failed on the missing table at
+  every attempt, so the transaction's writes to other tables never landed
+  and their row locks stayed. APPLY now skips the dropped table's writes. A
+  write that meets a table dropped through another SQL server fails with
+  1146 instead of "storage error 36".
+- A cross-shard transaction that wrote a row with NULL in a nullable unique
+  key failed its PREPARE ("Supplied key type of part 0 does not match index
+  part type"), and two of them conflicted on the NULL value; NULLs now take
+  no unique value, as in MySQL.
 - `DECIMAL(p, s)` values with more than p - s digits before the point were
   stored; they now fail with 1264, as in MySQL.
 - A statement on one SQL server right after another server created or
   recreated a table, a column or a database failed until the next catalog
   poll (up to 0.3 s) with "doesn't exist" errors; it is now re-planned with
-  the newer catalog, and `SHOW TABLES`, `SHOW CREATE TABLE`, `SHOW INDEX`,
+  the newer catalog, also while other schema changes reload the catalog at
+  the same moment, and `SHOW TABLES`, `SHOW CREATE TABLE`, `SHOW INDEX`,
   `SHOW COLUMNS` and `DESCRIBE` check for a newer catalog first.
 - `REPLACE` into a table with a unique key besides the primary key failed
   with 1062 when the new row collided with another row on that key; it now

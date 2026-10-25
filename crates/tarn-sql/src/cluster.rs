@@ -80,6 +80,10 @@ pub struct ClusterConfig {
     /// Seconds between runs of the cross-shard deadlock detector (0: off).
     #[serde(default = "default_deadlock_interval")]
     pub deadlock_interval: f64,
+    /// Engine of tables created without `ENGINE = memtx | vinyl` (MySQL
+    /// dumps say `ENGINE=InnoDB`).
+    #[serde(default)]
+    pub default_engine: crate::catalog::Engine,
 }
 
 fn default_deadlock_interval() -> f64 {
@@ -367,7 +371,16 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
         let victim = cyc.iter().max_by(|a, b| a.1.cmp(&b.1)).unwrap();
         let mut m = crate::mpw::Mp::new();
         m.arr(2).str(&victim.1).uint(victim.2);
-        if c.call(victim.0, "tarn_lock_victim", &m.0).await.is_ok() {
+        // true when this call failed the wait; false when it was already
+        // over (another SQL server's detector may have got there first)
+        let broke = match c.call(victim.0, "tarn_lock_victim", &m.0).await {
+            Ok(d) => {
+                let mut rd = crate::mpw::Rd::new(&d);
+                rd.array().is_ok() && matches!(rd.value(), Ok(Value::Int(1)))
+            }
+            Err(_) => false,
+        };
+        if broke {
             c.stats.deadlocks.fetch_add(1, Ordering::Relaxed);
             tracing::info!(
                 "deadlock across shards among {} transactions; rolled back {}",
@@ -549,12 +562,23 @@ impl Cluster {
 
     /// Reload the catalog if the shards have a newer one (true if so).
     pub async fn refresh_if_newer(&self) -> SqlResult<bool> {
+        let local = self.catalog().version;
+        self.catch_up(local).await
+    }
+
+    /// Make the catalog at least as new as the shards' at this moment, and
+    /// tell whether theirs is newer than version `than` (the catalog a
+    /// statement was planned with: another reload may have replaced it since).
+    pub async fn catch_up(&self, than: u64) -> SqlResult<bool> {
         let v = self.catalog_version().await?;
-        if v == self.catalog().version {
-            return Ok(false);
+        if self.catalog().version < v {
+            self.refresh_catalog().await?;
+            // A reload that finished meanwhile may have read an older one.
+            if self.catalog().version < v {
+                self.reload_catalog().await?;
+            }
         }
-        self.refresh_catalog().await?;
-        Ok(true)
+        Ok(v > than)
     }
 
     /// Reload the catalog after a statement met a newer table definition
@@ -602,7 +626,16 @@ impl Cluster {
             dbs.push(rd.string()?);
         }
         dbs.sort();
-        *self.catalog.write() = Arc::new(Catalog::new(version, dbs, defs));
+        {
+            // Reloads run concurrently (the poller, statements that met a
+            // stale catalog, DDL); one that read an older catalog must not
+            // replace a newer one.
+            let mut cur = self.catalog.write();
+            if version < cur.version {
+                return Ok(());
+            }
+            *cur = Arc::new(Catalog::new(version, dbs, defs));
+        }
         self.plans.write().clear();
         self.reloads.fetch_add(1, Ordering::AcqRel);
         Ok(())
@@ -717,9 +750,10 @@ impl Cluster {
         def.space_id = 10_000 + rd.value()?.as_i64().unwrap_or(0) as u32;
         let ld = def.lua_def();
         let mut m = Mp::new();
-        m.arr(1).map(5);
+        m.arr(1).map(6);
         m.str("name").str(&ld.name);
         m.str("id").uint(ld.id as u64);
+        m.str("engine").str(ld.engine);
         m.str("format").arr(ld.format.len());
         for (n, t, nullable) in &ld.format {
             m.map(3)

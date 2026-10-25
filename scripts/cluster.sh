@@ -6,6 +6,10 @@
 #                            [-s SERVERS] [-w WAL_MODE] [-m MEMORY_MB] [-t THREADS]
 #                            [-a]  (ack-on-prepare)  [-u]  (SQL servers reach storage via Unix sockets)
 #                            [-I ISOLATION]  (default level of new sessions, e.g. READ-COMMITTED)
+#                            [-e ENGINE]  (memtx | vinyl: engine of tables created without ENGINE=)
+#   Environment: TARN_VINYL_MEMORY_MB, TARN_VINYL_CACHE_MB (vinyl memory per storage instance),
+#                TARN_CHECK_YIELDS=1 (an atomic protocol step that yields fails: tests),
+#                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests)
 #   scripts/cluster.sh stop  [-d DIR]
 #   scripts/cluster.sh status [-d DIR]
 #
@@ -17,8 +21,8 @@ T=${TARANTOOL:-tarantool}
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
 CMD=${1:-}; shift || true
 N=2; R=1; DIR=${TARN_DIR:-/tmp/tarn-cluster}; TPORT=4000; SERVERS=1; WAL=write; MEM=1024
-THREADS=""; ACK=""; BASE=${TARN_BASE_PORT:-3300}; ITHREADS=1; UNIX=0; POOL=""; ISO=""
-while getopts "n:r:d:p:s:w:m:t:ab:i:uP:I:" o; do
+THREADS=""; ACK=""; BASE=${TARN_BASE_PORT:-3300}; ITHREADS=1; UNIX=0; POOL=""; ISO=""; ENGINE=""
+while getopts "n:r:d:p:s:w:m:t:ab:i:uP:I:e:" o; do
   case $o in
     n) N=$OPTARG;; r) R=$OPTARG;; d) DIR=$OPTARG;; p) TPORT=$OPTARG;; s) SERVERS=$OPTARG;;
     w) WAL=$OPTARG;; m) MEM=$OPTARG;; t) THREADS=$OPTARG;; a) ACK=--ack-on-prepare;; b) BASE=$OPTARG;;
@@ -26,6 +30,7 @@ while getopts "n:r:d:p:s:w:m:t:ab:i:uP:I:" o; do
     u) UNIX=1;;
     P) POOL=$OPTARG;;
     I) ISO=$OPTARG;;
+    e) ENGINE=$OPTARG;;
     *) echo "bad option"; exit 2;;
   esac
 done
@@ -61,6 +66,8 @@ start_storage() {
   ( cd "$DIR/s$i.$j" && TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$p TARN_WORKDIR="$DIR/s$i.$j" \
       TARN_REPLICAS="$(replicas_json "$i")" TARN_PEERS="$(peers_json)" TARN_MEMORY_MB=$MEM \
       TARN_WAL_MODE=$WAL TARN_LOG_LEVEL=${TARN_LOG_LEVEL:-5} TARN_IPROTO_THREADS=$ITHREADS \
+      TARN_VINYL_MEMORY_MB=${TARN_VINYL_MEMORY_MB:-128} TARN_VINYL_CACHE_MB=${TARN_VINYL_CACHE_MB:-128} \
+      TARN_CHECK_YIELDS=${TARN_CHECK_YIELDS:-} TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} \
       TARN_LISTEN_UNIX=$([ "$UNIX" = 1 ] && echo "$DIR/s$i.$j.sock") \
       exec "$T" "$ROOT/lua/storage.lua" >> "$DIR/s$i.$j.log" 2>&1 < /dev/null ) &
   echo $! > "$DIR/s$i.$j.pid"
@@ -115,7 +122,8 @@ case "$CMD" in
     for k in $(seq 1 "$SERVERS"); do
       tp=$((TPORT + k - 1))
       TARN_LOG=${TARN_LOG:-info} "$TARN" --config "$DIR/cluster.json" --listen 127.0.0.1:$tp --node-id "$k" \
-        ${THREADS:+--threads $THREADS} ${POOL:+--pool $POOL} ${ISO:+--isolation $ISO} $ACK >> "$DIR/tarn$k.log" 2>&1 < /dev/null &
+        ${THREADS:+--threads $THREADS} ${POOL:+--pool $POOL} ${ISO:+--isolation $ISO} \
+        ${ENGINE:+--default-engine $ENGINE} $ACK >> "$DIR/tarn$k.log" 2>&1 < /dev/null &
       echo $! > "$DIR/tarn$k.pid"
       wait_port "$tp" || { tail -5 "$DIR/tarn$k.log"; exit 1; }
     done
