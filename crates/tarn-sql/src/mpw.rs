@@ -73,17 +73,31 @@ impl Mp {
 /// Reader over a msgpack buffer.
 pub struct Rd<'a> {
     pub buf: &'a [u8],
+    /// When set, `buf` is a sub-slice of this buffer and strings are
+    /// returned as zero-copy slices of it.
+    src: Option<&'a bytes::Bytes>,
 }
 
 impl<'a> Rd<'a> {
     pub fn new(buf: &'a [u8]) -> Rd<'a> {
-        Rd { buf }
+        Rd { buf, src: None }
+    }
+    /// Continue `rd` (a reader over `src`) with zero-copy string values.
+    pub fn shared_at(src: &'a bytes::Bytes, rd: Rd<'a>) -> Rd<'a> {
+        Rd { buf: rd.buf, src: Some(src) }
+    }
+    /// Reader over a whole response buffer with zero-copy string values.
+    pub fn shared(src: &'a bytes::Bytes) -> Rd<'a> {
+        Rd { buf: src, src: Some(src) }
     }
     pub fn array(&mut self) -> SqlResult<usize> {
         tarn_iproto::mp::read_array_len(&mut self.buf).map(|n| n as usize).map_err(proto)
     }
     pub fn value(&mut self) -> SqlResult<Value> {
-        tarn_iproto::mp::decode_value(&mut self.buf).map_err(proto)
+        match self.src {
+            Some(src) => tarn_iproto::mp::decode_value_bytes(src, &mut self.buf).map_err(proto),
+            None => tarn_iproto::mp::decode_value(&mut self.buf).map_err(proto),
+        }
     }
     pub fn skip(&mut self) -> SqlResult<()> {
         tarn_iproto::mp::skip_value(&mut self.buf).map_err(proto)

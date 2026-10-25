@@ -64,6 +64,15 @@ pub struct Stream {
     pub id: u64,
 }
 
+/// A stream handle for one request: `begin` is true for the first request
+/// of a fresh stream, which must start the transaction itself (tarn_select
+/// with its begin flag) -- this saves the separate IPROTO BEGIN round trip.
+pub struct StreamRef {
+    pub client: Client,
+    pub id: u64,
+    pub begin: bool,
+}
+
 pub struct Txn {
     pub id: String,
     pub ts: f64,
@@ -103,16 +112,27 @@ impl Txn {
         self.streams.is_empty() && self.writes.is_empty()
     }
 
-    /// Stream on `shard`, opened with BEGIN on first use.
-    pub async fn stream(&mut self, cluster: &Cluster, shard: usize) -> SqlResult<(Client, u64)> {
+    /// Stream on `shard`. A fresh stream has no transaction yet: the first
+    /// request sent on it must begin one (see [`StreamRef::begin`]); requests
+    /// on a stream are processed in order, so later ones run inside it.
+    pub async fn stream(&mut self, cluster: &Cluster, shard: usize) -> SqlResult<StreamRef> {
         if let Some(s) = self.streams.get(&shard) {
-            return Ok((s.client.clone(), s.id));
+            return Ok(StreamRef { client: s.client.clone(), id: s.id, begin: false });
         }
         let client = cluster.shards[shard].client(cluster).await?;
         let id = client.next_stream_id();
-        client.begin(id, Some(60.0), Some(TxnIsolation::ReadConfirmed)).await.map_err(from_iproto)?;
         self.streams.insert(shard, Stream { client: client.clone(), id });
-        Ok((client, id))
+        Ok(StreamRef { client, id, begin: true })
+    }
+
+    /// Stream with an explicit IPROTO BEGIN (for requests that cannot begin
+    /// the transaction themselves).
+    pub async fn stream_begun(&mut self, cluster: &Cluster, shard: usize) -> SqlResult<(Client, u64)> {
+        let s = self.stream(cluster, shard).await?;
+        if s.begin {
+            s.client.begin(s.id, Some(60.0), Some(TxnIsolation::ReadConfirmed)).await.map_err(from_iproto)?;
+        }
+        Ok((s.client, s.id))
     }
 
     pub fn note_point(&mut self, shard: usize, space: u32, index: u32, key: Vec<Value>) {
@@ -290,7 +310,12 @@ impl Txn {
     }
 
     async fn commit_local(&mut self, cluster: &Arc<Cluster>, shard: usize) -> SqlResult<()> {
-        let (client, id) = self.stream(cluster, shard).await?;
+        // Without reads on this shard there is no stream: tarn_commit_local
+        // then runs as its own local transaction (no BEGIN round trip).
+        let (client, id) = match self.streams.get(&shard) {
+            Some(s) => (s.client.clone(), s.id),
+            None => (cluster.shards[shard].client(cluster).await?, 0),
+        };
         let mut m = Mp::new();
         m.arr(4).str(&self.id);
         self.encode_writes(cluster, shard, &mut m);
@@ -313,13 +338,18 @@ impl Txn {
         let dshard = self.writes.values().map(|w| w.shard).min().unwrap();
         let did = cluster.shards[dshard].id;
         let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
+        // Write-only participants have no stream: their PREPARE runs as its
+        // own local transaction.
+        let mut targets = Vec::new();
         for &p in parts {
-            self.stream(cluster, p).await?;
+            targets.push(match self.streams.get(&p) {
+                Some(s) => (s.client.clone(), s.id),
+                None => (cluster.shards[p].client(cluster).await?, 0),
+            });
         }
         // PREPARE everywhere in parallel.
         let mut futs = Vec::new();
-        for &p in parts {
-            let s = &self.streams[&p];
+        for (&p, (client, id)) in parts.iter().zip(targets) {
             let mut m = Mp::new();
             m.arr(7).str(&self.id).uint(did as u64);
             m.arr(part_ids.len());
@@ -329,7 +359,6 @@ impl Txn {
             self.encode_writes(cluster, p, &mut m);
             self.encode_reads(p, &mut m);
             m.f64(self.ts);
-            let (client, id) = (s.client.clone(), s.id);
             futs.push(async move {
                 match client.call(id, "tarn_prepare", &m.0).await {
                     Ok(r) => match r.data() {
@@ -484,10 +513,12 @@ pub async fn select_rows(
     limit: Option<u32>,
     end: Option<(&[Value], bool)>,
     lock_check: bool,
+    begin: bool,
 ) -> SqlResult<Vec<Row>> {
     let ncols = t.columns.len();
-    // Unbounded point/prefix lookups inside a stream use plain IPROTO SELECT.
-    if end.is_none() && !lock_check {
+    // Unbounded point/prefix lookups inside a running stream transaction use
+    // plain IPROTO SELECT.
+    if end.is_none() && !lock_check && !begin {
         let mut k = Mp::new();
         k.vals(key);
         let r = client
@@ -496,12 +527,12 @@ pub async fn select_rows(
             .map_err(from_iproto)?;
         let mut out = Vec::new();
         for tup in r.tuples().map_err(crate::mpw::proto)? {
-            out.push(Rd::new(&tup).row(ncols)?);
+            out.push(Rd::shared(&tup).row(ncols)?);
         }
         return Ok(out);
     }
     let mut m = Mp::new();
-    m.arr(8).uint(t.space_id as u64).uint(index as u64).vals(key).uint(iter as u64);
+    m.arr(if begin { 10 } else { 8 }).uint(t.space_id as u64).uint(index as u64).vals(key).uint(iter as u64);
     match limit {
         Some(l) => m.uint(l as u64),
         None => m.nil(),
@@ -515,9 +546,13 @@ pub async fn select_rows(
         }
     }
     m.bool(lock_check);
+    if begin {
+        m.nil().bool(true); // offset, begin
+    }
     let r = client.call(stream, "tarn_select", &m.0).await.map_err(from_iproto)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
-    let (_, mut rd) = lua_status(&d)?;
+    let (_, rd) = lua_status(&d)?;
+    let mut rd = Rd::shared_at(&d, rd);
     let n = rd.array()?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {

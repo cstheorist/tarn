@@ -248,16 +248,16 @@ pub async fn fetch(
             for c in calls {
                 let client = cluster.shards[c.shard].client(cluster).await?;
                 let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                rows.extend(select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true).await?);
+                rows.extend(select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await?);
             }
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
             for c in &calls {
-                let (client, sid) = txn.stream(cluster, c.shard).await?;
+                let st = txn.stream(cluster, c.shard).await?;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    select_rows(&client, sid, t, index, &c.key, c.iter, c.limit, end, false).await
+                    select_rows(&st.client, st.id, t, index, &c.key, c.iter, c.limit, end, false, st.begin).await
                 });
             }
             let results = futures::future::join_all(futs).await;

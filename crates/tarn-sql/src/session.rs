@@ -354,20 +354,29 @@ impl Session {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
             let snapshot = txn.writes.clone();
-            let res = self.dml_in_txn(&mut txn, stmt, params, &now).await;
+            let res = self.dml_in_txn(&mut txn, stmt, params, &now, None).await;
             if res.is_err() {
                 txn.writes = snapshot; // statement atomicity
             }
             let res = res.map(|(n, id)| self.dml_output(n, id));
             return self.finish_txn_stmt(txn, res);
         }
-        if let Some(out) = self.dml_fast_path(stmt, params, &now).await? {
+        // INSERT ... VALUES: evaluate the rows (and draw AUTO_INCREMENT values)
+        // once, so a fast-path fallback or a conflict retry reuses the same ids.
+        let pre = match stmt {
+            Stmt::Insert(p) if matches!(p.source, InsertSource::Values(_)) => {
+                let cx = self.cx(params, &now);
+                Some(self.insert_rows(p, &cx, None).await?)
+            }
+            _ => None,
+        };
+        if let Some(out) = self.dml_fast_path(stmt, params, &now, pre.as_ref()).await? {
             return Ok(out);
         }
         let mut attempt = 0;
         loop {
             let mut txn = Txn::new(&self.cluster, false);
-            let res = match self.dml_in_txn(&mut txn, stmt, params, &now).await {
+            let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
                 Ok(r) => txn.commit(&self.cluster).await.map(|_| r),
                 Err(e) => {
                     txn.rollback();
@@ -396,12 +405,24 @@ impl Session {
 
     /// Single-shard autocommit DML that needs no read round trip: one call to
     /// `tarn_autocommit` (one local transaction on the owning shard).
-    async fn dml_fast_path(&mut self, stmt: &Stmt, params: &[Value], now: &str) -> SqlResult<Option<Output>> {
+    async fn dml_fast_path(
+        &mut self,
+        stmt: &Stmt,
+        params: &[Value],
+        now: &str,
+        pre: Option<&(Vec<Row>, Option<u64>)>,
+    ) -> SqlResult<Option<Output>> {
         let cx = self.cx(params, now);
         let (shard, writes, insert_id) = match stmt {
             Stmt::Insert(p) if p.on_dup.is_empty() && !p.ignore => {
                 let InsertSource::Values(_) = &p.source else { return Ok(None) };
-                let (rows, id) = self.insert_rows(p, &cx, None).await?;
+                let (rows, id) = match pre {
+                    Some((r, id)) => (r.clone(), *id),
+                    None => self.insert_rows(p, &cx, None).await?,
+                };
+                if rows.is_empty() {
+                    return Ok(None);
+                }
                 let shard = shard_of_row(&self.cluster, &p.table, &rows[0]);
                 if rows.iter().any(|r| shard_of_row(&self.cluster, &p.table, r) != shard) {
                     return Ok(None);
@@ -623,13 +644,20 @@ impl Session {
         if let Some(b) = txn.buffered(t.space_id, pk) {
             return Ok(b.cloned());
         }
-        let (client, sid) = txn.stream(&self.cluster, shard).await?;
-        let rows = select_rows(&client, sid, t, 0, pk, Iter::Eq, Some(1), None, false).await?;
+        let st = txn.stream(&self.cluster, shard).await?;
+        let rows = select_rows(&st.client, st.id, t, 0, pk, Iter::Eq, Some(1), None, false, st.begin).await?;
         txn.note_point(shard, t.space_id, 0, pk.to_vec());
         Ok(rows.into_iter().next())
     }
 
-    async fn dml_in_txn(&self, txn: &mut Txn, stmt: &Stmt, params: &[Value], now: &str) -> SqlResult<(u64, Option<u64>)> {
+    async fn dml_in_txn(
+        &self,
+        txn: &mut Txn,
+        stmt: &Stmt,
+        params: &[Value],
+        now: &str,
+        pre: Option<&(Vec<Row>, Option<u64>)>,
+    ) -> SqlResult<(u64, Option<u64>)> {
         let cx = self.cx(params, now);
         match stmt {
             Stmt::Insert(p) => {
@@ -641,7 +669,10 @@ impl Session {
                     }
                     _ => None,
                 };
-                let (rows, id) = self.insert_rows(p, &cx, selected).await?;
+                let (rows, id) = match pre {
+                    Some((r, id)) => (r.clone(), *id),
+                    None => self.insert_rows(p, &cx, selected).await?,
+                };
                 let pk_cols = &t.indexes[0].cols;
                 let mut affected = 0;
                 for row in rows {
