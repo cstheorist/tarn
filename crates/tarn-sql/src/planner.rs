@@ -1307,6 +1307,14 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
                 if !index_serves(table, col, *coll, matches!(op, CmpOp::Eq | CmpOp::NullSafeEq)) {
                     continue;
                 }
+                // `col <=> x` holds for a NULL `col` when x is NULL, but an
+                // index lookup drops a NULL key part (NULL never equals
+                // anything under `=`). On a nullable column it is no index
+                // equality: x may be a NULL parameter of a cached plan (#72).
+                // On a NOT NULL column it is `=`: a NULL x matches nothing.
+                if op == CmpOp::NullSafeEq && table.columns[col].nullable {
+                    continue;
+                }
                 let o = (**other).clone();
                 preds[col].push(match op {
                     CmpOp::Eq | CmpOp::NullSafeEq => Pred::Eq(o),
@@ -3262,6 +3270,79 @@ mod tests {
         };
         assert!(pushed("SELECT id FROM sbtest1 LIMIT 1"));
         assert!(!pushed("SELECT id FROM sbtest1 HAVING id > 1 LIMIT 1"));
+    }
+
+    #[test]
+    fn null_safe_equality_paths() {
+        // issue #72: `col <=> x` matches NULL rows when x is NULL, which an
+        // index lookup cannot find: on a nullable column it is no index
+        // equality; on a NOT NULL one it is the same as `=`
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let ct = "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT NOT NULL, KEY ka (a), KEY kb (b))";
+        let Stmt::CreateTable { mut def, .. } = plan(ct, &ctx).unwrap() else {
+            panic!()
+        };
+        def.space_id = 601;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let path = |sql: &str| {
+            let n = normalize(sql, Mode::Literals).unwrap();
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &n.params,
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            match plan(&n.template, &ctx) {
+                Ok(Stmt::Select(s)) => match &s.source {
+                    Source::Table(t) => t.path.clone(),
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+        };
+        assert!(matches!(path("SELECT id FROM t WHERE a <=> NULL"), AccessPath::Full));
+        assert!(matches!(path("SELECT id FROM t WHERE NULL <=> a"), AccessPath::Full));
+        assert!(matches!(path("SELECT id FROM t WHERE a <=> 1"), AccessPath::Full));
+        assert!(matches!(
+            path("SELECT id FROM t WHERE a <=> NULL AND b = 2"),
+            AccessPath::Range { index: 2, .. }
+        ));
+        assert!(matches!(
+            path("SELECT id FROM t WHERE b <=> 2"),
+            AccessPath::Range { index: 2, .. }
+        ));
+        assert!(matches!(
+            path("SELECT id FROM t WHERE id <=> 3"),
+            AccessPath::Point { index: 0, .. }
+        ));
+        assert!(matches!(
+            path("SELECT id FROM t WHERE a = 1"),
+            AccessPath::Range { index: 1, .. }
+        ));
+        let dml = |sql: &str| {
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            match plan(sql, &ctx) {
+                Ok(Stmt::Update(u)) => u.access.path.clone(),
+                Ok(Stmt::Delete(d)) => d.access.path.clone(),
+                _ => panic!(),
+            }
+        };
+        assert!(matches!(dml("UPDATE t SET b = 1 WHERE a <=> NULL"), AccessPath::Full));
+        assert!(matches!(dml("DELETE FROM t WHERE a <=> NULL"), AccessPath::Full));
     }
 
     #[test]
