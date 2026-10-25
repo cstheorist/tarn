@@ -227,6 +227,60 @@ Sources: [TiDB Cloud v7.5.0 sysbench report](https://docs.pingcap.com/tidbcloud/
 10M rows); [YugabyteDB sysbench page](https://docs.yugabyte.com/stable/benchmark/sysbench-ysql/)
 (YugabyteDB 2026.1.2, 3 × c5.2xlarge = 24 vCPU, RF 3, TLS).
 
+## Vinyl tables: cached, and with data ten times the cache
+
+Issue #23's last step: sysbench on vinyl tables with a cache larger than the
+data and with data ten times the cache, against memtx and against TiDB with
+the same data ten times its block cache. Unlike the rest of this page, this
+ran on a GitHub-hosted runner, with every system on the same host:
+
+| | |
+|---|---|
+| Host | 4 vCPUs (AMD EPYC 9V74), 16 GB RAM; sysbench on the same vCPUs; every system's data on tmpfs |
+| Data | 4 tables × 1,000,000 rows: about 957 MB uncompressed, 500 MB per Tarn shard; read once after loading; uniform random keys; 30 s per run; p99 latency |
+| Tarn | 2 shards × 1 instance, strictly serializable. Vinyl, cached: 1,213 MB of cache per shard, of which 556 MB filled. Vinyl at 10×: 47 MB of cache per shard. Each shard checkpointed after loading, so every row was in vinyl's files |
+| TiDB | v8.5.8, 1 TiDB + 1 PD + 1 TiKV, snapshot isolation; block cache 3,072 MB, or 95 MB at 10× |
+
+| Workload, 64 threads | Tarn memtx | Tarn vinyl, cached | Tarn vinyl, data 10× cache | TiDB | TiDB, data 10× cache |
+|---|---:|---:|---:|---:|---:|
+| `oltp_point_select` (QPS / p99 ms) | 58,010 / 2.9 | 51,657 / 3.4 | 37,180 / 4.6 | 16,402 / 8.9 | 12,704 / 11.2 |
+| `oltp_read_only` (TPS / p99 ms) | 1,223 / 77.2 | 1,013 / 90.8 | 631 / 134.9 | 665 / 139.8 | 551 / 164.4 |
+| `oltp_read_write` (TPS / p99 ms) | 791 / 147.6 | 578 / 248.8 | 415 / 277.2 | 404 / 240.0 | 352 / 253.3 |
+| `oltp_update_index` (TPS / p99 ms) | 27,216 / 7.7 | 21,768 / 10.5 | 20,120 / 9.7 | 3,954 / 29.2 | 3,249 / 34.3 |
+| `oltp_update_non_index` (TPS / p99 ms) | 30,416 / 7.0 | 25,214 / 8.6 | 23,917 / 7.7 | 6,195 / 20.0 | 5,487 / 21.1 |
+| `oltp_insert` (TPS / p99 ms) | 31,220 / 6.0 | 22,992 / 9.6 | 24,692 / 7.8 | 4,616 / 25.7 | 4,242 / 27.7 |
+| Load, 4 × 1,000,000 rows (rows/s) | 31,896 | 30,063 | 31,334 | 57,228 | 59,568 |
+
+* **Cached, vinyl costs 11–27% against memtx**: 89% of memtx's point
+  selects, 80–83% of its updates, 73–74% of its inserts and read-write
+  transactions.
+* **With data ten times the cache, reads slow down and writes do not.**
+  - Point selects ran at 72% of the cached rate and range scans
+    (`oltp_read_only`) at 62%, since a read that misses the cache reads and
+    decompresses a page.
+  - Single-row writes ran at 92–107% of it: they go to vinyl's in-memory
+    level. 107% means run-to-run variation.
+  - p99 rose from 3.4 to 4.6 ms on point selects.
+* **Against TiDB at ten times its block cache**, Tarn at ten times its cache
+  served 2.9× the point selects and 4.4–6.2× the single-row writes, with a
+  lower p99. Multi-statement transactions came to 1.1–1.2× TiDB's, with a
+  similar p99. When the cache shrank, TiDB's reads lost less than Tarn's
+  (17–23% against 28–38%) and its writes lost more (8–18% against 0–8%).
+* **Isolation differs:** Tarn's read-write transactions are strictly
+  serializable and retried 140–292 serialization failures per run. TiDB ran
+  snapshot isolation, without failures.
+* **TiDB loaded rows nearly twice as fast** (57,000–60,000 rows/s, against
+  30,000–32,000).
+
+**On tmpfs, a cache miss reads memory, not a disk.** These numbers measure
+what a miss costs the engine, not disk latency. With the data on a disk
+larger than RAM, reads that miss would each wait for an I/O on both systems.
+The run is
+[40218092737](https://github.com/cstheorist/tarn/actions/runs/40218092737)
+of the `bench/compare` branch's workflow (`bench/compare/run.sh`,
+configuration `push.env`); its raw results are on the branch
+`results/compare-40218092737`.
+
 ## What would make Tarn faster
 
 * **Fewer round trips per transaction**: batch the 10 point selects of a
