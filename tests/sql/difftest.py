@@ -315,6 +315,12 @@ CASES = [
     ("LOCK TABLES t1 WRITE", "q"),
     ("UNLOCK TABLES", "q"),
     ("INSERT INTO t1 (id, c) VALUES (500, 123456789.5)", "err"),
+    # LIMIT is not pushed below a HAVING without aggregation (issue #38)
+    # (each result is every qualifying row, so it does not depend on row order)
+    ("SELECT id FROM t1 HAVING id = 40 LIMIT 1", "q"),
+    ("SELECT id FROM t1 HAVING id BETWEEN 38 AND 40 LIMIT 5", "q"),
+    ("SELECT k1, v FROM t3 HAVING v >= 200 LIMIT 10", "q"),
+    ("SELECT id FROM t1 HAVING id BETWEEN 38 AND 40 ORDER BY id LIMIT 1, 5", "q"),
     # tables without a PRIMARY KEY (issue #32): keyed by the first unique
     # NOT NULL key, as Rails' schema_migrations, or by a hidden row id
     ("CREATE TABLE sm (version VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL, "

@@ -138,6 +138,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `SELECT ... HAVING <condition> LIMIT n` without aggregation pushed the
+  `LIMIT` down to storage before `HAVING` filtered, and returned too few
+  rows, often none ([#38](https://github.com/cstheorist/tarn/issues/38)).
 - `DATETIME` and `TIMESTAMP` values compared by their spelling: a stored
   `'2025-01-01 00:00:01.000000'` did not equal `'2025-01-01 00:00:01'`, so
   keyset pagination repeated rows ([#37](https://github.com/cstheorist/tarn/issues/37)).
