@@ -84,8 +84,25 @@ fn table_name(n: &A::ObjectName, ctx: &PlanCtx) -> SqlResult<(String, String)> {
     }
 }
 
+/// A table a statement writes: never one of `information_schema` (1044).
 fn lookup_table(n: &A::ObjectName, ctx: &PlanCtx) -> SqlResult<Arc<TableDef>> {
     let (db, t) = table_name(n, ctx)?;
+    if db.eq_ignore_ascii_case(catalog::INFORMATION_SCHEMA) {
+        return Err(SqlError::new(
+            1044,
+            "42000",
+            format!("Access denied for user to database '{}'", catalog::INFORMATION_SCHEMA),
+        ));
+    }
+    ctx.catalog.get(&db, &t).ok_or_else(|| SqlError::no_table(&db, &t))
+}
+
+/// A table a SELECT reads: also the virtual tables of `information_schema`.
+fn lookup_read_table(n: &A::ObjectName, ctx: &PlanCtx) -> SqlResult<Arc<TableDef>> {
+    let (db, t) = table_name(n, ctx)?;
+    if db.eq_ignore_ascii_case(catalog::INFORMATION_SCHEMA) {
+        return catalog::information_schema_table(&t).map(Arc::new);
+    }
     ctx.catalog.get(&db, &t).ok_or_else(|| SqlError::no_table(&db, &t))
 }
 
@@ -889,6 +906,10 @@ fn union_path(table: &TableDef, alts: &[EqAlt]) -> Option<AccessPath> {
 }
 
 fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
+    if table.is_virtual() {
+        // information_schema: rows come from the catalog; WHERE filters them
+        return AccessPath::Full;
+    }
     let hi = offset + table.columns.len();
     let mut preds: Vec<Vec<Pred>> = (0..table.columns.len()).map(|_| Vec::new()).collect();
     let local = |e: &Expr| -> Option<usize> {
@@ -1073,7 +1094,7 @@ fn build_scope(from: &[A::TableWithJoins], ctx: &PlanCtx) -> SqlResult<(Scope, V
     let add = |tf: &A::TableFactor, scope: &mut Scope| -> SqlResult<()> {
         match tf {
             A::TableFactor::Table { name, alias, .. } => {
-                let table = lookup_table(name, ctx)?;
+                let table = lookup_read_table(name, ctx)?;
                 let alias = alias
                     .as_ref()
                     .map(|a| ident(&a.name))
@@ -1457,6 +1478,13 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         }
     }
 
+    // information_schema has no rows to lock: a locking read of it is a
+    // plain read, as in MySQL.
+    let virtuals = source.tables().iter().filter(|t| t.table.is_virtual()).count();
+    if !q.locks.is_empty() && virtuals > 0 && virtuals < source.tables().len() {
+        return Err(SqlError::unsupported("locking reads that join information_schema"));
+    }
+    let lockable = virtuals == 0;
     Ok(SelectPlan {
         source,
         filter,
@@ -1468,7 +1496,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         distinct: matches!(sel.distinct, Some(A::Distinct::Distinct)),
         limit,
         offset,
-        lock: q.locks.first().map(|l| RowLock {
+        lock: q.locks.first().filter(|_| lockable).map(|l| RowLock {
             exclusive: q.locks.iter().any(|l| matches!(l.lock_type, A::LockType::Update)),
             nowait: matches!(l.nonblock, Some(A::NonBlock::Nowait)),
             skip: matches!(l.nonblock, Some(A::NonBlock::SkipLocked)),
@@ -2626,6 +2654,43 @@ mod tests {
             plan("INSERT INTO log VALUES ('a', 1, 7)", &ctx).err().map(|e| e.code),
             Some(1136)
         );
+    }
+
+    #[test]
+    fn information_schema_tables() {
+        // issue #33: read from the catalog, never written
+        let cat = catalog();
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("sbtest"),
+            params: &[],
+        };
+        let code = |sql: &str| plan(sql, &ctx).err().map(|e| e.code);
+        match plan(
+            "SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = database() FOR UPDATE",
+            &ctx,
+        ) {
+            Ok(Stmt::Select(s)) => {
+                assert!(s.lock.is_none());
+                assert!(
+                    matches!(&s.source, Source::Table(t) if t.table.is_virtual() && matches!(t.path, AccessPath::Full))
+                );
+            }
+            _ => panic!(),
+        }
+        let rows = catalog::information_schema_rows(&cat);
+        let t = catalog::information_schema_table("tables").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.len() == t.columns.len()));
+        assert_eq!(rows[1][2], Value::str("sbtest1"));
+        assert_eq!(rows[1][3], Value::str("BASE TABLE"));
+        assert_eq!(code("SELECT * FROM information_schema.columns"), Some(1109));
+        assert_eq!(
+            code("INSERT INTO information_schema.tables (table_name) VALUES ('x')"),
+            Some(1044)
+        );
+        assert_eq!(code("DELETE FROM information_schema.tables"), Some(1044));
+        assert_eq!(code("UPDATE information_schema.tables SET engine = 'x'"), Some(1044));
     }
 
     #[test]

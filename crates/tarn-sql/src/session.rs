@@ -563,6 +563,9 @@ impl Session {
         if let Some(a) = admin::recognize(&sql)? {
             return self.run_admin(a).await;
         }
+        if let Some((select, vars)) = crate::prep::split_select_into(&sql) {
+            return self.select_into(&select, &vars).await;
+        }
         let substituted = self.substitute_vars(&sql, false)?;
         let sql: &str = substituted.as_deref().unwrap_or(&sql);
         if crate::complex::may_need(sql) {
@@ -578,6 +581,32 @@ impl Session {
         let n = normalize(sql, Mode::Literals)?;
         let stmt = self.plan_cached(&n.template, &n.params)?;
         self.run(&stmt, &n.params).await
+    }
+
+    /// `SELECT ... INTO @a, ...`: at most one row, whose values the
+    /// variables take; with no row they keep their values (MySQL warns 1329).
+    async fn select_into(&mut self, select: &str, vars: &[String]) -> SqlResult<Output> {
+        let rows = match Box::pin(self.query(select)).await? {
+            Output::Rows { rows, .. } => rows,
+            Output::Ok { .. } => return Err(SqlError::internal("SELECT ... INTO without rows")),
+        };
+        if rows.len() > 1 {
+            return Err(SqlError::new(1172, "42000", "Result consisted of more than one row"));
+        }
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(Output::ok(0));
+        };
+        if row.len() != vars.len() {
+            return Err(SqlError::new(
+                1222,
+                "21000",
+                "The used SELECT statements have a different number of columns",
+            ));
+        }
+        for (v, x) in vars.iter().zip(row) {
+            self.user_vars.insert(v.clone(), x);
+        }
+        Ok(Output::ok(1))
     }
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
