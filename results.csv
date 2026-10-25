@@ -1,0 +1,7 @@
+label,test,threads,tps,qps,lat_avg_ms,lat_p95_ms,errors,reconnects,tables,size,time
+mariadb,oltp_point_select,1,19508.07,19508.07,0.05,0.06,0,0,4,100000,15
+mariadb,oltp_point_select,16,64658.40,64658.40,0.25,0.38,0,0,4,100000,15
+mariadb,oltp_point_select,64,62524.86,62524.86,1.02,1.61,0,0,4,100000,15
+mariadb,oltp_read_only,1,872.90,13966.47,1.14,1.27,0,0,4,100000,15
+mariadb,oltp_read_only,16,3203.26,51252.20,4.99,7.04,0,0,4,100000,15
+mariadb,oltp_read_only,64,3049.76,48796.10,20.96,29.72,0,0,4,100000,15
