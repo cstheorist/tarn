@@ -38,6 +38,8 @@ local msgpack = require('msgpack')
 local key_def_lib = require('key_def')
 local net_box = require('net.box')
 local clock = require('clock')
+local ffi = require('ffi')
+local decimal = require('decimal')
 
 local M = {
     cfg = {
@@ -458,6 +460,81 @@ local function mysql_update_ops(old, ops)
     return out or ops
 end
 
+-- Exact comparison of integers that may be Lua numbers or int64_t / uint64_t
+-- cdata. LuaJIT compares a mix of signed and unsigned 64-bit values as
+-- unsigned, so on its own -1 > 9223372036854775807ULL (issue #11).
+local function int_negative(x)
+    if type(x) == 'number' then return x < 0 end
+    return ffi.istype('int64_t', x) and x < 0
+end
+
+local function int_lt(a, b)
+    local na, nb = int_negative(a), int_negative(b)
+    if na ~= nb then return na end
+    if na then return ffi.cast('int64_t', a) < ffi.cast('int64_t', b) end
+    return ffi.cast('uint64_t', a) < ffi.cast('uint64_t', b)
+end
+M.int_lt = int_lt
+
+local D_I64_MIN = decimal.new('-9223372036854775808')
+local D_I64_MAX = decimal.new('9223372036854775807')
+local D_U64_MAX = decimal.new('18446744073709551615')
+local EXACT = 2 ^ 52
+
+-- a + b without rounding: a Lua number when both are small, else a decimal.
+local function exact_add(a, b)
+    if type(a) == 'number' and type(b) == 'number' and a > -EXACT and a < EXACT and b > -EXACT and b < EXACT then
+        return a + b
+    end
+    return decimal.new(a) + decimal.new(b)
+end
+
+-- MySQL's checks for an integer column changed by arithmetic (UPDATE ...
+-- SET c = c + d): the arithmetic is BIGINT -- BIGINT UNSIGNED for an
+-- unsigned column -- and fails with 1690 outside that domain; the result
+-- must then fit the column type, else 1264. ranges: {{field, min, max}}.
+local function check_arith(old, ops, ranges)
+    for _, r in ipairs(ranges) do
+        local f, lo, hi = r[1], r[2], r[3]
+        local v = old[f]
+        for _, op in ipairs(ops) do
+            if op[2] == f and v ~= nil then
+                if op[1] == '+' then
+                    v = exact_add(v, op[3])
+                    local unsigned = not int_negative(lo)
+                    local bad
+                    if type(v) == 'number' then
+                        bad = unsigned and v < 0
+                    elseif unsigned then
+                        bad = v < 0 or v > D_U64_MAX
+                    else
+                        bad = v < D_I64_MIN or v > D_I64_MAX
+                    end
+                    if bad then
+                        error(box.error.new({code = 1690, reason = string.format(
+                            "BIGINT%s value is out of range in '`%s` + %s'",
+                            unsigned and ' UNSIGNED' or '', tostring(f), tostring(op[3]))}))
+                    end
+                elseif op[1] == '=' then
+                    v = op[3]
+                end
+            end
+        end
+        if v ~= nil then
+            local out
+            if type(v) == 'number' then
+                out = int_lt(v, lo) or int_lt(hi, v)
+            elseif decimal.is_decimal(v) then
+                out = v < decimal.new(lo) or v > decimal.new(hi)
+            end
+            if out then
+                error(box.error.new({code = 1264,
+                    reason = "Out of range value for column '" .. tostring(f) .. "' at row 1"}))
+            end
+        end
+    end
+end
+
 local function apply_checked(txid, w)
     local space = box.space[w[2]]
     if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
@@ -465,15 +542,9 @@ local function apply_checked(txid, w)
     local old = space:get(pk)
     if w[1] == 'update' then
         if old == nil then return nil end
+        -- w[5]: {{field, min, max}} for integer columns changed by arithmetic
+        if w[5] ~= nil and #w[5] > 0 then check_arith(old, w[4], w[5]) end
         new = old:update(mysql_update_ops(old, w[4]))
-        -- w[5]: {{field, min, max}} for columns changed by arithmetic
-        for _, r in ipairs(w[5] or {}) do
-            local v = new[r[1]]
-            if v ~= nil and (v < r[2] or v > r[3]) then
-                error(box.error.new({code = 1264,
-                    reason = "Out of range value for column '" .. tostring(r[1]) .. "' at row 1"}))
-            end
-        end
         local holder = write_conflict(txid, space, pk, old, new)
         if holder then return nil, holder end
         return space:replace(new), nil, old

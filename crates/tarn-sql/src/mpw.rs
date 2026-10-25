@@ -222,6 +222,7 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
                 1213 => SqlError::conflict(msg),
                 1062 => SqlError::new(1062, "23000", msg),
                 1264 => SqlError::new(1264, "22003", msg),
+                1690 => SqlError::new(1690, "22003", msg),
                 1146 => SqlError::new(1146, "42S02", msg),
                 0 => SqlError::internal(msg),
                 c if c < 1000 => SqlError::internal(format!("storage error {}: {}", c, msg)),
