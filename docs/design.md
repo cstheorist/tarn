@@ -399,15 +399,36 @@ strictly serializable. READ COMMITTED follows InnoDB:
   back.
 * **Deadlocks.** A shard fails a request with 1213 at once if waiting would
   close a cycle in its own wait-for graph. Cycles through several shards are
-  found by each SQL server every `deadlock_interval` (1 s): it collects the
-  shards' wait-for edges (`tarn_lock_waits`: waiter, wait id, holders),
-  finds the cycles, collects again and keeps the cycles whose waits are all
-  still pending with the same wait ids. Each such wait was pending from its
-  first observation to its second, so all of them were pending at the same
-  time, and a transaction blocked in a lock wait releases nothing, so the
-  cycle was real. Its transaction with the largest id (the same choice on
-  every SQL server) is failed with 1213 where it waits (`tarn_lock_victim`)
-  and rolled back.
+  found by the SQL servers, each starting from its own transactions' lock
+  requests (issue #26). Every `deadlock_interval` (1 s), a server with
+  requests that have waited for 50 ms or more follows the wait-for edges
+  backwards from them: it asks the shards where they wait or hold row locks
+  for their waits (`tarn_lock_waits`: waiter, wait id, the transactions it
+  waits for, and the other shards where the waiter holds row locks, which
+  its request named), then the shards where each transaction found waiting
+  for one already reached holds row locks, until no new shard comes up. A
+  transaction's waiters wait either where it holds the lock or behind it in
+  the queue where it waits itself, so the walk finds every transaction that
+  waits for the starting ones, directly or through others; and since a
+  transaction makes one lock request at a time and takes no lock while it
+  waits, the shards its request named are still exact. Every transaction
+  of a cycle waits, and its server walks from it, so every cycle is found.
+  Each shard is asked once per walk, so a server whose transactions do not
+  wait makes no call, and with contention the calls grow with the number of
+  waits, not with the number of shards (each server used to ask every
+  shard every second). The server then asks the shards of each cycle's
+  waits again, and keeps the cycle if each wait is still pending with the
+  same wait id *and* still waits for the next transaction of the cycle.
+  Each such edge was there at both observations and all the time between:
+  a transaction that left a wait's waits-for set can only queue behind the
+  waiter again. Every first observation came before every second one, so
+  at some moment all the edges existed at once, and the cycle is a real
+  deadlock, which lasts until it is broken. Comparing wait ids alone, as
+  the first detector did, could keep a cycle through a holder that released
+  the lock after its edge was seen and only then began to wait itself. The
+  cycle's transaction with the largest id (the same choice on every SQL
+  server) is failed with 1213 where it waits (`tarn_lock_victim`) and
+  rolled back.
 * **Commit.** An RC transaction that wrote on one shard commits with one
   local transaction (`tarn_commit_rc`, `CommitRC`); across shards it uses
   the same PREPARE/APPLY as serializable transactions. Either way the row
@@ -434,7 +455,11 @@ connection its first lock request used there. Each commit carries the
 that connection's storage session), and the shard refuses the commit (1213)
 if the table was reset or the session is gone; a lock request over a new
 session returns a new generation, which the SQL server treats the same way.
-A write is never applied after its lock was lost (`BugRCNoLockCheck`).
+A write is never applied after its lock was lost (`BugRCNoLockCheck`). A
+request that fails (1205, 3572, 1213) after some of its keys were granted
+keeps those locks until the transaction ends, as InnoDB does, and its reply
+carries their generation, so that the transaction releases them with its
+others even when it was its first request on that shard.
 
 **A gap between the model and the implementation, found by testing.**
 TarnCommit takes a local commit as one atomic step. In Tarantool,
@@ -704,13 +729,13 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit | 177/177 |
-| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit | 184/184 |
+| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection) | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 236 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors | 236/236 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
-| `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 22/22 |
+| `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 25/25 |
 | `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
