@@ -44,6 +44,10 @@ SCHEMA = [
     "CREATE TABLE cih (handle VARCHAR(20) PRIMARY KEY, n INT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
     "CREATE TABLE ciu (t INT, id INT, email VARCHAR(40), PRIMARY KEY (t, id), UNIQUE KEY ue (t, email)) "
     "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci PARTITION BY KEY(t)",
+    # an orders list: pages in the order of a secondary index (issue #41)
+    "CREATE TABLE ord (shop INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
+    "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (shop, id), KEY bypa (shop, pa, id), "
+    "KEY bystatus (shop, closed, del, id)) PARTITION BY KEY(shop)",
 ]
 
 
@@ -71,6 +75,15 @@ def seed():
              "(5, 'Bob', 'Ångström', 'c3', 'z', 50), (6, 'dave', 'angstrom', 'C3', NULL, 60), "
              "(7, 'Eve ', 'straße', 'd4', 'x', 70), (8, 'a_b', 'Straße', 'D4', 'w', 80), "
              "(9, 'ab', 'Œuvre', 'e5', 'v', 90), (10, 'a-b', 'oeuvre', 'E5', 'u', 100)")
+    rows = []
+    for shop, n in ((1, 700), (2, 30), (3, 1)):
+        for i in range(1, n + 1):
+            # processed_at repeats (ties broken by id); 1 in 5 deleted, 2 in 5 open
+            pa = f"'2025-01-{1 + i % 28:02d} 1{i % 7}:00:00'"
+            closed = "NULL" if i % 5 in (1, 3) else f"'2025-02-{1 + i % 28:02d} 00:00:00'"
+            st = "'paid'" if i % 3 else "'pending'"
+            rows.append(f"({shop}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
+    s.append("INSERT INTO ord VALUES " + ", ".join(rows))
     return s
 
 
@@ -708,6 +721,44 @@ CASES = [
     ("INSERT INTO cin VALUES ('a', 1), ('A', 2), ('b', 3), ('Ä', 4)", "dml:cin"),
     ("SELECT n FROM cin WHERE tag = 'A' ORDER BY n", "q"),
     ("SELECT MIN(n), COUNT(*) FROM cin GROUP BY tag ORDER BY 1", "q"),
+    # ordered pages with LIMIT read the index that follows ORDER BY a page at
+    # a time and stop early (issue #41): residuals, OFFSET, ties, bounds,
+    # selective filters, an empty range, and the transaction's own writes
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
+    ("SELECT * FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 20 OFFSET 300", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 300, 10", "q"),
+    ("SELECT pa FROM ord WHERE shop = 1 ORDER BY pa LIMIT 40", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 ORDER BY shop, pa, id LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa, id LIMIT 30", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id % 97 = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id > 690 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa >= '2025-01-20' ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
+     "ORDER BY pa, id LIMIT 25", "q"),
+    ("SELECT id FROM ord WHERE shop = 2 AND del = 0 ORDER BY pa, id LIMIT 100", "q"),
+    ("SELECT id FROM ord WHERE shop = 3 AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 9 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 0", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY id LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL ORDER BY closed, del, id LIMIT 9", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
+     "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
+    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE shop = 1 AND id = 400", "dml:ord"),
+    ("UPDATE ord SET del = 1 WHERE shop = 1 AND id = 28", "dml:ord"),
+    ("DELETE FROM ord WHERE shop = 1 AND id = 56", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8 OFFSET 2", "q"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("BEGIN", "q"),
+    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE shop = 1 AND id = 401", "dml:ord"),
+    ("DELETE FROM ord WHERE shop = 1 AND id = 84", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 3 FOR UPDATE", "q"),
+    ("COMMIT", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 
 

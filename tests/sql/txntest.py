@@ -345,6 +345,68 @@ class T:
                     bad.append((iso, key, res, rows))
         self.check(not bad, f"one of two inserts of case variants commits, the other fails: {bad[:3]}")
         self.check(q(c, "SELECT COUNT(*) FROM cik")[0][0] == 20, "one row per key")
+    def rows_read(self, c):
+        return int(dict(q(c, "SHOW STATUS LIKE 'Tarn_rows_read'"))["Tarn_rows_read"])
+
+    def test_ordered_limit_pages(self):
+        # issue #41: an ordered page with LIMIT reads the index that follows
+        # ORDER BY a page at a time and stops; a serializable read records
+        # only what it read, so writes past it do not conflict
+        c = self.fresh("ol", "CREATE TABLE ol (g INT, id INT, t INT, del TINYINT, PRIMARY KEY (g, id), "
+                             "KEY bt (g, t, id)) PARTITION BY KEY(g)", [])
+        for lo in range(0, 5000, 1000):
+            q(c, "INSERT INTO ol VALUES " + ",".join(f"(1, {i}, {5000 - i}, {int(i % 4 == 0)})"
+                                                   for i in range(lo, lo + 1000)))
+        page = "SELECT id FROM ol WHERE g = 1 AND del = 0 ORDER BY t, id LIMIT 50"
+        want = [i for i in range(4999, -1, -1) if i % 4][:50]
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                if txn:
+                    q(c, "BEGIN")
+                before = self.rows_read(c)
+                got = [r[0] for r in q(c, page)]
+                n = self.rows_read(c) - before
+                if txn:
+                    q(c, "COMMIT")
+                what = f"{iso}, {'in a transaction' if txn else 'autocommit'}"
+                self.check(got == want, f"{what}: the first page ({got[:5]}...)")
+                self.check(n <= 400, f"{what}: {n} rows read for a page of 50 out of 5000")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        # the transaction's own writes are merged into the page
+        q(c, "BEGIN")
+        q(c, "INSERT INTO ol VALUES (1, 9001, 0, 0)")
+        q(c, "UPDATE ol SET del = 1 WHERE g = 1 AND id = 4999")
+        q(c, "UPDATE ol SET t = -1 WHERE g = 1 AND id = 2001")
+        got = [r[0] for r in q(c, page)]
+        self.check(got == [2001, 9001] + [i for i in want if i != 4999][:48], f"own writes merged ({got[:5]}...)")
+        q(c, "ROLLBACK")
+        # an insert into the unread rest of the range does not conflict, one
+        # into the part read does
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for t, conflict in ((4000, False), (10, True)):
+            q(a, "BEGIN")
+            q(a, page)
+            q(a, "UPDATE ol SET del = 1 - del WHERE g = 1 AND id = 0")
+            q(b, f"INSERT INTO ol VALUES (1, {7000 + t}, {t}, 0)")
+            self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                       f"insert at t = {t}: {'conflict' if conflict else 'no conflict'}")
+
+    def test_ordered_limit_case_insensitive(self):
+        # issue #41: the part of a range a limited read records ends at its
+        # last row as the index holds it (a case-insensitive key holds
+        # weight strings): writes inside it conflict, writes past it do not
+        self.fresh("oci", "CREATE TABLE oci (g INT, h VARCHAR(10), n INT, PRIMARY KEY (g, h)) "
+                          "COLLATE=utf8mb4_general_ci PARTITION BY KEY(g)", [f"(1, 'k{i:02d}', {i})" for i in range(40)])
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for h, conflict in (("K35x", False), ("k01x", True)):
+            q(a, "BEGIN")
+            got = [r[0] for r in q(a, "SELECT h FROM oci WHERE g = 1 ORDER BY h LIMIT 3")]
+            self.check(got == ["k00", "k01", "k02"], f"first page {got}")
+            q(a, "UPDATE oci SET n = n + 1 WHERE g = 1 AND h = 'k39'")
+            q(b, f"INSERT INTO oci VALUES (1, '{h}', 0)")
+            self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                       f"insert of {h}: {'conflict' if conflict else 'no conflict'}")
 
     def test_select_for_update(self):
         # FOR UPDATE takes a row lock (as in InnoDB): a concurrent writer
