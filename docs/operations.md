@@ -83,6 +83,7 @@ at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
 | `recovery_interval` | 0.5 s | recovery and garbage-collection period |
 | `lock_wait` | 1 s | how long an autocommit read or write waits for a conflicting prepared transaction before failing with 1213 |
 | `gc_batch` | 500 | protocol records deleted per garbage-collection transaction |
+| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check the existing rows of a table (a narrower type, `NOT NULL`) when a shard holds more of them than this: writes to the table wait for the whole scan |
 
 Protocol records (participant and decision records of cross-shard
 transactions) are kept for about `max_txn_age + clock_skew` after their last

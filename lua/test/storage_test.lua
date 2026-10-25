@@ -575,6 +575,64 @@ check('two schema changes beginning at once: one runs, the other is told busy', 
 c[1]:call('tarn_ddl_end', {'o3'})
 c[1]:call('tarn_ddl_end', {'o4'})
 
+print('index builds ahead of the fence (BUILD, vinyl tables)')
+r = c[1]:call('tarn_alter_build', {'test.alt', aargs(7, {builds = {{9, 'mv', false, {{field = 2, type = 'integer'}}}}})})
+check('BUILD leaves a memtx table to PREPARE (MVCC aborts a build that writes overtake)',
+      r[1] == 'ok' and aindex(9) == nil, {r, aindex(9)})
+for i = 1, 2 do
+    c[i]:call('tarn_create_table', {{name = 'test.bld', engine = 'vinyl', format = afmt, indexes = aidx}})
+end
+c[1]:reload_schema()
+local bsid = c[1].space['test.bld'].id
+c[1]:call('tarn_autocommit', {{{'insert', bsid, {1, 10, 'a', 1}}, {'insert', bsid, {2, 20, 'b', 1}}}})
+local function bargs(ver, extra)
+    local a = {ver = ver, timeout = 1, checks = {}, builds = {}, drop = {}, renames = {},
+               def = {name = 'test.bld', id = bsid, format = afmt, indexes = aidx, json = '{}', ver = ver}}
+    for key, val in pairs(extra or {}) do a[key] = val end
+    return a
+end
+local function bw(op) return c[1]:call('tarn_autocommit', {{op}, {fence = {bsid, 0}}}) end
+local function bindex(id) return c[1]:eval('local i = box.space["test.bld"].index[...] return i and i.name', {id}) end
+local bu = {{5, 'bv', true, {{field = 2, type = 'integer'}}}}
+r = c[1]:call('tarn_alter_build', {'test.bld', bargs(1, {builds = bu})})
+check('BUILD makes the new index under a temporary name', r[1] == 'ok' and bindex(5) == '_tarn_tmp_5', {r, bindex(5)})
+r = bw({'insert', bsid, {3, 30, 'c', 1}})
+check('... without fencing writes made with the current definition', r[1] == 'ok', r)
+check('... and keeps the index current', c[1]:eval('return box.space["test.bld"].index[5]:get{30} ~= nil'))
+r = bw({'insert', bsid, {4, 30, 'd', 1}})
+check('a write the new unique index refuses fails with 1062, naming the index as it will be named',
+      r[1] == 'duplicate' and r[2] == 1062 and tostring(r[3]):find('"bv"') ~= nil, r)
+c[1]:call('tarn_alter_abort', {'test.bld', bargs(1, {builds = bu})})
+check('ABORT drops what BUILD made', bindex(5) == nil)
+-- A transaction prepared before the index existed writes a value it will
+-- refuse; decided, it must still land: the index goes instead.
+r = prepare(1, 'BX1', {{'replace', bsid, {5, 30, 'e', 1}}})
+check('a transaction prepared before BUILD, writing a value the new index will refuse', r[1] == 'yes', r)
+r = c[1]:call('tarn_alter_build', {'test.bld', bargs(1, {builds = bu})})
+check('... BUILD does not see that value yet', r[1] == 'ok' and bindex(5) == '_tarn_tmp_5', {r, bindex(5)})
+r = c[1]:call('tarn_apply', {'BX1'})
+check('... its APPLY lands, dropping the index under construction',
+      r[1] == 'ok' and bindex(5) == nil and c[1]:eval('return box.space["test.bld"]:get{5} ~= nil'), {r, bindex(5)})
+r = c[1]:call('tarn_alter_prepare', {'test.bld', bargs(1, {builds = bu})})
+check('... and PREPARE, building it again behind the fence, fails the schema change (1062)',
+      r[1] == 'duplicate' and r[2] == 1062 and bindex(5) == nil, {r, bindex(5)})
+c[1]:call('tarn_alter_abort', {'test.bld', bargs(1, {builds = bu})})
+c[1]:eval('tarn.cfg.alter_check_rows = 2')
+r = c[1]:call('tarn_alter_prepare', {'test.bld', bargs(1, {checks = {{2, 'v', 'range', 0, 100, 0}}})})
+check('checks of more existing rows than tarn.cfg.alter_check_rows are refused (1846)',
+      r[1] == 'error' and r[2] == 1846, r)
+check('... before anything is fenced', bw({'update', bsid, {1}, {{'+', 2, 1}}})[1] == 'ok')
+c[1]:eval('tarn.cfg.alter_check_rows = 1000000')
+c[1]:call('tarn_autocommit', {{{'delete', bsid, {5}}}})
+local bidx = table.deepcopy(aidx)
+bidx[3] = {name = 'bv', unique = true, parts = {{field = 'v', type = 'integer'}}}
+local bdone = bargs(1, {builds = bu, def = {name = 'test.bld', id = bsid, format = afmt, indexes = bidx,
+                                             json = '{}', ver = 1}})
+r = {c[1]:call('tarn_alter_build', {'test.bld', bdone}), c[1]:call('tarn_alter_prepare', {'test.bld', bdone}),
+     c[1]:call('tarn_alter_apply', {'test.bld', bdone})}
+check('BUILD, PREPARE and APPLY: the index under its own name',
+      r[1][1] == 'ok' and r[2][1] == 'ok' and r[3][1] == 'ok' and bindex(5) == 'bv', {r, bindex(5)})
+
 print('DROP TABLE under a prepared transaction')
 -- A table dropped between a transaction's PREPARE and its APPLY: the APPLY
 -- still lands the transaction's other writes and releases its locks (it

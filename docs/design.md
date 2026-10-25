@@ -520,28 +520,44 @@ under READ COMMITTED, each statement decoding rows with its own definition;
 under SERIALIZABLE the ALTER's DDL aborts the stream transactions that read
 the table (memtx MVCC invalidates an altered space), which fail with 1213.
 
-**Protocol.** One SQL server drives a change to version V through three
+**Protocol.** One SQL server drives a change to version V through four
 idempotent steps per shard (lua/tarn.lua "Schema changes"):
 
-1. PREPARE raises the table's fence to V in memory, waits until no local
+1. On a vinyl table, BUILD builds the new indexes under temporary names
+   while writes go on: vinyl keeps an index current while it builds it, so
+   no write waits for the build, however long it takes. A memtx table
+   builds in PREPARE instead: with memtx MVCC, any write committed while an
+   index build yields aborts the build.
+2. PREPARE raises the table's fence to V in memory, waits until no local
    commit that passed the check is still in flight (`wait_commits`) and no
    prepared cross-shard transaction holds locks on the table (their writes
    were encoded with the old definition and are applied by APPLY of the
    commit protocol), checks the existing rows against the new types --
-   rows that end early by the column's fill -- and builds new indexes under
-   temporary names (a unique one fails on duplicates, 1062).
-2. When every shard has prepared, APPLY drops the indexes that go, changes
+   rows that end early by the column's fill -- and builds the new indexes
+   BUILD has not (a unique one fails on duplicates, 1062). Writes wait
+   while it checks rows, so it refuses to check more rows than
+   `tarn.cfg.alter_check_rows` (one million by default) on a shard, with
+   1846, before raising the fence.
+3. When every shard has prepared, APPLY drops the indexes that go, changes
    the space format, renames indexes and the space, and stores the new
    definition, with `ver` = V, in `_tarn_catalog` (where the fence survives
    restarts and leader changes: `FENCE` is rebuilt from it). An APPLY that
    finds the in-memory fence gone (a restart or a new leader since PREPARE)
    runs PREPARE again first.
-3. The catalog version is bumped; the other SQL servers reload within their
+4. The catalog version is bumped; the other SQL servers reload within their
    0.3 s poll, or at once when a statement meets the fence.
 
-If a PREPARE fails anywhere (a row does not fit, a duplicate, a timeout
-waiting for prepared transactions), every shard is ABORTed: temporary
-indexes are dropped and the fence returns to the stored version. The change
+If a BUILD or a PREPARE fails anywhere (a row does not fit, a duplicate, a
+timeout waiting for prepared transactions), every shard is ABORTed:
+temporary indexes are dropped and the fence returns to the stored version.
+
+From BUILD on, a new unique index refuses rows that would break it, so an
+undecided write that the finished change would make fail fails at once
+(1062), as in TiDB's write-only index state. A decided one cannot fail: a
+cross-shard transaction prepared before BUILD may write such a row, and its
+APPLY must land. That APPLY drops the index under construction and runs
+again; PREPARE then builds the index behind the fence, where the duplicate
+fails the schema change instead. The change
 is recorded first in a job record on the first shard, which also makes
 schema changes run one at a time; a job whose server stopped touching it
 for 30 s is finished (run again from step 1) by the next schema change or
@@ -549,17 +565,23 @@ SQL server start.
 
 Writes wait (in the SQL server: the statement is retried, up to the lock
 wait timeout) from the moment PREPARE raises the fence until the servers
-have reloaded the new definition; reads do not wait. Index builds and row
-checks happen during that window, so on a large table an `ADD INDEX` holds
-up writes to that table for the length of the build -- the price of not
-keeping two layouts writable at once (F1 and TiDB step through
-intermediate schema states with leases instead).
+have reloaded the new definition; reads do not wait. Row checks, and index
+builds on memtx tables, happen during that window. An `ADD INDEX` on a vinyl
+table of 300,000 rows (`ddltest.py`, reading from disk) took 0.8 s, during
+which another server's single-row updates went on (961 of them, none slower
+than 39 ms); built behind the fence, the same index held them for the whole
+build. The price of the short window is not keeping two layouts writable
+at once (F1 and TiDB step through intermediate schema states with leases
+instead).
 
 **Why the commit protocol model is unchanged.** The fence only makes
 participants refuse requests (a NO vote, a failed local commit) before
 they write, which the model already allows at any time; the change itself
 waits until no prepared transaction holds locks on the table, so no
-prepared write is applied in an old layout after APPLY. `tests/sql/
+prepared write is applied in an old layout after APPLY. An index under
+construction likewise only refuses undecided writes; the APPLY it would
+refuse runs again after dropping it, which the model sees as an APPLY
+taken a little later. `tests/sql/
 ddltest.py` alters a table about 300 times in 20 s while two SQL servers
 write it (fast-path and read-modify-write autocommits, transfers,
 READ COMMITTED transactions) and checks that no acknowledged increment is
@@ -619,12 +641,15 @@ would not do: a cross-shard transaction prepared and applied here during
 the scan may have been read by another transaction that this read also
 sees, while its write here is missing from the snapshot.
 
-**Not yet.** `ALTER TABLE` builds indexes and checks rows while writes to the
-table wait (§2.10): seconds on memtx, hours on a large vinyl table, so
-builds will move ahead of the fence. Replica bootstrap and backups copy a
-shard's whole data set. Sizing (`TARN_VINYL_MEMORY_MB`, `TARN_VINYL_CACHE_MB`)
-and benchmarks with data larger than the cache are issue #23's remaining
-steps.
+**Schema changes.** `ALTER TABLE` builds a vinyl table's new indexes before
+it fences the table's writes (§2.10), so an `ADD INDEX` on a large table
+does not hold its writes for hours. Checking existing rows (a narrower
+type, `NOT NULL`) still happens behind the fence, and is refused above
+`tarn.cfg.alter_check_rows` rows per shard.
+
+**Not yet.** Replica bootstrap and backups copy a shard's whole data set.
+Sizing (`TARN_VINYL_MEMORY_MB`, `TARN_VINYL_CACHE_MB`) and benchmarks with
+data larger than the cache are issue #23's remaining steps.
 
 ## 3. Verus
 
@@ -671,14 +696,14 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan | 164/164 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit | 177/177 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 236 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors | 236/236 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 22/22 |
-| `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog | 7/7 |
+| `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
