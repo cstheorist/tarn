@@ -1582,10 +1582,16 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
     let source = build_source(&scope, &joins, &on_exprs, &conj)?;
     let filter = join_and(conj.clone());
 
-    // Push LIMIT to storage when every row read is a result row.
+    // Push LIMIT to storage when every row read is a result row (HAVING
+    // filters rows too, even without aggregation: issue #38).
     let mut source = source;
     if let Source::Table(t) = &mut source {
-        if filter.is_none() && !aggregated && order.is_empty() && !matches!(sel.distinct, Some(A::Distinct::Distinct)) {
+        if filter.is_none()
+            && having.is_none()
+            && !aggregated
+            && order.is_empty()
+            && !matches!(sel.distinct, Some(A::Distinct::Distinct))
+        {
             if let Some(l) = &limit {
                 t.limit = Some(match &offset {
                     Some(o) => Expr::Arith(Box::new(l.clone()), Arith::Add, Box::new(o.clone())),
@@ -2867,6 +2873,17 @@ mod tests {
         assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) > (1, 2, 3)"), Some(1241));
         assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) < 1"), Some(1241));
         assert_eq!(code("SELECT c FROM sbtest1 WHERE (id, k) <=> (1, 2)"), None);
+    }
+
+    #[test]
+    fn limit_not_pushed_below_having() {
+        // issue #38: HAVING without aggregation filters after the read
+        let pushed = |sql: &str| match plan_sel(sql).source {
+            Source::Table(t) => t.limit.is_some(),
+            _ => panic!(),
+        };
+        assert!(pushed("SELECT id FROM sbtest1 LIMIT 1"));
+        assert!(!pushed("SELECT id FROM sbtest1 HAVING id > 1 LIMIT 1"));
     }
 
     #[test]
