@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Tables without a `PRIMARY KEY`, keyed as InnoDB keys them: by the first
+  `UNIQUE` key with only `NOT NULL` columns, or else by a hidden row id that
+  statements do not see ([#32](https://github.com/cstheorist/tarn/issues/32)).
+  Rails' `schema_migrations` used to fail with 1173.
 - Vinyl settings and sizing: storage nodes take vinyl's read and write
   threads, page and range size and bloom filter false-positive rate from
   `TARN_VINYL_*` variables, and `docs/operations.md` gives the memory and

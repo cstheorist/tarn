@@ -1194,7 +1194,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         format!("Can't DROP COLUMN `{}`; check that it exists", name),
                     ));
                 };
-                if nd.columns.len() == 1 {
+                if nd.visible_columns().count() == 1 {
                     return Err(SqlError::new(
                         1090,
                         "42000",

@@ -23,6 +23,11 @@ use tarn_common::{SqlError, SqlResult, Value};
 
 pub const BUCKET_FIELD: &str = "bucket_id";
 
+/// The hidden column that keys a table declared without a primary key or a
+/// unique NOT NULL key (InnoDB's implicit row id, under InnoDB's reserved
+/// name).
+pub const ROW_ID: &str = "DB_ROW_ID";
+
 /// The Tarantool storage engine of a table: memtx keeps every row in RAM,
 /// vinyl is an LSM tree on disk with a RAM cache (issue #23). One
 /// Tarantool transaction may write both (memtx MVCC is on), so the commit
@@ -94,6 +99,11 @@ pub struct ColumnDef {
     /// existed, whose tuples end before its field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Fill>,
+    /// The implicit row id (`ROW_ID`): stored and indexed, but not part of
+    /// `SELECT *`, `INSERT` without a column list, `DESCRIBE` or `SHOW
+    /// CREATE TABLE`, and statements cannot name it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     #[serde(skip)]
     pub sql_type: Option<SqlType>,
 }
@@ -210,8 +220,24 @@ impl TableDef {
     pub fn usable_indexes(&self) -> impl Iterator<Item = &IndexDef> {
         self.indexes.iter().filter(|i| !i.invisible)
     }
+    /// The column a statement names (never the hidden row id).
     pub fn col_index(&self, name: &str) -> Option<usize> {
-        self.columns.iter().position(|c| c.name.eq_ignore_ascii_case(name))
+        self.columns
+            .iter()
+            .position(|c| !c.hidden && c.name.eq_ignore_ascii_case(name))
+    }
+    /// The columns statements see, with their positions.
+    pub fn visible_columns(&self) -> impl Iterator<Item = (usize, &ColumnDef)> {
+        self.columns.iter().enumerate().filter(|(_, c)| !c.hidden)
+    }
+    /// The hidden row id column, if the table has one.
+    pub fn row_id_col(&self) -> Option<usize> {
+        self.columns.iter().position(|c| c.hidden)
+    }
+    /// The primary key was declared (`PRIMARY KEY`), rather than taken from
+    /// a unique NOT NULL key or the hidden row id.
+    pub fn declared_pk(&self) -> bool {
+        self.indexes[0].name == "PRIMARY"
     }
     pub fn index_by_name(&self, name: &str) -> Option<&IndexDef> {
         self.indexes.iter().find(|i| i.name.eq_ignore_ascii_case(name))
@@ -455,13 +481,25 @@ pub fn parse_def_json(json: &str) -> SqlResult<TableDef> {
     Ok(d)
 }
 
-/// Check the invariants Tarn relies on: a primary key exists and is NOT NULL,
+/// Check the invariants Tarn relies on: no column takes the hidden row id's
+/// name (1166, as in InnoDB), a primary key exists and is NOT NULL,
 /// the shard key is part of the primary key, and every unique index contains
 /// the shard key (MySQL's rule for partitioned tables), so uniqueness can be
 /// enforced by a single shard.
 pub fn validate(def: &TableDef) -> SqlResult<()> {
     if def.indexes.is_empty() || def.indexes[0].id != 0 || def.indexes[0].cols.is_empty() {
         return Err(SqlError::new(1173, "42000", "This table type requires a primary key"));
+    }
+    if let Some(c) = def
+        .columns
+        .iter()
+        .find(|c| !c.hidden && c.name.eq_ignore_ascii_case(ROW_ID))
+    {
+        return Err(SqlError::new(
+            1166,
+            "42000",
+            format!("Incorrect column name '{}'", c.name),
+        ));
     }
     for &c in &def.indexes[0].cols {
         if def.columns[c].nullable {
