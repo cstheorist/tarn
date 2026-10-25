@@ -2038,7 +2038,7 @@ local function stuck(index, key, t)
 end
 
 local function recovery_pass()
-    if box.info.ro then return end
+    if box.info.ro or box.space._tarn_txn == nil then return end   -- (schema not made yet)
     local t = now()
     -- Participants stuck in 'prepared'.
     for _, p in ipairs(stuck(box.space._tarn_part.index.state, 'prepared', t)) do
@@ -2414,23 +2414,79 @@ end
 
 -------------------------------------------------------------------------------
 
+-- Every replica configured for this shard has joined and follows this node.
+local function replicas_follow()
+    local cfg = box.cfg.replication
+    local want = type(cfg) == 'table' and #cfg - 1 or 0   -- the list names this node too
+    local n = 0
+    for id, r in pairs(box.info.replication) do
+        if id ~= box.info.id and r.downstream ~= nil and r.downstream.status == 'follow' then
+            n = n + 1
+        end
+    end
+    return n >= want
+end
+
+-- Users and spaces, created by the writable node; replicas get them by
+-- replication. Every step is idempotent and writes nothing when its object
+-- exists.
+local function setup_schema()
+    box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
+    box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
+    ensure_schema()
+    if box.space._tarn_meta:get{'shard_id'} == nil then
+        -- The new shard's first synchronous write. Made while the replicas
+        -- are still joining, it cannot reach its quorum (they cannot
+        -- acknowledge it yet): it times out after replication_synchro_timeout,
+        -- and so does the first checkpoint of a joining replica that
+        -- received it, which waits for its confirmation and stops the
+        -- replica when it fails (Tarantool 3.9). So first let the replicas
+        -- join (for up to a minute).
+        local deadline = clock.monotonic() + 60
+        while M.cfg.sync and not replicas_follow() and clock.monotonic() < deadline do
+            fiber.sleep(0.1)
+        end
+        box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
+    end
+end
+
+-- Run setup_schema in the background whenever this node is writable, until
+-- it succeeds: a leadership change, or a write that times out waiting for
+-- its quorum while the shard bootstraps, must neither stop the process (an
+-- error in init would) nor leave the schema half made (the next leader
+-- finishes it).
+local setup_fiber
+local function setup_when_writable()
+    if box.info.ro or setup_fiber ~= nil then return end
+    setup_fiber = fiber.create(function()
+        fiber.name('tarn_schema')
+        while not box.info.ro do
+            local ok, err = pcall(setup_schema)
+            if ok then break end
+            log.warn('tarn: creating the schema: %s; trying again', tostring(err))
+            fiber.sleep(1)
+        end
+        setup_fiber = nil
+    end)
+end
+
 function M.init(cfg)
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
-    -- Schema is created on the writable node and reaches replicas by replication.
-    if not box.info.ro then
-        box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
-        box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
-        ensure_schema()
-        box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
+    if not M.cfg.sync and not box.info.ro then
+        setup_schema()          -- a single instance: before it serves requests
+    else
+        setup_when_writable()   -- a replicated shard: see above
     end
     box.space._space:on_replace(function() invalidate_key_defs() end)
     -- The lock index is maintained only while this instance is the leader;
     -- any election state change makes it stale (rebuilt before next use).
     box.ctl.on_election(function() LK_STALE = true; FENCE_STALE = true; pl_fresh() end)
-    box.watch('box.status', function() LK_STALE = true; FENCE_STALE = true; pl_fresh() end)   -- read-only changes
+    box.watch('box.status', function()   -- read-only changes
+        LK_STALE = true; FENCE_STALE = true; pl_fresh()
+        setup_when_writable()
+    end)
     box.space._index:on_replace(function() invalidate_key_defs() end)
     box.session.on_disconnect(pl_on_disconnect)
-    if not box.info.ro then lk_reload() end
     M.start_recovery()
     rawset(_G, 'tarn', M)
     return M

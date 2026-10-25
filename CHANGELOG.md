@@ -71,6 +71,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Bootstrapping a replicated shard could stop storage instances: the new
+  leader's first synchronous write, made while its replicas were still
+  joining, timed out (stopping the leader), or reached a joining replica,
+  whose first checkpoint then timed out waiting for its confirmation
+  (stopping the replica). The leader now waits for its replicas before that
+  write, and creates the schema in the background, retrying, so that a
+  leadership change or a timeout during bootstrap no longer stops it.
+  `scripts/cluster.sh start` returns once every replica has joined.
 - `DECIMAL(p, s)` values with more than p - s digits before the point were
   stored; they now fail with 1264, as in MySQL.
 - A statement on one SQL server right after another server created or
