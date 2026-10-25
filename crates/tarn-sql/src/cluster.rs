@@ -941,19 +941,32 @@ impl Cluster {
         }
     }
 
-    /// PREPARE everywhere; then APPLY everywhere, or ABORT everywhere if a
-    /// PREPARE failed; then publish the new catalog. Every step may be
+    /// BUILD everywhere (new indexes, while writes go on); then PREPARE
+    /// everywhere; then APPLY everywhere, or ABORT everywhere if a BUILD or
+    /// a PREPARE failed; then publish the new catalog. Every step may be
     /// repeated (a job finished by another server runs it again).
     async fn run_ddl_job(&self, space: &str, args: &[u8], _owner: &str) -> SqlResult<()> {
         let mut call = Mp::new();
         call.arr(2).str(space);
         call.0.extend_from_slice(args);
         let n = self.shards.len();
-        let prep = futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_prepare", &call.0))).await;
         let mut failed = None;
-        for r in prep {
-            if let Err(e) = r.and_then(|d| lua_status(&d).map(|_| ())) {
-                failed.get_or_insert(e);
+        for r in futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_build", &call.0))).await {
+            match r.and_then(|d| lua_status(&d).map(|_| ())) {
+                Ok(()) => {}
+                // a storage node from before BUILD existed: its PREPARE builds them
+                Err(e) if e.message.contains("'tarn_alter_build' is not defined") => {}
+                Err(e) => {
+                    failed.get_or_insert(e);
+                }
+            }
+        }
+        if failed.is_none() {
+            let prep = futures::future::join_all((0..n).map(|i| self.call(i, "tarn_alter_prepare", &call.0))).await;
+            for r in prep {
+                if let Err(e) = r.and_then(|d| lua_status(&d).map(|_| ())) {
+                    failed.get_or_insert(e);
+                }
             }
         }
         if let Some(e) = failed {

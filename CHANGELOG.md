@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ALTER TABLE ... ADD INDEX` on a vinyl table builds the index before it
+  holds the table's writes, which then wait only for the switch at the end
+  instead of the whole build ([#23](https://github.com/cstheorist/tarn/issues/23)).
+  Meanwhile a new unique index already refuses rows that would break it
+  (1062); a committed cross-shard transaction whose row it refuses drops it
+  and lands, and the schema change then fails on the duplicate. Checking
+  the existing rows of a table for a narrower type or `NOT NULL`, which
+  holds its writes for the scan, is refused (1846) above
+  `tarn.cfg.alter_check_rows` rows per shard (a million by default).
 - Tables on disk: `CREATE TABLE ... ENGINE=vinyl` stores a table in
   Tarantool's vinyl engine (an LSM tree with a RAM cache) instead of memtx,
   for data larger than RAM; `--default-engine` sets what `ENGINE=InnoDB`

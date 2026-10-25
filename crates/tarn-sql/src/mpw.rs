@@ -256,6 +256,7 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
                 1264 => SqlError::new(1264, "22003", msg),
                 1690 => SqlError::new(1690, "22003", msg),
                 1146 => SqlError::new(1146, "42S02", msg),
+                1846 => SqlError::new(1846, "0A000", msg),
                 // Tarantool's errors from a write to a table or an index
                 // dropped meanwhile: the same as from_iproto's
                 c if c == tarn_iproto::errcode::ER_NO_SUCH_SPACE as i64 => {
