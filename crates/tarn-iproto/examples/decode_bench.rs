@@ -74,9 +74,10 @@ fn bench(label: &str, src: &Bytes, zero_copy: bool, iters: usize, drop_elsewhere
 }
 
 /// Per-string cost of copy vs slice for a range of sizes (4 strings/row).
+/// Min of several interleaved trials, to filter out noise from other load.
 fn sweep() {
-    println!("per-string sweep (rows of 4 strings), ns/row: size | copy | slice | copy x-thread | slice x-thread");
-    for len in [4usize, 8, 16, 24, 32, 48, 64, 96, 128] {
+    println!("per-string sweep (rows of 4 strings), min ns/row: size | copy | slice | copy x-thread | slice x-thread");
+    for len in [4usize, 8, 16, 24, 32, 48, 64, 128, 256] {
         let mut out = Vec::new();
         mp::write_array_len(&mut out, 1000);
         let text = "s".repeat(len);
@@ -84,9 +85,8 @@ fn sweep() {
             mp::encode_tuple(&mut out, &[Value::str(&text), Value::str(&text), Value::str(&text), Value::str(&text)]);
         }
         let src = Bytes::from(out);
-        let quiet = |zc: bool, x: bool| {
-            let rows_per = 1000;
-            let iters = 1500;
+        let trial = |zc: bool, x: bool| {
+            let iters = 200;
             let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Vec<Value>>>(4);
             let dropper = std::thread::spawn(move || {
                 for rows in rx {
@@ -104,15 +104,15 @@ fn sweep() {
             }
             drop(tx);
             dropper.join().unwrap();
-            t0.elapsed().as_nanos() as f64 / (iters * rows_per) as f64
+            t0.elapsed().as_nanos() as f64 / (iters * 1000) as f64
         };
-        println!(
-            "  {len:>4} | {:>6.1} | {:>6.1} | {:>6.1} | {:>6.1}",
-            quiet(false, false),
-            quiet(true, false),
-            quiet(false, true),
-            quiet(true, true)
-        );
+        let mut best = [f64::MAX; 4];
+        for _ in 0..7 {
+            for (i, (zc, x)) in [(false, false), (true, false), (false, true), (true, true)].into_iter().enumerate() {
+                best[i] = best[i].min(trial(zc, x));
+            }
+        }
+        println!("  {len:>4} | {:>6.1} | {:>6.1} | {:>6.1} | {:>6.1}", best[0], best[1], best[2], best[3]);
     }
 }
 

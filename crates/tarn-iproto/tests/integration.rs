@@ -242,6 +242,18 @@ async fn insert_replace_update_delete() {
     assert_eq!(server_code(c.insert(0, TEST, &tuple(&[s("str")])).await), ER_FIELD_TYPE);
     assert_eq!(server_code(c.insert(0, 9999, &tuple(&[int(1)])).await), ER_NO_SUCH_SPACE);
 
+    // Without IPROTO_INDEX_BASE the server counts update fields from 0.
+    c.replace(0, TEST, &tuple(&[int(3), int(30), s("z")])).await.unwrap();
+    let mut body = vec![0x84, iproto::key::SPACE_ID];
+    mp::write_uint(&mut body, TEST as u64);
+    body.extend([iproto::key::INDEX_ID, 0, iproto::key::KEY]);
+    body.extend(key(3));
+    body.push(iproto::key::TUPLE);
+    body.extend(update_ops(&[vec![s("+"), int(1), int(5)]]));
+    let r = c.request(iproto::UPDATE, 0, Bytes::from(body)).await.unwrap();
+    assert_eq!(r.rows().unwrap(), vec![vec![int(3), int(35), s("z")]]);
+    c.delete(0, TEST, 0, &key(3)).await.unwrap();
+
     // Raw request with a hand-encoded body.
     let mut body = vec![0x82, iproto::key::SPACE_ID];
     mp::write_uint(&mut body, TEST as u64);
@@ -422,12 +434,18 @@ async fn read_write_conflict_aborts_stream_transaction() {
     // ...and the stream's write + commit must fail with a conflict. Memtx MVCC
     // already aborts the transaction when b commits, so the write itself
     // usually reports it; otherwise the commit does.
-    let res = match a.replace(sid, TEST, &tuple(&[int(1), int(2), s("mine")])).await {
+    let write = a.replace(sid, TEST, &tuple(&[int(1), int(2), s("mine")])).await;
+    let write_failed = write.is_err();
+    let res = match write {
         Err(e) => Err(e),
         Ok(_) => a.commit(sid).await,
     };
     assert_eq!(server_code(res), ER_TRANSACTION_CONFLICT);
-    assert_eq!(server_code(a.commit(sid).await), ER_TRANSACTION_CONFLICT);
+    if write_failed {
+        // The aborted transaction is still attached to the stream: COMMIT
+        // reports the conflict again, ROLLBACK clears it.
+        assert_eq!(server_code(a.commit(sid).await), ER_TRANSACTION_CONFLICT);
+    }
     a.rollback(sid).await.unwrap();
     let r = b.select(0, TEST, 0, Iter::Eq, 0, 1, &key(1)).await.unwrap();
     assert_eq!(r.rows().unwrap(), vec![vec![int(1), int(1), s("other")]]);

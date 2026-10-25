@@ -55,13 +55,15 @@ struct LocalServer {
 }
 
 impl LocalServer {
+    // The child is waited for in `Drop` (or before panicking).
+    #[allow(clippy::zombie_processes)]
     fn start(rows: u64) -> (LocalServer, String) {
         let bin = std::env::var("TARANTOOL").unwrap_or_else(|_| "/opt/src/tarantool/build/src/tarantool".into());
         let dir = std::env::temp_dir().join(format!("tarn-iproto-bench-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("init.lua"), INIT_LUA).unwrap();
-        let child = Command::new(&bin)
+        let mut child = Command::new(&bin)
             .arg("init.lua")
             .current_dir(&dir)
             .env("KV_ROWS", rows.to_string())
@@ -75,7 +77,11 @@ impl LocalServer {
             if let Ok(addr) = std::fs::read_to_string(dir.join("listen.txt")) {
                 return (LocalServer { child, dir }, addr.trim().to_string());
             }
-            assert!(Instant::now() < deadline, "tarantool did not start");
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("tarantool did not start");
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
     }
