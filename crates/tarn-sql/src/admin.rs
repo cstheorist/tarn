@@ -11,13 +11,12 @@ pub enum Admin {
     },
     Commit,
     Rollback,
-    SetAutocommit(bool),
-    /// SET ... statements with no effect on Tarn (names, isolation, sql_mode...).
-    SetIgnored,
-    SetVar {
-        name: String,
-        value: Value,
-    },
+    /// SET ...: the assignments that matter to Tarn (others -- names,
+    /// sql_mode, ... -- are accepted and ignored).
+    Set(Vec<SetItem>),
+    Savepoint(String),
+    RollbackToSavepoint(String),
+    ReleaseSavepoint(String),
     Use(String),
     ShowDatabases {
         like: Option<String>,
@@ -67,8 +66,84 @@ pub enum Admin {
 
 pub const SERVER_VERSION_COMMENT: &str = "Tarn: distributed MySQL on Tarantool";
 
+/// Transaction isolation levels as MySQL names them. READ UNCOMMITTED and
+/// READ COMMITTED run as READ COMMITTED (row locks, plain reads never
+/// validated); REPEATABLE READ and SERIALIZABLE run strictly serializable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Isolation {
+    ReadUncommitted,
+    ReadCommitted,
+    RepeatableRead,
+    Serializable,
+}
+
+impl Isolation {
+    /// 'READ-COMMITTED', 'read committed', 'READ_COMMITTED', ...
+    pub fn parse(s: &str) -> Option<Isolation> {
+        let n: String = s
+            .trim()
+            .chars()
+            .map(|c| {
+                if c == '_' || c == ' ' {
+                    '-'
+                } else {
+                    c.to_ascii_uppercase()
+                }
+            })
+            .collect();
+        Some(match n.as_str() {
+            "READ-UNCOMMITTED" => Isolation::ReadUncommitted,
+            "READ-COMMITTED" => Isolation::ReadCommitted,
+            "REPEATABLE-READ" => Isolation::RepeatableRead,
+            "SERIALIZABLE" => Isolation::Serializable,
+            _ => return None,
+        })
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Isolation::ReadUncommitted => "READ-UNCOMMITTED",
+            Isolation::ReadCommitted => "READ-COMMITTED",
+            Isolation::RepeatableRead => "REPEATABLE-READ",
+            Isolation::Serializable => "SERIALIZABLE",
+        }
+    }
+    pub fn mode(self) -> crate::txn::Mode {
+        match self {
+            Isolation::ReadUncommitted | Isolation::ReadCommitted => crate::txn::Mode::ReadCommitted,
+            Isolation::RepeatableRead | Isolation::Serializable => crate::txn::Mode::Serializable,
+        }
+    }
+}
+
+/// Scope of a SET: the session, the server default for new sessions
+/// (GLOBAL), or only the next transaction (SET TRANSACTION ...).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarScope {
+    Session,
+    Global,
+    Next,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SetItem {
+    Autocommit(bool),
+    Isolation(VarScope, Isolation),
+    /// innodb_lock_wait_timeout in seconds; None: DEFAULT.
+    LockWaitTimeout(VarScope, Option<f64>),
+    UserVar(String, Value),
+}
+
+/// Session state that system variables report.
+pub struct SessionVars<'a> {
+    pub autocommit: bool,
+    pub db: Option<&'a str>,
+    pub isolation: Isolation,
+    pub lock_wait_timeout: f64,
+}
+
 /// Variables reported by SELECT @@x / SHOW VARIABLES.
-pub fn system_var(name: &str, autocommit: bool, db: Option<&str>) -> Option<Value> {
+pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
+    let (autocommit, db) = (sv.autocommit, sv.db);
     let n = name.trim_start_matches('@').to_ascii_lowercase();
     let n = n
         .strip_prefix("session.")
@@ -82,7 +157,7 @@ pub fn system_var(name: &str, autocommit: bool, db: Option<&str>) -> Option<Valu
         "version_compile_os" => Value::str("Linux"),
         "version_compile_machine" => Value::str("x86_64"),
         "autocommit" => Value::Int(autocommit as i64),
-        "tx_isolation" | "transaction_isolation" => Value::str("SERIALIZABLE"),
+        "tx_isolation" | "transaction_isolation" => Value::str(sv.isolation.name()),
         "tx_read_only" | "transaction_read_only" | "read_only" | "super_read_only" => Value::Int(0),
         "max_allowed_packet" => Value::Int(67_108_864),
         "net_buffer_length" => Value::Int(16384),
@@ -107,7 +182,9 @@ pub fn system_var(name: &str, autocommit: bool, db: Option<&str>) -> Option<Valu
         "performance_schema" => Value::Int(0),
         "have_ssl" | "have_openssl" => Value::str("DISABLED"),
         "max_connections" => Value::Int(100_000),
-        "innodb_lock_wait_timeout" | "lock_wait_timeout" => Value::Int(1),
+        "innodb_lock_wait_timeout" => Value::Int(sv.lock_wait_timeout.round() as i64),
+        "lock_wait_timeout" => Value::Int(31_536_000),
+        "innodb_rollback_on_timeout" => Value::Int(0),
         "sql_select_limit" => Value::UInt(u64::MAX),
         "default_storage_engine" | "storage_engine" => Value::str("memtx"),
         "port" => Value::Int(3306),
@@ -301,12 +378,31 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
         }
         "COMMIT" => Admin::Commit,
         "ROLLBACK" => {
-            if t.peek_up(1) == "TO" {
-                return Err(SqlError::unsupported("ROLLBACK TO SAVEPOINT"));
+            t.i += 1;
+            let _ = t.is("WORK");
+            if t.is("TO") {
+                let _ = t.is("SAVEPOINT");
+                Admin::RollbackToSavepoint(unquote(
+                    &t.next()
+                        .ok_or_else(|| SqlError::parse("ROLLBACK TO needs a savepoint name"))?,
+                ))
+            } else {
+                Admin::Rollback
             }
-            Admin::Rollback
         }
-        "SAVEPOINT" | "RELEASE" => return Err(SqlError::unsupported("savepoints")),
+        "SAVEPOINT" => {
+            t.i += 1;
+            Admin::Savepoint(unquote(
+                &t.next().ok_or_else(|| SqlError::parse("SAVEPOINT needs a name"))?,
+            ))
+        }
+        "RELEASE" if t.peek_up(1) == "SAVEPOINT" => {
+            t.i += 2;
+            Admin::ReleaseSavepoint(unquote(
+                &t.next()
+                    .ok_or_else(|| SqlError::parse("RELEASE SAVEPOINT needs a name"))?,
+            ))
+        }
         "USE" => {
             t.i += 1;
             Admin::Use(unquote(
@@ -336,31 +432,109 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
     Ok(Some(r))
 }
 
-fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
-    let w = t.peek_up(0);
-    match w.as_str() {
-        "NAMES" | "CHARACTER" | "CHARSET" => return Ok(Admin::SetIgnored),
-        "TRANSACTION" => return Ok(Admin::SetIgnored),
-        "SESSION" | "GLOBAL" | "LOCAL" | "@@SESSION" | "@@GLOBAL" if t.peek_up(1) == "TRANSACTION" => {
-            return Ok(Admin::SetIgnored)
+fn bad_value(var: &str, v: &str) -> SqlError {
+    SqlError::new(
+        1231,
+        "42000",
+        format!("Variable '{}' can't be set to the value of '{}'", var, v),
+    )
+}
+
+/// Skip the rest of one SET assignment: up to the next comma outside
+/// parentheses (sql_mode = CONCAT(@@sql_mode, ',X') has commas inside).
+fn skip_assignment(t: &mut Toks) {
+    let mut depth = 0i32;
+    while !t.done() {
+        match t.peek_up(0).as_str() {
+            "(" => depth += 1,
+            ")" => depth -= 1,
+            "," if depth <= 0 => break,
+            _ => {}
         }
-        _ => {}
+        t.i += 1;
     }
-    // SET [SESSION|GLOBAL] name = value [, ...]; only autocommit matters.
-    let mut result = Admin::SetIgnored;
+}
+
+/// ISOLATION LEVEL READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SERIALIZABLE
+fn isolation_level(t: &mut Toks) -> SqlResult<Isolation> {
+    let lvl = if t.is("SERIALIZABLE") {
+        Isolation::Serializable
+    } else if t.is("REPEATABLE") && t.is("READ") {
+        Isolation::RepeatableRead
+    } else if t.is("READ") {
+        if t.is("COMMITTED") {
+            Isolation::ReadCommitted
+        } else if t.is("UNCOMMITTED") {
+            Isolation::ReadUncommitted
+        } else {
+            return Err(SqlError::parse("unknown isolation level"));
+        }
+    } else {
+        return Err(SqlError::parse("unknown isolation level"));
+    };
+    Ok(lvl)
+}
+
+fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
+    let mut items = Vec::new();
     loop {
-        let _ = t.is("SESSION") || t.is("GLOBAL") || t.is("LOCAL");
+        if t.done() {
+            break;
+        }
+        let mut scope = VarScope::Session;
+        let mut scoped = false;
+        if t.is("GLOBAL") || t.is("@@GLOBAL") {
+            scope = VarScope::Global;
+            scoped = true;
+        } else if t.is("SESSION") || t.is("LOCAL") || t.is("@@SESSION") || t.is("@@LOCAL") {
+            scoped = true;
+        }
+        let w = t.peek_up(0);
+        if w == "TRANSACTION" {
+            // SET [GLOBAL | SESSION] TRANSACTION characteristic [, ...]:
+            // without a scope it applies to the next transaction only.
+            t.i += 1;
+            let sc = if scoped { scope } else { VarScope::Next };
+            loop {
+                if t.is("ISOLATION") {
+                    if !t.is("LEVEL") {
+                        return Err(SqlError::parse("expected LEVEL after ISOLATION"));
+                    }
+                    items.push(SetItem::Isolation(sc, isolation_level(t)?));
+                } else if t.is("READ") {
+                    let _ = t.is("WRITE") || t.is("ONLY");
+                } else {
+                    break;
+                }
+                if !t.is(",") {
+                    break;
+                }
+            }
+            break;
+        }
+        if matches!(w.as_str(), "NAMES" | "CHARACTER" | "CHARSET") {
+            skip_assignment(t);
+            if !t.is(",") {
+                break;
+            }
+            continue;
+        }
         let name = match t.next() {
             Some(n) => n,
             None => break,
         };
-        let name = name.trim_start_matches('@').to_ascii_lowercase();
-        let name = name
-            .strip_prefix("session.")
-            .or_else(|| name.strip_prefix("global."))
-            .or_else(|| name.strip_prefix("local."))
-            .unwrap_or(&name)
-            .to_string();
+        let lower = name.to_ascii_lowercase();
+        let user_var = lower.starts_with('@') && !lower.starts_with("@@");
+        // `SET @@transaction_isolation = ...` (no scope at all) sets the
+        // next transaction's level, as SET TRANSACTION does (MySQL 8.0).
+        let bare_sysvar = lower.starts_with("@@") && !scoped && !lower.contains('.');
+        let mut n = lower.trim_start_matches('@').to_string();
+        if let Some(rest) = n.strip_prefix("global.") {
+            scope = VarScope::Global;
+            n = rest.to_string();
+        } else if let Some(rest) = n.strip_prefix("session.").or_else(|| n.strip_prefix("local.")) {
+            n = rest.to_string();
+        }
         if !(t.is("=")
             || (t.peek_up(0) == ":" && t.peek_up(1) == "=" && {
                 t.i += 2;
@@ -369,26 +543,53 @@ fn parse_set(t: &mut Toks) -> SqlResult<Admin> {
         {
             return Err(SqlError::parse(format!("syntax error near SET {}", name)));
         }
+        let raw = t.t.get(t.i).cloned().unwrap_or_default();
         let val = t.next().map(|s| literal_value(&s)).unwrap_or(Value::Null);
-        if name == "autocommit" {
-            let on = match &val {
-                Value::Int(i) => *i != 0,
-                Value::Str(s) => s.eq_ignore_ascii_case(b"on") || s.as_ref() == b"1",
-                _ => true,
-            };
-            result = Admin::SetAutocommit(on);
-        } else if matches!(result, Admin::SetIgnored) && name.starts_with('@') {
-            result = Admin::SetVar { name, value: val };
+        if user_var {
+            items.push(SetItem::UserVar(format!("@{}", n), val));
+        } else {
+            match n.as_str() {
+                "autocommit" => {
+                    let on = match &val {
+                        Value::Int(i) => *i != 0,
+                        Value::Str(s) => s.eq_ignore_ascii_case(b"on") || s.as_ref() == b"1",
+                        _ => true,
+                    };
+                    items.push(SetItem::Autocommit(on));
+                }
+                "transaction_isolation" | "tx_isolation" => {
+                    let txt = val.to_string();
+                    let lvl = Isolation::parse(&txt).ok_or_else(|| bad_value(&n, &unquote(&raw)))?;
+                    items.push(SetItem::Isolation(
+                        if bare_sysvar { VarScope::Next } else { scope },
+                        lvl,
+                    ));
+                }
+                "innodb_lock_wait_timeout" => {
+                    // An integer, clamped to 0..=1073741824 (0: do not wait),
+                    // as MariaDB does.
+                    let secs = if matches!(val, Value::Null) {
+                        None
+                    } else {
+                        let neg = raw == "-";
+                        let num = if neg { t.next().unwrap_or_default() } else { raw.clone() };
+                        let v = num.parse::<i64>().map_err(|_| {
+                            SqlError::new(1232, "42000", format!("Incorrect argument type to variable '{}'", n))
+                        })?;
+                        Some((if neg { -v } else { v }).clamp(0, 1_073_741_824) as f64)
+                    };
+                    items.push(SetItem::LockWaitTimeout(scope, secs));
+                }
+                _ => {}
+            }
         }
         // skip the rest of this assignment (expressions are not evaluated)
-        while !t.done() && t.peek_up(0) != "," {
-            t.i += 1;
-        }
+        skip_assignment(t);
         if !t.is(",") {
             break;
         }
     }
-    Ok(result)
+    Ok(Admin::Set(items))
 }
 
 fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
@@ -492,17 +693,80 @@ mod tests {
         );
         assert_eq!(
             recognize("SET autocommit=0").unwrap(),
-            Some(Admin::SetAutocommit(false))
+            Some(Admin::Set(vec![SetItem::Autocommit(false)]))
         );
         assert_eq!(
             recognize("SET @@session.autocommit = ON").unwrap(),
-            Some(Admin::SetAutocommit(true))
+            Some(Admin::Set(vec![SetItem::Autocommit(true)]))
         );
-        assert_eq!(recognize("SET NAMES utf8mb4").unwrap(), Some(Admin::SetIgnored));
+        assert_eq!(recognize("SET NAMES utf8mb4").unwrap(), Some(Admin::Set(vec![])));
+        use Isolation::*;
+        use VarScope::*;
         assert_eq!(
             recognize("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap(),
-            Some(Admin::SetIgnored)
+            Some(Admin::Set(vec![SetItem::Isolation(Session, ReadCommitted)]))
         );
+        assert_eq!(
+            recognize("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE").unwrap(),
+            Some(Admin::Set(vec![SetItem::Isolation(Next, Serializable)]))
+        );
+        assert_eq!(
+            recognize("SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ").unwrap(),
+            Some(Admin::Set(vec![SetItem::Isolation(Global, RepeatableRead)]))
+        );
+        // the shape of Rails' connection setup
+        assert_eq!(
+            recognize(
+                "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci, @@SESSION.sql_mode = CONCAT(@@sql_mode, ',STRICT_ALL_TABLES'), \
+                 @@SESSION.sql_auto_is_null = 0, @@SESSION.transaction_isolation = 'READ-COMMITTED', \
+                 @@SESSION.innodb_lock_wait_timeout = 7"
+            )
+            .unwrap(),
+            Some(Admin::Set(vec![
+                SetItem::Isolation(Session, ReadCommitted),
+                SetItem::LockWaitTimeout(Session, Some(7.0))
+            ]))
+        );
+        assert_eq!(
+            recognize("SET @@GLOBAL.tx_isolation = 'read-uncommitted'").unwrap(),
+            Some(Admin::Set(vec![SetItem::Isolation(Global, ReadUncommitted)]))
+        );
+        assert_eq!(
+            recognize("SET @@transaction_isolation = 'READ-COMMITTED', tx_isolation = 'SERIALIZABLE'").unwrap(),
+            Some(Admin::Set(vec![
+                SetItem::Isolation(Next, ReadCommitted),
+                SetItem::Isolation(Session, Serializable)
+            ]))
+        );
+        assert_eq!(
+            recognize("SET transaction_isolation = 'SNAPSHOT'").unwrap_err().code,
+            1231
+        );
+        assert_eq!(
+            recognize("SET innodb_lock_wait_timeout = -3, @@global.innodb_lock_wait_timeout = DEFAULT").unwrap(),
+            Some(Admin::Set(vec![
+                SetItem::LockWaitTimeout(Session, Some(0.0)),
+                SetItem::LockWaitTimeout(Global, None)
+            ]))
+        );
+        assert_eq!(recognize("SET innodb_lock_wait_timeout = 1.5").unwrap_err().code, 1232);
+        assert_eq!(
+            recognize("SAVEPOINT sp1").unwrap(),
+            Some(Admin::Savepoint("sp1".into()))
+        );
+        assert_eq!(
+            recognize("ROLLBACK TO SAVEPOINT `active_record_1`").unwrap(),
+            Some(Admin::RollbackToSavepoint("active_record_1".into()))
+        );
+        assert_eq!(
+            recognize("ROLLBACK WORK TO sp1").unwrap(),
+            Some(Admin::RollbackToSavepoint("sp1".into()))
+        );
+        assert_eq!(
+            recognize("RELEASE SAVEPOINT sp1").unwrap(),
+            Some(Admin::ReleaseSavepoint("sp1".into()))
+        );
+        assert_eq!(recognize("ROLLBACK").unwrap(), Some(Admin::Rollback));
         assert_eq!(
             recognize("select @@version_comment limit 1").unwrap(),
             Some(Admin::SelectVars(vec![(

@@ -2,7 +2,9 @@
 # Failover test: 2 shards x 3 synchronous replicas behind one tarn-server.
 # Runs the concurrent bank-transfer workload (serializable audits, a ledger
 # that exposes lost or duplicated transfers, autocommit counters that expose
-# double-applied single-row writes) and, while it runs:
+# double-applied single-row writes) next to READ COMMITTED transfers under
+# row locks (with their own ledger: tests/sql/rctest.py, test_zz_bank) and,
+# while they run:
 #   1. moves the leadership of shard 1 to another replica (box.ctl.promote):
 #      the old leader is demoted while the SQL server's connections to it
 #      stay open;
@@ -83,6 +85,9 @@ move_leader() {  # start an election on a follower of shard $1; the old leader s
 python3 "$ROOT/tests/sql/txntest.py" --tarn 127.0.0.1:$PORT --only bank --bank-seconds "$SECS" --threads 8 \
   > "$DIR/bank.out" 2>&1 &
 BANK=$!
+python3 "$ROOT/tests/sql/rctest.py" --tarn 127.0.0.1:$PORT --only bank --bank-seconds "$SECS" --threads 4 \
+  > "$DIR/rcbank.out" 2>&1 &
+RCBANK=$!
 sleep $((SECS / 5))
 move_leader 1 || MOVE_FAILED=1
 sleep $((SECS / 5))
@@ -91,7 +96,9 @@ sleep $((SECS / 5))
 kill_leader 2
 wait $BANK
 rc=$?
-cat "$DIR/bank.out"
+wait $RCBANK
+rcrc=$?
+cat "$DIR/bank.out" "$DIR/rcbank.out"
 KV="127.0.0.1:$(leader_of 1),127.0.0.1:$(leader_of 2)"
 python3 - "$KV" <<EOF
 import json, subprocess, sys
@@ -108,17 +115,17 @@ sys.exit(0 if total == 64000 else 1)
 EOF
 kv=$?
 grep -h -E "tarn recovery|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
-if [ $rc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
+if [ $rc -eq 0 ] && [ $rcrc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
   "$ROOT/scripts/cluster.sh" stop -d "$DIR"
   echo "FAILOVER TEST PASSED"
 else
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR"
-  echo "FAILOVER TEST FAILED (bank rc=$rc kv=$kv move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
+  echo "FAILOVER TEST FAILED (bank rc=$rc rc-bank rc=$rcrc kv=$kv move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
   # On GitHub Actions, put the evidence in an annotation (job logs are not
   # always at hand; annotations are).
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    msg=$({ echo "bank rc=$rc kv=$kv move_failed=${MOVE_FAILED:-0}"; grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
-            echo "--- workload"; tail -25 "$DIR/bank.out"
+    msg=$({ echo "bank rc=$rc rc-bank rc=$rcrc kv=$kv move_failed=${MOVE_FAILED:-0}"; grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
+            echo "--- workload"; tail -25 "$DIR/bank.out"; tail -8 "$DIR/rcbank.out"
             echo "--- storage logs"; grep -h -iE "error|warn|election|promote" "$DIR"/s*.log | tail -15
             echo "--- tarn-server"; grep -h -iE "error|warn" "$DIR"/tarn*.log | tail -8; } |
           sed 's/%/%25/g; s/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g')

@@ -97,6 +97,8 @@ jobs:
           python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
       - name: Transaction tests
         run: python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
+      - name: READ COMMITTED tests
+        run: python3 tests/sql/rctest.py --tarn 127.0.0.1:4000
       - name: Fault injection
         run: tests/faults.sh
       - name: Failover (2 shards x 3 replicas)

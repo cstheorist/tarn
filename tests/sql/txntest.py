@@ -250,14 +250,22 @@ class T:
         self.check(q(c, "SELECT COUNT(*) FROM dup")[0][0] == 2, "txn continues after statement error")
 
     def test_select_for_update(self):
+        # FOR UPDATE takes a row lock (as in InnoDB): a concurrent writer
+        # waits for the transaction instead of making it abort.
         self.fresh("sfu", "CREATE TABLE sfu (id INT PRIMARY KEY, v INT)", ["(1, 0)"])
         a, b = connect(self.args.tarn), connect(self.args.tarn)
         q(a, "BEGIN")
         q(a, "SELECT v FROM sfu WHERE id = 1 FOR UPDATE")
-        q(b, "UPDATE sfu SET v = 5 WHERE id = 1")
-        aborted = expect_conflict(lambda: (q(a, "UPDATE sfu SET v = v + 1 WHERE id = 1"), q(a, "COMMIT")))
+        res = {}
+        th = threading.Thread(target=lambda: res.update(n=q(b, "UPDATE sfu SET v = v + 10 WHERE id = 1")))
+        th.start()
+        time.sleep(0.3)
+        self.check(th.is_alive(), "a concurrent write waits for the row lock")
+        q(a, "UPDATE sfu SET v = v + 1 WHERE id = 1")
+        aborted = expect_conflict(lambda: q(a, "COMMIT"))
+        th.join(30)
         v = q(b, "SELECT v FROM sfu WHERE id = 1")[0][0]
-        self.check((aborted and v == 5) or (not aborted and v == 6), f"FOR UPDATE + concurrent write (aborted={aborted} v={v})")
+        self.check(not aborted and res.get("n") == 1 and v == 11, f"... and applies after the commit (aborted={aborted} v={v})")
 
     # ------------------------------------------------------------------
     def test_bank(self):

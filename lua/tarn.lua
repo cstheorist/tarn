@@ -40,6 +40,7 @@ local net_box = require('net.box')
 local clock = require('clock')
 local ffi = require('ffi')
 local decimal = require('decimal')
+local uuid = require('uuid')
 
 local M = {
     cfg = {
@@ -56,7 +57,8 @@ local M = {
     },
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
-             gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0},
+             gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
+             plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -193,6 +195,11 @@ end
 --     undo removes them if they fail) and the locks that a pending
 --     APPLY/ABORT is deleting (visible only in the read-confirmed view;
 --     their on_commit release removes them).
+-- Pessimistic row locks (see "Row locks" below), declared here because the
+-- write checks consult them.
+local PL = {}       -- PL[sid][iid][kbin] = {holders = {[txid] = 'S' | 'X'}, queue = {request, ...}}
+local PL_N = 0      -- row locks currently held
+
 local LK = {}       -- LK[sid][iid][kbin] = {[txid] = 'R' | 'W'}
 local RL = {}       -- RL[sid][iid][txid] = {{lo, hi, lo_incl, hi_incl}, ...}
 local BYTX = {}     -- BYTX[txid] = {{sid, iid, kbin} | {sid, iid}, ...}
@@ -315,7 +322,38 @@ end
 
 -- Conflicts of a write of `space` with primary key `pk`, old tuple `old`
 -- (nil if none) and new tuple `new` (nil for delete). Returns holder or nil.
+-- Another transaction's row lock on (sid, iid, key), if any.
+local function plock_holder(txid, sid, iid, key)
+    local i = PL[sid] and PL[sid][iid]
+    local e = i and i[kbin(key)]
+    if e == nil then return nil end
+    for t in pairs(e.holders) do
+        if t ~= txid then return t end
+    end
+    return nil
+end
+
+-- A write may not touch a row (or claim a unique value) that another
+-- transaction holds a row lock on (TarnCommit: plocks in CommitLocal and
+-- Prepare.writesOK).
+local function write_plocked(txid, space, pk, new)
+    if PL_N == 0 then return nil end
+    local h = plock_holder(txid, space.id, 0, pk)
+    if h then return h end
+    if new ~= nil then
+        for id, idx in pairs(space.index) do
+            if type(id) == 'number' and id ~= 0 and idx.unique then
+                h = plock_holder(txid, space.id, id, index_key_def(space.id, id):extract_key(new):totable())
+                if h then return h end
+            end
+        end
+    end
+    return nil
+end
+
 local function write_conflict(txid, space, pk, old, new)
+    local ph = write_plocked(txid, space, pk, new)
+    if ph then return ph end
     if NLOCK == 0 then return nil end
     local sid = space.id
     local s = LK[sid]
@@ -411,6 +449,467 @@ local function failure(e)
         return {'error', code, tostring(e.message or e)}
     end
     return {'error', 0, tostring(e)}
+end
+
+-------------------------------------------------------------------------------
+-- Row locks: READ COMMITTED writes and locking reads (TarnCommit: plocks)
+-------------------------------------------------------------------------------
+-- InnoDB-style pessimistic locks, kept in memory on the leader only. A lock
+-- is named by (space_id, index_id, key): a row's primary key, or a value of
+-- a unique key (so that concurrent inserts of one value wait for each
+-- other). Modes: S (shared) and X (exclusive). A request that conflicts
+-- with a holder, or with an earlier waiter, queues; it fails with 1205
+-- after its timeout, or with 1213 at once if waiting would close a cycle in
+-- the wait-for graph of this shard (cross-shard cycles are found by the SQL
+-- servers' detector, which picks a victim through tarn_lock_victim).
+-- Locks end with the transaction: its local commit, APPLY or ABORT, an
+-- explicit tarn_unlock, or the end of the connection that took them.
+--
+-- The table is volatile: a leader change empties it (new generation), and
+-- a transaction whose locks were dropped is BROKEN. Commits carry the
+-- generation the transaction locked under, and are refused unless that
+-- generation is current and the transaction is not broken, so a write is
+-- never applied after its lock was lost (TarnCommit: BugRCNoLockCheck).
+--
+-- Reading under a lock. TarnCommit takes a local commit as one atomic step;
+-- here box.commit() yields until the WAL (and the replication quorum) has
+-- the transaction, and until then other readers still see the previous
+-- versions of its rows. Writers that hold no row lock (autocommit
+-- statements, serializable commits) check for row locks before they write,
+-- so the only commits that can touch a row whose lock was just granted are
+-- those already in flight. tarn_lock waits for them before it reads
+-- (wait_commits): otherwise it would return a version about to be replaced,
+-- and a write computed from it would erase that commit's update.
+
+local INFLIGHT = {}     -- INFLIGHT[seq] = true while that local commit is in flight
+local INFLIGHT_SEQ = 0
+local INFLIGHT_COND = fiber.cond()
+
+-- box.commit() of a local transaction that wrote user rows.
+local function tracked_commit()
+    INFLIGHT_SEQ = INFLIGHT_SEQ + 1
+    local seq = INFLIGHT_SEQ
+    INFLIGHT[seq] = true
+    local ok, err = pcall(box.commit)
+    INFLIGHT[seq] = nil
+    INFLIGHT_COND:broadcast()
+    if not ok then error(err) end
+end
+
+-- Wait until every local commit in flight now has ended (false: deadline).
+local function wait_commits(deadline)
+    local upto = INFLIGHT_SEQ
+    while true do
+        local busy = false
+        for seq in pairs(INFLIGHT) do
+            if seq <= upto then busy = true; break end
+        end
+        if not busy then return true end
+        local left = deadline - clock.monotonic()
+        if left <= 0 then return false end
+        M.stats.commit_waits = M.stats.commit_waits + 1
+        INFLIGHT_COND:wait(math.min(left, 0.05))
+    end
+end
+
+local PTX = {}        -- PTX[txid] = {keys = {[kid] = {sid, iid, kb}}, sessions = {}, waiting = request}
+local PL_SESS = {}    -- PL_SESS[session id] = {[txid] = true}
+local PL_BROKEN = {}  -- PL_BROKEN[txid] = time after which the entry can be forgotten
+local PL_LIVE = {}    -- PL_LIVE[session id] = true: a connected session that took row locks
+local PL_GEN = uuid.str()
+local PL_STATE = nil  -- 'term/ro' the table belongs to
+local PL_WAIT_SEQ = 0
+M.pl_cond = fiber.cond()   -- broadcast whenever row locks are released
+
+local LOCK_TIMEOUT_MSG = 'Lock wait timeout exceeded; try restarting transaction'
+local DEADLOCK_MSG = 'Deadlock found when trying to get lock; try restarting transaction'
+local NOWAIT_MSG = 'Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.'
+local BROKEN_MSG = 'the transaction lost its row locks (leader change or lost connection); it was rolled back'
+
+local function pl_conflict(a, b) return a == 'X' or b == 'X' end
+
+local function pl_entry(sid, iid, kb, create)
+    local s = PL[sid]
+    if s == nil then
+        if not create then return nil end
+        s = {}; PL[sid] = s
+    end
+    local i = s[iid]
+    if i == nil then
+        if not create then return nil end
+        i = {}; s[iid] = i
+    end
+    local e = i[kb]
+    if e == nil and create then
+        e = {holders = {}, queue = {}}
+        i[kb] = e
+    end
+    return e
+end
+
+local function pl_drop_if_free(sid, iid, kb, e)
+    if next(e.holders) == nil and #e.queue == 0 then
+        local i = PL[sid] and PL[sid][iid]
+        if i ~= nil and i[kb] == e then i[kb] = nil end
+    end
+end
+
+local function pl_txn(txid)
+    local p = PTX[txid]
+    if p == nil then
+        p = {keys = {}, sessions = {}}
+        PTX[txid] = p
+    end
+    return p
+end
+
+-- Grantable now: compatible with every other holder and -- unless the
+-- transaction already holds the lock (an upgrade jumps the queue) -- with
+-- every earlier waiter among the first `upto` of the queue.
+local function pl_grantable(e, req, upto)
+    for t, m in pairs(e.holders) do
+        if t ~= req.txid and pl_conflict(m, req.mode) then return false end
+    end
+    if e.holders[req.txid] == nil then
+        for i = 1, upto do
+            local q = e.queue[i]
+            if q ~= req and q.txid ~= req.txid and pl_conflict(q.mode, req.mode) then return false end
+        end
+    end
+    return true
+end
+
+local function pl_hold(txid, sid, iid, kb, e, mode)
+    local cur = e.holders[txid]
+    if cur == nil then
+        PL_N = PL_N + 1
+        pl_txn(txid).keys[sid .. '\0' .. iid .. '\0' .. kb] = {sid, iid, kb}
+    end
+    if cur ~= 'X' then e.holders[txid] = mode end
+end
+
+local function pl_grant_waiters(sid, iid, kb, e)
+    local i = 1
+    while i <= #e.queue do
+        local q = e.queue[i]
+        if pl_grantable(e, q, i - 1) then
+            table.remove(e.queue, i)
+            pl_hold(q.txid, sid, iid, kb, e, q.mode)
+            q.granted = true
+            q.cond:signal()
+        else
+            i = i + 1
+        end
+    end
+end
+
+local function pl_unqueue(sid, iid, kb, e, req)
+    for i, q in ipairs(e.queue) do
+        if q == req then
+            table.remove(e.queue, i)
+            break
+        end
+    end
+    pl_grant_waiters(sid, iid, kb, e)
+    pl_drop_if_free(sid, iid, kb, e)
+end
+
+local function pl_release_key(txid, sid, iid, kb)
+    local p = PTX[txid]
+    if p ~= nil then p.keys[sid .. '\0' .. iid .. '\0' .. kb] = nil end
+    local e = pl_entry(sid, iid, kb, false)
+    if e == nil or e.holders[txid] == nil then return end
+    e.holders[txid] = nil
+    PL_N = PL_N - 1
+    pl_grant_waiters(sid, iid, kb, e)
+    pl_drop_if_free(sid, iid, kb, e)
+    M.pl_cond:broadcast()
+end
+
+local function pl_release_all(txid)
+    local p = PTX[txid]
+    if p == nil then return end
+    PTX[txid] = nil
+    for sess in pairs(p.sessions) do
+        local m = PL_SESS[sess]
+        if m ~= nil then
+            m[txid] = nil
+            if next(m) == nil then PL_SESS[sess] = nil end
+        end
+    end
+    if p.waiting ~= nil then
+        p.waiting.failed = 'released'
+        p.waiting.cond:signal()
+    end
+    for _, k in pairs(p.keys) do
+        local e = pl_entry(k[1], k[2], k[3], false)
+        if e ~= nil and e.holders[txid] ~= nil then
+            e.holders[txid] = nil
+            PL_N = PL_N - 1
+            pl_grant_waiters(k[1], k[2], k[3], e)
+            pl_drop_if_free(k[1], k[2], k[3], e)
+        end
+    end
+    M.pl_cond:broadcast()
+end
+M.pl_release_all = pl_release_all
+
+-- A new leader term or a read-only change empties the table: its locks
+-- belonged to the previous leadership (waiters fail, commits under the old
+-- generation are refused).
+local function pl_fresh()
+    local st = tostring(box.info.election.term) .. '/' .. tostring(box.info.ro)
+    if st == PL_STATE then return end
+    for _, p in pairs(PTX) do
+        if p.waiting ~= nil then
+            p.waiting.failed = 'reset'
+            p.waiting.cond:signal()
+        end
+    end
+    PL, PTX, PL_SESS, PL_BROKEN, PL_LIVE, PL_N = {}, {}, {}, {}, {}, 0
+    PL_GEN = uuid.str()
+    PL_STATE = st
+    M.pl_cond:broadcast()
+end
+M.pl_fresh = pl_fresh
+
+-- The transactions a waiting request waits for: conflicting holders and,
+-- unless it is an upgrade, conflicting requests queued before it.
+local function pl_waits_for(req)
+    local out, e = {}, req.entry
+    for t, m in pairs(e.holders) do
+        if t ~= req.txid and pl_conflict(m, req.mode) then out[t] = true end
+    end
+    if e.holders[req.txid] == nil then
+        for _, q in ipairs(e.queue) do
+            if q == req then break end
+            if q.txid ~= req.txid and pl_conflict(q.mode, req.mode) then out[q.txid] = true end
+        end
+    end
+    return out
+end
+
+-- Would `txid`, waiting on `req`, close a cycle of waiting transactions?
+local function pl_deadlock(txid, req)
+    local seen, stack = {}, {}
+    for t in pairs(pl_waits_for(req)) do stack[#stack + 1] = t end
+    while #stack > 0 do
+        local t = table.remove(stack)
+        if t == txid then return true end
+        if not seen[t] then
+            seen[t] = true
+            local p = PTX[t]
+            if p ~= nil and p.waiting ~= nil then
+                for u in pairs(pl_waits_for(p.waiting)) do stack[#stack + 1] = u end
+            end
+        end
+    end
+    return false
+end
+
+-- Take one lock: 'granted', 'skipped', or an error status table.
+local function pl_acquire(txid, sid, iid, kb, mode, opts, deadline)
+    local e = pl_entry(sid, iid, kb, true)
+    local cur = e.holders[txid]
+    if cur == 'X' or cur == mode then return 'granted' end
+    local req = {txid = txid, mode = mode, entry = e, cond = fiber.cond()}
+    if pl_grantable(e, req, #e.queue) then
+        pl_hold(txid, sid, iid, kb, e, mode)
+        return 'granted'
+    end
+    if opts.skip then
+        pl_drop_if_free(sid, iid, kb, e)
+        return 'skipped'
+    end
+    if opts.nowait then
+        pl_drop_if_free(sid, iid, kb, e)
+        return {'locked', 3572, NOWAIT_MSG}
+    end
+    if cur ~= nil then table.insert(e.queue, 1, req) else e.queue[#e.queue + 1] = req end
+    local p = pl_txn(txid)
+    if pl_deadlock(txid, req) then
+        pl_unqueue(sid, iid, kb, e, req)
+        M.stats.deadlocks = M.stats.deadlocks + 1
+        return {'deadlock', 1213, DEADLOCK_MSG}
+    end
+    PL_WAIT_SEQ = PL_WAIT_SEQ + 1
+    req.id = PL_WAIT_SEQ
+    p.waiting = req
+    M.stats.plock_waits = M.stats.plock_waits + 1
+    while not req.granted and req.failed == nil do
+        local left = deadline - clock.monotonic()
+        if left <= 0 then break end
+        req.cond:wait(left)
+    end
+    if p.waiting == req then p.waiting = nil end
+    if req.granted then return 'granted' end
+    if req.failed == 'reset' then error(box.error.new(box.error.READONLY)) end
+    pl_unqueue(sid, iid, kb, e, req)
+    if req.failed == 'deadlock' then
+        M.stats.deadlocks = M.stats.deadlocks + 1
+        return {'deadlock', 1213, DEADLOCK_MSG}
+    end
+    if req.failed == 'released' then return {'error', 1213, BROKEN_MSG} end
+    M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+    return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+end
+
+local function pl_register_session(txid)
+    local sess = box.session.id()
+    PL_LIVE[sess] = true
+    local p = pl_txn(txid)
+    if not p.sessions[sess] then
+        p.sessions[sess] = true
+        local m = PL_SESS[sess]
+        if m == nil then m = {}; PL_SESS[sess] = m end
+        m[txid] = true
+    end
+end
+
+-- The generation of the locks a session takes: the lock table's generation
+-- and the session id (session ids are never reused while the instance runs).
+local function pl_session_gen()
+    return PL_GEN .. '/' .. box.session.id()
+end
+
+-- Are the row locks `txid` took under generation `gen` all still held?
+-- (nil gen: it took none on this shard.) They are lost when the table is
+-- reset (new leader term, read-only change: PL_GEN changes) or when the
+-- session that took them disconnects (PL_LIVE; PL_BROKEN also refuses the
+-- transaction's further lock requests for a while).
+local function pl_intact(txid, gen)
+    if gen == nil or gen == box.NULL then return true end
+    pl_fresh()
+    if PL_BROKEN[txid] ~= nil then return false end
+    local g, sess = string.match(gen, '^(.*)/(%d+)$')
+    return g == PL_GEN and PL_LIVE[tonumber(sess)] == true
+end
+
+-- When the connection of a session that took row locks closes, they are
+-- released and their transactions are broken (their commits are refused).
+local function pl_on_disconnect()
+    PL_LIVE[box.session.id()] = nil
+    local m = PL_SESS[box.session.id()]
+    if m == nil then return end
+    PL_SESS[box.session.id()] = nil
+    for txid in pairs(m) do
+        if PTX[txid] ~= nil then
+            PL_BROKEN[txid] = clock.monotonic() + M.cfg.max_txn_age + M.cfg.clock_skew
+            pl_release_all(txid)
+        end
+    end
+end
+
+-- tarn_lock(txid, keys, mode, opts): take row locks for txid, in order.
+--   keys : {{space_id, index_id, key}, ...}   (index 0: primary key; else a unique key value)
+--   mode : 'X' or 'S'
+--   opts : {timeout = seconds (50), nowait = bool, skip = bool, read = bool}
+-- Returns {'ok', generation, results} (generation: see pl_session_gen; a
+-- different one than before means the transaction's earlier locks on this
+-- shard were lost); results[i] is, with read, the latest
+-- committed tuple with that index key (box.NULL if none), else true; false
+-- for a key skipped (skip: locked by another transaction). Before reading,
+-- a granted request waits out prepared transactions' W locks on the key
+-- (their value may already be committed: TarnCommit BugRCLockIgnoresWLocks).
+-- Errors: {'locked', 3572} (nowait), {'timeout', 1205}, {'deadlock', 1213},
+-- {'error', 1213} (the transaction's locks were lost). Locks granted before
+-- an error stay held until the transaction ends (as in InnoDB).
+function tarn_lock(txid, keys, mode, opts)
+    writable()
+    lk_fresh()
+    pl_fresh()
+    opts = opts or {}
+    if PL_BROKEN[txid] ~= nil then return {'error', 1213, BROKEN_MSG} end
+    local timeout = opts.timeout
+    if timeout == nil or timeout == box.NULL then timeout = 50 end
+    local deadline = clock.monotonic() + timeout
+    pl_register_session(txid)
+    local results = {}
+    for i, k in ipairs(keys) do
+        local sid, iid, key = k[1], k[2], k[3]
+        if box.space[sid] == nil then return {'error', 1146, 'no such space ' .. tostring(sid)} end
+        local kb = kbin(key)
+        local r = pl_acquire(txid, sid, iid, kb, mode, opts, deadline)
+        if r == 'skipped' then
+            results[i] = false
+        elseif r ~= 'granted' then
+            return r
+        else
+            if not wait_commits(deadline) then
+                M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+                return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+            end
+            local skip = false
+            if point_w_locked(txid, sid, iid, key) then
+                if opts.skip then
+                    pl_release_key(txid, sid, iid, kb)
+                    skip = true
+                elseif opts.nowait then
+                    return {'locked', 3572, NOWAIT_MSG}
+                else
+                    while point_w_locked(txid, sid, iid, key) do
+                        if clock.monotonic() > deadline then
+                            M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+                            return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+                        end
+                        M.stats.lock_waits = M.stats.lock_waits + 1
+                        M.unlock_cond:wait(0.01)
+                    end
+                end
+            end
+            if skip then
+                results[i] = false
+            elseif opts.read then
+                local t = box.space[sid].index[iid]:get(key)
+                results[i] = (t == nil) and box.NULL or t
+            else
+                results[i] = true
+            end
+        end
+    end
+    return {OK, pl_session_gen(), results}
+end
+
+-- tarn_unlock(txid[, keys]): release some row locks of txid ({{space_id,
+-- index_id, key}, ...}: READ COMMITTED drops the locks of rows that turned
+-- out not to match), or all of them (rollback, end of a read-only
+-- transaction).
+function tarn_unlock(txid, keys)
+    if keys == nil or keys == box.NULL then
+        pl_release_all(txid)
+        PL_BROKEN[txid] = nil
+    else
+        for _, k in ipairs(keys) do pl_release_key(txid, k[1], k[2], kbin(k[3])) end
+    end
+    return {OK}
+end
+
+-- Wait-for edges of this shard for the cross-shard deadlock detector:
+-- {{waiter, wait id, {holder, ...}}, ...}.
+function tarn_lock_waits()
+    local out = {}
+    for txid, p in pairs(PTX) do
+        local q = p.waiting
+        if q ~= nil and not q.granted and q.failed == nil then
+            local hs = {}
+            for t in pairs(pl_waits_for(q)) do hs[#hs + 1] = t end
+            out[#out + 1] = {txid, q.id, hs}
+        end
+    end
+    return out
+end
+
+-- Fail the wait `wait_id` of `txid` with 1213 if it is still pending (the
+-- detector found it on a cycle). Returns true if it was.
+function tarn_lock_victim(txid, wait_id)
+    local p = PTX[txid]
+    local q = p and p.waiting
+    if q ~= nil and q.id == wait_id and not q.granted and q.failed == nil then
+        q.failed = 'deadlock'
+        q.cond:signal()
+        return true
+    end
+    return false
 end
 
 -------------------------------------------------------------------------------
@@ -575,10 +1074,13 @@ end
 -- with lock checks, and commits; Tarantool's MVCC validates the reads
 -- themselves. Returns {'ok', n} or {status, code, message}; on failure the
 -- stream's transaction is rolled back.
-function tarn_commit_local(txid, writes, rpoints, rranges)
+function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen)
     writable()
     local ok, res = pcall(function()
         lk_fresh()
+        -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read
+        -- under those locks, outside its stream: the locks must have survived.
+        if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
         -- Without reads on this shard the coordinator sends no stream: the
         -- commit is then its own local transaction.
         if not box.is_in_txn() then box.begin(RW) end
@@ -590,7 +1092,8 @@ function tarn_commit_local(txid, writes, rpoints, rranges)
             if holder then return conflict('row locked by prepared transaction ' .. holder) end
             if res ~= nil then n = n + 1 end
         end
-        box.commit()
+        box.on_commit(function() pl_release_all(txid) end)
+        tracked_commit()
         M.stats.commit_local = M.stats.commit_local + 1
         return {OK, n}
     end)
@@ -625,8 +1128,13 @@ end
 -- the stream's reads, but it misses writes committed by its successor, and
 -- the probe write below goes to a data-temporary space, which Tarantool
 -- accepts even on read-only instances.
-function tarn_validate(txid, rpoints, rranges, cross)
+function tarn_validate(txid, rpoints, rranges, cross, lock_gen)
     writable()
+    if not pl_intact(txid, lock_gen) then
+        if box.is_in_txn() then box.rollback() end
+        pl_release_all(txid)
+        return {'error', 1213, BROKEN_MSG}
+    end
     if box.is_in_txn() then
         local t0 = STREAM_TERM[box.txn_id()]
         if t0 ~= nil and t0 ~= box.info.election.term then
@@ -658,6 +1166,7 @@ function tarn_validate(txid, rpoints, rranges, cross)
         return conflict('read row locked by prepared transaction ' .. h)
     end
     if box.is_in_txn() then box.commit() end
+    pl_release_all(txid)
     return {OK}
 end
 
@@ -820,20 +1329,33 @@ end
 -- Autocommit DML outside any stream: one local transaction. Waits (bounded)
 -- for conflicting locks of prepared cross-shard txns to clear, then retries.
 -- Returns {'ok', affected_rows, last_tuple}.
-function tarn_autocommit(writes)
+function tarn_autocommit(writes, opts)
     lk_fresh()   -- raises ER_READONLY before anything is written
+    pl_fresh()
     local deadline = clock.monotonic() + M.cfg.lock_wait
+    -- Rows held by another transaction's row lock: wait (holding nothing,
+    -- so this cannot deadlock) up to the session's lock wait timeout, as an
+    -- InnoDB autocommit statement waits for row locks.
+    local lock_timeout = opts and opts.lock_timeout
+    if lock_timeout == nil or lock_timeout == box.NULL then lock_timeout = 50 end
+    local pl_deadline = clock.monotonic() + lock_timeout
     while true do
         local ok, res = pcall(function()
             box.begin(RW)
             local n, last = 0, nil
             for _, w in ipairs(writes) do
+                local space = box.space[w[2]]
+                if space ~= nil and PL_N > 0 then
+                    local pk, new = write_target(space, w)
+                    local ph = write_plocked('', space, pk, new)
+                    if ph then box.rollback(); return {'plocked', ph} end
+                end
                 local t, holder, old = apply_checked('', w)
                 if holder then box.rollback(); return {'locked', holder} end
                 n = n + affected(w[1], old, t)
                 if t ~= nil then last = t end
             end
-            box.commit()
+            tracked_commit()
             return {OK, n, last}
         end)
         if not ok then
@@ -841,13 +1363,69 @@ function tarn_autocommit(writes)
             reraise_readonly(res)
             return failure(res)
         end
-        if res[1] ~= 'locked' then return res end
-        if clock.monotonic() > deadline then
-            return conflict('row locked by prepared transaction ' .. res[2])
+        if res[1] == 'plocked' then
+            if clock.monotonic() > pl_deadline then
+                M.stats.lock_timeouts = M.stats.lock_timeouts + 1
+                return {'timeout', 1205, LOCK_TIMEOUT_MSG}
+            end
+            M.stats.plock_waits = M.stats.plock_waits + 1
+            M.pl_cond:wait(math.min(0.1, math.max(0.001, pl_deadline - clock.monotonic())))
+            deadline = clock.monotonic() + M.cfg.lock_wait
+        elseif res[1] ~= 'locked' then
+            return res
+        else
+            if clock.monotonic() > deadline then
+                return conflict('row locked by prepared transaction ' .. res[2])
+            end
+            M.stats.lock_waits = M.stats.lock_waits + 1
+            M.unlock_cond:wait(0.01)
         end
-        M.stats.lock_waits = M.stats.lock_waits + 1
-        M.unlock_cond:wait(0.01)
     end
+end
+
+-- TarnCommit!CommitRC: the commit of a READ COMMITTED transaction whose
+-- writes are all on this shard. Its row locks must have survived (same
+-- generation, not broken); prepared transactions' locks on what it writes
+-- are waited out (bounded); the writes are applied in one local
+-- transaction, and the row locks are released once it has committed.
+-- Returns {'ok', n} or {status, code, message}.
+function tarn_commit_rc(txid, writes, gen)
+    writable()
+    local ok, res = pcall(function()
+        lk_fresh()
+        if not pl_intact(txid, gen) then
+            pl_release_all(txid)
+            return {'error', 1213, BROKEN_MSG}
+        end
+        local deadline = clock.monotonic() + M.cfg.lock_wait
+        while true do
+            box.begin(RW)
+            local n, holder = 0, nil
+            for _, w in ipairs(writes) do
+                local r, h = apply_checked(txid, w)
+                if h then holder = h; break end
+                if r ~= nil then n = n + 1 end
+            end
+            if holder == nil then
+                box.on_commit(function() pl_release_all(txid) end)
+                tracked_commit()
+                M.stats.commit_rc = M.stats.commit_rc + 1
+                return {OK, n}
+            end
+            box.rollback()
+            if clock.monotonic() > deadline then
+                return conflict('row locked by prepared transaction ' .. holder)
+            end
+            M.stats.lock_waits = M.stats.lock_waits + 1
+            M.unlock_cond:wait(0.01)
+        end
+    end)
+    if not ok then
+        if box.is_in_txn() then box.rollback() end
+        reraise_readonly(res)
+        return failure(res)
+    end
+    return res
 end
 
 -------------------------------------------------------------------------------
@@ -874,7 +1452,7 @@ local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
 -- Prepare requires t \notin expired), because a delayed or duplicated
 -- PREPARE may meet a participant whose records were already collected after
 -- the transaction committed. Raises ER_READONLY on a read-only instance.
-function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
+function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen)
     writable()
     rpoints, rranges = rpoints or {}, rranges or {}
     local function vote_no(code, msg)
@@ -891,6 +1469,7 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
             box.commit()
         end)
         if box.is_in_txn() then box.rollback() end
+        pl_release_all(txid)   -- the transaction aborts: its row locks here can go
         M.stats.prepare_no = M.stats.prepare_no + 1
         return {'no', code, msg}
     end
@@ -909,6 +1488,9 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts)
             return {'expired', 1213, 'transaction too old'}
         end
         lk_fresh()
+        -- RC transactions: their row locks must have survived (TarnCommit:
+        -- Prepare.readsOK for t \in RC).
+        if not pl_intact(txid, lock_gen) then return vote_no(1213, BROKEN_MSG) end
         -- readsOK: no W lock of another prepared txn on anything we read.
         local h = reads_w_locked(txid, rpoints, rranges)
         if h then return vote_no(1213, 'read row locked by ' .. h) end
@@ -1001,6 +1583,7 @@ local function release_locks(txid)
     end
     box.on_commit(function()
         lk_release(txid)
+        pl_release_all(txid)   -- row locks end with the transaction (TarnCommit: RCApplied)
         M.unlock_cond:broadcast()
     end)
 end
@@ -1043,16 +1626,19 @@ function tarn_apply(txid)
                 box.space._tarn_txn:replace{txid, 'committed', r.parts, now(), expiry()}
             end
         end
-        for _, l in box.space._tarn_locks.index.txid:pairs({txid}, {iterator = 'EQ'}) do
-            if l.mode == 'W' and l.op ~= nil then
-                local space = box.space[l.space_id]
-                if l.op == 'delete' then space:delete(msgpack.decode(l.key))
-                else space:replace(l.tuple) end
+        -- Deletes first: a new row may reuse a deleted row's unique values.
+        for _, pass in ipairs({'delete', 'write'}) do
+            for _, l in box.space._tarn_locks.index.txid:pairs({txid}, {iterator = 'EQ'}) do
+                if l.mode == 'W' and l.op ~= nil and (l.op == 'delete') == (pass == 'delete') then
+                    local space = box.space[l.space_id]
+                    if l.op == 'delete' then space:delete(msgpack.decode(l.key))
+                    else space:replace(l.tuple) end
+                end
             end
         end
         release_locks(txid)
         box.space._tarn_part:replace{txid, 'applied', p.dshard, p.parts, now(), expiry()}
-        box.commit()
+        tracked_commit()
         M.stats.apply = M.stats.apply + 1
         return {OK, 'applied'}
     end)
@@ -1073,6 +1659,7 @@ function tarn_abort(txid, dshard, parts)
         local p = box.space._tarn_part:get{txid}
         if p ~= nil and p.state ~= 'prepared' then
             box.rollback()
+            pl_release_all(txid)
             if p.state == 'applied' then
                 M.stats.protocol_errors = M.stats.protocol_errors + 1
                 log.error('tarn: ABORT of %s, but the participant applied it', txid)
@@ -1288,6 +1875,11 @@ end
 
 -- Garbage collection of expired records (see "Record lifecycle").
 local function gc_pass(t)
+    -- Forget broken transactions whose commits can no longer arrive.
+    local mono = clock.monotonic()
+    for txid, until_t in pairs(PL_BROKEN) do
+        if until_t < mono then PL_BROKEN[txid] = nil end
+    end
     local limit, scan = M.cfg.gc_batch * 4, M.cfg.gc_batch * 40
     -- Participant records.
     local victims, waiting, n = {}, {}, 0   -- waiting[dshard] = {txid, ...}
@@ -1492,7 +2084,7 @@ end
 
 function tarn_info()
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats,
-            locks = box.space._tarn_locks:len(), lock_index = NLOCK, prepared = box.space._tarn_part.index.state:count({'prepared'}),
+            locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0}
 end
@@ -1511,8 +2103,9 @@ function M.init(cfg)
     box.space._space:on_replace(function() invalidate_key_defs() end)
     -- The lock index is maintained only while this instance is the leader;
     -- any election state change makes it stale (rebuilt before next use).
-    box.ctl.on_election(function() LK_STALE = true end)
-    box.watch('box.status', function() LK_STALE = true end)   -- read-only changes
+    box.ctl.on_election(function() LK_STALE = true; pl_fresh() end)
+    box.watch('box.status', function() LK_STALE = true; pl_fresh() end)   -- read-only changes
+    box.session.on_disconnect(pl_on_disconnect)
     if not box.info.ro then lk_reload() end
     M.start_recovery()
     rawset(_G, 'tarn', M)
