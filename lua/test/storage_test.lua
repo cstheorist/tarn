@@ -758,6 +758,93 @@ r = {c[1]:call('tarn_alter_build', {'test.bld', bdone}), c[1]:call('tarn_alter_p
 check('BUILD, PREPARE and APPLY: the index under its own name',
       r[1][1] == 'ok' and r[2][1] == 'ok' and r[3][1] == 'ok' and bindex(5) == 'bv', {r, bindex(5)})
 
+print('indexes over instant-ADD fields (issue #70)')
+do
+    local fmt = table.deepcopy(afmt)
+    fmt[5] = {name = 'added', type = 'integer', is_nullable = true}
+    for _, engine in ipairs({'memtx', 'vinyl'}) do
+        local name = 'test.fill_' .. engine
+        for i = 1, 2 do
+            c[i]:call('tarn_create_table', {{name = name, engine = engine, format = fmt, indexes = aidx}})
+        end
+        c[1]:reload_schema()
+        local fsid = c[1].space[name].id
+        local builds = {{5, 'added_idx', false, {{field = 5, type = 'integer', is_nullable = true}}},
+                        {6, 'existing_idx', false, {{field = 2, type = 'integer'}}}}
+        local indexes = table.deepcopy(aidx)
+        indexes[3] = {name = 'added_idx', unique = false,
+                      parts = {{field = 5, type = 'integer', is_nullable = true}}}
+        indexes[4] = {name = 'existing_idx', unique = false, parts = {{field = 2, type = 'integer'}}}
+        local a = {ver = 1, timeout = 1, checks = {{5, 'added', 'indexed', box.NULL, box.NULL, 3}},
+                   builds = builds, drop = {}, renames = {},
+                   def = {name = name, id = fsid, format = fmt, indexes = indexes, json = '{}', ver = 1}}
+        local function fw(op) return c[1]:call('tarn_autocommit', {{op}, {fence = {fsid, 0}}}) end
+        local function fi(id)
+            return c[1]:eval('local n, id = ... local i = box.space[n].index[id] return i and i.name', {name, id})
+        end
+        local function label(s) return engine .. ': ' .. s end
+        fw({'insert', fsid, {1, 10, 'short', 1}})
+        fw({'insert', fsid, {2, 20, 'null', 1, box.NULL}})
+        r = c[1]:call('tarn_alter_build', {name, a})
+        check(label('BUILD defers every index when any field needs a presence check'),
+              r[1] == 'ok' and fi(5) == nil and fi(6) == nil, r)
+        for _ = 1, 2 do
+            r = c[1]:call('tarn_alter_prepare', {name, a})
+            check(label('short non-NULL fill fails PREPARE with 1846, repeatably'),
+                  r[1] == 'error' and r[2] == 1846 and fi(5) == nil and fi(6) == nil, r)
+        end
+        check(label('failed check releases the fence'), fw({'update', fsid, {1}, {{'+', 2, 1}}})[1] == 'ok')
+        local limit = c[1]:eval('return tarn.cfg.alter_check_rows')
+        c[1]:eval('tarn.cfg.alter_check_rows = 1')
+        r = c[1]:call('tarn_alter_prepare', {name, a})
+        c[1]:eval('tarn.cfg.alter_check_rows = ...', {limit})
+        check(label('presence checks retain the row-scan bound'), r[1] == 'error' and r[2] == 1846
+              and tostring(r[3]):find('limit 1', 1, true) ~= nil, r)
+        check(label('bounded refusal does not leave a fence'), fw({'update', fsid, {1}, {{'+', 2, 1}}})[1] == 'ok')
+        local txid = 'FILL_' .. engine
+        r = prepare(1, txid, {{'replace', fsid, {1, 12, 'full', 1, 3}}})
+        check(label('old-layout writer can prepare before the DDL fence'), r[1] == 'yes', r)
+        local short = table.deepcopy(a)
+        short.timeout = 0.01
+        r = c[1]:call('tarn_alter_prepare', {name, short})
+        check(label('PREPARE drains writers before checking short tuples'), r[1] == 'timeout' and r[2] == 1205, r)
+        local got
+        fiber.create(function() got = c[1]:call('tarn_alter_prepare', {name, a}) end)
+        fiber.sleep(0.05)
+        check(label('presence check waits for the prepared writer'), got == nil, got)
+        c[1]:call('tarn_apply', {txid})
+        local deadline = fiber.time() + 5
+        while got == nil and fiber.time() < deadline do fiber.sleep(0.01) end
+        check(label('materialized value and explicit NULL both pass after drain'),
+              got and got[1] == 'ok' and fi(5) == '_tarn_tmp_5' and fi(6) == '_tarn_tmp_6', got)
+        r = c[1]:call('tarn_alter_prepare', {name, a})
+        check(label('successful PREPARE is repeatable'), r[1] == 'ok', r)
+        c[1]:call('tarn_alter_abort', {name, a})
+        check(label('ABORT removes both temporary indexes'), fi(5) == nil and fi(6) == nil)
+        fw({'insert', fsid, {3, 30, 'late short', 1}})
+        -- No fence now: APPLY must redo PREPARE, as after a restart. It
+        -- cannot publish an index if an old-layout writer left a short row.
+        r = c[1]:call('tarn_alter_apply', {name, a})
+        local ver = c[1]:eval('local r = box.space._tarn_catalog:get{...} return r.def.ver or 0', {name})
+        check(label('APPLY without its fence rechecks and fails closed'),
+              r[1] == 'error' and r[2] == 1846 and ver == 0 and fi(5) == nil and fi(6) == nil, {r, ver})
+        check(label('failed APPLY releases the reconstructed fence'), fw({'delete', fsid, {3}})[1] == 'ok')
+        c[1]:call('tarn_alter_prepare', {name, a})
+        r = c[1]:call('tarn_alter_apply', {name, a})
+        check(label('fully present fields can be indexed and published'),
+              r[1] == 'ok' and fi(5) == 'added_idx' and fi(6) == 'existing_idx', r)
+        r = c[1]:call('tarn_alter_apply', {name, a})
+        check(label('published APPLY remains idempotent'), r[1] == 'ok' and r[2] == 'applied', r)
+        local null_checks = table.deepcopy(a)
+        null_checks.ver, null_checks.checks = 2, box.NULL
+        null_checks.builds = {{7, 'null_checks', false, {{field = 2, type = 'integer'}}}}
+        r = c[1]:call('tarn_alter_build', {name, null_checks})
+        check(label('BUILD accepts explicit MessagePack NULL checks'),
+              r[1] == 'ok' and (engine ~= 'vinyl' or fi(7) == '_tarn_tmp_7'), r)
+        c[1]:call('tarn_alter_abort', {name, null_checks})
+    end
+end
+
 print('DROP TABLE under a prepared transaction')
 -- A table dropped between a transaction's PREPARE and its APPLY: the APPLY
 -- still lands the transaction's other writes and releases its locks (it
