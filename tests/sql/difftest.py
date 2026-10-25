@@ -18,6 +18,7 @@ import re
 import sys
 
 import pymysql
+from pymysql.constants import CLIENT
 
 SCHEMA = [
     "CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(20), c DECIMAL(10,2), d DOUBLE, e DATETIME, KEY ka (a))",
@@ -393,10 +394,27 @@ CASES = [
 ]
 
 
-def connect(hp, db=None):
+# Run on connections with CLIENT_FOUND_ROWS (issue #39): UPDATE reports the
+# rows it matched, and an upsert that changes nothing reports 1.
+FOUND_ROWS_CASES = [
+    ("UPDATE t1 SET a = a WHERE id = 3", "dml:t1"),
+    ("UPDATE t1 SET a = 4 WHERE id BETWEEN 1 AND 6", "dml:t1"),
+    ("UPDATE t1 SET a = a WHERE id = 9999", "dml:t1"),
+    ("INSERT INTO t1 (id, a) VALUES (3, 4) ON DUPLICATE KEY UPDATE a = 4", "dml:t1"),
+    ("INSERT INTO t1 (id, a) VALUES (3, 5) ON DUPLICATE KEY UPDATE a = VALUES(a)", "dml:t1"),
+    ("BEGIN", "q"),
+    ("UPDATE t1 SET b = b WHERE id < 10", "dml:t1"),
+    ("COMMIT", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("UPDATE t1 SET a = a WHERE id < 10", "dml:t1"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+]
+
+
+def connect(hp, db=None, flags=0):
     host, port = hp.split(":")
     return pymysql.connect(host=host, port=int(port), user="sb", password="", database=db,
-                           autocommit=True, charset="utf8mb4")
+                           autocommit=True, charset="utf8mb4", client_flag=flags)
 
 
 def norm(v):
@@ -483,7 +501,8 @@ def main():
     setup(a, args.db)
     setup(b, args.db)
     fails = warns = 0
-    for sql, kind in CASES:
+    fa, fb = (connect(hp, args.db, CLIENT.FOUND_ROWS) for hp in (args.tarn, args.ref))
+    for (a, b), (sql, kind) in [((a, b), c) for c in CASES] + [((fa, fb), c) for c in FOUND_ROWS_CASES]:
         ra, rb = run(a, sql), run(b, sql)
         ok = True
         msg = ""
@@ -528,7 +547,7 @@ def main():
             print(f"FAIL {sql}\n    tarn: {str(ra)[:600]}\n    ref:  {str(rb)[:600]}{msg}")
         elif args.v or msg:
             print(f"ok   {sql}{msg}")
-    print(f"{len(CASES)} cases, {fails} failed, {warns} warnings")
+    print(f"{len(CASES) + len(FOUND_ROWS_CASES)} cases, {fails} failed, {warns} warnings")
     sys.exit(1 if fails else 0)
 
 

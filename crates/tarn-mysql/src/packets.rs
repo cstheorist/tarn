@@ -31,6 +31,7 @@ pub mod cap {
 /// What the server offers. No SSL, compression, session tracking or
 /// found-rows semantics.
 pub const SERVER_CAPS: u32 = cap::LONG_PASSWORD
+    | cap::FOUND_ROWS
     | cap::LONG_FLAG
     | cap::CONNECT_WITH_DB
     | cap::PROTOCOL_41

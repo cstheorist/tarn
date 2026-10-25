@@ -91,7 +91,14 @@ pub struct PrepareInfo {
 
 /// SQL engine behind one client connection.
 pub trait Backend: Send {
-    fn on_connect(&mut self, user: &str, database: Option<&str>) -> impl Future<Output = SqlResult<()>> + Send;
+    /// `found_rows`: the client set CLIENT_FOUND_ROWS (UPDATE reports the
+    /// rows it matched, not those it changed).
+    fn on_connect(
+        &mut self,
+        user: &str,
+        database: Option<&str>,
+        found_rows: bool,
+    ) -> impl Future<Output = SqlResult<()>> + Send;
     fn on_query(&mut self, sql: &str) -> impl Future<Output = SqlResult<QueryResult>> + Send;
     fn on_prepare(&mut self, stmt_id: u32, sql: &str) -> impl Future<Output = SqlResult<PrepareInfo>> + Send;
     fn on_execute(&mut self, stmt_id: u32, params: &[Value]) -> impl Future<Output = SqlResult<QueryResult>> + Send;
@@ -301,6 +308,10 @@ impl<B: Backend> Conn<B> {
         self.caps & cap::DEPRECATE_EOF != 0
     }
 
+    fn found_rows(&self) -> bool {
+        self.caps & cap::FOUND_ROWS != 0
+    }
+
     /// Status flags for an OK/EOF packet: the backend's, plus
     /// SERVER_MORE_RESULTS_EXISTS while a multi-statement has more results.
     fn status(&self) -> u16 {
@@ -425,7 +436,7 @@ impl<B: Backend> Conn<B> {
                 return Ok(false);
             }
         }
-        match self.backend.on_connect(&user, db.as_deref()).await {
+        match self.backend.on_connect(&user, db.as_deref(), self.found_rows()).await {
             Ok(()) => {
                 self.user = user;
                 self.db = db;
@@ -485,9 +496,10 @@ impl<B: Backend> Conn<B> {
         self.stmts.clear();
         self.backend.on_disconnect().await;
         let (user, db) = (self.user.clone(), self.db.clone());
-        if let Err(e) = self.backend.on_connect(&user, db.as_deref()).await {
+        let found_rows = self.found_rows();
+        if let Err(e) = self.backend.on_connect(&user, db.as_deref(), found_rows).await {
             tracing::debug!("reset connection: reconnect with db {:?} failed: {}", db, e);
-            let _ = self.backend.on_connect(&user, None).await;
+            let _ = self.backend.on_connect(&user, None, found_rows).await;
         }
     }
 
