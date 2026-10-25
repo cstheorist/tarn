@@ -38,7 +38,10 @@ run "clone" git clone --quiet --depth 1 --branch "$VERSION" --recurse-submodules
 # The bundled mimalloc is downloaded at build time from a third-party
 # server; the system allocator is fine for tests.
 run "configure" cmake -S "$SRC/tarantool" -B "$SRC/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_INSTALL_PREFIX="$PREFIX" -DENABLE_BUNDLED_MIMALLOC=OFF -DMIMALLOC_OVERRIDE=none -DENABLE_FEEDBACK_DAEMON=OFF
-run "build" cmake --build "$SRC/build" --parallel "$(nproc)"
-run "install" cmake --install "$SRC/build"
+  -DENABLE_BUNDLED_MIMALLOC=OFF -DMIMALLOC_OVERRIDE=none -DENABLE_FEEDBACK_DAEMON=OFF
+run "build" cmake --build "$SRC/build" --parallel "$(nproc)" --target tarantool
+# Tarn needs only the server binary: every module it uses is built in. (A
+# full `cmake --install` also wants the EmmyLua stubs, which are generated
+# only in ENABLE_DIST builds.)
+run "install" install -D -m 0755 "$SRC/build/src/tarantool" "$PREFIX/bin/tarantool"
 "$PREFIX/bin/tarantool" --version | head -2
