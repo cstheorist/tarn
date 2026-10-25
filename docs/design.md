@@ -473,11 +473,14 @@ READ COMMITTED transaction's write then erased the autocommit update. The
 concurrent counter test (`tests/sql/rctest.py`) lost 3 to 17 of 3,200
 decrements per run. Writers that hold no row lock check for row locks before
 they write, so only commits already in flight when a lock is granted can
-still change the row: `tarn_lock` now waits for every local commit that was
-in flight at the grant (`wait_commits`) before it reads, and the counter
-test loses nothing. The model splits the local commit's confirmation off
-(`infl`, `ConfirmLocal`: other readers still see the old value until then)
-and blocks `RCLock` while a commit to the key is in flight; with
+still change the row: `tarn_lock` now waits for the local commits in
+flight at the grant that write the row (`wait_commits`) before it reads,
+and the counter test loses nothing. A commit records its writes once it has
+done them (`inflight_writes`); until then it may write anything, and every
+grant waits for it; afterwards only a grant on its primary key, or on a
+unique value its old or new row holds, does. The model splits the local
+commit's confirmation off (`infl`, `ConfirmLocal`: other readers still see
+the old value until then) and blocks `RCLock` while a commit to the key is in flight; with
 `BugRCLockReadsInFlight` TLC finds the lost update in a 5-step trace.
 
 The model's READ COMMITTED transactions (the set `RC`) have a set `LSet` of

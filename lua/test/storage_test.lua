@@ -746,6 +746,32 @@ c[1]:call('tarn_unlock', {'VK1'})
 local rw = result(fw)
 check('... and is applied once it is released', rw[1] == 'ok' and vget(3) == 31, {rw, vget(3)})
 
+-- Once a commit in flight has done its writes, only lock grants on the keys
+-- they touch wait for it: the primary key, or a unique value the old or the
+-- new row holds.
+r = c[1]:call('tarn_autocommit', {{{'update', vsid, {3}, {{'=', 3, 'u3'}}}}})
+hook('written', 'hold')
+fw = async('tarn_autocommit', {{{'update', vsid, {3}, {{'=', 3, 'u4'}, {'+', 2, 1}}}}, {lock_timeout = 5}})
+hook('written', 'reached')
+t0 = fiber.clock()
+r = c[1]:call('tarn_lock', {'VK2', {{vsid, 0, {2}}, {vsid, 1, {'u5'}}}, 'X', {read = true, timeout = 5}})
+check('a row lock on another row does not wait for a commit in flight', r[1] == 'ok' and r[3][1][2] == 22
+      and r[3][2] == nil and fiber.clock() - t0 < 1, r)
+local fks = {}
+for i, k in ipairs({{0, {3}}, {1, {'u3'}}, {1, {'u4'}}}) do
+    fks[i] = async('tarn_lock', {'VK' .. (2 + i), {{vsid, k[1], k[2]}}, 'X', {read = true, timeout = 5}})
+end
+fiber.sleep(0.2)
+check('... but one on its row, its old or its new unique value does',
+      not fks[1]:is_ready() and not fks[2]:is_ready() and not fks[3]:is_ready())
+hook('written', 'release')
+local rks = {result(fks[1]), result(fks[2]), result(fks[3])}
+check('... then read the row as it was', rks[1][1] == 'ok' and rks[1][3][1][2] == 31
+      and rks[2][3][1][2] == 31 and rks[3][3][1] == nil, rks)
+for i = 2, 5 do c[1]:call('tarn_unlock', {'VK' .. i}) end
+rw = result(fw)
+check('... and the write is applied once they are released', rw[1] == 'ok' and vget(3) == 32, {rw, vget(3)})
+
 -- A schema change while a local commit made with the old definition is held
 -- after its read: PREPARE of the change waits for it, and the commit fails
 -- its fence check in the atomic section (1412).
