@@ -15,7 +15,7 @@ servers write to it (`tests/sql/`).
 
 | Feature | Support |
 |---|---|
-| Handshake | HandshakeV10, `mysql_native_password` (clients asking for `caching_sha2_password` are switched), `CLIENT_DEPRECATE_EOF` |
+| Handshake | HandshakeV10, `mysql_native_password` (clients asking for `caching_sha2_password` are switched), `CLIENT_DEPRECATE_EOF`, `CLIENT_FOUND_ROWS` |
 | Users | from the `--user NAME:PASSWORD` flags, or any user with `--allow-all` / no `--user` |
 | Text protocol | `COM_QUERY` with full result sets |
 | Binary protocol | `COM_STMT_PREPARE`, `EXECUTE` (all parameter types), `SEND_LONG_DATA`, `CLOSE`, `RESET` |
@@ -57,7 +57,10 @@ servers write to it (`tests/sql/`).
   `ON DUPLICATE KEY UPDATE` updates and `REPLACE` deletes.
 * Single-table `UPDATE` and `DELETE`, with `WHERE`, `ORDER BY` and `LIMIT`.
 * Affected-row counts follow MySQL (an `UPDATE` that changes nothing counts
-  0, a `REPLACE` of an existing row counts 2).
+  0, a `REPLACE` of an existing row counts 2). With `CLIENT_FOUND_ROWS`, an
+  `UPDATE` counts the rows it matched and an upsert that changes nothing
+  counts 1, as MySQL does for the drivers that set it (Rails, Go's
+  `clientFoundRows`).
 * `AUTO_INCREMENT`, `LAST_INSERT_ID()`.
 
 ### Definitions

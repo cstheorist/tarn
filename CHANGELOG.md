@@ -110,6 +110,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `CLIENT_FOUND_ROWS` was ignored: an `UPDATE` that matched a row without
+  changing it reported 0 affected rows to drivers that ask for matched rows
+  (Rails, Go's `clientFoundRows=true`), which read it as a missing row. It now
+  reports matched rows, in every `UPDATE` path, and 1 for an upsert that
+  changes nothing ([#39](https://github.com/cstheorist/tarn/issues/39)).
 - Bootstrapping a replicated shard could stop storage instances: the new
   leader's first synchronous write, made while its replicas were still
   joining, timed out (stopping the leader), or reached a joining replica,
