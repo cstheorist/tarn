@@ -964,6 +964,80 @@ pub async fn select_keys(
     Ok(out)
 }
 
+/// A predicate a shard evaluates on stored tuples while counting
+/// (`tarn_count`): a column against constants, as SQL compares them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoragePred {
+    pub col: usize,
+    pub op: PredOp,
+    /// Integers compare exactly; otherwise strings, by bytes.
+    pub int: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PredOp {
+    Cmp(&'static str, Value),
+    In(Vec<Value>),
+    IsNull,
+    NotNull,
+}
+
+/// Count rows of `t` on one shard (`tarn_count`): those the index scan
+/// `key`/`iter`/`end` covers that satisfy `preds`, leaving out the stored
+/// versions of the rows whose primary keys are in `exclude`.
+#[allow(clippy::too_many_arguments)]
+pub async fn count_rows(
+    client: &Client,
+    stream: u64,
+    t: &TableDef,
+    index: u32,
+    key: &[Value],
+    iter: Iter,
+    end: Option<(&[Value], bool)>,
+    preds: &[StoragePred],
+    exclude: &[&[Value]],
+    lock_check: bool,
+    begin: bool,
+) -> SqlResult<u64> {
+    let mut m = Mp::new();
+    m.arr(10)
+        .uint(t.space_id as u64)
+        .uint(index as u64)
+        .vals(key)
+        .uint(iter as u64);
+    match end {
+        Some((e, incl)) => m.vals(e).bool(incl),
+        None => m.nil().bool(true),
+    };
+    m.arr(preds.len());
+    for p in preds {
+        m.arr(5).uint(t.field_of(p.col) as u64 + 1);
+        match &p.op {
+            PredOp::Cmp(op, v) => m.str(op).val(v),
+            PredOp::In(vs) => m.str("in").vals(vs),
+            PredOp::IsNull => m.str("null").nil(),
+            PredOp::NotNull => m.str("notnull").nil(),
+        };
+        m.val(&t.layout.fills[p.col]).bool(p.int);
+    }
+    m.arr(exclude.len());
+    for k in exclude {
+        m.vals(k);
+    }
+    m.bool(lock_check).bool(begin);
+    let r = client
+        .call(stream, "tarn_count", &m.0)
+        .await
+        .map_err(from_iproto_read)?;
+    let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+    let (_, mut rd) = lua_status(&d)?;
+    match rd.value()? {
+        Value::Int(n) if n >= 0 => Ok(n as u64),
+        Value::UInt(n) => Ok(n),
+        other => Err(crate::mpw::proto(format!("bad count {:?}", other))),
+    }
+}
+
 /// Read rows of `t` from one shard, optionally inside a stream.
 /// `key`/`iter`/`end` describe a bounded index scan (see tarn_select).
 #[allow(clippy::too_many_arguments)]

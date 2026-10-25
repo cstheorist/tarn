@@ -80,6 +80,17 @@ and the check run without yielding, so they observe one state; if a prepared
 cross-shard transaction holds a W lock on the row, the read waits until it is
 applied (this is what makes autocommit reads strictly serializable, see §2.3).
 
+**Counts** (`SELECT COUNT(*) FROM t WHERE <index range> [AND <simple
+conditions>]`): each shard the range touches counts it with `tarn_count`,
+which takes the same scan as `tarn_select` (and the same lock check or
+stream) but evaluates the remaining conditions on the stored tuples and
+returns one number; the SQL server sums them. An equality prefix without
+further conditions is counted by the index (`index:count`, which MVCC
+tracks as a read of the range). Inside a transaction the shards leave out
+the stored versions of the rows it has written, and the SQL server adds
+those of its buffered rows that match; the counted ranges are recorded for
+validation exactly as reading the rows would record them.
+
 **Autocommit single-shard DML** (`UPDATE ... WHERE pk = ?`, single-shard
 `INSERT`, `DELETE ... WHERE pk = ?`): one call to `tarn_autocommit`, which runs
 one local Tarantool transaction (lock check + apply + commit).

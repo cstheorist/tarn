@@ -1845,6 +1845,158 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     end
 end
 
+-- tarn_count: the number of rows a tarn_select scan (`key`, `iterator`,
+-- `end_key`, `end_incl`) would return that satisfy every residual predicate
+-- of `preds` and whose primary key is not in `exclude` (rows the calling
+-- transaction has written, which it counts itself), without returning them
+-- (issue #52). A predicate is {field, op, value, fill, int}: the tuple field
+-- (1-based; `fill` when the tuple ends before it), 'eq' | 'ne' | 'lt' |
+-- 'le' | 'gt' | 'ge' against `value`, 'in' against an array of values, or
+-- 'null' | 'notnull'; `int` compares integers exactly, else strings by
+-- bytes. A comparison with NULL never holds, as in SQL. An equality prefix
+-- or a whole index without predicates is counted by the index. lock_check
+-- and begin as in tarn_select, which it mirrors. Returns {'ok', n}.
+local function pred_cmp(a, b, int)
+    if int and not (type(a) == 'number' and type(b) == 'number') then
+        if int_lt(a, b) then return -1 end
+        if int_lt(b, a) then return 1 end
+        return 0
+    end
+    if a < b then return -1 end
+    if a > b then return 1 end
+    return 0
+end
+
+local function preds_match(t, preds)
+    local len = #t
+    for i = 1, #preds do
+        local p = preds[i]
+        local op = p[2]
+        local v
+        if p[1] <= len then v = t[p[1]] else v = p[4] end
+        if op == 'null' then
+            if v ~= nil then return false end
+        elseif v == nil then
+            return false
+        elseif op == 'in' then
+            local any = false
+            for _, x in ipairs(p[3]) do
+                if pred_cmp(v, x, p[5]) == 0 then any = true; break end
+            end
+            if not any then return false end
+        elseif op ~= 'notnull' then
+            local c = pred_cmp(v, p[3], p[5])
+            local ok
+            if op == 'eq' then ok = c == 0
+            elseif op == 'ne' then ok = c ~= 0
+            elseif op == 'lt' then ok = c < 0
+            elseif op == 'le' then ok = c <= 0
+            elseif op == 'gt' then ok = c > 0
+            else ok = c >= 0 end
+            if not ok then return false end
+        end
+    end
+    return true
+end
+
+-- Whether the scan (`key`, `it`, `end_key`, `end_incl`) covers tuple t.
+local function scan_covers(kd, t, it, key, end_key, end_incl, reverse)
+    if #key > 0 and it ~= 'ALL' then
+        local c = kd:compare_with_key(t, key)
+        if (it == 'EQ' or it == 'REQ') and c ~= 0 then return false end
+        if (it == 'GE' and c < 0) or (it == 'GT' and c <= 0) then return false end
+        if (it == 'LE' and c > 0) or (it == 'LT' and c >= 0) then return false end
+    end
+    if end_key ~= nil then
+        local c = kd:compare_with_key(t, end_key)
+        if reverse then
+            if c < 0 or (c == 0 and not end_incl) then return false end
+        else
+            if c > 0 or (c == 0 and not end_incl) then return false end
+        end
+    end
+    return true
+end
+
+local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude)
+    local in_txn = box.is_in_txn()
+    if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end   -- see select_scan
+    local n = 0
+    if #preds == 0 and end_key == nil and (it == 'EQ' or it == 'ALL') then
+        n = idx:count(key, {iterator = it})
+        yield_point('scan')
+    else
+        local seen = 0
+        for _, t in idx:pairs(key, {iterator = it}) do
+            seen = seen + 1
+            -- Inside a transaction MVCC keeps the view consistent across
+            -- yields: let other requests run during long scans.
+            if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
+            if end_key ~= nil then
+                local c = kd:compare_with_key(t, end_key)
+                if reverse then
+                    if c < 0 or (c == 0 and not end_incl) then break end
+                else
+                    if c > 0 or (c == 0 and not end_incl) then break end
+                end
+            end
+            if preds_match(t, preds) then n = n + 1 end
+        end
+    end
+    -- The stored versions of rows the caller wrote are not its to count.
+    -- (In a stream these gets are reads MVCC tracks: a concurrent commit to
+    -- such a row can only abort the caller earlier, as it writes the row.)
+    local pk = box.space[space_id].index[0]
+    for _, k in ipairs(exclude) do
+        local t = pk:get(k)
+        if t ~= nil and scan_covers(kd, t, it, key, end_key, end_incl, reverse) and preds_match(t, preds) then
+            n = n - 1
+        end
+    end
+    return n
+end
+
+function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin)
+    if begin == true and not box.is_in_txn() then
+        box.begin(BEGIN_STREAM)
+        note_stream_term()
+    end
+    if lock_check == true then lk_fresh() end
+    local space = box.space[space_id]
+    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    local idx = space.index[index_id]
+    if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
+    local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
+    key = key or {}
+    if end_key == box.NULL then end_key = nil end
+    preds = preds or {}
+    exclude = exclude or {}
+    local kd = index_key_def(space_id, index_id)
+    local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
+    local function scan()
+        return count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude)
+    end
+    if lock_check ~= true then return {OK, scan()} end
+    if space.engine == 'vinyl' and not box.is_in_txn() then
+        return checked_read(scan, function(_, since)
+            return select_locked(space_id, index_id, idx, kd, it, key, nil, end_key, reverse, nil, since)
+        end)
+    end
+    -- memtx: count and check without a yield in between observe one state.
+    local deadline = clock.monotonic() + M.cfg.lock_wait
+    while true do
+        local n = scan()
+        if NLOCK == 0 and DDL_N == 0 then return {OK, n} end
+        local h = select_locked(space_id, index_id, idx, kd, it, key, nil, end_key, reverse, nil, nil)
+        if h == nil then return {OK, n} end
+        if clock.monotonic() > deadline then
+            return conflict('row locked by prepared transaction ' .. h)
+        end
+        M.stats.lock_waits = M.stats.lock_waits + 1
+        M.unlock_cond:wait(0.01)
+    end
+end
+
 function tarn_read(space_id, index_id, key, iterator, limit, offset)
     return tarn_select(space_id, index_id, key, iterator, limit, nil, true, true, offset)
 end

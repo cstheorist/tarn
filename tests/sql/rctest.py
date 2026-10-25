@@ -233,6 +233,30 @@ class T:
         self.check(time.time() - t0 < 1, "plain reads do not wait for row locks")
         q(other, "ROLLBACK")
 
+    def test_count_in_storage(self):
+        # A COUNT the shards compute (issue #52) sees the latest commit and
+        # the transaction's own writes, and waits for no row lock.
+        c = self.fresh("rcn", "CREATE TABLE rcn (g INT NOT NULL, id INT NOT NULL, f INT NOT NULL, "
+                       "PRIMARY KEY (g, id))", [f"({i % 2}, {i}, {i % 3})" for i in range(40)])
+        a, other = self.rc(), connect(self.args.tarn)
+        q(a, "BEGIN")
+        self.check(q(a, "SELECT COUNT(*) FROM rcn WHERE g = 1 AND f = 0")[0][0] == 7, "first count")
+        q(other, "INSERT INTO rcn VALUES (1, 101, 0), (1, 103, 0)")
+        self.check(q(a, "SELECT COUNT(*) FROM rcn WHERE g = 1 AND f = 0")[0][0] == 9, "sees the latest commit")
+        q(a, "UPDATE rcn SET f = 0 WHERE g = 1 AND id IN (1, 5)")   # f was 1 and 2
+        q(a, "DELETE FROM rcn WHERE g = 1 AND id = 3")              # f was 0
+        q(a, "INSERT INTO rcn VALUES (1, 105, 0), (0, 106, 0)")
+        self.check(q(a, "SELECT COUNT(*) FROM rcn WHERE g = 1 AND f = 0")[0][0] == 11, "... plus its own writes")
+        self.check(q(a, "SELECT COUNT(*) FROM rcn WHERE g = 1")[0][0] == 22, "... in an index count too")
+        q(other, "BEGIN")
+        q(other, "UPDATE rcn SET f = 0 WHERE g = 1 AND id = 7")
+        t0 = time.time()
+        self.check(q(a, "SELECT COUNT(*) FROM rcn WHERE g = 1 AND f = 0")[0][0] == 11, "uncommitted writes are not counted")
+        self.check(time.time() - t0 < 1, "counts do not wait for row locks")
+        q(other, "ROLLBACK")
+        self.check(err_code(lambda: q(a, "COMMIT")) is None, "commit")
+        self.check(q(c, "SELECT COUNT(*) FROM rcn WHERE g = 1 AND f = 0")[0][0] == 11, "committed count")
+
     def test_counter_concurrent(self):
         n = 6
         self.fresh("ctr", "CREATE TABLE ctr (id INT PRIMARY KEY, n BIGINT)", [f"({i}, 10000)" for i in range(1, n + 1)])
