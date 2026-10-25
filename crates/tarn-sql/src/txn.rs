@@ -255,11 +255,13 @@ impl Txn {
 
     async fn commit_read_only(&mut self, cluster: &Arc<Cluster>, parts: &BTreeSet<usize>) -> SqlResult<()> {
         let mut futs = Vec::new();
+        let cross = parts.len() > 1;
         for &p in parts {
             let s = self.streams.get(&p).expect("read-only participants have streams");
             let mut m = Mp::new();
-            m.arr(3).str(&self.id);
+            m.arr(4).str(&self.id);
             self.encode_reads(p, &mut m);
+            m.bool(cross);
             let (client, id) = (s.client.clone(), s.id);
             futs.push(async move {
                 let r = client.call(id, "tarn_validate", &m.0).await.map_err(from_iproto)?;

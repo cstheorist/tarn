@@ -85,6 +85,12 @@ local function ensure_schema()
         {'txid', 'string'}, {'status', 'string'}, {'parts', 'array'}, {'ts', 'double'}})
     txn:create_index('pk', {parts = {'txid'}, if_not_exists = true})
     txn:create_index('status', {parts = {'status', 'ts'}, unique = false, if_not_exists = true})
+
+    -- Target of the probe write in tarn_validate (data-temporary: no WAL,
+    -- not replicated; the definition reaches replicas).
+    local scratch = box.schema.space.create('_tarn_scratch', {if_not_exists = true, type = 'data-temporary',
+                                                              format = {{'k', 'unsigned'}}})
+    scratch:create_index('pk', {parts = {'k'}, if_not_exists = true})
 end
 
 -------------------------------------------------------------------------------
@@ -323,7 +329,21 @@ end
 
 -- Commit of a read-only single-shard transaction (TarnCommit!SnapshotRead):
 -- the lock check runs in the same MVCC view as the reads.
-function tarn_validate(txid, rpoints, rranges)
+-- TarnCommit!ValidateRO (cross = true) / the commit of a single-shard
+-- read-only stream (cross = false). Runs inside the reader's stream.
+function tarn_validate(txid, rpoints, rranges, cross)
+    if cross and box.is_in_txn() then
+        -- "The reads are unchanged": memtx MVCC moves a read-only transaction
+        -- whose reads were overwritten into a read view (it keeps seeing the
+        -- old values and could commit), but refuses any write from a read
+        -- view. A probe write turns that state into a conflict.
+        local ok, err = pcall(function() box.space._tarn_scratch:replace{1} end)
+        if not ok then
+            if box.is_in_txn() then box.rollback() end
+            M.stats.validate_changed = (M.stats.validate_changed or 0) + 1
+            return conflict('read set changed before commit: ' .. tostring(err))
+        end
+    end
     local h = reads_w_locked(txid, rpoints, rranges)
     if h then
         if box.is_in_txn() then box.rollback() end
