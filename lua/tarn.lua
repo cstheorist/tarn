@@ -451,6 +451,18 @@ local function failure(e)
     return {'error', 0, tostring(e)}
 end
 
+-- failure() for a local transaction that is the whole commit (CommitLocal,
+-- CommitRC, autocommit) or a PREPARE: ER_SYNC_ROLLBACK means the leader
+-- changed while the transaction waited for its quorum and the new leader
+-- rolled it back -- it took no effect anywhere, so the client may retry
+-- (1213). Not for APPLY, whose transaction is already decided.
+local function commit_failure(e)
+    if type(e) == 'cdata' and e.code == box.error.SYNC_ROLLBACK then
+        return conflict('shard leader changed during the commit, retry the transaction (' .. tostring(e.message) .. ')')
+    end
+    return failure(e)
+end
+
 -------------------------------------------------------------------------------
 -- Row locks: READ COMMITTED writes and locking reads (TarnCommit: plocks)
 -------------------------------------------------------------------------------
@@ -1100,7 +1112,7 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        return failure(res)
+        return commit_failure(res)
     end
     if res[1] ~= OK and box.is_in_txn() then box.rollback() end
     return res
@@ -1361,7 +1373,7 @@ function tarn_autocommit(writes, opts)
         if not ok then
             if box.is_in_txn() then box.rollback() end
             reraise_readonly(res)
-            return failure(res)
+            return commit_failure(res)
         end
         if res[1] == 'plocked' then
             if clock.monotonic() > pl_deadline then
@@ -1423,7 +1435,7 @@ function tarn_commit_rc(txid, writes, gen)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        return failure(res)
+        return commit_failure(res)
     end
     return res
 end
@@ -1567,7 +1579,7 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        local f = failure(res)
+        local f = commit_failure(res)
         return vote_no(f[2], f[3])
     end
     return res
