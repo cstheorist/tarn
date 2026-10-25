@@ -115,6 +115,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`ddl_job_stale`, 30 s, in `cluster.json`) rolls it back before every
   shard prepared and forward after; every SQL server looks for them every
   10 s ([#30](https://github.com/cstheorist/tarn/issues/30)).
+- Under READ COMMITTED, a row lock grant waits only for the local commits
+  in flight that write the locked row or unique value, not for every one on
+  the shard: transactions writing different rows no longer queue behind
+  each other's WAL writes ([#47](https://github.com/cstheorist/tarn/issues/47)).
 - `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
   on any index, batched into one storage call per shard, and an `OR` across
   indexes is a union of lookups (MySQL's `index_merge`); they used to scan
