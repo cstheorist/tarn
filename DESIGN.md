@@ -348,7 +348,7 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 | oltp_write_only (TPS) | 9,766 | 5,679 | 2,756 | – |
 | oltp_update_index (TPS) | 43,426 | 24,907 | 26,056 | 14,651 |
 | oltp_insert (TPS) | 45,461 | 29,632 | 24,255 | 14,560 |
-| direct KV point reads (ops/s) | – | – | 366,436 | – |
+| direct KV point reads (ops/s) | – | – | 363,233 | – |
 
 ## 6. Limitations
 
