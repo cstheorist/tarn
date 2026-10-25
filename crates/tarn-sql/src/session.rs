@@ -1909,18 +1909,19 @@ impl Session {
             } => {
                 let mut def = (**def).clone();
                 def.engine = engine.unwrap_or(c.cfg.default_engine);
-                c.create_table(def, *if_not_exists, *auto_increment).await?
+                c.create_table(def, *if_not_exists, *auto_increment, self.lock_wait_timeout)
+                    .await?
             }
             Stmt::Alter(plans) => {
                 for p in plans {
                     c.alter_table(p, self.lock_wait_timeout).await?;
                 }
             }
-            Stmt::DropTable { tables, if_exists } => c.drop_tables(tables, *if_exists).await?,
-            Stmt::Truncate { db, table } => c.truncate(db, table).await?,
+            Stmt::DropTable { tables, if_exists } => c.drop_tables(tables, *if_exists, self.lock_wait_timeout).await?,
+            Stmt::Truncate { db, table } => c.truncate(db, table, self.lock_wait_timeout).await?,
             Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
             Stmt::DropDatabase { name, if_exists } => {
-                let n = c.drop_database(name, *if_exists).await?;
+                let n = c.drop_database(name, *if_exists, self.lock_wait_timeout).await?;
                 if self.db.as_deref().is_some_and(|d| d.eq_ignore_ascii_case(name)) {
                     self.db = None;
                 }

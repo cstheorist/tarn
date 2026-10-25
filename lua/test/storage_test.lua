@@ -570,7 +570,7 @@ check('... and a range check by its fill value (0 here)', r[1] == 'ok', r)
 c[1]:call('tarn_alter_abort', {'test.alt', aargs(7)})
 r = c[1]:call('tarn_ddl_begin', {{'o1', 'test.alt', 7, aargs(7)}})
 local r2 = c[1]:call('tarn_ddl_begin', {{'o2', 'test.alt', 8, aargs(8)}})
-check('one schema change at a time (job record)', r[1] == 'ok' and r2[1] == 'busy' and r2[2] == 'o1', {r, r2})
+check('one schema change of a table at a time (job record)', r[1] == 'ok' and r2[1] == 'busy' and r2[2] == 'o1', {r, r2})
 r = c[1]:call('tarn_ddl_job')
 check('... the pending job can be read back', r[1] == 'ok' and r[2] == 'o1' and r[4] == 'test.alt' and r[6].ver == 7, r)
 r = c[1]:call('tarn_ddl_touch', {'o2', 'o1'})
@@ -792,6 +792,144 @@ c[1]:call('tarn_apply', {'VE'})
 rr = result(fr)
 check('... then reads the applied row', rr[1] == 'ok' and rr[2][1][2] == 24, rr)
 check('no atomic section yielded on vinyl', c[1]:eval('return true'))
+
+print('jobs: one record per table name')
+local function jb(owner, names)
+    return {owner = owner, kind = 'drop', space = names[1], names = names, ver = 1, a = {x = 1}}
+end
+r = {c[1]:call('tarn_job_begin', {jb('j1', {'t.a'}), 0}), c[1]:call('tarn_job_begin', {jb('j2', {'t.b'}), 0})}
+check('jobs on two tables run at once', r[1][1] == 'ok' and r[2][1] == 'ok', r)
+r = c[1]:call('tarn_job_begin', {jb('j3', {'t.c', 't.a'}), 0})
+check('a job on a table that another holds is told busy', r[1] == 'busy' and r[2] == 'j1', r)
+check('... and holds none of its names', #c[1]:call('tarn_jobs') == 2)
+r = c[1]:call('tarn_job_begin', {jb('j1', {'t.a'}), 0})
+check('... unless it is the same job (a repeated call)', r[1] == 'ok', r)
+local fj = async('tarn_job_begin', {jb('j3', {'t.c', 't.a'}), 5})
+fiber.sleep(0.1)
+check('with a wait, it waits', not fj:is_ready())
+c[1]:call('tarn_job_end', {'j1'})
+local rj = result(fj)
+check('... and begins once the other ends', rj[1] == 'ok', rj)
+local function job_of(owner)
+    for _, j in ipairs(c[1]:call('tarn_jobs')) do if j[1] == owner then return j end end
+end
+r = c[1]:call('tarn_job_phase', {'j2', 'apply'})
+check('a job records its phase', r[1] == 'ok' and job_of('j2')[5] == 'apply' and job_of('j2')[7].x == 1, {r, job_of('j2')})
+r = c[1]:call('tarn_job_touch', {'j4', 'j2'})
+local r2 = c[1]:call('tarn_job_touch', {'j5', 'j2'})
+check('an abandoned job is taken over by one server', r[1] == 'ok' and r2[1] == 'gone' and job_of('j4') ~= nil, {r, r2})
+r = c[1]:call('tarn_job_touch', {'j4', 'j2'})
+check('... a repeated takeover succeeds', r[1] == 'ok', r)
+r = c[1]:call('tarn_job_phase', {'j2', 'abort'})
+check('... and the old owner cannot change it any more', r[1] == 'gone' and job_of('j4')[5] == 'apply', r)
+c[1]:call('tarn_job_end', {'j3'})
+c[1]:call('tarn_job_end', {'j4'})
+check('jobs end', #c[1]:call('tarn_jobs') == 0)
+
+print('CREATE TABLE, DROP TABLE and TRUNCATE in steps (issue #30)')
+local cdef = table.deepcopy(def)
+cdef.name, cdef.id = 'test.cr', 20001
+local ca = {def = cdef}
+local function cexists(i) return c[i]:eval('return box.space["test.cr"] ~= nil') end
+local function cnamed(i) return c[i]:eval('return box.space._tarn_catalog:get{"test.cr"} ~= nil') end
+r = c[1]:call('tarn_create_prepare', {'test.cr', ca})
+check('CREATE PREPARE makes the space', r[1] == 'ok' and cexists(1), r)
+check('... which no catalog names yet', not cnamed(1))
+check('... a repeated PREPARE does nothing', c[1]:call('tarn_create_prepare', {'test.cr', ca})[1] == 'ok')
+r = c[1]:call('tarn_create_abort', {'test.cr', ca})
+check('CREATE ABORT drops it', r[1] == 'ok' and not cexists(1), r)
+for i = 1, 2 do c[i]:call('tarn_create_prepare', {'test.cr', ca}) end
+r = {c[2]:call('tarn_create_apply', {'test.cr', ca}), c[1]:call('tarn_create_apply', {'test.cr', ca})}
+check('CREATE APPLY names it in the catalog', r[1][1] == 'ok' and r[2][1] == 'ok' and cnamed(1) and cnamed(2), r)
+r = c[1]:call('tarn_create_abort', {'test.cr', ca})
+check('... after which ABORT leaves it', r[1] == 'ok' and r[2] == 'applied' and cexists(1), r)
+local other = table.deepcopy(ca)
+other.def.id = 20002
+r = c[1]:call('tarn_create_prepare', {'test.cr', other})
+check('a CREATE of a name another table has: 1050', r[1] == 'error' and r[2] == 1050, r)
+
+local crsid = 20001
+c[1]:call('tarn_autocommit', {{{'insert', crsid, {1, 10, box.NULL, 1}}, {'insert', crsid, {2, 20, box.NULL, 1}}}})
+local function targs(ver)
+    local d = table.deepcopy(cdef)
+    d.json, d.ver = '{}', ver
+    return {ver = ver, timeout = 5, id = crsid, def = d}
+end
+local function cw(ver, op) return c[1]:call('tarn_autocommit', {{op}, {fence = {crsid, ver}}}) end
+local function clen() return c[1]:eval('return box.space["test.cr"]:len()') end
+r = prepare(1, 'TX1', {{'replace', crsid, {3, 30, box.NULL, 1}}})
+check('a transaction prepared with a write to the table', r[1] == 'yes', r)
+got = nil
+f = fiber.create(function() got = c[1]:call('tarn_truncate_prepare', {'test.cr', targs(3)}) end)
+fiber.sleep(0.1)
+check('TRUNCATE PREPARE waits for it', got == nil)
+local t0 = fiber.clock()
+r = c[1]:call('tarn_select', {crsid, 0, {1}, 'EQ', 1, box.NULL, box.NULL, true})
+check('... meanwhile autocommit reads of the table wait, then fail (1213)',
+      r[1] == 'conflict' and fiber.clock() - t0 >= 0.9, r)
+r = c[1]:call('tarn_select', {sid, 0, {9001}, 'EQ', 1, box.NULL, box.NULL, true})
+check('... those of other tables do not', r[1] == 'ok', r)
+r = cw(0, {'update', crsid, {1}, {{'+', 2, 1}}})
+check('... and writes made with the current definition get 1412', r[1] == 'error' and r[2] == 1412, r)
+local fk2 = async('tarn_lock', {'TK1', {{crsid, 0, {1}}}, 'X', {read = true, timeout = 5}})
+fiber.sleep(0.1)
+check('... and a row lock with a read waits', not fk2:is_ready())
+c[1]:call('tarn_apply', {'TX1'})
+fiber.sleep(0.1)
+check('... until the transaction is applied: then it prepares', got and got[1] == 'ok', got)
+local sr = c[1]:new_stream()
+sr:call('tarn_select', {crsid, 0, {1}, 'EQ', 1, box.NULL, box.NULL, false, box.NULL, true})
+r = sr:call('tarn_validate', {'TV1', {{crsid, 0, {1}}}, {}, true})
+check('a transaction that read the held table fails validation', r[1] == 'conflict', r)
+c[1]:eval('tarn.stale_fences()')
+r = cw(0, {'update', crsid, {1}, {{'+', 2, 1}}})
+check('the fence and the hold outlive a rebuild from storage (a restart, a new leader)',
+      r[1] == 'error' and r[2] == 1412 and c[1]:call('tarn_info').ddl_held == 1, {r, c[1]:call('tarn_info').ddl_held})
+r = c[1]:call('tarn_truncate_apply', {'test.cr', targs(3)})
+check("TRUNCATE APPLY empties the table, the applied transaction's row too", r[1] == 'ok' and clen() == 0, {r, clen()})
+local rk2 = result(fk2)
+check('... the waiting row lock reads the empty table', rk2[1] == 'ok' and rk2[3][1] == nil, rk2)
+c[1]:call('tarn_unlock', {'TK1'})
+check('... the definition is stored under the new version',
+      c[1]:eval('return box.space._tarn_catalog:get{"test.cr"}.def.ver') == 3)
+r = cw(0, {'insert', crsid, {1, 1, box.NULL, 1}})
+check('... writes encoded before it stay refused (1412)', r[1] == 'error' and r[2] == 1412, r)
+r = cw(3, {'insert', crsid, {1, 1, box.NULL, 1}})
+check('... those encoded after it are not', r[1] == 'ok', r)
+r = c[1]:call('tarn_truncate_apply', {'test.cr', targs(3)})
+check('... and a repeated APPLY does nothing', r[1] == 'ok' and r[2] == 'applied' and clen() == 1, {r, clen()})
+check('... and nothing is held any more', c[1]:call('tarn_info').ddl_held == 0)
+r = c[1]:call('tarn_truncate_prepare', {'test.cr', targs(4)})
+check('TRUNCATE ABORT after PREPARE', r[1] == 'ok' and c[1]:call('tarn_info').ddl_held == 1, r)
+r = c[1]:call('tarn_truncate_abort', {'test.cr', targs(4)})
+check('... releases the table and lowers the fence',
+      r[1] == 'ok' and c[1]:call('tarn_info').ddl_held == 0 and cw(3, {'update', crsid, {1}, {{'+', 2, 1}}})[1] == 'ok', r)
+local da = {ver = 5, timeout = 5, id = crsid}
+r = {c[1]:call('tarn_drop_prepare', {'test.cr', da}), c[1]:call('tarn_drop_apply', {'test.cr', da})}
+check('DROP PREPARE and APPLY drop the space and its catalog entry',
+      r[1][1] == 'ok' and r[2][1] == 'ok' and not cexists(1) and not cnamed(1), r)
+r = c[1]:call('tarn_drop_apply', {'test.cr', da})
+check('... a repeated APPLY does nothing', r[1] == 'ok' and r[2] == 'applied', r)
+check('... and nothing is held', c[1]:call('tarn_info').ddl_held == 0)
+
+-- vinyl MVCC aborts the writers of a space a DDL changes, not its readers:
+-- the TRUNCATE dooms them (the stream registers with tarn_select's begin).
+local vtdef = {name = 'test.vt', id = 20003, engine = 'vinyl', format = vfmt, indexes = vidx}
+c[1]:call('tarn_create_table', {vtdef})
+c[1]:call('tarn_autocommit', {{{'insert', 20003, {1, 10, box.NULL, 1}}}})
+local sv = c[1]:new_stream()
+r = sv:call('tarn_select', {20003, 0, {1}, 'EQ', 1, box.NULL, box.NULL, false, box.NULL, true})
+check('a stream reads a vinyl table', r[1] == 'ok' and #r[2] == 1, r)
+local vt = {ver = 2, timeout = 5, id = 20003, def = {name = 'test.vt', id = 20003, engine = 'vinyl', format = vfmt,
+                                                     indexes = vidx, json = '{}', ver = 2}}
+r = {c[1]:call('tarn_truncate_prepare', {'test.vt', vt}), c[1]:call('tarn_truncate_apply', {'test.vt', vt})}
+check('the table is truncated', r[1][1] == 'ok' and r[2][1] == 'ok', r)
+r = sv:call('tarn_validate', {'TV2', {{20003, 0, {1}}}, {}, true})
+check('... and the stream that read it before fails validation', r[1] == 'conflict', r)
+local sw = c[1]:new_stream()
+sw:call('tarn_select', {20003, 0, {1}, 'EQ', 1, box.NULL, box.NULL, false, box.NULL, true})
+r = sw:call('tarn_validate', {'TV3', {{20003, 0, {1}}}, {}, true})
+check('... one that began after it does not', r[1] == 'ok', r)
 
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

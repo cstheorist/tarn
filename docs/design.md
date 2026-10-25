@@ -582,11 +582,21 @@ undecided write that the finished change would make fail fails at once
 cross-shard transaction prepared before BUILD may write such a row, and its
 APPLY must land. That APPLY drops the index under construction and runs
 again; PREPARE then builds the index behind the fence, where the duplicate
-fails the schema change instead. The change
-is recorded first in a job record on the first shard, which also makes
-schema changes run one at a time; a job whose server stopped touching it
-for 30 s is finished (run again from step 1) by the next schema change or
-SQL server start.
+fails the schema change instead.
+
+**Jobs.** A schema change -- `ALTER TABLE`, and `CREATE TABLE`, `DROP
+TABLE` and `TRUNCATE` (below) -- is first recorded as a job on the first
+shard, with one record per table name it touches (an `ALTER TABLE ...
+RENAME` touches two). Schema changes of the same table run one at a time;
+those of other tables do not wait, which matters since an `ALTER TABLE` of a
+large vinyl table may build an index for hours. The job records its phase:
+`prepare` until every shard has prepared, then `apply`, or `abort` if one
+could not, written before the first APPLY or ABORT is sent. Its SQL server
+touches it every few seconds; every SQL server looks for jobs untouched for
+`ddl_job_stale` (30 s, `cluster.json`) at startup and every 10 s, takes one
+over, and finishes it from its phase: back (ABORT everywhere) before
+`apply`, forward (APPLY everywhere) after. A statement whose job is left
+unfinished reports the outcome as unknown (1180).
 
 Writes wait (in the SQL server: the statement is retried, up to the lock
 wait timeout) from the moment PREPARE raises the fence until the servers
@@ -612,7 +622,51 @@ write it (fast-path and read-modify-write autocommits, transfers,
 READ COMMITTED transactions) and checks that no acknowledged increment is
 lost or duplicated, and `lua/test/run.sh` checks the shard side (fences on
 every write path, waiting for prepared transactions, checks with fill
-values, temporary indexes, the job record).
+values, temporary indexes, the job records).
+
+**`CREATE TABLE`, `DROP TABLE` and `TRUNCATE`** (issue #30) run as jobs in
+the same steps, so that each takes effect on every shard or on none:
+
+* `CREATE TABLE`: PREPARE creates the space and its indexes, which no
+  catalog names yet (the SQL servers read the first shard's), and APPLY
+  names it in `_tarn_catalog`, on the first shard last. ABORT drops it.
+* `DROP TABLE` and `TRUNCATE`: PREPARE raises the table's fence above every
+  definition the SQL servers have, *holds* the table, and waits for the
+  local commits in flight and the prepared transactions holding locks on it,
+  as `ALTER TABLE`'s PREPARE does. The hold works like a W lock of a
+  prepared transaction on every row: autocommit reads of the table, and
+  READ COMMITTED row locks that read, wait for it; the validation of a
+  transaction that read the table fails. APPLY drops or empties the space
+  (`TRUNCATE` also stores the definition under a new version, so writes
+  encoded before it stay refused) and releases the hold. The fence and the
+  hold are stored (`hold:<space id>` in `_tarn_meta`), so they outlive a
+  restart or a leader change between PREPARE and APPLY. ABORT releases the
+  hold and lowers the fence.
+
+A `TRUNCATE` or `DROP` thus behaves like a cross-shard transaction that
+writes every row of the table: no transaction sees it applied on one shard
+and not yet on another, a transaction prepared before it is applied before
+it (its rows go with the `TRUNCATE`), and a transaction that read the
+table before it cannot commit after it. memtx MVCC aborts the transactions
+that read a space when DDL changes it; vinyl aborts only those that wrote
+it, so APPLY also marks the stream transactions open on the shard as
+having read a table that changed, and their validation fails if their
+reads include it.
+
+The commit protocol model is unchanged here too: a `TRUNCATE` is the
+model's cross-shard transaction that deletes every row of the table, with
+the hold as the W locks its PREPARE takes after the table's own drain, and
+APPLY as its writes; the model's validation of reads (the probe write of
+§2.4) is what the doomed streams restore for vinyl. A `DROP` is a
+`TRUNCATE` after which the table is gone; a `CREATE` writes nothing a
+transaction could have read.
+
+`tests/ddlfaults.sh` checks the failures: with a shard down, each
+statement fails and its job is rolled back once the shard is back (the
+created table exists on no shard; the dropped or truncated one keeps its
+rows); with a shard killed while it applies (a test hook holds its APPLY),
+the statement reports an unknown outcome and the job is rolled forward on
+every shard once the shard is back.
 
 ### 2.11 Tables on disk (vinyl)
 
@@ -729,7 +783,7 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job record, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit | 184/184 |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE` | 227/227 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection) | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 236 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors | 236/236 identical |
@@ -738,6 +792,7 @@ does not check.
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 25/25 |
 | `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
+| `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
 ## 5. Results
@@ -893,16 +948,14 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   increasing per server, with gaps across servers (as in TiDB). An explicit id
   inserted through one server inside another server's cached block is not
   detected until that server reaches it (duplicate-key error then).
-* `CREATE` / `DROP TABLE`, `TRUNCATE` and `CREATE` / `DROP DATABASE` are
-  not transactional and do not run through the schema-change protocol;
-  another SQL server sees them within its catalog poll (statements that meet
-  an older catalog there are re-planned). They do not wait for prepared
-  transactions: an APPLY skips the writes to a table dropped since its
-  PREPARE (space ids are never reused), while a `TRUNCATE` that runs between
-  a transaction's PREPARE and its APPLY leaves that transaction's rows in
-  the table. Nor are they atomic across shards: when a shard cannot be
-  reached, the statement fails after the other shards have run it (issue
-  #30).
+* DDL is not transactional (as in MySQL). Each `CREATE TABLE`, `DROP
+  TABLE` and `TRUNCATE` is atomic across shards (§2.10), but `DROP DATABASE`
+  drops its tables one by one, and one that fails part way leaves the tables
+  it had not reached. While a `DROP TABLE` or `TRUNCATE` waits for the
+  prepared transactions holding locks on the table, autocommit reads of the
+  table wait too, and fail with 1213 after `lock_wait` (1 s), where MySQL's
+  metadata lock makes them wait up to `lock_wait_timeout`. `TRUNCATE` does
+  not reset `AUTO_INCREMENT`.
 * The bucket → shard map is static (no online resharding / bucket moves yet),
   so vshard compatibility is at the level of tuple layout and bucket hashing.
 * No TLS, no `COM_CHANGE_USER`; users and passwords come from the command
