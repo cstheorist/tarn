@@ -563,39 +563,50 @@ states).
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
 |---|---|---:|---:|---:|---|---:|
-| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 114736 | 576778 | 14 | 10s | 14 |
-| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 22229 | 82897 | 11 | 04s | 11 |
-| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2742 | 7635 | 10 | 01s | 9 |
-| Bug_LocalIgnoresRLocks | violates StrictSerializable | 33430 | 136338 | 13 | 03s | 13 |
-| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3608 | 10065 | 10 | 01s | 10 |
-| Bug_NoReadLocks | violates StrictSerializable | 2056 | 7030 | 9 | 01s | 9 |
-| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6569 | 18301 | 9 | 02s | 9 |
-| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12218 | 45049 | 11 | 02s | 11 |
-| Bug_ROValidateNoReadCheck | violates StrictSerializable | 19356 | 70996 | 12 | 04s | 12 |
-| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10736 | 37525 | 11 | 04s | 11 |
-| Frac | no errors | 1182650 | 9429589 | 23 | 03min 29s |  |
-| FracFailover | no errors | 2715768 | 21065756 | 25 | 04min 39s |  |
-| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 49s |  |
-| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 02min 54s |  |
-| Frac_ROValidate | no errors | 95786 | 555473 | 19 | 12s |  |
-| Local | no errors | 710975 | 5545010 | 23 | 02min 04s |  |
-| LocalFailover | no errors | 1881011 | 14423765 | 25 | 03min 14s |  |
-| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 38s |  |
-| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 01min 53s |  |
-| Local_ROValidate | no errors | 66348 | 377760 | 19 | 09s |  |
-| Recov | no errors | 71927 | 412881 | 18 | 09s |  |
-| RecovReaders | no errors | 28258 | 135187 | 17 | 04s |  |
-| Recov_AckOnPrepare | no errors | 83195 | 474842 | 18 | 08s |  |
-| Recov_GC | no errors | 1136892 | 8123071 | 23 | 01min 36s |  |
+| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 112812 | 566854 | 14 | 15s | 14 |
+| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 21733 | 81213 | 11 | 06s | 11 |
+| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2881 | 8063 | 10 | 02s | 9 |
+| Bug_IgnorePLocks | violates StrictSerializable | 4296 | 13823 | 11 | 06s | 11 |
+| Bug_LocalIgnoresRLocks | violates StrictSerializable | 32762 | 134735 | 13 | 07s | 13 |
+| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3539 | 10017 | 10 | 02s | 10 |
+| Bug_NoReadLocks | violates StrictSerializable | 2098 | 7167 | 9 | 02s | 9 |
+| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6596 | 19191 | 9 | 03s | 9 |
+| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12441 | 46334 | 11 | 04s | 11 |
+| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 4420 | 14830 | 11 | 06s | 11 |
+| Bug_RCLockReadsInFlight | violates StrictSerializable | 100 | 186 | 5 | 01s | 5 |
+| Bug_RCNoLockCheck | violates StrictSerializable | 36934 | 110964 | 11 | 15s | 10 |
+| Bug_RCReadBeforeLock | violates StrictSerializable | 3287 | 10040 | 11 | 05s | 11 |
+| Bug_ROValidateNoReadCheck | violates StrictSerializable | 19573 | 72384 | 12 | 05s | 12 |
+| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10636 | 37303 | 11 | 04s | 11 |
+| Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
+| FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
+| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 02min 25s |  |
+| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 05min 39s |  |
+| Frac_ROValidate | no errors | 95786 | 555473 | 19 | 16s |  |
+| Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
+| LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
+| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 01min 31s |  |
+| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 03min 44s |  |
+| Local_ROValidate | no errors | 66348 | 377760 | 19 | 12s |  |
+| RC_Counter | no errors | 2289068 | 17877610 | 26 | 05min 09s |  |
+| RC_CounterFailover | no errors | 1246789 | 8726265 | 26 | 02min 35s |  |
+| RC_Counter_AckOnPrepare | no errors | 1252034 | 9355913 | 26 | 03min 11s |  |
+| RC_Local | no errors | 53479 | 287001 | 19 | 10s |  |
+| RC_Mixed | no errors | 171352 | 1029336 | 20 | 48s |  |
+| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 48s |  |
+| Recov | no errors | 71927 | 412881 | 18 | 12s |  |
+| RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
+| Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 13s |  |
+| Recov_GC | no errors | 1136892 | 8123071 | 23 | 03min 20s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
-| SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 07min 38s |  |
-| SkewTimeout_GC_ROValidate | no errors | 4509135 | 40415963 | 34 | 08min 18s |  |
+| SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 10min 18s |  |
+| SkewTimeout_GC_ROValidate | no errors | 4509135 | 40415963 | 34 | 14min 39s |  |
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
 | Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |
-| Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 06min 00s |  |
-| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 546 | 957 | 7 | 00s | 7 |
-| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 2236 | 6582 | 8 | 01s | 8 |
+| Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
+| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 617 | 1165 | 8 | 01s | 7 |
+| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3119 | 9623 | 9 | 02s | 8 |
 
 ### 5.2 Benchmarks
 
