@@ -1,6 +1,7 @@
 //! Physical plans produced by the planner and consumed by the executor.
 
 use crate::catalog::TableDef;
+use crate::collation::Collation;
 use crate::expr::Expr;
 use std::sync::Arc;
 use tarn_common::Column;
@@ -107,6 +108,8 @@ pub struct AggCall {
     pub order: Vec<(Expr, bool)>,
     /// GROUP_CONCAT(... SEPARATOR s); default ",".
     pub sep: Option<bytes::Bytes>,
+    /// Collation of the argument (MIN / MAX order, DISTINCT).
+    pub coll: Collation,
 }
 
 impl AggCall {
@@ -117,6 +120,7 @@ impl AggCall {
             distinct,
             order: Vec::new(),
             sep: None,
+            coll: Collation::Utf8Bin,
         }
     }
 }
@@ -125,6 +129,8 @@ impl AggCall {
 pub struct AggPlan {
     /// Output row layout: group values followed by aggregate results.
     pub group: Vec<Expr>,
+    /// Collation each group value groups by.
+    pub group_coll: Vec<Collation>,
     pub aggs: Vec<AggCall>,
 }
 
@@ -139,6 +145,8 @@ pub struct SelectPlan {
     pub project: Vec<Expr>,
     pub columns: Arc<[Column]>,
     pub distinct: bool,
+    /// Collation each projected value is told apart by (DISTINCT).
+    pub distinct_coll: Vec<Collation>,
     pub limit: Option<Expr>,
     pub offset: Option<Expr>,
     /// FOR UPDATE / FOR SHARE [NOWAIT | SKIP LOCKED].

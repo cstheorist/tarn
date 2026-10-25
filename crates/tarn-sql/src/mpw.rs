@@ -169,6 +169,16 @@ pub fn proto(e: impl std::fmt::Display) -> SqlError {
     SqlError::internal(format!("storage protocol error: {}", e))
 }
 
+/// Tarantool's duplicate-key message without its dump of both tuples
+/// (which shows weight fields as bytes): "Duplicate key exists in unique
+/// index "ix" in space "db.t"".
+fn duplicate_message(m: &str) -> String {
+    match m.find(" with old tuple") {
+        Some(i) => m[..i].to_string(),
+        None => m.to_string(),
+    }
+}
+
 /// Map a Tarantool server error to a MySQL error.
 ///
 /// ER_READONLY means the request reached a node that is no longer the shard
@@ -181,7 +191,7 @@ pub fn from_iproto(e: tarn_iproto::Error) -> SqlError {
             if code == tarn_iproto::ER_TRANSACTION_CONFLICT {
                 SqlError::conflict(message)
             } else if code == tarn_iproto::ER_TUPLE_FOUND {
-                SqlError::new(1062, "23000", message)
+                SqlError::new(1062, "23000", duplicate_message(&message))
             } else if code == tarn_iproto::errcode::ER_NO_SUCH_INDEX_ID {
                 // an index an ALTER TABLE dropped: re-plan with the new catalog
                 SqlError::new(1412, "HY000", "Table definition has changed, please retry transaction")
@@ -252,7 +262,7 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
             let msg = if m > 2 { rd.string()? } else { status.clone() };
             Err(match code {
                 1213 => SqlError::conflict(msg),
-                1062 => SqlError::new(1062, "23000", msg),
+                1062 => SqlError::new(1062, "23000", duplicate_message(&msg)),
                 1264 => SqlError::new(1264, "22003", msg),
                 1690 => SqlError::new(1690, "22003", msg),
                 1146 => SqlError::new(1146, "42S02", msg),

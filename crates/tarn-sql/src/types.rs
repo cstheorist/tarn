@@ -1,6 +1,7 @@
 //! SQL column types, their Tarantool and MySQL-protocol mappings, and the
 //! value semantics (coercion, comparison, arithmetic) the executor uses.
 
+use crate::collation::Collation;
 use bytes::Bytes;
 use std::cmp::Ordering;
 use tarn_common::{column_flags, Column, ColumnType, SqlError, SqlResult, Value};
@@ -130,6 +131,10 @@ impl SqlType {
     }
     pub fn is_binary(&self) -> bool {
         matches!(self.base, BaseType::Binary | BaseType::VarBinary | BaseType::Blob)
+    }
+    /// Text that has a collation (CHAR, VARCHAR, TEXT, ENUM, SET).
+    pub fn is_text(&self) -> bool {
+        matches!(self.base, BaseType::Char | BaseType::VarChar | BaseType::Text)
     }
 
     /// Tarantool field type used in the space format.
@@ -681,7 +686,7 @@ fn is_numeric_value(v: &Value) -> bool {
 
 /// MySQL comparison: NULL if either side is NULL. Numbers compare
 /// numerically; a number against a string compares numerically; strings
-/// compare as bytes (Tarn uses binary collation).
+/// compare as bytes (utf8mb4_bin; see `compare_coll`).
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     if a.is_null() || b.is_null() {
         return None;
@@ -701,6 +706,34 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
             x.partial_cmp(&y)
         }
         _ => None,
+    }
+}
+
+/// `compare` under a collation: two text values compare by the
+/// collation's weights; a binary string (`Value::Bin`) makes it a byte
+/// comparison, as in MySQL.
+pub fn compare_coll(a: &Value, b: &Value, coll: Collation) -> Option<Ordering> {
+    match (a, b) {
+        (Value::Str(x), Value::Str(y)) if coll.is_ci() => Some(coll.cmp(x, y)),
+        _ => compare(a, b),
+    }
+}
+
+/// `sort_cmp` under a collation.
+pub fn sort_cmp_coll(a: &Value, b: &Value, coll: Collation) -> Ordering {
+    match (a.is_null(), b.is_null()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        _ => compare_coll(a, b, coll).unwrap_or(Ordering::Equal),
+    }
+}
+
+/// `key_val` under a collation: text values equal under it get one key.
+pub fn key_val_coll(v: &Value, coll: Collation) -> KeyVal {
+    match v {
+        Value::Str(b) if coll.is_ci() => KeyVal::Bytes(coll.key(b)),
+        other => key_val(other),
     }
 }
 

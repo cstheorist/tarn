@@ -35,6 +35,15 @@ SCHEMA = [
     "CREATE TABLE al (id INT PRIMARY KEY, a INT, b VARCHAR(10), c DECIMAL(6,2), KEY ka (a))",
     "CREATE TABLE al2 (t INT, id INT, name VARCHAR(10), PRIMARY KEY (t, id)) PARTITION BY KEY(t)",
     "CREATE TABLE fkc (id INT PRIMARY KEY, p INT)",
+    # collations (issue #13): general_ci, unicode_ci and bin columns, indexed
+    # and not; a case-insensitive primary (and shard) key; a case-insensitive
+    # unique key next to the shard key
+    "CREATE TABLE ci (id INT PRIMARY KEY, handle VARCHAR(20) COLLATE utf8mb4_general_ci, "
+    "name VARCHAR(30) COLLATE utf8mb4_unicode_ci, code VARCHAR(10) COLLATE utf8mb4_bin, note VARCHAR(10), n INT, "
+    "UNIQUE KEY uh (handle, id), KEY kn (name)) DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE cih (handle VARCHAR(20) PRIMARY KEY, n INT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+    "CREATE TABLE ciu (t INT, id INT, email VARCHAR(40), PRIMARY KEY (t, id), UNIQUE KEY ue (t, email)) "
+    "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci PARTITION BY KEY(t)",
 ]
 
 
@@ -57,6 +66,11 @@ def seed():
              "(3, -9223372036854775807, 18446744073709551615, -2147483648)")
     s.append("INSERT INTO al VALUES (1, 5, 'one', 1.5), (2, NULL, 'two-two', 22.25), (3, 300, NULL, -3), (4, 7, 'four', 0)")
     s.append("INSERT INTO al2 VALUES (1, 1, 'x'), (1, 2, 'x'), (2, 1, 'x')")
+    s.append("INSERT INTO ci VALUES (1, 'Alice', 'Émile', 'A1', 'x', 10), (2, 'bob', 'emile', 'a1', 'X', 20), "
+             "(3, 'ALICE', 'Zoë', 'b2', 'y', 30), (4, 'carol', 'zoe', 'B2', 'Y', 40), "
+             "(5, 'Bob', 'Ångström', 'c3', 'z', 50), (6, 'dave', 'angstrom', 'C3', NULL, 60), "
+             "(7, 'Eve ', 'straße', 'd4', 'x', 70), (8, 'a_b', 'Straße', 'D4', 'w', 80), "
+             "(9, 'ab', 'Œuvre', 'e5', 'v', 90), (10, 'a-b', 'oeuvre', 'E5', 'u', 100)")
     return s
 
 
@@ -381,7 +395,7 @@ CASES = [
     ("SELECT table_name FROM information_schema.tables WHERE table_schema = database() "
      "AND table_type = 'BASE TABLE' AND table_name LIKE 't%'", "q"),
     ("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES "
-     "WHERE TABLE_SCHEMA = 'difftest' AND TABLE_NAME = 'u'", "q"),
+     "WHERE TABLE_SCHEMA = '{db}' AND TABLE_NAME = 'u'", "q"),
     ("SELECT table_comment FROM information_schema.tables WHERE table_schema = database() AND table_name = 'nope'", "q"),
     ("SELECT COUNT(*) FROM information_schema.tables t WHERE t.table_schema = database()", "q"),
     ("SELECT COUNT(*) INTO @rocksdb_has_p_s_session_variables FROM INFORMATION_SCHEMA.TABLES "
@@ -463,6 +477,114 @@ CASES = [
     ("SELECT id FROM dtp WHERE dd < '2025-01-02 00:00:01' ORDER BY id", "q"),
     ("SELECT d0, COUNT(*) FROM dtp GROUP BY d0 ORDER BY d0", "q"),
     ("UPDATE dtp SET dt = '2025-01-01 00:00:01' WHERE dt = '2025-01-01 00:00:01.000000'", "dml:dtp"),
+    # collations (issue #13): comparisons, LIKE, ranges and lookups through
+    # case-insensitive indexes, ordering, grouping, unique keys
+    ("SELECT id FROM ci WHERE handle = 'alice'", "q"),
+    ("SELECT id FROM ci WHERE handle IN ('BOB', 'Carol', 'nobody') ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle = 'eve'", "q"),
+    ("SELECT id FROM ci WHERE name = 'EMILE' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE name IN ('zoe', 'ANGSTROM') ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE name = 'STRASSE' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE name = 'oeuvre' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE code = 'a1'", "q"),
+    ("SELECT id FROM ci WHERE note = 'X' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle LIKE 'a%' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle LIKE 'B_B' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE name LIKE '%STROM' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE name LIKE 'é%' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE code LIKE 'a%' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle > 'bob' ORDER BY handle, id", "q"),
+    ("SELECT id FROM ci WHERE handle BETWEEN 'B' AND 'D' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE name >= 'Z' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle < 'AB' ORDER BY id", "q"),
+    ("SELECT handle, id FROM ci ORDER BY handle, id", "q"),
+    ("SELECT name, id FROM ci ORDER BY name DESC, id", "q"),
+    ("SELECT code FROM ci ORDER BY code", "q"),
+    ("SELECT id FROM ci ORDER BY handle, id LIMIT 3", "q"),
+    ("SELECT LOWER(handle), COUNT(*), MIN(id), SUM(n) FROM ci GROUP BY handle ORDER BY 1", "q"),
+    ("SELECT MIN(id) AS k, COUNT(*) AS c FROM ci GROUP BY name HAVING c > 1 ORDER BY k", "q"),
+    ("SELECT COUNT(DISTINCT handle), COUNT(DISTINCT name), COUNT(DISTINCT code), COUNT(DISTINCT note) FROM ci", "q"),
+    ("SELECT MAX(handle), MIN(code), MAX(code) FROM ci", "q"),
+    ("SELECT GROUP_CONCAT(id ORDER BY handle, id) FROM ci", "q"),
+    ("SELECT handle FROM ci WHERE id = 1 UNION SELECT handle FROM ci WHERE id = 3", "q"),
+    ("SELECT code FROM ci WHERE id = 1 UNION SELECT code FROM ci WHERE id = 2 ORDER BY code", "q"),
+    ("SELECT 'a' = 'A', 'a' = 'a ', 'a' < 'B', 'ß' = 's', 'abc' LIKE 'AB_', 'é' = 'E'", "q"),
+    ("SELECT 'ß' COLLATE utf8mb4_unicode_ci = 'ss', 'Æ' COLLATE utf8mb4_unicode_ci = 'ae', "
+     "'a' COLLATE utf8mb4_bin = 'A', 'a' COLLATE utf8mb4_general_nopad_ci = 'a '", "q"),
+    ("SELECT COLLATION(handle), COLLATION(name), COLLATION(code), COLLATION(note), COLLATION('x'), "
+     "COERCIBILITY(handle), COERCIBILITY('x'), COLLATION(handle COLLATE utf8mb4_bin) FROM ci WHERE id = 1", "q"),
+    ("SELECT HEX(WEIGHT_STRING(handle)), HEX(WEIGHT_STRING(name)), HEX(WEIGHT_STRING(code)) FROM ci ORDER BY id", "q"),
+    ("SELECT HEX(WEIGHT_STRING('AaÀàÆæŒœßẞÞþÐðŁłØøĲĳﬁﬂ ΑαΣσςЁёЙйЯя٣३अआ中日本あアｶﾞ가각😀𝐀  ' COLLATE utf8mb4_general_ci)) "
+     "AS w", "q"),
+    ("SELECT HEX(WEIGHT_STRING('AaÀàÆæŒœßẞÞþÐðŁłØøĲĳﬁﬂ ΑαΣσςЁёЙйЯя٣३अआ中日本あアｶﾞ가각😀𝐀  ' COLLATE utf8mb4_unicode_ci)) "
+     "AS w", "q"),
+    ("SELECT NULLIF(handle, 'ALICE'), GREATEST(handle, 'B'), LEAST(name, 'F'), LOCATE('LI', handle) FROM ci "
+     "WHERE id IN (1, 2, 5) ORDER BY id", "q"),
+    ("SELECT id, CASE handle WHEN 'ALICE' THEN 'a' WHEN 'BOB' THEN 'b' ELSE '-' END FROM ci ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE code = 'a1' COLLATE utf8mb4_general_ci ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle = 'alice' COLLATE utf8mb4_bin", "q"),
+    ("SELECT id FROM ci WHERE handle = code ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE handle = name", "err"),
+    ("SELECT id FROM ci WHERE handle = 'x' COLLATE utf8mb4_nonesuch_ci", "err"),
+    ("SELECT id FROM ci WHERE handle = 'x' COLLATE latin1_swedish_ci", "err"),
+    ("INSERT INTO cih VALUES ('Alice', 1), ('Straße', 2), ('Zoë', 3)", "dml:cih"),
+    ("INSERT INTO cih VALUES ('ALICE', 4)", "err"),
+    ("INSERT INTO cih VALUES ('alice  ', 4)", "err"),
+    ("INSERT INTO cih VALUES ('strasse', 4)", "dml:cih"),
+    ("INSERT INTO cih VALUES ('ZOE', 4)", "err"),
+    ("INSERT IGNORE INTO cih VALUES ('aLiCe', 5), ('Bob', 6)", "dml:cih"),
+    ("INSERT INTO cih VALUES ('BOB', 7) ON DUPLICATE KEY UPDATE n = n + 100", "dml:cih"),
+    ("REPLACE INTO cih VALUES ('bob', 8)", "dml:cih"),
+    ("SELECT handle, n FROM cih WHERE handle IN ('ALICE', 'alice', 'BOB', 'zoe') ORDER BY n", "q"),
+    ("SELECT handle FROM cih ORDER BY handle LIMIT 2", "q"),
+    ("UPDATE cih SET handle = 'ALICE' WHERE handle = 'alice'", "dml:cih"),
+    ("UPDATE cih SET handle = 'bob' WHERE handle = 'alice'", "err"),
+    ("UPDATE cih SET n = n + 1 WHERE handle = 'BOB'", "dml:cih"),
+    ("DELETE FROM cih WHERE handle = 'STRASSE'", "dml:cih"),
+    ("SELECT a.id, b.n FROM ci a JOIN cih b ON b.handle = a.handle ORDER BY a.id", "q"),
+    ("INSERT INTO ciu VALUES (1, 1, 'A@x.org'), (1, 2, 'b@x.org'), (2, 1, 'a@x.org')", "dml:ciu"),
+    ("INSERT INTO ciu VALUES (1, 3, 'a@X.ORG')", "err"),
+    ("UPDATE ciu SET email = 'B@X.org' WHERE t = 1 AND id = 1", "err"),
+    ("UPDATE ciu SET email = 'a@X.org' WHERE t = 1 AND id = 1", "dml:ciu"),
+    ("SELECT t, id FROM ciu WHERE email = 'A@X.ORG' ORDER BY t, id", "q"),
+    ("UPDATE ci SET n = n + 1 ORDER BY handle DESC, id LIMIT 3", "dml:ci"),
+    ("DELETE FROM ci WHERE name = 'OEUVRE' ORDER BY id LIMIT 1", "dml:ci"),
+    ("BEGIN", "q"),
+    ("INSERT INTO cih VALUES ('Zed', 1)", "dml:cih"),
+    ("INSERT INTO cih VALUES ('ZED', 2)", "err"),
+    ("UPDATE cih SET n = 5 WHERE handle = 'zed'", "dml:cih"),
+    ("COMMIT", "dml:cih"),
+    ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),
+    ("INSERT INTO cih VALUES ('zed', 3)", "err"),
+    ("UPDATE cih SET n = n * 2 WHERE handle IN ('ZED', 'bob')", "dml:cih"),
+    ("SELECT handle, n FROM cih WHERE handle = 'ZeD' FOR UPDATE", "q"),
+    ("DELETE FROM cih WHERE handle = 'ZED'", "dml:cih"),
+    ("SET SESSION tx_isolation = 'REPEATABLE-READ'", "q"),
+    ("ALTER TABLE ci ADD COLUMN tag VARCHAR(10) COLLATE utf8mb4_general_ci, ADD UNIQUE KEY ut (tag, id)", "ddl:ci"),
+    ("UPDATE ci SET tag = 'Y' WHERE id = 1", "dml:ci"),
+    ("UPDATE ci SET tag = 'y' WHERE id IN (2, 3)", "dml:ci"),
+    ("SELECT id FROM ci WHERE tag = 'Y' ORDER BY id", "q"),
+    ("SELECT id FROM ci WHERE tag IS NULL ORDER BY id", "q"),
+    ("ALTER TABLE ci MODIFY note VARCHAR(10) COLLATE utf8mb4_general_ci", "ddl:ci"),
+    ("SELECT id FROM ci WHERE note = 'Y' ORDER BY id", "q"),
+    ("ALTER TABLE ci MODIFY code VARCHAR(12) COLLATE utf8mb4_bin", "ddl:ci"),
+    ("SELECT id FROM ci WHERE code = 'b2'", "q"),
+    ("SELECT handle, id FROM ci WHERE (handle, id) > ('BOB', 0) ORDER BY handle, id LIMIT 4", "q"),
+    ("SELECT id FROM ci WHERE (handle, id) <= ('carol', 100) ORDER BY handle DESC, id DESC LIMIT 3", "q"),
+    ("SELECT id FROM ci WHERE (name, id) >= ('ÉMILE', 0) ORDER BY name, id", "q"),
+    ("SELECT id FROM ci WHERE (handle, id) > (name, 0)", "err"),
+    # ... in tables without a PRIMARY KEY: keyed by a case-insensitive
+    # unique key, or by the hidden row id with a case-insensitive index
+    ("CREATE TABLE cik (email VARCHAR(40) COLLATE utf8mb4_general_ci NOT NULL, n INT, UNIQUE KEY ue (email))",
+     "ddl:cik"),
+    ("INSERT INTO cik VALUES ('A@x.org', 1), ('b@x.org', 2)", "dml:cik"),
+    ("INSERT INTO cik VALUES ('a@X.ORG', 3)", "err"),
+    ("INSERT INTO cik VALUES ('B@X.org', 4) ON DUPLICATE KEY UPDATE n = n + 10", "dml:cik"),
+    ("SELECT email, n FROM cik WHERE email = 'B@x.ORG'", "q"),
+    ("CREATE TABLE cin (tag VARCHAR(10) COLLATE utf8mb4_unicode_ci, n INT, KEY kt (tag))", "ddl:cin"),
+    ("INSERT INTO cin VALUES ('a', 1), ('A', 2), ('b', 3), ('Ä', 4)", "dml:cin"),
+    ("SELECT n FROM cin WHERE tag = 'A' ORDER BY n", "q"),
+    ("SELECT MIN(n), COUNT(*) FROM cin GROUP BY tag ORDER BY 1", "q"),
 ]
 
 
@@ -575,6 +697,7 @@ def main():
     fails = warns = 0
     fa, fb = (connect(hp, args.db, CLIENT.FOUND_ROWS) for hp in (args.tarn, args.ref))
     for (a, b), (sql, kind) in [((a, b), c) for c in CASES] + [((fa, fb), c) for c in FOUND_ROWS_CASES]:
+        sql = sql.replace("{db}", args.db)  # the database the cases run in (--db)
         ra, rb = run(a, sql), run(b, sql)
         ok = True
         msg = ""

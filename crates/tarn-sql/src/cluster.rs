@@ -88,10 +88,18 @@ pub struct ClusterConfig {
     /// (seconds) is taken over and finished by another server.
     #[serde(default = "default_ddl_job_stale")]
     pub ddl_job_stale: f64,
+    /// Collation of text columns in tables that name none (no COLLATE or
+    /// CHARSET option): `collation_server`.
+    #[serde(default = "default_collation")]
+    pub default_collation: String,
 }
 
 fn default_ddl_job_stale() -> f64 {
     30.0
+}
+
+fn default_collation() -> String {
+    "utf8mb4_bin".into()
 }
 
 fn default_deadlock_interval() -> f64 {

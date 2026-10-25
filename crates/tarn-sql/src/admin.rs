@@ -187,6 +187,10 @@ pub struct SessionVars<'a> {
     /// Values the session SET for variables Tarn reports but does not act
     /// on (character sets, sql_mode, time_zone, foreign_key_checks, ...).
     pub overrides: Option<&'a std::collections::HashMap<String, Value>>,
+    /// collation_connection: the collation of literals.
+    pub collation_connection: &'a str,
+    /// collation_server / collation_database: the default of new tables.
+    pub collation_server: &'a str,
 }
 
 /// A system variable name without `@@` and scope prefix, lower-cased.
@@ -222,7 +226,8 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         | "character_set_server"
         | "character_set_database"
         | "character_set_system" => Value::str("utf8mb4"),
-        "collation_connection" | "collation_server" | "collation_database" => Value::str("utf8mb4_bin"),
+        "collation_connection" => Value::str(sv.collation_connection),
+        "collation_server" | "collation_database" => Value::str(sv.collation_server),
         "sql_mode" => Value::str("STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"),
         "time_zone" => Value::str("SYSTEM"),
         "system_time_zone" => Value::str("UTC"),
