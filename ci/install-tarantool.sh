@@ -35,8 +35,10 @@ run "install build dependencies" sudo apt-get install -y -qq build-essential cma
 SRC=$(mktemp -d)
 run "clone" git clone --quiet --depth 1 --branch "$VERSION" --recurse-submodules \
   https://github.com/tarantool/tarantool.git "$SRC/tarantool"
+# The bundled mimalloc is downloaded at build time from a third-party
+# server; the system allocator is fine for tests.
 run "configure" cmake -S "$SRC/tarantool" -B "$SRC/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_INSTALL_PREFIX="$PREFIX"
+  -DCMAKE_INSTALL_PREFIX="$PREFIX" -DENABLE_BUNDLED_MIMALLOC=OFF -DMIMALLOC_OVERRIDE=none -DENABLE_FEEDBACK_DAEMON=OFF
 run "build" cmake --build "$SRC/build" --parallel "$(nproc)"
 run "install" cmake --install "$SRC/build"
 "$PREFIX/bin/tarantool" --version | head -2
