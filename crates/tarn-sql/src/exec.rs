@@ -1161,6 +1161,80 @@ pub async fn lock_matching(
     Ok(kept)
 }
 
+/// READ COMMITTED UPDATE/DELETE of rows named by their full primary key
+/// (`WHERE pk = ?`, `pk IN (...)`, possibly with more conditions): the rows
+/// are locked and read in one `tarn_lock` call per shard, with no candidate
+/// read first, and WHERE is checked on the versions read under the locks, as
+/// `lock_matching` does. A key with no row, or whose row does not match, has
+/// its lock released at once. As in InnoDB, whose semi-consistent read does
+/// not apply to unique searches, a key another transaction holds is waited
+/// for. None: the statement is not of this form (the caller then reads
+/// candidates with `candidate_rows` and locks them with `lock_matching`).
+#[allow(clippy::too_many_arguments)]
+pub async fn lock_pk_points(
+    cluster: &Arc<Cluster>,
+    txn: &mut Txn,
+    access: &TableAccess,
+    filter: &Option<Expr>,
+    order: &[(Expr, bool)],
+    o: LockOpts,
+    want: Option<usize>,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Option<Vec<Row>>> {
+    let AccessPath::Point { index: 0, keys } = &access.path else {
+        return Ok(None);
+    };
+    // Several keys are taken in primary-key order: only without ORDER BY
+    // and LIMIT, which make that order visible.
+    if keys.len() > 1 && (!order.is_empty() || want.is_some()) {
+        return Ok(None);
+    }
+    let t = &access.table;
+    let pk = &t.indexes[0];
+    let mut kept = Vec::new();
+    if want == Some(0) {
+        return Ok(Some(kept));
+    }
+    let mut items = Vec::new();
+    for (j, key) in eval_keys(t, pk, keys, &[], cx)?.into_iter().enumerate() {
+        let Some(shard) = route_prefix(cluster, t, pk, &key) else {
+            return Ok(None);
+        };
+        items.push(LockItem {
+            cand: j,
+            table: 0,
+            shard,
+            key: LockKey {
+                table: t.clone(),
+                index: 0,
+                key,
+            },
+        });
+    }
+    let res = lock_batch(cluster, txn, &items, LockOpts { read: true, ..o }).await?;
+    let mut release = Vec::new();
+    for (it, r) in items.into_iter().zip(res) {
+        let latest = match r {
+            Locked::Row(row) => own_or_latest(txn, t, &it.key.key, row),
+            Locked::Skipped | Locked::Granted => return Err(crate::mpw::proto("tarn_lock read no row")),
+        };
+        let ok = match &latest {
+            None => false,
+            Some(row) => match filter {
+                Some(f) => f.eval_bool(row, cx)?,
+                None => true,
+            },
+        };
+        if ok {
+            kept.push(latest.unwrap());
+        } else if txn.buffered(t.space_id, &it.key.key).is_none() {
+            release.push((it.shard, it.key));
+        }
+    }
+    unlock_items(cluster, txn, release).await;
+    Ok(Some(kept))
+}
+
 /// Candidate rows of a single table for a READ COMMITTED UPDATE/DELETE: the
 /// latest committed state (with the transaction's own writes), filtered and
 /// ordered; locked and re-checked by `lock_matching`.
