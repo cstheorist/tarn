@@ -139,7 +139,10 @@ settings, then checkpointed:
 * **The cache decides how many reads go to disk.** A read that misses it
   reads a page from disk on one of `TARN_VINYL_READ_THREADS` (1 by default).
   Raise it when the rows a workload reads do not fit the cache and the disk
-  serves parallel reads.
+  serves parallel reads. With data ten times the cache, point selects ran at
+  72% of their cached rate and range scans at 62%, while single-row writes
+  kept theirs ([bench/RESULTS.md](../bench/RESULTS.md); files on tmpfs, so
+  a miss read memory and the figures leave out disk latency).
 * **Disk.** Vinyl compresses pages (zstd) when it compacts them. Dumps are
   written uncompressed, so recent writes take more space until compaction
   merges them. Compaction writes a range's new files before dropping the old

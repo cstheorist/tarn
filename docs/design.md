@@ -647,10 +647,17 @@ does not hold its writes for hours. Checking existing rows (a narrower
 type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
-**Not yet.** Replica bootstrap and backups copy a shard's whole data set.
-Benchmarks with data larger than the cache are issue #23's last step;
-[Sizing](operations.md#sizing) gives the memory and disk a vinyl shard
-needs, measured.
+**Performance.** Cached, vinyl tables served 73–89% of memtx's throughput
+in sysbench. With data ten times the cache, point selects ran at 72% of the
+cached rate and single-row writes kept theirs, at 2.9× and 4.4–6.2× TiDB's
+with the same data ten times its block cache
+([bench/RESULTS.md](../bench/RESULTS.md); data on tmpfs, so these leave out
+disk latency). [Sizing](operations.md#sizing) gives the memory and disk a
+vinyl shard needs.
+
+**Not yet.** Replica bootstrap and backups copy a shard's whole data set
+(issue #56). A table cannot move between engines (issue #57). Writes are
+not slowed down when compaction falls behind (issue #58).
 
 ## 3. Verus
 
