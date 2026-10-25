@@ -197,17 +197,13 @@ pub enum Stmt {
     Update(Arc<UpdatePlan>),
     Delete(Arc<DeletePlan>),
     CreateTable {
-        def: crate::catalog::TableDef,
+        def: Box<crate::catalog::TableDef>,
         if_not_exists: bool,
+        /// AUTO_INCREMENT = n table option: the first generated value.
+        auto_increment: Option<u64>,
     },
-    CreateIndex {
-        db: String,
-        table: String,
-        name: String,
-        cols: Vec<String>,
-        unique: bool,
-        if_not_exists: bool,
-    },
+    /// ALTER TABLE, RENAME TABLE (one plan per table), CREATE / DROP INDEX
+    Alter(Vec<crate::alter::AlterPlan>),
     DropTable {
         tables: Vec<(String, String)>,
         if_exists: bool,

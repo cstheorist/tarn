@@ -30,6 +30,10 @@ SCHEMA = [
     # a unique key apart from the primary key (both contain the shard key t)
     "CREATE TABLE uk (t INT, id INT, name VARCHAR(10), n INT, PRIMARY KEY (t, id), UNIQUE KEY tn (t, name)) "
     "PARTITION BY KEY(t)",
+    # schema changes (issue #16)
+    "CREATE TABLE al (id INT PRIMARY KEY, a INT, b VARCHAR(10), c DECIMAL(6,2), KEY ka (a))",
+    "CREATE TABLE al2 (t INT, id INT, name VARCHAR(10), PRIMARY KEY (t, id)) PARTITION BY KEY(t)",
+    "CREATE TABLE fkc (id INT PRIMARY KEY, p INT)",
 ]
 
 
@@ -50,6 +54,8 @@ def seed():
     s.append("INSERT INTO t3 VALUES " + ", ".join(rows))
     s.append("INSERT INTO sgn (id, n, u, i) VALUES (1, 0, 0, 0), (2, 5, 5, 2147483647), "
              "(3, -9223372036854775807, 18446744073709551615, -2147483648)")
+    s.append("INSERT INTO al VALUES (1, 5, 'one', 1.5), (2, NULL, 'two-two', 22.25), (3, 300, NULL, -3), (4, 7, 'four', 0)")
+    s.append("INSERT INTO al2 VALUES (1, 1, 'x'), (1, 2, 'x'), (2, 1, 'x')")
     return s
 
 
@@ -243,6 +249,71 @@ CASES = [
     ("COMMIT", "dml:uk"),
     ("ROLLBACK TO SAVEPOINT s1", "err"),
     ("SET SESSION tx_isolation = 'REPEATABLE-READ'", "q"),
+    # ALTER TABLE, CREATE / DROP INDEX, RENAME TABLE (issue #16); "ddl:t"
+    # compares the table's rows, column names and indexes afterwards
+    ("ALTER TABLE al ADD COLUMN n INT NOT NULL", "ddl:al"),
+    ("ALTER TABLE al ADD COLUMN m VARCHAR(5) DEFAULT 'zz' AFTER id, ADD d DATE, ADD e INT DEFAULT -2 FIRST", "ddl:al"),
+    ("INSERT INTO al (id, a, b, c, n) VALUES (5, 1, 'five', 5, 50)", "dml:al"),
+    ("UPDATE al SET n = n + 1 WHERE id = 1", "dml:al"),
+    ("UPDATE al SET m = 'new', n = n + 2 WHERE a = 7", "dml:al"),
+    ("SELECT id, m, n, e FROM al WHERE n > 0 ORDER BY id", "q"),
+    ("ALTER TABLE al MODIFY a INT NOT NULL", "err"),
+    ("ALTER TABLE al MODIFY b VARCHAR(3)", "err"),
+    ("ALTER TABLE al MODIFY a TINYINT", "err"),
+    ("ALTER TABLE al MODIFY c DECIMAL(3,2)", "err"),
+    ("ALTER TABLE al MODIFY b VARCHAR(20) NOT NULL", "err"),
+    ("ALTER TABLE al MODIFY m VARCHAR(2)", "err"),
+    ("ALTER TABLE al MODIFY e INT UNSIGNED", "err"),
+    ("ALTER TABLE al MODIFY b VARCHAR(20), MODIFY a BIGINT, MODIFY c DECIMAL(9,2)", "ddl:al"),
+    ("ALTER TABLE al CHANGE b bb VARCHAR(20) DEFAULT 'x' FIRST", "ddl:al"),
+    ("ALTER TABLE al RENAME COLUMN bb TO b2", "ddl:al"),
+    ("ALTER TABLE al ALTER COLUMN n SET DEFAULT 9", "ddl:al"),
+    ("INSERT INTO al (id, a, c) VALUES (6, 2, 1)", "dml:al"),
+    ("ALTER TABLE al ALTER COLUMN n DROP DEFAULT", "ddl:al"),
+    ("INSERT INTO al (id, a, c) VALUES (7, 2, 1)", "err"),
+    ("ALTER TABLE al DROP COLUMN m, DROP COLUMN e", "ddl:al"),
+    ("ALTER TABLE al DROP COLUMN nope", "err"),
+    ("ALTER TABLE al ADD COLUMN a INT", "err"),
+    ("ALTER TABLE al ADD UNIQUE KEY ua (a, id), ADD INDEX ic (c)", "ddl:al"),
+    ("ALTER TABLE al DROP INDEX ka, RENAME INDEX ic TO ic2", "ddl:al"),
+    ("ALTER TABLE al ADD INDEX ic2 (n)", "err"),
+    ("CREATE INDEX ia ON al (a, n)", "ddl:al"),
+    ("ALTER TABLE al DROP COLUMN n", "ddl:al"),
+    ("DROP INDEX ia ON al", "ddl:al"),
+    ("DROP INDEX ia ON al", "err"),
+    ("ALTER TABLE al2 ADD UNIQUE KEY tn (t, name)", "err"),
+    ("UPDATE al2 SET name = 'y' WHERE t = 1 AND id = 2", "dml:al2"),
+    ("ALTER TABLE al2 ADD UNIQUE KEY tn (t, name)", "ddl:al2"),
+    ("INSERT INTO al2 VALUES (1, 3, 'y')", "err"),
+    ("ALTER TABLE al ENGINE = InnoDB, ALGORITHM = INPLACE, LOCK = NONE", "ddl:al"),
+    ("ALTER TABLE al DISABLE KEYS", "q"),
+    ("ALTER TABLE al ENABLE KEYS", "q"),
+    ("ALTER TABLE fkc ADD CONSTRAINT fk1 FOREIGN KEY (p) REFERENCES t1 (id)", "ddl:fkc"),
+    ("ALTER TABLE fkc DROP COLUMN p", "err"),
+    ("ALTER TABLE fkc DROP FOREIGN KEY fk1", "ddl:fkc"),
+    ("ALTER TABLE fkc DROP FOREIGN KEY fk1", "err"),
+    ("RENAME TABLE fkc TO fkc2", "q"),
+    ("SELECT * FROM fkc", "err"),
+    ("ALTER TABLE fkc2 RENAME TO fkc3, ADD COLUMN z INT", "q"),
+    ("SELECT * FROM fkc3", "q"),
+    # user and system variables, executable comments, LOCK TABLES
+    ("SET @v = 5, @s = 'it''s', @d = 1.50, @n = NULL", "q"),
+    ("SELECT @v, @s, @d, @n, @never_set", "q"),
+    ("SELECT id FROM t1 WHERE id < @v ORDER BY id", "q"),
+    ("SET @v := @v * 3", "q"),
+    ("SELECT @v AS tripled", "q"),
+    ("SET @old_mode = @@sql_mode", "q"),
+    ("SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')", "q"),
+    ("INSERT INTO ai (id, v) VALUES (0, 'zero')", "dml:ai"),
+    ("SET sql_mode = @old_mode", "q"),
+    ("INSERT INTO ai (id, v) VALUES (0, 'gen')", "q"),
+    ("SELECT COUNT(*) FROM ai WHERE id = 0", "q"),
+    ("SELECT 1 /*!40101 + 1 */ AS x", "q"),
+    ("/*!40101 SET @c = 7 */", "q"),
+    ("SELECT @c", "q"),
+    ("LOCK TABLES t1 WRITE", "q"),
+    ("UNLOCK TABLES", "q"),
+    ("INSERT INTO t1 (id, c) VALUES (500, 123456789.5)", "err"),
 ]
 
 
@@ -350,7 +421,26 @@ def main():
             # same column names (exactly) and the same rows
             ok = ra[2] == rb[2] and rows_equal(ra[1], rb[1], ordered)
         elif ra[0] == "ok":
-            ok = ra[1] == rb[1]
+            # ALTER TABLE reports rows copied (0 when done in place)
+            ok = ra[1] == rb[1] or kind.startswith("ddl:")
+        if ok and kind.startswith("ddl:"):
+            # the same rows under the same column names, and the same indexes
+            t = kind[4:]
+            da, db_ = run(a, f"SELECT * FROM {t}"), run(b, f"SELECT * FROM {t}")
+            ok = da[0] == db_[0] == "rows" and da[2] == db_[2] and rows_equal(da[1], db_[1], False)
+            ia, ib = run(a, f"SHOW INDEX FROM {t}"), run(b, f"SHOW INDEX FROM {t}")
+
+            def keys(r):
+                if r[0] != "rows":
+                    return r
+                cols = r[2]
+                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name")]
+                return sorted(tuple(row[i] for i in pick) for row in r[1])
+            if ok and keys(ia) != keys(ib):
+                ok = False
+                msg = f"\n    indexes differ:\n    tarn: {keys(ia)}\n    ref:  {keys(ib)}"
+            elif not ok:
+                msg = f"\n    table {t} differs:\n    tarn: {da[2] if da[0] == 'rows' else da}\n    ref:  {db_[2] if db_[0] == 'rows' else db_}"
         if ok and kind.startswith("dml:"):
             t = kind[4:]
             da, db_ = run(a, f"SELECT * FROM {t}"), run(b, f"SELECT * FROM {t}")

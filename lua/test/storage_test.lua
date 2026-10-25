@@ -475,5 +475,105 @@ check('a unique-key value lock reads the row holding that value', r[1] == 'ok' a
 c[1]:call('tarn_unlock', {'P18'})
 check('every row lock is released', c[1]:call('tarn_info').row_locks == 0, c[1]:call('tarn_info').row_locks)
 
+
+print('schema changes (ALTER TABLE)')
+local afmt = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
+              {name = 's', type = 'string', is_nullable = true}, {name = 'bucket_id', type = 'unsigned'}}
+local aidx = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+              {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}
+for i = 1, 2 do c[i]:call('tarn_create_table', {{name = 'test.alt', engine = 'memtx', format = afmt, indexes = aidx}}) end
+c[1]:reload_schema()
+local asid = c[1].space['test.alt'].id
+c[1]:call('tarn_autocommit', {{{'insert', asid, {1, 10, 'abc', 1}}, {'insert', asid, {2, 20, 'abcdef', 1}}}})
+local function aw(ver, op) return c[1]:call('tarn_autocommit', {{op}, {fence = {asid, ver}}}) end
+local function aget(id) return c[1]:eval('return box.space["test.alt"]:get{...}', {id}) end
+local function aindex(id) return c[1]:eval('local i = box.space["test.alt"].index[...] return i and i.name', {id}) end
+local function aargs(ver, extra)
+    local a = {ver = ver, timeout = 1, checks = {}, builds = {}, drop = {}, renames = {},
+               def = {name = 'test.alt', id = asid, format = afmt, indexes = aidx, json = '{}', ver = ver}}
+    for key, val in pairs(extra or {}) do a[key] = val end
+    return a
+end
+local iv = {{7, 'iv', true, {{field = 2, type = 'integer'}}}}
+r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(5, {checks = {{3, 's', 'chars', 4, box.NULL, box.NULL}}})})
+check('PREPARE refuses rows that do not fit the new type (1265)', r[1] == 'error' and r[2] == 1265, r)
+r = aw(0, {'update', asid, {1}, {{'+', 2, 1}}})
+check('... and lifts its fence again', r[1] == 'ok', r)
+r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(5, {builds = iv})})
+check('PREPARE builds a new index under a temporary name', r[1] == 'ok' and aindex(7) == '_tarn_tmp_7', {r, aindex(7)})
+r = aw(0, {'update', asid, {1}, {{'+', 2, 1}}})
+check('a write made with the replaced definition is refused (1412)', r[1] == 'error' and r[2] == 1412, r)
+r = aw(5, {'update', asid, {1}, {{'+', 2, 1}}})
+check('... one made with the new definition is not', r[1] == 'ok', r)
+local sa = c[1]:new_stream(); sa:begin()
+r = sa:call('tarn_commit_local', {'AL1', {{'replace', asid, {1, 0, 'abc', 1}}}, {}, {}, box.NULL, {asid, 0}})
+check('CommitLocal refuses it too', r[1] == 'error' and r[2] == 1412 and aget(1)[2] == 12, r)
+sa = c[1]:new_stream(); sa:begin()
+v1 = sa:call('tarn_prepare', {'AP1', 1, {1, 2}, {{'replace', asid, {1, 0, 'abc', 1}}}, {}, {}, fiber.time(), box.NULL, {asid, 0}})
+check('... and PREPARE votes NO', v1[1] == 'no' and v1[2] == 1412, v1)
+r = c[1]:call('tarn_alter_abort', {'test.alt', aargs(5, {builds = iv})})
+check('ABORT drops the temporary index and lifts the fence',
+      r[1] == 'ok' and aindex(7) == nil and aw(0, {'update', asid, {1}, {{'+', 2, 1}}})[1] == 'ok', r)
+v1 = prepare(1, 'AX1', {{'replace', asid, {2, 21, 'abcdef', 1}}})
+r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(6)})
+check('PREPARE waits for prepared transactions writing the table, up to its timeout (1205)',
+      r[1] == 'timeout' and r[2] == 1205, r)
+got = nil
+f = fiber.create(function() got = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(6, {timeout = 5})}) end)
+fiber.sleep(0.1)
+check('... it waits', got == nil)
+c[1]:call('tarn_apply', {'AX1'})
+fiber.sleep(0.1)
+check('... until the transaction is applied', got and got[1] == 'ok', got)
+local afmt2 = table.deepcopy(afmt)
+afmt2[5] = {name = 'w', type = 'integer', is_nullable = true}
+r = c[1]:call('tarn_alter_apply', {'test.alt', aargs(6, {format = afmt2,
+    def = {name = 'test.alt', id = asid, format = afmt2, indexes = aidx, json = '{}', ver = 6}})})
+local aver = c[1]:eval('return box.space._tarn_catalog:get{"test.alt"}.def.ver')
+check('APPLY changes the format and stores definition version 6', r[1] == 'ok' and aver == 6, {r, aver})
+r = c[1]:call('tarn_alter_apply', {'test.alt', aargs(6)})
+check('... a repeated APPLY does nothing', r[1] == 'ok' and r[2] == 'applied', r)
+r = aw(5, {'update', asid, {1}, {{'+', 2, 1}}})
+check('the fence outlives the ALTER (stored with the definition)', r[1] == 'error' and r[2] == 1412, r)
+r = aw(6, {'update', asid, {1}, {{'+', 5, 1}}, {}, {4, 41}})
+check('an update of a row older than an added field starts from its fill value',
+      r[1] == 'ok' and aget(1)[5] == 42 and aget(1)[2] == 13, {r, aget(1)})
+aw(6, {'insert', asid, {3, 21, 'q', 1, box.NULL}})
+local ux = {{8, 'uv', true, {{field = 2, type = 'integer'}}}}
+r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(7, {builds = ux})})
+check('a unique index the rows violate: 1062, and no index is left', r[2] == 1062 and aindex(8) == nil, {r, aindex(8)})
+r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(7, {checks = {{5, 'w', 'notnull', box.NULL, box.NULL, box.NULL}}})})
+check('a NOT NULL check counts a short row by its fill value (NULL here)', r[1] == 'error' and r[2] == 1265, r)
+r = c[1]:call('tarn_alter_prepare', {'test.alt', aargs(7, {checks = {{5, 'w', 'range', 0, 100, 0}}})})
+check('... and a range check by its fill value (0 here)', r[1] == 'ok', r)
+c[1]:call('tarn_alter_abort', {'test.alt', aargs(7)})
+r = c[1]:call('tarn_ddl_begin', {{'o1', 'test.alt', 7, aargs(7)}})
+local r2 = c[1]:call('tarn_ddl_begin', {{'o2', 'test.alt', 8, aargs(8)}})
+check('one schema change at a time (job record)', r[1] == 'ok' and r2[1] == 'busy' and r2[2] == 'o1', {r, r2})
+r = c[1]:call('tarn_ddl_job')
+check('... the pending job can be read back', r[1] == 'ok' and r[2] == 'o1' and r[4] == 'test.alt' and r[6].ver == 7, r)
+r = c[1]:call('tarn_ddl_touch', {'o2', 'o1'})
+c[1]:call('tarn_ddl_end', {'o1'})
+check('... taken over by another server', r[1] == 'ok' and c[1]:call('tarn_ddl_job')[2] == 'o2', r)
+c[1]:call('tarn_ddl_end', {'o2'})
+check('... and ended by its owner', #c[1]:call('tarn_ddl_job') == 1)
+-- Two jobs beginning at once: the second must see the first even while its
+-- insert waits for the WAL (a read-confirmed read would not).
+local f1 = c[1]:call('tarn_ddl_begin', {{'o3', 'test.alt', 9, aargs(9)}}, {is_async = true})
+local f2 = c[1]:call('tarn_ddl_begin', {{'o4', 'test.alt', 10, aargs(10)}}, {is_async = true})
+local function status(f)
+    -- wait_result returns the call's results packed in a table, or nil and
+    -- the error
+    local ok, r, e = pcall(f.wait_result, f, 5)
+    if not ok then return tostring(r) end
+    if r == nil then return tostring(e) end
+    return type(r[1]) == 'table' and r[1][1] or tostring(r[1])
+end
+local st = {status(f1), status(f2)}
+table.sort(st)
+check('two schema changes beginning at once: one runs, the other is told busy', st[1] == 'busy' and st[2] == 'ok', st)
+c[1]:call('tarn_ddl_end', {'o3'})
+c[1]:call('tarn_ddl_end', {'o4'})
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

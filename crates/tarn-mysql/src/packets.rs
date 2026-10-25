@@ -28,8 +28,8 @@ pub mod cap {
     pub const DEPRECATE_EOF: u32 = 1 << 24;
 }
 
-/// What the server offers. No SSL, compression, multi-statements, session
-/// tracking or found-rows semantics.
+/// What the server offers. No SSL, compression, session tracking or
+/// found-rows semantics.
 pub const SERVER_CAPS: u32 = cap::LONG_PASSWORD
     | cap::LONG_FLAG
     | cap::CONNECT_WITH_DB
@@ -37,6 +37,7 @@ pub const SERVER_CAPS: u32 = cap::LONG_PASSWORD
     | cap::INTERACTIVE
     | cap::TRANSACTIONS
     | cap::SECURE_CONNECTION
+    | cap::MULTI_STATEMENTS
     | cap::MULTI_RESULTS
     | cap::PS_MULTI_RESULTS
     | cap::PLUGIN_AUTH
@@ -46,6 +47,7 @@ pub const SERVER_CAPS: u32 = cap::LONG_PASSWORD
 
 pub const SERVER_STATUS_IN_TRANS: u16 = 1;
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 2;
+pub const SERVER_MORE_RESULTS_EXISTS: u16 = 8;
 
 /// utf8mb4_general_ci
 pub const DEFAULT_COLLATION: u8 = 45;

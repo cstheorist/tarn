@@ -44,7 +44,7 @@ impl Backend for Conn {
         self.s.user = user.to_string();
         if let Some(db) = database {
             if !db.is_empty() {
-                self.s.use_db(db)?;
+                self.s.use_db_fresh(db).await?;
             }
         }
         Ok(())
@@ -71,7 +71,7 @@ impl Backend for Conn {
     }
 
     async fn on_init_db(&mut self, db: &str) -> SqlResult<()> {
-        self.s.use_db(db)
+        self.s.use_db_fresh(db).await
     }
 
     fn status_flags(&self) -> u16 {
