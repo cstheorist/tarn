@@ -53,6 +53,40 @@ pub struct Session {
 
 const MAX_RETRIES: usize = 20;
 
+/// First keyword of a statement, skipping whitespace and comments.
+fn first_keyword(sql: &str) -> &str {
+    let mut s = sql;
+    loop {
+        s = s.trim_start();
+        if let Some(r) = s.strip_prefix("/*") {
+            if r.starts_with('!') {
+                // MySQL versioned comment: its content is executable SQL
+                let r = r[1..].trim_start_matches(|c: char| c.is_ascii_digit());
+                s = r;
+                continue;
+            }
+            match r.find("*/") {
+                Some(i) => s = &r[i + 2..],
+                None => return "",
+            }
+        } else if s.starts_with("-- ") || s.starts_with('#') {
+            match s.find('\n') {
+                Some(i) => s = &s[i + 1..],
+                None => return "",
+            }
+        } else {
+            break;
+        }
+    }
+    let end = s.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(s.len());
+    &s[..end]
+}
+
+fn is_ddl(sql: &str) -> bool {
+    let k = first_keyword(sql);
+    ["CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"].iter().any(|d| k.eq_ignore_ascii_case(d))
+}
+
 fn cols(names: &[(&str, ColumnType)]) -> Arc<[Column]> {
     names.iter().map(|(n, t)| Column::new(n, *t)).collect::<Vec<_>>().into()
 }
@@ -98,6 +132,11 @@ impl Session {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if let Some(a) = admin::recognize(sql)? {
             return self.run_admin(a).await;
+        }
+        if is_ddl(sql) {
+            // Literals in DDL are syntax (VARCHAR(20), DEFAULT '0'), not values.
+            let stmt = self.plan_cached(sql, &[])?;
+            return self.run(&stmt, &[]).await;
         }
         let n = normalize(sql, Mode::Literals)?;
         let stmt = self.plan_cached(&n.template, &n.params)?;

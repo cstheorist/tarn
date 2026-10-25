@@ -275,7 +275,22 @@ local function apply_checked(txid, w)
     end
     local holder = write_conflict(txid, space, pk, old, new)
     if holder then return nil, holder end
-    return apply_write(w)
+    return apply_write(w), nil, old
+end
+
+-- MySQL affected-rows convention for one write: REPLACE of a different row
+-- counts 2, an UPDATE or REPLACE that changes nothing counts 0 / 1.
+local function affected(op, old, new)
+    if op == 'insert' then return 1 end
+    if op == 'delete' then return old ~= nil and 1 or 0 end
+    local same = old ~= nil and new ~= nil and msgpack.encode(old) == msgpack.encode(new)
+    if op == 'replace' then
+        if old == nil or same then return 1 end
+        return 2
+    end
+    -- update
+    if old == nil or new == nil or same then return 0 end
+    return 1
 end
 
 -- TarnCommit!CommitLocal: called inside the transaction's IPROTO stream after
@@ -401,9 +416,10 @@ function tarn_autocommit(writes)
             box.begin(RW)
             local n, last = 0, nil
             for _, w in ipairs(writes) do
-                local t, holder = apply_checked('', w)
+                local t, holder, old = apply_checked('', w)
                 if holder then box.rollback(); return {'locked', holder} end
-                if t ~= nil then n = n + 1; last = t end
+                n = n + affected(w[1], old, t)
+                if t ~= nil then last = t end
             end
             box.commit()
             return {OK, n, last}

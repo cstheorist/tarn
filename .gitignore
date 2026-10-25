@@ -2,3 +2,4 @@ target/
 *.log
 tla/states/
 tla/**/*.out
+tla/MC_TTrace_*

@@ -6,12 +6,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-tarn-common = { workspace = true }
-bytes = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-sha1 = { workspace = true }
-rand = { workspace = true }
+tarn-common.workspace = true
+tarn-verified.workspace = true
+bytes.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+sha1.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
-mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
+tokio = { workspace = true }

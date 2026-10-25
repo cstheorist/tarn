@@ -43,6 +43,7 @@ box.cfg{
     readahead = 1024 * 1024,
     log_level = tonumber(env('TARN_LOG_LEVEL', '5')),
     checkpoint_interval = 3600,
+    feedback_enabled = false,
     replication = replicated and replicas or nil,
     replication_synchro_quorum = replicated and 'N / 2 + 1' or nil,
     replication_synchro_timeout = 5,

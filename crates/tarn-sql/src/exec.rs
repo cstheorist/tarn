@@ -176,7 +176,7 @@ pub async fn fetch(
                 }
             }
             let next_ty = idx.cols.get(eq.len()).map(|&c| t.columns[c].ty());
-            let mut bound = |b: &Option<(Expr, bool)>| -> SqlResult<Option<(Value, bool)>> {
+            let bound = |b: &Option<(Expr, bool)>| -> SqlResult<Option<(Value, bool)>> {
                 match (b, next_ty) {
                     (Some((e, incl)), Some(ty)) => {
                         let v = e.eval(outer, cx)?;
@@ -349,7 +349,8 @@ enum AggState {
     Min(Option<Value>),
     Max(Option<Value>),
     Any(Option<Value>),
-    Concat(Vec<Bytes>),
+    /// GROUP_CONCAT: (sort keys, text) per input row.
+    Concat(Vec<(Vec<Value>, Bytes)>),
 }
 
 fn dec_scale(v: &Value) -> u32 {
@@ -436,11 +437,11 @@ impl AggState {
                     *m = Some(v);
                 }
             }
-            AggState::Concat(parts) => parts.push(v.to_text().unwrap_or_default()),
+            AggState::Concat(parts) => parts.push((Vec::new(), v.to_text().unwrap_or_default())),
         }
     }
 
-    fn finish(self) -> Value {
+    fn finish(self, a: &AggCall) -> Value {
         match self {
             AggState::Count(n) => Value::Int(n as i64),
             AggState::SumInt(s, any) => {
@@ -474,11 +475,31 @@ impl AggState {
                 }
             }
             AggState::Min(m) | AggState::Max(m) | AggState::Any(m) => m.unwrap_or(Value::Null),
-            AggState::Concat(parts) => {
+            AggState::Concat(mut parts) => {
                 if parts.is_empty() {
                     Value::Null
                 } else {
-                    Value::Str(Bytes::from(parts.join(&b","[..])))
+                    if !a.order.is_empty() {
+                        parts.sort_by(|(x, _), (y, _)| {
+                            for (i, (_, desc)) in a.order.iter().enumerate() {
+                                let o = sort_cmp(&x[i], &y[i]);
+                                let o = if *desc { o.reverse() } else { o };
+                                if o.is_ne() {
+                                    return o;
+                                }
+                            }
+                            std::cmp::Ordering::Equal
+                        });
+                    }
+                    let sep: &[u8] = a.sep.as_deref().unwrap_or(b",");
+                    let mut out = Vec::new();
+                    for (i, (_, t)) in parts.iter().enumerate() {
+                        if i > 0 {
+                            out.extend_from_slice(sep);
+                        }
+                        out.extend_from_slice(t);
+                    }
+                    Value::Str(Bytes::from(out))
                 }
             }
         }
@@ -507,19 +528,30 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
                     }
                 }
             }
+            if a.func == AggFunc::GroupConcat && !a.order.is_empty() {
+                if let Some(x) = v {
+                    if !x.is_null() {
+                        let keys: Vec<Value> = a.order.iter().map(|(e, _)| e.eval(row, cx)).collect::<SqlResult<_>>()?;
+                        if let AggState::Concat(parts) = &mut entry.1[i] {
+                            parts.push((keys, x.to_text().unwrap_or_default()));
+                        }
+                    }
+                }
+                continue;
+            }
             entry.1[i].add(a.func, v);
         }
     }
     if groups.is_empty() && ap.group.is_empty() {
         // aggregate over an empty input still yields one row
-        let row: Vec<Value> = ap.aggs.iter().map(|a| AggState::new(a).finish()).collect();
+        let row: Vec<Value> = ap.aggs.iter().map(|a| AggState::new(a).finish(a)).collect();
         return Ok(vec![row]);
     }
     let mut out = Vec::with_capacity(order.len());
     for k in order {
         let (gv, states, _) = groups.remove(&k).unwrap();
         let mut row = gv;
-        row.extend(states.into_iter().map(|s| s.finish()));
+        row.extend(states.into_iter().zip(ap.aggs.iter()).map(|(s, a)| s.finish(a)));
         out.push(row);
     }
     Ok(out)
@@ -542,6 +574,9 @@ pub fn render_columns(cols: &Arc<[Column]>, params: &[Value]) -> Arc<[Column]> {
 
 pub fn render_name(s: &str, params: &[Value]) -> String {
     let b = s.as_bytes();
+    // A bare literal is named by its value (SELECT 'abc' -> abc); inside an
+    // expression, string literals keep their quotes as typed (LOWER('ABC')).
+    let bare = b.len() > 1 && b[0] == b'?' && b[1..].iter().all(u8::is_ascii_digit);
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
@@ -553,7 +588,12 @@ pub fn render_name(s: &str, params: &[Value]) -> String {
             if let Ok(n) = s[i + 1..j].parse::<usize>() {
                 if let Some(v) = n.checked_sub(1).and_then(|k| params.get(k)) {
                     match v {
-                        Value::Str(x) => out.push_str(&String::from_utf8_lossy(x)),
+                        Value::Str(x) if bare => out.push_str(&String::from_utf8_lossy(x)),
+                        Value::Str(x) => {
+                            out.push('\'');
+                            out.push_str(&String::from_utf8_lossy(x).replace('\'', "''"));
+                            out.push('\'');
+                        }
                         other => out.push_str(&other.to_string()),
                     }
                     i = j;

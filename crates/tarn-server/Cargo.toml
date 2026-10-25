@@ -1,6 +1,20 @@
 [package]
 name = "tarn-server"
+description = "Tarn: a MySQL-protocol distributed SQL server over Tarantool shards"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tarn-server"
+path = "src/main.rs"
 
 [dependencies]
+tarn-common.workspace = true
+tarn-mysql.workspace = true
+tarn-sql.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde_json = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mimalloc = { version = "0.1", default-features = false }

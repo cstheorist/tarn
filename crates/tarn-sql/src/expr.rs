@@ -494,20 +494,47 @@ impl Expr {
     }
 }
 
+/// Integer value of the longest numeric prefix of a string ("12abc" -> 12),
+/// saturating at the i64 range like MySQL.
+fn int_prefix(b: &[u8]) -> i64 {
+    let s = std::str::from_utf8(b).unwrap_or("").trim_start();
+    let bytes = s.as_bytes();
+    let (neg, mut i) = match bytes.first() {
+        Some(b'-') => (true, 1),
+        Some(b'+') => (false, 1),
+        _ => (false, 0),
+    };
+    let start = i;
+    let mut v: i128 = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        v = (v * 10 + (bytes[i] - b'0') as i128).min(i64::MAX as i128 + 1);
+        i += 1;
+    }
+    if i == start {
+        return 0;
+    }
+    let v = if neg { -v } else { v };
+    v.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
 fn cast(v: Value, to: CastTo) -> SqlResult<Value> {
     if v.is_null() {
         return Ok(Value::Null);
     }
     Ok(match to {
+        // Numbers round half away from zero; strings convert their leading
+        // integer prefix (CAST('3.7' AS SIGNED) = 3), as MySQL does.
         CastTo::Signed => Value::Int(match &v {
             Value::Int(i) => *i,
             Value::UInt(u) => *u as i64,
-            other => to_num(other).unwrap_or(0.0).trunc() as i64,
+            Value::Str(b) | Value::Bin(b) => int_prefix(b),
+            other => to_num(other).unwrap_or(0.0).round() as i64,
         }),
         CastTo::Unsigned => Value::UInt(match &v {
             Value::Int(i) => *i as u64,
             Value::UInt(u) => *u,
-            other => to_num(other).unwrap_or(0.0).trunc() as u64,
+            Value::Str(b) | Value::Bin(b) => int_prefix(b) as u64,
+            other => to_num(other).unwrap_or(0.0).round() as u64,
         }),
         CastTo::Char | CastTo::Date | CastTo::DateTime => Value::Str(v.to_text().unwrap_or_default()),
         CastTo::Binary => Value::Bin(v.to_text().unwrap_or_default()),
@@ -861,7 +888,6 @@ pub fn infer(e: &Expr, input: &[ExprType], params: &[Value]) -> ExprType {
                 _ => ExprType::of(C::VarString),
             }
         }
-        _ => ExprType::of(C::VarString),
     }
 }
 

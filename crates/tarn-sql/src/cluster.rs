@@ -119,7 +119,18 @@ impl Shard {
                 }
             };
             let ro = match c.eval(0, "return box.info.ro", &[0x90]).await {
-                Ok(r) => r.data().map(|d| d.as_ref() != [0x91, 0xc2]).unwrap_or(true),
+                // DATA = [ro]; Tarantool may use any array header width.
+                Ok(r) => r
+                    .data()
+                    .and_then(|d| {
+                        let mut rd = Rd::new(&d);
+                        let n = rd.array().ok()?;
+                        if n == 0 {
+                            return None;
+                        }
+                        rd.value().ok().map(|v| v.as_i64() != Some(0))
+                    })
+                    .unwrap_or(true),
                 Err(e) => {
                     last_err = format!("{}: {}", addr, e);
                     continue;
@@ -134,7 +145,7 @@ impl Shard {
                 match Client::connect(&opts).await {
                     Ok(x) => clients.push(x),
                     Err(e) => {
-                        last_err = format!("{}: {}", addr, e);
+                        tracing::warn!(shard = self.id, "extra connection to {}: {}", addr, e);
                         break;
                     }
                 }
@@ -535,9 +546,15 @@ impl Cluster {
     /// sure future generated values are larger.
     pub async fn note_auto_inc(&self, t: &TableDef, v: u64) -> SqlResult<()> {
         {
-            let m = self.auto_inc.lock();
-            if let Some((next, _)) = m.get(&t.space_id) {
+            let mut m = self.auto_inc.lock();
+            if let Some((next, end)) = m.get_mut(&t.space_id) {
                 if v < *next {
+                    return Ok(());
+                }
+                if v < *end {
+                    // Inside this server's reserved block: skip past it, as a
+                    // single MySQL server would (next value v + 1).
+                    *next = v + 1;
                     return Ok(());
                 }
             }
