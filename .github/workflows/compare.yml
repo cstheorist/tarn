@@ -1,0 +1,92 @@
+name: Compare
+
+# Same-host comparison of Tarn with TiDB and YugabyteDB (bench/compare).
+# Results go to the job summary and to a branch results/compare-<run id>.
+
+on:
+  workflow_dispatch:
+    inputs:
+      configs:
+        description: Configurations (see bench/compare/run.sh)
+        default: "mariadb tarn_2x1 tarn_2x1_rc tarn_2x3 tidb_rf1 tidb_rf1_rc tidb_rf3 yb_rf1 yb_rf1_ser yb_rf3 many_tarn many_tidb many_yb many_yb_colocated many_mariadb"
+      time:
+        description: Seconds per sysbench run
+        default: "15"
+  push:
+    branches: [bench/compare]
+
+permissions:
+  contents: write   # to publish the results branch
+
+concurrency:
+  group: compare
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.98.1"
+  TARANTOOL_VERSION: "3.9.0"
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Restore Tarantool
+        id: tarantool-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - name: Save Tarantool
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install sysbench and clients
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sysbench postgresql-client bc
+          sysbench --version; psql --version; mysql --version
+      - name: Build tarn-server
+        run: cargo build --release -p tarn-server
+      - name: Run the comparison
+        env:
+          TIME_INPUT: ${{ github.event.inputs.time || '' }}
+          CONFIGS_INPUT: ${{ github.event.inputs.configs || '' }}
+        run: |
+          # A push runs what bench/compare/push.env says; a manual run, its inputs.
+          set -a
+          . bench/compare/push.env
+          set +a
+          [ -n "$TIME_INPUT" ] && TIME=$TIME_INPUT
+          [ -n "$CONFIGS_INPUT" ] && CONFIGS=$CONFIGS_INPUT
+          # shellcheck disable=SC2086
+          bench/compare/run.sh "$RUNNER_TEMP/compare" $CONFIGS
+      - name: Summary
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/compare/summary.md" ] || python3 bench/compare/render.py "$RUNNER_TEMP/compare" > "$RUNNER_TEMP/compare/summary.md"
+          cat "$RUNNER_TEMP/compare/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish results
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/compare"
+          git init -q -b results
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Comparison results, run ${{ github.run_id }} (${{ github.sha }})"
+          git push -q "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git" \
+            "HEAD:refs/heads/results/compare-${{ github.run_id }}"
+          echo "::notice title=Results::branch results/compare-${{ github.run_id }}"
