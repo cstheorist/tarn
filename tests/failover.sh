@@ -55,16 +55,19 @@ kill_leader() {
 }
 
 move_leader() {  # start an election on a follower of shard $1; the old leader stays up
-  local s=$1 p j
+  local s=$1 p j attempt
   check_alive
   p=$(leader_of "$s") || { echo "shard $s: no leader found"; return 1; }
-  for j in 1 2 3; do
-    local q=$((BASE + 10 * s + j))
-    if [ "$q" != "$p" ]; then
-      echo "$(date +%T) box.ctl.promote() on s$s.$j (port $q); the leader on $p will be demoted with its connections open"
+  # Under a heavy write load a follower is often a little behind the leader
+  # and loses the election, so retry, alternating followers.
+  for attempt in 1 2 3 4 5 6; do
+    for j in 1 2 3; do
+      local q=$((BASE + 10 * s + j))
+      [ "$q" = "$p" ] && continue
+      echo "$(date +%T) box.ctl.promote() on s$s.$j (port $q), attempt $attempt; the leader on $p will be demoted with its connections open"
       # The election may also be won by the third replica: any new leader will do.
-      "$T" "$ROOT/scripts/promote.lua" "tarn:tarn@127.0.0.1:$q" < /dev/null || true
-      for _ in $(seq 100); do
+      "$T" "$ROOT/scripts/promote.lua" "tarn:tarn@127.0.0.1:$q" < /dev/null 2>&1 | head -1
+      for _ in $(seq 50); do
         local np; np=$(leader_of "$s")
         if [ -n "$np" ] && [ "$np" != "$p" ]; then
           echo "$(date +%T) shard $s leader is now $np; $p still running: $(kill -0 "$(cat "$DIR/s$s.$((p - BASE - 10 * s)).pid")" && echo yes)"
@@ -72,9 +75,9 @@ move_leader() {  # start an election on a follower of shard $1; the old leader s
         fi
         sleep 0.1
       done
-      echo "shard $s: leadership did not move"; return 1
-    fi
+    done
   done
+  echo "shard $s: leadership did not move"; return 1
 }
 
 python3 "$ROOT/tests/sql/txntest.py" --tarn 127.0.0.1:$PORT --only bank --bank-seconds "$SECS" --threads 8 \
