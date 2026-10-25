@@ -314,6 +314,31 @@ CASES = [
     ("LOCK TABLES t1 WRITE", "q"),
     ("UNLOCK TABLES", "q"),
     ("INSERT INTO t1 (id, c) VALUES (500, 123456789.5)", "err"),
+    # tables without a PRIMARY KEY (issue #32): keyed by the first unique
+    # NOT NULL key, as Rails' schema_migrations, or by a hidden row id
+    ("CREATE TABLE sm (version VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL, "
+     "UNIQUE KEY unique_schema_migrations (version)) ENGINE=InnoDB ROW_FORMAT=DYNAMIC", "ddl:sm"),
+    ("INSERT INTO sm (version) VALUES ('20261023145912'), ('20261023145858')", "dml:sm"),
+    ("INSERT INTO sm (version) VALUES ('20261023145912')", "err"),
+    ("INSERT IGNORE INTO sm (version) VALUES ('20261023145912'), ('20261023010002')", "dml:sm"),
+    ("INSERT INTO sm VALUES ('20261023145858') ON DUPLICATE KEY UPDATE version = '20261022000000'", "dml:sm"),
+    ("SELECT version FROM sm WHERE version = '20261023010002'", "q"),
+    ("SELECT * FROM sm ORDER BY version", "q"),
+    ("DESCRIBE sm", "q"),
+    ("CREATE TABLE nk (msg VARCHAR(20), n INT, KEY kn (n))", "ddl:nk"),
+    ("INSERT INTO nk VALUES ('a', 1), ('a', 1), ('b', 2), (NULL, NULL)", "dml:nk"),
+    ("INSERT INTO nk SET msg = 'c'", "dml:nk"),
+    ("SELECT * FROM nk WHERE n = 1", "q"),
+    ("SELECT nk.* FROM nk ORDER BY msg, n", "q"),
+    ("UPDATE nk SET n = 5 WHERE msg = 'b'", "dml:nk"),
+    ("DELETE FROM nk WHERE n = 1 LIMIT 1", "dml:nk"),
+    ("REPLACE INTO nk VALUES ('a', 1)", "dml:nk"),
+    ("SELECT msg, COUNT(*) FROM nk GROUP BY msg", "q"),
+    ("SELECT DB_ROW_ID FROM nk", "err"),
+    ("ALTER TABLE nk ADD COLUMN z INT DEFAULT 3, ADD INDEX kz (z)", "ddl:nk"),
+    ("ALTER TABLE nk DROP COLUMN msg", "ddl:nk"),
+    ("ALTER TABLE nk DROP COLUMN n, DROP COLUMN z", "err"),
+    ("CREATE TABLE rid (DB_ROW_ID INT)", "err"),
 ]
 
 

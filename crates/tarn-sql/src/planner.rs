@@ -1284,7 +1284,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
             match item {
                 A::SelectItem::Wildcard(_) => {
                     for t in &scope.tables {
-                        for (i, c) in t.table.columns.iter().enumerate() {
+                        for (i, c) in t.table.visible_columns() {
                             proj.push(Expr::Col(t.offset + i));
                             names.push((c.name.clone(), Some((t.table.clone(), i))));
                         }
@@ -1302,7 +1302,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
                         .iter()
                         .find(|t| t.alias.eq_ignore_ascii_case(&qual) || t.table.name.eq_ignore_ascii_case(&qual))
                         .ok_or_else(|| SqlError::new(1051, "42S02", format!("Unknown table '{}'", qual)))?;
-                    for (i, c) in t.table.columns.iter().enumerate() {
+                    for (i, c) in t.table.visible_columns() {
                         proj.push(Expr::Col(t.offset + i));
                         names.push((c.name.clone(), Some((t.table.clone(), i))));
                     }
@@ -1645,7 +1645,7 @@ fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
     let table = lookup_table(name, ctx)?;
     let ncols = table.columns.len();
     let targets: Vec<usize> = if ins.columns.is_empty() {
-        (0..ncols).collect()
+        table.visible_columns().map(|(i, _)| i).collect()
     } else {
         ins.columns
             .iter()
@@ -1726,12 +1726,7 @@ fn plan_insert(ins: &A::Insert, ctx: &PlanCtx) -> SqlResult<InsertPlan> {
                             .zip(targets.iter().copied())
                             .collect()
                     }
-                    _ => table
-                        .columns
-                        .iter()
-                        .enumerate()
-                        .map(|(i, c)| (c.name.clone(), i))
-                        .collect(),
+                    _ => table.visible_columns().map(|(i, c)| (c.name.clone(), i)).collect(),
                 },
             }),
             None => None,
@@ -1956,11 +1951,32 @@ pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
             field: None,
             storage_nullable: None,
             fill: None,
+            hidden: false,
             sql_type: Some(ty),
         },
         primary,
         unique,
     })
+}
+
+/// The hidden row id of a table without a primary key or unique NOT NULL
+/// key (`catalog::ROW_ID`): its values come from a counter, like
+/// AUTO_INCREMENT's.
+fn row_id_column() -> ColumnDef {
+    let ty = SqlType::parse("bigint unsigned").expect("a valid type");
+    ColumnDef {
+        name: catalog::ROW_ID.into(),
+        ty: ty.display(),
+        nullable: false,
+        default: None,
+        default_null: false,
+        auto_increment: false,
+        field: None,
+        storage_nullable: None,
+        fill: None,
+        hidden: true,
+        sql_type: Some(ty),
+    }
 }
 
 /// Column names of an index definition (`col(10)` prefixes index the
@@ -2231,12 +2247,31 @@ fn plan_create_table(
             other => return Err(SqlError::unsupported(format!("table constraint {}", other))),
         }
     }
-    let pk = pk.ok_or_else(|| SqlError::new(1173, "42000", "Tarn tables require a PRIMARY KEY"))?;
+    // Without a PRIMARY KEY, InnoDB clusters the rows by the first UNIQUE
+    // key whose columns are all NOT NULL, which keeps its name, or else by a
+    // hidden row id.
+    let (pk, pk_name) = match pk {
+        Some(pk) => (pk, "PRIMARY".to_string()),
+        None => match secondary
+            .iter()
+            .position(|(_, cols, unique)| *unique && cols.iter().all(|&c| !columns[c].nullable))
+        {
+            Some(k) => {
+                let (n, cols, _) = secondary.remove(k);
+                let n = n.unwrap_or_else(|| columns[cols[0]].name.clone());
+                (cols, n)
+            }
+            None => {
+                columns.push(row_id_column());
+                (vec![columns.len() - 1], "GEN_CLUST_INDEX".to_string())
+            }
+        },
+    };
     for &c in &pk {
         columns[c].nullable = false;
     }
     let mut indexes = vec![IndexDef {
-        name: "PRIMARY".into(),
+        name: pk_name,
         id: 0,
         cols: pk.clone(),
         unique: true,
@@ -2523,6 +2558,74 @@ mod tests {
             Source::Table(t) => assert!(matches!(&t.path, AccessPath::Point { keys, .. } if keys.len() == 3)),
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn tables_without_primary_key() {
+        // issue #32: InnoDB's clustered index without a PRIMARY KEY
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+        };
+        let def = |sql: &str| match plan(sql, &ctx) {
+            Ok(Stmt::CreateTable { def, .. }) => Ok(def),
+            Ok(_) => panic!(),
+            Err(e) => Err(e.code),
+        };
+        // the first unique key with only NOT NULL columns becomes the key
+        let t = def("CREATE TABLE schema_migrations (version VARCHAR(255) NOT NULL, \
+                     UNIQUE KEY unique_schema_migrations (version))")
+        .unwrap();
+        assert_eq!(t.indexes.len(), 1);
+        assert_eq!(t.pk().name, "unique_schema_migrations");
+        assert_eq!(t.pk().cols, vec![0]);
+        assert_eq!(t.shard_key, vec![0]);
+        assert!(t.row_id_col().is_none() && !t.declared_pk());
+        // (ua has a nullable column)
+        let t =
+            def("CREATE TABLE u (a INT, b INT NOT NULL, UNIQUE KEY ua (a, b), UNIQUE KEY ub (b), KEY ka (a))").unwrap();
+        assert_eq!((t.pk().name.as_str(), t.indexes.len()), ("ub", 3));
+        assert_eq!(t.indexes[1].name, "ua");
+        // otherwise a hidden row id
+        let t = def("CREATE TABLE log (msg VARCHAR(20), n INT, KEY kn (n))").unwrap();
+        assert_eq!(t.columns.len(), 3);
+        assert_eq!(t.row_id_col(), Some(2));
+        assert_eq!(t.pk().name, "GEN_CLUST_INDEX");
+        assert_eq!(t.pk().cols, vec![2]);
+        assert_eq!(t.shard_key, vec![2]);
+        assert_eq!(t.visible_columns().count(), 2);
+        assert_eq!(t.col_index(catalog::ROW_ID), None);
+        // the hidden column's name is reserved, as in InnoDB
+        assert_eq!(def("CREATE TABLE r (db_row_id INT PRIMARY KEY)").err(), Some(1166));
+        // a nullable unique key would need the row id as its shard key (#14)
+        assert_eq!(def("CREATE TABLE n (a INT, UNIQUE KEY ua (a))").err(), Some(1503));
+        // statements never see the hidden column
+        let mut log = *def("CREATE TABLE log (msg VARCHAR(20), n INT)").unwrap();
+        log.space_id = 600;
+        let cat = Catalog::new(1, vec!["d".into()], vec![log]);
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &[],
+        };
+        match plan("SELECT * FROM log", &ctx) {
+            Ok(Stmt::Select(s)) => assert_eq!(s.columns.len(), 2),
+            _ => panic!(),
+        }
+        match plan("INSERT INTO log VALUES ('a', 1)", &ctx) {
+            Ok(Stmt::Insert(_)) => {}
+            _ => panic!(),
+        }
+        assert_eq!(
+            plan("SELECT DB_ROW_ID FROM log", &ctx).err().map(|e| e.code),
+            Some(1054)
+        );
+        assert_eq!(
+            plan("INSERT INTO log VALUES ('a', 1, 7)", &ctx).err().map(|e| e.code),
+            Some(1136)
+        );
     }
 
     #[test]

@@ -247,7 +247,9 @@ pub struct Cluster {
     pub shards: Vec<Shard>,
     catalog: RwLock<Arc<Catalog>>,
     plans: RwLock<HashMap<(String, String), Arc<CachedPlan>>>,
-    auto_inc: Mutex<HashMap<u32, (u64, u64)>>,
+    /// Blocks of counter values reserved by this server (AUTO_INCREMENT,
+    /// hidden row ids), by counter name: (next, last).
+    auto_inc: Mutex<HashMap<String, (u64, u64)>>,
     txn_seq: AtomicU64,
     boot: u32,
     pub stats: Stats,
@@ -1075,9 +1077,19 @@ impl Cluster {
     /// Next AUTO_INCREMENT value(s) for a table; allocated from a counter on
     /// shard 1 in batches so most inserts never leave this server.
     pub async fn next_auto_inc(&self, t: &TableDef, n: u64) -> SqlResult<u64> {
+        self.next_counter(format!("ai:{}", t.space_id), n).await
+    }
+
+    /// Next hidden row id(s) of a table without a primary key, from its own
+    /// counter: InnoDB's DB_ROW_ID, never reused.
+    pub async fn next_row_id(&self, t: &TableDef, n: u64) -> SqlResult<u64> {
+        self.next_counter(format!("rid:{}", t.space_id), n).await
+    }
+
+    async fn next_counter(&self, name: String, n: u64) -> SqlResult<u64> {
         {
             let mut m = self.auto_inc.lock();
-            if let Some((next, end)) = m.get_mut(&t.space_id) {
+            if let Some((next, end)) = m.get_mut(&name) {
                 if *next + n - 1 <= *end {
                     let v = *next;
                     *next += n;
@@ -1087,22 +1099,23 @@ impl Cluster {
         }
         let batch = n.max(1000);
         let mut a = Mp::new();
-        a.arr(2).str(&format!("ai:{}", t.space_id)).uint(batch);
+        a.arr(2).str(&name).uint(batch);
         let d = self.call(0, "tarn_counter_alloc", &a.0).await?;
         let mut rd = Rd::new(&d);
         rd.array()?;
         let start = rd.value()?.as_i64().unwrap_or(1) as u64;
         let mut m = self.auto_inc.lock();
-        m.insert(t.space_id, (start + n, start + batch - 1));
+        m.insert(name, (start + n, start + batch - 1));
         Ok(start)
     }
 
     /// An explicit value was inserted into an AUTO_INCREMENT column: make
     /// sure future generated values are larger.
     pub async fn note_auto_inc(&self, t: &TableDef, v: u64) -> SqlResult<()> {
+        let name = format!("ai:{}", t.space_id);
         {
             let mut m = self.auto_inc.lock();
-            if let Some((next, end)) = m.get_mut(&t.space_id) {
+            if let Some((next, end)) = m.get_mut(&name) {
                 if v < *next {
                     return Ok(());
                 }
@@ -1115,9 +1128,9 @@ impl Cluster {
             }
         }
         let mut a = Mp::new();
-        a.arr(2).str(&format!("ai:{}", t.space_id)).uint(v);
+        a.arr(2).str(&name).uint(v);
         self.call(0, "tarn_counter_bump", &a.0).await?;
-        self.auto_inc.lock().remove(&t.space_id);
+        self.auto_inc.lock().remove(&name);
         Ok(())
     }
 }

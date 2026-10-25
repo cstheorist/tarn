@@ -1314,6 +1314,15 @@ impl Session {
                 self.cluster.note_auto_inc(t, max_explicit).await?;
             }
         }
+        // The hidden row id of a table without a primary key: never given by
+        // statements, always generated.
+        if let Some(rid) = t.row_id_col() {
+            let mut next = self.cluster.next_row_id(t, raw.len() as u64).await?;
+            for r in raw.iter_mut() {
+                r[rid] = Some(Value::UInt(next));
+                next += 1;
+            }
+        }
         let mut rows = Vec::with_capacity(raw.len());
         for r in raw {
             let mut row = Vec::with_capacity(ncols);
@@ -1395,7 +1404,7 @@ impl Session {
                         let pk: Vec<Value> = pk_cols.iter().map(|&c| row[c].clone()).collect();
                         if txn.buffered(t.space_id, &pk).is_some() {
                             let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
-                            return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
+                            return Err(SqlError::dup_key(&shown.join("-"), &t.pk().name));
                         }
                         let shard = shard_of_row(&self.cluster, t, &row);
                         txn.buffer(BufWrite {
@@ -1468,7 +1477,7 @@ impl Session {
                             return Err(match (&pk_row, uniq.first()) {
                                 (Some(_), _) | (None, None) => {
                                     let shown: Vec<String> = pk.iter().map(|v| v.to_string()).collect();
-                                    SqlError::dup_key(&shown.join("-"), "PRIMARY")
+                                    SqlError::dup_key(&shown.join("-"), &t.pk().name)
                                 }
                                 (None, Some((ix, _))) => {
                                     let idx = &t.indexes[*ix];
@@ -1826,7 +1835,7 @@ impl Session {
         };
         if exists {
             let shown: Vec<String> = new_pk.iter().map(|v| v.to_string()).collect();
-            return Err(SqlError::dup_key(&shown.join("-"), "PRIMARY"));
+            return Err(SqlError::dup_key(&shown.join("-"), &t.pk().name));
         }
         txn.buffer(BufWrite {
             shard,
@@ -2040,7 +2049,7 @@ impl Session {
                     .get(&db, &table)
                     .ok_or_else(|| SqlError::no_table(&db, &table))?;
                 let mut rows = Vec::new();
-                for (i, c) in t.columns.iter().enumerate() {
+                for (i, c) in t.visible_columns() {
                     let key = if t.is_pk_col(i) {
                         "PRI"
                     } else if t.indexes[1..].iter().any(|ix| ix.cols.first() == Some(&i) && ix.unique) {
@@ -2090,7 +2099,11 @@ impl Session {
                     .get(&db, &table)
                     .ok_or_else(|| SqlError::no_table(&db, &table))?;
                 let mut rows = Vec::new();
-                for ix in &t.indexes {
+                for ix in t
+                    .indexes
+                    .iter()
+                    .filter(|ix| ix.cols.iter().all(|&c| !t.columns[c].hidden))
+                {
                     for (seq, &c) in ix.cols.iter().enumerate() {
                         rows.push(vec![
                             Value::str(&t.name),
@@ -2398,7 +2411,7 @@ async fn backoff(attempt: usize) {
 fn show_create(t: &TableDef) -> String {
     let mut s = format!("CREATE TABLE `{}` (\n", t.name);
     let mut lines = Vec::new();
-    for c in &t.columns {
+    for (_, c) in t.visible_columns() {
         let mut l = format!("  `{}` {}", c.name, c.ty().display());
         if !c.nullable {
             l.push_str(" NOT NULL");
@@ -2418,8 +2431,11 @@ fn show_create(t: &TableDef) -> String {
         lines.push(l);
     }
     for ix in &t.indexes {
+        if ix.cols.iter().any(|&c| t.columns[c].hidden) {
+            continue;
+        }
         let colnames: Vec<String> = ix.cols.iter().map(|&c| format!("`{}`", t.columns[c].name)).collect();
-        if ix.id == 0 {
+        if ix.id == 0 && t.declared_pk() {
             lines.push(format!("  PRIMARY KEY ({})", colnames.join(",")));
         } else {
             lines.push(format!(
@@ -2465,7 +2481,9 @@ fn show_create(t: &TableDef) -> String {
     if !t.comment.is_empty() {
         s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));
     }
-    s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
+    if t.shard_key.iter().all(|&c| !t.columns[c].hidden) {
+        s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
+    }
     s
 }
 
