@@ -52,7 +52,9 @@ clients or on the storage machines.
 | `TARN_MEMORY_MB` | `1024` | memtx memory: memtx tables, the protocol's records and the system spaces |
 | `TARN_VINYL_MEMORY_MB` | `128` | vinyl's in-memory level: recent writes of vinyl tables, dumped to disk when full |
 | `TARN_VINYL_CACHE_MB` | `128` | vinyl's cache of recently read rows |
-| `TARN_VINYL_READ_THREADS`, `TARN_VINYL_WRITE_THREADS`, `TARN_VINYL_PAGE_SIZE`, `TARN_VINYL_RANGE_SIZE`, `TARN_VINYL_BLOOM_FPR` | Tarantool's | the `vinyl_*` options of those names: threads for disk reads and for dumps and compaction, page and range size of new indexes, bloom filter false-positive rate |
+| `TARN_VINYL_READ_THREADS` | the CPUs divided among `TARN_HOST_INSTANCES`, 1 to 8 | threads reading vinyl pages from disk (`vinyl_read_threads`): see [Sizing](#sizing) |
+| `TARN_HOST_INSTANCES` | `1` | storage instances sharing this machine, for the default of `TARN_VINYL_READ_THREADS` (`scripts/cluster.sh` sets it) |
+| `TARN_VINYL_WRITE_THREADS`, `TARN_VINYL_PAGE_SIZE`, `TARN_VINYL_RANGE_SIZE`, `TARN_VINYL_BLOOM_FPR` | Tarantool's | the `vinyl_*` options of those names: threads for dumps and compaction, page and range size of new indexes, bloom filter false-positive rate |
 | `TARN_WAL_MODE` | `write` | `write` (no fsync per commit, like `innodb_flush_log_at_trx_commit=2`), `fsync`, or `none` |
 | `TARN_IPROTO_THREADS` | `1` | Tarantool network threads |
 | `TARN_LOG_LEVEL` | `5` | Tarantool log level |
@@ -137,12 +139,28 @@ settings, then checkpointed:
   sends more lookups of absent keys to disk. Both settings apply to indexes
   created afterwards.
 * **The cache decides how many reads go to disk.** A read that misses it
-  reads a page from disk on one of `TARN_VINYL_READ_THREADS` (1 by default).
-  Raise it when the rows a workload reads do not fit the cache and the disk
-  serves parallel reads. With data ten times the cache, point selects ran at
-  72% of their cached rate and range scans at 62%, while single-row writes
+  reads a page from disk on one of `TARN_VINYL_READ_THREADS`, taken in
+  turn. With data ten times the cache, point selects ran at 72% of their
+  cached rate and range scans at 62%, while single-row writes
   kept theirs ([bench/RESULTS.md](../bench/RESULTS.md); files on tmpfs, so
   a miss read memory and the figures leave out disk latency).
+* **Reader threads.** Tarantool reads with one thread unless told
+  otherwise, and every miss then waits for the one before it. A storage
+  instance defaults to the machine's CPUs divided by `TARN_HOST_INSTANCES`,
+  at least 1 and at most 8: the readers spend their time waiting on the disk
+  and decompressing pages, and past 8 the shard's transaction thread is the
+  limit. Point selects by primary key of a vinyl table holding 13 times its
+  cache:
+
+  | `vinyl_read_threads` | 8 clients | 32 clients |
+  |---|---:|---:|
+  | 1 (Tarantool's default) | 8.6k/s | |
+  | 8 | 25.3k/s | 39.8k/s |
+
+  Set `TARN_HOST_INSTANCES` when several storage instances share a machine,
+  or `TARN_VINYL_READ_THREADS` itself: higher for a disk with deep queues
+  (network block storage), lower to leave cores to other processes. With
+  everything in the cache the threads stay idle.
 * **Disk.** Vinyl compresses pages (zstd) when it compacts them. Dumps are
   written uncompressed, so recent writes take more space until compaction
   merges them. Compaction writes a range's new files before dropping the old
@@ -152,8 +170,9 @@ settings, then checkpointed:
   space of about the size of the data, plus the WAL of two hours of writes.
 * **CPU.** A shard runs its transactions on one thread. Dumps and
   compaction, compression included, run on `TARN_VINYL_WRITE_THREADS` (4 by
-  default). Give each shard leader a core for its transactions and leave
-  cores for these threads.
+  default, Tarantool's; they run in the background, so no read or commit
+  waits on them the way a cache miss waits on a reader). Give each shard
+  leader a core for its transactions and leave cores for these threads.
 * **Replicas** each hold a full copy of their shard: size every replica like
   its leader.
 
