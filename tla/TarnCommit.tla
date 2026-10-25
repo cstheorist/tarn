@@ -31,6 +31,17 @@
 (* serializable (memtx MVCC) and acknowledged only after the synchronous   *)
 (* replication quorum, so they survive a failover.                        *)
 (*                                                                         *)
+(* Record lifecycle (option GC).  A PREPARE is refused once its           *)
+(* transaction has expired (it is older than max_txn_age; Expire models    *)
+(* that moment), and records are garbage-collected only after expiry: an   *)
+(* applied participant record once the decision record is final or gone,   *)
+(* an aborted one (tombstone) any time, a decision record once it is final *)
+(* and no participant is prepared.  Recovery fences a missing decision     *)
+(* record only before expiry or while some participant is prepared:        *)
+(* otherwise the record may have been collected.  With ApplyMarksCommitted *)
+(* the decision shard's APPLY records COMMITTED (as the implementation     *)
+(* does) instead of the coordinator after every APPLY.                     *)
+(*                                                                         *)
 (* The Bug* constants switch on deliberately weakened variants so that TLC *)
 (* can demonstrate why each piece of the protocol is needed.              *)
 (***************************************************************************)
@@ -48,7 +59,12 @@ CONSTANTS
     AckOnPrepare,               \* option: acknowledge once all PREPAREs succeed
     ROValidateOnly,             \* option: cross-shard read-only txns validate, no PREPARE
     BugLocalReadsIgnoreWLocks,  \* single-shard reads don't check W locks
-    BugROValidateNoReadCheck    \* ValidateRO skips "reads unchanged" (memtx read views)
+    BugROValidateNoReadCheck,   \* ValidateRO skips "reads unchanged" (memtx read views)
+    ApplyMarksCommitted,        \* option: D's APPLY records COMMITTED (implementation)
+    GC,                         \* option: expiry and garbage collection of records
+    BugGCIgnoresDecision,       \* GC deletes applied participant records regardless of rec
+    BugGCNoExpiry,              \* GC does not wait for expiry
+    BugFenceAfterExpiry         \* recovery fences a missing record even after expiry
 
 ASSUME Owner \in [Keys -> Shards]
 ASSUME RSet \in [Txns -> SUBSET Keys] /\ WSet \in [Txns -> SUBSET Keys]
@@ -86,11 +102,12 @@ VARIABLES
     nFail, nCrash, nLoss,
     recovering,  \* txns whose commit timed out; a recovery agent works on them
     nTimeout,
-    validated    \* validated[t]: shards where read-only t passed validation
+    validated,   \* validated[t]: shards where read-only t passed validation
+    expired      \* txns whose PREPAREs are refused from now on (GC)
 
 vars == <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, everC,
           acked, started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
-          recovering, nTimeout, validated>>
+          recovering, nTimeout, validated, expired>>
 
 Msg(type, t, s, yes) == [type |-> type, t |-> t, s |-> s, yes |-> yes]
 
@@ -122,6 +139,7 @@ Init ==
     /\ nFail = 0 /\ nCrash = 0 /\ nLoss = 0
     /\ recovering = {} /\ nTimeout = 0
     /\ validated = [t \in Txns |-> {}]
+    /\ expired = {}
 
 \* Record the real-time predecessors of t at its first operation.
 Start(t) ==
@@ -142,7 +160,7 @@ Read(t, k) ==
     /\ obs' = [obs EXCEPT ![t][k] = data[k]]
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, coord, lost, msgs, local, wh,
-                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* No other transaction holds a W lock on any key in S: a W lock may belong
 \* to a transaction that is committed but not yet applied on this shard.
@@ -162,7 +180,7 @@ SnapshotRead(t) ==
     /\ acked' = acked \cup {t}
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, lost, msgs, wh, dobs, dpos, dacked, dirty,
-                   nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* Single-shard read-write commit: one local Tarantool transaction.
 CommitLocal(t) ==
@@ -185,7 +203,7 @@ CommitLocal(t) ==
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ Start(t)
     /\ UNCHANGED <<locks, part, rec, obs, lost, msgs, dobs, dpos, dacked, dirty,
-                   nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* Cross-shard read-only transactions (option ROValidateOnly): no PREPARE and
 \* no locks.  Each participant checks, in the stream's MVCC view, that the
@@ -212,7 +230,7 @@ ValidateRO(t, s) ==
             /\ coord' = [coord EXCEPT ![t] = "finished"]
             /\ UNCHANGED validated
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, wh, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, expired>>
 
 FinishRO(t) ==
     /\ ROValidateOnly
@@ -222,7 +240,7 @@ FinishRO(t) ==
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ acked' = acked \cup {t}
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, wh, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 -----------------------------------------------------------------------------
 (* Multi-shard commit: coordinator *)
@@ -234,7 +252,7 @@ SendPrepare(t) ==
     /\ msgs' = msgs \cup {Msg("prepare", t, s, FALSE) : s \in Part(t)}
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, local, wh, acked,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 CoordDecide(t) ==
     /\ coord[t] = "preparing"
@@ -247,7 +265,7 @@ CoordDecide(t) ==
           /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
           /\ UNCHANGED acked
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, local, wh, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* Acknowledge the client once every participant applied; mark the record.
 CoordFinish(t) ==
@@ -257,13 +275,13 @@ CoordFinish(t) ==
     /\ acked' = acked \cup {t}
     /\ rec' = [rec EXCEPT ![t] = IF @ = "staging" THEN "committed" ELSE @]
     /\ UNCHANGED <<data, locks, part, obs, lost, msgs, local, wh, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 CoordAbortDone(t) ==
     /\ coord[t] = "aborting"
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 CoordCrash(t) ==
     /\ nCrash < MaxCrashes
@@ -271,7 +289,7 @@ CoordCrash(t) ==
     /\ coord' = [coord EXCEPT ![t] = "crashed"]
     /\ nCrash' = nCrash + 1
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nLoss, recovering, nTimeout, validated>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nLoss, recovering, nTimeout, validated, expired>>
 
 -----------------------------------------------------------------------------
 (* Multi-shard commit: participants (each action is one local transaction) *)
@@ -291,6 +309,11 @@ Prepare(t, s) ==
     IN
     /\ Msg("prepare", t, s, FALSE) \in msgs
     /\ part[s][t] = "none"
+    \* An expired transaction's PREPARE is refused without any effect: no
+    \* record, and no vote either -- a (re-delivered) PREPARE may meet a
+    \* participant whose records were already collected, so a NO here could
+    \* contradict a commit.  The coordinator treats the reply as unknown.
+    /\ t \notin expired
     /\ IF readsOK /\ writesOK /\ recOK
        THEN /\ locks' = [locks EXCEPT ![s] = @ \cup newLocks]
             /\ part' = [part EXCEPT ![s][t] = "prepared"]
@@ -302,7 +325,7 @@ Prepare(t, s) ==
             /\ msgs' = msgs \cup {Msg("vote", t, s, FALSE)}
             /\ UNCHANGED locks
     /\ UNCHANGED <<data, coord, obs, lost, local, wh, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* A re-delivered PREPARE re-sends the vote implied by durable state.
 Revote(t, s) ==
@@ -310,18 +333,23 @@ Revote(t, s) ==
     /\ part[s][t] # "none"
     /\ msgs' = msgs \cup {Msg("vote", t, s, part[s][t] \in {"prepared", "applied"})}
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
+\* With ApplyMarksCommitted the decision shard's APPLY also records COMMITTED
+\* (and refuses to apply if its record says ABORTED, which never happens).
 ApplyAt(t, s) ==
     LET wk == KeysOn(WSet[t], s) IN
     /\ Msg("apply", t, s, FALSE) \in msgs
     /\ part[s][t] = "prepared"
+    /\ ApplyMarksCommitted /\ s = D(t) => rec[t] # "aborted"
     /\ data' = [k \in Keys |-> IF k \in wk THEN t ELSE data[k]]
     /\ wh' = [k \in Keys |-> IF k \in wk THEN Append(wh[k], t) ELSE wh[k]]
     /\ locks' = [locks EXCEPT ![s] = {l \in @ : l.t # t}]
     /\ part' = [part EXCEPT ![s][t] = "applied"]
-    /\ UNCHANGED <<rec, coord, obs, lost, msgs, local, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+    /\ rec' = IF ApplyMarksCommitted /\ s = D(t) /\ rec[t] = "staging"
+              THEN [rec EXCEPT ![t] = "committed"] ELSE rec
+    /\ UNCHANGED <<coord, obs, lost, msgs, local, acked, started, rtPred,
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* Abort releases locks; on a participant that never prepared it leaves a
 \* tombstone, so a PREPARE that arrives later is refused.
@@ -331,7 +359,7 @@ AbortAt(t, s) ==
     /\ locks' = [locks EXCEPT ![s] = {l \in @ : l.t # t}]
     /\ part' = [part EXCEPT ![s][t] = "aborted"]
     /\ UNCHANGED <<data, rec, coord, obs, lost, msgs, local, wh, acked, started,
-                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 -----------------------------------------------------------------------------
 (* Recovery: when t's commit times out, any Tarn server may resolve it,    *)
@@ -344,16 +372,21 @@ Timeout(t) ==
     /\ recovering' = recovering \cup {t}
     /\ nTimeout' = nTimeout + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, validated>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, validated, expired>>
 
 \* No record yet: fence D(t) by recording ABORTED (refuses a late PREPARE).
+\* After expiry a missing record may have been garbage-collected, so it is
+\* only fenced while some participant is prepared (which rules that out).
 RecoverFenceRecord(t) ==
     /\ t \in recovering
     /\ rec[t] = "none"
+    /\ \/ t \notin expired
+       \/ \E s \in Part(t) : part[s][t] = "prepared"
+       \/ BugFenceAfterExpiry
     /\ rec' = [rec EXCEPT ![t] = "aborted"]
     /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, local, wh, acked, started,
-                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 \* STAGING but some participant never prepared: fence it with a tombstone.
 \* (Bug variant: give up on the transaction without fencing.)
@@ -365,9 +398,9 @@ RecoverFenceParticipant(t, s) ==
             /\ msgs' = msgs \cup {Msg("abort", t, p, FALSE) : p \in Part(t) \ {s}}
             /\ UNCHANGED part
        ELSE /\ part' = [part EXCEPT ![s][t] = "aborted"]
-            /\ UNCHANGED <<rec, msgs, recovering, nTimeout, validated>>
+            /\ UNCHANGED <<rec, msgs, recovering, nTimeout, validated, expired>>
     /\ UNCHANGED <<data, locks, coord, obs, lost, local, wh, acked, started, rtPred,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 RecoverDecide(t) ==
     /\ t \in recovering
@@ -386,7 +419,7 @@ RecoverDecide(t) ==
           /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
           /\ UNCHANGED rec
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, local, wh, acked, started,
-                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 -----------------------------------------------------------------------------
 (* Environment *)
@@ -399,7 +432,7 @@ Failover(s) ==
                                THEN lost[t] \cup {s} ELSE lost[t]]
     /\ nFail' = nFail + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, msgs, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nCrash, nLoss, recovering, nTimeout, validated>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
 Lose(m) ==
     /\ nLoss < MaxLoss
@@ -407,7 +440,7 @@ Lose(m) ==
     /\ msgs' = msgs \ {m}
     /\ nLoss' = nLoss + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, local, wh, acked,
-                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, recovering, nTimeout, validated>>
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, recovering, nTimeout, validated, expired>>
 
 \* A plain Tarantool get on the owning shard, bypassing Tarn entirely.
 DirectRead(r, k) ==
@@ -417,7 +450,42 @@ DirectRead(r, k) ==
     /\ dacked' = [dacked EXCEPT ![r][k] = acked]
     /\ dirty' = [dirty EXCEPT ![r] = @ \/ ~(data[k] = NoVal \/ everC[data[k]] \/ CommittedNow(data[k]))]
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
-                   started, rtPred, nFail, nCrash, nLoss, recovering, nTimeout, validated>>
+                   started, rtPred, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
+
+-----------------------------------------------------------------------------
+(* Record lifecycle (option GC) *)
+
+\* max_txn_age has passed since t started: its PREPAREs are refused now.
+Expire(t) ==
+    /\ GC /\ ~BugGCNoExpiry
+    /\ t \in started /\ t \notin expired
+    /\ expired' = expired \cup {t}
+    /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
+                   recovering, nTimeout, validated>>
+
+GCAllowed(t) == t \in expired \/ BugGCNoExpiry
+
+\* Delete a participant record.  Prepared records are never collected; an
+\* applied one only once the decision record is final (or itself gone).
+GCPart(t, s) ==
+    /\ GC /\ GCAllowed(t)
+    /\ part[s][t] \in {"applied", "aborted"}
+    /\ part[s][t] = "applied" => (BugGCIgnoresDecision \/ rec[t] \in {"committed", "none"})
+    /\ part' = [part EXCEPT ![s][t] = "none"]
+    /\ UNCHANGED <<data, locks, rec, coord, obs, lost, msgs, local, wh, acked,
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
+                   recovering, nTimeout, validated, expired>>
+
+\* Delete a final decision record once no participant is prepared.
+GCRec(t) ==
+    /\ GC /\ GCAllowed(t)
+    /\ rec[t] \in {"committed", "aborted"}
+    /\ \A s \in Part(t) : part[s][t] # "prepared"
+    /\ rec' = [rec EXCEPT ![t] = "none"]
+    /\ UNCHANGED <<data, locks, part, coord, obs, lost, msgs, local, wh, acked,
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
+                   recovering, nTimeout, validated, expired>>
 
 -----------------------------------------------------------------------------
 
@@ -446,6 +514,9 @@ TimeoutH(t) == Timeout(t) /\ H
 FailoverH(s) == Failover(s) /\ H
 LoseH(m) == Lose(m) /\ H
 DirectReadH(r, k) == DirectRead(r, k) /\ H
+ExpireH(t) == Expire(t) /\ H
+GCPartH(t, s) == GCPart(t, s) /\ H
+GCRecH(t) == GCRec(t) /\ H
 
 Next ==
     \/ \E t \in Txns, k \in Keys : ReadH(t, k)
@@ -469,6 +540,9 @@ Next ==
     \/ \E s \in Shards : FailoverH(s)
     \/ \E m \in msgs : LoseH(m)
     \/ \E r \in Readers, k \in Keys : DirectReadH(r, k)
+    \/ \E t \in Txns : ExpireH(t)
+    \/ \E t \in Txns, s \in Shards : GCPartH(t, s)
+    \/ \E t \in Txns : GCRecH(t)
 
 Spec == Init /\ [][Next]_vars
 
@@ -484,6 +558,7 @@ TypeOK ==
     /\ rec \in [Txns -> {"none", "staging", "committed", "aborted"}]
     /\ obs \in [Txns -> [Keys -> Vals \cup {Unread}]]
     /\ local \in [Txns -> {"none", "committed", "aborted"}]
+    /\ expired \subseteq Txns
 
 \* Atomicity: writes reach a plain space only for committed transactions ...
 AppliedOnlyIfCommitted ==

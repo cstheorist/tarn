@@ -197,5 +197,108 @@ check('all locks released', c[1]:call('tarn_info').locks == 0 and c[2]:call('tar
 v2 = prepare(2, 'R3', {{'replace', sid, {42, -999, 'r4@x', 2}}})
 check('late PREPARE after fence votes no', v2[1] == 'no', v2)
 
+local function wait_for(cond, secs)
+    local deadline = fiber.clock() + (secs or 5)
+    while fiber.clock() < deadline do
+        if cond() then return true end
+        fiber.sleep(0.1)
+    end
+    return cond()
+end
+local function raises_readonly(ok, err)
+    return not ok and tostring(err):find('read%-only') ~= nil
+end
+
+print('APPLY outcomes')
+check('APPLY on the decision shard marked X1 committed', c[1]:call('tarn_txn_status', {'X1'}) == 'committed')
+r = c[2]:call('tarn_apply', {'NOPE'})
+check('APPLY without a participant record reports none', r[1] == 'ok' and r[2] == 'none', r)
+r = c[1]:call('tarn_apply', {'X3'})   -- X3 left a tombstone on shard 1
+check('APPLY of an aborted participant is an error', r[1] == 'error', r)
+
+print('expiry and failed PREPAREs')
+r = c[2]:call('tarn_prepare', {'OLD1', 1, {1, 2}, {{'replace', sid, {70, 1, 'o@x', 2}}}, {}, {}, fiber.time() - 1000})
+check('PREPARE of an expired transaction is refused as expired (neither yes nor no)', r[1] == 'expired', r)
+check('... without a tombstone', c[2]:call('tarn_part_status', {'OLD1'}) == 'none')
+-- An error after the locks entered the index (here: an invalid range) must
+-- undo them (audit finding: they used to stay forever).
+r = c[2]:call('tarn_prepare', {'BAD1', 1, {1, 2}, {{'replace', sid, {71, 1, 'u71@x', 2}}}, {},
+                               {{'not-a-space-id', 0, box.NULL, box.NULL, true, true}}, fiber.time()})
+check('PREPARE failing after taking its locks votes no', r[1] == 'no', r)
+check('... and leaves no lock in the index', c[2]:call('tarn_info').lock_index == 0, c[2]:call('tarn_info'))
+r = c[2]:call('tarn_autocommit', {{{'insert', sid, {71, 1, 'u71@x', 2}}}})
+check('... so its row stays writable', r[1] == 'ok', r)
+
+print('stale leaders')
+local function stream_begin(i, key)
+    local s = c[i]:new_stream()
+    s:call('tarn_select', {sid, 0, key, 0, 1, box.NULL, true, false, box.NULL, true})
+    return s
+end
+st = stream_begin(2, {2})
+c[2]:eval('box.cfg{read_only = true}')
+check('validate on a demoted node raises READONLY', raises_readonly(pcall(st.call, st, 'tarn_validate', {'V1', {{sid, 0, {2}}}, {}, true})))
+check('autocommit on a demoted node raises READONLY',
+      raises_readonly(pcall(c[2].call, c[2], 'tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})))
+check('PREPARE on a demoted node raises READONLY',
+      raises_readonly(pcall(c[2].call, c[2], 'tarn_prepare', {'RO1', 1, {1, 2}, {}, {}, {}, fiber.time()})))
+check('lock-checked read on a demoted node raises READONLY',
+      raises_readonly(pcall(c[2].call, c[2], 'tarn_read', {sid, 0, {2}, 'EQ', 1})))
+c[2]:eval('box.cfg{read_only = false}')
+st = stream_begin(2, {2})
+c[2]:eval('box.ctl.promote()')   -- new election term
+r = st:call('tarn_validate', {'V2', {{sid, 0, {2}}}, {}, true})
+check('validate of a stream begun in an earlier term -> conflict', r[1] == 'conflict', r)
+st = stream_begin(2, {2})
+r = st:call('tarn_validate', {'V3', {{sid, 0, {2}}}, {}, true})
+check('validate of a stream begun in the current term passes', r[1] == 'ok', r)
+
+print('lock index rebuild with a PREPARE waiting for quorum')
+c[2]:eval([[box.space._tarn_locks:alter{is_sync = true}; box.space._tarn_part:alter{is_sync = true}
+            box.cfg{replication_synchro_quorum = 2, replication_synchro_timeout = 2}]])
+local pend
+fiber.create(function()
+    pend = c[2]:call('tarn_prepare', {'Q1', 1, {1, 2}, {{'replace', sid, {2, 5, 'b@x', 2}}}, {}, {}, fiber.time()})
+end)
+fiber.sleep(0.3)
+-- A read-only round trip makes the index stale; the next check rebuilds it
+-- while Q1's lock records still wait for a quorum.
+c[2]:eval('box.cfg{read_only = true}; require("fiber").sleep(0.05); box.cfg{read_only = false}')
+fiber.sleep(0.05)
+r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
+check('rebuilt index keeps the lock of a PREPARE waiting for quorum', r[1] == 'conflict', r)
+check('the waiting PREPARE fails once the quorum times out', wait_for(function() return pend ~= nil end, 10) and pend[1] == 'no', pend)
+c[2]:eval([[box.cfg{replication_synchro_quorum = 1}
+            box.space._tarn_locks:alter{is_sync = false}; box.space._tarn_part:alter{is_sync = false}]])
+check('... and its lock is gone', wait_for(function() return c[2]:call('tarn_info').lock_index == 0 end), c[2]:call('tarn_info'))
+r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
+check('... so the row is writable again', r[1] == 'ok', r)
+
+print('garbage collection')
+for i = 1, 2 do c[i]:eval('tarn.cfg.max_txn_age = 0.5; tarn.cfg.clock_skew = 0.5; tarn.cfg.recovery_after = 1000') end
+-- G1 is applied on shard 2 only; its record on D (shard 1) stays STAGING.
+prepare(1, 'G1', {{'replace', sid, {80, 1, 'g80@x', 1}}})
+prepare(2, 'G1', {{'replace', sid, {81, 1, 'g81@x', 2}}})
+c[2]:call('tarn_apply', {'G1'})
+fiber.sleep(2.5)
+check('applied participant record kept while the decision record is STAGING',
+      c[2]:call('tarn_part_status', {'G1'}) == 'applied')
+c[1]:call('tarn_apply', {'G1'})
+check('decision record COMMITTED once D applied', c[1]:call('tarn_txn_status', {'G1'}) == 'committed')
+check('then every G1 record is collected', wait_for(function()
+    return c[2]:call('tarn_part_status', {'G1'}) == 'none' and c[1]:call('tarn_part_status', {'G1'}) == 'none'
+       and c[1]:call('tarn_txn_status', {'G1'}) == 'none' end))
+-- G2's decision record is final (ABORTED) while shard 2 is still prepared.
+prepare(2, 'G2', {{'replace', sid, {82, 1, 'g82@x', 2}}})
+c[1]:call('tarn_txn_cas', {'G2', 'none', 'aborted', {1, 2}})
+fiber.sleep(2.5)
+check('decision record kept while a participant is prepared', c[1]:call('tarn_txn_status', {'G2'}) == 'aborted')
+c[2]:call('tarn_abort', {'G2', 1, {1, 2}})
+check('collected once nobody is prepared, tombstone too', wait_for(function()
+    return c[1]:call('tarn_txn_status', {'G2'}) == 'none' and c[2]:call('tarn_part_status', {'G2'}) == 'none' end))
+check('resolve of a vanished transaction writes nothing',
+      c[1]:eval("return tarn.resolve('GONE1', 1, {1, 2})") == 'gone' and c[1]:call('tarn_txn_status', {'GONE1'}) == 'none')
+for i = 1, 2 do c[i]:eval('tarn.cfg.max_txn_age = 120; tarn.cfg.clock_skew = 60; tarn.cfg.recovery_after = 2') end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

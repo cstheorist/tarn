@@ -24,6 +24,9 @@ fn default_user() -> String {
 fn default_pool() -> usize {
     4
 }
+fn default_max_txn_age() -> f64 {
+    120.0
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ShardConfig {
@@ -53,6 +56,12 @@ pub struct ClusterConfig {
     /// (checked in TLA+); gives up read-your-writes for direct KV readers.
     #[serde(default)]
     pub ack_on_prepare: bool,
+    /// Storage nodes refuse PREPAREs of transactions older than this
+    /// (seconds; must match `max_txn_age` of lua/tarn.lua). A coordinator
+    /// whose transaction is older no longer reads a missing record as
+    /// "never prepared" (it may have been garbage-collected).
+    #[serde(default = "default_max_txn_age")]
+    pub max_txn_age: f64,
 }
 
 struct Pool {
@@ -67,7 +76,9 @@ impl Pool {
         let start = self.next.fetch_add(1, Ordering::Relaxed);
         for i in 0..n {
             let c = &self.clients[(start + i) % n];
-            if !c.is_closed() {
+            // A stale connection answered ER_READONLY: its server is no
+            // longer the leader, although the connection survived.
+            if !c.is_closed() && !c.is_stale() {
                 return Some(c.clone());
             }
         }
@@ -271,8 +282,22 @@ impl Cluster {
         route::bucket_of(shard_key, self.cfg.bucket_count)
     }
 
-    /// CALL a Lua procedure on a shard leader outside any stream.
+    /// CALL an idempotent Lua procedure on a shard leader outside any
+    /// stream. Retried on a new leader after ER_READONLY (the procedure did
+    /// not run) and once after a lost connection (it may have run: callers
+    /// guarantee that running it twice is harmless).
     pub async fn call(&self, shard: usize, func: &str, args: &[u8]) -> SqlResult<Bytes> {
+        self.call_inner(shard, func, args, true).await
+    }
+
+    /// CALL a procedure that must not run twice (autocommit DML). Retried
+    /// only after ER_READONLY; a connection lost while the request was in
+    /// flight leaves the outcome unknown, reported as such.
+    pub async fn call_once(&self, shard: usize, func: &str, args: &[u8]) -> SqlResult<Bytes> {
+        self.call_inner(shard, func, args, false).await
+    }
+
+    async fn call_inner(&self, shard: usize, func: &str, args: &[u8], idempotent: bool) -> SqlResult<Bytes> {
         let s = &self.shards[shard];
         let mut tries = 0;
         loop {
@@ -282,6 +307,10 @@ impl Cluster {
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
                     tracing::warn!(shard = s.id, "leader changed: {}", message);
                     s.invalidate();
+                }
+                Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) if !idempotent => {
+                    s.invalidate();
+                    return Err(crate::mpw::ambiguous(s.id, &e));
                 }
                 Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) if tries < 1 => {
                     tracing::warn!(shard = s.id, "connection lost: {}", e);

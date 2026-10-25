@@ -97,17 +97,30 @@ one local Tarantool transaction (lock check + apply + commit).
   The transaction is committed exactly when the record is STAGING and every
   participant is prepared, so the decision needs no extra round trip. APPLY
   then moves the intents into the plain spaces and releases the locks; the
-  client is acknowledged after every APPLY (or, with `--ack-on-prepare`,
-  right after the PREPAREs; see §2.7).
+  decision shard's APPLY also records COMMITTED in the same local
+  transaction. The client is acknowledged after every APPLY succeeded (or,
+  with `--ack-on-prepare`, right after the PREPAREs; see §2.7). An APPLY that
+  keeps failing (shard down) is retried a few times and then left to
+  recovery: the commit is acknowledged anyway, as with ack-on-prepare.
 * *Recovery:* any storage node's recovery fiber (and any SQL server) can
   resolve a transaction whose coordinator vanished: fence the record (no
   record yet → ABORTED, refusing a late PREPARE), fence participants that
   never prepared with tombstones, then decide from the durable state and
   apply or abort everywhere. Recovery may race a slow-but-alive coordinator.
+* *Record lifecycle:* PREPAREs of transactions older than `max_txn_age`
+  (120 s) are refused, and protocol records are garbage-collected only after
+  that horizon, under the rules of §2.6 that keep "no record" meaningful for
+  recovery.
 
 Conflicts surface as MySQL error 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE 40001),
 which clients already treat as "retry the transaction". Autocommit statements
-are retried transparently (up to 20 times with backoff).
+are retried transparently (up to 20 times with backoff). A shard leader
+change (the request reached a demoted node, which answers ER_READONLY) and a
+connection lost during a read are reported the same way: nothing was
+written. A connection lost while a commit or an autocommit write was in
+flight is different: the write may or may not have happened, so Tarn reports
+error 1180 with SQLSTATE 40003 ("statement completion unknown") and never
+re-sends the request.
 
 ## 2. Isolation and the commit protocol
 
@@ -117,7 +130,8 @@ are retried transparently (up to 20 times with backoff).
   **strictly serializable**: there is a serial order consistent with real time.
 * Direct Key/Value readers see only committed data (`read-confirmed`
   isolation: in replicated shards, only data acknowledged by a quorum), and a
-  direct read issued after an SQL COMMIT returned sees that commit.
+  direct read issued after an SQL COMMIT returned sees that commit (except
+  when an APPLY failed and the commit was acknowledged without it, see §1.2).
 * Documented trade-offs (checked by TLC as *expected* violations): a direct
   reader that reads two rows of a cross-shard transaction on two different
   shards may see one applied and the other not yet (`Tradeoff_DirectReadAtomic`;
@@ -134,7 +148,11 @@ reads, single-shard commit, snapshot reads, read-only validation, PREPARE
 participants, decide), re-delivered PREPAREs, and faults: coordinator crashes,
 message loss, and **shard leader failover**, which keeps durable state
 (quorum-replicated) but destroys the MVCC read tracking of streams still
-executing. Local Tarantool transactions are atomic steps.
+executing. Local Tarantool transactions are atomic steps. Two options model
+the record lifecycle of the implementation: `ApplyMarksCommitted` (the
+decision shard's APPLY records COMMITTED) and `GC` (transactions expire,
+after which their PREPAREs are refused, and records are garbage-collected
+under the rules of §2.6).
 
 Invariants checked in every configuration:
 
@@ -182,7 +200,9 @@ in PREPARE, recovery that aborts without tombstones (a late PREPARE then
 resurrects an aborted transaction: `AppliedOnlyIfCommitted` fails), local
 commits that ignore R locks, single-shard reads that ignore W locks,
 read-only validation without the W-lock check or without the "reads
-unchanged" check.
+unchanged" check, garbage collection of applied records regardless of the
+decision record, garbage collection without the expiry horizon, and fencing
+a missing decision record after expiry.
 
 ### 2.4 A model/implementation gap found by testing: memtx read views
 
@@ -225,24 +245,55 @@ waiting for their WAL write or quorum. A PREPARE whose local transaction
 rolls back removes its entries (`box.on_rollback`); APPLY/ABORT remove them
 when their transaction commits (`box.on_commit`). The durable records stay
 in the spaces for recovery; the index is rebuilt from them at startup and
-after any election state change, before the next check (replicas do not
-maintain it). Because checks now see current lock state rather than the
-reads' snapshot, every read-only validation (single-shard too) does the
-probe write of §2.4, so "reads unchanged" plus "no W lock now" together
-give the model's atomic `SnapshotRead`/`ValidateRO`.
+after any election or read-only state change, before the next check, and
+only on a writable node (replicas do not maintain it). The rebuild reads the
+lock spaces under two isolation levels and takes the union: the
+read-committed view holds the locks of PREPAREs still waiting for WAL or a
+quorum, the read-confirmed view holds locks that a pending APPLY/ABORT is
+deleting; the undo/release hooks of those transactions correct the index
+whichever way they end. (The first version rebuilt from the read-confirmed
+view only and dropped the locks of PREPAREs waiting for a quorum; see §2.8.)
+Because checks see current lock state rather than the reads' snapshot,
+every read-only validation (single-shard too) does the probe write of §2.4,
+so "reads unchanged" plus "no W lock now" together give the model's atomic
+`SnapshotRead`/`ValidateRO`.
 
-### 2.6 Timing assumptions (outside the model)
+### 2.6 Record lifecycle and timing assumptions
 
-Safety does not depend on timing, with one exception that the model does not
-cover: garbage collection of protocol records. Tombstones (participants
-fenced by recovery) are kept `tombstone_ttl` (3600 s), and PREPAREs for
-transactions that started more than `max_txn_age` (1800 s) ago are refused,
-judged by the coordinator's start timestamp. A delayed PREPARE therefore
-always meets its tombstone, provided clocks agree to within the 1800 s
-difference. PREPARE is never re-sent by a coordinator (a lost vote goes to
-recovery, as in the model), so applied participant records and decided
-transaction records can be dropped after `record_ttl` (30 s) once no
-participant is still prepared.
+Every protocol record carries an expiry time: `max_txn_age` (120 s) plus a
+clock-skew allowance (60 s) after it was written. A participant refuses a
+PREPARE whose transaction started more than `max_txn_age` ago (by the
+coordinator's timestamp, on the participant's clock), so after a record's
+expiry no PREPARE of its transaction can be accepted any more. Records are
+garbage-collected only after expiry, and
+
+* a *prepared* participant record never (recovery resolves it first);
+* an *applied* participant record only once the decision record is final
+  (COMMITTED) or gone -- otherwise recovery could read the missing record as
+  "never prepared", fence it and abort a transaction that is committed and
+  already applied on that shard;
+* a *tombstone* (aborted participant) any time after expiry;
+* a *decision record* only once it is final and no participant is still
+  prepared.
+
+Recovery fences a missing decision record only while the transaction has
+not expired or some participant is still prepared (either rules out "the
+record was collected"); otherwise it reports the outcome as unknown. An
+expired PREPARE is refused without writing anything and without a vote: a
+NO could contradict a commit whose records are already gone (TLC found this,
+§2.8). The `*_GC` configurations check all of this.
+
+Timing assumptions remain in two places. The expiry rules assume that clocks
+differ by less than the 60 s allowance. And a leader that is partitioned
+away but does not yet know it has been replaced can still answer autocommit
+reads from its (possibly stale) data until Tarantool's
+`election_fencing_mode = 'strict'` makes it step down, which bounds the
+window by the election timeout; this is the usual leader-lease assumption
+and is not part of the TLA+ model, which treats leader changes as atomic.
+A leader that knows it was demoted refuses every lock check, validation and
+commit with ER_READONLY (it may still serve plain reads of an open stream,
+whose commit then fails), and a validation in a stream that began under an
+earlier election term is refused.
 
 ### 2.7 Ack-on-prepare
 
@@ -251,11 +302,51 @@ succeeded (one round trip instead of two); APPLY happens in the background.
 TLC shows SQL-level strict serializability is preserved
 (`Skew_AckOnPrepare`, `Recov_AckOnPrepare`: SQL readers wait on the W locks),
 while direct read-your-writes is lost (`Tradeoff_AckOnPrepare_DirectRYW`).
+The same argument covers the default mode when an APPLY keeps failing and
+the commit is acknowledged without it.
+
+### 2.8 Findings of an independent review
+
+After the first complete version, an independent code review (a separate
+agent auditing the code against the spec, with its own experiments on real
+Tarantool instances) found five real bugs, all reproduced and fixed:
+
+1. **Committed writes lost after a long shard outage (critical).** The
+   coordinator never recorded COMMITTED, and applied participant records were
+   garbage-collected after 30 s without looking at the decision record. If a
+   participant applied a transaction while another one was down for longer
+   than that, recovery later read the collected record as "never prepared",
+   fenced it and aborted the transaction on the other shard. Fixed by the
+   record lifecycle of §2.6; the model now covers garbage collection, and
+   TLC finds this bug again in `Bug_GCIgnoresDecision`.
+2. **Read-only commits validated by a demoted leader.** `tarn_validate`'s
+   probe write goes to a data-temporary space, which Tarantool accepts on
+   read-only nodes, and SQL servers kept using a demoted leader whose
+   connection survived. Fixed: validation, lock checks and commits refuse to
+   run on a read-only node and validation checks the election term; an
+   ER_READONLY reply marks the connection stale on every code path, so the
+   next request finds the new leader.
+3. **Autocommit DML applied twice.** A lost connection made the SQL server
+   re-send any call once, including `UPDATE ... SET v = v + 1`. Fixed: only
+   idempotent calls are re-sent; otherwise the outcome is reported as unknown
+   (1180/40003). `tests/faults.sh` reproduces the scenario with a proxy that
+   swallows the reply.
+4. **Locks stuck in the lock index.** An error inside PREPARE after its
+   locks entered the index but before the undo hook was registered left them
+   there until a restart. Fixed by registering the undo first.
+5. **Lock index rebuilt without pending PREPAREs.** See §2.5.
+
+Extending the model for (1) also paid off directly: the first version of the
+GC rules let an expired PREPARE vote NO. TLC found a 13-step trace in which
+a re-delivered PREPARE meets a participant whose applied record was already
+collected and votes NO, and a slow coordinator aborts the committed
+transaction on that participant. Expired PREPAREs now get a third answer,
+"expired", that the coordinator treats as unknown.
 
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **58 verified, 0 errors**) and compiled into the server as plain
+src/lib.rs`: **59 verified, 0 errors**) and compiled into the server as plain
 Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
@@ -265,14 +356,20 @@ Rust. What is proven:
   bucket (the map is a total, onto partition). The SQL layer, the KV
   benchmark and the bucket ids stored in tuples all use these functions.
 * **Coordinator logic** (`coord.rs`). `decide(votes)` returns COMMIT iff
-  every vote is YES and ABORT iff some vote is NO (the TLA+ `CoordDecide`);
-  `resolve_step(record, participant states)` is one step of recovery
-  (`RecoverFenceRecord`, `RecoverFenceParticipant`, `RecoverDecide`) and is
-  proven to report/decide COMMIT only when the transaction is committed in the
-  sense of `CommittedNow`, ABORT only when it can never commit, and to fence
-  only participants that never prepared. The coordinator in `txn.rs` calls
-  both. (The storage-side recovery fiber in Lua implements the same TLA+
-  actions and is covered by tests, not by proof.)
+  every vote is YES and ABORT iff some vote is NO (the TLA+ `CoordDecide`).
+  `resolve_step(record, participant states, expired)` is one step of
+  recovery (`RecoverFenceRecord`, `RecoverFenceParticipant`,
+  `RecoverDecide`): it is proven to decide COMMIT only when the states it is
+  given satisfy `CommittedNow`, to decide ABORT only when some participant is
+  tombstoned, to fence only participants without a record while the record
+  is STAGING, and to fence a missing record only before expiry or while some
+  participant is prepared (otherwise it returns `Gone`). This is a case
+  analysis of one snapshot of states. That "no participant record" means
+  "never prepared" and "no record" means "never created" are properties of
+  the whole protocol (the garbage-collection rules of §2.6), which TLC checks
+  in the `*_GC` configurations, not Verus. The coordinator in `txn.rs` calls
+  both functions; the storage-side recovery fiber in Lua implements the same
+  TLA+ actions and is covered by tests, not by proof.
 * **MySQL wire codec** (`wire.rs`). Length-encoded integers and strings:
   encoding matches a byte-level spec, decoding inverts it and never reads out
   of bounds; packet framing: `frame_packets` produces exactly the MySQL
@@ -282,17 +379,23 @@ Rust. What is proven:
   framed, or `None` while incomplete. No overflow or panic on any input.
   `tarn-mysql::codec` delegates to these functions.
 
+Not covered by the proofs: how SQL values are turned into the bytes that
+are hashed for routing (`tarn-sql/src/route.rs`, tested against Tarantool's
+own `digest.crc32` instead), and packet sequence numbers, which `deframe`
+does not check.
+
 ## 4. Tests
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads | 50/50 |
-| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
-| `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, MP_DECIMAL written by Tarantool | 29 tests pass |
-| `tests/sql/difftest.py` | 99 SQL cases run on Tarn and MariaDB 10.11, results compared (incl. column names, affected rows, final table contents): access paths, expressions, aggregates, joins, subqueries, UNION, DML, errors | 99/99 identical |
-| `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB | 2,000 queries, 0 mismatches |
-| `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads, concurrent bank transfers with serializable audits | 12/12 |
-| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload; kill -9 the leader of shard 1, then of shard 2 | passes: new leaders in ≈2 s, every audit exact, final sums exact via SQL and via direct KV reads on the new leaders |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum | 74/74 |
+| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions | all pass |
+| `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
+| `tests/sql/difftest.py` | 99 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents; access paths, expressions, aggregates, joins, subqueries, UNION, DML, errors | 99/99 identical |
+| `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
+| `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 12/12 |
+| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2 | passes: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
+| `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
 ## 5. Results
 
@@ -300,36 +403,48 @@ Rust. What is proven:
 
 Every configuration of `tla/MC.tla` and its result (`python3 tla/summarize.py`
 regenerates this table from `tla/out`). Configurations named `*_ROValidate`
-model the implementation exactly (cross-shard read-only transactions commit
-by validation, no PREPARE); the others model the PREPARE-based variant.
-`Bug_*` configurations switch off one protection each and must fail;
-`Tradeoff_*` check documented weaker guarantees and must fail.
+follow the implementation's commit paths (cross-shard read-only transactions
+commit by validation without PREPARE; the decision shard's APPLY records
+COMMITTED); `*_GC` configurations add expiry and garbage collection of
+records; the others model the PREPARE-based variant with the coordinator
+recording COMMITTED, and keep records forever. `Bug_*` configurations switch
+off one protection each and must fail; `Tradeoff_*` check documented weaker
+guarantees and must fail. Each workload has three transactions on two
+shards with one or two faults, so these are bounded checks: small, but
+exhaustive within those bounds.
 
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
 |---|---|---:|---:|---:|---|---:|
+| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 114736 | 576778 | 14 | 10s | 14 |
+| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 22229 | 82897 | 11 | 04s | 11 |
+| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2742 | 7635 | 10 | 01s | 9 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 33430 | 136338 | 13 | 03s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3608 | 10065 | 10 | 01s | 10 |
 | Bug_NoReadLocks | violates StrictSerializable | 2056 | 7030 | 9 | 01s | 9 |
-| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6541 | 17971 | 9 | 01s | 9 |
+| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6569 | 18301 | 9 | 02s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12218 | 45049 | 11 | 02s | 11 |
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 19356 | 70996 | 12 | 04s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10736 | 37525 | 11 | 04s | 11 |
 | Frac | no errors | 1182650 | 9419404 | 23 | 01min 57s |  |
 | FracFailover | no errors | 2715768 | 21065756 | 25 | 04min 39s |  |
-| FracFailover_ROValidate | no errors | 544585 | 2974335 | 21 | 57s |  |
-| Frac_ROValidate | no errors | 103162 | 596551 | 19 | 13s |  |
+| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 49s |  |
+| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 02min 54s |  |
+| Frac_ROValidate | no errors | 95786 | 555473 | 19 | 12s |  |
 | Local | no errors | 710975 | 5538922 | 23 | 01min 08s |  |
 | LocalFailover | no errors | 1881011 | 14423765 | 25 | 03min 14s |  |
-| LocalFailover_ROValidate | no errors | 407273 | 2199390 | 21 | 39s |  |
-| Local_ROValidate | no errors | 69500 | 394964 | 19 | 08s |  |
-| Recov | no errors | 71927 | 412305 | 18 | 08s |  |
+| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 38s |  |
+| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 01min 53s |  |
+| Local_ROValidate | no errors | 66348 | 377760 | 19 | 09s |  |
+| Recov | no errors | 71927 | 412881 | 18 | 09s |  |
 | RecovReaders | no errors | 28258 | 135187 | 17 | 04s |  |
 | Recov_AckOnPrepare | no errors | 83195 | 474842 | 18 | 08s |  |
+| Recov_GC | no errors | 1136892 | 8123071 | 23 | 01min 36s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
-| SkewFailover | incomplete | 137797 | 650139 | - | - |  |
+| SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4519985 | 36314837 | 28 | 09min 57s |  |
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
+| Skew_GC_ROValidate | incomplete | 6250650 | 42322905 | - | - |  |
 | Skew_ROValidate | no errors | 2085494 | 17591232 | 26 | 23min 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 546 | 957 | 7 | 00s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 2236 | 6582 | 8 | 01s | 8 |
@@ -342,13 +457,13 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 <!-- BENCH -->
 | Best throughput over 1/16/64 threads | MariaDB 10.11 | MySQL 9.7 | Tarn 2 shards | Tarn 1×3 sync replicas |
 |---|---:|---:|---:|---:|
-| oltp_point_select (QPS) | 84,134 | 62,481 | 42,490 | 54,648 |
-| oltp_read_only (TPS) | 3,294 | 2,012 | 902 | – |
-| oltp_read_write (TPS) | 2,250 | 1,112 | 549 | 669 |
-| oltp_write_only (TPS) | 9,766 | 5,679 | 2,756 | – |
-| oltp_update_index (TPS) | 43,426 | 24,907 | 26,056 | 14,651 |
-| oltp_insert (TPS) | 45,461 | 29,632 | 24,255 | 14,560 |
-| direct KV point reads (ops/s) | – | – | 363,233 | – |
+| oltp_point_select (QPS) | 46,391 | 26,442 | 29,711 | 32,389 |
+| oltp_read_only (TPS) | 1,981 | 1,000 | 619 | – |
+| oltp_read_write (TPS) | 1,389 | 726 | 356 | 495 |
+| oltp_write_only (TPS) | 6,557 | 3,459 | 1,507 | – |
+| oltp_update_index (TPS) | 28,197 | 13,237 | 17,617 | 10,231 |
+| oltp_insert (TPS) | 30,020 | 17,493 | 16,646 | 11,566 |
+| direct KV point reads (ops/s) | – | – | 259,797 | – |
 
 ## 6. Limitations
 
@@ -367,6 +482,21 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   under heavy concurrent writes to what they read (they abort and retry);
   explicit transactions surface 1213 to the client like any serializable
   database.
+* Transactions must commit within `max_txn_age` (120 s) of their first
+  statement (stream transactions already time out after 60 s); protocol
+  records are kept for about 3 minutes, which at several thousand
+  cross-shard commits per second costs on the order of 100 MB of memtx
+  memory per shard.
+* A commit or autocommit write interrupted by a lost connection is reported
+  as "outcome unknown" (1180/40003), as in other distributed databases; the
+  client has to check.
+* Timing assumptions (§2.6): clocks within 60 s of each other, and a leader
+  lease bounded by Tarantool's election timeout for autocommit reads on a
+  partitioned old leader.
+* Write paths read in `read-committed` isolation, so in a replicated shard a
+  write can fail with a duplicate key (1062) because of an insert that is
+  not yet confirmed by the quorum and is later rolled back by a failover (a
+  spurious error, not an inconsistency).
 * AUTO_INCREMENT values are allocated in blocks per SQL server: unique and
   increasing per server, with gaps across servers (as in TiDB). An explicit id
   inserted through one server inside another server's cached block is not

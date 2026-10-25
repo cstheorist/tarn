@@ -33,8 +33,15 @@ use tokio::net::TcpStream;
 
 pub use packets::{SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS};
 
-/// Largest logical packet accepted from a client (like max_allowed_packet).
-pub const MAX_ALLOWED_PACKET: usize = 256 << 20;
+/// Largest logical packet accepted from a client (MySQL's default
+/// max_allowed_packet); also the cap on long data per prepared statement.
+pub const MAX_ALLOWED_PACKET: usize = 64 << 20;
+/// Largest packet accepted before authentication (a handshake response is
+/// a few hundred bytes).
+pub const MAX_PREAUTH_PACKET: usize = 64 << 10;
+/// Prepared statements per connection (MySQL's max_prepared_stmt_count
+/// default, which MySQL applies server-wide).
+pub const MAX_PREPARED_STMTS: usize = 16382;
 
 #[derive(Clone, Debug)]
 pub struct ServerOpts {
@@ -87,6 +94,10 @@ struct Stmt {
     num_params: u16,
     types: Vec<(u8, bool)>,
     long_data: HashMap<u16, Vec<u8>>,
+    /// Bytes in `long_data`; past MAX_ALLOWED_PACKET the data is dropped and
+    /// the next EXECUTE fails.
+    long_bytes: usize,
+    long_overflow: bool,
 }
 
 struct Conn<B> {
@@ -105,6 +116,8 @@ struct Conn<B> {
     db: Option<String>,
     started: std::time::Instant,
     questions: u64,
+    /// Current packet size limit: MAX_PREAUTH_PACKET until authenticated.
+    max_packet: usize,
 }
 
 const COM_QUIT: u8 = 0x01;
@@ -135,9 +148,17 @@ fn text(b: &[u8]) -> std::borrow::Cow<'_, str> {
     String::from_utf8_lossy(b)
 }
 
-/// Take one complete logical packet off the front of `rbuf`.
-fn take_packet(rbuf: &mut BytesMut) -> io::Result<Option<(Bytes, u8)>> {
+fn too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "packet larger than max_allowed_packet")
+}
+
+/// Take one complete logical packet (at most `max` bytes) off the front of
+/// `rbuf`.
+fn take_packet(rbuf: &mut BytesMut, max: usize) -> io::Result<Option<(Bytes, u8)>> {
     let Some((len, seq)) = codec::packet_header(rbuf) else { return Ok(None) };
+    if len > max {
+        return Err(too_large());
+    }
     if len < codec::MAX_PAYLOAD {
         if rbuf.len() < 4 + len {
             return Ok(None);
@@ -151,8 +172,8 @@ fn take_packet(rbuf: &mut BytesMut) -> io::Result<Option<(Bytes, u8)>> {
     let mut last_seq;
     loop {
         let Some((l, s)) = codec::packet_header(&rbuf[off..]) else { return Ok(None) };
-        if off + 4 + l > MAX_ALLOWED_PACKET + 4096 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "packet larger than max_allowed_packet"));
+        if off + l > max {
+            return Err(too_large());
         }
         if rbuf.len() < off + 4 + l {
             return Ok(None);
@@ -223,7 +244,7 @@ impl<B: Backend> Conn<B> {
 
     async fn read_packet(&mut self) -> io::Result<Option<(Bytes, u8)>> {
         loop {
-            if let Some(p) = take_packet(&mut self.rbuf)? {
+            if let Some(p) = take_packet(&mut self.rbuf, self.max_packet)? {
                 return Ok(Some(p));
             }
             // Nothing complete buffered: answer everything so far, then block.
@@ -289,6 +310,7 @@ impl<B: Backend> Conn<B> {
             Ok(()) => {
                 self.user = user;
                 self.db = db;
+                self.max_packet = MAX_ALLOWED_PACKET;
                 self.send_ok(0, 0, 0, "");
                 Ok(true)
             }
@@ -372,8 +394,16 @@ impl<B: Backend> Conn<B> {
                     self.send_err(&unknown_stmt(id, "mysqld_stmt_execute"));
                     return Ok(true);
                 };
+                if st.long_overflow {
+                    st.long_data.clear();
+                    st.long_bytes = 0;
+                    st.long_overflow = false;
+                    self.send_err(&SqlError::new(1153, "08S01", "Got a packet bigger than 'max_allowed_packet' bytes"));
+                    return Ok(true);
+                }
                 let params = packets::decode_params(&mut r, st.num_params as usize, &mut st.types, &mut st.long_data);
                 st.long_data.clear();
+                st.long_bytes = 0;
                 match params {
                     None => self.send_err(&malformed()),
                     Some(params) => {
@@ -383,6 +413,14 @@ impl<B: Backend> Conn<B> {
                 }
             }
             COM_STMT_PREPARE => {
+                if self.stmts.len() >= MAX_PREPARED_STMTS {
+                    self.send_err(&SqlError::new(
+                        1461,
+                        "42000",
+                        format!("Can't create more than max_prepared_stmt_count statements (current value: {})", MAX_PREPARED_STMTS),
+                    ));
+                    return Ok(true);
+                }
                 let sql = text(&body).into_owned();
                 let id = self.next_stmt;
                 self.next_stmt = self.next_stmt.wrapping_add(1).max(1);
@@ -391,7 +429,13 @@ impl<B: Backend> Conn<B> {
                     Ok(info) => {
                         self.stmts.insert(
                             id,
-                            Stmt { num_params: info.num_params, types: Vec::new(), long_data: HashMap::new() },
+                            Stmt {
+                                num_params: info.num_params,
+                                types: Vec::new(),
+                                long_data: HashMap::new(),
+                                long_bytes: 0,
+                                long_overflow: false,
+                            },
                         );
                         let ncols = info.columns.len() as u16;
                         let nparams = info.num_params;
@@ -415,7 +459,15 @@ impl<B: Backend> Conn<B> {
                 let mut r = Reader::new(&body);
                 if let (Some(id), Some(param)) = (r.u32(), r.u16()) {
                     if let Some(st) = self.stmts.get_mut(&id) {
-                        st.long_data.entry(param).or_default().extend_from_slice(r.rest());
+                        let chunk = r.rest();
+                        if st.long_overflow || st.long_bytes + chunk.len() > MAX_ALLOWED_PACKET {
+                            st.long_overflow = true;
+                            st.long_data.clear();
+                            st.long_bytes = 0;
+                        } else {
+                            st.long_bytes += chunk.len();
+                            st.long_data.entry(param).or_default().extend_from_slice(chunk);
+                        }
                     }
                 }
                 // no response
@@ -432,6 +484,8 @@ impl<B: Backend> Conn<B> {
                 Some(id) => match self.stmts.get_mut(&id) {
                     Some(st) => {
                         st.long_data.clear();
+                        st.long_bytes = 0;
+                        st.long_overflow = false;
                         self.send_ok(0, 0, 0, "");
                     }
                     None => self.send_err(&unknown_stmt(id, "mysqld_stmt_reset")),
@@ -509,8 +563,44 @@ pub async fn serve_connection<B: Backend>(
         db: None,
         started: std::time::Instant::now(),
         questions: 0,
+        max_packet: MAX_PREAUTH_PACKET,
     };
     let r = c.run().await;
     c.backend.on_disconnect().await;
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn packet(len: usize, seq: u8) -> Vec<u8> {
+        let mut v = vec![(len & 0xff) as u8, ((len >> 8) & 0xff) as u8, ((len >> 16) & 0xff) as u8, seq];
+        v.resize(4 + len, b'x');
+        v
+    }
+
+    #[test]
+    fn packet_size_limits() {
+        // A small packet passes under the pre-authentication limit.
+        let mut b = BytesMut::from(&packet(100, 1)[..]);
+        let (p, seq) = take_packet(&mut b, MAX_PREAUTH_PACKET).unwrap().unwrap();
+        assert_eq!((p.len(), seq), (100, 1));
+        // A single packet above the limit is refused from its header alone,
+        // before its body is buffered.
+        let mut b = BytesMut::from(&packet(MAX_PREAUTH_PACKET + 1, 1)[..8]);
+        assert!(take_packet(&mut b, MAX_PREAUTH_PACKET).is_err());
+        // ... and is accepted after authentication.
+        let mut b = BytesMut::from(&packet(MAX_PREAUTH_PACKET + 1, 1)[..]);
+        assert_eq!(take_packet(&mut b, MAX_ALLOWED_PACKET).unwrap().unwrap().0.len(), MAX_PREAUTH_PACKET + 1);
+        // A multi-packet payload is refused once its pieces exceed the limit.
+        let max = codec::MAX_PAYLOAD; // 0xFFFFFF
+        let mut big = packet(max, 0);
+        big.extend_from_slice(&packet(max, 1)[..4]);
+        let mut b = BytesMut::from(&big[..]);
+        assert!(take_packet(&mut b, max + 10).is_err());
+        // An incomplete packet under the limit just waits for more bytes.
+        let mut b = BytesMut::from(&packet(1000, 0)[..500]);
+        assert!(take_packet(&mut b, MAX_PREAUTH_PACKET).unwrap().is_none());
+    }
 }

@@ -261,42 +261,98 @@ class T:
 
     # ------------------------------------------------------------------
     def test_bank(self):
-        n_acc, init = 64, 1000
+        """Concurrent transfers with serializable audits. Every transfer also
+        inserts a ledger row (same transaction), so the final balances must
+        equal what the ledger says: a transfer whose writes were lost on one
+        shard, or applied twice, shows up there. Clients classify each COMMIT
+        as acknowledged (must be in the ledger), aborted with 1213 (must not
+        be), or ambiguous (lost connection / 1180: either). Autocommit
+        increments of counters check that no single-row write is applied
+        twice (ok <= n <= ok + ambiguous)."""
+        n_acc, init, n_ctr = 64, 1000, 16
         total = n_acc * init
         self.fresh("bank", "CREATE TABLE bank (id INT PRIMARY KEY, bal BIGINT NOT NULL)",
                    [f"({i}, {init})" for i in range(n_acc)])
+        self.fresh("ledger", "CREATE TABLE ledger (id BIGINT PRIMARY KEY, x INT NOT NULL, y INT NOT NULL, "
+                   "amt INT NOT NULL)", [])
+        self.fresh("counters", "CREATE TABLE counters (id INT PRIMARY KEY, n BIGINT NOT NULL)",
+                   [f"({i}, 0)" for i in range(n_ctr)])
         stop = time.time() + self.args.bank_seconds
-        stats = {"commit": 0, "conflict": 0, "audit": 0, "bad": [], "err": [], "times": []}
+        stats = {"commit": 0, "conflict": 0, "audit": 0, "bad": [], "err": [], "times": [],
+                 "acked": set(), "aborted": set(), "ambiguous": set(),
+                 "ctr_ok": [0] * n_ctr, "ctr_amb": [0] * n_ctr, "ctr_err": 0}
         t_start = time.time()
         lock = threading.Lock()
 
         def transfer(seed):
             rnd = random.Random(seed)
             c = connect(self.args.tarn)
+            seq = 0
             while time.time() < stop:
                 x, y = rnd.sample(range(n_acc), 2)
                 amt = rnd.randint(1, 50)
+                seq += 1
+                lid = seed * 1_000_000 + seq
+                stage = "body"
                 try:
                     q(c, "BEGIN")
                     bx = q(c, "SELECT bal FROM bank WHERE id = %s", (x,))[0][0]
-                    if bx >= amt:
-                        q(c, "UPDATE bank SET bal = bal - %s WHERE id = %s", (amt, x))
-                        q(c, "UPDATE bank SET bal = bal + %s WHERE id = %s", (amt, y))
+                    if bx < amt:
+                        q(c, "ROLLBACK")
+                        continue
+                    q(c, "UPDATE bank SET bal = bal - %s WHERE id = %s", (amt, x))
+                    q(c, "UPDATE bank SET bal = bal + %s WHERE id = %s", (amt, y))
+                    q(c, "INSERT INTO ledger VALUES (%s, %s, %s, %s)", (lid, x, y, amt))
+                    stage = "commit"
                     q(c, "COMMIT")
                     with lock:
                         stats["commit"] += 1
+                        stats["acked"].add(lid)
                         stats["times"].append(time.time() - t_start)
                 except pymysql.MySQLError as e:
+                    code = e.args[0] if e.args else 0
+                    with lock:
+                        if code == CONFLICT:
+                            stats["conflict"] += 1
+                            if stage == "commit":
+                                stats["aborted"].add(lid)
+                        else:
+                            if stage == "commit":
+                                stats["ambiguous"].add(lid)
+                            stats["err"].append(str(e))
                     try:
                         q(c, "ROLLBACK")
                     except pymysql.MySQLError:
                         c = connect(self.args.tarn)
+                    if code != CONFLICT:
+                        time.sleep(0.05)
+
+        def counter(seed):
+            rnd = random.Random(1000 + seed)
+            c = connect(self.args.tarn)
+            while time.time() < stop:
+                i = rnd.randrange(n_ctr)
+                try:
+                    q(c, "UPDATE counters SET n = n + 1 WHERE id = %s", (i,))
                     with lock:
-                        if e.args[0] == CONFLICT:
-                            stats["conflict"] += 1
+                        stats["ctr_ok"][i] += 1
+                except pymysql.MySQLError as e:
+                    code = e.args[0] if e.args else 0
+                    with lock:
+                        if code == CONFLICT:
+                            pass   # not applied
                         else:
-                            stats["err"].append(str(e))
-                            time.sleep(0.05)
+                            stats["ctr_amb"][i] += 1
+                            stats["ctr_err"] += 1
+                    try:
+                        c.ping()
+                    except pymysql.MySQLError:
+                        time.sleep(0.05)
+                        try:
+                            c = connect(self.args.tarn)
+                        except pymysql.MySQLError:
+                            pass
+                    time.sleep(0.02)
 
         def audit():
             c = connect(self.args.tarn)
@@ -318,7 +374,7 @@ class T:
                     stats["audit"] += 1
                     if int(s[0]) != total or s[1] != n_acc or s[2] < 0:
                         stats["bad"].append(s)
-                # autocommit point reads of two accounts must also be sane
+                # autocommit reads must also be sane
                 try:
                     s2 = q(c, "SELECT SUM(bal) FROM bank")[0][0]
                     if int(s2) != total:
@@ -328,14 +384,40 @@ class T:
                     pass
 
         th = [threading.Thread(target=transfer, args=(i,)) for i in range(self.args.threads)]
+        th += [threading.Thread(target=counter, args=(i,)) for i in range(2)]
         th += [threading.Thread(target=audit) for _ in range(2)]
         for t in th:
             t.start()
         for t in th:
             t.join()
-        final = q(connect(self.args.tarn), "SELECT SUM(bal), COUNT(*) FROM bank")[0]
+        # Recovery may still be finishing transactions whose APPLY was cut
+        # off: wait until the ledger and the balances agree, or time out.
+        c = connect(self.args.tarn)
+        deadline = time.time() + 30
+        while True:
+            try:
+                bal = dict(q(c, "SELECT id, bal FROM bank"))
+                ledger = q(c, "SELECT id, x, y, amt FROM ledger")
+                ctrs = dict(q(c, "SELECT id, n FROM counters"))
+            except pymysql.MySQLError as e:
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.5)
+                c = connect(self.args.tarn)
+                continue
+            want = {i: init for i in range(n_acc)}
+            for _, x, y, amt in ledger:
+                want[x] -= amt
+                want[y] += amt
+            if want == bal or time.time() > deadline:
+                break
+            time.sleep(0.5)
+        in_ledger = {r[0] for r in ledger}
         print(f"    bank: {stats['commit']} commits, {stats['conflict']} conflicts, {stats['audit']} audits, "
-              f"{len(stats['err'])} other errors, final sum {final[0]}")
+              f"{len(stats['err'])} other errors ({len(stats['ambiguous'])} commits with unknown outcome, "
+              f"{sum(1 for i in stats['ambiguous'] if i in in_ledger)} of them committed), "
+              f"final sum {sum(bal.values())}")
+        print(f"    counters: {sum(stats['ctr_ok'])} acknowledged increments, {stats['ctr_err']} with unknown outcome")
         for e in stats["err"][:5]:
             print(f"      error: {e}")
         buckets = [0] * (int(self.args.bank_seconds) // 3 + 1)
@@ -343,7 +425,16 @@ class T:
             buckets[min(int(t_ // 3), len(buckets) - 1)] += 1
         print("    commits per 3 s:", " ".join(str(b) for b in buckets))
         self.check(not stats["bad"], f"audits saw a broken invariant: {stats['bad'][:5]}")
-        self.check(int(final[0]) == total and final[1] == n_acc, "final balance sum")
+        self.check(sum(bal.values()) == total and len(bal) == n_acc, "final balance sum")
+        diff = {i: (bal.get(i), want[i]) for i in want if bal.get(i) != want[i]}
+        self.check(not diff, f"balances match the ledger (lost or duplicated transfer writes): {list(diff.items())[:5]}")
+        lost = stats["acked"] - in_ledger
+        self.check(not lost, f"every acknowledged COMMIT is in the ledger: {len(lost)} missing")
+        phantom = stats["aborted"] & in_ledger
+        self.check(not phantom, f"no COMMIT reported as 1213 committed: {sorted(phantom)[:5]}")
+        bad_ctr = [(i, ctrs.get(i), stats["ctr_ok"][i], stats["ctr_amb"][i]) for i in range(n_ctr)
+                   if not (stats["ctr_ok"][i] <= ctrs.get(i, -1) <= stats["ctr_ok"][i] + stats["ctr_amb"][i])]
+        self.check(not bad_ctr, f"autocommit increments applied exactly once (id, n, ok, unknown): {bad_ctr[:5]}")
         self.check(stats["commit"] > 0, "some transfers committed")
         if self.args.kv:
             s = 0

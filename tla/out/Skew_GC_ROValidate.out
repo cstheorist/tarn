@@ -1,0 +1,44 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=44277 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 13 and seed -1924803607763965670 with 2 workers on 2 cores with 3641MB heap and 64MB offheap memory [pid: 4882] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/claude/tarn/tla/MC.tla
+Parsing file /home/claude/tarn/tla/TarnCommit.tla
+Parsing file /tmp/tlc-14387552717464681277/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-14387552717464681277/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-14387552717464681277/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-14387552717464681277/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-14387552717464681277/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-14387552717464681277/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-14387552717464681277/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TarnCommit
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module MC
+Linting of module TarnCommit
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module MC
+Starting... (2026-10-24 22:29:23)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-24 22:29:23.
+Progress(10) at 2026-10-24 22:29:26: 42,780 states generated (42,780 s/min), 12,449 distinct states found (12,449 ds/min), 7,970 states left on queue.
+Progress(15) at 2026-10-24 22:30:26: 4,243,936 states generated (4,201,156 s/min), 784,579 distinct states found (772,130 ds/min), 408,782 states left on queue.
+Progress(16) at 2026-10-24 22:31:26: 9,314,008 states generated (5,070,072 s/min), 1,592,930 distinct states found (808,351 ds/min), 784,382 states left on queue.
+Progress(16) at 2026-10-24 22:32:26: 13,530,642 states generated (4,216,634 s/min), 2,208,542 distinct states found (615,612 ds/min), 1,034,750 states left on queue.
+Progress(17) at 2026-10-24 22:33:26: 16,426,500 states generated (2,895,858 s/min), 2,655,561 distinct states found (447,019 ds/min), 1,224,509 states left on queue.
+Progress(17) at 2026-10-24 22:34:26: 20,021,953 states generated (3,595,453 s/min), 3,166,723 distinct states found (511,162 ds/min), 1,444,220 states left on queue.
+Progress(17) at 2026-10-24 22:35:26: 22,566,701 states generated (2,544,748 s/min), 3,535,387 distinct states found (368,664 ds/min), 1,596,253 states left on queue.
+Progress(17) at 2026-10-24 22:36:26: 25,095,422 states generated (2,528,721 s/min), 3,871,809 distinct states found (336,422 ds/min), 1,719,964 states left on queue.
+Progress(17) at 2026-10-24 22:37:26: 27,617,285 states generated (2,521,863 s/min), 4,185,910 distinct states found (314,101 ds/min), 1,826,392 states left on queue.
+Progress(18) at 2026-10-24 22:49:59: 30,218,809 states generated (2,601,524 s/min), 4,603,109 distinct states found (417,199 ds/min), 2,001,696 states left on queue.
+Progress(18) at 2026-10-24 22:50:59: 35,485,313 states generated (5,266,504 s/min), 5,320,164 distinct states found (717,055 ds/min), 2,299,736 states left on queue.
+Checkpointing of run /tmp/tlcmeta/Skew_GC_ROValidate/26-10-24-22-29-22.990
+Checkpointing completed at (2026-10-24 23:16:29)
+Progress(18) at 2026-10-24 23:16:29: 37,084,067 states generated (1,598,754 s/min), 5,518,981 distinct states found (198,817 ds/min), 2,352,386 states left on queue.
+Progress(18) at 2026-10-24 23:17:29: 42,322,905 states generated (5,238,838 s/min), 6,250,650 distinct states found (731,669 ds/min), 2,634,905 states left on queue.
+Progress(18) at 2026-10-24 23:18:29: 47,330,664 states generated (5,007,759 s/min), 6,846,907 distinct states found (596,257 ds/min), 2,815,827 states left on queue.

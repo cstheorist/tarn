@@ -21,13 +21,13 @@
 
 use crate::catalog::TableDef;
 use crate::cluster::Cluster;
-use crate::mpw::{from_iproto, lua_status, Mp, Rd};
+use crate::mpw::{ambiguous, from_iproto, from_iproto_read, lua_status, Mp, Rd};
 use bytes::Bytes;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tarn_common::{SqlError, SqlResult, Value};
-use tarn_iproto::{Client, Iter, TxnIsolation};
+use tarn_iproto::{Client, Iter};
 use tarn_verified::coord::{self, Decision, Vote};
 
 pub type Row = Vec<Value>;
@@ -134,17 +134,6 @@ impl Txn {
         if let Some(s) = self.streams.get_mut(&shard) {
             s.begun = true;
         }
-    }
-
-    /// Stream with an explicit IPROTO BEGIN (for requests that cannot begin
-    /// the transaction themselves).
-    pub async fn stream_begun(&mut self, cluster: &Cluster, shard: usize) -> SqlResult<(Client, u64)> {
-        let s = self.stream(cluster, shard).await?;
-        if s.begin {
-            s.client.begin(s.id, Some(60.0), Some(TxnIsolation::ReadConfirmed)).await.map_err(from_iproto)?;
-            self.mark_begun(shard);
-        }
-        Ok((s.client, s.id))
     }
 
     pub fn note_point(&mut self, shard: usize, space: u32, index: u32, key: Vec<Value>) {
@@ -296,7 +285,9 @@ impl Txn {
             m.bool(cross);
             let (client, id) = (s.client.clone(), s.id);
             futs.push(async move {
-                let r = client.call(id, "tarn_validate", &m.0).await.map_err(from_iproto)?;
+                // Read-only: a lost connection or a demoted leader just
+                // means "retry" (nothing was written).
+                let r = client.call(id, "tarn_validate", &m.0).await.map_err(from_iproto_read)?;
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
                 lua_status(&d).map(|_| ())
             });
@@ -332,7 +323,12 @@ impl Txn {
         m.arr(4).str(&self.id);
         self.encode_writes(cluster, shard, &mut m);
         self.encode_reads(shard, &mut m);
-        let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(from_iproto);
+        let shard_id = cluster.shards[shard].id;
+        let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
+            // The commit may have happened: report the outcome as unknown.
+            e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => ambiguous(shard_id, &e),
+            e => from_iproto(e),
+        });
         cluster.stats.commits_local.fetch_add(1, Ordering::Relaxed);
         let r = r.and_then(|r| r.data().ok_or_else(|| crate::mpw::proto("no data")));
         match r {
@@ -346,6 +342,15 @@ impl Txn {
 
     async fn commit_2pc(&mut self, cluster: &Arc<Cluster>, parts: &BTreeSet<usize>) -> SqlResult<()> {
         cluster.stats.commits_2pc.fetch_add(1, Ordering::Relaxed);
+        // Participants refuse PREPAREs older than max_txn_age; do not start
+        // a commit that they would refuse.
+        if now_secs() - self.ts > cluster.cfg.max_txn_age {
+            let t = std::mem::take(&mut self.streams);
+            for (_, s) in t {
+                let _ = s.client.rollback(s.id).await;
+            }
+            return Err(SqlError::conflict("transaction too old (max_txn_age exceeded); retry it"));
+        }
         // Decision shard: the lowest participant that writes.
         let dshard = self.writes.values().map(|w| w.shard).min().unwrap();
         let did = cluster.shards[dshard].id;
@@ -374,6 +379,11 @@ impl Txn {
             futs.push(async move {
                 match client.call(id, "tarn_prepare", &m.0).await {
                     Ok(r) => match r.data() {
+                        // 'expired' is neither YES nor NO (TarnCommit: an
+                        // expired PREPARE has no effect and sends no vote).
+                        Some(d) if crate::mpw::status_is(&d, "expired") => {
+                            (Vote::Unknown, Some(SqlError::conflict("transaction too old (max_txn_age exceeded)")))
+                        }
                         Some(d) => match lua_status(&d) {
                             Ok(_) => (Vote::Yes, None),
                             Err(e) => (Vote::No, Some(e)),
@@ -395,12 +405,12 @@ impl Txn {
                     let c = cluster.clone();
                     let id = self.id.clone();
                     tokio::spawn(async move {
-                        let _ = apply_all(&c, &id, &parts_v).await;
+                        apply_all(&c, &id, &parts_v).await;
                     });
-                    Ok(())
                 } else {
-                    apply_all(cluster, &self.id, &parts_v).await
+                    apply_all(cluster, &self.id, &parts_v).await;
                 }
+                Ok(())
             }
             Decision::Abort => {
                 abort_all(cluster, &self.id, did, &part_ids, &parts_v).await;
@@ -410,32 +420,66 @@ impl Txn {
                 // Some PREPARE replies were lost: resolve exactly like the
                 // recovery agents do (TarnCommit!RecoverDecide), via the
                 // decision shard's record and the participants' states.
-                match resolve(cluster, &self.id, dshard, &parts_v).await {
-                    Ok(true) => Ok(()),
-                    Ok(false) => Err(first_err.unwrap_or_else(|| SqlError::conflict("transaction aborted"))),
-                    Err(e) => Err(SqlError::new(
-                        2013,
-                        "HY000",
-                        format!("transaction {} outcome unknown ({}); it will be resolved by recovery", self.id, e),
-                    )),
+                let expired = now_secs() - self.ts > cluster.cfg.max_txn_age;
+                match resolve(cluster, &self.id, dshard, &parts_v, expired).await {
+                    Ok(Some(true)) => Ok(()),
+                    // Aborted for certain: retryable.
+                    Ok(Some(false)) => Err(SqlError::conflict(match first_err {
+                        Some(e) => format!("transaction aborted ({})", e.message),
+                        None => "transaction aborted".to_string(),
+                    })),
+                    Ok(None) => Err(ambiguous(did, &"transaction expired before its outcome was known")),
+                    Err(e) => Err(ambiguous(did, &format!("{}; recovery will finish transaction {}", e, self.id))),
                 }
             }
         }
     }
 }
 
-async fn apply_all(cluster: &Arc<Cluster>, txid: &str, parts: &[usize]) -> SqlResult<()> {
+fn now_secs() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+/// APPLY a committed transaction everywhere (TarnCommit!ApplyAt); the
+/// decision shard's APPLY also marks the record COMMITTED. A participant
+/// counts as done when it reports `applied` (or `none`: applied earlier and
+/// garbage-collected). Failed APPLYs are retried a few times; if a shard
+/// stays unreachable the commit is acknowledged anyway -- it is decided, SQL
+/// readers wait on its W locks, and recovery applies it -- which gives up
+/// direct read-your-writes for that transaction, exactly as ack-on-prepare
+/// does (TarnCommit: Tradeoff_AckOnPrepare_DirectRYW).
+async fn apply_all(cluster: &Arc<Cluster>, txid: &str, parts: &[usize]) {
     let mut m = Mp::new();
     m.arr(1).str(txid);
     let args = m.0;
-    let futs = parts.iter().map(|&p| cluster.call(p, "tarn_apply", &args));
-    for r in futures::future::join_all(futs).await {
-        // A failed APPLY is retried by recovery; the transaction is committed.
-        if let Err(e) = r.and_then(|d| lua_status(&d).map(|_| ())) {
-            tracing::warn!("apply of {} failed (recovery will retry): {}", txid, e);
+    let mut todo: Vec<usize> = parts.to_vec();
+    for attempt in 0..4u64 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(50 << attempt)).await;
         }
+        let futs = todo.iter().map(|&p| cluster.call(p, "tarn_apply", &args));
+        let results = futures::future::join_all(futs).await;
+        let mut left = Vec::new();
+        for (&p, r) in todo.iter().zip(results) {
+            let r = r.and_then(|d| lua_status(&d).and_then(|(_, mut rd)| rd.string()));
+            match r {
+                Ok(st) if st == "applied" || st == "none" => {}
+                Ok(st) => {
+                    tracing::error!("APPLY of {} on shard {} returned '{}'", txid, cluster.shards[p].id, st);
+                    left.push(p);
+                }
+                Err(e) => {
+                    tracing::warn!("APPLY of {} on shard {} failed: {}", txid, cluster.shards[p].id, e);
+                    left.push(p);
+                }
+            }
+        }
+        if left.is_empty() {
+            return;
+        }
+        todo = left;
     }
-    Ok(())
+    tracing::warn!("APPLY of {} still pending on {} shard(s); recovery will finish it", txid, todo.len());
 }
 
 async fn abort_all(cluster: &Arc<Cluster>, txid: &str, did: u32, part_ids: &[u32], parts: &[usize]) {
@@ -457,8 +501,9 @@ async fn call_str(cluster: &Arc<Cluster>, shard: usize, f: &str, args: &[u8]) ->
 }
 
 /// Determine the outcome of a transaction whose votes are not all known.
-/// Ok(true) = committed (and applied), Ok(false) = aborted.
-pub async fn resolve(cluster: &Arc<Cluster>, txid: &str, dshard: usize, parts: &[usize]) -> SqlResult<bool> {
+/// Ok(Some(true)) = committed (and applied), Ok(Some(false)) = aborted,
+/// Ok(None) = cannot be known any more (expired, records gone).
+pub async fn resolve(cluster: &Arc<Cluster>, txid: &str, dshard: usize, parts: &[usize], expired: bool) -> SqlResult<Option<bool>> {
     let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
     let did = cluster.shards[dshard].id;
     let mut idm = Mp::new();
@@ -470,15 +515,16 @@ pub async fn resolve(cluster: &Arc<Cluster>, txid: &str, dshard: usize, parts: &
             states.push(call_str(cluster, p, "tarn_part_status", &idm.0).await?);
         }
         let states: Vec<coord::PartState> = states.iter().map(|s| coord::PartState::parse(s)).collect();
-        match coord::resolve_step(coord::RecStatus::parse(&status), &states) {
+        match coord::resolve_step(coord::RecStatus::parse(&status), &states, expired) {
             coord::Step::Committed => {
-                apply_all(cluster, txid, parts).await?;
-                return Ok(true);
+                apply_all(cluster, txid, parts).await;
+                return Ok(Some(true));
             }
             coord::Step::Aborted => {
                 abort_all(cluster, txid, did, &part_ids, parts).await;
-                return Ok(false);
+                return Ok(Some(false));
             }
+            coord::Step::Gone => return Ok(None),
             coord::Step::DecideCommit => {
                 let mut m = Mp::new();
                 m.arr(3).str(txid).str("staging").str("committed");
@@ -536,7 +582,7 @@ pub async fn select_rows(
         let r = client
             .select(stream, t.space_id, index, iter, 0, limit.unwrap_or(u32::MAX), &k.0)
             .await
-            .map_err(from_iproto)?;
+            .map_err(from_iproto_read)?;
         let mut out = Vec::new();
         for tup in r.tuples().map_err(crate::mpw::proto)? {
             out.push(Rd::shared(&tup).row(ncols)?);
@@ -561,7 +607,7 @@ pub async fn select_rows(
     if begin {
         m.nil().bool(true); // offset, begin
     }
-    let r = client.call(stream, "tarn_select", &m.0).await.map_err(from_iproto)?;
+    let r = client.call(stream, "tarn_select", &m.0).await.map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     let (_, rd) = lua_status(&d)?;
     let mut rd = Rd::shared_at(&d, rd);

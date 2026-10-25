@@ -239,6 +239,10 @@ struct Shared {
     /// Wakes the writer: data available or connection closed.
     write_ready: Notify,
     closed: AtomicBool,
+    /// The server answered a request with ER_READONLY: it is no longer the
+    /// leader. The connection still works, but callers that need the leader
+    /// should stop using it (see [`Client::is_stale`]).
+    stale: AtomicBool,
     tasks: Mutex<Vec<AbortHandle>>,
     counters: Counters,
 }
@@ -667,6 +671,7 @@ impl Client {
             }),
             write_ready: Notify::new(),
             closed: AtomicBool::new(false),
+            stale: AtomicBool::new(false),
             tasks: Mutex::new(Vec::with_capacity(2)),
             counters: Counters::default(),
         });
@@ -706,6 +711,16 @@ impl Client {
     /// closed client fails immediately with [`Error::Closed`].
     pub fn is_closed(&self) -> bool {
         self.inner.shared.closed.load(Ordering::Acquire)
+    }
+
+    /// True once the server answered some request with ER_READONLY (it was
+    /// demoted, or is a replica), or after [`Client::mark_stale`].
+    pub fn is_stale(&self) -> bool {
+        self.inner.shared.stale.load(Ordering::Acquire)
+    }
+
+    pub fn mark_stale(&self) {
+        self.inner.shared.stale.store(true, Ordering::Release);
     }
 
     /// Close the connection now. Pending and later requests fail with
@@ -753,7 +768,13 @@ impl Client {
     ) -> Result<Response, Error> {
         let rx = self.enqueue(req_type, stream_id, body)?;
         match rx.await {
-            Ok(reply) => reply.into_response(),
+            Ok(reply) => {
+                let r = reply.into_response();
+                if let Err(Error::Server { code: crate::ER_READONLY, .. }) = &r {
+                    self.inner.shared.stale.store(true, Ordering::Release);
+                }
+                r
+            }
             Err(_) => Err(Error::Closed),
         }
     }

@@ -70,11 +70,16 @@ fn coordinator_decisions() {
     assert!(matches!(coord::decide(&[Vote::Unknown, Vote::No]), Decision::Abort));
     assert!(matches!(coord::decide(&[Vote::Yes, Vote::Unknown]), Decision::Unknown));
     use PartState::*;
-    assert!(matches!(coord::resolve_step(RecStatus::Staging, &[Prepared, Applied]), Step::DecideCommit));
-    assert!(matches!(coord::resolve_step(RecStatus::Staging, &[Prepared, Aborted]), Step::DecideAbort));
-    match coord::resolve_step(RecStatus::Staging, &[Prepared, None, None]) {
+    assert!(matches!(coord::resolve_step(RecStatus::Staging, &[Prepared, Applied], false), Step::DecideCommit));
+    assert!(matches!(coord::resolve_step(RecStatus::Staging, &[Prepared, Aborted], false), Step::DecideAbort));
+    match coord::resolve_step(RecStatus::Staging, &[Prepared, None, None], true) {
         Step::FenceParticipants(m) => assert_eq!(m, vec![1, 2]),
         other => panic!("{:?}", other),
     }
-    assert!(matches!(coord::resolve_step(RecStatus::None, &[Prepared]), Step::FenceRecord));
+    assert!(matches!(coord::resolve_step(RecStatus::None, &[Prepared], false), Step::FenceRecord));
+    // expired: fence a missing record only while someone is still prepared
+    assert!(matches!(coord::resolve_step(RecStatus::None, &[Prepared, None], true), Step::FenceRecord));
+    assert!(matches!(coord::resolve_step(RecStatus::None, &[Applied, None], true), Step::Gone));
+    assert!(matches!(coord::resolve_step(RecStatus::None, &[None, None], false), Step::FenceRecord));
+    assert!(matches!(coord::resolve_step(RecStatus::Committed, &[None, Applied], true), Step::Committed));
 }

@@ -136,6 +136,11 @@ pub fn proto(e: impl std::fmt::Display) -> SqlError {
 }
 
 /// Map a Tarantool server error to a MySQL error.
+///
+/// ER_READONLY means the request reached a node that is no longer the shard
+/// leader and did nothing; the connection is then stale (see
+/// `Client::is_stale`), so the transaction is aborted with a retryable 1213
+/// and its retry goes to the new leader.
 pub fn from_iproto(e: tarn_iproto::Error) -> SqlError {
     match e {
         tarn_iproto::Error::Server { code, message } => {
@@ -144,13 +149,42 @@ pub fn from_iproto(e: tarn_iproto::Error) -> SqlError {
             } else if code == tarn_iproto::ER_TUPLE_FOUND {
                 SqlError::new(1062, "23000", message)
             } else if code == tarn_iproto::ER_READONLY {
-                SqlError::new(1290, "HY000", format!("storage node is read-only (leader changed?): {}", message))
+                SqlError::conflict(format!("shard leader changed, retry the transaction ({})", message))
             } else {
                 SqlError::internal(format!("storage error {}: {}", code, message))
             }
         }
         other => SqlError::new(2013, "HY000", format!("Lost connection to storage: {}", other)),
     }
+}
+
+/// A request that may have changed data was in flight when the connection
+/// to its shard broke: it may or may not have taken effect. Deliberately not
+/// 1213, which clients (and Tarn itself) retry.
+pub fn ambiguous(shard: u32, e: &dyn std::fmt::Display) -> SqlError {
+    SqlError::new(
+        1180,
+        "40003",
+        format!("Lost connection to shard {} during commit ({}); the statement may or may not have been applied", shard, e),
+    )
+}
+
+/// A read (or a read-only commit) failed because the connection to its
+/// shard broke: nothing was written, so the transaction can simply be
+/// retried.
+pub fn from_iproto_read(e: tarn_iproto::Error) -> SqlError {
+    match e {
+        e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => {
+            SqlError::conflict(format!("connection to shard lost, retry the transaction ({})", e))
+        }
+        other => from_iproto(other),
+    }
+}
+
+/// True if `data` (a CALL reply) is a `{status, ...}` table with this status.
+pub fn status_is(data: &[u8], status: &str) -> bool {
+    let mut rd = Rd::new(data);
+    matches!(rd.array(), Ok(n) if n > 0) && matches!(rd.array(), Ok(m) if m > 0) && rd.string().is_ok_and(|s| s == status)
 }
 
 /// Decode the `{status, ...}` table returned by a Tarn Lua procedure:

@@ -1,11 +1,13 @@
 # Benchmarks
 
 All numbers were measured on the development machine: **2 vCPUs** (Intel
-Xeon @ 2.30 GHz, a Firecracker VM), 8 GB RAM, Linux 6.18. The load generator
+Xeon @ 2.80 GHz, a Firecracker VM), 8 GB RAM, Linux 6.18. The load generator
 (sysbench 1.0.20) runs on the same two vCPUs as the database, so every
 system here is CPU-bound and pays for its client too. Treat the absolute
 numbers as small-machine numbers; the ratios between systems are the
-interesting part.
+interesting part, and even they depend on the hardware (see "Another host"
+below). Every system in the tables was measured on the same host within the
+same two hours, with the final code.
 
 ## Setup
 
@@ -30,124 +32,133 @@ validated at commit; conflicting transactions abort with 1213 and retry).
 
 | System | 1 thr QPS | 16 thr QPS | 64 thr QPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 20,576 | 84,134 | 71,414 | 0.06 | 0.46 | 2.11 | 0 |
-| MySQL 9.7 (RR) | 15,929 | 62,481 | 51,173 | 0.09 | 0.53 | 2.66 | 0 |
-| Tarn 2 shards (strict serializable) | 7,470 | 32,571 | 42,490 | 0.17 | 0.92 | 2.76 | 0 |
-| Tarn 1 shard x 3 sync replicas | 9,335 | 43,167 | 54,648 | 0.14 | 0.61 | 1.89 | 0 |
+| MariaDB 10.11 (RR) | 11,871 | 46,391 | 43,191 | 0.12 | 0.75 | 3.07 | 0 |
+| MySQL 9.7 (RR) | 8,545 | 26,442 | 23,275 | 0.16 | 1.14 | 6.79 | 0 |
+| Tarn 2 shards (strict serializable) | 4,719 | 23,570 | 29,711 | 0.29 | 1.27 | 4.03 | 0 |
+| Tarn 1 shard x 3 sync replicas | 5,137 | 26,435 | 32,389 | 0.26 | 1.04 | 3.43 | 0 |
 
 ### oltp_read_only
 
 | System | 1 thr TPS | 16 thr TPS | 64 thr TPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 1,132 | 3,294 | 2,762 | 1.08 | 9.56 | 44.17 | 0 |
-| MySQL 9.7 (RR) | 718 | 2,012 | 1,572 | 1.67 | 14.46 | 74.46 | 0 |
-| Tarn 2 shards (strict serializable) | 315 | 817 | 902 | 4.49 | 30.26 | 92.42 | 0 |
-| MariaDB 10.11 (SERIALIZABLE) | 1,082 | 3,358 | 2,637 | 1.03 | 9.39 | 44.98 | 0 |
+| MariaDB 10.11 (RR) | 586 | 1,981 | 1,737 | 2.18 | 15.27 | 64.47 | 0 |
+| MySQL 9.7 (RR) | 365 | 1,000 | 907 | 3.62 | 25.28 | 95.81 | 0 |
+| Tarn 2 shards (strict serializable) | 210 | 551 | 619 | 6.55 | 44.17 | 137.35 | 0 |
+| MariaDB 10.11 (SERIALIZABLE) | 568 | 1,817 | 1,713 | 2.22 | 15.00 | 68.05 | 0 |
 
 ### oltp_read_write
 
 | System | 1 thr TPS | 16 thr TPS | 64 thr TPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 768 | 2,250 | 1,962 | 1.73 | 13.95 | 66.84 | 0 |
-| MySQL 9.7 (RR) | 538 | 1,112 | 982 | 2.35 | 24.38 | 110.66 | 0 |
-| Tarn 2 shards (strict serializable) | 234 | 456 | 549 | 5.99 | 49.21 | 207.82 | 843 |
-| Tarn 2 shards, ack-on-prepare | 283 | 524 | 503 | 4.82 | 40.37 | 240.02 | 844 |
-| Tarn 1 shard x 3 sync replicas | 280 | 629 | 669 | 4.41 | 36.89 | 164.45 | 730 |
-| MariaDB 10.11 (SERIALIZABLE) | 813 | 2,390 | 1,900 | 1.37 | 12.08 | 59.99 | 6 |
+| MariaDB 10.11 (RR) | 467 | 1,389 | 1,209 | 2.86 | 20.74 | 94.10 | 0 |
+| MySQL 9.7 (RR) | 295 | 726 | 658 | 4.49 | 36.24 | 155.80 | 0 |
+| Tarn 2 shards (strict serializable) | 159 | 350 | 356 | 8.90 | 64.47 | 325.98 | 588 |
+| Tarn 2 shards, ack-on-prepare | 167 | 372 | 357 | 8.28 | 61.08 | 337.94 | 611 |
+| Tarn 1 shard x 3 sync replicas | 178 | 452 | 495 | 7.17 | 54.83 | 219.36 | 552 |
+| MariaDB 10.11 (SERIALIZABLE) | 458 | 1,395 | 1,247 | 2.81 | 17.32 | 75.82 | 5 |
 
 ### oltp_update_index
 
 | System | 1 thr TPS | 16 thr TPS | 64 thr TPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 19,988 | 43,426 | 40,386 | 0.08 | 0.97 | 3.62 | 0 |
-| MySQL 9.7 (RR) | 11,219 | 23,114 | 24,907 | 0.12 | 2.11 | 5.77 | 0 |
-| Tarn 2 shards (strict serializable) | 5,303 | 20,205 | 26,056 | 0.27 | 1.55 | 5.00 | 0 |
-| Tarn 1 shard x 3 sync replicas | 2,233 | 9,360 | 14,651 | 0.61 | 2.48 | 6.09 | 0 |
+| MariaDB 10.11 (RR) | 9,418 | 28,197 | 23,550 | 0.15 | 1.27 | 5.77 | 0 |
+| MySQL 9.7 (RR) | 5,681 | 12,966 | 13,237 | 0.23 | 3.49 | 14.46 | 0 |
+| Tarn 2 shards (strict serializable) | 3,376 | 14,476 | 17,617 | 0.39 | 2.11 | 7.56 | 0 |
+| Tarn 1 shard x 3 sync replicas | 2,054 | 8,151 | 10,231 | 0.68 | 3.02 | 9.91 | 0 |
 
 ### oltp_update_non_index
 
 | System | 1 thr TPS | 16 thr TPS | 64 thr TPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 28,443 | 53,659 | 50,115 | 0.07 | 0.75 | 2.71 | 0 |
-| MySQL 9.7 (RR) | 14,005 | 31,661 | 29,500 | 0.11 | 1.18 | 4.10 | 0 |
-| Tarn 2 shards (strict serializable) | 5,476 | 20,657 | 26,480 | 0.24 | 1.52 | 4.82 | 0 |
+| MariaDB 10.11 (RR) | 12,486 | 31,174 | 30,780 | 0.14 | 1.14 | 4.41 | 0 |
+| MySQL 9.7 (RR) | 7,078 | 16,467 | 15,033 | 0.20 | 2.11 | 9.06 | 0 |
+| Tarn 2 shards (strict serializable) | 3,407 | 14,334 | 18,702 | 0.39 | 2.14 | 7.04 | 0 |
 
 ### oltp_insert
 
 | System | 1 thr TPS | 16 thr TPS | 64 thr TPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 23,012 | 45,461 | 40,499 | 0.07 | 0.83 | 3.49 | 0 |
-| MySQL 9.7 (RR) | 13,569 | 29,632 | 26,579 | 0.10 | 1.23 | 6.43 | 0 |
-| Tarn 2 shards (strict serializable) | 5,207 | 19,203 | 24,255 | 0.26 | 1.55 | 5.00 | 0 |
-| Tarn 1 shard x 3 sync replicas | 2,330 | 10,019 | 14,560 | 0.59 | 2.30 | 6.43 | 0 |
+| MariaDB 10.11 (RR) | 10,608 | 27,946 | 30,020 | 0.14 | 1.27 | 4.57 | 0 |
+| MySQL 9.7 (RR) | 7,037 | 17,493 | 15,538 | 0.20 | 1.96 | 15.27 | 0 |
+| Tarn 2 shards (strict serializable) | 3,339 | 12,971 | 16,646 | 0.39 | 2.30 | 7.70 | 0 |
+| Tarn 1 shard x 3 sync replicas | 2,113 | 8,849 | 11,566 | 0.68 | 2.81 | 8.74 | 0 |
 
 ### oltp_write_only
 
 | System | 1 thr TPS | 16 thr TPS | 64 thr TPS | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| MariaDB 10.11 (RR) | 4,022 | 9,766 | 8,257 | 0.32 | 3.62 | 14.73 | 0 |
-| MySQL 9.7 (RR) | 2,307 | 5,679 | 4,735 | 0.64 | 5.18 | 28.67 | 0 |
-| Tarn 2 shards (strict serializable) | 962 | 2,138 | 2,756 | 1.55 | 11.24 | 34.33 | 44 |
-| Tarn 2 shards, ack-on-prepare | 1,067 | 2,404 | 3,349 | 1.42 | 10.27 | 29.72 | 58 |
-| MariaDB 10.11 (SERIALIZABLE) | 4,385 | 10,205 | 9,765 | 0.30 | 3.36 | 12.08 | 0 |
+| MariaDB 10.11 (RR) | 2,268 | 6,557 | 5,874 | 0.60 | 4.65 | 18.95 | 0 |
+| MySQL 9.7 (RR) | 1,354 | 3,459 | 3,076 | 1.03 | 7.17 | 43.39 | 0 |
+| Tarn 2 shards (strict serializable) | 609 | 1,364 | 1,507 | 2.52 | 18.61 | 66.84 | 14 |
+| Tarn 2 shards, ack-on-prepare | 838 | 1,736 | 1,923 | 1.76 | 14.73 | 51.94 | 40 |
+| MariaDB 10.11 (SERIALIZABLE) | 2,156 | 6,396 | 6,063 | 0.61 | 4.74 | 20.00 | 0 |
 
 ### kv_point_read
 
 | System | 1 thr ops/s | 16 thr ops/s | 64 thr ops/s | 1 thr p95 ms | 16 thr p95 ms | 64 thr p95 ms | errors (max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Tarn 2 shards (strict serializable) | 15,962 | 147,051 | 363,233 | 0.10 | 0.18 | 0.30 | 0 |
+| Tarn 2 shards (strict serializable) | 9,068 | 95,549 | 259,797 | 0.15 | 0.28 | 0.41 | 0 |
 
 ## Reading the numbers
 
 **Direct Key/Value reads are the fast path.** Reading SQL rows straight from
 Tarantool by primary key (with the same bucket routing the SQL layer uses,
-`crates/tarn-sql/examples/kvbench.rs`) reaches about 363k reads/s at 64
-tasks, over four times the best SQL point-select rate of any system here,
+`crates/tarn-sql/examples/kvbench.rs`) reaches about 260k reads/s at 64
+tasks, over five times the best SQL point-select rate of any system here,
 on the same two vCPUs.
 
 **Single-row SQL statements.** A point select is one round trip to the
 owning shard; an autocommit single-row write is one round trip and one local
-Tarantool transaction. At 64 threads Tarn's single-row writes are ahead of
-MySQL 9.7 or within 10% of it (`update_index` 26.1k vs 24.9k TPS,
-`update_non_index` 26.5k vs 29.5k, `insert` 24.3k vs 26.6k) and reach 53–65%
-of MariaDB. At 64 threads point selects reach 42.5k (2 shards) and 54.6k QPS
-(1 shard), against 51k for MySQL and 71k for MariaDB (whose peaks, at 16
-threads, are 62k and 84k). At one thread Tarn is 2–3× slower than MySQL and
-3–5× slower than MariaDB: it pays for two network hops (client → SQL server →
-shard) where they pay for one, and each hop crosses Tarantool's network and
-transaction threads. Profiling
-`tarn-server` under load (perf) shows about half of all CPU in the kernel's
-loopback TCP path and wake-ups, not in SQL processing; Unix sockets for the
-internal hop did not change that.
+Tarantool transaction. At 64 threads Tarn is ahead of MySQL 9.7 on these:
+point selects 29.7k (2 shards) and 32.4k QPS (1 shard) against 23.3k,
+`update_index` 17.6k against 13.2k TPS, `update_non_index` 18.7k against
+15.0k, `insert` 16.6k against 15.5k. MariaDB 10.11 is faster still: Tarn
+reaches 55–75% of it at 64 threads. At one thread Tarn is about 2× slower
+than MySQL and 2.5–3.7× slower than MariaDB: it pays for two network hops
+(client → SQL server → shard) where they pay for one, and each hop crosses
+Tarantool's network and transaction threads. Profiling `tarn-server` under
+load (perf) shows about half of all CPU in the kernel's loopback TCP path
+and wake-ups, not in SQL processing; Unix sockets for the internal hop did
+not change that.
 
 **One shard beats two on this box.** The 3-replica single-shard
-configuration is faster than two unreplicated shards for everything except
-writes: on two vCPUs fewer active processes means less context switching,
-range queries do not fan out, and transactions commit locally instead of
-through two-phase commit. Synchronous replication roughly halves single-row
-write throughput (every commit waits for a second replica's acknowledgment
-and three instances share two vCPUs). On real hardware each shard leader
-would have its own machine, and more shards add capacity.
+configuration is faster than two unreplicated shards for reads and
+multi-statement transactions: on two vCPUs fewer active processes means less
+context switching, range queries do not fan out, and transactions commit
+locally instead of through two-phase commit. Synchronous replication costs
+30–40% of single-row write throughput (every commit waits for a second
+replica's acknowledgment, and three instances share two vCPUs). On real
+hardware each shard leader would have its own machine, and more shards add
+capacity.
 
 **Multi-statement transactions** (`read_only`, `read_write`, `write_only`)
 issue 10–20 storage round trips each; with two shards almost every
 `read_write`/`write_only` transaction is a cross-shard two-phase commit
 (PREPARE and APPLY, each a durable local transaction on both shards), and the
 four range queries go to both shards because tables are hash-partitioned by
-primary key. Here Tarn reaches a quarter to a third of MariaDB's
-throughput. Ack-on-prepare takes one round trip off the commit: about 18%
-lower `read_write` latency at one thread and 21% more `write_only`
-throughput at 64 threads, but no gain for `read_write` at 64 threads, where
-the reads already saturate the CPU. Strict serializability costs retries
-(`errors` column, total over a 15 s run): about 3 aborts per 100 committed
-`read_write` transactions at 16 threads and 10 per 100 at 64 threads, versus
-none for REPEATABLE READ. InnoDB's SERIALIZABLE (lock-based) performs like
-its REPEATABLE READ at this low contention and rarely aborts.
+primary key. Here Tarn reaches 45–70% of MySQL and a quarter to a third of
+MariaDB. Ack-on-prepare takes one round trip off the commit: 27% lower
+`write_only` latency at one thread and 28% more `write_only` throughput at
+64 threads, but no gain for `read_write`, whose reads dominate. Strict
+serializability costs retries (`errors` column, total over a 15 s run):
+about 2 aborts per 100 committed `read_write` transactions at 16 threads and
+11 per 100 at 64 threads (7 with one shard), versus none for REPEATABLE
+READ; InnoDB's SERIALIZABLE (lock-based) performs like its REPEATABLE READ at
+this low contention and rarely aborts.
 
-**The lock index fix.** The first full run exposed a performance bug: lock
-checks read the lock spaces inside transactions, so concurrent PREPAREs that
-locked *different* rows conflicted through MVCC (DESIGN.md §2.5).
-`oltp_read_write` then collapsed under concurrency:
+**Another host.** The sandbox moved to a different host during the project.
+The same matrix on the first host (Intel Xeon @ 2.30 GHz, previous code
+without the review fixes) gave MariaDB 84k, MySQL 62k and Tarn 42k/55k
+point-select QPS, and Tarn's single-row writes were roughly level with MySQL
+(within 10%) and at 53–65% of MariaDB. On this host every system is slower
+but MySQL lost the most (−58% point selects, against −45% for MariaDB and
+−30% for Tarn, whose direct KV reads lost the same 30%), so the ranking
+between Tarn and MySQL on single-row statements depends on the machine.
+
+**The lock index fix.** The first full run (on the first host) exposed a
+performance bug: lock checks read the lock spaces inside transactions, so
+concurrent PREPAREs that locked *different* rows conflicted through MVCC
+(DESIGN.md §2.5). `oltp_read_write` then collapsed under concurrency:
 
 | oltp_read_write, Tarn 2 shards | 1 thread | 16 threads | 64 threads |
 |---|---:|---:|---:|
@@ -167,13 +178,13 @@ configuration has no replication.
 <!-- COMPARISON -->
 | Workload (best throughput) | TiDB 7.5 (80 vCPU) | per vCPU | YugabyteDB (24 vCPU) | per vCPU | Tarn 2 shards (2 vCPU) | per vCPU | Tarn 1×3 sync (2 vCPU) | per vCPU | MariaDB 1 node (2 vCPU) | per vCPU |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| oltp_point_select | 118,651 | 1,483 | – | – | 42,490 | 21,245 | 54,648 | 27,324 | 84,134 | 42,067 |
-| oltp_read_only | – | – | 4,616 | 192 | 902 | 451 | – | – | 3,294 | 1,647 |
-| oltp_read_write | 3,169 | 40 | 245 | 10 | 549 | 275 | 669 | 334 | 2,250 | 1,125 |
-| oltp_update_index | 20,377 | 255 | 260 | 11 | 26,056 | 13,028 | 14,651 | 7,325 | 43,426 | 21,713 |
-| oltp_update_non_index | 34,011 | 425 | – | – | 26,480 | 13,240 | – | – | 53,659 | 26,829 |
-| oltp_insert | 37,247 | 466 | – | – | 24,255 | 12,127 | 14,560 | 7,280 | 45,461 | 22,731 |
-| direct KV point read | – | – | – | – | 363,233 | 181,616 | – | – | – | – |
+| oltp_point_select | 118,651 | 1,483 | – | – | 29,711 | 14,856 | 32,389 | 16,195 | 46,391 | 23,196 |
+| oltp_read_only | – | – | 4,616 | 192 | 619 | 310 | – | – | 1,981 | 991 |
+| oltp_read_write | 3,169 | 40 | 245 | 10 | 356 | 178 | 495 | 248 | 1,389 | 695 |
+| oltp_update_index | 20,377 | 255 | 260 | 11 | 17,617 | 8,809 | 10,231 | 5,116 | 28,197 | 14,098 |
+| oltp_update_non_index | 34,011 | 425 | – | – | 18,702 | 9,351 | – | – | 31,174 | 15,587 |
+| oltp_insert | 37,247 | 466 | – | – | 16,646 | 8,323 | 11,566 | 5,783 | 30,020 | 15,010 |
+| direct KV point read | – | – | – | – | 259,797 | 129,898 | – | – | – | – |
 
 Sources: [TiDB Cloud v7.5.0 sysbench report](https://docs.pingcap.com/tidbcloud/v7.5-performance-benchmarking-with-sysbench/)
 (2 TiDB nodes × 16 vCPU + 3 TiKV nodes × 16 vCPU = 80 vCPU, 32 tables ×

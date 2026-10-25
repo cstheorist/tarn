@@ -2,3 +2,4 @@ target/
 *.log
 tla/states/
 tla/MC_TTrace_*
+__pycache__/

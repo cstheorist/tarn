@@ -521,7 +521,8 @@ impl Session {
         };
         let mut attempt = 0;
         loop {
-            let d = self.cluster.call(shard, "tarn_autocommit", &writes.0).await?;
+            // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
+            let d = self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await?;
             match lua_status(&d) {
                 Ok((_, mut rd)) => {
                     let n = rd.value()?.as_i64().unwrap_or(0) as u64;
