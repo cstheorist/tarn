@@ -195,6 +195,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `col <=> NULL` (and `col <=> ?` bound to NULL) on an indexed nullable
+  column found no rows: the index lookup it became drops a NULL key part.
+  On a nullable column, `<=>` is now a filter, not an index equality, in
+  `SELECT`, `UPDATE` and `DELETE`
+  ([#72](https://github.com/cstheorist/tarn/issues/72)). Such a query
+  scans where it used to look up (wrongly), and so does a join `ON` a
+  nullable column with `<=>`, for each outer row; `=` and `NOT NULL`
+  columns keep their indexes.
 - `SELECT ... HAVING <condition> LIMIT n` without aggregation pushed the
   `LIMIT` down to storage before `HAVING` filtered, and returned too few
   rows, often none ([#38](https://github.com/cstheorist/tarn/issues/38)).
