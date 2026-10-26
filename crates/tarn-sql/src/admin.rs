@@ -75,6 +75,11 @@ pub enum Admin {
         id: u32,
         replicas: Vec<String>,
     },
+    /// TARN REMOVE SHARD id: the shard leaves the cluster (its buckets move
+    /// to the others first).
+    RemoveShard {
+        id: u32,
+    },
     /// SHOW TARN SHARDS: the cluster's shards (its membership).
     ShowTarnShards,
     /// SELECT @@a [AS x], @@b ... [LIMIT n]
@@ -596,6 +601,22 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             t.i += 2;
             parse_add_shard(&mut t)?
         }
+        "TARN" if t.peek_up(1) == "REMOVE" => {
+            t.i += 2;
+            let usage = || SqlError::parse("expected TARN REMOVE SHARD id");
+            if !t.is("SHARD") {
+                return Err(usage());
+            }
+            let id = t
+                .next()
+                .and_then(|n| n.parse::<u32>().ok())
+                .filter(|&n| n > 0)
+                .ok_or_else(usage)?;
+            if !t.done() {
+                return Err(usage());
+            }
+            Admin::RemoveShard { id }
+        }
         "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
@@ -1069,7 +1090,15 @@ mod tests {
                 replicas: vec!["h:1".into()]
             })
         );
+        assert_eq!(
+            recognize("TARN REMOVE SHARD 2").unwrap(),
+            Some(Admin::RemoveShard { id: 2 })
+        );
         for bad in [
+            "TARN REMOVE SHARD",
+            "TARN REMOVE SHARD 0",
+            "TARN REMOVE 2",
+            "TARN REMOVE SHARD 2 NOW",
             "TARN ADD SHARD 0 'h:1'",
             "TARN ADD SHARD x 'h:1'",
             "TARN ADD SHARD 3",

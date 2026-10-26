@@ -1,9 +1,10 @@
 #!/bin/bash
-# TARN ADD SHARD whose SQL server dies (issue #25): another server gives the
-# join up, or finishes it. Starts a 2-shard cluster with three SQL servers,
-# test hooks and ddl_job_stale = 2 s, so that abandoned jobs are taken over
-# within seconds, starts the storage of shard 3, and runs
-# tests/sql/joinfaults.py.
+# TARN ADD SHARD and TARN REMOVE SHARD whose SQL server dies (issue #25):
+# another server gives the join up, or finishes it; the removal goes on when
+# run again. Starts a 2-shard cluster with three SQL servers, test hooks,
+# ddl_job_stale = 2 s (abandoned jobs are taken over within seconds) and 480
+# buckets (a shard drains in seconds), starts the storage of shard 3, and
+# runs tests/sql/joinfaults.py.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIR=${DIR:-/tmp/tarn-joinfaults}
@@ -11,7 +12,7 @@ BASE=${BASE:-3600}
 PORT=${PORT:-4980}
 C="$ROOT/scripts/cluster.sh"
 "$C" stop -d "$DIR" 2>/dev/null
-export TARN_TEST_HOOKS=1 TARN_DDL_JOB_STALE=2
+export TARN_TEST_HOOKS=1 TARN_DDL_JOB_STALE=2 TARN_BUCKET_COUNT=480
 "$C" start -n 2 -r 1 -s 3 -d "$DIR" -b "$BASE" -p "$PORT" -m 256 || exit 1
 reps=$("$C" add-shard -d "$DIR" 3) || { "$C" stop -d "$DIR"; echo "the storage of shard 3 did not start"; exit 1; }
 python3 "$ROOT/tests/sql/joinfaults.py" --tarn "127.0.0.1:$PORT,127.0.0.1:$((PORT + 1)),127.0.0.1:$((PORT + 2))" \

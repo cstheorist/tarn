@@ -393,9 +393,27 @@ impl Move {
 
 impl Cluster {
     /// Every shard's map, in shard order.
+    /// Every shard's part of the map, by position: a removed shard's is
+    /// empty (it owns no bucket and is not asked).
     pub(crate) async fn bucket_reports(&self) -> SqlResult<Vec<Report>> {
         let replies = self.call_all("tarn_buckets", &[0x90]).await?;
-        replies.iter().map(|d| parse_report(d)).collect()
+        let mut out: Vec<Option<Report>> = Vec::with_capacity(replies.len());
+        for d in &replies {
+            out.push(match d {
+                Some(d) => Some(parse_report(d)?),
+                None => None,
+            });
+        }
+        let count = out.iter().flatten().map(|r| r.count).find(|&c| c > 0).unwrap_or(0);
+        Ok(out
+            .into_iter()
+            .map(|r| {
+                r.unwrap_or_else(|| Report {
+                    count,
+                    ..Report::default()
+                })
+            })
+            .collect())
     }
 
     /// Read the map from the shards and route by it; make it first on a
@@ -447,6 +465,16 @@ impl Cluster {
             match BucketMap::from_reports(reports, &pos) {
                 Ok(mut map) if map.settled() || Instant::now() >= deadline => {
                     map.mver = mver;
+                    // (a bucket in flight is sent to the shard it is going
+                    // to, or a guess: never a shard that left)
+                    if let Some(first) = self.live_shards().next() {
+                        for &b in &map.moving {
+                            let o = &mut map.owner[(b - 1) as usize];
+                            if self.shards[*o as usize].removed() {
+                                *o = first as u32;
+                            }
+                        }
+                    }
                     self.install_buckets(map);
                     return Ok(());
                 }
@@ -485,7 +513,7 @@ impl Cluster {
         }
         let initial = initial_ranges(count, self.shards.len());
         for (i, r) in reports.iter().enumerate() {
-            if r.count > 0 {
+            if r.count > 0 || self.shards[i].removed() {
                 continue;
             }
             let (lo, hi) = initial[i];
@@ -581,6 +609,18 @@ impl Cluster {
             .await?;
         // Under the job, nothing else moves the bucket: read where it is.
         let res: SqlResult<Option<Move>> = async {
+            // (and no shard joins or leaves: buckets move to the cluster's
+            // active shards, as this server knows them since the job began)
+            if self.shards[to].removed() || !self.shard_active(to) {
+                return Err(SqlError::new(
+                    1210,
+                    "HY000",
+                    format!(
+                        "shard {} is leaving the cluster: no bucket moves to it",
+                        self.shards[to].id
+                    ),
+                ));
+            }
             self.reload_buckets().await?;
             let map = self.bucket_map();
             if !map.settled() && map.moving.contains(&b) {
@@ -883,6 +923,9 @@ impl Cluster {
         let reports = self.bucket_reports().await?;
         let mut out = Vec::new();
         for (i, r) in reports.iter().enumerate() {
+            if self.shards[i].removed() {
+                continue;
+            }
             let n: u32 = r.owned.iter().map(|(lo, hi)| hi - lo + 1).sum();
             let moving = r
                 .others

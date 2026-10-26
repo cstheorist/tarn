@@ -13,6 +13,8 @@
 
 use crate::cluster::{Cluster, Job, JobKind, Shard};
 use crate::mpw::{lua_status, Mp, Rd};
+use futures::StreamExt;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tarn_common::{SqlError, SqlResult};
 
@@ -132,9 +134,21 @@ fn info_shard_id(d: &[u8]) -> SqlResult<u32> {
     Err(crate::mpw::proto("tarn_info: no shard_id"))
 }
 
-/// How long `TARN ADD SHARD` waits for the jobs in progress (it waits for
-/// all of them), and then for every shard to record the new membership.
+/// How long a change of the cluster's shards waits for the jobs in
+/// progress (it waits for all of them), and then for every shard to record
+/// the new membership.
 const ADD_WAIT: Duration = Duration::from_secs(60);
+
+/// How many buckets a shard that leaves moves at once.
+const DRAIN_PARALLEL: usize = 8;
+
+/// A change of the cluster's shards (a job of kind `members`).
+enum Change<'a> {
+    /// Shard `id` joins, with these replicas.
+    Add { id: u32, replicas: &'a [String] },
+    /// Shard `id` leaves: 'draining', then 'removed'.
+    State { id: u32, state: &'static str },
+}
 
 impl Cluster {
     /// The membership this server knows (version 0: its configuration's).
@@ -160,22 +174,38 @@ impl Cluster {
 
     /// Read the membership from the shards, and take in a newer one than
     /// this server knows: the shards that joined are added at the end of
-    /// `shards`, those that left are marked.
+    /// `shards`, those that left are marked. A shard that cannot be reached
+    /// is passed over when another answers (it may be one that left, which
+    /// the others' membership says).
     pub(crate) async fn load_members(&self) -> SqlResult<()> {
         let _g = self.members_mu.lock().await;
-        let live: Vec<usize> = (0..self.shards.len()).filter(|&i| !self.shards[i].removed()).collect();
+        let live: Vec<usize> = self.live_shards().collect();
         let replies = futures::future::join_all(live.iter().map(|&i| self.call(i, "tarn_members", &[0x90]))).await;
         let mut best: Option<Members> = None;
+        let mut failed: Option<SqlError> = None;
+        let mut answered = false;
         for r in replies {
             let d = match r {
                 Ok(d) => d,
                 // Storage nodes from before membership: the configuration's.
-                Err(e) if e.message.contains("'tarn_members' is not defined") => continue,
-                Err(e) => return Err(e),
+                Err(e) if e.message.contains("'tarn_members' is not defined") => {
+                    answered = true;
+                    continue;
+                }
+                Err(e) => {
+                    failed.get_or_insert(e);
+                    continue;
+                }
             };
+            answered = true;
             let m = parse_members(&d)?;
             if best.as_ref().is_none_or(|b| m.ver > b.ver) {
                 best = Some(m);
+            }
+        }
+        if !answered {
+            if let Some(e) = failed {
+                return Err(e);
             }
         }
         let Some(m) = best else { return Ok(()) };
@@ -196,6 +226,18 @@ impl Cluster {
         Ok(())
     }
 
+    /// Whether the shard at position `p` is active (not leaving the
+    /// cluster) in the membership this server knows.
+    pub fn shard_active(&self, p: usize) -> bool {
+        let id = self.shards[p].id;
+        self.members
+            .read()
+            .shards
+            .iter()
+            .find(|s| s.id == id)
+            .is_none_or(|s| s.state == "active")
+    }
+
     /// `SHOW TARN SHARDS`: the membership, read from the shards.
     pub async fn show_members(&self) -> SqlResult<Members> {
         self.load_members().await?;
@@ -213,10 +255,229 @@ impl Cluster {
             ));
         }
         self.load_members().await?;
-        self.not_member(id)?;
+        self.change_members(&Change::Add {
+            id,
+            replicas: &replicas,
+        })
+        .await
+    }
+
+    /// `TARN REMOVE SHARD id`: shard `id` leaves the cluster. It is marked
+    /// draining -- buckets no longer move to it, and it decides no
+    /// transaction (participants refuse it as a decision shard) -- its
+    /// buckets move to the other shards, and once no transaction needs it,
+    /// it is marked removed: the shards and the SQL servers stop asking it,
+    /// and its storage can be stopped. Run again, it goes on from where it
+    /// stopped. The number of buckets it moved.
+    pub async fn remove_shard(&self, id: u32) -> SqlResult<u64> {
+        self.load_members().await?;
+        let m = self.members();
+        let state = m
+            .shards
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.state.clone())
+            .ok_or_else(|| SqlError::new(1210, "HY000", format!("there is no shard {} in the cluster", id)))?;
+        if state == "removed" {
+            return Err(SqlError::new(
+                1210,
+                "HY000",
+                format!("shard {} has left the cluster already", id),
+            ));
+        }
+        let pos = self
+            .shard_position(id)
+            .ok_or_else(|| SqlError::new(1210, "HY000", format!("there is no shard {} in the cluster", id)))?;
+        if pos == 0 {
+            return Err(SqlError::new(
+                1210,
+                "HY000",
+                format!(
+                    "shard {} keeps the cluster's jobs and catalog (the first shard of the configuration): it cannot leave",
+                    id
+                ),
+            ));
+        }
+        if !m.shards.iter().any(|s| s.id != id && s.state == "active") {
+            return Err(SqlError::new(
+                1210,
+                "HY000",
+                "no other shard would be left to take its buckets",
+            ));
+        }
+        if state == "active" {
+            self.change_members(&Change::State { id, state: "draining" }).await?;
+        }
+        let moved = self.drain(pos).await?;
+        self.wait_unneeded(id).await?;
+        self.change_members(&Change::State { id, state: "removed" }).await?;
+        Ok(moved)
+    }
+
+    /// Move every bucket of the shard at position `pos` to the active
+    /// shards, each to the one with the fewest, a few at a time: the number
+    /// moved.
+    async fn drain(&self, pos: usize) -> SqlResult<u64> {
+        let mut moved = 0;
+        let mut failed_passes = 0;
+        let mut last_error: Option<SqlError> = None;
+        let mut busy_until: Option<Instant> = None;
+        loop {
+            let rep = crate::buckets::parse_report(&self.call(pos, "tarn_buckets", &[0x90]).await?)?;
+            let busy = rep.others.iter().any(|(_, st, ..)| st != "sent");
+            let mine: Vec<u32> = rep.owned.iter().flat_map(|&(lo, hi)| lo..=hi).collect();
+            if mine.is_empty() && !busy {
+                return Ok(moved);
+            }
+            if failed_passes >= 3 {
+                return Err(last_error
+                    .unwrap_or_else(|| SqlError::new(1205, "HY000", "the shard's buckets did not move; try again")));
+            }
+            if mine.is_empty() {
+                // a move in progress (one of another server, or one given
+                // up that a takeover finishes): wait for it
+                let until = *busy_until.get_or_insert_with(|| {
+                    Instant::now() + Duration::from_secs_f64(self.cfg.move_timeout * 2.0 + 10.0)
+                });
+                if Instant::now() >= until {
+                    return Err(SqlError::new(
+                        1205,
+                        "HY000",
+                        format!("shard {} has a bucket move in progress; try again", self.shards[pos].id),
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
+            }
+            self.refresh_buckets().await?;
+            let map = self.bucket_map();
+            let targets: Vec<usize> = self
+                .live_shards()
+                .filter(|&p| p != pos && self.shard_active(p))
+                .collect();
+            if targets.is_empty() {
+                return Err(SqlError::new(1210, "HY000", "no active shard to take the buckets"));
+            }
+            let mut have: HashMap<usize, u64> = targets.iter().map(|&p| (p, 0)).collect();
+            for b in 1..=map.count {
+                if let Some(n) = have.get_mut(&map.shard(b)) {
+                    *n += 1;
+                }
+            }
+            let mut plan = Vec::with_capacity(mine.len());
+            for b in mine {
+                let to = *targets.iter().min_by_key(|&&p| (have[&p], p)).unwrap();
+                *have.get_mut(&to).unwrap() += 1;
+                plan.push((b, to));
+            }
+            let results: Vec<(u32, SqlResult<bool>)> = futures::stream::iter(plan)
+                .map(|(b, to)| async move { (b, self.move_bucket(b, to, self.cfg.move_timeout).await) })
+                .buffer_unordered(DRAIN_PARALLEL)
+                .collect()
+                .await;
+            let mut pass_moved = 0;
+            for (b, r) in results {
+                match r {
+                    Ok(true) => pass_moved += 1,
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!("draining shard {}: bucket {}: {}", self.shards[pos].id, b, e.message);
+                        last_error = Some(e);
+                    }
+                }
+            }
+            moved += pass_moved;
+            if pass_moved == 0 {
+                failed_passes += 1;
+            }
+        }
+    }
+
+    /// Wait until no shard may still need shard `id` to finish a
+    /// transaction (lua/tarn.lua `tarn_shard_records`); from when it began
+    /// to leave, no new one can.
+    async fn wait_unneeded(&self, id: u32) -> SqlResult<()> {
+        let deadline = Instant::now() + Duration::from_secs_f64(self.cfg.max_txn_age.max(5.0) * 2.0);
+        loop {
+            let n = self.records_for(id).await?;
+            if n == 0 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(SqlError::new(
+                    1205,
+                    "HY000",
+                    format!(
+                        "shard {} is still needed to finish {} transaction(s); TARN REMOVE SHARD {} goes on when run again",
+                        id, n, id
+                    ),
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    /// The transactions on the shards in the cluster that may still need
+    /// shard `id` to finish.
+    async fn records_for(&self, id: u32) -> SqlResult<u64> {
+        let mut a = Mp::new();
+        a.arr(1).uint(id as u64);
+        let live: Vec<usize> = self.live_shards().collect();
+        let replies =
+            futures::future::try_join_all(live.iter().map(|&p| self.call(p, "tarn_shard_records", &a.0))).await?;
+        let mut n = 0;
+        for d in replies {
+            let (_, mut rd) = lua_status(&d)?;
+            n += rd.value()?.as_i64().unwrap_or(0).max(0) as u64;
+        }
+        Ok(n)
+    }
+
+    /// The membership with change `ch` made (its version raised), or why it
+    /// cannot be made.
+    fn changed(&self, ch: &Change<'_>) -> SqlResult<Members> {
+        let mut next = self.members();
+        next.ver += 1;
+        match *ch {
+            Change::Add { id, replicas } => {
+                if next.shards.iter().any(|s| s.id == id && s.state != "removed") {
+                    return Err(SqlError::new(
+                        1210,
+                        "HY000",
+                        format!("shard {} is in the cluster already", id),
+                    ));
+                }
+                next.shards.retain(|s| s.id != id);
+                next.shards.push(Member {
+                    id,
+                    replicas: replicas.to_vec(),
+                    state: "active".into(),
+                });
+            }
+            Change::State { id, state } => {
+                let s =
+                    next.shards.iter_mut().find(|s| s.id == id).ok_or_else(|| {
+                        SqlError::new(1210, "HY000", format!("there is no shard {} in the cluster", id))
+                    })?;
+                if s.state == "removed" {
+                    return Err(SqlError::new(
+                        1210,
+                        "HY000",
+                        format!("shard {} has left the cluster already", id),
+                    ));
+                }
+                s.state = state.into();
+            }
+        }
+        Ok(next)
+    }
+
+    /// Make change `ch` as a job of kind `members`, which every other job
+    /// waits for and which waits for them.
+    async fn change_members(&self, ch: &Change<'_>) -> SqlResult<()> {
         let deadline = Instant::now() + ADD_WAIT;
         let name = "members".to_string();
-        let args = self.members_with(id, &replicas).args();
+        let args = self.changed(ch)?.args();
         let mut job = self
             .job_begin_as(
                 &self.job_owner(),
@@ -231,7 +492,7 @@ impl Cluster {
         let owner = job.owner.clone();
         let mut applied = false;
         let r = self
-            .with_job_alive(&owner, self.add_shard_job(&mut job, id, &replicas, &mut applied))
+            .with_job_alive(&owner, self.members_job(&mut job, ch, &mut applied))
             .await;
         match r {
             Ok(()) => {
@@ -243,51 +504,80 @@ impl Cluster {
             // membership already, and moves must wait until all do.
             Err(e) if applied => Err(e),
             Err(e) => {
-                // The new shard may have the tables and a map, but it is no
-                // member: the statement can run again.
+                // A shard that was to join may have the tables and a map,
+                // but it is no member: the statement can run again.
                 let _ = self.job_end(&owner).await;
                 Err(e)
             }
         }
     }
 
-    /// Fail if shard `id` is a member.
-    fn not_member(&self, id: u32) -> SqlResult<()> {
-        if self.members().shards.iter().any(|s| s.id == id && s.state != "removed") {
-            return Err(SqlError::new(
-                1210,
-                "HY000",
-                format!("shard {} is in the cluster already", id),
-            ));
-        }
-        Ok(())
-    }
-
-    /// The membership with shard `id` added.
-    fn members_with(&self, id: u32, replicas: &[String]) -> Members {
-        let mut next = self.members();
-        next.ver += 1;
-        next.shards.retain(|s| s.id != id);
-        next.shards.push(Member {
-            id,
-            replicas: replicas.to_vec(),
-            state: "active".into(),
-        });
-        next
-    }
-
-    async fn add_shard_job(&self, job: &mut Job, id: u32, replicas: &[String], applied: &mut bool) -> SqlResult<()> {
+    async fn members_job(&self, job: &mut Job, ch: &Change<'_>, applied: &mut bool) -> SqlResult<()> {
         // No other change of the shards runs while this job does: the
         // membership read now (one may have ended as this job began) is the
-        // one to extend.
+        // one to change.
         self.load_members().await?;
-        self.not_member(id)?;
-        let next = self.members_with(id, replicas);
+        let next = self.changed(ch)?;
         let args = next.args();
         if args != job.args {
             job.args = args;
             self.job_args(job).await?;
         }
+        let new = match *ch {
+            Change::Add { id, replicas } => Some(self.prepare_new_shard(id, replicas).await?),
+            // (checked before the job too; a check here sees the shards as
+            // the membership this job replaces left them)
+            Change::State { id, state: "removed" } => {
+                let n = self.records_for(id).await?;
+                if n > 0 {
+                    return Err(SqlError::new(
+                        1205,
+                        "HY000",
+                        format!("shard {} is still needed to finish {} transaction(s)", id, n),
+                    ));
+                }
+                None
+            }
+            Change::State { .. } => None,
+        };
+        // From here on the change is made.
+        if let Err(e) = self.job_phase(job, "apply").await {
+            // (Written or not? A job left in 'apply' is finished forward.)
+            match self.jobs().await?.into_iter().find(|j| j.owner == job.owner) {
+                Some(j) if j.phase == "apply" => {}
+                Some(_) => return Err(e),
+                None => {
+                    *applied = true;
+                    return Err(e);
+                }
+            }
+        }
+        *applied = true;
+        if let Some(new) = new {
+            self.add_known_shard(new)?;
+        }
+        // Every shard must learn it before the job ends: moves to a shard
+        // that joins wait for the job (lua/tarn.lua "Membership").
+        let until = Instant::now() + ADD_WAIT;
+        loop {
+            match self.publish_members(&next).await {
+                Ok(()) => return Ok(()),
+                Err(e) if Instant::now() >= until => return Err(e),
+                Err(e) => {
+                    tracing::warn!(
+                        "changing the cluster's shards: recording the membership: {}; trying again",
+                        e.message
+                    );
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            }
+        }
+    }
+
+    /// Check the storage of shard `id` that is to join, and give it every
+    /// table and a bucket map with no buckets: the shard, to add to
+    /// `shards` once it joins.
+    async fn prepare_new_shard(&self, id: u32, replicas: &[String]) -> SqlResult<Shard> {
         let new = Shard::new(id, replicas.to_vec());
         let client = new.client(self).await?;
         let call = |func: &'static str, args: Vec<u8>| {
@@ -341,52 +631,34 @@ impl Cluster {
         } else {
             lua_status(&d)?;
         }
-        // From here on the shard joins.
-        if let Err(e) = self.job_phase(job, "apply").await {
-            // (Written or not? A job left in 'apply' is finished forward.)
-            match self.jobs().await?.into_iter().find(|j| j.owner == job.owner) {
-                Some(j) if j.phase == "apply" => {}
-                Some(_) => return Err(e),
-                None => {
-                    *applied = true;
-                    return Err(e);
-                }
-            }
-        }
-        *applied = true;
-        self.add_known_shard(new)?;
-        // Every shard must learn it before the job ends: moves to the new
-        // shard wait for the job (lua/tarn.lua "Membership").
-        let until = Instant::now() + ADD_WAIT;
-        loop {
-            match self.publish_members(&next).await {
-                Ok(()) => return Ok(()),
-                Err(e) if Instant::now() >= until => return Err(e),
-                Err(e) => {
-                    tracing::warn!(
-                        "TARN ADD SHARD {}: recording the membership: {}; trying again",
-                        id,
-                        e.message
-                    );
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                }
-            }
-        }
+        Ok(new)
     }
 
-    /// Record membership `next` on every shard (the new ones too).
+    /// Record membership `next` on every shard in it, and on a shard it
+    /// removes (best effort: that one may be gone already).
     async fn publish_members(&self, next: &Members) -> SqlResult<()> {
         let mut m = Mp::new();
         m.arr(1);
         next.encode(&mut m);
         for s in &next.shards {
-            if s.state == "removed" {
-                continue;
-            }
             let p = match self.shard_position(s.id) {
                 Some(p) => p,
+                None if s.state == "removed" => continue,
                 None => self.add_known_shard(Shard::new(s.id, s.replicas.clone()))?,
             };
+            if s.state == "removed" {
+                if !self.shards[p].removed() {
+                    if let Err(e) = self
+                        .call(p, "tarn_members_set", &m.0)
+                        .await
+                        .and_then(|d| lua_status(&d).map(|_| ()))
+                    {
+                        tracing::info!("shard {} left the cluster; telling it so: {}", s.id, e.message);
+                    }
+                    self.shards[p].set_removed();
+                }
+                continue;
+            }
             let d = self.call(p, "tarn_members_set", &m.0).await?;
             lua_status(&d)?;
         }
@@ -394,8 +666,8 @@ impl Cluster {
         Ok(())
     }
 
-    /// Finish an abandoned `TARN ADD SHARD` (the job is ours now): forward
-    /// from phase 'apply', else give it up.
+    /// Finish an abandoned change of the cluster's shards (the job is ours
+    /// now): forward from phase 'apply', else give it up.
     pub(crate) async fn finish_members(&self, job: &Job) -> SqlResult<()> {
         let Some(job) = self.jobs().await?.into_iter().find(|j| j.owner == job.owner) else {
             return Ok(());
