@@ -46,3 +46,7 @@ tla/check.sh                               # needs tla/tla2tools.jar
   (`Cluster::call_once`); report "outcome unknown" (1180/40003) instead.
 - Regenerate doc tables with `python3 bench/render_results.py` and
   `python3 scripts/render_docs.py`.
+- Examples, tests, issues and PRs stay application-neutral: generic tables
+  and columns (`t`, `tenant_id`, `created_at`), and workloads described by
+  their shape (rows per key prefix, selectivity), not by an application's
+  schema or benchmark.
