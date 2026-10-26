@@ -1,0 +1,12 @@
+date: 2026-10-26T14:25:35Z
+kernel: 6.17.0-1022-azure
+CPU(s):                                  4
+Model name:                              AMD EPYC 9V45 96-Core Processor
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+Socket(s):                               1
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1077       10828          47        4476       14911
+sysbench: sysbench 1.0.20
+settings: TABLES=4 SIZE=1000000 THREADS='1 16 64' TIME=30 PERCENTILE=99 WARM=1 MANY=1000
+data: about 957 MB uncompressed; caches of the 10x configurations: 95 MB in all

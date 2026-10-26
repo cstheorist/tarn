@@ -1,0 +1,2 @@
+tarn: 27022f0 on Tarantool 3.9.0-0-g8b9a0f5
+tidb: 8.0.11-TiDB-v8.5.8
