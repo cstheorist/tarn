@@ -431,6 +431,44 @@ class T:
             self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
                        f"insert at t = {t}: {'conflict' if conflict else 'no conflict'}")
 
+    def test_ordered_limit_by_row_counts(self):
+        # issue #81: with a longer equality prefix on another index, the read
+        # pages the index that follows ORDER BY when the prefix holds many
+        # rows, and reads the prefix when it holds few
+        c = self.fresh("oc", "CREATE TABLE oc (g INT, id INT, t INT, closed INT NULL, del TINYINT, cust INT, "
+                             "PRIMARY KEY (g, id), KEY bt (g, t, id), KEY bs (g, closed, del, id), "
+                             "KEY bc (g, cust, id)) PARTITION BY KEY(g)", [])
+        rows = [(i, (i * 7919) % 5000, None if i % 5 in (1, 3) else i, int(i % 10 == 0), i % 300)
+                for i in range(5000)]
+        for lo in range(0, 5000, 1000):
+            q(c, "INSERT INTO oc VALUES " + ",".join(
+                f"(1, {i}, {t}, {'NULL' if cl is None else cl}, {d}, {cu})" for i, t, cl, d, cu in rows[lo:lo + 1000]))
+        by_t = sorted(rows, key=lambda r: (r[1], r[0]))
+        estimates = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_path_estimates'"))["Tarn_path_estimates"])
+        cases = (
+            ("SELECT id FROM oc WHERE g = 1 AND closed IS NULL AND del = 0 ORDER BY t, id LIMIT 50",
+             [r[0] for r in by_t if r[2] is None and r[3] == 0][:50], 400),
+            ("SELECT id FROM oc WHERE g = 1 AND closed IS NULL AND del = 0 ORDER BY t DESC, id DESC LIMIT 50",
+             [r[0] for r in reversed(by_t) if r[2] is None and r[3] == 0][:50], 400),
+            ("SELECT id FROM oc WHERE g = 1 AND cust = 7 ORDER BY t, id LIMIT 50",
+             [r[0] for r in by_t if r[4] == 7][:50], 20),
+        )
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                for sql, want, most in cases:
+                    if txn:
+                        q(c, "BEGIN")
+                    before, est = self.rows_read(c), estimates()
+                    got = [r[0] for r in q(c, sql)]
+                    n, e = self.rows_read(c) - before, estimates() - est
+                    if txn:
+                        q(c, "COMMIT")
+                    what = f"{iso}, {'in a transaction' if txn else 'autocommit'}: {sql}"
+                    self.check(got == want, f"{what}: rows ({got[:5]}...)")
+                    self.check(n <= most and e >= 1, f"{what}: {n} rows read, {e} estimates")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+
     def test_ordered_limit_case_insensitive(self):
         # issue #41: the part of a range a limited read records ends at its
         # last row as the index holds it (a case-insensitive key holds

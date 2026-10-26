@@ -41,7 +41,10 @@ servers write to it (`tests/sql/`).
   the equality prefix match `ORDER BY` (all ascending, or all descending: the
   index is then read backwards) is preferred, and the single-table
   read then goes through it a page at a time, filtering as it goes, and
-  stops once `LIMIT` (+ `OFFSET`) rows qualify.
+  stops once `LIMIT` (+ `OFFSET`) rows qualify. When another index fixes a
+  longer equality prefix, the shard counts both ranges first (one call: an
+  index count on memtx, a scan of at most one page on vinyl) and the read pages the ordered index when that
+  reads fewer rows than reading the longer prefix whole and sorting it.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
   `COUNT(*)`, `COUNT(constant)` and `COUNT(col)` of one table without
