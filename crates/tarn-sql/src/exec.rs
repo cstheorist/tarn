@@ -478,9 +478,16 @@ async fn fetch_stored_from(
                 if unique_point {
                     txn.note_point(c.shard, t.space_id, index, c.key);
                 } else if let Some(mut r) = c.range {
-                    if let Some(k) = to {
-                        r.hi = Some(k);
-                        r.hi_incl = true;
+                    match to {
+                        Some(k) if matches!(c.iter, Iter::Le | Iter::Lt) => {
+                            r.lo = Some(k);
+                            r.lo_incl = true;
+                        }
+                        Some(k) => {
+                            r.hi = Some(k);
+                            r.hi_incl = true;
+                        }
+                        None => {}
                     }
                     txn.note_range(c.shard, r);
                 }
@@ -557,7 +564,7 @@ fn range_calls(
             eq,
             lo,
             hi,
-            reverse: _,
+            reverse,
         } => {
             let idx = index_def(t, *index);
             let mut prefix = Vec::with_capacity(eq.len() + 1);
@@ -620,9 +627,16 @@ fn range_calls(
                 lo_incl,
                 hi_incl: end.as_ref().map(|(_, i)| *i).unwrap_or(true),
             };
-            let (key, iter) = match resume {
-                Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
-                None => (key, iter),
+            // Backwards (ORDER BY ... DESC, issue #50): from the upper bound
+            // down to the lower one.
+            let (key, iter, end) = match (*reverse, resume) {
+                (false, Some((k, incl))) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }, end),
+                (false, None) => (key, iter, end),
+                (true, Some((k, incl))) => (k.to_vec(), if incl { Iter::Le } else { Iter::Lt }, lower_end(&range)),
+                (true, None) => match &end {
+                    Some((k, incl)) => (k.clone(), if *incl { Iter::Le } else { Iter::Lt }, lower_end(&range)),
+                    None => (Vec::new(), Iter::Le, lower_end(&range)),
+                },
             };
             for s in shards {
                 calls.push(Call {
@@ -658,6 +672,11 @@ fn range_calls(
         AccessPath::Point { .. } | AccessPath::Union(_) => unreachable!("not a range access"),
     }
     Ok(calls)
+}
+
+/// Where a backwards scan of `r` stops: its lower bound (None: unbounded).
+fn lower_end(r: &RangeRead) -> Option<(Vec<Value>, bool)> {
+    r.lo.as_ref().map(|k| (k.clone(), r.lo_incl))
 }
 
 fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
@@ -2193,13 +2212,8 @@ async fn finish_range_lock(
     finish_select(kept, p, cx)
 }
 
-/// Paged candidates of a locking read: a forward scan of one index range on
-/// one shard, a page at a time, each page starting after the last row
-/// returned. Only for scans whose index order is the statement's ORDER BY,
-/// on a table where the transaction has at most deleted rows (those are left
-/// out; rows it inserted or changed would need merging into index order).
-/// Paged reads of one index range on one shard: a forward scan, a page at a
-/// time, each page starting after the last row returned. Only for scans
+/// Paged reads of one index range on one shard, forwards or backwards, a
+/// page at a time, each page starting after the last row returned. Only for scans
 /// whose index order is the statement's ORDER BY. Rows the transaction wrote
 /// or deleted are left out; callers merge in its own versions.
 struct Pager {
@@ -2222,14 +2236,9 @@ impl Pager {
         cx: &EvalCtx<'_>,
     ) -> SqlResult<Option<Pager>> {
         let t = &ta.table;
-        let (index, prefix) = match &ta.path {
-            AccessPath::Range {
-                index,
-                eq,
-                reverse: false,
-                ..
-            } => (*index, eq),
-            AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, &keys[0]),
+        let (index, prefix, reverse) = match &ta.path {
+            AccessPath::Range { index, eq, reverse, .. } => (*index, eq, *reverse),
+            AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, &keys[0], false),
             _ => return Ok(None),
         };
         let idx = index_def(t, index);
@@ -2240,7 +2249,7 @@ impl Pager {
             return Ok(None);
         }
         // ORDER BY: columns fixed by the equality prefix, then the next index
-        // columns in order, ascending.
+        // columns in order, in the direction of the scan.
         let mut next = prefix.len();
         for (e, desc) in order {
             // (a case-insensitive column sorts by its key, as its index does)
@@ -2254,7 +2263,7 @@ impl Pager {
             };
             match idx.cols.iter().position(|x| x == c) {
                 Some(pos) if pos < prefix.len() => {}
-                Some(pos) if pos == next && !desc => next += 1,
+                Some(pos) if pos == next && *desc == reverse => next += 1,
                 _ => return Ok(None),
             }
         }

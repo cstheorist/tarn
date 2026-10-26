@@ -37,7 +37,8 @@ servers write to it (`tests/sql/`).
   `IN` on any index (one storage call per shard, rows in index order). An
   `OR` whose branches use different indexes becomes a union of lookups,
   like MySQL's `index_merge`. With `LIMIT`, an index whose columns after
-  the equality prefix match `ORDER BY` is preferred, and the single-table
+  the equality prefix match `ORDER BY` (all ascending, or all descending: the
+  index is then read backwards) is preferred, and the single-table
   read then goes through it a page at a time, filtering as it goes, and
   stops once `LIMIT` (+ `OFFSET`) rows qualify.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,

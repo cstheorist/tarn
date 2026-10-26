@@ -359,19 +359,23 @@ class T:
                                                    for i in range(lo, lo + 1000)))
         page = "SELECT id FROM ol WHERE g = 1 AND del = 0 ORDER BY t, id LIMIT 50"
         want = [i for i in range(4999, -1, -1) if i % 4][:50]
+        # issue #50: ORDER BY ... DESC reads the index backwards
+        rpage = "SELECT id FROM ol WHERE g = 1 AND del = 0 ORDER BY t DESC, id DESC LIMIT 50"
+        rwant = [i for i in range(5000) if i % 4][:50]
         for iso in ("SERIALIZABLE", "READ COMMITTED"):
             q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
             for txn in (False, True):
-                if txn:
-                    q(c, "BEGIN")
-                before = self.rows_read(c)
-                got = [r[0] for r in q(c, page)]
-                n = self.rows_read(c) - before
-                if txn:
-                    q(c, "COMMIT")
-                what = f"{iso}, {'in a transaction' if txn else 'autocommit'}"
-                self.check(got == want, f"{what}: the first page ({got[:5]}...)")
-                self.check(n <= 400, f"{what}: {n} rows read for a page of 50 out of 5000")
+                for sql, exp, name in ((page, want, "first page"), (rpage, rwant, "last page")):
+                    if txn:
+                        q(c, "BEGIN")
+                    before = self.rows_read(c)
+                    got = [r[0] for r in q(c, sql)]
+                    n = self.rows_read(c) - before
+                    if txn:
+                        q(c, "COMMIT")
+                    what = f"{iso}, {'in a transaction' if txn else 'autocommit'}, {name}"
+                    self.check(got == exp, f"{what}: {got[:5]}...")
+                    self.check(n <= 400, f"{what}: {n} rows read for a page of 50 out of 5000")
         q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
         # the transaction's own writes are merged into the page
         q(c, "BEGIN")
@@ -384,9 +388,9 @@ class T:
         # an insert into the unread rest of the range does not conflict, one
         # into the part read does
         a, b = connect(self.args.tarn), connect(self.args.tarn)
-        for t, conflict in ((4000, False), (10, True)):
+        for sql, t, conflict in ((page, 4000, False), (page, 10, True), (rpage, 20, False), (rpage, 4990, True)):
             q(a, "BEGIN")
-            q(a, page)
+            q(a, sql)
             q(a, "UPDATE ol SET del = 1 - del WHERE g = 1 AND id = 0")
             q(b, f"INSERT INTO ol VALUES (1, {7000 + t}, {t}, 0)")
             self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
