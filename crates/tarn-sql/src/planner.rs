@@ -1114,7 +1114,8 @@ fn join_and(mut v: Vec<Expr>) -> Option<Expr> {
 // ---------------------------------------------------------------------------
 
 enum Pred {
-    Eq(Expr),
+    /// Equality; true: a NULL value matches NULLs (`IS NULL`, `<=>`).
+    Eq(Expr, bool),
     In(Vec<Expr>),
     Range(Option<(Expr, bool)>, Option<(Expr, bool)>),
 }
@@ -1335,17 +1336,13 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
                 if !index_serves(table, col, *coll, matches!(op, CmpOp::Eq | CmpOp::NullSafeEq)) {
                     continue;
                 }
-                // `col <=> x` holds for a NULL `col` when x is NULL, but an
-                // index lookup drops a NULL key part (NULL never equals
-                // anything under `=`). On a nullable column it is no index
-                // equality: x may be a NULL parameter of a cached plan (#72).
-                // On a NOT NULL column it is `=`: a NULL x matches nothing.
-                if op == CmpOp::NullSafeEq && table.columns[col].nullable {
-                    continue;
-                }
                 let o = (**other).clone();
                 preds[col].push(match op {
-                    CmpOp::Eq | CmpOp::NullSafeEq => Pred::Eq(o),
+                    CmpOp::Eq => Pred::Eq(o, false),
+                    // `<=>` selects NULLs too, where the column stores them
+                    // (a NULL x may be a parameter of a cached plan, #72); on
+                    // a NOT NULL column it is `=`, and a NULL x matches nothing
+                    CmpOp::NullSafeEq => Pred::Eq(o, table.columns[col].storage_nullable()),
                     CmpOp::Lt => Pred::Range(None, Some((o, false))),
                     CmpOp::LtEq => Pred::Range(None, Some((o, true))),
                     CmpOp::Gt => Pred::Range(Some((o, false)), None),
@@ -1363,13 +1360,22 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
                     }
                 }
             }
+            // `col IS NULL` is an equality on NULL (issue #51): an index
+            // stores NULLs of a nullable part, first in its order.
+            Expr::IsNull(x, false) => {
+                if let Some(c) = local(x) {
+                    if table.columns[c].storage_nullable() {
+                        preds[c].push(Pred::Eq(Expr::Lit(Value::Null), true));
+                    }
+                }
+            }
             Expr::InList(x, list, false, coll) => {
                 if let Some(c) = local(x) {
                     if !index_serves(table, c, *coll, true) {
                         continue;
                     }
                     if list.len() == 1 && list[0].is_constant() {
-                        preds[c].push(Pred::Eq(list[0].clone()));
+                        preds[c].push(Pred::Eq(list[0].clone(), false));
                     } else if list.iter().all(|e| e.is_constant()) && !list.is_empty() {
                         preds[c].push(Pred::In(list.clone()));
                     }
@@ -1424,17 +1430,20 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
     }
     for idx in table.usable_indexes() {
         let mut eq: Vec<Expr> = Vec::new();
+        let mut null_eq: Vec<bool> = Vec::new();
         let mut in_list: Option<(usize, Vec<Expr>)> = None;
         let mut range: Option<(Option<(Expr, bool)>, Option<(Expr, bool)>)> = None;
         for (pos, &c) in idx.cols.iter().enumerate() {
-            if let Some(Pred::Eq(e)) = preds[c].iter().find(|p| matches!(p, Pred::Eq(_))) {
+            if let Some(Pred::Eq(e, n)) = preds[c].iter().find(|p| matches!(p, Pred::Eq(..))) {
                 eq.push(e.clone());
+                null_eq.push(*n);
                 continue;
             }
             if in_list.is_none() {
                 if let Some(Pred::In(l)) = preds[c].iter().find(|p| matches!(p, Pred::In(_))) {
                     in_list = Some((pos, l.clone()));
                     eq.push(Expr::Lit(Value::Null)); // placeholder, replaced per key
+                    null_eq.push(false);
                     continue;
                 }
             }
@@ -1457,7 +1466,8 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
         }
         let full = eq.len() == idx.cols.len();
         let pk_bonus = if idx.id == 0 { 1 } else { 0 };
-        let (score, path) = if full && idx.unique {
+        // A unique key holds any number of NULLs: `IS NULL` on it is a range.
+        let (score, path) = if full && idx.unique && !null_eq.contains(&true) {
             let keys = match &in_list {
                 None => vec![eq.clone()],
                 Some((pos, list)) => list
@@ -1493,6 +1503,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
                 AccessPath::Range {
                     index: idx.id,
                     eq,
+                    null_eq,
                     lo,
                     hi: hi2,
                     reverse: follows == Some(true),
@@ -3247,6 +3258,28 @@ mod tests {
             rev("SELECT * FROM orders WHERE tenant_id = 1 ORDER BY created_at DESC, id DESC"),
             (0, false)
         );
+        // issue #51: IS NULL fixes an index part like an equality
+        let prefix = |sql: &str| match path(sql) {
+            AccessPath::Range { index, eq, null_eq, .. } => (index, eq.len(), null_eq),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND number IS NULL"),
+            (2, 2, vec![false, true])
+        );
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND number <=> NULL AND id > 5"),
+            (2, 2, vec![false, true])
+        );
+        // IS NOT NULL, and IS NULL on a NOT NULL column, fix nothing
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND number IS NOT NULL"),
+            (0, 1, vec![false])
+        );
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND deleted IS NULL"),
+            (0, 1, vec![false])
+        );
         // aggregates read every row anyway
         let ctx = PlanCtx {
             catalog: &cat,
@@ -3450,9 +3483,9 @@ mod tests {
 
     #[test]
     fn null_safe_equality_paths() {
-        // issue #72: `col <=> x` matches NULL rows when x is NULL, which an
-        // index lookup cannot find: on a nullable column it is no index
-        // equality; on a NOT NULL one it is the same as `=`
+        // issue #72: `col <=> x` matches NULL rows when x is NULL: on a
+        // nullable column it is an index equality whose NULL selects the
+        // NULLs (issue #51); on a NOT NULL one it is the same as `=`
         let c0 = Catalog::default();
         let ctx = PlanCtx {
             catalog: &c0,
@@ -3484,17 +3517,18 @@ mod tests {
                 _ => panic!(),
             }
         };
-        assert!(matches!(path("SELECT id FROM t WHERE a <=> NULL"), AccessPath::Full));
-        assert!(matches!(path("SELECT id FROM t WHERE NULL <=> a"), AccessPath::Full));
-        assert!(matches!(path("SELECT id FROM t WHERE a <=> 1"), AccessPath::Full));
+        let null_safe = |p: AccessPath| match p {
+            AccessPath::Range { index, null_eq, .. } => (index, null_eq),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE a <=> NULL")), (1, vec![true]));
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE NULL <=> a")), (1, vec![true]));
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE a <=> 1")), (1, vec![true]));
         assert!(matches!(
             path("SELECT id FROM t WHERE a <=> NULL AND b = 2"),
-            AccessPath::Range { index: 2, .. }
+            AccessPath::Range { index: 1 | 2, .. }
         ));
-        assert!(matches!(
-            path("SELECT id FROM t WHERE b <=> 2"),
-            AccessPath::Range { index: 2, .. }
-        ));
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE b <=> 2")), (2, vec![false]));
         assert!(matches!(
             path("SELECT id FROM t WHERE id <=> 3"),
             AccessPath::Point { index: 0, .. }
@@ -3517,8 +3551,14 @@ mod tests {
                 _ => panic!(),
             }
         };
-        assert!(matches!(dml("UPDATE t SET b = 1 WHERE a <=> NULL"), AccessPath::Full));
-        assert!(matches!(dml("DELETE FROM t WHERE a <=> NULL"), AccessPath::Full));
+        assert!(matches!(
+            dml("UPDATE t SET b = 1 WHERE a <=> NULL"),
+            AccessPath::Range { index: 1, .. }
+        ));
+        assert!(matches!(
+            dml("DELETE FROM t WHERE a <=> NULL"),
+            AccessPath::Range { index: 1, .. }
+        ));
     }
 
     #[test]

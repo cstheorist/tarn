@@ -32,7 +32,8 @@ servers write to it (`tests/sql/`).
   `OFFSET` (both syntaxes), `DISTINCT`, column aliases, ordinal `ORDER BY 2`.
 * Joins: `[INNER] JOIN`, `LEFT [OUTER] JOIN`, comma joins, `ON` / `USING`.
   Joins are nested loops with index lookups on the inner table.
-* Index access: equality and range predicates on an index prefix, and
+* Index access: equality (including `IS NULL` and `<=>`) and range
+  predicates on an index prefix, and
   multi-key lookups for `col IN (...)`, `OR`s of equalities and row-value
   `IN` on any index (one storage call per shard, rows in index order). An
   `OR` whose branches use different indexes becomes a union of lookups,
