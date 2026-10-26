@@ -12,12 +12,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   equality prefix, which it must read whole and sort, and the index that
   follows `ORDER BY`, which it pages until `LIMIT` (+ `OFFSET`) rows
   qualify, by row counts: the shard counts both ranges (`tarn_estimate`, an
-  index count on memtx, a capped scan on vinyl) and the read pages the
-  ordered index when about `want * n_ordered / n_prefix` rows are fewer than
+  index count on memtx, a sample and a capped scan on vinyl) and the read
+  pages the ordered index when about `want * n_ordered / n_prefix` rows are fewer than
   `n_prefix` ([#81](https://github.com/cstheorist/tarn/issues/81)). With
   300,000 rows under one tenant, a page of its 112,726 open rows reads 204
   rows instead of all of them. `SHOW STATUS` reports
-  `Tarn_path_estimates`.
+  `Tarn_path_estimates`. On vinyl the estimate samples the ordered index's
+  first page (`4 * want` rows) to measure what paging would read, and
+  counts the prefix only up to that
+  ([#93](https://github.com/cstheorist/tarn/issues/93)): that page takes
+  about 2 ms there instead of 15-19 ms.
 
 - Unique keys that do not contain the shard key
   ([#14](https://github.com/cstheorist/tarn/issues/14)), such as

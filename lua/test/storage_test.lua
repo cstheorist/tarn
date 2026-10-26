@@ -1051,6 +1051,33 @@ check('vinyl counts a prefix up to where paging the other is sure to read fewer 
       rr[1] == 'ok' and rr[2] == math.min(vb, math.floor(math.sqrt(vn)) + 1) and rr[3] == vn, {rr, vn, vb})
 rr = c[1]:call('tarn_estimate', {vsid, 2, {1}, 0, {}, 2^62})
 check('... and not past one page: the plan stays', rr[1] == 'ok' and rr[2] == 0 and rr[3] == vn, rr)
+-- issue #93: a sample of B's first page gives the cost of paging B. Space
+-- est: ids 1..30, g = 1 for every third id, 3 for every tenth, else 2.
+c[1]:eval([[
+    local s = box.schema.space.create('test.est', {engine = 'vinyl'})
+    s:create_index('pk', {parts = {{1, 'unsigned'}}})
+    s:create_index('g', {parts = {{2, 'unsigned'}}, unique = false})
+    for id = 1, 30 do s:insert{id, id % 10 == 0 and 3 or (id % 3 == 0 and 1 or 2)} end
+]])
+local esid = c[1]:eval('return box.space["test.est"].id')
+local function est(...) return c[1]:call('tarn_estimate', {esid, 1, ...}) end
+-- g = 1 holds ids 3, 6, 9, 12, 15, 18, 21, 24, 27 (30 is g = 3): 9 rows
+check('vinyl: budget rows of A in the first page cost that page; A is counted one past it',
+      table.concat(est({1}, 0, {}, 2, 'EQ'), ',') == 'ok,9,0,8', est({1}, 0, {}, 2, 'EQ'))
+check('... read backwards for a backwards page',
+      table.concat(est({1}, 0, {}, 2, 'REQ'), ',') == 'ok,9,0,8', est({1}, 0, {}, 2, 'REQ'))
+-- g = 3: ids 10, 20, 30; one in the first 12 rows: about 36 rows to page
+check('... fewer rows of A extrapolate from their share of the page',
+      table.concat(est({3}, 0, {}, 3, 'EQ'), ',') == 'ok,3,0,36', est({3}, 0, {}, 3, 'EQ'))
+check('... a B shorter than the page costs its rows',
+      table.concat(est({3}, 0, {}, 8, 'EQ'), ',') == 'ok,3,0,30', est({3}, 0, {}, 8, 'EQ'))
+rr = est({3}, 0, {}, 2, 'EQ')
+check('... and with no row of A in the page, falls back to the index size',
+      rr[1] == 'ok' and rr[2] == 3 and rr[3] == 30 and rr[4] == nil, rr)
+rr = est({1}, 0, {}, 2, box.NULL)
+-- (counted up to sqrt(2 * 30) + 1 = 8, where paging is sure to win)
+check('... as it does without a sample', rr[1] == 'ok' and rr[2] == 8 and rr[3] == 30 and rr[4] == nil, rr)
+c[1]:eval('box.space["test.est"]:drop()')
 local svc = c[1]:new_stream()
 rr = svc:call('tarn_count', {vsid, 0, {}, 'ALL', box.NULL, true, {}, {{9}, {2}, {777}}, false, true})
 check('a vinyl count in a stream leaves out the rows the caller wrote', rr[1] == 'ok' and rr[2] == n0 - 1, {rr, n0})
