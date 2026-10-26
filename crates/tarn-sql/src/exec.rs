@@ -661,6 +661,29 @@ async fn fetch_stored_from(
         if resume.is_some() {
             return Ok(Vec::new());
         }
+        if t.name == "TARN_MOVES" {
+            return Ok(cluster
+                .rebalance_status()
+                .await?
+                .map(|r| r.moves)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|x| {
+                    vec![
+                        Value::UInt(x.bucket as u64),
+                        Value::UInt(x.from as u64),
+                        Value::UInt(x.to as u64),
+                        Value::UInt(x.bytes),
+                        Value::str(&x.state),
+                        if x.error.is_empty() {
+                            Value::Null
+                        } else {
+                            Value::str(&x.error)
+                        },
+                    ]
+                })
+                .collect());
+        }
         // A table another SQL server has just created shows up at once, as
         // in SHOW TABLES.
         cluster.refresh_if_newer().await?;

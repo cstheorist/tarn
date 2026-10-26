@@ -60,6 +60,9 @@ local M = {
         -- per call; the SQL server continues it after the last one (issue #77).
         scan_page_rows = 4096,
         scan_page_bytes = 4 * 1024 * 1024,
+        -- The rebalancer's load of each bucket covers the requests of the
+        -- last one or two windows of this many seconds (tarn_bucket_stats).
+        load_window = 60,
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
     },
@@ -771,8 +774,45 @@ function BK.recheck(fn, i)
             end
             local mv = BK.check_now(route)
             if mv then return mv end
+            BK.count_reads(route)
         end
         return r
+    end
+end
+
+-- Load (issue #25): the requests of each bucket, for the rebalancer
+-- (tarn_bucket_stats): the reads routed by the bucket, and the rows written
+-- to it and their bytes, counted in memory over windows of cfg.load_window
+-- seconds, the current one and the one before. A read of several buckets
+-- counts once for each. (Cheap: a read's own cost is about 2 us; the bytes
+-- it returns would cost half as much again to count, and fiber.clock(),
+-- the event loop's, a tenth of clock.monotonic().)
+BK.load = {t0 = 0, cur = {}, prev = {}, prev_secs = 0}
+function BK.load_rotate()
+    local L, t, w = BK.load, fiber.clock(), M.cfg.load_window
+    if t - L.t0 < w then return end
+    if t - L.t0 < 2 * w then
+        L.prev, L.prev_secs = L.cur, t - L.t0
+    else
+        L.prev, L.prev_secs = {}, 0
+    end
+    L.cur, L.t0 = {}, t
+end
+function BK.load_add(b, reads, writes, bytes)
+    local c = BK.load.cur[b]
+    if c == nil then
+        c = {0, 0, 0}
+        BK.load.cur[b] = c
+    end
+    c[1], c[2], c[3] = c[1] + reads, c[2] + writes, c[3] + bytes
+end
+function BK.count_reads(route)
+    if type(route) == 'number' then
+        BK.load_rotate()
+        BK.load_add(route, 1, 0, 0)
+    elseif type(route) == 'table' and route[1] ~= nil then
+        BK.load_rotate()
+        for _, b in ipairs(route) do BK.load_add(b, 1, 0, 0) end
     end
 end
 
@@ -1123,7 +1163,20 @@ function BK.commit_check(wb, rpoints, rranges, fence_reads, plans, mver)
     if b then return BK.moved(b) end
     b = BK.held_conflict(rpoints, rranges)
     if b then return conflict(string.format('read the rows of bucket %d, which is moving to this shard', b)) end
+    if plans ~= nil then BK.count_writes(plans) end
     return nil
+end
+
+-- (The writes of a commit step whose checks passed: see BK.load.)
+function BK.count_writes(plans)
+    BK.load_rotate()
+    for _, p in ipairs(plans) do
+        local b = BK.of_plan(p)
+        if b ~= nil then
+            local t = p[P_RES] or p[P_NEW]   -- (an update's row: its result, once applied)
+            BK.load_add(b, 0, 1, type(t) == 'cdata' and t:bsize() or 0)
+        end
+    end
 end
 
 -- The bucket of the row a planned write writes (nil: none, or a space
@@ -4355,6 +4408,28 @@ function tarn_truncate_abort(name, a) return clear_abort('TRUNCATE', name, a) en
 --   job = {owner, kind, space, names, ver, a, phase}
 local JOB = 'job:'
 local JOB_COND = fiber.cond()
+-- Schema changes and changes of the cluster's shards that wait for bucket
+-- moves to end, by owner: when they last found a move in their way
+-- (BK.want). New moves wait for them (tarn_job_begin), or a stream of moves
+-- -- a rebalance, a drain -- could keep them waiting for ever. They wait in
+-- calls of at most a few seconds, one after the other: an entry not
+-- refreshed for BK.WANT_FRESH seconds is forgotten.
+BK.want = {}
+BK.WANT_FRESH = 1.0
+
+-- The owner of a job other than `owner`'s that waits for moves (see
+-- BK.want), or nil.
+function BK.wanted(owner)
+    local now = clock.monotonic()
+    for o, t in pairs(BK.want) do
+        if now - t >= BK.WANT_FRESH then
+            BK.want[o] = nil
+        elseif o ~= owner then
+            return o
+        end
+    end
+    return nil
+end
 
 local function job_value(key)
     local t = box.space._tarn_meta:get{key}
@@ -4428,6 +4503,10 @@ function tarn_job_begin(job, wait)
                     end
                 end
             end
+            -- And a move waits while one of them waits for moves.
+            if busy == nil and job.kind == 'move' and BK.wanted(job.owner) ~= nil then
+                busy = {owner = '', ts = clock.realtime()}
+            end
             if busy == nil then
                 local v = {owner = job.owner, ts = clock.realtime(), kind = job.kind, space = job.space,
                            names = job.names, ver = job.ver, a = job.a, phase = job.phase or 'prepare', gen = 1}
@@ -4436,7 +4515,13 @@ function tarn_job_begin(job, wait)
             box.commit()
         end)
         if box.is_in_txn() then box.rollback() end
-        if ok and busy == nil then return {OK, BK.mver} end
+        if ok and busy == nil then
+            BK.want[job.owner] = nil
+            return {OK, BK.mver}
+        end
+        if job.kind ~= 'move' and busy ~= nil then
+            BK.want[job.owner] = busy.kind == 'move' and clock.monotonic() or nil
+        end
         -- (A repeated call whose first one began the job: see Cluster::call.)
         if busy ~= nil and busy.owner == job.owner then return {OK, BK.mver} end
         local left = deadline - clock.monotonic()
@@ -5245,6 +5330,112 @@ function tarn_shard_records(id)
         n = n + box.space._tarn_txn.index.status:count({'staging'})
     end
     return {OK, n}
+end
+
+-- Rebalance (issue #25) -------------------------------------------------------
+
+-- The load of the buckets this shard owns (see BK.load): {'ok', secs,
+-- {{bucket, reads, writes, bytes written}, ...}} over the last `secs`
+-- seconds.
+function tarn_bucket_stats()
+    writable()
+    BK.fresh()
+    BK.load_rotate()
+    local L = BK.load
+    local sum = {}
+    for _, w in ipairs({L.prev, L.cur}) do
+        for b, c in pairs(w) do
+            local x = sum[b]
+            if x == nil then
+                x = {0, 0, 0}
+                sum[b] = x
+            end
+            x[1], x[2], x[3] = x[1] + c[1], x[2] + c[2], x[3] + c[3]
+        end
+    end
+    local out = {}
+    for b, x in pairs(sum) do
+        local st = BK.state[b]
+        if st == 'active' or st == 'sending' or st == 'fenced' then
+            out[#out + 1] = {b, x[1], x[2], x[3]}
+        end
+    end
+    table.sort(out, function(a, b) return a[1] < b[1] end)
+    return {OK, L.prev_secs + (fiber.clock() - L.t0), out}
+end
+
+-- The size of each bucket this shard owns that has rows: {'ok', {{bucket,
+-- rows, bytes}, ...}}, from a scan of the bucket_id index of every table
+-- (it yields). The rebalancer reads it once, and again only after a while:
+-- a bucket's size moves with it.
+function BK.owns(st) return st == 'active' or st == 'sending' or st == 'fenced' end
+
+function tarn_bucket_sizes()
+    writable()
+    BK.fresh()
+    local sizes, n = {}, 0
+    for _, sid in ipairs(BK.spaces()) do
+        local sp = box.space[sid]
+        local idx = sp ~= nil and sp.index.bucket_id
+        if idx then
+            local f = idx.parts[1].fieldno
+            for _, t in idx:pairs() do
+                local x = sizes[t[f]]
+                if x == nil then
+                    x = {0, 0}
+                    sizes[t[f]] = x
+                end
+                x[1], x[2] = x[1] + 1, x[2] + t:bsize()
+                n = n + 1
+                if n % 1000 == 0 then fiber.yield() end
+            end
+        end
+    end
+    BK.fresh()
+    local out = {}
+    for b, x in pairs(sizes) do
+        if BK.owns(BK.state[b]) then out[#out + 1] = {b, x[1], x[2]} end
+    end
+    table.sort(out, function(a, b) return a[1] < b[1] end)
+    return {OK, out}
+end
+
+-- The rebalancer's record, on the first shard ('rebalance' in _tarn_meta;
+-- the SQL servers keep its fields; `at` is when it was last written, by
+-- this shard's clock): {'ok', record, age in seconds} or {'ok', nil}.
+function tarn_rebalance_get()
+    writable()
+    local t = box.space._tarn_meta:get{'rebalance'}
+    if t == nil then return {OK, box.NULL} end
+    return {OK, t.value, clock.realtime() - (t.value.at or 0)}
+end
+
+-- Replace the record with `rec` if it is the one of owner `owner` at
+-- version `ver` (as read), or, with owner nil, if there is none or it has
+-- ended (status 'done', 'cancelled' or 'failed'): {'ok', new version}, or
+-- {'busy', record}. Its owner, TARN REBALANCE PAUSE, RESUME and CANCEL, and
+-- a server taking it over each read it, change it and write it back: the
+-- version makes the one that wrote second read it again.
+function tarn_rebalance_put(owner, ver, rec)
+    writable()
+    box.begin(RW)
+    local t = box.space._tarn_meta:get{'rebalance'}
+    local cur = t ~= nil and t.value or nil
+    local mine
+    if owner == nil or owner == box.NULL then
+        mine = cur == nil or cur.status == 'done' or cur.status == 'cancelled' or cur.status == 'failed'
+    else
+        mine = cur ~= nil and cur.owner == owner and (cur.ver or 0) == ver
+    end
+    if not mine then
+        box.rollback()
+        return {'busy', cur or box.NULL}
+    end
+    rec.ver = (cur ~= nil and cur.ver or 0) + 1
+    rec.at = clock.realtime()
+    box.space._tarn_meta:replace{'rebalance', rec}
+    box.commit()
+    return {OK, rec.ver}
 end
 
 -- The definitions of this shard's tables, for a shard that joins: per table

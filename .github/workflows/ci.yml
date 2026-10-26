@@ -128,6 +128,8 @@ jobs:
         run: |
           ci/annotate.sh jointest tests/jointest.sh
           R=3 ENGINE=vinyl DIR=/tmp/tarn-join-vinyl ci/annotate.sh vinyl-jointest tests/jointest.sh
+      - name: Grow from 2 shards to 4 and shrink to 3 under load
+        run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
       - name: Failover (2 shards x 3 replicas)
         run: SECS=45 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
@@ -137,7 +139,7 @@ jobs:
       - name: Cluster logs
         if: failure()
         run: |
-          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log; do
+          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log /tmp/tarn-growshrink/*.log; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true

@@ -8,6 +8,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Rebalancing ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN
+  REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes]` moves
+  buckets in the background, in rounds, from the heaviest active shard to
+  the lightest until the shards are even -- in the bytes of their rows, or
+  in the requests to their buckets, which the shards count -- and hold even
+  shares of the buckets, with at most n moves at a time and a limit of
+  bytes per second. One runs at a time; `TARN REBALANCE PAUSE`, `RESUME`
+  and `CANCEL` control it, `SHOW TARN REBALANCE`, `SHOW TARN MOVES` and
+  `information_schema.TARN_MOVES` show it, and another SQL server takes it
+  over if its server stops. A schema change or a change of the shards that
+  waits for moves now holds new moves back. `tests/growshrink.sh` grows a
+  cluster from two shards to four and shrinks it to three under the bank
+  workloads of `txntest.py` and `rctest.py`.
+
 - Shards leave a running cluster
   ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN REMOVE SHARD
   id` marks the shard draining (no bucket moves to it, and participants

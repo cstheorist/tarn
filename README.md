@@ -33,7 +33,8 @@ read them as **key/value**.
   `ENGINE=vinyl`, on disk; one transaction may span both. Buckets move
   between shards online (`TARN MOVE BUCKET`) while transactions use their
   rows, and shards join and leave a running cluster (`TARN ADD SHARD`,
-  `TARN REMOVE SHARD`).
+  `TARN REMOVE SHARD`), which `TARN REBALANCE` evens out by size or by
+  load.
 * **Strictly serializable transactions** across shards: lock-aware reads,
   MVCC-validated single-shard commits, and a parallel-commit two-phase commit
   whose recovery survives coordinator crashes and leader failover.

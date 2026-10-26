@@ -2842,6 +2842,99 @@ impl Session {
                     info: format!("Shard {} left the cluster ({} buckets moved off it)", id, moved),
                 })
             }
+            Admin::Rebalance {
+                by,
+                max_moves,
+                max_rate,
+            } => {
+                self.implicit_commit().await?;
+                let info = self.cluster.rebalance_start(&by, max_moves, max_rate).await?;
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info,
+                })
+            }
+            Admin::RebalanceControl(action) => {
+                self.implicit_commit().await?;
+                let info = self.cluster.rebalance_control(&action).await?;
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info,
+                })
+            }
+            Admin::ShowTarnRebalance => {
+                let r = self.cluster.rebalance_status().await?;
+                let rows = r
+                    .into_iter()
+                    .map(|r| {
+                        let count = |st: &[&str]| r.moves.iter().filter(|x| st.contains(&x.state.as_str())).count();
+                        vec![
+                            Value::str(&r.status),
+                            Value::str(&r.by),
+                            Value::str(&r.owner),
+                            Value::Float(r.started),
+                            Value::UInt(r.done),
+                            Value::UInt(r.failed),
+                            Value::UInt(count(&["planned"]) as u64),
+                            Value::UInt(count(&["moving", "copying", "fenced"]) as u64),
+                            Value::UInt(r.bytes),
+                            Value::UInt(r.max_moves as u64),
+                            Value::UInt(r.max_rate),
+                            Value::str(&r.message),
+                        ]
+                    })
+                    .collect();
+                rows_out(
+                    cols(&[
+                        ("Status", ColumnType::VarString),
+                        ("By", ColumnType::VarString),
+                        ("Owner", ColumnType::VarString),
+                        ("Started", ColumnType::Double),
+                        ("Moves_done", ColumnType::LongLong),
+                        ("Moves_failed", ColumnType::LongLong),
+                        ("Planned", ColumnType::LongLong),
+                        ("Moving", ColumnType::LongLong),
+                        ("Bytes_moved", ColumnType::LongLong),
+                        ("Max_moves", ColumnType::LongLong),
+                        ("Max_rate", ColumnType::LongLong),
+                        ("Message", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
+            }
+            Admin::ShowTarnMoves => {
+                let moves = self
+                    .cluster
+                    .rebalance_status()
+                    .await?
+                    .map(|r| r.moves)
+                    .unwrap_or_default();
+                rows_out(
+                    cols(&[
+                        ("Bucket", ColumnType::LongLong),
+                        ("From_shard", ColumnType::LongLong),
+                        ("To_shard", ColumnType::LongLong),
+                        ("Bytes", ColumnType::LongLong),
+                        ("State", ColumnType::VarString),
+                        ("Error", ColumnType::VarString),
+                    ]),
+                    moves
+                        .into_iter()
+                        .map(|x| {
+                            vec![
+                                Value::UInt(x.bucket as u64),
+                                Value::UInt(x.from as u64),
+                                Value::UInt(x.to as u64),
+                                Value::UInt(x.bytes),
+                                Value::str(&x.state),
+                                Value::str(&x.error),
+                            ]
+                        })
+                        .collect(),
+                )
+            }
             Admin::ShowTarnShards => {
                 let m = self.cluster.show_members().await?;
                 rows_out(

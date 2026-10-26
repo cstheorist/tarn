@@ -82,6 +82,19 @@ pub enum Admin {
     },
     /// SHOW TARN SHARDS: the cluster's shards (its membership).
     ShowTarnShards,
+    /// TARN REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes]:
+    /// move buckets toward an even spread, in the background.
+    Rebalance {
+        by: String,
+        max_moves: u32,
+        max_rate: u64,
+    },
+    /// TARN REBALANCE PAUSE | RESUME | CANCEL.
+    RebalanceControl(String),
+    /// SHOW TARN REBALANCE: the rebalancer's state.
+    ShowTarnRebalance,
+    /// SHOW TARN MOVES: the moves of its current (or last) round.
+    ShowTarnMoves,
     /// SELECT @@a [AS x], @@b ... [LIMIT n]
     SelectVars(Vec<(String, String)>),
     Describe {
@@ -601,6 +614,10 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             t.i += 2;
             parse_add_shard(&mut t)?
         }
+        "TARN" if t.peek_up(1) == "REBALANCE" => {
+            t.i += 2;
+            parse_rebalance(&mut t)?
+        }
         "TARN" if t.peek_up(1) == "REMOVE" => {
             t.i += 2;
             let usage = || SqlError::parse("expected TARN REMOVE SHARD id");
@@ -679,6 +696,55 @@ fn parse_add_shard(t: &mut Toks) -> SqlResult<Admin> {
         return Err(usage());
     }
     Ok(Admin::AddShard { id, replicas })
+}
+
+/// `TARN REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes]` and
+/// `TARN REBALANCE PAUSE | RESUME | CANCEL` (after `TARN REBALANCE`). By
+/// default by size, four moves at a time, at any rate.
+fn parse_rebalance(t: &mut Toks) -> SqlResult<Admin> {
+    let usage = || {
+        SqlError::parse(
+            "expected TARN REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes_per_second], \
+             or TARN REBALANCE PAUSE | RESUME | CANCEL",
+        )
+    };
+    for (w, a) in [("PAUSE", "pause"), ("RESUME", "resume"), ("CANCEL", "cancel")] {
+        if t.is(w) {
+            return if t.done() {
+                Ok(Admin::RebalanceControl(a.into()))
+            } else {
+                Err(usage())
+            };
+        }
+    }
+    let (mut by, mut max_moves, mut max_rate) = ("size".to_string(), 4u32, 0u64);
+    while !t.done() {
+        if t.is("BY") {
+            by = if t.is("SIZE") {
+                "size".into()
+            } else if t.is("LOAD") {
+                "load".into()
+            } else {
+                return Err(usage());
+            };
+        } else if t.is("MAX") {
+            let n = |t: &mut Toks| t.next().and_then(|n| n.parse::<u64>().ok()).ok_or_else(usage);
+            if t.is("MOVES") {
+                max_moves = n(t)?.clamp(1, 64) as u32;
+            } else if t.is("RATE") {
+                max_rate = n(t)?;
+            } else {
+                return Err(usage());
+            }
+        } else {
+            return Err(usage());
+        }
+    }
+    Ok(Admin::Rebalance {
+        by,
+        max_moves,
+        max_rate,
+    })
 }
 
 /// The name of an SQL-level prepared statement (case-insensitive).
@@ -1003,6 +1069,8 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         "PROCESSLIST" => Admin::ShowProcesslist,
         "TARN" if t.is("BUCKETS") => Admin::ShowTarnBuckets,
         "TARN" if t.is("SHARDS") => Admin::ShowTarnShards,
+        "TARN" if t.is("REBALANCE") => Admin::ShowTarnRebalance,
+        "TARN" if t.is("MOVES") => Admin::ShowTarnMoves,
         "TARN" => Admin::ShowTarnStatus,
         "ENGINE" | "PLUGINS" | "MASTER" | "SLAVE" | "REPLICA" | "BINARY" | "GRANTS" | "PRIVILEGES" | "TRIGGERS"
         | "EVENTS" | "PROCEDURE" | "FUNCTION" | "OPEN" => Admin::Noop,
@@ -1068,6 +1136,44 @@ mod tests {
             "TARN MOVE BUCKETS BETWEEN 9 AND 3 TO SHARD 2",
             "TARN MOVE BUCKET 5 TO 2",
             "TARN MOVE BUCKET 5 TO SHARD 2 NOW",
+        ] {
+            assert!(recognize(bad).is_err(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn rebalance_statements() {
+        assert_eq!(
+            recognize("TARN REBALANCE").unwrap(),
+            Some(Admin::Rebalance {
+                by: "size".into(),
+                max_moves: 4,
+                max_rate: 0
+            })
+        );
+        assert_eq!(
+            recognize("tarn rebalance by load max moves 2 max rate 1000000").unwrap(),
+            Some(Admin::Rebalance {
+                by: "load".into(),
+                max_moves: 2,
+                max_rate: 1_000_000
+            })
+        );
+        assert_eq!(
+            recognize("TARN REBALANCE CANCEL").unwrap(),
+            Some(Admin::RebalanceControl("cancel".into()))
+        );
+        assert_eq!(
+            recognize("SHOW TARN REBALANCE").unwrap(),
+            Some(Admin::ShowTarnRebalance)
+        );
+        assert_eq!(recognize("SHOW TARN MOVES").unwrap(), Some(Admin::ShowTarnMoves));
+        for bad in [
+            "TARN REBALANCE BY COUNT",
+            "TARN REBALANCE MAX MOVES",
+            "TARN REBALANCE MAX MOVES x",
+            "TARN REBALANCE PAUSE NOW",
+            "TARN REBALANCE NOW",
         ] {
             assert!(recognize(bad).is_err(), "{}", bad);
         }
