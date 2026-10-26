@@ -64,4 +64,19 @@ RCLocal     == {"T1", "T2"}
 RSetRCLocal == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {} [] t = "T3" -> {"x"}]
 WSetRCLocal == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {"x"}]
 LSetRCLocal == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {}]
+
+\* No inserts (every workload above).
+NoIKeys == [t \in MCTxns |-> {}]
+
+\* Uniq: a unique key without the shard key (issue #14). x is the global
+\* index entry of one value (shard A); y is T1's row (shard B). T1 inserts
+\* its row and the entry across shards; T2 inserts another row with the
+\* same value, its row and the entry both on A (a local commit); T3 reads
+\* the entry and T1's row across shards.
+RSetUniq  == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {} [] t = "T3" -> {"x", "y"}]
+WSetUniq  == [t \in MCTxns |-> CASE t = "T1" -> {"x", "y"} [] t = "T2" -> {"x"} [] t = "T3" -> {}]
+IKeysUniq == [t \in MCTxns |-> CASE t = "T1" -> {"x", "y"} [] t = "T2" -> {"x"} [] t = "T3" -> {}]
+\* ... and with T2 at READ COMMITTED, locking the entry key first.
+RCUniq    == {"T2"}
+LSetUniq  == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {"x"} [] t = "T3" -> {}]
 =============================================================================

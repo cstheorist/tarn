@@ -101,8 +101,11 @@ servers write to it (`tests/sql/`).
   *`, `INSERT` without a column list, `DESCRIBE`, `SHOW INDEX` and `SHOW
   CREATE TABLE` leave out and statements cannot name. No column may be
   called `DB_ROW_ID` (1166).
-* Every unique key must include the shard key (by default the primary key),
-  so that uniqueness is enforced on one shard.
+* A unique key that does not include the shard key (by default the primary
+  key) is enforced across shards through a global index, maintained in the
+  same transaction as the rows: writes to such a table touch one more shard
+  per such key. `ALTER TABLE` cannot add one to an existing table yet
+  (1503), nor drop, rename or change the columns of one (1846).
 * `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
   transactional; another SQL server sees their result within its catalog
   poll (0.3 s), and a statement that meets an older catalog there is run

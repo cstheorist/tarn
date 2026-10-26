@@ -1261,6 +1261,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         cols: vec![at],
                         unique: true,
                         invisible: false,
+                        global: None,
                     });
                 }
                 changed = true;
@@ -1456,6 +1457,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         cols: vec![at],
                         unique: true,
                         invisible: false,
+                        global: None,
                     });
                 }
                 changed = true;
@@ -1539,6 +1541,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                     cols: ix,
                     unique: *unique,
                     invisible: *invisible,
+                    global: None,
                 });
                 changed = true;
             }
@@ -1722,6 +1725,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
     let old_width = def.layout.width as u32;
     nd.assign_weight_fields(&|c| c.field.is_some_and(|f| f >= old_width))?;
     catalog::validate(&nd)?;
+    check_globals(def, &nd)?;
     // Storage: format and indexes, by difference.
     let old_format = def.lua_format();
     let new_format = nd.lua_format();
@@ -1762,6 +1766,54 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         auto_inc_from,
         changed,
     })
+}
+
+/// Global indexes (unique keys without the shard key, see `catalog`) are
+/// made with the table and stay as they are: a change that would need a new
+/// one (1503, as before they existed), or would drop, rename or change the
+/// columns of one, is refused.
+fn check_globals(def: &TableDef, nd: &TableDef) -> SqlResult<()> {
+    for ix in &nd.indexes {
+        if nd.needs_global(ix) && ix.global.is_none() {
+            return Err(SqlError::new(
+                1503,
+                "HY000",
+                format!(
+                    "A UNIQUE INDEX must include all columns in the table's partitioning function ({})",
+                    ix.name
+                ),
+            ));
+        }
+    }
+    let entry_cols = |t: &TableDef, g: &catalog::GlobalIndex| -> Vec<(String, String)> {
+        g.src
+            .iter()
+            .map(|&c| (t.columns[c].name.clone(), t.columns[c].ty.clone()))
+            .collect()
+    };
+    for g in &def.globals {
+        let old = &def.indexes[g.pos];
+        let same = nd
+            .globals
+            .iter()
+            .find(|n| n.table.space_id == g.table.space_id)
+            .filter(|n| {
+                let new = &nd.indexes[n.pos];
+                new.name == old.name && entry_cols(nd, n) == entry_cols(def, g)
+            });
+        if same.is_none() {
+            return Err(SqlError::new(
+                1846,
+                "0A000",
+                format!(
+                    "ALTER TABLE is not supported. Reason: unique key '{}' does not contain the shard key; \
+                     its columns and name cannot change yet",
+                    old.name
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The argument of `tarn_alter_prepare` / `_apply` / `_abort` (`ch.def`
@@ -1847,10 +1899,15 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
 /// A table's catalog entry (`_tarn_catalog`), as tarn_create_table stores
 /// it, under definition version `ver`.
 pub fn catalog_entry(m: &mut Mp, def: &TableDef, ver: u64) {
-    let ld = def.lua_def();
-    m.map(7);
+    lua_def_entry(m, &def.lua_def(), Some(ver));
+}
+
+/// `ld` as the storage takes it: name, id, engine, format, indexes, the
+/// global index spaces (`uix`, when there are any), json and `ver`.
+pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) {
+    m.map(6 + ver.is_some() as usize + !ld.uix.is_empty() as usize);
     m.str("name").str(&ld.name);
-    m.str("id").uint(def.space_id as u64);
+    m.str("id").uint(ld.id as u64);
     m.str("engine").str(ld.engine);
     m.str("format");
     format_list(m, &ld.format);
@@ -1859,8 +1916,16 @@ pub fn catalog_entry(m: &mut Mp, def: &TableDef, ver: u64) {
         m.map(3).str("name").str(n).str("unique").bool(*unique).str("parts");
         format_parts(m, parts);
     }
+    if !ld.uix.is_empty() {
+        m.str("uix").arr(ld.uix.len());
+        for u in &ld.uix {
+            lua_def_entry(m, u, None);
+        }
+    }
     m.str("json").str(&ld.json);
-    m.str("ver").uint(ver);
+    if let Some(v) = ver {
+        m.str("ver").uint(v);
+    }
 }
 
 fn int(m: &mut Mp, v: i128) {

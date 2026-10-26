@@ -61,8 +61,8 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
 * A case-insensitive text column that is part of an index has a second
   field after `bucket_id`, `_weight_<n>` (varbinary), holding its weight
   string; its indexes are built on that field (§1.3).
-* As in MySQL's partitioned tables, every unique index must contain the shard
-  key, so uniqueness is enforced by one shard.
+* A unique key that contains the shard key is enforced by its index on one
+  shard. One that does not has a *global index* as well (§1.4).
 * The table definitions live in `_tarn_catalog` on every shard; SQL servers
   cache them and reload on a catalog version bump.
 
@@ -211,6 +211,56 @@ the index then finds a superset, which the statement's filter narrows.
 Literals take `collation_connection` (from the client's handshake or `SET
 NAMES`), and plans are cached per connection collation.
 
+### 1.4 Global unique indexes
+
+A unique key that does not contain the shard key (issue #14), such as
+`UNIQUE (tenant_id, handle)` next to `PRIMARY KEY (id)`, cannot be enforced
+by one shard: two rows with one value may live on different shards. Such a
+key gets a global index, a hidden space `_tarn_uix_<table space id>_<index
+id>` on every shard, created, truncated and dropped with the table. It holds
+one entry per row whose key has no NULL part: the key's columns (as the
+table's indexes hold them, so a case-insensitive column by its weight
+string), then the row's primary key. The entry's primary key is the unique
+key, and entries are sharded by it.
+
+The SQL servers write the entries as ordinary buffered writes in the same
+transaction as the rows (`Session::stage`): an insert adds the row's entry,
+a delete removes it, an update that changes the key does both, and an update
+that leaves it alone touches nothing (`tarn_verified::uix::index_delta`,
+§3). The commit protocol then does the rest. An insert of an entry whose key
+is held fails like any duplicate primary key (1062, under the unique key's
+name), in a local commit or by a NO vote in PREPARE. Two transactions that
+insert one value from rows on different shards write the same key on one
+shard, where W locks and MVCC let only one of them commit. The entry and its
+row are committed atomically, and recovery, fences and garbage collection
+treat entries like any row.
+
+Entry writes are fenced with their table's definition version (§2.10), so a
+`TRUNCATE`, `DROP TABLE` or `ALTER TABLE` of the table refuses them as it
+refuses the rows. A transaction may move a value from one row to another, or
+swap two rows' values: the commit steps write a row that a unique index
+refuses again after the others, and take rows that swap values out before
+writing them.
+
+Finding the row that holds a value (`INSERT IGNORE`, `ON DUPLICATE KEY
+UPDATE`, `REPLACE`, an `UPDATE` to a new value) takes two reads: the entry on
+its shard, then the row by primary key. Serializable transactions read both
+through their streams, so both are validated at commit. READ COMMITTED
+transactions lock the entry's key (X) and the row and read both under the
+locks, so concurrent writers of one value queue on the entry's shard as
+they queue on a local unique key (§2.9); deleting an entry also locks its
+key.
+
+What it costs: an insert, a delete, or an update of a key column of such a
+table writes up to one more shard per global index, so it becomes a
+cross-shard commit unless the entry happens to live on the row's shard, and
+it leaves the single-call autocommit path. Reads and updates of other
+columns cost nothing more. The table also keeps its own index of the key,
+unique within each shard. `ALTER TABLE` cannot yet add a unique key without
+the shard key to an existing table (1503), nor drop, rename or change the
+columns of one (1846). Writes made directly through Tarantool bypass the
+global index.
+
 ## 2. Isolation and the commit protocol
 
 ### 2.1 Guarantees
@@ -264,6 +314,7 @@ Invariants checked in every configuration:
 | `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock) |
 | `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
 | `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
+| `UniqueHolds` | no key is inserted by two committed transactions (unique keys, §1.4) |
 
 `StrictSerializable` is checked constructively: the spec records the order in
 which writes reached each key and the real-time predecessors of each
@@ -276,6 +327,15 @@ transaction, observed by a cross-shard reader), *Frac* (cross-shard blind
 writer, cross-shard reader, single-shard read-modify-write), *Recov* (cross-
 shard read-modify-write under crashes and message loss, plus single-shard
 writer and reader). Three more workloads exercise READ COMMITTED (§2.9).
+*Uniq* models a unique key without the shard key (§1.4): an insert (`IKeys`,
+refused when the key holds a value) of one global index entry by a
+cross-shard transaction that also inserts its row, and by a local one on the
+entry's shard, serializable or READ COMMITTED, observed by a cross-shard
+reader of the entry and the row; `BugInsertNoExistCheck` drops the check and
+TLC finds two committed holders. The model never deletes keys, so a transaction that
+frees a value and takes another (REPLACE, an UPDATE of the key) is argued
+rather than checked: its deletes and inserts on a shard are in one PREPARE
+or local commit, which applies them together.
 
 ### 2.3 What TLC found
 
@@ -851,7 +911,7 @@ not slowed down when compaction falls behind (issue #58).
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **59 verified, 0 errors**) and compiled into the server as plain
+src/lib.rs`: **61 verified, 0 errors**) and compiled into the server as plain
 Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
@@ -883,6 +943,13 @@ Rust. What is proven:
   `deframe` is proven to return precisely the payload that `frames_spec`
   framed, or `None` while incomplete. No overflow or panic on any input.
   `tarn-mysql::codec` delegates to these functions.
+* **Global index maintenance** (`uix.rs`, §1.4). `index_delta` decides
+  which entry writes a row write makes. It is proven that applying them to
+  an index that holds the row's old entry leaves the other rows' entries
+  alone and holds its new entry instead (none when the row is deleted or its
+  key has a NULL part), and that a write that keeps the key writes no entry.
+  That the new entry's key is free is the commit protocol's job, which TLC
+  checks (`Uniq*`, §2.2).
 
 Not covered by the proofs: how SQL values are turned into the bytes that
 are hashed for routing (`tarn-sql/src/route.rs`, tested against Tarantool's
@@ -940,6 +1007,7 @@ states).
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 21733 | 81213 | 11 | 06s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2881 | 8063 | 10 | 02s | 9 |
 | Bug_IgnorePLocks | violates StrictSerializable | 4296 | 13823 | 11 | 06s | 11 |
+| Bug_InsertNoExistCheck | violates UniqueHolds | 144 | 231 | 6 | 00s | 5 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 32762 | 134735 | 13 | 07s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3539 | 10017 | 10 | 02s | 10 |
 | Bug_NoReadLocks | violates StrictSerializable | 2098 | 7167 | 9 | 02s | 9 |
@@ -980,6 +1048,9 @@ states).
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 617 | 1165 | 8 | 01s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3119 | 9623 | 9 | 02s | 8 |
+| Uniq | no errors | 657499 | 5210697 | 22 | 31s |  |
+| UniqFailover | no errors | 1444398 | 11344964 | 24 | 56s |  |
+| Uniq_RC | no errors | 966902 | 7892907 | 23 | 34s |  |
 
 ### 5.2 Benchmarks
 
@@ -1026,6 +1097,10 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   indexed case-insensitive column is stored twice (text and weights).
 * Hash sharding: range predicates on the shard key and lookups through
   non-unique secondary indexes go to every shard.
+* Global unique indexes (§1.4): writes to their tables touch the entries'
+  shards too; `ALTER TABLE` can neither add one to an existing table nor
+  change one; lookups by the key do not use them yet (they go to every
+  shard); direct Tarantool writes do not maintain them.
 * Serializable OCC: long read-only transactions that span shards can starve
   under heavy concurrent writes to what they read (they abort and retry);
   explicit transactions surface 1213 to the client like any serializable

@@ -1112,9 +1112,12 @@ impl Session {
         let (shard, writes, insert_id, table) = match stmt {
             // REPLACE on a table with another unique key may have to delete
             // other rows (those it collides with on that key): not here.
+            // Nor writes that change a global index (catalog: unique keys
+            // without the shard key), whose entries live on other shards.
             Stmt::Insert(p)
                 if p.on_dup.is_empty()
                     && !p.ignore
+                    && p.table.globals.is_empty()
                     && !(p.replace && p.table.indexes.iter().skip(1).any(|i| i.unique)) =>
             {
                 let InsertSource::Values(_) = &p.source else {
@@ -1209,7 +1212,7 @@ impl Session {
                 }
                 (shard, m, None, t.clone())
             }
-            Stmt::Delete(p) => {
+            Stmt::Delete(p) if p.access.table.globals.is_empty() => {
                 let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, &cx)? else {
                     return Ok(None);
                 };
@@ -1321,7 +1324,7 @@ impl Session {
         };
         let mut ops = Vec::new();
         for (c, e) in &p.set {
-            if t.is_pk_col(*c) || t.shard_key.contains(c) {
+            if t.is_pk_col(*c) || t.shard_key.contains(c) || t.in_global(*c) {
                 return Ok(None);
             }
             let col = &t.columns[*c];
@@ -1472,6 +1475,142 @@ impl Session {
         Ok((rows, first_id))
     }
 
+    /// Buffer write `w` of a table together with the changes it makes to the
+    /// table's global indexes (unique keys without the shard key, see
+    /// `catalog`): `old` is the row it replaces or deletes (None: none). The
+    /// entries commit with the row, so the commit refuses a key another row
+    /// holds (1062 under the key's name). READ COMMITTED locks the key of
+    /// each entry it deletes; the keys it inserts were locked when their
+    /// holders were looked up.
+    async fn stage(&self, txn: &mut Txn, w: BufWrite, old: Option<&Row>) -> SqlResult<()> {
+        let t = w.table.clone();
+        for g in &t.globals {
+            let new = if w.op == WOp::Delete { None } else { w.row.as_deref() };
+            let (before, after) = (old.and_then(|r| g.entry(&t, r)), new.and_then(|r| g.entry(&t, r)));
+            let d = tarn_verified::uix::index_delta(
+                old.is_some(),
+                old.is_some() && before.is_none(),
+                new.is_some(),
+                new.is_some() && after.is_none(),
+                before.is_some() && before == after,
+            );
+            let k = g.key_len();
+            if let (true, Some(e)) = (d.delete_old, &before) {
+                let key = e[..k].to_vec();
+                let shard = self.cluster.shard_of(&key);
+                if txn.mode == TxnMode::ReadCommitted {
+                    let x = LockOpts {
+                        exclusive: true,
+                        ..Default::default()
+                    };
+                    let lk = LockKey {
+                        table: g.table.clone(),
+                        index: 0,
+                        key: key.clone(),
+                    };
+                    txn.lock(&self.cluster, shard, &[lk], x).await?;
+                }
+                txn.buffer(BufWrite {
+                    shard,
+                    table: g.table.clone(),
+                    op: WOp::Delete,
+                    row: None,
+                    pk: key,
+                })?;
+            }
+            if let (true, Some(e)) = (d.insert_new, after) {
+                let key = e[..k].to_vec();
+                txn.buffer(BufWrite {
+                    shard: self.cluster.shard_of(&key),
+                    table: g.table.clone(),
+                    op: WOp::Insert,
+                    row: Some(e),
+                    pk: key,
+                })
+                .map_err(|e| {
+                    // another row of this transaction holds the value: name
+                    // it by the row's values (not by weight strings)
+                    if e.code != 1062 {
+                        return e;
+                    }
+                    let row = w.row.as_deref().unwrap_or_default();
+                    let shown: Vec<String> = g.src[..k].iter().map(|&c| row[c].to_string()).collect();
+                    SqlError::dup_key(&shown.join("-"), &t.indexes[g.pos].name)
+                })?;
+            }
+        }
+        txn.buffer(w)
+    }
+
+    /// The row holding `key` of global index `g` of table `t` (None: no
+    /// row): its entry, read on the entry's shard, then the row by primary
+    /// key. Serializable reads both through the transaction (validated at
+    /// commit); READ COMMITTED locks the key and the row (X) and reads them
+    /// under the locks, so concurrent writers of one value queue.
+    async fn global_holder(
+        &self,
+        txn: &mut Txn,
+        t: &Arc<TableDef>,
+        g: &crate::catalog::GlobalIndex,
+        key: Vec<Value>,
+    ) -> SqlResult<Option<Row>> {
+        let shard = self.cluster.shard_of(&key);
+        let entry = if txn.mode == TxnMode::ReadCommitted {
+            let x = LockOpts {
+                exclusive: true,
+                read: true,
+                ..Default::default()
+            };
+            let lk = LockKey {
+                table: g.table.clone(),
+                index: 0,
+                key,
+            };
+            match txn.lock(&self.cluster, shard, &[lk], x).await?.pop() {
+                Some(Locked::Row(r)) => r,
+                _ => None,
+            }
+        } else {
+            let st = txn.stream(&self.cluster, shard).await?;
+            let rows = select_rows(
+                &st.client,
+                st.id,
+                &g.table,
+                0,
+                &key,
+                Iter::Eq,
+                Some(1),
+                None,
+                false,
+                st.begin,
+            )
+            .await?;
+            txn.mark_begun(shard);
+            txn.note_point(shard, g.table.space_id, 0, key);
+            rows.into_iter().next()
+        };
+        let Some(entry) = entry else { return Ok(None) };
+        let pk = g.holder_pk(t, &entry);
+        let row_shard = exec::route_prefix(&self.cluster, t, &t.indexes[0], &pk).unwrap_or(0);
+        if txn.mode == TxnMode::ReadCommitted {
+            let x = LockOpts {
+                exclusive: true,
+                read: true,
+                ..Default::default()
+            };
+            let lk = LockKey {
+                table: t.clone(),
+                index: 0,
+                key: pk,
+            };
+            return Ok(match txn.lock(&self.cluster, row_shard, &[lk], x).await?.pop() {
+                Some(Locked::Row(r)) => r,
+                _ => None,
+            });
+        }
+        self.row_exists(txn, t, &pk, row_shard).await
+    }
+
     async fn row_exists(&self, txn: &mut Txn, t: &Arc<TableDef>, pk: &[Value], shard: usize) -> SqlResult<Option<Row>> {
         if let Some(b) = txn.buffered(t.space_id, pk) {
             return Ok(b.cloned());
@@ -1514,7 +1653,10 @@ impl Session {
                 let pk_cols = &t.indexes[0].cols;
                 let mut affected = 0;
                 let plain = p.on_dup.is_empty() && !p.replace && !p.ignore;
-                if plain && !txn.explicit && txn.mode == TxnMode::Serializable {
+                // (Not for a global index on a case-insensitive column: the
+                // shard would report a duplicate by its weight string, so the
+                // holder is looked up first and 1062 shows the value.)
+                if plain && !txn.explicit && txn.mode == TxnMode::Serializable && !t.global_on_weights() {
                     // A single-statement transaction: the shards refuse an
                     // existing key when the INSERT commits (local commit or
                     // PREPARE votes NO with 1062), failing the statement as a
@@ -1526,13 +1668,14 @@ impl Session {
                             return Err(SqlError::dup_key(&shown.join("-"), &t.pk().name));
                         }
                         let shard = shard_of_row(&self.cluster, t, &row);
-                        txn.buffer(BufWrite {
+                        let w = BufWrite {
                             shard,
                             table: t.clone(),
                             op: WOp::Insert,
                             row: Some(row),
                             pk,
-                        })?;
+                        };
+                        self.stage(txn, w, None).await?;
                         affected += 1;
                     }
                     return Ok((affected, id));
@@ -1573,24 +1716,26 @@ impl Session {
                             for (_, r) in &uniq {
                                 let rpk = t.pk_key(r);
                                 if rpk != pk {
-                                    txn.buffer(BufWrite {
+                                    let w = BufWrite {
                                         shard: shard_of_row(&self.cluster, t, r),
                                         table: t.clone(),
                                         op: WOp::Delete,
                                         row: None,
                                         pk: rpk,
-                                    })?;
+                                    };
+                                    self.stage(txn, w, Some(r)).await?;
                                     deleted += 1;
                                 }
                             }
                             let op = if pk_row.is_some() { WOp::Replace } else { WOp::Insert };
-                            txn.buffer(BufWrite {
+                            let w = BufWrite {
                                 shard,
                                 table: t.clone(),
                                 op,
                                 row: Some(row),
                                 pk,
-                            })?;
+                            };
+                            self.stage(txn, w, pk_row.as_ref()).await?;
                             affected += 1 + deleted + pk_row.is_some() as u64;
                         }
                         Some(_) if p.ignore => {}
@@ -1608,13 +1753,14 @@ impl Session {
                             });
                         }
                         None => {
-                            txn.buffer(BufWrite {
+                            let w = BufWrite {
                                 shard,
                                 table: t.clone(),
                                 op: WOp::Insert,
                                 row: Some(row),
                                 pk,
-                            })?;
+                            };
+                            self.stage(txn, w, None).await?;
                             affected += 1;
                         }
                     }
@@ -1651,13 +1797,14 @@ impl Session {
                 for old in rows {
                     let pk = t.pk_key(&old);
                     let shard = shard_of_row(&self.cluster, t, &old);
-                    txn.buffer(BufWrite {
+                    let w = BufWrite {
                         shard,
                         table: t.clone(),
                         op: WOp::Delete,
                         row: None,
                         pk,
-                    })?;
+                    };
+                    self.stage(txn, w, Some(&old)).await?;
                 }
                 Ok((n, None))
             }
@@ -1683,13 +1830,14 @@ impl Session {
                 for old in rows {
                     let pk = t.pk_key(&old);
                     let shard = shard_of_row(&self.cluster, t, &old);
-                    txn.buffer(BufWrite {
+                    let w = BufWrite {
                         shard,
                         table: t.clone(),
                         op: WOp::Delete,
                         row: None,
                         pk,
-                    })?;
+                    };
+                    self.stage(txn, w, Some(&old)).await?;
                 }
                 Ok((n, None))
             }
@@ -1733,6 +1881,9 @@ impl Session {
             for (k, &ix) in uniq.iter().enumerate() {
                 if t.indexes[ix].cols.iter().any(|&c| row[c].is_null()) {
                     continue; // NULLs never collide in a unique index
+                }
+                if t.global_of(ix).is_some() {
+                    continue; // below, through the global index
                 }
                 lookups.push((i, k + 1, shard, t.indexes[ix].id, t.index_key(&t.indexes[ix], row)));
             }
@@ -1807,6 +1958,16 @@ impl Session {
                 place(&mut out, l.0, l.1, r.into_iter().next());
             }
         }
+        // Unique keys without the shard key: their holders through the
+        // global indexes.
+        for (i, row) in rows.iter().enumerate() {
+            for (k, &ix) in uniq.iter().enumerate() {
+                let Some(g) = t.global_of(ix) else { continue };
+                let Some(e) = g.entry(t, row) else { continue };
+                let r = self.global_holder(txn, t, g, e[..g.key_len()].to_vec()).await?;
+                place(&mut out, i, k + 1, r);
+            }
+        }
         Ok(out)
     }
 
@@ -1836,8 +1997,11 @@ impl Session {
         }
         let shard = shard_of_row(&self.cluster, t, new);
         let key_of = |i: usize| -> Vec<Value> { t.index_key(&t.indexes[i], new) };
-        let mut stored: Vec<Option<Row>> = Vec::with_capacity(changed.len());
-        if txn.mode == TxnMode::ReadCommitted {
+        // Unique keys without the shard key are looked up through their
+        // global indexes, the others on the row's shard.
+        let (globals, changed): (Vec<usize>, Vec<usize>) = changed.into_iter().partition(|&i| t.global_of(i).is_some());
+        let mut stored: Vec<Option<Row>> = Vec::with_capacity(changed.len() + globals.len());
+        if !changed.is_empty() && txn.mode == TxnMode::ReadCommitted {
             let keys: Vec<LockKey> = changed
                 .iter()
                 .map(|&i| LockKey {
@@ -1869,8 +2033,16 @@ impl Session {
                 stored.push(rows.into_iter().next());
             }
         }
+        for &i in &globals {
+            let g = t.global_of(i).unwrap();
+            stored.push(self.global_holder(txn, t, g, key_of(i)).await?);
+        }
+        // in index order, as MySQL checks them (the first collision names
+        // the key in 1062)
+        let mut found: Vec<(usize, Option<Row>)> = changed.into_iter().chain(globals).zip(stored).collect();
+        found.sort_by_key(|(i, _)| *i);
         let pk_of = |r: &Row| -> Vec<Value> { t.pk_key(r) };
-        for (&i, holder) in changed.iter().zip(stored) {
+        for (i, holder) in found {
             let same = |r: &Row| t.same_key(&t.indexes[i], r, new);
             // A row this transaction wrote with that value ...
             let mine = txn
@@ -1940,14 +2112,14 @@ impl Session {
             return Err(SqlError::dup_key(&shown.join("-"), &idx.name));
         }
         if key_bytes(&old_pk) == key_bytes(&new_pk) {
-            txn.buffer(BufWrite {
+            let w = BufWrite {
                 shard,
                 table: t.clone(),
                 op: WOp::Replace,
                 row: Some(new),
                 pk: new_pk,
-            })?;
-            return Ok(());
+            };
+            return self.stage(txn, w, Some(old)).await;
         }
         // primary key (and possibly shard) changes: delete + insert
         let new_shard = shard_of_row(&self.cluster, t, &new);
@@ -1975,20 +2147,22 @@ impl Session {
             let shown: Vec<String> = pk_cols.iter().map(|&c| new[c].to_string()).collect();
             return Err(SqlError::dup_key(&shown.join("-"), &t.pk().name));
         }
-        txn.buffer(BufWrite {
+        let del = BufWrite {
             shard,
             table: t.clone(),
             op: WOp::Delete,
             row: None,
             pk: old_pk,
-        })?;
-        txn.buffer(BufWrite {
+        };
+        self.stage(txn, del, Some(old)).await?;
+        let ins = BufWrite {
             shard: new_shard,
             table: t.clone(),
             op: WOp::Insert,
             row: Some(new),
             pk: new_pk,
-        })?;
+        };
+        self.stage(txn, ins, None).await?;
         Ok(())
     }
 
