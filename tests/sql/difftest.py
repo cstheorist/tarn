@@ -501,6 +501,13 @@ CASES = [
     ("SELECT * FROM fkc", "err"),
     ("ALTER TABLE fkc2 RENAME TO fkc3, ADD COLUMN z INT", "q"),
     ("SELECT * FROM fkc3", "q"),
+    # index comments are stored and kept by ALTER TABLE (issue #80)
+    ("CREATE TABLE icm (id INT, a INT, b INT, PRIMARY KEY (id) COMMENT 'pk', "
+     "KEY ka (a) USING BTREE COMMENT 'lookups by a', UNIQUE KEY ub (b) COMMENT 'it''s b') COMMENT 'a table'", "ddl:icm"),
+    ("ALTER TABLE icm ADD COLUMN c INT, ADD INDEX kc (c) COMMENT 'by c', RENAME INDEX ka TO ka2", "ddl:icm"),
+    ("CREATE INDEX kac ON icm (a, c) COMMENT 'pair' ALGORITHM=INPLACE", "ddl:icm"),
+    ("ALTER TABLE icm MODIFY a BIGINT, DROP INDEX kc", "ddl:icm"),
+    ("ALTER TABLE icm DROP COLUMN c", "ddl:icm"),
     # user and system variables, executable comments, LOCK TABLES
     ("SET @v = 5, @s = 'it''s', @d = 1.50, @n = NULL", "q"),
     ("SELECT @v, @s, @d, @n, @never_set", "q"),
@@ -1098,7 +1105,8 @@ def main():
                 if r[0] != "rows":
                     return r
                 cols = r[2]
-                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name")]
+                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name",
+                                                "Index_comment")]
                 return sorted(tuple(row[i] for i in pick) for row in r[1])
             if ok and keys(ia) != keys(ib):
                 ok = False

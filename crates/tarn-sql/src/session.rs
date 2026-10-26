@@ -2519,7 +2519,7 @@ impl Session {
                             Value::str(if t.columns[c].nullable { "YES" } else { "" }),
                             Value::str("TREE"),
                             Value::str(""),
-                            Value::str(""),
+                            Value::str(&ix.comment),
                             Value::str(if ix.invisible { "NO" } else { "YES" }),
                             Value::Null,
                         ]);
@@ -2888,6 +2888,12 @@ fn charset_of(collation: &str) -> &str {
     }
 }
 
+/// `s` as the body of a quoted SQL string, as SHOW CREATE TABLE writes it:
+/// `\` and `'` doubled.
+fn sql_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "''")
+}
+
 fn show_create(t: &TableDef) -> String {
     let mut s = format!("CREATE TABLE `{}` (\n", t.name);
     let mut lines = Vec::new();
@@ -2907,7 +2913,7 @@ fn show_create(t: &TableDef) -> String {
             if d == "CURRENT_TIMESTAMP" {
                 l.push_str(" DEFAULT CURRENT_TIMESTAMP");
             } else {
-                l.push_str(&format!(" DEFAULT '{}'", d.replace('\'', "''")));
+                l.push_str(&format!(" DEFAULT '{}'", sql_str(d)));
             }
         } else if c.nullable {
             l.push_str(" DEFAULT NULL");
@@ -2922,14 +2928,20 @@ fn show_create(t: &TableDef) -> String {
             continue;
         }
         let colnames: Vec<String> = ix.cols.iter().map(|&c| format!("`{}`", t.columns[c].name)).collect();
+        let comment = if ix.comment.is_empty() {
+            String::new()
+        } else {
+            format!(" COMMENT '{}'", sql_str(&ix.comment))
+        };
         if ix.id == 0 && t.declared_pk() {
-            lines.push(format!("  PRIMARY KEY ({})", colnames.join(",")));
+            lines.push(format!("  PRIMARY KEY ({}){}", colnames.join(","), comment));
         } else {
             lines.push(format!(
-                "  {}KEY `{}` ({}){}",
+                "  {}KEY `{}` ({}){}{}",
                 if ix.unique { "UNIQUE " } else { "" },
                 ix.name,
                 colnames.join(","),
+                comment,
                 if ix.invisible { " /*!80000 INVISIBLE */" } else { "" }
             ));
         }
@@ -2968,7 +2980,7 @@ fn show_create(t: &TableDef) -> String {
         table_coll
     ));
     if !t.comment.is_empty() {
-        s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));
+        s.push_str(&format!(" COMMENT='{}'", sql_str(&t.comment)));
     }
     if t.shard_key.iter().all(|&c| !t.columns[c].hidden) {
         s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
