@@ -56,6 +56,10 @@ local M = {
         clock_skew = 60.0,       -- assumed bound on clock differences between nodes
         gc_batch = 500,          -- records deleted per GC transaction
         alter_check_rows = 1000000, -- ALTER TABLE refuses to check more existing rows than this per shard
+        -- A read returns at most this many rows, or rows of this many bytes,
+        -- per call; the SQL server continues it after the last one (issue #77).
+        scan_page_rows = 4096,
+        scan_page_bytes = 4 * 1024 * 1024,
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
     },
@@ -64,7 +68,7 @@ local M = {
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
              stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0,
-             creates = 0, drops = 0, truncates = 0, ddl_doomed = 0},
+             creates = 0, drops = 0, truncates = 0, ddl_doomed = 0, read_oom = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -1250,7 +1254,9 @@ function tarn_lock(txid, keys, mode, opts)
     return {OK, pl_session_gen(), results}
 end
 
-local select_scan, select_checked   -- (below, with tarn_select)
+-- The scans of tarn_select and their pages (below, with tarn_select; one
+-- table, as lua/tarn.lua is at Lua's limit of 200 locals in a chunk).
+local PG = {OOM = {}}   -- PG.OOM: raised by a scan that stops for want of heap
 
 -- tarn_lock_range(txid, ranges, mode, opts): the locking reads of READ
 -- COMMITTED `SELECT ... WHERE <primary key prefix> [ORDER BY <primary key>]
@@ -1294,15 +1300,15 @@ function tarn_lock_range(txid, ranges, mode, opts)
             local page = math.min(math.max(2 * (n - #rows), 16), 512)
             local key, it = prefix, 'GE'
             if last ~= nil then key, it = last, 'GT' end
-            local r
-            if opts.skip then
-                -- Every candidate is read again under its lock, and one a
-                -- prepared transaction W-locks is skipped: no need to wait
-                -- for those (a row such a transaction inserts would be).
-                r = {OK, select_scan(idx, kd, it, key, page, prefix, true, nil, false)}
-            else
-                r = select_checked(space, idx, kd, it, key, page, prefix, true, nil, false)
-            end
+            local r = PG.read(function()
+                if opts.skip then
+                    -- Every candidate is read again under its lock, and one a
+                    -- prepared transaction W-locks is skipped: no need to wait
+                    -- for those (a row such a transaction inserts would be).
+                    return {OK, PG.scan(idx, kd, it, key, page, prefix, true, nil, false, nil)}
+                end
+                return PG.checked(space, idx, kd, it, key, page, prefix, true, nil, false, nil)
+            end)
             if r[1] ~= OK then return pl_failed(txid, r) end
             local cands = r[2]
             for j = 1, #cands do
@@ -1322,7 +1328,8 @@ function tarn_lock_range(txid, ranges, mode, opts)
                     end
                 end
             end
-            if #cands < page then break end   -- the end of the range
+            -- The end of the range (a page cut short by its bytes says more).
+            if #cands < page and r[3] == nil then break end
             -- Not in a transaction or an atomic step: let other requests run
             -- between pages (the SQL server asks for at most 256 rows a range).
             fiber.yield()
@@ -1751,12 +1758,62 @@ local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] 
 -- (autocommit reads, TarnCommit!SnapshotRead), the scan waits while another
 -- transaction holds a W lock on anything it covers; on memtx, scan and lock
 -- check run without a yield in between, so they observe one state (vinyl:
--- checked_read). Returns {'ok', tuples}.
+-- checked_read). Returns {'ok', tuples[, position]}: one page (see
+-- "Pages").
 local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
 -- Scans longer than this many tuples yield inside stream transactions.
 local SCAN_CHUNK = 1000
 -- Fiber slice of a long autocommit scan, which may not yield (seconds).
 local LONG_SCAN_SLICE = {warn = 1.0, err = 30.0}
+
+-- Pages (issue #77). A read returns at most cfg.scan_page_rows rows, or
+-- rows of cfg.scan_page_bytes bytes, per call, and then the position of
+-- its last row (`index:tuple_pos`); the caller continues after it. Every
+-- row a call returns is held in the Lua heap until the reply is sent, so
+-- without pages the heap grew with the range scanned, up to Tarantool's
+-- Lua memory limit, where an allocation that failed outside a protected
+-- call killed the instance. A read that finds the heap nearly full anyway
+-- fails with 1041 instead (PG.read) and frees what it read.
+
+-- Whether less than a reserve of the Lua heap is free (1/16 of the limit,
+-- at least 16 MiB): what the replies, other requests and the node itself
+-- need while reads run.
+-- (A full collection runs at most every 100 ms: a heap that stays near the
+-- reserve must not make every read collect it.)
+do
+    local alloc_ok, alloc = pcall(require, 'internal.alloc')
+    local collected = -math.huge
+    function PG.heap_low()
+        if not alloc_ok then return false end
+        local reserve = math.max(alloc.getlimit() / 16, 16 * 1024 * 1024)
+        if alloc.unused() >= reserve then return false end
+        if clock.monotonic() - collected > 0.1 then
+            collectgarbage()   -- (what is in use may be mostly garbage)
+            collected = clock.monotonic()
+        end
+        return alloc.unused() < reserve
+    end
+end
+
+function PG.full(n, bytes)
+    return n >= M.cfg.scan_page_rows or bytes >= M.cfg.scan_page_bytes
+end
+
+-- Run read(...) and return its result, or the 1041 error status when it
+-- ran out of heap (it stopped at heap_low, or an allocation failed).
+function PG.read(read, ...)
+    local ok, r
+    if PG.heap_low() then ok, r = false, PG.OOM else ok, r = pcall(read, ...) end
+    if ok then return r end
+    if r == PG.OOM or tostring(r):find('not enough memory', 1, true) then
+        M.stats.read_oom = M.stats.read_oom + 1
+        return {'error', 1041, 'Out of memory: the storage node is short of Lua memory for this read'}
+    end
+    error(r)
+end
+
+-- The storage call `fn`, failing with 1041 instead when the heap runs out.
+function PG.bounded(fn) return function(...) return PG.read(fn, ...) end end
 
 -- Whether a W lock was taken or released on a key of [lo, hi] of the index
 -- since history entry `since` (an autocommit read of a vinyl table): true,
@@ -1789,7 +1846,7 @@ local function checked_read(scan, locked)
     while true do
         VY_SCANS = VY_SCANS + 1
         local s0 = LOG_SEQ
-        local ok, rows = pcall(function()
+        local ok, rows, more = pcall(function()
             box.begin({txn_isolation = 'read-confirmed'})
             return scan()
         end)
@@ -1799,9 +1856,9 @@ local function checked_read(scan, locked)
         local h = atomic('SnapshotRead', function()
             if LK_STALE then return {'stale'} end
             if NLOCK == 0 and LOG_SEQ == s0 and DDL_N == 0 then return nil end
-            return locked(rows, s0)
+            return locked(rows, s0, more)
         end)
-        if h == nil then return {OK, rows} end
+        if h == nil then return {OK, rows, more} end
         if type(h) == 'table' and h[1] == 'stale' then
             lk_fresh()   -- a leader change meanwhile (raises ER_READONLY if demoted)
         elseif type(h) == 'table' then
@@ -1821,9 +1878,12 @@ local function checked_read(scan, locked)
     end
 end
 
--- Bounded index scan of tarn_select: rows from `key` in `it` order, stopping
--- after `limit` rows or once past `end_key`, skipping `offset` rows.
-function select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+-- Bounded index scan of tarn_select: rows from `key` in `it` order (after
+-- the position `after` if given), stopping after `limit` rows or once past
+-- `end_key`, skipping `offset` rows. At most one page (see "Pages"): returns
+-- the rows, and the position of the last one when the page ended the scan
+-- before its end.
+function PG.scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse, after)
     local in_txn = box.is_in_txn()
     local unbounded = limit == nil or limit > SCAN_CHUNK
     if unbounded and not in_txn then
@@ -1832,17 +1892,32 @@ function select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse
         fiber.set_slice(LONG_SCAN_SLICE)
     end
     local skip = (offset ~= nil) and offset or 0   -- msgpack nil arrives as box.NULL
-    if end_key == nil and (limit == nil or limit > 0) and skip == 0 and not (unbounded and in_txn) then
-        local rows = idx:select(key, {iterator = it, limit = limit})
+    if after == box.NULL then after = nil end   -- (msgpack nil)
+    if after ~= nil then skip = 0 end   -- (the first page skipped them)
+    local max_bytes = M.cfg.scan_page_bytes
+    local n = limit
+    if n == nil or n > M.cfg.scan_page_rows then n = M.cfg.scan_page_rows end
+    if end_key == nil and n > 0 and skip == 0 and not (unbounded and in_txn) then
+        local rows = idx:select(key, {iterator = it, limit = n, after = after})
         yield_point('scan')
+        local bytes = 0
+        for i = 1, #rows do
+            bytes = bytes + rows[i]:bsize()
+            if bytes >= max_bytes and i < #rows then
+                for j = #rows, i + 1, -1 do rows[j] = nil end
+                return rows, idx:tuple_pos(rows[i])
+            end
+        end
+        if #rows == n and n ~= limit then return rows, idx:tuple_pos(rows[n]) end
         return rows
     end
-    local rows, seen = {}, 0
-    for _, t in idx:pairs(key, {iterator = it}) do
+    local rows, seen, bytes = {}, 0, 0
+    for _, t in idx:pairs(key, {iterator = it, after = after}) do
         seen = seen + 1
         -- Inside a transaction MVCC keeps the view consistent across yields:
         -- let other requests run during long scans.
         if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
+        if seen % 256 == 0 and PG.heap_low() then error(PG.OOM) end
         if end_key ~= nil then
             local c = kd:compare_with_key(t, end_key)
             if reverse then
@@ -1855,6 +1930,8 @@ function select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse
         else
             rows[#rows + 1] = t
             if limit ~= nil and #rows >= limit then break end
+            bytes = bytes + t:bsize()
+            if PG.full(#rows, bytes) then return rows, idx:tuple_pos(t) end
         end
     end
     return rows
@@ -1863,8 +1940,10 @@ end
 -- The holder of a W lock on what a tarn_select scan covered, a table when a
 -- W lock was there at some moment since history entry `since` (vinyl), or
 -- nil. Covered: from the start key to the end key, or to the last row
--- returned when the limit cut the scan short.
-local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
+-- returned when the limit or the page (`more`) cut the scan short. (A page
+-- that continues an earlier one is checked from the start key: more than
+-- it covered, which can only make it wait more.)
+local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since, more)
     if DDL_HELD[space_id] ~= nil then return DDL_HELD[space_id] end
     local lo, hi, h
     if (it == 'EQ' or it == 'REQ') and idx.unique and #key == #idx.parts then
@@ -1873,7 +1952,7 @@ local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_ke
     else
         local first = (#key > 0) and key or nil
         local last = end_key
-        if limit ~= nil and #rows >= limit and #rows > 0 then
+        if ((limit ~= nil and #rows >= limit) or more ~= nil) and #rows > 0 then
             last = kd:extract_key(rows[#rows]):totable()
         end
         if it == 'EQ' or it == 'REQ' then lo, hi = first, first
@@ -1889,24 +1968,24 @@ local function select_locked(space_id, index_id, idx, kd, it, key, limit, end_ke
 end
 
 -- The lock-checked scan of tarn_select (TarnCommit!SnapshotRead, RCRead):
--- {OK, rows} read in a state in which no prepared transaction W-locks what
--- they cover, or the conflict after waiting lock_wait.
-function select_checked(space, idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+-- {OK, rows[, position]} read in a state in which no prepared transaction
+-- W-locks what they cover, or the conflict after waiting lock_wait.
+function PG.checked(space, idx, kd, it, key, limit, end_key, end_incl, offset, reverse, after)
     local space_id, index_id = space.id, idx.id
     if space.engine == 'vinyl' and not box.is_in_txn() then
         return checked_read(
-            function() return select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse) end,
-            function(rows, since)
-                return select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since)
+            function() return PG.scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse, after) end,
+            function(rows, since, more)
+                return select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, since, more)
             end)
     end
     -- memtx: scan and check without a yield in between observe one state.
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
-        local rows = select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
-        if NLOCK == 0 and DDL_N == 0 then return {OK, rows} end
-        local h = select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, nil)
-        if h == nil then return {OK, rows} end
+        local rows, more = PG.scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse, after)
+        if NLOCK == 0 and DDL_N == 0 then return {OK, rows, more} end
+        local h = select_locked(space_id, index_id, idx, kd, it, key, limit, end_key, reverse, rows, nil, more)
+        if h == nil then return {OK, rows, more} end
         if clock.monotonic() > deadline then
             return conflict('row locked by prepared transaction ' .. h)
         end
@@ -1915,7 +1994,11 @@ function select_checked(space, idx, kd, it, key, limit, end_key, end_incl, offse
     end
 end
 
-function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin)
+-- tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl,
+-- lock_check, offset, begin, after): one page of the scan (see "Pages"),
+-- {'ok', tuples[, position]}; with a position, call again with it as
+-- `after` for the next page.
+function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin, after)
     -- First request of a stream: start the stream's transaction here (it
     -- stays open after the call because the request carries a stream id).
     if begin == true and not box.is_in_txn() then
@@ -1935,30 +2018,49 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     local kd = index_key_def(space_id, index_id)
     local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
     if lock_check ~= true then
-        return {OK, select_scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse)}
+        return {OK, PG.scan(idx, kd, it, key, limit, end_key, end_incl, offset, reverse, after)}
     end
-    return select_checked(space, idx, kd, it, key, limit, end_key, end_incl, offset, reverse)
+    return PG.checked(space, idx, kd, it, key, limit, end_key, end_incl, offset, reverse, after)
 end
+
+tarn_select = PG.bounded(tarn_select)
 
 -- Rows of several keys of one index in one call (issue #10: IN lists, ORs of
 -- equalities, row-value IN). For each key: the row with that key when it is
 -- a full key of a unique index, else every row whose index key starts with
 -- it (at most `limit` per key). Rows come back key by key. lock_check and
--- begin as in tarn_select.
-local function keys_scan(idx, keys, limit)
+-- begin as in tarn_select. One page at a time (see "Pages"): the reply
+-- {'ok', rows[, resume]} carries, when the page ended early, where the next
+-- call starts: resume = {i, position, n} continues with keys[i], after the
+-- row at `position` (box.NULL: from its first row), n of its rows returned
+-- already; pass it as `after`.
+local function keys_scan(idx, keys, limit, after)
     local in_txn = box.is_in_txn()
     local nparts = #idx.parts
-    local rows, n = {}, 0
-    for _, key in ipairs(keys) do
+    local rows, n, bytes = {}, 0, 0
+    local first, pos, done = 1, nil, 0
+    if after ~= nil and after ~= box.NULL then
+        first, done = after[1], after[3]
+        if after[2] ~= box.NULL then pos = after[2] end
+    end
+    for i = first, #keys do
+        local key = keys[i]
+        if PG.full(#rows, bytes) then return rows, {i, box.NULL, 0} end
         if idx.unique and #key == nparts then
             local t = idx:get(key)
-            if t ~= nil then rows[#rows + 1] = t end
+            if t ~= nil then
+                rows[#rows + 1] = t
+                bytes = bytes + t:bsize()
+            end
         else
-            local got = 0
-            for _, t in idx:pairs(key, {iterator = 'EQ'}) do
+            local got = (i == first) and done or 0
+            for _, t in idx:pairs(key, {iterator = 'EQ', after = (i == first) and pos or nil}) do
                 rows[#rows + 1] = t
                 got = got + 1
                 if limit ~= nil and got >= limit then break end
+                bytes = bytes + t:bsize()
+                if got % 256 == 0 and PG.heap_low() then error(PG.OOM) end
+                if PG.full(#rows, bytes) then return rows, {i, idx:tuple_pos(t), got} end
             end
         end
         n = n + 1
@@ -1988,7 +2090,7 @@ local function keys_locked(space_id, index_id, idx, kd, keys, since)
     return nil
 end
 
-function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
+function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin, after)
     if begin == true and not box.is_in_txn() then
         box.begin(BEGIN_STREAM)
         note_stream_term()
@@ -1998,19 +2100,20 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
-    if lock_check ~= true then return {OK, keys_scan(idx, keys, limit)} end
+    if lock_check ~= true then return {OK, keys_scan(idx, keys, limit, after)} end
+    -- (The lock check covers every key, also those of other pages.)
     if space.engine == 'vinyl' and not box.is_in_txn() then
         local kd = index_key_def(space_id, index_id)
         return checked_read(
-            function() return keys_scan(idx, keys, limit) end,
+            function() return keys_scan(idx, keys, limit, after) end,
             function(_, since) return keys_locked(space_id, index_id, idx, kd, keys, since) end)
     end
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
-        local rows = keys_scan(idx, keys, limit)
-        if NLOCK == 0 and DDL_N == 0 then return {OK, rows} end
+        local rows, more = keys_scan(idx, keys, limit, after)
+        if NLOCK == 0 and DDL_N == 0 then return {OK, rows, more} end
         local h = keys_locked(space_id, index_id, idx, nil, keys, nil)
-        if h == nil then return {OK, rows} end
+        if h == nil then return {OK, rows, more} end
         if clock.monotonic() > deadline then
             return conflict('row locked by prepared transaction ' .. h)
         end
@@ -2018,6 +2121,8 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin)
         M.unlock_cond:wait(0.01)
     end
 end
+
+tarn_select_keys = PG.bounded(tarn_select_keys)
 
 -- tarn_count: the number of rows a tarn_select scan (`key`, `iterator`,
 -- `end_key`, `end_incl`) would return that satisfy every residual predicate
@@ -2094,7 +2199,7 @@ end
 
 local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude)
     local in_txn = box.is_in_txn()
-    if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end   -- see select_scan
+    if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end   -- see PG.scan
     local n = 0
     if #preds == 0 and end_key == nil and (it == 'EQ' or it == 'ALL') then
         n = idx:count(key, {iterator = it})
@@ -2170,6 +2275,10 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
         M.unlock_cond:wait(0.01)
     end
 end
+
+-- (A count holds no rows; it fails with 1041 like a read if the heap runs
+-- out anyway.)
+tarn_count = PG.bounded(tarn_count)
 
 function tarn_read(space_id, index_id, key, iterator, limit, offset)
     return tarn_select(space_id, index_id, key, iterator, limit, nil, true, true, offset)

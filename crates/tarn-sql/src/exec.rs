@@ -14,7 +14,7 @@ use crate::txn::{
 };
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::Arc;
 use tarn_common::{Column, SqlError, SqlResult, Value};
@@ -29,16 +29,222 @@ pub fn need_txn() -> SqlError {
     SqlError::new(NEED_TXN, "HY000", "internal: statement needs a transaction")
 }
 
+/// Error code used internally to say "this READ COMMITTED read needs more
+/// than one storage page": the statement is read again in a snapshot (see
+/// [`committed_snapshot`]).
+const NEED_SNAPSHOT: u16 = 65001;
+
+fn need_snapshot() -> SqlError {
+    SqlError::new(NEED_SNAPSHOT, "HY000", "internal: read needs a snapshot")
+}
+
+/// Whether every page of a storage read is fetched, or only one (a read that
+/// has more fails with this error, and its statement reads differently).
+#[derive(Clone, Copy)]
+enum Pages {
+    All,
+    One(fn() -> SqlError),
+}
+
+/// What a read keeps of the stored rows of each page as they arrive, when
+/// the statement's WHERE (`filter`) is pushed down to it: the rows that
+/// satisfy it, leaving out first the stored versions of the rows the
+/// transaction wrote (`written`; the overlay replaces those, and WHERE
+/// must not see them). Each row is evaluated once, which matters for
+/// RAND() and for expressions that fail on some rows.
+#[derive(Clone, Copy)]
+struct Keep<'a, 'c> {
+    filter: Option<&'a Expr>,
+    cx: &'a EvalCtx<'c>,
+    t: &'a TableDef,
+    written: &'a BTreeSet<Bytes>,
+}
+
+impl Keep<'_, '_> {
+    fn extend(&self, out: &mut Vec<Row>, rows: Vec<Row>) -> SqlResult<()> {
+        match self.filter {
+            None => out.extend(rows),
+            Some(f) => {
+                for r in rows {
+                    if !self.written.is_empty() && self.written.contains(&crate::txn::key_bytes(&self.t.pk_key(&r))) {
+                        continue;
+                    }
+                    if f.eval_bool(&r, self.cx)? {
+                        out.push(r);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The rows one index scan kept, with how many it read and the last row it
+/// read (before `Keep` filtered them): what the scan covered.
+struct Scanned {
+    rows: Vec<Row>,
+    read: usize,
+    last: Option<Row>,
+}
+
+/// Every page of one index scan (`select_rows`) on one shard; in a stream,
+/// the first page begins its transaction if `begin`.
+#[allow(clippy::too_many_arguments)]
+async fn scan_pages(
+    client: &tarn_iproto::Client,
+    stream: u64,
+    mut begin: bool,
+    t: &TableDef,
+    index: u32,
+    c: &Call,
+    lock_check: bool,
+    pages: Pages,
+    keep: Keep<'_, '_>,
+) -> SqlResult<Scanned> {
+    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
+    let mut out = Scanned {
+        rows: Vec::new(),
+        read: 0,
+        last: None,
+    };
+    let mut after: Option<Vec<u8>> = None;
+    let mut left = c.limit;
+    loop {
+        let (rows, next) = select_rows(
+            client,
+            stream,
+            t,
+            index,
+            &c.key,
+            c.iter,
+            left,
+            end,
+            lock_check,
+            begin,
+            after.as_deref(),
+        )
+        .await?;
+        begin = false;
+        if let Some(l) = left.as_mut() {
+            *l = l.saturating_sub(rows.len() as u32);
+        }
+        out.read += rows.len();
+        if let Some(r) = rows.last() {
+            out.last = Some(r.clone());
+        }
+        keep.extend(&mut out.rows, rows)?;
+        match (next, pages) {
+            (None, _) => return Ok(out),
+            (Some(_), _) if left == Some(0) => return Ok(out),
+            (Some(_), Pages::One(e)) => return Err(e()),
+            (Some(n), Pages::All) => after = Some(n),
+        }
+    }
+}
+
+/// Every page of one multi-key read (`select_keys`) on one shard.
+#[allow(clippy::too_many_arguments)]
+async fn keys_pages(
+    client: &tarn_iproto::Client,
+    stream: u64,
+    mut begin: bool,
+    t: &TableDef,
+    index: u32,
+    keys: &[Vec<Value>],
+    limit: Option<u32>,
+    lock_check: bool,
+    pages: Pages,
+) -> SqlResult<Vec<Row>> {
+    let mut out = Vec::new();
+    let mut after: Option<Vec<u8>> = None;
+    loop {
+        let (rows, next) = select_keys(
+            client,
+            stream,
+            t,
+            index,
+            keys,
+            limit,
+            lock_check,
+            begin,
+            after.as_deref(),
+        )
+        .await?;
+        begin = false;
+        out.extend(rows);
+        match (next, pages) {
+            (None, _) => return Ok(out),
+            (Some(_), Pages::One(e)) => return Err(e()),
+            (Some(n), Pages::All) => after = Some(n),
+        }
+    }
+}
+
+impl ReadMode<'_> {
+    /// How many pages each storage read of this mode fetches.
+    fn pages(&self) -> Pages {
+        match self {
+            ReadMode::Auto { .. } => Pages::One(need_txn),
+            ReadMode::Statement(_) => Pages::One(need_snapshot),
+            ReadMode::Txn(_) | ReadMode::Committed(_) => Pages::All,
+        }
+    }
+}
+
+/// A READ COMMITTED SELECT that needs more than one storage page per read
+/// (issue #77), run again in a read-only serializable transaction that
+/// overlays `txn`'s buffered writes: the statement sees one state of the
+/// shards, as InnoDB's sees one read view, where page-by-page reads of the
+/// latest state could miss a row that moved within an index meanwhile, or
+/// return it twice. Its reads are validated when it ends, and it is retried
+/// after a conflict; under writes that keep changing what it reads it fails
+/// with 1213 after the retries, like an autocommit read.
+async fn committed_snapshot(
+    cluster: &Arc<Cluster>,
+    txn: &Txn,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
+    let mut attempt = 0;
+    loop {
+        let mut snap = Txn::new(cluster, false);
+        snap.writes = txn.writes.clone(); // overlaid, never written
+        let res = select_once(cluster, &mut ReadMode::Txn(&mut snap), p, cx).await;
+        snap.writes.clear();
+        let res = match res {
+            Ok(v) => snap.commit(cluster).await.map(|_| v),
+            Err(e) => {
+                snap.rollback(cluster);
+                Err(e)
+            }
+        };
+        match res {
+            Err(e) if e.code == 1213 && attempt < crate::session::MAX_RETRIES => {
+                attempt += 1;
+                cluster.stats.retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                crate::session::backoff(attempt).await;
+            }
+            other => return other,
+        }
+    }
+}
+
 pub enum ReadMode<'a> {
     /// Reads inside the transaction's streams (tracked, overlaid).
     Txn(&'a mut Txn),
-    /// One lock-aware autocommit read (TarnCommit!SnapshotRead).
+    /// One lock-aware autocommit read (TarnCommit!SnapshotRead): one storage
+    /// call returning one page; a longer read needs a transaction.
     Auto { calls: usize },
     /// READ COMMITTED (TarnCommit!RCRead): every storage read sees the latest
     /// committed state -- waiting out prepared transactions' W locks, as
     /// autocommit reads do -- and is neither tracked nor validated; the
-    /// transaction's own buffered writes are overlaid.
+    /// transaction's own buffered writes are overlaid. Reads go on page by
+    /// page (UPDATE and DELETE candidates, which are read again under
+    /// their locks).
     Committed(&'a mut Txn),
+    /// A READ COMMITTED SELECT: as `Committed`, but in one page per storage
+    /// read; one that needs more reads in a snapshot ([`committed_snapshot`]).
+    Statement(&'a mut Txn),
 }
 
 /// Convert a key value to the exact type stored in the index column, or
@@ -210,6 +416,7 @@ async fn fetch_keys(
         }
     }
     let mut rows = Vec::new();
+    let pages = mode.pages();
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += per_shard.len();
@@ -218,14 +425,14 @@ async fn fetch_keys(
             }
             for (s, ks) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                rows.extend(select_keys(&client, 0, t, idx.id, ks, limit, true, false).await?);
+                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages).await?);
             }
         }
-        ReadMode::Committed(_) => {
+        ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (s, ks) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                futs.push(async move { select_keys(&client, 0, t, idx.id, ks, limit, true, false).await });
+                futs.push(async move { keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages).await });
             }
             for r in futures::future::join_all(futs).await {
                 rows.extend(r?);
@@ -235,7 +442,9 @@ async fn fetch_keys(
             let mut futs = Vec::new();
             for (s, ks) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
-                futs.push(async move { select_keys(&st.client, st.id, t, idx.id, ks, limit, false, st.begin).await });
+                futs.push(
+                    async move { keys_pages(&st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages).await },
+                );
             }
             for r in futures::future::join_all(futs).await {
                 match r {
@@ -310,11 +519,14 @@ async fn fetch_stored(
     outer: &[Value],
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Vec<Row>> {
-    fetch_stored_from(cluster, mode, ta, outer, cx, None).await
+    fetch_stored_from(cluster, mode, ta, outer, cx, None, None).await
 }
 
 /// `fetch_stored`, but a range scan (a `Range` path or a single prefix)
-/// starts at `resume` (index key, inclusive?) instead of its lower bound.
+/// starts at `resume` (index key, inclusive?) instead of its lower bound,
+/// and the rows of its scans are kept only if they satisfy `filter`, page
+/// by page (the stored versions of rows the transaction wrote are dropped
+/// by the overlay anyway, so filtering them first changes nothing).
 async fn fetch_stored_from(
     cluster: &Arc<Cluster>,
     mode: &mut ReadMode<'_>,
@@ -322,6 +534,7 @@ async fn fetch_stored_from(
     outer: &[Value],
     cx: &EvalCtx<'_>,
     resume: Option<(&[Value], bool)>,
+    filter: Option<&Expr>,
 ) -> SqlResult<Vec<Row>> {
     let t = &ta.table;
     if t.is_virtual() {
@@ -418,42 +631,51 @@ async fn fetch_stored_from(
     }
     let index = path_index(&ta.path);
     let mut rows = Vec::new();
+    let mut read = 0;
+    let pages = mode.pages();
+    // (The rows this transaction wrote are left out before WHERE sees them.)
+    let written = match (&*mode, filter) {
+        (ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn), Some(_)) => txn.written_keys(t),
+        _ => BTreeSet::new(),
+    };
+    let keep = Keep {
+        filter,
+        cx,
+        t,
+        written: &written,
+    };
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += calls.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for c in calls {
+            for c in &calls {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                rows.extend(select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await?);
+                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep).await?;
+                read += s.read;
+                rows.extend(s.rows);
             }
         }
-        ReadMode::Committed(_) => {
+        ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for c in &calls {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                futs.push(async move {
-                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    select_rows(&client, 0, t, index, &c.key, c.iter, c.limit, end, true, false).await
-                });
+                futs.push(async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep).await });
             }
             for r in futures::future::join_all(futs).await {
-                rows.extend(r?);
+                let s = r?;
+                read += s.read;
+                rows.extend(s.rows);
             }
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
             for c in &calls {
                 let st = txn.stream(cluster, c.shard).await?;
-                futs.push(async move {
-                    let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    select_rows(
-                        &st.client, st.id, t, index, &c.key, c.iter, c.limit, end, false, st.begin,
-                    )
-                    .await
-                });
+                futs.push(
+                    async move { scan_pages(&st.client, st.id, st.begin, t, index, c, false, pages, keep).await },
+                );
             }
             let results = futures::future::join_all(futs).await;
             // A call that a limit cut short read its range only up to the
@@ -465,12 +687,14 @@ async fn fetch_stored_from(
             let mut read_to: Vec<Option<Vec<Value>>> = Vec::with_capacity(calls.len());
             for (r, c) in results.into_iter().zip(&calls) {
                 match r {
-                    Ok(v) => {
-                        read_to.push(match (c.limit, v.last()) {
-                            (Some(l), Some(last)) if v.len() >= l as usize => Some(t.index_key(idx, last)),
+                    Ok(s) => {
+                        // (What the scan read, before WHERE: what it covered.)
+                        read_to.push(match (c.limit, &s.last) {
+                            (Some(l), Some(last)) if s.read >= l as usize => Some(t.index_key(idx, last)),
                             _ => None,
                         });
-                        rows.extend(v)
+                        read += s.read;
+                        rows.extend(s.rows)
                     }
                     Err(e) => {
                         if e.code == 1213 {
@@ -501,11 +725,19 @@ async fn fetch_stored_from(
             }
         }
     }
-    cluster
-        .stats
-        .rows_read
-        .fetch_add(rows.len() as u64, AtomicOrdering::Relaxed);
+    cluster.stats.rows_read.fetch_add(read as u64, AtomicOrdering::Relaxed);
     Ok(rows)
+}
+
+/// Whether `fetch_stored_from` applies a filter to the rows of `path`:
+/// those read by index scans (`scan_pages`); other paths return their rows
+/// unfiltered.
+fn pushes_filter(path: &AccessPath) -> bool {
+    match path {
+        AccessPath::Range { .. } | AccessPath::Full => true,
+        AccessPath::Prefixes { keys, .. } => keys.len() == 1,
+        AccessPath::Point { .. } | AccessPath::Union(_) => false,
+    }
 }
 
 fn path_index(path: &AccessPath) -> u32 {
@@ -714,7 +946,7 @@ fn lower_end(r: &RangeRead) -> Option<(Vec<Value>, bool)> {
 
 fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
     match mode {
-        ReadMode::Txn(txn) | ReadMode::Committed(txn) => txn.overlay(t, rows),
+        ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) => txn.overlay(t, rows),
         ReadMode::Auto { .. } => rows,
     }
 }
@@ -1351,7 +1583,7 @@ async fn storage_count(
         }
     }
     let (mut n, written): (u64, Vec<(usize, Vec<Value>)>) = match mode {
-        ReadMode::Txn(txn) | ReadMode::Committed(txn) => {
+        ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) => {
             let mut mine = Vec::new();
             let mut n = 0;
             for (_, w) in txn
@@ -1394,7 +1626,7 @@ async fn storage_count(
                 n += count_rows(&client, 0, t, index, &c.key, c.iter, end, &preds, &[], true, false).await?;
             }
         }
-        ReadMode::Committed(_) => {
+        ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (c, ex) in calls.iter().zip(&excl) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
@@ -1456,6 +1688,21 @@ pub async fn run_select(
     p: &SelectPlan,
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Vec<Row>> {
+    match select_once(cluster, mode, p, cx).await {
+        Err(e) if e.code == NEED_SNAPSHOT => match mode {
+            ReadMode::Statement(txn) => committed_snapshot(cluster, txn, p, cx).await,
+            _ => Err(SqlError::internal("a read asked for a snapshot outside READ COMMITTED")),
+        },
+        other => other,
+    }
+}
+
+async fn select_once(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Row>> {
     if let Some(n) = storage_count(cluster, mode, p, cx).await? {
         let ap = p.agg.as_ref().expect("a count is an aggregate");
         let row: Row = ap.aggs.iter().map(|_| Value::Int(n as i64)).collect();
@@ -1464,16 +1711,32 @@ pub async fn run_select(
     if let Some(rows) = paged_select(cluster, mode, p, cx).await? {
         return Ok(rows);
     }
-    let mut rows = source_rows(cluster, mode, &p.source, cx).await?;
-    if let Some(f) = &p.filter {
+    let filter = |rows: Vec<Row>| -> SqlResult<Vec<Row>> {
+        let Some(f) = &p.filter else { return Ok(rows) };
         let mut kept = Vec::with_capacity(rows.len());
         for r in rows {
             if f.eval_bool(&r, cx)? {
                 kept.push(r);
             }
         }
-        rows = kept;
-    }
+        Ok(kept)
+    };
+    let rows = match &p.source {
+        // One table read by index scans: WHERE is applied to each page as it
+        // arrives, so a statement holds only the stored rows that match
+        // (issue #77); then to the rows the transaction wrote. Each row is
+        // evaluated once.
+        Source::Table(ta) if pushes_filter(&ta.path) && !ta.table.is_virtual() => {
+            let t = &ta.table;
+            let mut rows = fetch_stored_from(cluster, mode, ta, &[], cx, None, p.filter.as_ref()).await?;
+            if let ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) = mode {
+                rows = txn.unwritten(t, rows); // (without WHERE the scan kept them)
+                rows.extend(filter(txn.own_rows(t.space_id).cloned().collect())?);
+            }
+            rows
+        }
+        src => filter(source_rows(cluster, mode, src, cx).await?)?,
+    };
     finish_select(rows, p, cx)
 }
 
@@ -1514,7 +1777,9 @@ async fn paged_select(
             None => Ok(true),
         }
     };
-    let restart = matches!(mode, ReadMode::Committed(_));
+    // (A page longer than one storage page reads the statement in a
+    // snapshot instead: see `committed_snapshot`.)
+    let restart = matches!(mode, ReadMode::Committed(_) | ReadMode::Statement(_));
     let mut rows: Vec<Row> = Vec::new();
     let mut seen: HashSet<Bytes> = HashSet::new();
     // The first page is four times what LIMIT needs (WHERE may reject some
@@ -1540,7 +1805,7 @@ async fn paged_select(
             }
         }
     }
-    if let ReadMode::Txn(txn) | ReadMode::Committed(txn) = mode {
+    if let ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) = mode {
         for r in txn.own_rows(t.space_id) {
             if keep(r)? {
                 rows.push(r.clone());
@@ -2350,13 +2615,13 @@ impl Pager {
             ..self.ta.clone()
         };
         let resume = self.last.as_ref().map(|k| (k.as_slice(), !self.unique));
-        let rows = fetch_stored_from(cluster, mode, &page, &[], cx, resume).await?;
+        let rows = fetch_stored_from(cluster, mode, &page, &[], cx, resume, None).await?;
         if rows.len() < limit {
             self.done = true;
         }
         let t = &self.ta.table;
         let txn = match mode {
-            ReadMode::Txn(txn) | ReadMode::Committed(txn) => Some(&**txn),
+            ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) => Some(&**txn),
             ReadMode::Auto { .. } => None,
         };
         let mut out = Vec::with_capacity(rows.len());

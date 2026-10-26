@@ -106,7 +106,7 @@ fn client_collation_name(id: u8) -> Option<&'static str> {
     })
 }
 
-const MAX_RETRIES: usize = 20;
+pub(crate) const MAX_RETRIES: usize = 20;
 
 /// Statements that met a stale catalog: a table definition an ALTER TABLE
 /// replaced (1412; the shards refuse writes made with it while the ALTER
@@ -897,7 +897,7 @@ impl Session {
                 Ok(()) => {
                     let cx = self.cx(params, &now);
                     if txn.mode == TxnMode::ReadCommitted {
-                        let mut mode = ReadMode::Committed(&mut txn);
+                        let mut mode = ReadMode::Statement(&mut txn);
                         run_select(&self.cluster, &mut mode, p, &cx).await
                     } else {
                         let mut mode = ReadMode::Txn(&mut txn);
@@ -913,7 +913,7 @@ impl Session {
             let mut txn = self.new_txn(false);
             let rows = {
                 let cx = self.cx(params, &now);
-                let mut mode = ReadMode::Committed(&mut txn);
+                let mut mode = ReadMode::Statement(&mut txn);
                 run_select(&self.cluster, &mut mode, p, &cx).await?
             };
             self.found_rows = rows.len() as u64;
@@ -1572,7 +1572,7 @@ impl Session {
             }
         } else {
             let st = txn.stream(&self.cluster, shard).await?;
-            let rows = select_rows(
+            let (rows, _) = select_rows(
                 &st.client,
                 st.id,
                 &g.table,
@@ -1583,6 +1583,7 @@ impl Session {
                 None,
                 false,
                 st.begin,
+                None,
             )
             .await?;
             txn.mark_begun(shard);
@@ -1616,7 +1617,20 @@ impl Session {
             return Ok(b.cloned());
         }
         let st = txn.stream(&self.cluster, shard).await?;
-        let rows = select_rows(&st.client, st.id, t, 0, pk, Iter::Eq, Some(1), None, false, st.begin).await?;
+        let (rows, _) = select_rows(
+            &st.client,
+            st.id,
+            t,
+            0,
+            pk,
+            Iter::Eq,
+            Some(1),
+            None,
+            false,
+            st.begin,
+            None,
+        )
+        .await?;
         txn.mark_begun(shard);
         txn.note_point(shard, t.space_id, 0, pk.to_vec());
         Ok(rows.into_iter().next())
@@ -1637,7 +1651,7 @@ impl Session {
                 let selected = match &p.source {
                     InsertSource::Select(sp, _) => {
                         if txn.mode == TxnMode::ReadCommitted {
-                            let mut mode = ReadMode::Committed(txn);
+                            let mut mode = ReadMode::Statement(txn);
                             Some(run_select(&self.cluster, &mut mode, sp, &cx).await?)
                         } else {
                             let mut mode = ReadMode::Txn(txn);
@@ -1948,11 +1962,12 @@ impl Session {
                     None,
                     false,
                     st.begin,
+                    None,
                 )
             });
             let results = futures::future::join_all(futs).await;
             for ((l, _), r) in pending.into_iter().zip(results) {
-                let r = r?;
+                let (r, _) = r?;
                 txn.mark_begun(l.2);
                 txn.note_point(l.2, t.space_id, l.3, l.4.clone());
                 place(&mut out, l.0, l.1, r.into_iter().next());
@@ -2026,8 +2041,20 @@ impl Session {
                 let st = txn.stream(&self.cluster, shard).await?;
                 let key = key_of(i);
                 let id = t.indexes[i].id;
-                let rows =
-                    select_rows(&st.client, st.id, t, id, &key, Iter::Eq, Some(1), None, false, st.begin).await?;
+                let (rows, _) = select_rows(
+                    &st.client,
+                    st.id,
+                    t,
+                    id,
+                    &key,
+                    Iter::Eq,
+                    Some(1),
+                    None,
+                    false,
+                    st.begin,
+                    None,
+                )
+                .await?;
                 txn.mark_begun(shard);
                 txn.note_point(shard, t.space_id, id, key);
                 stored.push(rows.into_iter().next());
@@ -2771,7 +2798,7 @@ fn current_conflicts(
     (pk_row, uniq)
 }
 
-async fn backoff(attempt: usize) {
+pub(crate) async fn backoff(attempt: usize) {
     let base = 200u64 << attempt.min(6);
     let jitter = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

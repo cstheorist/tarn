@@ -257,6 +257,56 @@ class T:
         self.check(err_code(lambda: q(a, "COMMIT")) is None, "commit")
         self.check(q(c, "SELECT COUNT(*) FROM rcn WHERE g = 1 AND f = 0")[0][0] == 11, "committed count")
 
+    def test_long_read_one_state(self):
+        # Issue #77: storage returns a long read a page at a time. A READ
+        # COMMITTED SELECT that needs several pages reads them in one state,
+        # as InnoDB's statement reads one view: a row another transaction
+        # moves within the index meanwhile is neither missed nor returned
+        # twice (page by page from the latest state, it could be either).
+        n = 12000
+        c = self.fresh("mv", "CREATE TABLE mv (id INT PRIMARY KEY, k INT NOT NULL, KEY (k))", [])
+        for lo in range(0, n, 1000):
+            q(c, "INSERT INTO mv VALUES " + ", ".join(f"({i}, {i})" for i in range(lo, lo + 1000)))
+        stop, moved = [False], [0]
+
+        def writer():
+            w, rnd = connect(self.args.tarn), random.Random(77)
+            while not stop[0]:
+                i = rnd.randrange(n)
+                # to the other end of the index, past the rows a scan has yet to read or behind it
+                q(w, "UPDATE mv SET k = IF(k < %s, k + %s, k - %s) WHERE id = %s", (n, 2 * n, 2 * n, i))
+                moved[0] += 1
+                time.sleep(0.1)   # (each move makes the reads that met it retry)
+
+        th = threading.Thread(target=writer, daemon=True)
+        th.start()
+        a = self.rc(autocommit=False)
+        ok = conflicts = 0
+        t0 = time.time()
+        while (time.time() - t0 < 8 or ok < 3) and time.time() - t0 < 60:
+            try:
+                ids = [r[0] for r in q(a, "SELECT id FROM mv WHERE k >= 0 ORDER BY k")]
+                q(a, "COMMIT")
+            except pymysql.MySQLError as e:
+                if e.args[0] != DEADLOCK:
+                    raise
+                conflicts += 1
+                continue
+            ok += 1
+            if not self.check(len(ids) == n and len(set(ids)) == n,
+                              f"a long read returns every row once: {len(ids)} rows, {len(set(ids))} distinct"):
+                break
+        stop[0] = True
+        th.join(10)
+        self.check(ok >= 3 and moved[0] > 20, f"reads ({ok}, {conflicts} conflicts) while rows moved ({moved[0]})")
+        # The transaction's own writes are overlaid on the snapshot.
+        q(a, "BEGIN")
+        q(a, "UPDATE mv SET k = -1 WHERE id = 5")
+        q(a, "INSERT INTO mv VALUES (%s, 0)", (n,))
+        ids = [r[0] for r in q(a, "SELECT id FROM mv WHERE k >= 0")]
+        self.check(len(ids) == n and 5 not in ids and n in ids, "... with the transaction's own writes")
+        q(a, "ROLLBACK")
+
     def test_counter_concurrent(self):
         n = 6
         self.fresh("ctr", "CREATE TABLE ctr (id INT PRIMARY KEY, n BIGINT)", [f"({i}, 10000)" for i in range(1, n + 1)])

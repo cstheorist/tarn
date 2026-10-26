@@ -237,6 +237,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with 1846 before publishing the index; empty tables, physically present
   fields and NULL fills remain supported. Automatic backfill is not yet
   implemented. Vinyl builds that need this check run behind the write fence.
+- A large scan no longer kills a storage node. A read returned its whole
+  range in one reply, held in the node's Lua heap, so reads of millions of
+  rows (an unindexed `WHERE` over a big table) took the heap to Tarantool's
+  Lua memory limit, and the node then exited with a Lua panic. Reads now
+  return at most 4096 rows or 4 MiB per call and the SQL server continues
+  after the last one, applying a single-table `WHERE` page by page; a read
+  that finds the node's Lua heap nearly full fails with 1041 and the node
+  stays up ([#77](https://github.com/cstheorist/tarn/issues/77)).
+  Autocommit reads that need more than one page run as implicit read-only
+  transactions, and a READ COMMITTED `SELECT` that does reads in one
+  read-only snapshot overlaid with its transaction's writes, so that rows
+  moved within an index meanwhile are neither missed nor returned twice.
+  Both may therefore fail with 1213 (after 20 retries) when writes keep
+  changing what they read, which rolls back the READ COMMITTED transaction
+  as any 1213 does; short reads are unchanged.
 - `SET @var = literal` after a leading `--`, `#` or `/* ... */` comment
   failed with 1064 because literal normalization turned the value into an
   unbound placeholder ([#71](https://github.com/cstheorist/tarn/issues/71)).

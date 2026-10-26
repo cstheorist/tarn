@@ -607,6 +607,28 @@ impl Txn {
             .filter_map(|(_, w)| w.row.as_ref())
     }
 
+    /// Primary keys (`key_bytes`) of the rows of `t` this transaction wrote:
+    /// their stored versions are not its to read.
+    pub fn written_keys(&self, t: &TableDef) -> BTreeSet<Bytes> {
+        self.writes
+            .range((t.space_id, Bytes::new())..)
+            .take_while(|((s, _), _)| *s == t.space_id)
+            .map(|(_, w)| key_bytes(&w.pk))
+            .collect()
+    }
+
+    /// The stored rows of `rows` (of `t`) this transaction has not written:
+    /// [`Txn::overlay`] without the rows it adds.
+    pub fn unwritten(&self, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
+        let written = self.written_keys(t);
+        if written.is_empty() {
+            return rows;
+        }
+        rows.into_iter()
+            .filter(|r| !written.contains(&key_bytes(&t.pk_key(r))))
+            .collect()
+    }
+
     /// Apply this transaction's writes to rows read from storage for table
     /// `t`: drop rows it overwrote/deleted, add every live row it wrote.
     /// Callers re-check predicates, so including extra rows is harmless.
@@ -1088,9 +1110,36 @@ pub async fn resolve(
     Err(SqlError::internal("could not resolve transaction"))
 }
 
+/// The most rows one storage read returns (`scan_page_rows` of lua/tarn.lua;
+/// a page also ends at `scan_page_bytes`). A longer read continues where
+/// the page ended (issue #77).
+pub const PAGE_ROWS: u32 = 4096;
+
+/// One page of a storage read: its rows and, when the read goes on, where
+/// the next page starts (an opaque MessagePack value, passed back as is).
+pub type Page = (Vec<Row>, Option<Vec<u8>>);
+
+/// The rows of a `{'ok', rows[, next]}` reply.
+fn page_of(d: &Bytes, t: &TableDef) -> SqlResult<Page> {
+    let (_, rd) = lua_status(d)?;
+    let mut rd = Rd::shared_at(d, rd);
+    let n = rd.array()?;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(rd.row_of(t)?);
+    }
+    let next = if rd.buf.is_empty() || rd.is_nil() {
+        None
+    } else {
+        Some(rd.raw_value()?.to_vec())
+    };
+    Ok((out, next))
+}
+
 /// Rows of several index keys in one call (`tarn_select_keys`): for each key,
 /// the row with that full unique key, or every row whose index key starts
-/// with it (at most `limit` per key); rows come back key by key.
+/// with it (at most `limit` per key); rows come back key by key. One page,
+/// from `after` (the `next` of the page before) when given.
 #[allow(clippy::too_many_arguments)]
 pub async fn select_keys(
     client: &Client,
@@ -1101,9 +1150,13 @@ pub async fn select_keys(
     limit: Option<u32>,
     lock_check: bool,
     begin: bool,
-) -> SqlResult<Vec<Row>> {
+    after: Option<&[u8]>,
+) -> SqlResult<Page> {
     let mut m = Mp::new();
-    m.arr(6).uint(t.space_id as u64).uint(index as u64).arr(keys.len());
+    m.arr(if after.is_some() { 7 } else { 6 })
+        .uint(t.space_id as u64)
+        .uint(index as u64)
+        .arr(keys.len());
     for k in keys {
         m.vals(k);
     }
@@ -1112,19 +1165,15 @@ pub async fn select_keys(
         None => m.nil(),
     };
     m.bool(lock_check).bool(begin);
+    if let Some(a) = after {
+        m.raw(a);
+    }
     let r = client
         .call(stream, "tarn_select_keys", &m.0)
         .await
         .map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
-    let (_, rd) = lua_status(&d)?;
-    let mut rd = Rd::shared_at(&d, rd);
-    let n = rd.array()?;
-    let mut out = Vec::with_capacity(n);
-    for _ in 0..n {
-        out.push(rd.row_of(t)?);
-    }
-    Ok(out)
+    page_of(&d, t)
 }
 
 /// A predicate a shard evaluates on stored tuples while counting
@@ -1202,7 +1251,8 @@ pub async fn count_rows(
 }
 
 /// Read rows of `t` from one shard, optionally inside a stream.
-/// `key`/`iter`/`end` describe a bounded index scan (see tarn_select).
+/// `key`/`iter`/`end` describe a bounded index scan (see tarn_select). One
+/// page, from `after` (the `next` of the page before) when given.
 #[allow(clippy::too_many_arguments)]
 pub async fn select_rows(
     client: &Client,
@@ -1215,28 +1265,42 @@ pub async fn select_rows(
     end: Option<(&[Value], bool)>,
     lock_check: bool,
     begin: bool,
-) -> SqlResult<Vec<Row>> {
+    after: Option<&[u8]>,
+) -> SqlResult<Page> {
     // Unbounded point/prefix lookups inside a running stream transaction use
-    // plain IPROTO SELECT.
-    if end.is_none() && !lock_check && !begin {
+    // plain IPROTO SELECT; a full page goes on after its last tuple (which
+    // tarn_select takes as a position too).
+    if end.is_none() && !lock_check && !begin && after.is_none() {
         let mut k = Mp::new();
         k.vals(key);
+        let n = limit.unwrap_or(u32::MAX).min(PAGE_ROWS);
         let r = client
-            .select(stream, t.space_id, index, iter, 0, limit.unwrap_or(u32::MAX), &k.0)
+            .select(stream, t.space_id, index, iter, 0, n, &k.0)
             .await
             .map_err(from_iproto_read)?;
-        let mut out = Vec::new();
-        for tup in r.tuples().map_err(crate::mpw::proto)? {
-            out.push(Rd::shared(&tup).row_of(t)?);
+        let tuples = r.tuples().map_err(crate::mpw::proto)?;
+        let mut out = Vec::with_capacity(tuples.len());
+        for tup in &tuples {
+            out.push(Rd::shared(tup).row_of(t)?);
         }
-        return Ok(out);
+        let next = match tuples.last() {
+            Some(last) if tuples.len() == n as usize && Some(n) != limit => Some(last.to_vec()),
+            _ => None,
+        };
+        return Ok((out, next));
     }
     let mut m = Mp::new();
-    m.arr(if begin { 10 } else { 8 })
-        .uint(t.space_id as u64)
-        .uint(index as u64)
-        .vals(key)
-        .uint(iter as u64);
+    m.arr(if after.is_some() {
+        11
+    } else if begin {
+        10
+    } else {
+        8
+    })
+    .uint(t.space_id as u64)
+    .uint(index as u64)
+    .vals(key)
+    .uint(iter as u64);
     match limit {
         Some(l) => m.uint(l as u64),
         None => m.nil(),
@@ -1250,22 +1314,18 @@ pub async fn select_rows(
         }
     }
     m.bool(lock_check);
-    if begin {
-        m.nil().bool(true); // offset, begin
+    if begin || after.is_some() {
+        m.nil().bool(begin); // offset, begin
+    }
+    if let Some(a) = after {
+        m.raw(a);
     }
     let r = client
         .call(stream, "tarn_select", &m.0)
         .await
         .map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
-    let (_, rd) = lua_status(&d)?;
-    let mut rd = Rd::shared_at(&d, rd);
-    let n = rd.array()?;
-    let mut out = Vec::with_capacity(n);
-    for _ in 0..n {
-        out.push(rd.row_of(t)?);
-    }
-    Ok(out)
+    page_of(&d, t)
 }
 
 #[cfg(test)]
