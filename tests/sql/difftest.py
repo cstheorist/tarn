@@ -948,7 +948,7 @@ CASES = [
     ("SELECT id FROM nu WHERE e IS NULL AND id = 3", "q"),
     ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL AND id = 3", "q"),
     ("UPDATE nu SET f = 9 WHERE e IS NULL", "dml:nu"),
-    ("DELETE FROM nu WHERE e IS NULL AND f = 9 LIMIT 1", "dml:nu"),
+    ("DELETE FROM nu WHERE e IS NULL AND f = 9 ORDER BY id LIMIT 1", "dml:nu"),
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
      "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
