@@ -465,6 +465,11 @@ CASES = [
     ("ALTER TABLE al ADD UNIQUE KEY ua (a, id), ADD INDEX ic (c)", "ddl:al"),
     ("ALTER TABLE al DROP INDEX ka, RENAME INDEX ic TO ic2", "ddl:al"),
     ("ALTER TABLE al ADD INDEX ic2 (n)", "err"),
+    # Indexing a non-NULL instant fill requires physically present fields
+    # (#70; refusal cases live in ddltest). Real changes materialize them;
+    # UPDATE n=n alone is deliberately a no-op.
+    ("UPDATE al SET n = n + 1", "dml:al"),
+    ("UPDATE al SET n = n - 1", "dml:al"),
     ("CREATE INDEX ia ON al (a, n)", "ddl:al"),
     ("ALTER TABLE al DROP COLUMN n", "ddl:al"),
     ("DROP INDEX ia ON al", "ddl:al"),
@@ -529,7 +534,12 @@ CASES = [
     ("REPLACE INTO nk VALUES ('a', 1)", "dml:nk"),
     ("SELECT msg, COUNT(*) FROM nk GROUP BY msg", "q"),
     ("SELECT DB_ROW_ID FROM nk", "err"),
-    ("ALTER TABLE nk ADD COLUMN z INT DEFAULT 3, ADD INDEX kz (z)", "ddl:nk"),
+    ("ALTER TABLE nk ADD COLUMN z INT DEFAULT 3", "ddl:nk"),
+    ("UPDATE nk SET z = 4", "dml:nk"),
+    ("UPDATE nk SET z = 3", "dml:nk"),
+    ("ALTER TABLE nk ADD INDEX kz (z)", "ddl:nk"),
+    ("SELECT msg, n, z FROM nk WHERE z = 3", "q"),
+    ("SELECT COUNT(*) FROM nk WHERE z = 3", "q"),
     ("ALTER TABLE nk DROP COLUMN msg", "ddl:nk"),
     ("ALTER TABLE nk DROP COLUMN n, DROP COLUMN z", "err"),
     ("CREATE TABLE rid (DB_ROW_ID INT)", "err"),

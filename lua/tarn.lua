@@ -3108,6 +3108,7 @@ end
 --   {field, column, 'chars', n}        <= n characters    (else 1265)
 --   {field, column, 'range', lo, hi}   integer in range   (else 1264)
 --   {field, column, 'digits', n}       decimal with <= n digits before the point (else 1264)
+--   {field, column, 'indexed'}        field is physically present (else 1846)
 -- with the column's fill value as the 6th element: the value of rows whose
 -- tuple ends before the field.
 local function check_value(c, v)
@@ -3132,6 +3133,11 @@ local function run_checks(sp, checks)
     for _, t in sp.index[0]:pairs() do
         n = n + 1
         for _, c in ipairs(checks) do
+            if c[3] == 'indexed' and #t < c[1] then
+                return {'error', 1846, string.format(
+                    "Indexing column '%s' is not supported while existing rows omit its non-NULL fill "
+                    .. "(row %d). The stored field must be materialized before adding the index", c[2], n)}
+            end
             local v
             if #t < c[1] then v = c[6] else v = t[c[1]] end
             local code = check_value(c, v)
@@ -3186,6 +3192,13 @@ function tarn_alter_build(name, a)
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     if catalog_ver(sp.name) >= a.ver or sp.engine ~= 'vinyl' then return {OK} end
+    -- An instant-ADD field may be missing in old tuples. Check it only after
+    -- PREPARE fences and drains old-layout writes, then build behind that fence.
+    if a.checks ~= nil and a.checks ~= box.NULL then
+        for _, c in ipairs(a.checks) do
+            if c[3] == 'indexed' then return {OK} end
+        end
+    end
     local bad = build_indexes(sp, a.builds)
     if bad then
         drop_built(sp, a.builds)
