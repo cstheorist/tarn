@@ -253,13 +253,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- An index's `COMMENT` (in `CREATE TABLE`, `ALTER TABLE ... ADD INDEX` and
-  `CREATE INDEX`) is stored with the index, kept by `ALTER TABLE`, and
-  shown by `SHOW CREATE TABLE` and in `SHOW INDEX`'s `Index_comment`, so a
-  dump and reload keeps it. It was accepted and dropped
-  ([#80](https://github.com/cstheorist/tarn/issues/80)). `SHOW CREATE TABLE`
-  now also doubles backslashes in comments and defaults, as MariaDB does,
-  so that its output reloads to the same strings.
 - New indexes on instant-added columns could miss old rows or accept
   duplicate logical keys: short tuples omit the column's non-NULL fill,
   which a native index reads as NULL
@@ -359,6 +352,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   was negative. Arithmetic on an unsigned integer now fails with 1690 below
   zero and BIGINT overflow with 1690, as in MySQL
   ([#11](https://github.com/cstheorist/tarn/issues/11)).
+
+- An index's `COMMENT` (in `CREATE TABLE`, `ALTER TABLE ... ADD INDEX` and
+  `CREATE INDEX`) is stored, kept by `ALTER TABLE`, and shown by
+  `SHOW CREATE TABLE` and `SHOW INDEX`, so dump/reload preserves it
+  ([#80](https://github.com/cstheorist/tarn/issues/80)). `CREATE INDEX`
+  decodes MySQL string escapes; `SHOW CREATE TABLE` escapes quotes,
+  backslashes, NUL, newline and carriage return as MariaDB does.
 
 ## [0.1.0] - 2026-10-25
 
