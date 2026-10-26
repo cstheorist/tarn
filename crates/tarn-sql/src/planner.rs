@@ -1956,7 +1956,9 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
 
     // FROM: access paths. A single-table read with LIMIT prefers an index
     // that returns rows in ORDER BY order (the executor then pages through
-    // it and stops early).
+    // it and stops early); when another index fixes a longer prefix, the
+    // plan keeps the ordered range too, for the executor to choose between
+    // them by row counts (issue #81).
     let order_cols: Vec<(usize, bool)> =
         if scope.tables.len() == 1 && limit.is_some() && !aggregated && sel.distinct.is_none() {
             order

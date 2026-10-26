@@ -148,6 +148,18 @@ implicit read-only transaction, as one that needs several shards does. A
 READ COMMITTED SELECT that needs more than one page reads in a read-only
 serializable transaction overlaid with its transaction's writes (§2.9).
 
+**Ordered pages or a longer prefix.** When a single-table `SELECT ...
+ORDER BY ... LIMIT n` could read either a range with a longer equality
+prefix (read whole, then sorted) or a range of an index that follows
+`ORDER BY` (paged until `n` + `OFFSET` rows qualify), the SQL server asks
+the shard both prefixes route to for their row counts first
+(`tarn_estimate`, issue #81) and pages when `want * n_ordered / n_prefix <
+n_prefix`. Memtx counts both in its indexes; vinyl, whose counts scan,
+takes the index size for the ordered range and counts the prefix only up
+to where the answer is certain, and not at all past one page. The counts
+are no reads of the transaction: WHERE filters either path, so they change
+how many rows are read, never which rows qualify.
+
 Conflicts surface as MySQL error 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE 40001),
 which clients already treat as "retry the transaction". Autocommit statements
 are retried transparently (up to 20 times with backoff). A shard leader

@@ -241,7 +241,8 @@ st:rollback()
 print('row counts for the access path (issue #81)')
 got = c[1]:call('tarn_estimate', {sid, 2, {9}, 0, {}, 51})
 check('memtx counts both prefixes in its indexes',
-      got[1] == 'ok' and got[2] == #c[1].space['test.acct'].index[2]:select({9}) and got[3] == c[1]:eval('return box.space[...]:count()', {sid}), got)
+      got[1] == 'ok' and got[2] == #c[1].space['test.acct'].index[2]:select({9})
+      and got[3] == c[1]:eval('return box.space[...]:count()', {sid}), got)
 got = c[1]:call('tarn_estimate', {sid, 2, {12345}, 0, {301}, 51})
 check('an empty prefix counts 0', got[1] == 'ok' and got[2] == 0 and got[3] == 1, got)
 
@@ -1048,6 +1049,8 @@ local vn = c[1]:eval('return box.space["test.vy"].index[0]:len()')
 local vb = c[1]:eval('return box.space["test.vy"].index[2]:count({1})')
 check('vinyl counts a prefix up to where paging the other is sure to read fewer rows',
       rr[1] == 'ok' and rr[2] == math.min(vb, math.floor(math.sqrt(vn)) + 1) and rr[3] == vn, {rr, vn, vb})
+rr = c[1]:call('tarn_estimate', {vsid, 2, {1}, 0, {}, 2^62})
+check('... and not past one page: the plan stays', rr[1] == 'ok' and rr[2] == 0 and rr[3] == vn, rr)
 local svc = c[1]:new_stream()
 rr = svc:call('tarn_count', {vsid, 0, {}, 'ALL', box.NULL, true, {}, {{9}, {2}, {777}}, false, true})
 check('a vinyl count in a stream leaves out the rows the caller wrote', rr[1] == 'ok' and rr[2] == n0 - 1, {rr, n0})

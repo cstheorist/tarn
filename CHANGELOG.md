@@ -16,7 +16,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ordered index when about `want * n_ordered / n_prefix` rows are fewer than
   `n_prefix` ([#81](https://github.com/cstheorist/tarn/issues/81)). On an
   orders-list benchmark the open-orders page of a tenant with 300,000 rows
-  reads about 200 rows instead of 113,597. `SHOW STATUS` reports
+  reads 204 rows instead of 112,726. `SHOW STATUS` reports
   `Tarn_path_estimates`.
 
 - Unique keys that do not contain the shard key
