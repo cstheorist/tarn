@@ -167,7 +167,7 @@ impl JobKind {
             JobKind::Drop => "DROP TABLE",
             JobKind::Truncate => "TRUNCATE",
             JobKind::Move => "TARN MOVE BUCKET",
-            JobKind::Members => "TARN ADD SHARD",
+            JobKind::Members => "TARN ADD SHARD / REMOVE SHARD",
         }
     }
 }
@@ -861,10 +861,14 @@ impl Cluster {
             members_ver: AtomicU64::new(0),
             members_mu: tokio::sync::Mutex::new(()),
         });
-        for s in &c.shards {
-            s.client(&c).await?;
-        }
+        // The first shard (jobs, catalog) must answer, and every shard in
+        // the cluster; one of the configuration that left the cluster need
+        // not (the membership the others keep says it left).
+        c.shards[0].client(&c).await?;
         c.load_members().await?;
+        for i in c.live_shards().collect::<Vec<_>>() {
+            c.shards[i].client(&c).await?;
+        }
         c.reload_buckets().await?;
         if let Some(n) = c.cfg.bucket_count {
             let count = c.bucket_map().count;
@@ -904,7 +908,7 @@ impl Cluster {
                     tokio::time::sleep(every).await;
                     let Some(c) = weak.upgrade() else { break };
                     // (shards may join a cluster of one)
-                    if c.nshards() > 1 {
+                    if c.nlive() > 1 {
                         detect_deadlocks(&c).await;
                     }
                 }
@@ -938,8 +942,20 @@ impl Cluster {
         }
     }
 
+    /// The number of shard positions (`shards`), removed shards included.
     pub fn nshards(&self) -> usize {
         self.shards.len()
+    }
+
+    /// The positions of the shards in the cluster (not removed): those a
+    /// read of every shard reads, and a schema change acts on.
+    pub fn live_shards(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.shards.len()).filter(move |&i| !self.shards[i].removed())
+    }
+
+    /// The number of shards in the cluster.
+    pub fn nlive(&self) -> usize {
+        self.live_shards().count()
     }
 
     /// Register a row-lock request of `txid` that may wait on `shard`, for
@@ -1092,9 +1108,16 @@ impl Cluster {
         }
     }
 
-    pub async fn call_all(&self, func: &str, args: &[u8]) -> SqlResult<Vec<Bytes>> {
-        let futs = (0..self.shards.len()).map(|i| self.call(i, func, args));
-        futures::future::try_join_all(futs).await
+    /// CALL `func` on every shard in the cluster: the replies by position
+    /// (None for a removed shard).
+    pub async fn call_all(&self, func: &str, args: &[u8]) -> SqlResult<Vec<Option<Bytes>>> {
+        let live: Vec<usize> = self.live_shards().collect();
+        let replies = futures::future::try_join_all(live.iter().map(|&i| self.call(i, func, args))).await?;
+        let mut out = vec![None; self.shards.len()];
+        for (i, d) in live.into_iter().zip(replies) {
+            out[i] = Some(d);
+        }
+        Ok(out)
     }
 
     async fn catalog_version(&self) -> SqlResult<u64> {
@@ -1795,7 +1818,8 @@ impl Cluster {
         call.arr(3).str(&job.space);
         call.0.extend_from_slice(&job.args);
         call.uint(job.gen);
-        let n = self.shards.len();
+        // (every shard in the cluster; the first shard is never removed)
+        let live: Vec<usize> = self.live_shards().collect();
         let step = |i: usize, proc: String| {
             let call = &call;
             async move {
@@ -1808,7 +1832,7 @@ impl Cluster {
         let mut phase = job.phase.as_str();
         if phase == "prepare" || phase == "run" {
             if job.kind == JobKind::Alter {
-                for r in futures::future::join_all((0..n).map(|i| step(i, job.kind.proc("build")))).await {
+                for r in futures::future::join_all(live.iter().map(|&i| step(i, job.kind.proc("build")))).await {
                     match r {
                         Ok(_) => {}
                         // a storage node from before BUILD existed: its PREPARE builds them
@@ -1821,7 +1845,7 @@ impl Cluster {
             }
             let mut applied = false;
             if failed.is_none() {
-                for r in futures::future::join_all((0..n).map(|i| step(i, job.kind.proc("prepare")))).await {
+                for r in futures::future::join_all(live.iter().map(|&i| step(i, job.kind.proc("prepare")))).await {
                     match r {
                         Ok(d) => applied |= applied_reply(&d),
                         Err(e) => {
@@ -1841,7 +1865,7 @@ impl Cluster {
             self.job_phase(job, phase).await?;
         }
         if phase == "abort" {
-            for r in futures::future::join_all((0..n).map(|i| step(i, job.kind.proc("abort")))).await {
+            for r in futures::future::join_all(live.iter().map(|&i| step(i, job.kind.proc("abort")))).await {
                 if let Err(e) = r {
                     // The job stays: whoever finishes it aborts again.
                     tracing::warn!("{} of {}: abort: {}", job.kind.statement(), job.space, e);
@@ -1859,10 +1883,10 @@ impl Cluster {
         }
         // CREATE TABLE names the table in the first shard's catalog, which
         // the SQL servers read, last.
-        let groups: Vec<Vec<usize>> = if job.kind == JobKind::Create && n > 1 {
-            vec![(1..n).collect(), vec![0]]
+        let groups: Vec<Vec<usize>> = if job.kind == JobKind::Create && live.len() > 1 {
+            vec![live.iter().copied().filter(|&i| i != 0).collect(), vec![0]]
         } else {
-            vec![(0..n).collect()]
+            vec![live.clone()]
         };
         for g in groups {
             for r in futures::future::join_all(g.iter().map(|&i| step(i, job.kind.proc("apply")))).await {
@@ -1906,7 +1930,7 @@ impl Cluster {
         const PAGE: u32 = 1000;
         // per global index and target shard: (entry, the row's key values shown in 1062)
         let mut pending: Vec<HashMap<usize, Vec<(Vec<Value>, String)>>> = vec![HashMap::new(); globals.len()];
-        for shard in 0..self.shards.len() {
+        for shard in self.live_shards().collect::<Vec<_>>() {
             let client = self.shards[shard].client(self).await?;
             let mut after: Option<Vec<Value>> = None;
             loop {
@@ -1998,7 +2022,7 @@ impl Cluster {
         let mut floor = ch.auto_increment.map(|n| n.saturating_sub(1)).unwrap_or(0);
         if let Some(ix) = ch.auto_inc_from {
             let ai = t.auto_inc.unwrap();
-            for i in 0..self.shards.len() {
+            for i in self.live_shards().collect::<Vec<_>>() {
                 let c = self.shards[i].client(self).await?;
                 let r = c
                     .select(0, t.space_id, ix, tarn_iproto::Iter::Le, 0, 1, &[0x90])

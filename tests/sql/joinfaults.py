@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """A TARN ADD SHARD whose SQL server dies (issue #25) is finished by another
-server: given up when it died before the shard joined, finished when after.
-Run by tests/joinfaults.sh, which starts a 2-shard cluster with three SQL
-servers, test hooks and ddl_job_stale = 2 s, and the storage of shard 3.
+server: given up when it died before the shard joined, finished when after;
+a TARN REMOVE SHARD whose server dies goes on when run again. Run by
+tests/joinfaults.sh, which starts a 2-shard cluster with three SQL
+servers, test hooks, ddl_job_stale = 2 s and 480 buckets, and the storage
+of shard 3.
 
 The server driving the join is killed while a test hook holds one of its
 steps, and started again after each case:
@@ -15,7 +17,14 @@ steps, and started again after each case:
    has it.
 
 Then every SQL server lists the new shard (the restarted one too), a bucket
-moves to it, and its rows are read and written there.
+moves to it, and its rows are read and written there. Then shard 2 leaves:
+
+4. the server driving TARN REMOVE SHARD is killed while a move of the
+   drain copies a bucket: other servers end the moves it left, and the
+   shard stays draining on every shard, with buckets;
+5. run again through another server, it finishes: the shard is removed on
+   every shard, the SQL servers leave it out, and once its storage is
+   stopped every server still reads and writes every row.
 """
 import argparse
 import json
@@ -61,6 +70,26 @@ class Test(MoveFaults):
 
     def rows_on(self, shard):
         return int(self.lua(shard, f"local s = box.space['{DB}.t'] return s and s:count() or 0"))
+
+    def state_of(self, shard, id):
+        """The state of shard `id` in the membership shard `shard` (an index) keeps."""
+        return json.loads(self.lua(shard, f"for _, m in ipairs(tarn_members()[3]) do if m.id == {id} then "
+                                          f"return m.state end end return 'none'"))
+
+    def owned(self, id):
+        return sum(int(r[1]) for r in self.sql(0, "SHOW TARN BUCKETS") if int(r[0]) == id)
+
+    def remove_in_thread(self, k, id):
+        res = {}
+
+        def run():
+            try:
+                res["ok"] = self.sql(k, f"TARN REMOVE SHARD {id}")
+            except Exception as e:  # the server is killed: its connection breaks
+                res["err"] = str(e)
+        th = threading.Thread(target=run)
+        th.start()
+        return th, res
 
     def add_in_thread(self, k):
         res = {}
@@ -143,6 +172,43 @@ class Test(MoveFaults):
             self.check(False, "a second TARN ADD SHARD of it fails")
         except pymysql.MySQLError as e:
             self.check("already" in str(e), "a second TARN ADD SHARD of it fails", str(e))
+        print("4. shard 2 leaves; the server driving it is killed while it drains")
+        self.hook(1, "bucket_rows", "hold")
+        th, res = self.remove_in_thread(2, 2)
+        reached = self.hook(1, "bucket_rows", "reached")
+        self.check('"ok",1' in reached.replace(" ", ""), "4: the drain reached a copy", reached)
+        self.kill_server(2)
+        self.check(self.wait_no_job(secs=20), "4: other servers ended the moves it left")
+        states = [self.state_of(i, 2) for i in range(3)]
+        self.check(states == ["draining"] * 3, "4: shard 2 is draining on every shard", states)
+        self.check(self.owned(2) > 0, "4: ... with buckets", self.owned(2))
+        self.hook(1, "bucket_rows", "release")
+        th.join(10)
+        self.check("ok" not in res, "4: the statement did not return success", res)
+        self.start_server(2)
+        print("5. run again, it finishes")
+        try:
+            r = self.sql(1, "TARN REMOVE SHARD 2")
+            self.check(True, f"5: TARN REMOVE SHARD 2 ran to its end {r}")
+        except pymysql.MySQLError as e:
+            self.check(False, "5: TARN REMOVE SHARD 2 ran to its end", str(e))
+        states = [self.state_of(i, 2) for i in range(3)]
+        self.check(states == ["removed"] * 3, "5: shard 2 is removed on every shard", states)
+        self.check(self.rows_on(1) == 0, "5: its storage keeps no row", self.rows_on(1))
+        for k in range(3):
+            listed = {int(r[0]): r[2] for r in self.sql(k, "SHOW TARN SHARDS")}
+            shown = sorted(int(r[0]) for r in self.sql(k, "SHOW TARN BUCKETS"))
+            self.check(listed.get(2) == "removed" and shown == [1, self.new_id],
+                       f"5: SQL server {k + 1} lists it removed and shows no buckets of it", (listed, shown))
+        with open(os.path.join(self.args.dir, "s2.1.pid")) as f:
+            os.kill(int(f.read()), 9)
+        for k in range(3):
+            n = self.sql(k, "SELECT COUNT(*), SUM(v) FROM t")[0]
+            self.check(n[0] == 100 and int(n[1]) == sum(range(100)) + 1,
+                       f"5: with its storage stopped, SQL server {k + 1} reads every row", n)
+        self.sql(1, "UPDATE t SET v = v - 1 WHERE k = 1 AND id = 7")
+        v = self.sql(2, "SELECT v FROM t WHERE k = 1 AND id = 7")[0][0]
+        self.check(v == 7, "5: ... and writes them", v)
         return self.failures
 
 

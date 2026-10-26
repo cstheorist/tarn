@@ -200,6 +200,22 @@ impl StaleRetry {
                     Stale::Changed
                 })
             }
+            // A shard that cannot be reached may have left the cluster: the
+            // statement runs again once this server learns that it has (the
+            // others' membership says so).
+            2003 | 2013 => {
+                let v = cluster.member_ver();
+                if !autocommit || std::time::Instant::now() > self.deadline || self.attempt >= 3 {
+                    return Ok(Stale::Done);
+                }
+                if cluster.load_members().await.is_err() || cluster.member_ver() == v {
+                    return Ok(Stale::Done);
+                }
+                cluster.refresh_buckets().await?;
+                self.attempt += 1;
+                cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
+                Ok(Stale::Retry)
+            }
             _ => Ok(Stale::Done),
         }
     }
@@ -2817,6 +2833,15 @@ impl Session {
                     info: format!("Shard {} joined the cluster (with no buckets)", id),
                 })
             }
+            Admin::RemoveShard { id } => {
+                self.implicit_commit().await?;
+                let moved = self.cluster.remove_shard(id).await?;
+                Ok(Output::Ok {
+                    affected: moved,
+                    last_insert_id: 0,
+                    info: format!("Shard {} left the cluster ({} buckets moved off it)", id, moved),
+                })
+            }
             Admin::ShowTarnShards => {
                 let m = self.cluster.show_members().await?;
                 rows_out(
@@ -3045,7 +3070,7 @@ impl Session {
             ("Tarn_bucket_moves", s.bucket_moves.load(Ordering::Relaxed)),
             ("Tarn_bucket_map_reads", self.cluster.bucket_loads()),
             ("Tarn_buckets", self.cluster.bucket_map().count as u64),
-            ("Tarn_shards", self.cluster.nshards() as u64),
+            ("Tarn_shards", self.cluster.nlive() as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));
         let rows = stats

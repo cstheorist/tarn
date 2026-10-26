@@ -451,7 +451,7 @@ async fn fetch_keys(
                 e.1.push(Some(b));
             }
             None => {
-                for s in 0..cluster.nshards() {
+                for s in cluster.live_shards() {
                     let e = per_shard.entry(s).or_default();
                     e.0.push(k.clone());
                     e.1.push(None);
@@ -702,7 +702,7 @@ async fn fetch_stored_from(
         // reads would be missed; they ask every shard.)
         AccessPath::Point { index, keys }
             if resume.is_none()
-                && cluster.nshards() > 1
+                && cluster.nlive() > 1
                 && !matches!(mode, ReadMode::Committed(_))
                 && global_index(t, *index).is_some() =>
         {
@@ -750,7 +750,7 @@ async fn fetch_stored_from(
                 // catalog) does not say which shard holds the row: ask each.
                 let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &key) {
                     Some((s, b)) => vec![(s, Some(b))],
-                    None => (0..cluster.nshards()).map(|s| (s, None)).collect(),
+                    None => cluster.live_shards().map(|s| (s, None)).collect(),
                 };
                 for (shard, bucket) in shards {
                     calls.push(Call {
@@ -916,7 +916,7 @@ fn range_calls(
             };
             let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &prefix) {
                 Some((s, b)) => vec![(s, Some(b))],
-                None => (0..cluster.nshards()).map(|s| (s, None)).collect(),
+                None => cluster.live_shards().map(|s| (s, None)).collect(),
             };
             let (key, iter) = match resume {
                 Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
@@ -996,7 +996,7 @@ fn range_calls(
             };
             let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &prefix) {
                 Some((s, b)) => vec![(s, Some(b))],
-                None => (0..cluster.nshards()).map(|s| (s, None)).collect(),
+                None => cluster.live_shards().map(|s| (s, None)).collect(),
             };
             let range = RangeRead {
                 space: t.space_id,
@@ -1043,7 +1043,7 @@ fn range_calls(
                 hi_incl: true,
                 bucket: None,
             };
-            for s in 0..cluster.nshards() {
+            for s in cluster.live_shards() {
                 calls.push(Call {
                     shard: s,
                     bucket: None,

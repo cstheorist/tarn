@@ -312,7 +312,7 @@ any SQL server:
 
 ```sql
 TARN ADD SHARD 3 '10.0.0.31:3301,10.0.0.32:3301';   -- its id and replicas, as --shard takes them
-SHOW TARN SHARDS;                                   -- the cluster's shards: id, replicas, state
+SHOW TARN SHARDS;                                   -- the cluster's shards: id, replicas, state (active, draining, removed)
 TARN MOVE BUCKETS BETWEEN 1 AND 10000 TO SHARD 3;
 ```
 
@@ -330,15 +330,31 @@ once buckets can have moved to it (see design §2.13). Buckets move to the
 cluster's members only: once a shard has joined with `TARN ADD SHARD`, a
 shard added only to the SQL servers' configuration gets none.
 
-To **remove a shard**, move all its buckets away first. (A shard that
-joined with `TARN ADD SHARD` stays a member, which scans read, until a
-change of the membership removes it: not yet available.) Before moving
-buckets, every SQL server must run a version with bucket moves and know
-every shard: an older server names no buckets in its requests (shards
-refuse its writes by their rows' `bucket_id`, but its reads are not
-checked). Likewise, before adding a shard, every SQL server must run a
-version with `TARN ADD SHARD`: an older one names no membership version,
-so its reads of every shard are not checked.
+To **remove a shard**, run on any SQL server:
+
+```sql
+TARN REMOVE SHARD 2;   -- its buckets move to the other shards, then it leaves
+```
+
+It marks the shard *draining* on every shard: no bucket moves to it from
+then on, and it decides no new transaction (participants refuse it as a
+decision shard, whose outcome they would have to ask it for). Its buckets
+then move to the active shards, eight at a time, each to the one with the
+fewest; it waits until no participant still needs the shard to learn an
+outcome, and marks it *removed* on every shard. From then on the SQL
+servers leave it out -- they learn it as they learn of a shard that joins,
+or when the shard cannot be reached -- and its storage can be stopped; a
+server whose configuration still lists it starts without it. The first
+shard of the configuration keeps the cluster's jobs and catalog and cannot
+be removed. A `TARN REMOVE SHARD` that stops (an error, a lost connection)
+goes on when run again.
+
+Before moving buckets, every SQL server must run a version with bucket
+moves and know every shard: an older server names no buckets in its
+requests (shards refuse its writes by their rows' `bucket_id`, but its
+reads are not checked). Likewise, before adding or removing a shard, every
+SQL server must run a version with `TARN ADD SHARD`: an older one names no
+membership version, so its reads of every shard are not checked.
 
 Key/value clients that compute a row's shard themselves find each bucket's
 shard in `tarn_buckets()` on the shards (or in `SHOW TARN BUCKETS`), or ask

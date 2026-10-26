@@ -1,6 +1,7 @@
 -- Membership (issue #25): the cluster's shards as every shard keeps them,
--- the refusal of requests routed with an older membership, and what a shard
--- that joins gets: the tables and a bucket map with no buckets. Run via
+-- the refusal of requests routed with an older membership, what a shard
+-- that joins gets (the tables and a bucket map with no buckets), and the
+-- checks for a shard that leaves. Run via
 -- lua/test/run.sh after bucket_test.lua: shards 1 and 2 have bucket maps,
 -- shard 3 is a new one.
 local net = require('net.box')
@@ -164,6 +165,31 @@ r = c[3]:call('tarn_bucket_init', {map[2] + 1, {}})
 check('... and a second map is not made', r[1] == 'exists' and r[2] == map[2], r)
 r = c[3]:call('tarn_members_set', {m1})
 check('it learns the membership', r[1] == 'ok' and r[2] == 1 and c[3]:call('tarn_buckets')[6] == 1, r)
+
+print('a shard that leaves')
+local m2 = {ver = 2, shards = {{id = 1, replicas = {S1}, state = 'active'},
+                               {id = 2, replicas = {S2}, state = 'active'},
+                               {id = 3, replicas = {S3}, state = 'draining'}}}
+r = c[1]:call('tarn_members_set', {m2})
+check('shard 3 is draining', r[1] == 'ok' and r[2] == 2, r)
+local function prep(txid, dshard, id)
+    return c[1]:call('tarn_prepare', {txid, dshard, {1, dshard}, {{'replace', sid, {id, id, b}}}, {}, {},
+                                      require('fiber').time(), box.NULL, box.NULL, {b}, box.NULL})
+end
+r = prep('MB7', 3, 1)
+check('a PREPARE whose decision shard is leaving votes no (moved)', r[1] == 'moved' and r[2] == 1213, r)
+check('... and nothing depends on shard 3 here', c[1]:call('tarn_shard_records', {3})[2] == 0)
+r = prep('MB8', 2, 2)
+check('a PREPARE whose decision shard stays is prepared', r[1] == 'yes', r)
+r = c[1]:call('tarn_shard_records', {2})
+check('... and shard 2 is needed to finish it', r[1] == 'ok' and r[2] == 1, r)
+c[1]:call('tarn_abort', {'MB8', 2, {1, 2}})
+check('... until it ends', c[1]:call('tarn_shard_records', {2})[2] == 0)
+local m3 = {ver = 3, shards = {{id = 1, replicas = {S1}, state = 'active'},
+                               {id = 2, replicas = {S2}, state = 'active'},
+                               {id = 3, replicas = {S3}, state = 'removed'}}}
+r = c[1]:call('tarn_members_set', {m3})
+check('shard 3 is removed', r[1] == 'ok' and r[2] == 3 and c[1]:call('tarn_members')[3][3].state == 'removed', r)
 
 check('no locks or row locks left', c[1]:call('tarn_info').locks == 0 and c[1]:call('tarn_info').row_locks == 0)
 for i = 1, 2 do c[i]:call('tarn_drop_table', {'test.mb'}) end
