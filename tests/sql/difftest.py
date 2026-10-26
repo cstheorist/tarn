@@ -77,8 +77,13 @@ SCHEMA = [
     # and as base PKs reached through a text global unique index.
     "CREATE TABLE jdo (id INT PRIMARY KEY, k DECIMAL(20,0), s VARCHAR(8))",
     "CREATE TABLE jdi (id INT PRIMARY KEY, k DECIMAL(20,0), KEY jk (k))",
-    "CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
-    "PRIMARY KEY (p, id), UNIQUE KEY us (s))",
+    # Same logical schema; Tarn shards by integer p because DECIMAL shard
+    # keys are unsupported. MariaDB cannot partition by p when UNIQUE(s)
+    # omits p, so its reference table uses ordinary local storage.
+    ("CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
+     "PRIMARY KEY (p, id), UNIQUE KEY us (s)) PARTITION BY KEY(p)",
+     "CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
+     "PRIMARY KEY (p, id), UNIQUE KEY us (s))"),
 ]
 
 
@@ -1234,13 +1239,15 @@ def run(conn, sql):
         cur.close()
 
 
-def setup(conn, db):
+def setup(conn, db, reference=False):
     run(conn, f"DROP DATABASE IF EXISTS {db}")
     r = run(conn, f"CREATE DATABASE {db}")
     if r[0] == "err":
         raise SystemExit(f"cannot create database: {r}")
     conn.select_db(db)
     for s in SCHEMA + seed():
+        if isinstance(s, tuple):
+            s = s[1 if reference else 0]
         r = run(conn, s)
         if r[0] == "err":
             raise SystemExit(f"setup failed: {s}: {r}")
@@ -1255,7 +1262,7 @@ def main():
     args = ap.parse_args()
     a, b = connect(args.tarn), connect(args.ref)
     setup(a, args.db)
-    setup(b, args.db)
+    setup(b, args.db, reference=True)
     fails = warns = 0
     fa, fb = (connect(hp, args.db, CLIENT.FOUND_ROWS) for hp in (args.tarn, args.ref))
     for (a, b), (sql, kind) in [((a, b), c) for c in CASES] + [((fa, fb), c) for c in FOUND_ROWS_CASES]:
