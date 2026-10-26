@@ -325,6 +325,17 @@ CASES = [
     ("INSERT INTO gu VALUES (13, 1, 'b', 1, 130)", "dml:gu"),
     ("UPDATE gu SET n = 1", "err"),
     ("SELECT * FROM gu WHERE t = 1 AND h = 'b' AND live = 1", "q"),
+    # point lookups by a unique key without the shard key find the row on
+    # whichever shard holds it
+    ("SELECT id FROM gu WHERE n = 21", "q"),
+    ("SELECT id FROM gu WHERE n = 31", "q"),
+    ("SELECT id FROM gu WHERE n = 71", "q"),
+    ("SELECT id FROM gu WHERE n = 131", "q"),
+    ("SELECT id FROM gu WHERE n IN (21, 31, 71, 131) ORDER BY id", "q"),
+    ("SELECT id, h FROM gu WHERE t = 2 AND h = 'a' AND live = 1", "q"),
+    ("SELECT id, h FROM gu WHERE t = 3 AND h = 'c' AND live = 1", "q"),
+    ("SELECT id FROM gci WHERE email = 'BOB@X'", "q"),
+    ("SELECT id FROM gci WHERE email = 'ann@x'", "q"),
     # a value moved from one row to another in one transaction
     ("BEGIN", "q"),
     ("UPDATE gu SET n = 500 WHERE id = 2", "dml:gu"),
