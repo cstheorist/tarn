@@ -8,6 +8,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Unique keys that do not contain the shard key
+  ([#14](https://github.com/cstheorist/tarn/issues/14)), such as
+  `PRIMARY KEY (id), UNIQUE KEY (tenant_id, handle)`, are accepted and
+  enforced across shards: each gets a global index, a hidden space sharded
+  by the key, whose entries are written in the same transaction as the rows.
+  1062 names the unique key; `INSERT IGNORE`, `ON DUPLICATE KEY UPDATE`,
+  `REPLACE` and updates find the holder of a value through it; NULLs take
+  no entry. READ COMMITTED transactions lock the value on the entry's shard.
+  Writes to such tables touch one more shard per such key. `ALTER TABLE`
+  cannot add one to an existing table yet (1503), nor change one (1846). The
+  TLA+ model gains inserts and the `UniqueHolds` invariant (`Uniq*`,
+  `Bug_InsertNoExistCheck`); Verus proves the entry maintenance (61
+  verified).
 - `col IS NULL` and `col <=> x` on a nullable index column are used as an
   equality whose NULL selects the column's NULLs when choosing the access
   path (the index lookup reads them), so an index

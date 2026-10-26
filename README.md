@@ -142,7 +142,7 @@ YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md).
   live coordinator, leader failover, and record garbage collection. TLC
   found a real design flaw early on: single-shard reads could break strict
   serializability. It later caught a flaw in a fix too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 59 verified
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 61 verified
   functions and lemmas for routing, coordinator decisions and the MySQL wire
   codec.
 * **Tests**: 74 storage-protocol tests, 99 SQL statements compared exactly

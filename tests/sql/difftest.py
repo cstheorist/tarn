@@ -50,6 +50,14 @@ SCHEMA = [
     "CREATE TABLE ord (tenant INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
     "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (tenant, id), KEY bypa (tenant, pa, id), "
     "KEY bystatus (tenant, closed, del, id)) PARTITION BY KEY(tenant)",
+    # unique keys without the shard key (issue #14): enforced across shards
+    # through global indexes; a nullable column, as in soft-delete keys
+    "CREATE TABLE gu (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
+    "UNIQUE KEY th (t, h, live), UNIQUE KEY code (n))",
+    "CREATE TABLE gr (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
+    "UNIQUE KEY th (t, h, live), UNIQUE KEY code (n))",
+    # ... with a case-insensitive column (issue #13): the collation decides
+    "CREATE TABLE gci (id INT PRIMARY KEY, email VARCHAR(40) COLLATE utf8mb4_general_ci, UNIQUE KEY ue (email))",
 ]
 
 
@@ -288,6 +296,47 @@ CASES = [
     ("INSERT INTO uk VALUES (1, 7, 'a', 1)", "err"),
     ("INSERT INTO uk VALUES (1, 1, 'z', 1) ON DUPLICATE KEY UPDATE name = 'b'", "err"),
     ("UPDATE uk SET name = 'a' WHERE t = 1 AND id = 6", "err"),
+    # unique keys without the shard key: cross-shard enforcement (#14)
+    ("INSERT INTO gci VALUES (1, 'Ann@x'), (2, 'bob@x'), (3, NULL), (4, NULL)", "dml:gci"),
+    ("INSERT INTO gci VALUES (5, 'ANN@X')", "err"),
+    ("UPDATE gci SET email = 'Bob@X' WHERE id = 1", "err"),
+    ("UPDATE gci SET email = 'ann@X' WHERE id = 1", "dml:gci"),
+    ("INSERT INTO gci VALUES (6, 'BOB@x') ON DUPLICATE KEY UPDATE email = 'carol@x'", "dml:gci"),
+    ("SELECT * FROM gci ORDER BY id", "q"),
+    ("INSERT INTO gu VALUES (1, 1, 'a', 1, 10), (2, 1, 'b', 1, 20), (3, 2, 'a', 1, 30)", "dml:gu"),
+    ("INSERT INTO gu VALUES (4, 1, 'a', NULL, NULL), (5, 1, 'a', NULL, NULL)", "dml:gu"),
+    ("INSERT INTO gu VALUES (6, 1, 'a', 1, 60)", "err"),
+    ("INSERT INTO gu VALUES (6, 9, 'z', 1, 10)", "err"),
+    ("INSERT INTO gu VALUES (6, 9, 'z', 1, 60), (7, 9, 'z', 1, 70)", "err"),
+    ("SELECT * FROM gu ORDER BY id", "q"),
+    ("INSERT IGNORE INTO gu VALUES (6, 1, 'a', 1, 61), (7, 3, 'c', 1, 70)", "dml:gu"),
+    ("INSERT INTO gu VALUES (8, 1, 'b', 1, 80) ON DUPLICATE KEY UPDATE n = n + 1", "dml:gu"),
+    ("INSERT INTO gu VALUES (8, 5, 'q', 1, 30) ON DUPLICATE KEY UPDATE h = 'w'", "dml:gu"),
+    ("INSERT INTO gu VALUES (9, 1, 'b', 1, 90) ON DUPLICATE KEY UPDATE h = 'a'", "err"),
+    ("REPLACE INTO gu VALUES (10, 1, 'b', 1, 70)", "dml:gu"),
+    ("REPLACE INTO gu VALUES (1, 4, 'd', 1, 11)", "dml:gu"),
+    ("UPDATE gu SET t = 1, h = 'b' WHERE id = 1", "err"),
+    ("UPDATE gu SET h = 'e', n = 12 WHERE id = 1", "dml:gu"),
+    ("UPDATE gu SET live = NULL WHERE id = 10", "dml:gu"),
+    ("INSERT INTO gu VALUES (11, 1, 'b', 1, 110)", "dml:gu"),
+    ("UPDATE gu SET id = 12 WHERE id = 11", "dml:gu"),
+    ("UPDATE gu SET n = n + 1 WHERE t = 1", "dml:gu"),
+    ("DELETE FROM gu WHERE id = 12", "dml:gu"),
+    ("INSERT INTO gu VALUES (13, 1, 'b', 1, 130)", "dml:gu"),
+    ("UPDATE gu SET n = 1", "err"),
+    ("SELECT * FROM gu WHERE t = 1 AND h = 'b' AND live = 1", "q"),
+    # a value moved from one row to another in one transaction
+    ("BEGIN", "q"),
+    ("UPDATE gu SET n = 500 WHERE id = 2", "dml:gu"),
+    ("UPDATE gu SET n = 21 WHERE id = 3", "dml:gu"),
+    ("COMMIT", "dml:gu"),
+    ("BEGIN", "q"),
+    ("UPDATE gu SET h = 'm' WHERE id = 2", "dml:gu"),
+    ("UPDATE gu SET n = NULL WHERE id = 2", "dml:gu"),
+    ("UPDATE gu SET h = 'b', n = 500 WHERE id = 13", "dml:gu"),
+    ("COMMIT", "dml:gu"),
+    ("SELECT * FROM gu ORDER BY id", "q"),
+    ("SELECT * FROM gu ORDER BY id", "q"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers
     ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),
@@ -723,6 +772,41 @@ CASES = [
     ("INSERT INTO cin VALUES ('a', 1), ('A', 2), ('b', 3), ('Ä', 4)", "dml:cin"),
     ("SELECT n FROM cin WHERE tag = 'A' ORDER BY n", "q"),
     ("SELECT MIN(n), COUNT(*) FROM cin GROUP BY tag ORDER BY 1", "q"),
+    # unique keys without the shard key, at READ COMMITTED (#14)
+    ("INSERT INTO gr VALUES (1, 1, 'a', 1, 10), (2, 1, 'b', 1, 20), (3, 2, 'a', 1, 30)", "dml:gr"),
+    ("INSERT INTO gr VALUES (4, 1, 'a', NULL, NULL), (5, 1, 'a', NULL, NULL)", "dml:gr"),
+    ("INSERT INTO gr VALUES (6, 1, 'a', 1, 60)", "err"),
+    ("INSERT INTO gr VALUES (6, 9, 'z', 1, 10)", "err"),
+    ("INSERT INTO gr VALUES (6, 9, 'z', 1, 60), (7, 9, 'z', 1, 70)", "err"),
+    ("SELECT * FROM gr ORDER BY id", "q"),
+    ("INSERT IGNORE INTO gr VALUES (6, 1, 'a', 1, 61), (7, 3, 'c', 1, 70)", "dml:gr"),
+    ("INSERT INTO gr VALUES (8, 1, 'b', 1, 80) ON DUPLICATE KEY UPDATE n = n + 1", "dml:gr"),
+    ("INSERT INTO gr VALUES (8, 5, 'q', 1, 30) ON DUPLICATE KEY UPDATE h = 'w'", "dml:gr"),
+    ("INSERT INTO gr VALUES (9, 1, 'b', 1, 90) ON DUPLICATE KEY UPDATE h = 'a'", "err"),
+    ("REPLACE INTO gr VALUES (10, 1, 'b', 1, 70)", "dml:gr"),
+    ("REPLACE INTO gr VALUES (1, 4, 'd', 1, 11)", "dml:gr"),
+    ("UPDATE gr SET t = 1, h = 'b' WHERE id = 1", "err"),
+    ("UPDATE gr SET h = 'e', n = 12 WHERE id = 1", "dml:gr"),
+    ("UPDATE gr SET live = NULL WHERE id = 10", "dml:gr"),
+    ("INSERT INTO gr VALUES (11, 1, 'b', 1, 110)", "dml:gr"),
+    ("UPDATE gr SET id = 12 WHERE id = 11", "dml:gr"),
+    ("UPDATE gr SET n = n + 1 WHERE t = 1", "dml:gr"),
+    ("DELETE FROM gr WHERE id = 12", "dml:gr"),
+    ("INSERT INTO gr VALUES (13, 1, 'b', 1, 130)", "dml:gr"),
+    ("UPDATE gr SET n = 1", "err"),
+    ("SELECT * FROM gr WHERE t = 1 AND h = 'b' AND live = 1", "q"),
+    # a value moved from one row to another in one transaction
+    ("BEGIN", "q"),
+    ("UPDATE gr SET n = 500 WHERE id = 2", "dml:gr"),
+    ("UPDATE gr SET n = 21 WHERE id = 3", "dml:gr"),
+    ("COMMIT", "dml:gr"),
+    ("BEGIN", "q"),
+    ("UPDATE gr SET h = 'm' WHERE id = 2", "dml:gr"),
+    ("UPDATE gr SET n = NULL WHERE id = 2", "dml:gr"),
+    ("UPDATE gr SET h = 'b', n = 500 WHERE id = 13", "dml:gr"),
+    ("COMMIT", "dml:gr"),
+    ("SELECT * FROM gr ORDER BY id", "q"),
+    ("SELECT * FROM gr ORDER BY id", "q"),
     # ordered pages with LIMIT read the index that follows ORDER BY a page at
     # a time and stop early (issue #41): residuals, OFFSET, ties, bounds,
     # selective filters, an empty range, and the transaction's own writes

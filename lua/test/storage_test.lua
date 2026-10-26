@@ -1097,5 +1097,77 @@ sw:call('tarn_select', {20003, 0, {1}, 'EQ', 1, box.NULL, box.NULL, false, box.N
 r = sw:call('tarn_validate', {'TV3', {{20003, 0, {1}}}, {}, true})
 check('... one that began after it does not', r[1] == 'ok', r)
 
+print('global indexes of unique keys without the shard key (issue #14)')
+local gdef = {
+    name = 'test.gt', id = 20010, engine = 'memtx',
+    format = {{name = 'id', type = 'unsigned'}, {name = 'h', type = 'string'}, {name = 'bucket_id', type = 'unsigned'}},
+    indexes = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+               {name = 'uh', unique = true, parts = {{field = 'h', type = 'string'}}},
+               {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}},
+    uix = {{name = '_tarn_uix_20010_1', id = 20011, engine = 'memtx',
+            format = {{name = 'h', type = 'string'}, {name = 'id', type = 'unsigned'},
+                      {name = 'bucket_id', type = 'unsigned'}},
+            indexes = {{name = 'uh', unique = true, parts = {{field = 'h', type = 'string'}}},
+                       {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}}},
+    json = '{}',
+}
+local ga = {def = gdef}
+for i = 1, 2 do c[i]:call('tarn_create_prepare', {'test.gt', ga}) end
+for i = 2, 1, -1 do c[i]:call('tarn_create_apply', {'test.gt', ga}) end
+local function uexists(i) return c[i]:eval('return box.space._tarn_uix_20010_1 ~= nil') end
+check('CREATE makes the global index space on every shard', uexists(1) and uexists(2))
+check('... with no catalog entry of its own',
+      c[1]:eval('return box.space._tarn_catalog:get{"_tarn_uix_20010_1"} == nil'))
+r = c[1]:call('tarn_autocommit', {{{'insert', 20010, {1, 'hat', 1}}, {'insert', 20011, {'hat', 1, 7}}}})
+check('a row and its entry commit together', r[1] == 'ok', r)
+-- (a row on the other shard: only the entry collides)
+r = c[2]:call('tarn_autocommit', {{{'insert', 20011, {'hat', 2, 7}}}})
+check('... the other shard has no entry', r[1] == 'ok', r)
+c[2]:call('tarn_autocommit', {{{'delete', 20011, {'hat'}}}})
+r = c[1]:call('tarn_autocommit', {{{'insert', 20011, {'hat', 2, 7}}}})
+check("an entry whose key is taken: 1062, named by the unique key",
+      r[1] == 'duplicate' and r[2] == 1062 and r[3] == "Duplicate entry 'hat' for key 'uh'", r)
+r = prepare(1, 'GX1', {{'insert', 20011, {'hat', 3, 7}}})
+check('... also when PREPARE finds it', r[1] == 'no' and r[2] == 1062 and r[3] == "Duplicate entry 'hat' for key 'uh'", r)
+r = prepare(1, 'GX2', {{'insert', 20011, {'cap', 4, 7}}})
+check('a transaction prepared with an entry', r[1] == 'yes', r)
+got = nil
+f = fiber.create(function()
+    got = c[1]:call('tarn_drop_prepare', {'test.gt', {ver = 9, timeout = 5, id = 20010}})
+end)
+fiber.sleep(0.1)
+check("DROP PREPARE waits for the table's prepared entries", got == nil)
+c[1]:call('tarn_apply', {'GX2'})
+fiber.sleep(0.1)
+check('... until they are applied', got and got[1] == 'ok', got)
+c[1]:call('tarn_drop_abort', {'test.gt', {ver = 9, timeout = 5, id = 20010}})
+local ta = {ver = 10, timeout = 5, id = 20010, def = table.deepcopy(gdef)}
+ta.def.ver = 10
+r = {c[1]:call('tarn_truncate_prepare', {'test.gt', ta}), c[1]:call('tarn_truncate_apply', {'test.gt', ta})}
+check('TRUNCATE empties the global index too', r[2][1] == 'ok'
+      and c[1]:eval('return box.space._tarn_uix_20010_1:len()') == 0, r)
+r = prepare(1, 'GX3', {{'insert', 20010, {5, 'cap', 1}}, {'insert', 20010, {6, 'top', 1}}}, nil, nil, nil)
+c[1]:call('tarn_apply', {'GX3'})
+r = c[1]:call('tarn_autocommit', {{{'insert', 20011, {'old', 9, 7}}}, {fence = {20010, 9}}})
+check('an entry written with the definition from before TRUNCATE gets 1412 (fenced by its table)',
+      r[1] == 'error' and r[2] == 1412, r)
+local sl = c[1]:new_stream(); sl:begin()
+r = sl:call('tarn_commit_local', {'GL1', {{'replace', 20010, {6, 'cap', 1}}, {'replace', 20010, {5, 'pin', 1}}}})
+check('a local commit moves a value from a later row to an earlier one', r[1] == 'ok', r)
+sl = c[1]:new_stream(); sl:begin()
+r = sl:call('tarn_commit_local', {'GL2', {{'replace', 20010, {5, 'cap', 1}}, {'replace', 20010, {6, 'pin', 1}}}})
+check('... and two rows swap their values', r[1] == 'ok' and c[1]:eval('return box.space["test.gt"]:get{6}[2]') == 'pin', r)
+r = prepare(1, 'GX5', {{'replace', 20010, {6, 'pin', 1}}, {'replace', 20010, {5, 'cap', 1}}})
+check('PREPARE of a transaction that moves a value back: yes', r[1] == 'yes', r)
+r = c[1]:call('tarn_apply', {'GX5'})
+check('... and APPLY lands both rows', r[1] == 'ok' and c[1]:eval('return box.space["test.gt"]:get{5}[2]') == 'cap', r)
+c[1]:call('tarn_autocommit', {{{'replace', 20010, {5, 'cap', 1}}, {'replace', 20010, {6, 'top', 1}}}})
+r = prepare(1, 'GX4', {{'replace', 20010, {7, 'cap', 1}}, {'delete', 20010, {5}}})
+check("PREPARE of a REPLACE that deletes the value's holder: no 1062", r[1] == 'yes', r)
+c[1]:call('tarn_apply', {'GX4'})
+r = {c[1]:call('tarn_drop_prepare', {'test.gt', {ver = 11, timeout = 5, id = 20010}}),
+     c[1]:call('tarn_drop_apply', {'test.gt', {ver = 11, timeout = 5, id = 20010}})}
+check('DROP drops the global index space', r[2][1] == 'ok' and not uexists(1), r)
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

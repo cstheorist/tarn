@@ -83,13 +83,16 @@ CONSTANTS
     BugRCLockIgnoresWLocks,     \* RC lock granted while a prepared txn W-locks the key
     BugRCReadBeforeLock,        \* RC write computed from the value read before locking
     BugIgnorePLocks,            \* serializable commits ignore other txns' plocks
-    BugRCLockReadsInFlight      \* RC lock reads a key while a local commit to it is in flight
+    BugRCLockReadsInFlight,     \* RC lock reads a key while a local commit to it is in flight
+    IKeys,                      \* IKeys[t] \subseteq WSet[t]: keys t inserts (fails if present)
+    BugInsertNoExistCheck       \* commits do not check that inserted keys are free
 
 ASSUME Owner \in [Keys -> Shards]
 ASSUME RSet \in [Txns -> SUBSET Keys] /\ WSet \in [Txns -> SUBSET Keys]
 ASSUME RKeys \in [Readers -> SUBSET Keys]
 ASSUME RC \subseteq Txns /\ LSet \in [Txns -> SUBSET Keys]
 ASSUME \A t \in Txns : IF t \in RC THEN WSet[t] \subseteq LSet[t] ELSE LSet[t] = {}
+ASSUME IKeys \in [Txns -> SUBSET Keys] /\ \A t \in Txns : IKeys[t] \subseteq WSet[t]
 
 NoVal  == "init"     \* value of a key before any transaction wrote it
 Unread == "unread"
@@ -206,6 +209,12 @@ Read(t, k) ==
 \* to a transaction that is committed but not yet applied on this shard.
 NoWLocks(t, S) == \A k \in S : ~\E l \in locks[Owner[k]] : l.t # t /\ l.k = k /\ l.m = "W"
 
+\* Inserts (IKeys): a key a transaction inserts must not hold a value yet.
+\* This is how a unique key is enforced across shards: its global index
+\* entry is a key on the shard its value hashes to, inserted in the same
+\* transaction as the row, so two rows with one value insert one key.
+InsertsFree(S) == BugInsertNoExistCheck \/ \A k \in S : data[k] = NoVal
+
 \* A single-shard read-only transaction sees one MVCC read view and then
 \* checks the lock table in that same view (autocommit SELECTs check before
 \* reading).  If a read key is W-locked the read is retried, so the action
@@ -236,7 +245,7 @@ CommitLocal(t) ==
     /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none"
     /\ SingleShard(t) /\ ~ReadOnly(t) /\ ReadsDone(t)
-    /\ IF valid /\ noConf
+    /\ IF valid /\ noConf /\ InsertsFree(IKeys[t])
        THEN /\ data' = [k \in Keys |-> IF k \in WSet[t] THEN t ELSE data[k]]
             /\ wh' = [k \in Keys |-> IF k \in WSet[t] THEN Append(wh[k], t) ELSE wh[k]]
             /\ local' = [local EXCEPT ![t] = "committed"]
@@ -374,7 +383,7 @@ Prepare(t, s) ==
     \* participant whose records were already collected, so a NO here could
     \* contradict a commit.  The coordinator treats the reply as unknown.
     /\ t \notin expired
-    /\ IF readsOK /\ writesOK /\ recOK
+    /\ IF readsOK /\ writesOK /\ recOK /\ InsertsFree(KeysOn(IKeys[t], s))
        THEN /\ locks' = [locks EXCEPT ![s] = @ \cup newLocks]
             /\ part' = [part EXCEPT ![s][t] = "prepared"]
             /\ rec' = IF s = D(t) THEN [rec EXCEPT ![t] = "staging"] ELSE rec
@@ -538,7 +547,7 @@ CommitRC(t) ==
     /\ t \in RC /\ coord[t] = "exec" /\ local[t] = "none" /\ ReadsDone(t)
     /\ ReadOnly(t) \/ SingleShard(t)
     /\ ~\E s \in Shards : \E l \in locks[s] : l.t # t /\ l.k \in WSet[t]
-    /\ IF ReadOnly(t) \/ intact
+    /\ IF ReadOnly(t) \/ (intact /\ InsertsFree(IKeys[t]))
        THEN /\ data' = [k \in Keys |-> IF k \in WSet[t] THEN t ELSE data[k]]
             /\ wh' = [k \in Keys |-> IF k \in WSet[t] THEN Append(wh[k], t) ELSE wh[k]]
             /\ lostUpd' = (lostUpd \/ \E k \in WSet[t] : data[k] # lobs[t][k])
@@ -774,6 +783,11 @@ RealTimeRespected(f) ==
 StrictSerializable ==
     \E f \in Perms(Committed) :
         ReadsExplained(f) /\ WritesOrdered(f) /\ RealTimeRespected(f)
+
+\* Unique keys: at most one committed transaction inserted each key (keys
+\* are never deleted in the model).
+UniqueHolds ==
+    \A k \in Keys : Cardinality({t \in Txns : everC[t] /\ k \in IKeys[t]}) <= 1
 
 \* No lost updates: every RC write lands on the value its transaction read
 \* under the lock (SET x = x - 1 never loses a concurrent decrement).

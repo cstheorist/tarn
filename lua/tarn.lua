@@ -627,11 +627,48 @@ local function refused_by_pending(sp, err)
     return iid
 end
 
+-- Global indexes of unique keys without the shard key (issue #14): hidden
+-- spaces '_tarn_uix_<table space id>_<index id>', one entry per row
+-- whose key has no NULL part (the key, then the row's primary key), written
+-- in the same transaction as the row by the SQL servers. The entry's
+-- primary key is the unique key, so an insert of a value another row holds
+-- fails here like any duplicate key.
+local UIX = {prefix = '_tarn_uix_'}   -- (one local: the main chunk is near Lua's limit)
+
+function UIX.key_text(v)
+    if type(v) == 'cdata' then return (tostring(v):gsub('U?LL$', '')) end
+    return tostring(v)
+end
+
+-- MySQL's message for an entry of global index space `sp` that `tuple`
+-- could not take, "Duplicate entry '<key>' for key '<unique key>'" (the
+-- space's primary index has the unique key's name), or nil for other spaces.
+function UIX.dup(sp, tuple)
+    if sp == nil or tuple == nil or sp.name:sub(1, #UIX.prefix) ~= UIX.prefix then return nil end
+    local parts = {}
+    for i = 1, #sp.index[0].parts do parts[i] = UIX.key_text(tuple[i]) end
+    return string.format("Duplicate entry '%s' for key '%s'", table.concat(parts, '-'), sp.index[0].name)
+end
+
+-- The global index spaces of table space `sid`.
+function UIX.spaces(sid)
+    local out, tag = {}, UIX.prefix .. sid .. '_'
+    for _, s in box.space._space.index.name:pairs({tag}, {iterator = 'GE'}) do
+        if s.name:sub(1, #tag) ~= tag then break end
+        if s.name:sub(#tag + 1):match('^%d+$') then out[#out + 1] = box.space[s.id] end
+    end
+    return out
+end
+
 local function failure(e)
     if type(e) == 'cdata' or type(e) == 'table' then
         local code = e.code or 0
         if code == box.error.TRANSACTION_CONFLICT then return conflict(tostring(e.message)) end
-        if code == box.error.TUPLE_FOUND then return {'duplicate', 1062, pending_label(tostring(e.message))} end
+        if code == box.error.TUPLE_FOUND then
+            local msg = tostring(e.message)
+            local sp = box.space[e.space or msg:match('in space "([^"]+)"') or '']
+            return {'duplicate', 1062, UIX.dup(sp, e.new_tuple) or pending_label(msg)}
+        end
         return {'error', code, tostring(e.message or e)}
     end
     return {'error', 0, tostring(e)}
@@ -1470,6 +1507,10 @@ end
 -- what the write returned, `skip` marks an update of a missing row (nothing
 -- written).
 
+-- (write_step is local to write_steps' block: the main chunk is near Lua's
+-- limit of 200 locals)
+local write_steps
+do
 local function write_step(w)
     local space = box.space[w[2]]
     if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
@@ -1493,6 +1534,46 @@ local function write_step(w)
     if w[5] ~= nil and #w[5] > 0 then check_arith(old, w[4], w[5]) end
     new = old:update(mysql_update_ops(old, w[4]))
     return {space, pk, old, new, space:replace(new), false}
+end
+
+-- write_step for every write, in order, except that a write a unique index
+-- refuses (TUPLE_FOUND) is tried again after the others: a transaction may
+-- move a unique value from one row to another, and the row giving it up may
+-- come later. Returns the plans in the order of `writes`.
+function write_steps(writes)
+    local plans, todo = {}, {}
+    for i = 1, #writes do todo[#todo + 1] = i end
+    while true do
+        local again, err = {}, nil
+        for _, i in ipairs(todo) do
+            local ok, p = pcall(write_step, writes[i])
+            if ok then plans[i] = p
+            elseif type(p) == 'cdata' and p.code == box.error.TUPLE_FOUND then
+                again[#again + 1], err = i, p
+            else error(p) end
+        end
+        if #again == 0 then return plans end
+        if #again == #todo then
+            -- Values that go round in a cycle (rows that swap them): take
+            -- the rows out, then write them (as their old versions' plans).
+            local old = {}
+            for _, i in ipairs(again) do
+                local w = writes[i]
+                if w[1] ~= 'replace' then error(err) end
+                local sp = box.space[w[2]]
+                local pk = write_target(sp, w)
+                old[i] = sp:get(pk)
+                sp:delete(pk)
+            end
+            for _, i in ipairs(again) do
+                plans[i] = write_step(writes[i])
+                plans[i][P_OLD] = old[i]
+            end
+            return plans
+        end
+        todo = again
+    end
+end
 end
 
 -- Step 2 (no yield): the holder of a lock that one of the writes conflicts
@@ -1572,11 +1653,9 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence)
         -- Without reads on this shard the coordinator sends no stream: the
         -- commit is then its own local transaction.
         if not box.is_in_txn() then box.begin(RW) end
-        local plans, n = {}, 0
-        for i = 1, #writes do
-            local p = write_step(writes[i])
-            plans[i] = p
-            if p[P_RES] ~= nil then n = n + 1 end
+        local plans, n = write_steps(writes), 0
+        for i = 1, #plans do
+            if plans[i][P_RES] ~= nil then n = n + 1 end
         end
         inflight_writes(seq, plans)
         local r = atomic('CommitLocal', commit_local_checks, txid, lock_gen, fence, rpoints, rranges, plans)
@@ -2136,12 +2215,10 @@ function tarn_autocommit(writes, opts)
             local stale = stale_definition(fence)
             if stale then return stale end
             box.begin(RW)
-            local plans, n, last = {}, 0, nil
+            local plans, n, last = write_steps(writes), 0, nil
             for i = 1, #writes do
-                local w = writes[i]
-                local p = write_step(w)
-                plans[i] = p
-                n = n + affected(w[1], p[P_OLD], p[P_RES], found_rows)
+                local p = plans[i]
+                n = n + affected(writes[i][1], p[P_OLD], p[P_RES], found_rows)
                 if p[P_RES] ~= nil then last = p[P_RES] end
             end
             inflight_writes(seq, plans)
@@ -2215,11 +2292,9 @@ function tarn_commit_rc(txid, writes, gen, fence)
             end
             seq = inflight_begin()
             box.begin(RW)
-            local plans, n = {}, 0
-            for i = 1, #writes do
-                local p = write_step(writes[i])
-                plans[i] = p
-                if p[P_RES] ~= nil then n = n + 1 end
+            local plans, n = write_steps(writes), 0
+            for i = 1, #plans do
+                if plans[i][P_RES] ~= nil then n = n + 1 end
             end
             inflight_writes(seq, plans)
             local r = atomic('CommitRC', commit_rc_checks, txid, gen, fence, plans)
@@ -2383,6 +2458,24 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         -- Reads (may yield, see "Yields"): the rows the writes replace and the
         -- holders of the unique values the new rows take (tracked by MVCC).
         local plans = {}
+        -- Rows this transaction deletes or rewrites here (by space and
+        -- primary key: false, or the new tuple). A unique value such a row
+        -- holds now is free for the transaction's other rows unless the
+        -- row's new version keeps it (REPLACE, a value moved between rows).
+        local mine = {}
+        for _, w in ipairs(writes) do
+            local sp = box.space[w[2]]
+            if sp ~= nil then
+                local wpk, wnew = write_target(sp, w)
+                mine[w[2] .. kbin(wpk)] = wnew or false
+            end
+        end
+        local function keeps(space, iid, cpk, key)
+            local m = mine[space.id .. kbin(cpk)]
+            if m == nil then return true end
+            if type(m) == 'boolean' then return false end   -- (a tuple's == cannot take a boolean)
+            return index_key_def(space.id, iid):compare_with_key(m, key) == 0
+        end
         for i, w in ipairs(writes) do
             local space = box.space[w[2]]
             if space == nil then return vote_no(1146, 'no such space ' .. tostring(w[2])) end
@@ -2390,7 +2483,7 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
             local old = space:get(pk)
             yield_point('prepare')
             if w[1] == 'insert' and old ~= nil then
-                return vote_no(1062, 'Duplicate entry for key PRIMARY')
+                return vote_no(1062, UIX.dup(space, new) or 'Duplicate entry for key PRIMARY')
             end
             local keys = secondary_keys(space, old, {})
             secondary_keys(space, new, keys)
@@ -2399,7 +2492,8 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
                 for _, k in ipairs(keys) do
                     if k[3] and not has_null(k[2]) then
                         local cur = space.index[k[1]]:get(k[2])
-                        if cur ~= nil and pkd:compare_keys(pkd:extract_key(cur):totable(), pk) ~= 0 then
+                        local cpk = cur ~= nil and pkd:extract_key(cur):totable()
+                        if cur ~= nil and pkd:compare_keys(cpk, pk) ~= 0 and keeps(space, k[1], cpk, k[2]) then
                             local idx = space.index[k[1]]
                             return vote_no(1062, 'Duplicate entry for key '
                                 .. (PENDING_NAME[space.id .. '/' .. k[1]] or idx.name))
@@ -2488,6 +2582,9 @@ function tarn_apply(txid, retries)
         -- ids are never reused: its writes have nothing left to change (the
         -- transaction is ordered before the DROP TABLE), while the others
         -- must still land.
+        -- A replace that a unique index refuses is tried again after the
+        -- others: a value may move from one row to another (see write_steps).
+        local later = {}
         for _, pass in ipairs({'delete', 'write'}) do
             for _, l in box.space._tarn_locks.index.txid:pairs({txid}, {iterator = 'EQ'}) do
                 if l.mode == 'W' and l.op ~= nil and (l.op == 'delete') == (pass == 'delete') then
@@ -2500,11 +2597,31 @@ function tarn_apply(txid, retries)
                         if not wok then
                             local iid = refused_by_pending(space, err)
                             if iid ~= nil then refused = {space.id, iid} end
-                            error(err)
+                            if iid ~= nil or type(err) ~= 'cdata' or err.code ~= box.error.TUPLE_FOUND then
+                                error(err)
+                            end
+                            later[#later + 1] = {space, l.tuple, err}
                         end
                     end
                 end
             end
+        end
+        while #later > 0 do
+            local again = {}
+            for _, x in ipairs(later) do
+                local wok, err = pcall(x[1].replace, x[1], x[2])
+                if not wok then again[#again + 1] = {x[1], x[2], err} end
+            end
+            if #again == #later then
+                -- Values that go round in a cycle (rows that swap them):
+                -- take the rows out, then write them.
+                for _, x in ipairs(again) do
+                    x[1]:delete(index_key_def(x[1].id, 0):extract_key(box.tuple.new(x[2])))
+                end
+                for _, x in ipairs(again) do x[1]:replace(x[2]) end
+                break
+            end
+            later = again
         end
         release_locks(txid)
         box.space._tarn_part:replace{txid, 'applied', p.dshard, p.parts, now(), expiry()}
@@ -2875,6 +2992,8 @@ end
 
 -- def = {name=, engine=, format={{name=,type=,is_nullable=}}, indexes={{name=,
 --        unique=, parts={{field=,type=,is_nullable=,collation=}}}}, ...}
+-- def.uix: the table's global index spaces, in the same form (no catalog
+-- entry of their own).
 local function create_space(def)
     local s = box.schema.space.create(def.name, {
         id = def.id, engine = def.engine or 'memtx', format = def.format,
@@ -2883,7 +3002,12 @@ local function create_space(def)
         s:create_index(idx.name, {type = 'tree', unique = idx.unique, parts = idx.parts,
                                   id = i - 1, if_not_exists = true})
     end
+    for _, u in ipairs(def.uix or {}) do create_space(u) end
     return s
+end
+
+function UIX.drop(sid)
+    for _, u in ipairs(UIX.spaces(sid)) do u:drop() end
 end
 
 function tarn_create_table(def)
@@ -2897,7 +3021,10 @@ function tarn_create_table(def)
 end
 
 function tarn_drop_table(name)
-    if box.space[name] ~= nil then box.space[name]:drop() end
+    if box.space[name] ~= nil then
+        UIX.drop(box.space[name].id)
+        box.space[name]:drop()
+    end
     box.space._tarn_catalog:delete{name}
     invalidate_key_defs()
     return {OK}
@@ -2945,9 +3072,14 @@ end
 
 local function tmp_index_name(id) return TMP_PREFIX .. id end
 
-local function has_locks(sid)
+local function has_locks(sid, uix)
     for _, i in pairs(LK[sid] or {}) do if next(i) ~= nil then return true end end
     for _, i in pairs(RL[sid] or {}) do if next(i) ~= nil then return true end end
+    -- the table's global index entries on this shard, written by
+    -- transactions whose rows may live on other shards
+    for _, u in ipairs(uix or {}) do
+        if has_locks(u.id) then return true end
+    end
     return false
 end
 
@@ -2955,9 +3087,10 @@ end
 -- prepared transaction holds locks on space sid.
 local function drain(sid, deadline)
     if not wait_commits(deadline) then return false end
+    local uix = UIX.spaces(sid)
     while true do
         lk_fresh()
-        if not has_locks(sid) then return true end
+        if not has_locks(sid, uix) then return true end
         local left = deadline - clock.monotonic()
         if left <= 0 then return false end
         M.unlock_cond:wait(math.min(left, 0.05))
@@ -3176,11 +3309,10 @@ end
 function tarn_create_prepare(name, a)
     writable()
     local sp = box.space[name]
-    if sp ~= nil then
-        if sp.id == a.def.id then return {OK} end
+    if sp ~= nil and sp.id ~= a.def.id then
         return {'error', 1050, "Table '" .. name .. "' already exists"}
     end
-    create_space(a.def)
+    create_space(a.def)   -- (again: whatever an earlier attempt left out)
     return {OK}
 end
 
@@ -3188,11 +3320,10 @@ function tarn_create_apply(name, a)
     writable()
     yield_point('ddl_apply')   -- tests: a shard that fails while it applies
     local sp = box.space[name]
-    if sp == nil then
-        create_space(a.def)
-    elseif sp.id ~= a.def.id then
+    if sp ~= nil and sp.id ~= a.def.id then
         return {'error', 1050, "Table '" .. name .. "' already exists"}
     end
+    create_space(a.def)   -- (if anything is missing)
     if box.space._tarn_catalog:get{name} == nil then
         box.space._tarn_catalog:replace{name, a.def}
         invalidate_key_defs()
@@ -3206,6 +3337,7 @@ function tarn_create_abort(name, a)
     local sp = box.space[name]
     if sp == nil or sp.id ~= a.def.id then return {OK} end
     if box.space._tarn_catalog:get{name} ~= nil then return {OK, 'applied'} end
+    UIX.drop(sp.id)
     sp:drop()
     return {OK}
 end
@@ -3255,6 +3387,7 @@ local function clear_apply(op, name, a)
     if sp == nil then
         if op == 'TRUNCATE' then return {'error', 1146, string.format(NO_TABLE, name)} end
         -- Dropped by an earlier APPLY: finish what it may have left.
+        UIX.drop(a.id)
         box.begin(RW)
         local c = box.space._tarn_catalog:get{name}
         if c ~= nil and c.def.id == a.id then box.space._tarn_catalog:delete{name} end
@@ -3272,6 +3405,7 @@ local function clear_apply(op, name, a)
         if r[1] ~= OK or r[2] == 'applied' then return r end
     end
     if op == 'DROP' then
+        UIX.drop(sid)
         sp:drop()
         box.begin(RW)
         box.space._tarn_catalog:delete{name}
@@ -3284,6 +3418,7 @@ local function clear_apply(op, name, a)
         FENCE[sid] = nil
         M.stats.drops = M.stats.drops + 1
     else
+        for _, u in ipairs(UIX.spaces(sid)) do u:truncate() end
         sp:truncate()
         box.begin(RW)
         box.space._tarn_catalog:replace{name, a.def}
@@ -3479,7 +3614,10 @@ local function migrate_legacy_job()
 end
 
 function tarn_truncate(name)
-    if box.space[name] ~= nil then box.space[name]:truncate() end
+    if box.space[name] ~= nil then
+        for _, u in ipairs(UIX.spaces(box.space[name].id)) do u:truncate() end
+        box.space[name]:truncate()
+    end
     return {OK}
 end
 

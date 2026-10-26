@@ -10,4 +10,5 @@
 
 pub mod coord;
 pub mod route;
+pub mod uix;
 pub mod wire;
