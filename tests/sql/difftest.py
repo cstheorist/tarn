@@ -44,6 +44,20 @@ SCHEMA = [
     "CREATE TABLE cih (handle VARCHAR(20) PRIMARY KEY, n INT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
     "CREATE TABLE ciu (t INT, id INT, email VARCHAR(40), PRIMARY KEY (t, id), UNIQUE KEY ue (t, email)) "
     "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci PARTITION BY KEY(t)",
+    # unique keys on nullable columns hold several NULLs (issue #51)
+    "CREATE TABLE nu (id INT PRIMARY KEY, e VARCHAR(10), f INT, UNIQUE KEY ue (e, id), UNIQUE KEY uef (e, f, id))",
+    # an orders list: pages in the order of a secondary index (issue #41)
+    "CREATE TABLE ord (shop INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
+    "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (shop, id), KEY bypa (shop, pa, id), "
+    "KEY bystatus (shop, closed, del, id)) PARTITION BY KEY(shop)",
+    # unique keys without the shard key (issue #14): enforced across shards
+    # through global indexes; a nullable column, as in soft-delete keys
+    "CREATE TABLE gu (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
+    "UNIQUE KEY th (t, h, live), UNIQUE KEY code (n))",
+    "CREATE TABLE gr (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
+    "UNIQUE KEY th (t, h, live), UNIQUE KEY code (n))",
+    # ... with a case-insensitive column (issue #13): the collation decides
+    "CREATE TABLE gci (id INT PRIMARY KEY, email VARCHAR(40) COLLATE utf8mb4_general_ci, UNIQUE KEY ue (email))",
 ]
 
 
@@ -71,6 +85,15 @@ def seed():
              "(5, 'Bob', 'Ångström', 'c3', 'z', 50), (6, 'dave', 'angstrom', 'C3', NULL, 60), "
              "(7, 'Eve ', 'straße', 'd4', 'x', 70), (8, 'a_b', 'Straße', 'D4', 'w', 80), "
              "(9, 'ab', 'Œuvre', 'e5', 'v', 90), (10, 'a-b', 'oeuvre', 'E5', 'u', 100)")
+    rows = []
+    for shop, n in ((1, 700), (2, 30), (3, 1)):
+        for i in range(1, n + 1):
+            # processed_at repeats (ties broken by id); 1 in 5 deleted, 2 in 5 open
+            pa = f"'2025-01-{1 + i % 28:02d} 1{i % 7}:00:00'"
+            closed = "NULL" if i % 5 in (1, 3) else f"'2025-02-{1 + i % 28:02d} 00:00:00'"
+            st = "'paid'" if i % 3 else "'pending'"
+            rows.append(f"({shop}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
+    s.append("INSERT INTO ord VALUES " + ", ".join(rows))
     return s
 
 
@@ -273,6 +296,58 @@ CASES = [
     ("INSERT INTO uk VALUES (1, 7, 'a', 1)", "err"),
     ("INSERT INTO uk VALUES (1, 1, 'z', 1) ON DUPLICATE KEY UPDATE name = 'b'", "err"),
     ("UPDATE uk SET name = 'a' WHERE t = 1 AND id = 6", "err"),
+    # unique keys without the shard key: cross-shard enforcement (#14)
+    ("INSERT INTO gci VALUES (1, 'Ann@x'), (2, 'bob@x'), (3, NULL), (4, NULL)", "dml:gci"),
+    ("INSERT INTO gci VALUES (5, 'ANN@X')", "err"),
+    ("UPDATE gci SET email = 'Bob@X' WHERE id = 1", "err"),
+    ("UPDATE gci SET email = 'ann@X' WHERE id = 1", "dml:gci"),
+    ("INSERT INTO gci VALUES (6, 'BOB@x') ON DUPLICATE KEY UPDATE email = 'carol@x'", "dml:gci"),
+    ("SELECT * FROM gci ORDER BY id", "q"),
+    ("INSERT INTO gu VALUES (1, 1, 'a', 1, 10), (2, 1, 'b', 1, 20), (3, 2, 'a', 1, 30)", "dml:gu"),
+    ("INSERT INTO gu VALUES (4, 1, 'a', NULL, NULL), (5, 1, 'a', NULL, NULL)", "dml:gu"),
+    ("INSERT INTO gu VALUES (6, 1, 'a', 1, 60)", "err"),
+    ("INSERT INTO gu VALUES (6, 9, 'z', 1, 10)", "err"),
+    ("INSERT INTO gu VALUES (6, 9, 'z', 1, 60), (7, 9, 'z', 1, 70)", "err"),
+    ("SELECT * FROM gu ORDER BY id", "q"),
+    ("INSERT IGNORE INTO gu VALUES (6, 1, 'a', 1, 61), (7, 3, 'c', 1, 70)", "dml:gu"),
+    ("INSERT INTO gu VALUES (8, 1, 'b', 1, 80) ON DUPLICATE KEY UPDATE n = n + 1", "dml:gu"),
+    ("INSERT INTO gu VALUES (8, 5, 'q', 1, 30) ON DUPLICATE KEY UPDATE h = 'w'", "dml:gu"),
+    ("INSERT INTO gu VALUES (9, 1, 'b', 1, 90) ON DUPLICATE KEY UPDATE h = 'a'", "err"),
+    ("REPLACE INTO gu VALUES (10, 1, 'b', 1, 70)", "dml:gu"),
+    ("REPLACE INTO gu VALUES (1, 4, 'd', 1, 11)", "dml:gu"),
+    ("UPDATE gu SET t = 1, h = 'b' WHERE id = 1", "err"),
+    ("UPDATE gu SET h = 'e', n = 12 WHERE id = 1", "dml:gu"),
+    ("UPDATE gu SET live = NULL WHERE id = 10", "dml:gu"),
+    ("INSERT INTO gu VALUES (11, 1, 'b', 1, 110)", "dml:gu"),
+    ("UPDATE gu SET id = 12 WHERE id = 11", "dml:gu"),
+    ("UPDATE gu SET n = n + 1 WHERE t = 1", "dml:gu"),
+    ("DELETE FROM gu WHERE id = 12", "dml:gu"),
+    ("INSERT INTO gu VALUES (13, 1, 'b', 1, 130)", "dml:gu"),
+    ("UPDATE gu SET n = 1", "err"),
+    ("SELECT * FROM gu WHERE t = 1 AND h = 'b' AND live = 1", "q"),
+    # point lookups by a unique key without the shard key find the row on
+    # whichever shard holds it
+    ("SELECT id FROM gu WHERE n = 21", "q"),
+    ("SELECT id FROM gu WHERE n = 31", "q"),
+    ("SELECT id FROM gu WHERE n = 71", "q"),
+    ("SELECT id FROM gu WHERE n = 131", "q"),
+    ("SELECT id FROM gu WHERE n IN (21, 31, 71, 131) ORDER BY id", "q"),
+    ("SELECT id, h FROM gu WHERE t = 2 AND h = 'a' AND live = 1", "q"),
+    ("SELECT id, h FROM gu WHERE t = 3 AND h = 'c' AND live = 1", "q"),
+    ("SELECT id FROM gci WHERE email = 'BOB@X'", "q"),
+    ("SELECT id FROM gci WHERE email = 'ann@x'", "q"),
+    # a value moved from one row to another in one transaction
+    ("BEGIN", "q"),
+    ("UPDATE gu SET n = 500 WHERE id = 2", "dml:gu"),
+    ("UPDATE gu SET n = 21 WHERE id = 3", "dml:gu"),
+    ("COMMIT", "dml:gu"),
+    ("BEGIN", "q"),
+    ("UPDATE gu SET h = 'm' WHERE id = 2", "dml:gu"),
+    ("UPDATE gu SET n = NULL WHERE id = 2", "dml:gu"),
+    ("UPDATE gu SET h = 'b', n = 500 WHERE id = 13", "dml:gu"),
+    ("COMMIT", "dml:gu"),
+    ("SELECT * FROM gu ORDER BY id", "q"),
+    ("SELECT * FROM gu ORDER BY id", "q"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers
     ("SET SESSION tx_isolation = 'READ-COMMITTED'", "q"),
@@ -718,6 +793,138 @@ CASES = [
     ("INSERT INTO cin VALUES ('a', 1), ('A', 2), ('b', 3), ('Ä', 4)", "dml:cin"),
     ("SELECT n FROM cin WHERE tag = 'A' ORDER BY n", "q"),
     ("SELECT MIN(n), COUNT(*) FROM cin GROUP BY tag ORDER BY 1", "q"),
+    # unique keys without the shard key, at READ COMMITTED (#14)
+    ("INSERT INTO gr VALUES (1, 1, 'a', 1, 10), (2, 1, 'b', 1, 20), (3, 2, 'a', 1, 30)", "dml:gr"),
+    ("INSERT INTO gr VALUES (4, 1, 'a', NULL, NULL), (5, 1, 'a', NULL, NULL)", "dml:gr"),
+    ("INSERT INTO gr VALUES (6, 1, 'a', 1, 60)", "err"),
+    ("INSERT INTO gr VALUES (6, 9, 'z', 1, 10)", "err"),
+    ("INSERT INTO gr VALUES (6, 9, 'z', 1, 60), (7, 9, 'z', 1, 70)", "err"),
+    ("SELECT * FROM gr ORDER BY id", "q"),
+    ("INSERT IGNORE INTO gr VALUES (6, 1, 'a', 1, 61), (7, 3, 'c', 1, 70)", "dml:gr"),
+    ("INSERT INTO gr VALUES (8, 1, 'b', 1, 80) ON DUPLICATE KEY UPDATE n = n + 1", "dml:gr"),
+    ("INSERT INTO gr VALUES (8, 5, 'q', 1, 30) ON DUPLICATE KEY UPDATE h = 'w'", "dml:gr"),
+    ("INSERT INTO gr VALUES (9, 1, 'b', 1, 90) ON DUPLICATE KEY UPDATE h = 'a'", "err"),
+    ("REPLACE INTO gr VALUES (10, 1, 'b', 1, 70)", "dml:gr"),
+    ("REPLACE INTO gr VALUES (1, 4, 'd', 1, 11)", "dml:gr"),
+    ("UPDATE gr SET t = 1, h = 'b' WHERE id = 1", "err"),
+    ("UPDATE gr SET h = 'e', n = 12 WHERE id = 1", "dml:gr"),
+    ("UPDATE gr SET live = NULL WHERE id = 10", "dml:gr"),
+    ("INSERT INTO gr VALUES (11, 1, 'b', 1, 110)", "dml:gr"),
+    ("UPDATE gr SET id = 12 WHERE id = 11", "dml:gr"),
+    ("UPDATE gr SET n = n + 1 WHERE t = 1", "dml:gr"),
+    ("DELETE FROM gr WHERE id = 12", "dml:gr"),
+    ("INSERT INTO gr VALUES (13, 1, 'b', 1, 130)", "dml:gr"),
+    ("UPDATE gr SET n = 1", "err"),
+    ("SELECT * FROM gr WHERE t = 1 AND h = 'b' AND live = 1", "q"),
+    # a value moved from one row to another in one transaction
+    ("BEGIN", "q"),
+    ("UPDATE gr SET n = 500 WHERE id = 2", "dml:gr"),
+    ("UPDATE gr SET n = 21 WHERE id = 3", "dml:gr"),
+    ("COMMIT", "dml:gr"),
+    ("BEGIN", "q"),
+    ("UPDATE gr SET h = 'm' WHERE id = 2", "dml:gr"),
+    ("UPDATE gr SET n = NULL WHERE id = 2", "dml:gr"),
+    ("UPDATE gr SET h = 'b', n = 500 WHERE id = 13", "dml:gr"),
+    ("COMMIT", "dml:gr"),
+    ("SELECT * FROM gr ORDER BY id", "q"),
+    ("SELECT * FROM gr ORDER BY id", "q"),
+    # ordered pages with LIMIT read the index that follows ORDER BY a page at
+    # a time and stop early (issue #41): residuals, OFFSET, ties, bounds,
+    # selective filters, an empty range, and the transaction's own writes
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
+    ("SELECT * FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 20 OFFSET 300", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 300, 10", "q"),
+    ("SELECT pa FROM ord WHERE shop = 1 ORDER BY pa LIMIT 40", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 ORDER BY shop, pa, id LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa, id LIMIT 30", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id % 97 = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id > 690 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa >= '2025-01-20' ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
+     "ORDER BY pa, id LIMIT 25", "q"),
+    ("SELECT id FROM ord WHERE shop = 2 AND del = 0 ORDER BY pa, id LIMIT 100", "q"),
+    ("SELECT id FROM ord WHERE shop = 3 AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 9 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 0", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY id LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL ORDER BY closed, del, id LIMIT 9", "q"),
+    # ... and backwards for ORDER BY ... DESC (issue #50): with and without
+    # bounds, residuals, OFFSET, ties, mixed directions (sorted instead)
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 51", "q"),
+    ("SELECT * FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 20 OFFSET 300", "q"),
+    ("SELECT pa FROM ord WHERE shop = 1 ORDER BY pa DESC LIMIT 40", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 ORDER BY id DESC LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 ORDER BY shop DESC, pa DESC, id DESC LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa DESC, id DESC LIMIT 30", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id % 97 = 0 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa >= '2025-01-20' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-20' ORDER BY pa DESC, id DESC LIMIT 1000", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa < '2025-01-03' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa <= '2025-01-03 12:00:00' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
+     "ORDER BY pa DESC, id DESC LIMIT 25", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id < 40 ORDER BY id DESC LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND id >= 690 ORDER BY id DESC LIMIT 50", "q"),
+    ("SELECT id FROM ord WHERE shop = 2 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 100", "q"),
+    ("SELECT id FROM ord WHERE shop = 9 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id LIMIT 9", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id DESC LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL ORDER BY closed DESC, del DESC, id DESC LIMIT 9", "q"),
+    # IS NULL as an index predicate (issue #51): single-column and composite
+    # indexes, with and without further key columns, unique keys holding
+    # several NULLs, <=>, and comparisons with NULL that match nothing
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY id", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 20", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NOT NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NULL AND del = 1 AND id > 600", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed = NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed <=> NULL AND del = 0", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed > NULL", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY closed, del, id LIMIT 5", "q"),
+    ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),
+    ("SELECT id FROM t1 WHERE a <=> NULL", "q"),
+    ("SELECT id FROM t1 WHERE a <=> 3 ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE a IS NULL OR a = 1 ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE NOT (a IS NULL) AND a < 2 ORDER BY id", "q"),
+    ("SELECT t2.id FROM t2 JOIN t1 ON t1.id = t2.t1_id WHERE t1.a IS NULL ORDER BY t2.id", "q"),
+    ("SELECT t1.id FROM t1 LEFT JOIN t2 ON t2.t1_id = t1.id WHERE t2.t1_id IS NULL ORDER BY t1.id", "q"),
+    ("SELECT x.id, y.id FROM t1 x JOIN t1 y ON y.a <=> x.a WHERE x.id < 15 ORDER BY x.id, y.id", "q"),
+    ("SELECT id FROM t1 WHERE id IS NULL", "q"),
+    ("INSERT INTO nu VALUES (1, NULL, 1), (2, 'b', NULL), (3, NULL, NULL), (4, 'd', 4)", "dml:nu"),
+    ("SELECT id FROM nu WHERE e IS NULL ORDER BY id", "q"),
+    ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL", "q"),
+    ("SELECT id FROM nu WHERE e <=> NULL AND f <=> 1", "q"),
+    ("SELECT id FROM nu WHERE e = 'b'", "q"),
+    ("SELECT id FROM nu WHERE e IS NULL AND id = 3", "q"),
+    ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL AND id = 3", "q"),
+    ("UPDATE nu SET f = 9 WHERE e IS NULL", "dml:nu"),
+    ("DELETE FROM nu WHERE e IS NULL AND f = 9 LIMIT 1", "dml:nu"),
+    ("BEGIN", "q"),
+    ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
+     "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
+    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE shop = 1 AND id = 400", "dml:ord"),
+    ("UPDATE ord SET del = 1 WHERE shop = 1 AND id = 28", "dml:ord"),
+    ("DELETE FROM ord WHERE shop = 1 AND id = 56", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8 OFFSET 2", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
+    ("UPDATE ord SET pa = '2026-01-01 00:00:00' WHERE shop = 1 AND id = 402", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8 OFFSET 1", "q"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("BEGIN", "q"),
+    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE shop = 1 AND id = 401", "dml:ord"),
+    ("DELETE FROM ord WHERE shop = 1 AND id = 84", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 3 FOR UPDATE", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 3 FOR UPDATE", "q"),
+    ("SELECT id FROM ord WHERE shop = 2 ORDER BY pa DESC, id DESC LIMIT 4 FOR UPDATE SKIP LOCKED", "q"),
+    ("COMMIT", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 
 

@@ -868,6 +868,62 @@ class T:
         self.check(q(c, "SELECT COUNT(*), SUM(n) FROM up2") == ((1, total),), "unique-key upserts all counted, one row")
         self.check(q(c, "SELECT COUNT(*) FROM up WHERE k LIKE 'k%'")[0][0] == per, "INSERT IGNORE: one row per key")
 
+    def test_global_unique(self):
+        # A unique key without the shard key (issue #14): its value is locked
+        # on the shard of its global index entry, so concurrent writers of
+        # one value queue there whichever shards their rows live on.
+        c = self.fresh("gq", "CREATE TABLE gq (id INT PRIMARY KEY, email VARCHAR(20), n INT, UNIQUE KEY ue (email))", [])
+        x, y = self.two_shards(list(range(1, 40)))
+        a, b = self.rc(), self.rc()
+        q(a, "BEGIN")
+        q(a, "INSERT INTO gq VALUES (%s, 'x@y', 1)", (x,))
+        bg = Bg(lambda: q(b, "INSERT INTO gq VALUES (%s, 'x@y', 2)", (y,)))
+        time.sleep(0.4)
+        self.check(bg.running(), "an insert of a value an uncommitted row on another shard has waits")
+        q(a, "ROLLBACK")
+        bg.join()
+        self.check(bg.exc is None, f"... and succeeds when that one rolls back ({bg.exc})")
+        q(a, "BEGIN")
+        q(a, "UPDATE gq SET email = 'z@y' WHERE id = %s", (y,))
+        bg = Bg(lambda: q(self.rc(), "INSERT INTO gq VALUES (%s, 'x@y', 3)", (x,)))
+        time.sleep(0.4)
+        self.check(bg.running(), "... an insert of a value an uncommitted UPDATE frees waits")
+        q(a, "COMMIT")
+        bg.join()
+        self.check(bg.exc is None, f"... and takes it when the UPDATE commits ({bg.exc})")
+        self.check(q(c, "SELECT id, email FROM gq ORDER BY id") == tuple(sorted(((x, "x@y"), (y, "z@y")))),
+                   "final rows")
+        # concurrent upserts of one value from rows on every shard: one row
+        q(c, "DELETE FROM gq")
+        errors = []
+        per = 20
+
+        def worker(w):
+            s = self.rc()
+            for i in range(per):
+                try:
+                    if i % 2:
+                        q(s, "BEGIN")
+                    q(s, "INSERT INTO gq VALUES (%s, 'hot', 1) ON DUPLICATE KEY UPDATE n = n + 1", (w * 1000 + i,))
+                    if i % 2:
+                        q(s, "COMMIT")
+                except pymysql.MySQLError as e:
+                    errors.append(e.args)
+                    try:
+                        q(s, "ROLLBACK")
+                    except pymysql.MySQLError:
+                        pass
+
+        ths = [threading.Thread(target=worker, args=(w,)) for w in range(self.args.threads)]
+        for t in ths:
+            t.start()
+        for t in ths:
+            t.join()
+        self.check(not [e for e in errors if e[0] != 1213], f"no errors but deadlocks ({errors[:3]})")
+        total = self.args.threads * per - len(errors)
+        self.check(q(c, "SELECT COUNT(*), SUM(n) FROM gq") == ((1, total),),
+                   f"unique-key upserts across shards all counted, one row ({q(c, 'SELECT COUNT(*), SUM(n) FROM gq')})")
+
     def test_savepoints(self):
         for level in ("READ-COMMITTED", "SERIALIZABLE"):
             c = self.fresh("sp", "CREATE TABLE sp (id INT PRIMARY KEY, v INT)", ["(1, 0)"])

@@ -1114,7 +1114,8 @@ fn join_and(mut v: Vec<Expr>) -> Option<Expr> {
 // ---------------------------------------------------------------------------
 
 enum Pred {
-    Eq(Expr),
+    /// Equality; true: a NULL value matches NULLs (`IS NULL`, `<=>`).
+    Eq(Expr, bool),
     In(Vec<Expr>),
     Range(Option<(Expr, bool)>, Option<(Expr, bool)>),
 }
@@ -1273,7 +1274,35 @@ fn union_path(table: &TableDef, alts: &[EqAlt]) -> Option<AccessPath> {
     ))
 }
 
-fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
+/// Whether reading `idx` with `eq_len` leading columns fixed returns rows in
+/// the order of `order` (table columns, descending?): every ORDER BY column
+/// is fixed by the equality prefix or is the next index column, all of the
+/// latter in one direction. Some(true): read backwards (issue #50).
+fn index_follows_order(idx: &crate::catalog::IndexDef, eq_len: usize, order: &[(usize, bool)]) -> Option<bool> {
+    let mut next = eq_len;
+    let mut dir: Option<bool> = None;
+    for &(c, desc) in order {
+        match idx.cols.iter().position(|&x| x == c) {
+            Some(pos) if pos < eq_len => {}
+            Some(pos) if pos == next && dir.is_none_or(|d| d == desc) => {
+                next += 1;
+                dir = Some(desc);
+            }
+            _ => return None,
+        }
+    }
+    match dir {
+        Some(d) => Some(d),
+        None if !order.is_empty() => Some(false),
+        None => None,
+    }
+}
+
+/// Access path for the conjuncts `conj`. `order` is the statement's ORDER BY
+/// as table columns when a LIMIT may stop the scan early (else empty): among
+/// indexes with the same equality prefix, one that returns rows in that order
+/// wins, so a plain read can page through it and stop (issue #41).
+fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, bool)]) -> AccessPath {
     if table.is_virtual() {
         // information_schema: rows come from the catalog; WHERE filters them
         return AccessPath::Full;
@@ -1307,17 +1336,13 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
                 if !index_serves(table, col, *coll, matches!(op, CmpOp::Eq | CmpOp::NullSafeEq)) {
                     continue;
                 }
-                // `col <=> x` holds for a NULL `col` when x is NULL, but an
-                // index lookup drops a NULL key part (NULL never equals
-                // anything under `=`). On a nullable column it is no index
-                // equality: x may be a NULL parameter of a cached plan (#72).
-                // On a NOT NULL column it is `=`: a NULL x matches nothing.
-                if op == CmpOp::NullSafeEq && table.columns[col].nullable {
-                    continue;
-                }
                 let o = (**other).clone();
                 preds[col].push(match op {
-                    CmpOp::Eq | CmpOp::NullSafeEq => Pred::Eq(o),
+                    CmpOp::Eq => Pred::Eq(o, false),
+                    // `<=>` selects NULLs too, where the column stores them
+                    // (a NULL x may be a parameter of a cached plan, #72); on
+                    // a NOT NULL column it is `=`, and a NULL x matches nothing
+                    CmpOp::NullSafeEq => Pred::Eq(o, table.columns[col].storage_nullable()),
                     CmpOp::Lt => Pred::Range(None, Some((o, false))),
                     CmpOp::LtEq => Pred::Range(None, Some((o, true))),
                     CmpOp::Gt => Pred::Range(Some((o, false)), None),
@@ -1335,13 +1360,22 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
                     }
                 }
             }
+            // `col IS NULL` is an equality on NULL (issue #51): an index
+            // stores NULLs of a nullable part, first in its order.
+            Expr::IsNull(x, false) => {
+                if let Some(c) = local(x) {
+                    if table.columns[c].storage_nullable() {
+                        preds[c].push(Pred::Eq(Expr::Lit(Value::Null), true));
+                    }
+                }
+            }
             Expr::InList(x, list, false, coll) => {
                 if let Some(c) = local(x) {
                     if !index_serves(table, c, *coll, true) {
                         continue;
                     }
                     if list.len() == 1 && list[0].is_constant() {
-                        preds[c].push(Pred::Eq(list[0].clone()));
+                        preds[c].push(Pred::Eq(list[0].clone(), false));
                     } else if list.iter().all(|e| e.is_constant()) && !list.is_empty() {
                         preds[c].push(Pred::In(list.clone()));
                     }
@@ -1396,17 +1430,20 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
     }
     for idx in table.usable_indexes() {
         let mut eq: Vec<Expr> = Vec::new();
+        let mut null_eq: Vec<bool> = Vec::new();
         let mut in_list: Option<(usize, Vec<Expr>)> = None;
         let mut range: Option<(Option<(Expr, bool)>, Option<(Expr, bool)>)> = None;
         for (pos, &c) in idx.cols.iter().enumerate() {
-            if let Some(Pred::Eq(e)) = preds[c].iter().find(|p| matches!(p, Pred::Eq(_))) {
+            if let Some(Pred::Eq(e, n)) = preds[c].iter().find(|p| matches!(p, Pred::Eq(..))) {
                 eq.push(e.clone());
+                null_eq.push(*n);
                 continue;
             }
             if in_list.is_none() {
                 if let Some(Pred::In(l)) = preds[c].iter().find(|p| matches!(p, Pred::In(_))) {
                     in_list = Some((pos, l.clone()));
                     eq.push(Expr::Lit(Value::Null)); // placeholder, replaced per key
+                    null_eq.push(false);
                     continue;
                 }
             }
@@ -1429,7 +1466,8 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
         }
         let full = eq.len() == idx.cols.len();
         let pk_bonus = if idx.id == 0 { 1 } else { 0 };
-        let (score, path) = if full && idx.unique {
+        // A unique key holds any number of NULLs: `IS NULL` on it is a range.
+        let (score, path) = if full && idx.unique && !null_eq.contains(&true) {
             let keys = match &in_list {
                 None => vec![eq.clone()],
                 Some((pos, list)) => list
@@ -1449,15 +1487,26 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
             continue; // IN on a non-unique / partial key: fall back to other paths
         } else if !eq.is_empty() || range.is_some() {
             let (lo, hi2) = range.unwrap_or((None, None));
-            let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus;
+            // Following ORDER BY outweighs the primary-key bonus, never a
+            // longer equality prefix or a bound on the next column; only
+            // when the prefix fixes the shard key (one shard, read in pages).
+            let routed = table.shard_key.iter().all(|c| idx.cols[..eq.len()].contains(c));
+            let follows = if routed {
+                index_follows_order(idx, eq.len(), order)
+            } else {
+                None
+            };
+            let ordered = if follows.is_some() { 3 } else { 0 };
+            let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus + ordered;
             (
                 s,
                 AccessPath::Range {
                     index: idx.id,
                     eq,
+                    null_eq,
                     lo,
                     hi: hi2,
-                    reverse: false,
+                    reverse: follows == Some(true),
                 },
             )
         } else {
@@ -1880,8 +1929,23 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         limit_exprs(q, &mut lb)?
     };
 
-    // FROM: access paths
-    let source = build_source(&scope, &joins, &on_exprs, &conj)?;
+    // FROM: access paths. A single-table read with LIMIT prefers an index
+    // that returns rows in ORDER BY order (the executor then pages through
+    // it and stops early).
+    let order_cols: Vec<(usize, bool)> =
+        if scope.tables.len() == 1 && limit.is_some() && !aggregated && sel.distinct.is_none() {
+            order
+                .iter()
+                .map(|(e, desc)| match e {
+                    Expr::Col(c) if *c < scope.tables[0].table.columns.len() => Some((*c, *desc)),
+                    _ => None,
+                })
+                .collect::<Option<_>>()
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+    let source = build_source(&scope, &joins, &on_exprs, &conj, &order_cols)?;
     let filter = join_and(conj.clone());
 
     // Push LIMIT to storage when every row read is a result row (HAVING
@@ -2040,6 +2104,7 @@ fn build_source(
     joins: &[(JoinKind, Option<A::Expr>)],
     on: &[Option<Expr>],
     conj: &[Expr],
+    order: &[(usize, bool)],
 ) -> SqlResult<Source> {
     if scope.tables.is_empty() {
         return Ok(Source::Dual);
@@ -2048,7 +2113,7 @@ fn build_source(
     let mut src = Source::Table(TableAccess {
         table: t0.table.clone(),
         alias: t0.alias.clone(),
-        path: choose_path(&t0.table, 0, conj),
+        path: choose_path(&t0.table, 0, conj, order),
         offset: 0,
         limit: None,
     });
@@ -2063,7 +2128,7 @@ fn build_source(
         if kind == JoinKind::Inner {
             cands.extend(conj.iter().cloned());
         }
-        let path = choose_path(&t.table, t.offset, &cands);
+        let path = choose_path(&t.table, t.offset, &cands, &[]);
         src = Source::Join {
             left: Box::new(src),
             right: TableAccess {
@@ -2252,7 +2317,7 @@ fn plan_update(u: &A::Update, ctx: &PlanCtx) -> SqlResult<UpdatePlan> {
         Some(l) => Some(b.bind(l)?),
         None => None,
     };
-    let path = choose_path(&table, 0, &conj);
+    let path = choose_path(&table, 0, &conj, &[]);
     Ok(UpdatePlan {
         access: TableAccess {
             table: table.clone(),
@@ -2290,7 +2355,7 @@ fn plan_delete(d: &A::Delete, ctx: &PlanCtx) -> SqlResult<DeletePlan> {
         Some(l) => Some(b.bind(l)?),
         None => None,
     };
-    let path = choose_path(&table, 0, &conj);
+    let path = choose_path(&table, 0, &conj, &[]);
     Ok(DeletePlan {
         access: TableAccess {
             table: table.clone(),
@@ -2577,6 +2642,7 @@ pub(crate) fn add_foreign_key(def: &mut TableDef, name: Option<String>, mut fk: 
             cols,
             unique: false,
             invisible: false,
+            global: None,
         });
     }
     def.foreign_keys.push(fk);
@@ -2771,6 +2837,7 @@ fn plan_create_table(
         cols: pk.clone(),
         unique: true,
         invisible: false,
+        global: None,
     }];
     for (n, cols, unique) in secondary.into_iter() {
         let name = match n {
@@ -2791,6 +2858,7 @@ fn plan_create_table(
             cols,
             unique,
             invisible,
+            global: None,
         });
     }
     let shard_key = match partition_key {
@@ -2861,6 +2929,8 @@ fn plan_create_table(
         foreign_keys: Vec::new(),
         bucket_index: None,
         layout: Default::default(),
+        globals: Vec::new(),
+        base: None,
     };
     // Index ids so far are 0..n; the bucket_id index takes n at creation,
     // so indexes a foreign key adds come after it.
@@ -3090,6 +3160,150 @@ mod tests {
     }
 
     #[test]
+    fn index_that_follows_order_by() {
+        // issue #41: with LIMIT, an index whose columns after the equality
+        // prefix are the ORDER BY wins over the primary-key prefix
+        let c0 = Catalog::default();
+        let ctx0 = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE orders (shop_id BIGINT NOT NULL, id BIGINT NOT NULL, processed_at DATETIME, \
+             is_deleted TINYINT NOT NULL DEFAULT 0, number INT, PRIMARY KEY (shop_id, id), \
+             KEY by_processed (shop_id, processed_at, id), KEY by_number (shop_id, number, id)) \
+             PARTITION BY KEY (shop_id)",
+            &ctx0,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let path = |sql: &str| {
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            match plan(sql, &ctx).unwrap() {
+                Stmt::Select(s) => match &s.source {
+                    Source::Table(t) => t.path.clone(),
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+        };
+        let index = |p: AccessPath| match p {
+            AccessPath::Range { index, eq, .. } => (index, eq.len()),
+            other => panic!("{other:?}"),
+        };
+        let page = "SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at, id";
+        assert_eq!(index(path(&format!("{page} LIMIT 51"))), (1, 1));
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at LIMIT 5"
+            )),
+            (1, 1)
+        );
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY number, id LIMIT 5"
+            )),
+            (2, 1)
+        );
+        // the primary key follows ORDER BY id
+        assert_eq!(
+            index(path("SELECT * FROM orders WHERE shop_id = 1 ORDER BY id LIMIT 5")),
+            (0, 1)
+        );
+        // without LIMIT, or with an order no index follows: the primary key
+        assert_eq!(index(path(page)), (0, 1));
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY is_deleted LIMIT 5"
+            )),
+            (0, 1)
+        );
+        // a longer equality prefix still beats the order
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 AND number = 3 ORDER BY processed_at LIMIT 5"
+            )),
+            (2, 2)
+        );
+        // issue #50: all descending reads the index backwards; mixed
+        // directions follow no index
+        let rev = |sql: &str| match path(sql) {
+            AccessPath::Range { index, reverse, .. } => (index, reverse),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at DESC, id DESC LIMIT 51"),
+            (1, true)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY shop_id, id DESC LIMIT 5"),
+            (0, true)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at, id LIMIT 5"),
+            (1, false)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at DESC, id LIMIT 5"),
+            (0, false)
+        );
+        assert_eq!(
+            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at DESC, id DESC"),
+            (0, false)
+        );
+        // issue #51: IS NULL fixes an index part like an equality
+        let prefix = |sql: &str| match path(sql) {
+            AccessPath::Range { index, eq, null_eq, .. } => (index, eq.len(), null_eq),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE shop_id = 1 AND number IS NULL"),
+            (2, 2, vec![false, true])
+        );
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE shop_id = 1 AND number <=> NULL AND id > 5"),
+            (2, 2, vec![false, true])
+        );
+        // IS NOT NULL, and IS NULL on a NOT NULL column, fix nothing
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE shop_id = 1 AND number IS NOT NULL"),
+            (0, 1, vec![false])
+        );
+        assert_eq!(
+            prefix("SELECT * FROM orders WHERE shop_id = 1 AND is_deleted IS NULL"),
+            (0, 1, vec![false])
+        );
+        // aggregates read every row anyway
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::Select(s) = plan(
+            "SELECT COUNT(*) FROM orders WHERE shop_id = 1 ORDER BY processed_at LIMIT 5",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert!(matches!(&s.source, Source::Table(t) if matches!(t.path, AccessPath::Range { index: 0, .. })));
+    }
+
+    #[test]
     fn tables_without_primary_key() {
         // issue #32: InnoDB's clustered index without a PRIMARY KEY
         let c0 = Catalog::default();
@@ -3130,8 +3344,10 @@ mod tests {
         assert_eq!(t.col_index(catalog::ROW_ID), None);
         // the hidden column's name is reserved, as in InnoDB
         assert_eq!(def("CREATE TABLE r (db_row_id INT PRIMARY KEY)").err(), Some(1166));
-        // a nullable unique key would need the row id as its shard key (#14)
-        assert_eq!(def("CREATE TABLE n (a INT, UNIQUE KEY ua (a))").err(), Some(1503));
+        // a nullable unique key does not contain the shard key (the row id):
+        // it gets a global index (#14)
+        let n = def("CREATE TABLE n (a INT, UNIQUE KEY ua (a))").unwrap();
+        assert!(n.needs_global(&n.indexes[1]));
         // statements never see the hidden column
         let mut log = *def("CREATE TABLE log (msg VARCHAR(20), n INT)").unwrap();
         log.space_id = 600;
@@ -3274,9 +3490,9 @@ mod tests {
 
     #[test]
     fn null_safe_equality_paths() {
-        // issue #72: `col <=> x` matches NULL rows when x is NULL, which an
-        // index lookup cannot find: on a nullable column it is no index
-        // equality; on a NOT NULL one it is the same as `=`
+        // issue #72: `col <=> x` matches NULL rows when x is NULL: on a
+        // nullable column it is an index equality whose NULL selects the
+        // NULLs (issue #51); on a NOT NULL one it is the same as `=`
         let c0 = Catalog::default();
         let ctx = PlanCtx {
             catalog: &c0,
@@ -3308,17 +3524,18 @@ mod tests {
                 _ => panic!(),
             }
         };
-        assert!(matches!(path("SELECT id FROM t WHERE a <=> NULL"), AccessPath::Full));
-        assert!(matches!(path("SELECT id FROM t WHERE NULL <=> a"), AccessPath::Full));
-        assert!(matches!(path("SELECT id FROM t WHERE a <=> 1"), AccessPath::Full));
+        let null_safe = |p: AccessPath| match p {
+            AccessPath::Range { index, null_eq, .. } => (index, null_eq),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE a <=> NULL")), (1, vec![true]));
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE NULL <=> a")), (1, vec![true]));
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE a <=> 1")), (1, vec![true]));
         assert!(matches!(
             path("SELECT id FROM t WHERE a <=> NULL AND b = 2"),
-            AccessPath::Range { index: 2, .. }
+            AccessPath::Range { index: 1 | 2, .. }
         ));
-        assert!(matches!(
-            path("SELECT id FROM t WHERE b <=> 2"),
-            AccessPath::Range { index: 2, .. }
-        ));
+        assert_eq!(null_safe(path("SELECT id FROM t WHERE b <=> 2")), (2, vec![false]));
         assert!(matches!(
             path("SELECT id FROM t WHERE id <=> 3"),
             AccessPath::Point { index: 0, .. }
@@ -3341,8 +3558,14 @@ mod tests {
                 _ => panic!(),
             }
         };
-        assert!(matches!(dml("UPDATE t SET b = 1 WHERE a <=> NULL"), AccessPath::Full));
-        assert!(matches!(dml("DELETE FROM t WHERE a <=> NULL"), AccessPath::Full));
+        assert!(matches!(
+            dml("UPDATE t SET b = 1 WHERE a <=> NULL"),
+            AccessPath::Range { index: 1, .. }
+        ));
+        assert!(matches!(
+            dml("DELETE FROM t WHERE a <=> NULL"),
+            AccessPath::Range { index: 1, .. }
+        ));
     }
 
     #[test]
@@ -3446,7 +3669,73 @@ mod tests {
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
         };
-        let bad = "CREATE TABLE o (shop_id INT, id INT, email VARCHAR(10), PRIMARY KEY (shop_id, id), UNIQUE KEY (email)) PARTITION BY KEY (shop_id)";
-        assert!(plan(bad, &ctx).is_err());
+        // a unique key without the shard key gets a global index (#14)
+        let sql = "CREATE TABLE o (shop_id INT, id INT, email VARCHAR(10), PRIMARY KEY (shop_id, id), UNIQUE KEY (email)) PARTITION BY KEY (shop_id)";
+        let Ok(Stmt::CreateTable { def, .. }) = plan(sql, &ctx) else {
+            panic!()
+        };
+        assert!(def.needs_global(&def.indexes[1]));
+        assert!(!def.needs_global(&def.indexes[0]));
+        // a shard key outside the primary key is still refused
+        let bad = "CREATE TABLE o (a INT, id INT PRIMARY KEY) PARTITION BY KEY (a)";
+        assert_eq!(plan(bad, &ctx).err().map(|e| e.code), Some(1503));
+    }
+}
+
+#[cfg(test)]
+mod global_index_tests {
+    use super::*;
+    use crate::catalog::Catalog;
+    use tarn_common::Value;
+
+    #[test]
+    fn entries_of_a_global_index() {
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let sql = "CREATE TABLE p (id BIGINT PRIMARY KEY, tenant BIGINT NOT NULL, handle VARCHAR(20), \
+                   live TINYINT, UNIQUE KEY th (tenant, handle, live), UNIQUE KEY ti (id, tenant))";
+        let Ok(Stmt::CreateTable { def, .. }) = plan(sql, &ctx) else {
+            panic!()
+        };
+        let mut def = *def;
+        // th lacks the shard key (id); ti contains it and stays local
+        assert!(def.needs_global(&def.indexes[1]));
+        assert!(!def.needs_global(&def.indexes[2]));
+        assert_eq!(def.global_cols(&def.indexes[1]), vec![1, 2, 3, 0]);
+        def.space_id = 10_007;
+        def.indexes[1].global = Some(10_008);
+        def.resolve_types().unwrap();
+        assert_eq!(def.globals.len(), 1);
+        let g = &def.globals[0];
+        assert_eq!(g.table.name, "_tarn_uix_10007_1");
+        assert_eq!(g.table.space_id, 10_008);
+        assert_eq!(g.table.shard_key, vec![0, 1, 2]);
+        assert_eq!(g.table.base, Some((10_007, 0)));
+        let row = vec![Value::Int(5), Value::Int(9), Value::str("hat"), Value::Int(1)];
+        let e = g.entry(&def, &row).unwrap();
+        assert_eq!(e, vec![Value::Int(9), Value::str("hat"), Value::Int(1), Value::Int(5)]);
+        assert_eq!(g.holder_pk(&def, &e), vec![Value::Int(5)]);
+        // a NULL key part takes no entry
+        let soft = vec![Value::Int(6), Value::Int(9), Value::str("hat"), Value::Null];
+        assert!(g.entry(&def, &soft).is_none());
+        assert!(def.in_global(3) && def.in_global(0));
+        // the storage gets the hidden space with the table; its primary
+        // index carries the unique key's name (duplicate-key messages)
+        let ld = def.lua_def();
+        assert_eq!(ld.uix.len(), 1);
+        assert_eq!(ld.uix[0].name, "_tarn_uix_10007_1");
+        assert_eq!(ld.uix[0].indexes[0].0, "th");
+        assert_eq!(ld.uix[0].indexes.len(), 2); // + bucket_id
+                                                // the definition survives the catalog round trip
+        let mut back = crate::catalog::parse_def_json(&ld.json).unwrap();
+        back.space_id = 10_007;
+        back.resolve_globals().unwrap();
+        assert_eq!(back.globals.len(), 1);
     }
 }

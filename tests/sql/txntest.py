@@ -345,6 +345,135 @@ class T:
                     bad.append((iso, key, res, rows))
         self.check(not bad, f"one of two inserts of case variants commits, the other fails: {bad[:3]}")
         self.check(q(c, "SELECT COUNT(*) FROM cik")[0][0] == 20, "one row per key")
+    def rows_read(self, c):
+        return int(dict(q(c, "SHOW STATUS LIKE 'Tarn_rows_read'"))["Tarn_rows_read"])
+
+    def test_ordered_limit_pages(self):
+        # issue #41: an ordered page with LIMIT reads the index that follows
+        # ORDER BY a page at a time and stops; a serializable read records
+        # only what it read, so writes past it do not conflict
+        c = self.fresh("ol", "CREATE TABLE ol (g INT, id INT, t INT, del TINYINT, PRIMARY KEY (g, id), "
+                             "KEY bt (g, t, id)) PARTITION BY KEY(g)", [])
+        for lo in range(0, 5000, 1000):
+            q(c, "INSERT INTO ol VALUES " + ",".join(f"(1, {i}, {5000 - i}, {int(i % 4 == 0)})"
+                                                   for i in range(lo, lo + 1000)))
+        page = "SELECT id FROM ol WHERE g = 1 AND del = 0 ORDER BY t, id LIMIT 50"
+        want = [i for i in range(4999, -1, -1) if i % 4][:50]
+        # issue #50: ORDER BY ... DESC reads the index backwards
+        rpage = "SELECT id FROM ol WHERE g = 1 AND del = 0 ORDER BY t DESC, id DESC LIMIT 50"
+        rwant = [i for i in range(5000) if i % 4][:50]
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                for sql, exp, name in ((page, want, "first page"), (rpage, rwant, "last page")):
+                    if txn:
+                        q(c, "BEGIN")
+                    before = self.rows_read(c)
+                    got = [r[0] for r in q(c, sql)]
+                    n = self.rows_read(c) - before
+                    if txn:
+                        q(c, "COMMIT")
+                    what = f"{iso}, {'in a transaction' if txn else 'autocommit'}, {name}"
+                    self.check(got == exp, f"{what}: {got[:5]}...")
+                    self.check(n <= 400, f"{what}: {n} rows read for a page of 50 out of 5000")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        # the transaction's own writes are merged into the page
+        q(c, "BEGIN")
+        q(c, "INSERT INTO ol VALUES (1, 9001, 0, 0)")
+        q(c, "UPDATE ol SET del = 1 WHERE g = 1 AND id = 4999")
+        q(c, "UPDATE ol SET t = -1 WHERE g = 1 AND id = 2001")
+        got = [r[0] for r in q(c, page)]
+        self.check(got == [2001, 9001] + [i for i in want if i != 4999][:48], f"own writes merged ({got[:5]}...)")
+        q(c, "ROLLBACK")
+        # an insert into the unread rest of the range does not conflict, one
+        # into the part read does
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for sql, t, conflict in ((page, 4000, False), (page, 10, True), (rpage, 20, False), (rpage, 4990, True)):
+            q(a, "BEGIN")
+            q(a, sql)
+            q(a, "UPDATE ol SET del = 1 - del WHERE g = 1 AND id = 0")
+            q(b, f"INSERT INTO ol VALUES (1, {7000 + t}, {t}, 0)")
+            self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                       f"insert at t = {t}: {'conflict' if conflict else 'no conflict'}")
+
+    def test_ordered_limit_case_insensitive(self):
+        # issue #41: the part of a range a limited read records ends at its
+        # last row as the index holds it (a case-insensitive key holds
+        # weight strings): writes inside it conflict, writes past it do not
+        self.fresh("oci", "CREATE TABLE oci (g INT, h VARCHAR(10), n INT, PRIMARY KEY (g, h)) "
+                          "COLLATE=utf8mb4_general_ci PARTITION BY KEY(g)", [f"(1, 'k{i:02d}', {i})" for i in range(40)])
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for h, conflict in (("K35x", False), ("k01x", True)):
+            q(a, "BEGIN")
+            got = [r[0] for r in q(a, "SELECT h FROM oci WHERE g = 1 ORDER BY h LIMIT 3")]
+            self.check(got == ["k00", "k01", "k02"], f"first page {got}")
+            q(a, "UPDATE oci SET n = n + 1 WHERE g = 1 AND h = 'k39'")
+            q(b, f"INSERT INTO oci VALUES (1, '{h}', 0)")
+            self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                       f"insert of {h}: {'conflict' if conflict else 'no conflict'}")
+
+    def test_global_unique(self):
+        # A unique key without the shard key (issue #14): sessions insert,
+        # rename and delete rows with values from a small set, from rows on
+        # every shard, in autocommit statements and transactions. No value
+        # may ever be held twice, and the global index must name exactly the
+        # rows that hold each value.
+        c = self.fresh("gx", "CREATE TABLE gx (id INT PRIMARY KEY, h VARCHAR(10), UNIQUE KEY uh (h))", [])
+        stop = time.time() + 4
+        errors = []
+        counts = {"ok": 0, "dup": 0, "conflict": 0}
+
+        def worker(w):
+            s = connect(self.args.tarn)
+            rnd = random.Random(w)
+            while time.time() < stop:
+                k = rnd.randrange(60)
+                v = f"v{rnd.randrange(12)}"
+                try:
+                    op = rnd.randrange(4)
+                    if op == 0:
+                        q(s, "INSERT INTO gx VALUES (%s, %s)", (k, v))
+                    elif op == 1:
+                        q(s, "UPDATE gx SET h = %s WHERE id = %s", (v, k))
+                    elif op == 2:
+                        q(s, "DELETE FROM gx WHERE id = %s", (k,))
+                    else:
+                        q(s, "BEGIN")
+                        q(s, "INSERT INTO gx VALUES (%s, %s) ON DUPLICATE KEY UPDATE h = NULL", (k, v))
+                        q(s, "UPDATE gx SET h = %s WHERE id = %s", (f"v{rnd.randrange(12)}", rnd.randrange(60)))
+                        q(s, "COMMIT")
+                    counts["ok"] += 1
+                except pymysql.MySQLError as e:
+                    code = e.args[0]
+                    try:
+                        q(s, "ROLLBACK")
+                    except pymysql.MySQLError:
+                        pass
+                    if code == 1062:
+                        counts["dup"] += 1
+                    elif code == 1213:
+                        counts["conflict"] += 1
+                    else:
+                        errors.append(e.args)
+
+        ths = [threading.Thread(target=worker, args=(w,)) for w in range(8)]
+        for t in ths:
+            t.start()
+        for t in ths:
+            t.join()
+        print(f"    global unique: {counts}")
+        self.check(not errors, f"no other errors ({errors[:3]})")
+        dups = q(c, "SELECT h, COUNT(*) FROM gx WHERE h IS NOT NULL GROUP BY h HAVING COUNT(*) > 1")
+        self.check(not dups, f"no value held twice: {dups}")
+        # every value is found through the index by exactly its row
+        rows = q(c, "SELECT id, h FROM gx WHERE h IS NOT NULL")
+        for k, h in rows:
+            q(c, "INSERT INTO gx VALUES (1000, %s) ON DUPLICATE KEY UPDATE id = id", (h,))
+            self.check(not q(c, "SELECT id FROM gx WHERE id = 1000"), f"the index finds the holder of {h}")
+        free = {f"v{i}" for i in range(12)} - {h for _, h in rows}
+        for h in free:
+            q(c, "INSERT INTO gx VALUES (1000, %s)", (h,))
+            q(c, "DELETE FROM gx WHERE id = 1000")
 
     def test_select_for_update(self):
         # FOR UPDATE takes a row lock (as in InnoDB): a concurrent writer
