@@ -48,7 +48,7 @@ fn quoted_end(b: &[u8], i: usize) -> usize {
 /// End (exclusive) of a `--` or `#` comment starting at `i`, if one starts
 /// there (`--` must be followed by whitespace, a control character or the
 /// end of the text, as in MySQL).
-fn line_comment_end(b: &[u8], i: usize) -> Option<usize> {
+pub(crate) fn line_comment_end(b: &[u8], i: usize) -> Option<usize> {
     let starts =
         b[i] == b'#' || (b[i] == b'-' && b.get(i + 1) == Some(&b'-') && b.get(i + 2).is_none_or(|c| *c <= b' '));
     if !starts {
