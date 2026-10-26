@@ -47,8 +47,8 @@ def setup(hp, units):
     q(c, f"DROP DATABASE IF EXISTS {DB}")
     q(c, f"CREATE DATABASE {DB}")
     c.select_db(DB)
-    q(c, "CREATE TABLE units (shop INT, item INT, unit INT, PRIMARY KEY (shop, item, unit)) PARTITION BY KEY(shop)")
-    q(c, "CREATE TABLE holds (shop INT, id INT, item INT, unit INT, PRIMARY KEY (shop, id)) PARTITION BY KEY(shop)")
+    q(c, "CREATE TABLE units (tenant INT, item INT, unit INT, PRIMARY KEY (tenant, item, unit)) PARTITION BY KEY(tenant)")
+    q(c, "CREATE TABLE holds (tenant INT, id INT, item INT, unit INT, PRIMARY KEY (tenant, id)) PARTITION BY KEY(tenant)")
     q(c, "CREATE TABLE counters (id INT PRIMARY KEY, n BIGINT)")
     for item in range(4):
         for lo in range(0, units, 1000):
@@ -72,11 +72,11 @@ def run(hp, level, workload, clients, seconds, items_per_cart):
         cart = rnd.sample(range(4), items_per_cart)
         q(c, "BEGIN")
         for item in cart:
-            r = q(c, "SELECT unit FROM units WHERE shop = 1 AND item = %s ORDER BY unit LIMIT 1 "
+            r = q(c, "SELECT unit FROM units WHERE tenant = 1 AND item = %s ORDER BY unit LIMIT 1 "
                      "FOR UPDATE SKIP LOCKED", (item,))
             if not r:
                 continue
-            q(c, "DELETE FROM units WHERE shop = 1 AND item = %s AND unit = %s", (item, r[0][0]))
+            q(c, "DELETE FROM units WHERE tenant = 1 AND item = %s AND unit = %s", (item, r[0][0]))
             with ids_lock:
                 hid = next(hold_ids)
             q(c, "INSERT INTO holds VALUES (1, %s, %s, %s)", (hid, item, r[0][0]))

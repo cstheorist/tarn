@@ -39,7 +39,7 @@ read them as **key/value**.
   `NOWAIT`, unique keys locked by value, savepoints. Hot-row updates wait
   instead of aborting, and commits stay atomic across shards.
 * **Key/value fast path.** Committed rows are ordinary tuples
-  (`box.space['shop.orders'].index.primary:get{42}`): about 260,000 direct
+  (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
   and model-checked with TLC (44 configurations, including 15 deliberately
@@ -63,11 +63,11 @@ scripts/cluster.sh start -n 2 -r 1 -p 4000      # 2 shards, SQL on port 4000
 
 ```sh
 mysql -h 127.0.0.1 -P 4000 -u root -e "
-  CREATE DATABASE shop;
-  CREATE TABLE shop.orders (id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  CREATE DATABASE demo;
+  CREATE TABLE demo.orders (id BIGINT PRIMARY KEY AUTO_INCREMENT,
                             customer INT NOT NULL, total DECIMAL(10,2), KEY c (customer));
-  INSERT INTO shop.orders (customer, total) VALUES (7, 19.99), (8, 5.00);
-  SELECT * FROM shop.orders WHERE id = 1;"
+  INSERT INTO demo.orders (customer, total) VALUES (7, 19.99), (8, 5.00);
+  SELECT * FROM demo.orders WHERE id = 1;"
 ```
 
 The same row, read straight from Tarantool:
@@ -75,7 +75,7 @@ The same row, read straight from Tarantool:
 ```lua
 -- tarantool
 local c = require('net.box').connect('tarn:tarn@127.0.0.1:3311')
-c.space['shop.orders'].index.primary:get{1}   -- on whichever shard owns it
+c.space['demo.orders'].index.primary:get{1}   -- on whichever shard owns it
 ```
 
 `scripts/cluster.sh start -n 2 -r 3` gives every shard three synchronous

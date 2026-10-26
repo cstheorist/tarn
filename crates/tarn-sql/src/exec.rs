@@ -2964,9 +2964,9 @@ mod tests {
     use crate::planner::{plan, PlanCtx};
 
     fn catalog() -> Catalog {
-        let ct = "CREATE TABLE o (shop_id BIGINT NOT NULL, id BIGINT NOT NULL, closed_at DATETIME DEFAULT NULL, \
-                  is_deleted TINYINT(1) NOT NULL DEFAULT '0', status VARCHAR(20), note VARCHAR(20) NOT NULL DEFAULT '', \
-                  price DECIMAL(10,2), PRIMARY KEY (shop_id, id), KEY st (shop_id, closed_at, is_deleted))";
+        let ct = "CREATE TABLE o (tenant_id BIGINT NOT NULL, id BIGINT NOT NULL, closed_at DATETIME DEFAULT NULL, \
+                  deleted TINYINT(1) NOT NULL DEFAULT '0', status VARCHAR(20), note VARCHAR(20) NOT NULL DEFAULT '', \
+                  price DECIMAL(10,2), PRIMARY KEY (tenant_id, id), KEY st (tenant_id, closed_at, deleted))";
         let c0 = Catalog::default();
         let ctx = PlanCtx {
             catalog: &c0,
@@ -3012,49 +3012,49 @@ mod tests {
     #[test]
     fn count_pushdown() {
         // The index scan selects everything: nothing left for the shard.
-        assert_eq!(preds("SELECT COUNT(*) FROM o WHERE shop_id = 1"), Some(vec![]));
+        assert_eq!(preds("SELECT COUNT(*) FROM o WHERE tenant_id = 1"), Some(vec![]));
         assert_eq!(preds("SELECT COUNT(*) FROM o"), Some(vec![]));
         assert_eq!(
-            preds("SELECT COUNT(id), COUNT(1) FROM o WHERE shop_id = 1 AND id > 5"),
+            preds("SELECT COUNT(id), COUNT(1) FROM o WHERE tenant_id = 1 AND id > 5"),
             Some(vec![])
         );
         // Residuals the shard evaluates.
-        let p = preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND is_deleted = 0").unwrap();
+        let p = preds("SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND deleted = 0").unwrap();
         assert_eq!(p.len(), 1);
         assert!(p[0].col == 3 && p[0].int && p[0].op == PredOp::Cmp("eq", Value::Int(0)));
         let p =
-            preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND closed_at IS NULL AND status IN ('a', 'b')").unwrap();
+            preds("SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND closed_at IS NULL AND status IN ('a', 'b')").unwrap();
         assert_eq!(p.len(), 2);
         assert!(
             p[0].op == PredOp::IsNull && p[1].op == PredOp::In(vec![Value::str("a"), Value::str("b")]) && !p[1].int
         );
-        let p = preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND 'x' < note").unwrap();
+        let p = preds("SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND 'x' < note").unwrap();
         assert!(p[0].col == 5 && p[0].op == PredOp::Cmp("gt", Value::str("x")));
         // COUNT(nullable column) counts non-NULL values.
-        let p = preds("SELECT COUNT(status) FROM o WHERE shop_id = 1").unwrap();
+        let p = preds("SELECT COUNT(status) FROM o WHERE tenant_id = 1").unwrap();
         assert!(p.len() == 1 && p[0].col == 4 && p[0].op == PredOp::NotNull);
         // Anything else reads the rows.
         for sql in [
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 GROUP BY is_deleted",
-            "SELECT COUNT(DISTINCT status) FROM o WHERE shop_id = 1",
-            "SELECT COUNT(*), SUM(id) FROM o WHERE shop_id = 1",
-            "SELECT COUNT(status), COUNT(*) FROM o WHERE shop_id = 1",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND status LIKE 'a%'",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND (status = 'a' OR id = 3)",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND is_deleted = '0'",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND price > 3",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id + 1 = 3",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id = shop_id",
-            "SELECT COUNT(*) FROM o WHERE shop_id IN (1, 2)",
-            "SELECT COUNT(*) FROM o WHERE shop_id = 1 FOR UPDATE",
-            "SELECT id FROM o WHERE shop_id = 1",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 GROUP BY deleted",
+            "SELECT COUNT(DISTINCT status) FROM o WHERE tenant_id = 1",
+            "SELECT COUNT(*), SUM(id) FROM o WHERE tenant_id = 1",
+            "SELECT COUNT(status), COUNT(*) FROM o WHERE tenant_id = 1",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND status LIKE 'a%'",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND (status = 'a' OR id = 3)",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND deleted = '0'",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND price > 3",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND id + 1 = 3",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND id = tenant_id",
+            "SELECT COUNT(*) FROM o WHERE tenant_id IN (1, 2)",
+            "SELECT COUNT(*) FROM o WHERE tenant_id = 1 FOR UPDATE",
+            "SELECT id FROM o WHERE tenant_id = 1",
         ] {
             assert_eq!(preds(sql), None, "{sql}");
         }
         // NULLs sort first in an index: an upper bound alone on a nullable
         // column stays a residual (a NOT NULL one is the scan's).
-        let p = preds("SELECT COUNT(*) FROM o WHERE shop_id < 3").unwrap();
-        assert!(p.is_empty(), "shop_id is NOT NULL: {p:?}");
+        let p = preds("SELECT COUNT(*) FROM o WHERE tenant_id < 3").unwrap();
+        assert!(p.is_empty(), "tenant_id is NOT NULL: {p:?}");
         let cat = catalog();
         let t = cat.get("d", "o").unwrap();
         let k = Expr::Lit(Value::Int(5));
@@ -3081,7 +3081,7 @@ mod tests {
         };
         assert_eq!(path_atoms(&t, &path).len(), 3, "with a lower bound it is");
         // A bound the scan could not use exactly stays a residual.
-        assert_eq!(preds("SELECT COUNT(*) FROM o WHERE shop_id = 1 AND id > 2.5"), None);
+        assert_eq!(preds("SELECT COUNT(*) FROM o WHERE tenant_id = 1 AND id > 2.5"), None);
     }
 
     fn eq(c: usize, v: i64) -> Expr {
@@ -3135,10 +3135,10 @@ mod tests {
 
     #[test]
     fn paging_the_ordered_index_or_reading_the_prefix() {
-        // issue #81: 112,726 open orders of 300,000, a page of 51: paging
-        // processed_at reads ~136 rows, the status prefix 112,726
+        // issue #81: 112,726 open rows of 300,000, a page of 51: paging
+        // created_at reads ~136 rows, the status prefix 112,726
         assert!(pages_fewer(51, 112_726, 300_000));
-        // 60 orders of one customer: reading them beats paging the shop
+        // 60 rows of one customer: reading them beats paging the tenant
         assert!(!pages_fewer(51, 60, 300_000));
         // an empty prefix is read in no time
         assert!(!pages_fewer(51, 0, 300_000));

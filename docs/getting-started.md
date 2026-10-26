@@ -50,8 +50,8 @@ mysql -h 127.0.0.1 -P 4000 -u root
 ```
 
 ```sql
-CREATE DATABASE shop;
-USE shop;
+CREATE DATABASE demo;
+USE demo;
 
 CREATE TABLE orders (
   id       BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -94,7 +94,7 @@ tarantool
 net_box = require('net.box')
 for _, port in ipairs({3311, 3321}) do
   local c = net_box.connect('tarn:tarn@127.0.0.1:' .. port)
-  print(port, c.space['shop.orders'].index.primary:get{1})
+  print(port, c.space['demo.orders'].index.primary:get{1})
 end
 -- prints the row on the shard that owns it, e.g.  3321  [1, 7, 14.99, 1622]
 ```
