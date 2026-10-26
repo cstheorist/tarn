@@ -24,6 +24,7 @@ pub mod normalize;
 pub mod plan;
 pub mod planner;
 pub mod prep;
+pub mod rebalance;
 pub mod route;
 pub mod session;
 pub mod txn;

@@ -897,6 +897,10 @@ impl Cluster {
                     if let Err(e) = c.finish_stale_jobs().await {
                         tracing::debug!("looking for abandoned schema changes: {}", e);
                     }
+                    // (and a rebalance whose server stopped)
+                    if let Err(e) = c.rebalance_takeover().await {
+                        tracing::debug!("looking for an abandoned rebalance: {}", e);
+                    }
                 }
             });
         }

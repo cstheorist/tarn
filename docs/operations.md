@@ -59,6 +59,7 @@ clients or on the storage machines.
 | `TARN_WAL_MODE` | `write` | `write` (no fsync per commit, like `innodb_flush_log_at_trx_commit=2`), `fsync`, or `none` |
 | `TARN_IPROTO_THREADS` | `1` | Tarantool network threads |
 | `TARN_LOG_LEVEL` | `5` | Tarantool log level |
+| `TARN_LOAD_WINDOW` | `60` | seconds per window of the requests counted for each bucket: `TARN REBALANCE BY LOAD` sees the last one to two windows |
 
 The bootstrap enables memtx MVCC, sets the default isolation to
 `read-confirmed` (plain reads never see data that a failover could roll
@@ -305,7 +306,9 @@ writes. A step that waits longer than `move_timeout` gives the move up
 either shard (it copies the bucket again if the old shard's leader changed
 while it copied), and if its SQL server stops, another server finishes it
 after `ddl_job_stale`: back if the old shard had not deleted the rows yet,
-forward otherwise. Moves and schema changes wait for each other.
+forward otherwise. Moves and schema changes wait for each other; while a
+schema change (or a change of the cluster's shards) waits for moves to end,
+no new move begins.
 
 To **add a shard**, start its storage nodes with a new shard id, then, on
 any SQL server:
@@ -348,6 +351,41 @@ server whose configuration still lists it starts without it. The first
 shard of the configuration keeps the cluster's jobs and catalog and cannot
 be removed. A `TARN REMOVE SHARD` that stops (an error, a lost connection)
 goes on when run again.
+
+To **rebalance** -- after adding a shard, or when the shards' sizes have
+drifted apart --, run on any SQL server:
+
+```sql
+TARN REBALANCE;                                  -- by size, four moves at a time
+TARN REBALANCE BY LOAD MAX MOVES 2 MAX RATE 50000000;   -- by requests; at most 50 MB/s of buckets
+SHOW TARN REBALANCE;     -- status, owner, moves done and failed, planned, moving, bytes moved, limits
+SHOW TARN MOVES;         -- the current (or last) round's moves: bucket, from, to, bytes, state (planned, copying, fenced, done, failed)
+SELECT * FROM information_schema.TARN_MOVES WHERE STATE = 'failed';
+TARN REBALANCE PAUSE;    -- the moves in flight end; no new one starts
+TARN REBALANCE RESUME;
+TARN REBALANCE CANCEL;   -- the planned moves are dropped
+```
+
+A rebalance runs in the background, one at a time in the cluster, and
+plans in rounds of up to 64 moves: from the shards' sizes (`BY SIZE`, the
+default: each bucket's rows and their bytes, which the shards count) or
+from their load (`BY LOAD`: each bucket's reads and written rows over the
+last one to two minutes, `TARN_LOAD_WINDOW`), it moves buckets from the
+heaviest active shard to the lightest -- the bucket that best halves the
+gap between them -- until the shards are even within a bucket's average
+weight or 2% of a shard's share, whichever is more. A bucket's weight also
+counts that average, so the shards end with even shares of the buckets as
+well: the rows written later spread over them. Each round reads the sizes
+again; the rebalance ends (`done`) when a round finds nothing to move.
+`MAX MOVES` (1 to 64, default 4) bounds the moves in flight and `MAX RATE`
+the bytes per second of the buckets moved (default: no limit). Each move is
+a `TARN MOVE BUCKET`: a move that fails is shown with its error and the
+rebalance goes on (it fails after ten failures in a row); a move that waits
+for a schema change is planned again for later. The rebalance runs on the
+SQL server that started it; if that server stops, another one takes it over
+after `ddl_job_stale` and goes on, as it does for a paused one. Moves only
+go to active shards: a rebalance can run while a shard is being removed,
+and leaves that shard's buckets to the drain.
 
 Before moving buckets, every SQL server must run a version with bucket
 moves and know every shard: an older server names no buckets in its

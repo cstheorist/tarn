@@ -18,6 +18,9 @@
 --   TARN_WAL_MODE      write | fsync | none (default write)
 --   TARN_IPROTO_THREADS (default 1)
 --   TARN_LISTEN_UNIX   optional Unix socket path to listen on as well
+--   TARN_LOAD_WINDOW   seconds of requests a bucket's load counts (the
+--                      rebalancer's TARN REBALANCE BY LOAD; default 60:
+--                      the last one or two minutes)
 --   TARN_CHECK_YIELDS, TARN_TEST_HOOKS  (tests) see lua/tarn.lua "Yields"
 --   TARN_DUMP_EVERY    (tests) checkpoint every N seconds, so that vinyl rows
 --                      go to disk and reads of them yield
@@ -127,4 +130,5 @@ require('tarn').init{
     -- let tests hold a step at its yield points (lua/tarn.lua "Yields").
     check_yields = env('TARN_CHECK_YIELDS', '') ~= '',
     test_hooks = env('TARN_TEST_HOOKS', '') ~= '',
+    load_window = tonumber(env('TARN_LOAD_WINDOW', '60')),
 }
