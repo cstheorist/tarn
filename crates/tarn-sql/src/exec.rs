@@ -1831,9 +1831,13 @@ async fn paged_select(
 /// in B, and the rows of A spread over B, paging B reads about want * n_b /
 /// n_a rows: B wins when that is fewer than n_a. (On vinyl n_b is the size
 /// of the index, an upper bound: the choice may then read A where B would
-/// have been faster, as before, but not the other way.) Both prefixes must
-/// route to one shard, which counts them (`tarn_estimate`); A must have no
-/// bound on its next column, which its prefix count would overstate. WHERE
+/// have been faster, as before, but not the other way. Where it can, vinyl
+/// measures what paging B reads from B's first page instead, issue #93,
+/// with the assumption of the counts: the rows of A are what B filters on,
+/// so a selective condition outside A's index can make paging slower.)
+/// Both prefixes must route to one shard, which counts them
+/// (`tarn_estimate`); A must have no bound on its next column, which its
+/// prefix count would overstate. WHERE
 /// filters either way, so the choice changes only how many rows are read.
 /// (A read retried in a transaction or a snapshot counts again.)
 async fn ordered_instead(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<TableAccess>> {
@@ -1871,6 +1875,8 @@ async fn ordered_instead(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_
     }
     let t = &ta.table;
     let (a_idx, b_idx) = (index_def(t, *a_index), index_def(t, *b_index));
+    let b_whole = matches!(b_path, AccessPath::Range { lo: None, hi: None, .. });
+    let b_reverse = matches!(b_path, AccessPath::Range { reverse: true, .. });
     let (Some(a_key), Some(b_key)) = (
         range_prefix(t, a_idx, a_eq, a_null, &[], cx)?,
         range_prefix(t, b_idx, b_eq, b_null, &[], cx)?,
@@ -1885,12 +1891,18 @@ async fn ordered_instead(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_
         _ => return Ok(None),
     };
     // (A count that fails leaves the plan as it is: the read reports what
-    // is wrong, if anything still is.)
-    let Ok((n_a, n_b)) = estimate(cluster, shard, t, a_idx.id, &a_key, b_idx.id, &b_key, want).await else {
+    // is wrong, if anything still is. A sample of B reads B as the page
+    // would: its whole prefix, in the page's direction.)
+    let sample = b_whole.then_some(if b_reverse { Iter::Req } else { Iter::Eq });
+    let Ok(e) = estimate(cluster, shard, t, a_idx.id, &a_key, b_idx.id, &b_key, want, sample).await else {
         return Ok(None);
     };
     cluster.stats.path_estimates.fetch_add(1, AtomicOrdering::Relaxed);
-    if !pages_fewer(want, n_a, n_b) {
+    let pages = match e.cost {
+        Some(cost) => e.n_a > cost,
+        None => pages_fewer(want, e.n_a, e.n_b),
+    };
+    if !pages {
         return Ok(None);
     }
     Ok(Some(TableAccess {
@@ -1907,8 +1919,18 @@ fn pages_fewer(want: u64, n_a: u64, n_b: u64) -> bool {
     n_a > 0 && (want as u128) * (n_b as u128) < (n_a as u128) * (n_a as u128)
 }
 
-/// `tarn_estimate` on `shard`: the rows of the `a_key` prefix of index
-/// `a_index` and of the `b_key` prefix of `b_index` (see there).
+/// What `tarn_estimate` found: the rows of range A (counted up to where the
+/// answer is certain), of range B, or (vinyl, from a sample of B) the rows
+/// paging B would read.
+struct Estimate {
+    n_a: u64,
+    n_b: u64,
+    cost: Option<u64>,
+}
+
+/// `tarn_estimate` on `shard` for the `a_key` prefix of index `a_index` and
+/// the `b_key` prefix of `b_index`, sampling B in the direction `sample`
+/// when B is that whole prefix (see there).
 #[allow(clippy::too_many_arguments)]
 async fn estimate(
     cluster: &Arc<Cluster>,
@@ -1919,25 +1941,35 @@ async fn estimate(
     b_index: u32,
     b_key: &[Value],
     budget: u64,
-) -> SqlResult<(u64, u64)> {
+    sample: Option<Iter>,
+) -> SqlResult<Estimate> {
     let mut m = crate::mpw::Mp::new();
-    m.arr(6)
+    m.arr(7)
         .uint(t.space_id as u64)
         .uint(a_index as u64)
         .vals(a_key)
         .uint(b_index as u64)
         .vals(b_key)
         .uint(budget);
+    match sample {
+        Some(Iter::Req) => m.str("REQ"),
+        Some(_) => m.str("EQ"),
+        None => m.nil(),
+    };
     let d = cluster.call(shard, "tarn_estimate", &m.0).await?;
     let (_, mut rd) = crate::mpw::lua_status(&d)?;
-    let mut n = || -> SqlResult<u64> {
+    let mut n = || -> SqlResult<Option<u64>> {
         match rd.value()? {
-            Value::Int(n) if n >= 0 => Ok(n as u64),
-            Value::UInt(n) => Ok(n),
+            Value::Int(n) if n >= 0 => Ok(Some(n as u64)),
+            Value::UInt(n) => Ok(Some(n)),
+            Value::Null => Ok(None),
             other => Err(crate::mpw::proto(format!("bad estimate {:?}", other))),
         }
     };
-    Ok((n()?, n()?))
+    let bad = || crate::mpw::proto("bad estimate");
+    let n_a = n()?.ok_or_else(bad)?;
+    let n_b = n()?.ok_or_else(bad)?;
+    Ok(Estimate { n_a, n_b, cost: n()? })
 }
 
 /// The rest of a SELECT over its filtered FROM rows: aggregation, HAVING,

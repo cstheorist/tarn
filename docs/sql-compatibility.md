@@ -43,8 +43,10 @@ servers write to it (`tests/sql/`).
   read then goes through it a page at a time, filtering as it goes, and
   stops once `LIMIT` (+ `OFFSET`) rows qualify. When another index fixes a
   longer equality prefix, the shard counts both ranges first (one call: an
-  index count on memtx, a scan of at most one page on vinyl) and the read pages the ordered index when that
-  reads fewer rows than reading the longer prefix whole and sorting it.
+  index count on memtx; on vinyl a sample of the ordered index's first page
+  and a count of the prefix up to what paging would read) and the read
+  pages the ordered index when that reads fewer rows than reading the
+  longer prefix whole and sorting it.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
   `COUNT(*)`, `COUNT(constant)` and `COUNT(col)` of one table without
