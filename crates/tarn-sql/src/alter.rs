@@ -184,12 +184,21 @@ fn lex(sql: &str) -> SqlResult<Vec<Tok>> {
                     return Err(SqlError::parse("unterminated quoted string"));
                 }
                 if b[j] == b'\\' && q != b'`' && j + 1 < b.len() {
-                    s.push(match b[j + 1] {
+                    let escaped = match b[j + 1] {
+                        b'b' => 8,
                         b'n' => b'\n',
+                        b'r' => b'\r',
                         b't' => b'\t',
                         b'0' => 0,
+                        b'Z' => 26,
+                        // These retain their backslash outside LIKE patterns.
+                        x @ (b'%' | b'_') => {
+                            s.push(b'\\');
+                            x
+                        }
                         x => x,
-                    });
+                    };
+                    s.push(escaped);
                     j += 2;
                     continue;
                 }
@@ -2316,6 +2325,37 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(matches!(&v[0].ops[0], AlterOp::AddIndex { comment, .. } if comment == "pair"));
+    }
+
+    #[test]
+    fn create_index_comment_decodes_mysql_string_escapes() {
+        let (def, cat) = table(T);
+        for (escaped, expected) in [
+            (r"\b", "\u{8}"),
+            (r"\r", "\r"),
+            (r"\Z", "\u{1a}"),
+            (r"\0\n\t", "\0\n\t"),
+            (r"\\", "\\"),
+            (r#"\'\""#, "'\""),
+            (r"\%\_", r"\%\_"),
+            (r"\q\B\z\a\f", "qBzaf"),
+            ("雪\\r☃\\Z", "雪\r☃\u{1a}"),
+        ] {
+            for quote in ['\'', '"'] {
+                let sql = format!("CREATE INDEX kec ON t (a) COMMENT {quote}{escaped}{quote}");
+                let ch = alter(&def, &cat, &sql).unwrap();
+                assert_eq!(ch.def.indexes.last().unwrap().comment, expected, "{sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn quoted_lexer_keeps_backtick_escapes_and_utf8() {
+        let tokens = lex(r#"`雪\b\r\Z\%\_``末` '雪''☃' "雪""☃""#).unwrap();
+        assert_eq!(tokens.len(), 3);
+        assert!(matches!(&tokens[0].t, T::Quoted(s) if s == r"雪\b\r\Z\%\_`末"));
+        assert!(matches!(&tokens[1].t, T::Str(s) if s == "雪'☃"));
+        assert!(matches!(&tokens[2].t, T::Str(s) if s == "雪\"☃"));
     }
 
     #[test]
