@@ -264,6 +264,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An OK packet's info string, such as `PREPARE`'s "Statement prepared",
+  is length-encoded, as MySQL and MariaDB write it. MariaDB's client
+  checked the length and failed every `PREPARE` with 2027 (malformed
+  packet) ([#61](https://github.com/cstheorist/tarn/issues/61)).
 - New indexes on instant-added columns could miss old rows or accept
   duplicate logical keys: short tuples omit the column's non-NULL fill,
   which a native index reads as NULL
