@@ -1298,6 +1298,117 @@ r = {c[1]:call('tarn_drop_prepare', {'test.gt', {ver = 11, timeout = 5, id = 200
      c[1]:call('tarn_drop_apply', {'test.gt', {ver = 11, timeout = 5, id = 20010}})}
 check('DROP drops the global index space', r[2][1] == 'ok' and not uexists(1), r)
 
+print('ALTER TABLE adds a global index to a table with rows (issue #88)')
+do   -- (a block: the main chunk is near Lua's limit of 200 locals)
+local ufmt = {{name = 'id', type = 'unsigned'}, {name = 'h', type = 'string'}, {name = 'bucket_id', type = 'unsigned'}}
+local uidx = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
+              {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}
+for i = 1, 2 do
+    c[i]:call('tarn_create_table', {{name = 'test.ua', id = 20020, engine = 'memtx', format = ufmt, indexes = uidx}})
+end
+c[1]:call('tarn_autocommit', {{{'insert', 20020, {1, 'a', 1}}, {'insert', 20020, {2, 'b', 1}}}})
+local uspace = {name = '_tarn_uix_20020_1', id = 20021, engine = 'memtx',
+                format = {{name = 'h', type = 'string'}, {name = 'id', type = 'unsigned'}, {name = 'bucket_id', type = 'unsigned'}},
+                indexes = {{name = 'uh', unique = true, parts = {{field = 'h', type = 'string'}}},
+                           {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}}}}
+local function uargs()
+    return {ver = 12, timeout = 1, checks = {}, builds = {}, drop = {}, renames = {}, uix = {uspace}, uix_drop = {},
+            def = {name = 'test.ua', id = 20020, format = ufmt, indexes = uidx, json = '{}', ver = 12}}
+end
+local function uw(ver, op) return c[1]:call('tarn_autocommit', {{op}, {fence = {20020, ver}}}) end
+r = c[1]:call('tarn_uix_fill', {20021, {{'a', 1, 7}}, 20020, 12, 2})
+check('a fill before PREPARE is refused (1412)', r[1] == 'error' and r[2] == 1412, r)
+c[1]:call('tarn_alter_prepare', {'test.ua', uargs(), 1})
+r = c[1]:call('tarn_alter_prepare', {'test.ua', uargs(), 2})
+check('PREPARE creates the empty global index space', r[1] == 'ok'
+      and c[1]:eval('return box.space._tarn_uix_20020_1:len()') == 0, r)
+r = c[1]:call('tarn_uix_fill', {20021, {{'z', 9, 7}}, 20020, 12, 1})
+check('a fill of the run the job was taken from (generation 2 prepared since) is refused',
+      r[1] == 'error' and r[2] == 1412, r)
+r = c[1]:call('tarn_alter_prepare', {'test.ua', uargs(), 1})
+check('... and so is a late PREPARE of that run', r[1] == 'error' and r[2] == 1412, r)
+r = {c[1]:call('tarn_uix_fill', {20021, {{'a', 1, 7}}, 20020, 12, 2}),
+     c[1]:call('tarn_uix_fill', {20021, {{'a', 1, 7}, {'b', 2, 7}}, 20020, 12, 2})}
+check('the SQL server fills it; entries written again (another fill) count once',
+      r[1][1] == 'ok' and r[2][1] == 'ok' and c[1]:eval('return box.space._tarn_uix_20020_1:len()') == 2, r)
+r = c[1]:call('tarn_uix_fill', {20021, {{'b', 3, 7}}, 20020, 12, 2})
+check('... a value another row holds: duplicate', r[1] == 'duplicate' and r[2] == 1, r)
+c[1]:eval('tarn.stale_fences()')
+r = uw(0, {'insert', 20020, {9, 'a', 1}})
+check('the fence outlives a rebuild from storage (a restart, a new leader): 1412', r[1] == 'error' and r[2] == 1412, r)
+r = c[1]:call('tarn_alter_apply', {'test.ua', uargs()})
+check('APPLY keeps the filled entries', r[1] == 'ok'
+      and c[1]:eval('return box.space._tarn_uix_20020_1:len()') == 2, r)
+check('... and clears the stored fence', c[1]:eval('return box.space._tarn_meta:get{"fence:20020"} == nil'))
+r = c[1]:call('tarn_uix_fill', {20021, {{'z', 5, 7}}, 20020, 12, 2})
+check('a fill after APPLY (a server that lost the job) is refused', r[1] == 'error' and r[2] == 1412, r)
+local a2 = uargs(); a2.ver = 13; a2.def.ver = 13; a2.uix = {table.deepcopy(uspace)}
+a2.uix[1].name, a2.uix[1].id = '_tarn_uix_20020_2', 20022
+r = c[1]:call('tarn_alter_prepare', {'test.ua', a2, 1})
+c[1]:call('tarn_alter_abort', {'test.ua', a2})
+check('ABORT drops the new space', r[1] == 'ok' and c[1]:eval('return box.space[20022] == nil'), r)
+c[1]:eval('tarn.stale_fences()')
+r = uw(12, {'insert', 20020, {9, 'q', 1}})
+check('... and the table takes writes again, also after a rebuild from storage', r[1] == 'ok', r)
+r = c[1]:call('tarn_alter_prepare', {'test.ua', a2, 1})
+c[1]:eval('tarn.stale_fences()')
+local rw = uw(12, {'replace', 20020, {9, 'r', 1}})
+check('a late PREPARE after ABORT is refused and fences nothing', r[1] == 'error' and r[2] == 1412
+      and rw[1] == 'ok' and c[1]:eval('return box.space[20022] == nil'), {r, rw})
+-- ... also after a later change of the table aborted too (versions only grow)
+local a3 = uargs(); a3.ver = 14; a3.def.ver = 14; a3.uix = {}
+c[1]:call('tarn_alter_prepare', {'test.ua', a3, 1})
+c[1]:call('tarn_alter_abort', {'test.ua', a3})
+r = c[1]:call('tarn_alter_prepare', {'test.ua', a2, 1})
+c[1]:eval('tarn.stale_fences()')
+rw = uw(12, {'replace', 20020, {9, 's', 1}})
+check('a late PREPARE of a change older than one begun since is refused', r[1] == 'error' and r[2] == 1412
+      and rw[1] == 'ok' and c[1]:eval('return box.space[20022] == nil'), {r, rw})
+-- A late PREPARE that fails (here: its checks) after a later run prepared:
+-- its undo leaves that run's fence alone.
+local a4 = uargs(); a4.ver = 15; a4.def.ver = 15; a4.uix = {table.deepcopy(uspace)}
+a4.uix[1].name, a4.uix[1].id = '_tarn_uix_20020_3', 20023
+r = c[1]:call('tarn_alter_prepare', {'test.ua', a4, 2})
+local bad = table.deepcopy(a4); bad.checks = {{2, 'h', 'chars', 0, box.NULL, box.NULL}}
+local rb = c[1]:call('tarn_alter_prepare', {'test.ua', bad, 2})
+rw = uw(12, {'replace', 20020, {9, 't', 1}})
+check("a failed PREPARE of the same run lifts the fence", r[1] == 'ok' and rb[1] == 'error'
+      and rw[1] == 'ok', {r, rb, rw})
+-- Run 2 prepares and waits for a prepared transaction; run 3 takes over
+-- and prepares too; run 2 times out first: its undo leaves run 3's fence.
+r = prepare(1, 'GU1', {{'replace', 20020, {9, 'v', 1}}})
+local a4s = table.deepcopy(a4); a4s.timeout = 0.3
+local f2 = async('tarn_alter_prepare', {'test.ua', a4s, 2})
+fiber.sleep(0.1)
+local f3 = async('tarn_alter_prepare', {'test.ua', a4, 3})
+local r2 = result(f2)
+c[1]:call('tarn_apply', {'GU1'})
+local r3 = result(f3)
+c[1]:eval('tarn.stale_fences()')
+rw = uw(12, {'replace', 20020, {9, 'u', 1}})
+check("a late PREPARE's undo leaves the fence of the run that took the job over",
+      r[1] == 'yes' and r2[1] == 'timeout' and r3[1] == 'ok' and rw[1] == 'error' and rw[2] == 1412
+      and c[1]:eval('return box.space._tarn_meta:get{"fence:20020"}.value.gen') == 3, {r, r2, r3, rw})
+c[1]:call('tarn_alter_abort', {'test.ua', a4})
+-- Run 4 is held after its checks and builds; run 5 prepares, and the
+-- change is aborted; run 4 goes on: it creates nothing, and its undo
+-- leaves the tombstone alone.
+local a5 = table.deepcopy(a4); a5.ver = 16; a5.def.ver = 16
+a5.builds = {{7, 'iv5', true, {{field = 2, type = 'string'}}}}
+hook('alter_prepare', 'hold')
+local f4 = async('tarn_alter_prepare', {'test.ua', a5, 4})
+hook('alter_prepare', 'reached')
+c[1]:call('tarn_alter_abort', {'test.ua', a5})
+hook('alter_prepare', 'release')
+local r4 = result(f4)
+c[1]:eval('tarn.stale_fences()')
+rw = uw(12, {'replace', 20020, {9, 'w', 1}})
+check('a PREPARE of a run that finishes after ABORT creates nothing and fences nothing',
+      r4[1] == 'error' and r4[2] == 1412 and rw[1] == 'ok'
+      and c[1]:eval('return box.space[20023] == nil and box.space["test.ua"].index[7] == nil')
+      and c[1]:eval('return box.space._tarn_meta:get{"fence:20020"}.value.aborted') == true, {r4, rw})
+end
+
 -- Issue #77: a read returns its rows a page at a time (at most
 -- scan_page_rows rows, or scan_page_bytes bytes) with the position to go on
 -- from, so the Lua heap of a storage node no longer grows with the range it

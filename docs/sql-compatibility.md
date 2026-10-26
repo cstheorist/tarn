@@ -109,8 +109,10 @@ servers write to it (`tests/sql/`).
 * A unique key that does not include the shard key (by default the primary
   key) is enforced across shards through a global index, maintained in the
   same transaction as the rows: writes to such a table touch one more shard
-  per such key. `ALTER TABLE` cannot add one to an existing table yet
-  (1503), nor drop, rename or change the columns of one (1846).
+  per such key. `ALTER TABLE ... ADD UNIQUE` builds one from the existing
+  rows (writes to the table wait meanwhile; a value two rows hold fails it
+  with 1062; above a million rows per shard it is refused, 1846) and `DROP INDEX` drops it; renaming one or changing its
+  columns is refused (1846). Lookups by the full key read through it.
 * `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
   transactional; another SQL server sees their result within its catalog
   poll (0.3 s), and a statement that meets an older catalog there is run

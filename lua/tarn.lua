@@ -386,6 +386,16 @@ local function fence_rebuild()
             if (f[sid] or 0) < t.value.ver then f[sid] = t.value.ver end
         end
     end
+    -- An ALTER TABLE that fills a new global index keeps its fence stored
+    -- until APPLY or ABORT (tarn_alter_prepare): only the new definition
+    -- writes the index's entries, so writes made with the old one must stay
+    -- refused across a restart or a leader change.
+    for _, t in box.space._tarn_meta:pairs({'fence:'}, {iterator = 'GE'}) do
+        if t.key:sub(1, 6) ~= 'fence:' then break end
+        local sid, v = tonumber(t.key:sub(7)), t.value
+        if sid ~= nil and box.space[sid] ~= nil and type(v) == 'table' and not v.aborted
+           and (f[sid] or 0) < v.ver then f[sid] = v.ver end
+    end
     FENCE, FENCE_STALE = f, false
     DDL_HELD, DDL_N = held, n
 end
@@ -3369,7 +3379,14 @@ local function alter_space(name, a)
 end
 
 -- a: {ver, checks, builds, timeout, drop = {index ids}, renames = {{id, name}},
---     format = new format or nil, rename = new space name or nil, def = catalog entry}
+--     format = new format or nil, rename = new space name or nil, def = catalog entry,
+--     uix = new global index spaces (as create_space takes them), uix_drop = {space ids}}
+-- New global indexes (unique keys without the shard key, issue #88): PREPARE
+-- creates their spaces, empty and named by no catalog; once every shard has
+-- prepared -- the table's writes are fenced everywhere -- the SQL server
+-- fills them from the rows (tarn_uix_fill), where a value held twice fails
+-- the change (1062); APPLY puts them to use with the new definition, ABORT
+-- drops them. APPLY drops the spaces of dropped ones.
 function tarn_alter_build(name, a)
     writable()
     local sp = alter_space(name, a)
@@ -3390,29 +3407,59 @@ function tarn_alter_build(name, a)
     return {OK}
 end
 
-function tarn_alter_prepare(name, a)
+-- gen: the job's generation (see tarn_job_touch): the fill of a new global
+-- index is accepted only from the run that prepared last (UIX.filling).
+function tarn_alter_prepare(name, a, gen)
     writable()
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
-    if a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0 then
-        -- Writes to the table wait while the rows are checked; vinyl's
-        -- count is an estimate, which is enough for a limit.
+    local fills = a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0
+    if (a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0) or fills then
+        -- Writes to the table wait while the rows are checked, or read to
+        -- fill a new global index; vinyl's count is an estimate, which is
+        -- enough for a limit.
         local rows = sp.index[0]:len()
         if rows > M.cfg.alter_check_rows then
             return {'error', 1846, string.format(
-                "Checking the existing rows of '%s' is not supported. Reason: a shard holds about %d rows "
+                "%s the existing rows of '%s' is not supported. Reason: a shard holds about %d rows "
                 .. "of it (limit %d, tarn.cfg.alter_check_rows), and writes to the table would wait for "
-                .. "the whole scan. Try a change that needs no check, such as a wider type or a "
-                .. "nullable column", sp.name, rows, M.cfg.alter_check_rows)}
+                .. "the whole scan. %s", fills and 'Building a global unique index from' or 'Checking',
+                sp.name, rows, M.cfg.alter_check_rows,
+                fills and 'Add the unique key while the table is small, or include the shard key in it'
+                    or 'Try a change that needs no check, such as a wider type or a nullable column')}
         end
     end
     fence_fresh()
+    -- Stored first when a new global index is filled (see fence_rebuild).
+    if fills then
+        local had = UIX.record(sp.id)
+        if gen == nil or gen == box.NULL then
+            -- APPLY prepares again without one (the fill is done then).
+            gen = had and had.ver == a.ver and had.gen or 0
+        elseif had ~= nil and (had.ver > a.ver or (had.ver == a.ver and (had.aborted or (had.gen or 0) > gen))) then
+            -- A run of the job that another one took over, a change that
+            -- was aborted, or one older than a change begun since (catalog
+            -- versions only grow): it may not fence the table again, nor fill.
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+        if had == nil or had.ver < a.ver or not had.aborted then
+            box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver, gen = gen}}
+        end
+    end
     if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
     local function undo(res)
         drop_built(sp, a.builds)
-        FENCE[sp.id] = cur > 0 and cur or nil
+        -- Only while the fence is still this run's: a later run of the job
+        -- (a takeover) may have prepared on this shard meanwhile.
+        local mine = not fills
+        if fills then
+            local r = UIX.record(sp.id)
+            mine = r ~= nil and r.ver == a.ver and r.gen == gen and not r.aborted
+            if mine then box.space._tarn_meta:delete{'fence:' .. sp.id} end
+        end
+        if mine then FENCE[sp.id] = cur > 0 and cur or nil end
         return res
     end
     local deadline = clock.monotonic() + (a.timeout or 50)
@@ -3424,6 +3471,75 @@ function tarn_alter_prepare(name, a)
     if bad then return undo(bad) end
     bad = build_indexes(sp, a.builds)
     if bad then return undo(bad) end
+    if fills then
+        -- The steps above may yield for long: a later run of the job may have
+        -- prepared meanwhile, or the change been aborted.
+        yield_point('alter_prepare')
+        local r = UIX.record(sp.id)
+        if r == nil or r.ver ~= a.ver or r.aborted or r.gen ~= gen then
+            return undo({'error', 1412, STALE_DEF_MSG})
+        end
+    end
+    for _, u in ipairs(a.uix or {}) do create_space(u) end
+    if fills then
+        -- (Creating them yields on the WAL: once more.)
+        local r = UIX.record(sp.id)
+        if r == nil or r.ver ~= a.ver or r.aborted or r.gen ~= gen then
+            for _, u in ipairs(a.uix) do
+                if box.space[u.id] ~= nil then box.space[u.id]:drop() end
+            end
+            return undo({'error', 1412, STALE_DEF_MSG})
+        end
+    end
+    return {OK}
+end
+
+-- The stored fence of table space `sid` (see tarn_alter_prepare):
+-- {ver, gen} or {ver, aborted = true}, or nil.
+function UIX.record(sid)
+    local t = box.space._tarn_meta:get{'fence:' .. sid}
+    return t ~= nil and type(t.value) == 'table' and t.value or nil
+end
+
+-- Whether generation `gen` of the job still fills the new global indexes of
+-- the ALTER TABLE of table space `sid` to version `ver` here: the change is
+-- prepared (its fence stored) by that run, and not applied. A run that took
+-- the job over prepares again on every shard before it fills, so a late fill
+-- of the run it took the job from is refused everywhere -- including after
+-- some shard applied, when rows written with the new definition change again.
+function UIX.filling(sid, ver, gen)
+    local sp = box.space[sid]
+    if sp == nil or catalog_ver(sp.name) >= ver then return false end
+    local v = UIX.record(sid)
+    return v ~= nil and v.ver == ver and not v.aborted and v.gen == gen
+end
+
+-- Insert entries `tuples` into new global index space `id` of the ALTER
+-- TABLE of table space `sid` to `ver`, in one local transaction: {'ok'},
+-- or {'duplicate', i} when the i-th entry's key is held by another row, of
+-- `owner` (see UIX.filling). An entry already there as it is counts as
+-- written. Until a shard applies the change, its rows cannot change, so
+-- every fill writes the same entries: a call sent again after a lost
+-- connection, and the fill of a server that took the job over. A space is
+-- never emptied for a new fill (ABORT drops it, and PREPARE makes a new one).
+function tarn_uix_fill(id, tuples, sid, ver, gen)
+    writable()
+    if not UIX.filling(sid, ver, gen) then return {'error', 1412, STALE_DEF_MSG} end
+    local sp = box.space[id]
+    if sp == nil then return {'error', 1146, 'no such space ' .. tostring(id)} end
+    box.begin(RW)
+    for i, t in ipairs(tuples) do
+        local ok, err = pcall(sp.insert, sp, t)
+        if not ok then
+            local dup = type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND
+            if not (dup and msgpack.encode(err.old_tuple) == msgpack.encode(t)) then
+                box.rollback()
+                if dup then return {'duplicate', i} end
+                error(err)
+            end
+        end
+    end
+    box.commit()
     return {OK}
 end
 
@@ -3446,6 +3562,9 @@ function tarn_alter_apply(name, a)
     for _, id in ipairs(a.drop or {}) do
         if sp.index[id] ~= nil then sp.index[id]:drop() end
     end
+    for _, id in ipairs(a.uix_drop or {}) do
+        if box.space[id] ~= nil then box.space[id]:drop() end
+    end
     if a.format ~= nil and a.format ~= box.NULL then sp:format(a.format) end
     for _, r in ipairs(a.renames or {}) do
         local idx = sp.index[r[1]]
@@ -3460,6 +3579,7 @@ function tarn_alter_apply(name, a)
     box.begin()
     if old_name ~= sp.name then box.space._tarn_catalog:delete{old_name} end
     box.space._tarn_catalog:replace{sp.name, a.def}
+    box.space._tarn_meta:delete{'fence:' .. sp.id}
     box.commit()
     FENCE[sp.id] = a.ver
     invalidate_key_defs()
@@ -3474,8 +3594,27 @@ function tarn_alter_abort(name, a)
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
     drop_built(sp, a.builds)
+    for _, u in ipairs(a.uix or {}) do
+        if box.space[u.id] ~= nil then box.space[u.id]:drop() end
+    end
+    -- The stored fence: a tombstone for this change (a late PREPARE of it,
+    -- from a run of the job that lost it, may not fence the table again;
+    -- the next ALTER TABLE of the table replaces it, or APPLY deletes it),
+    -- unless a later change has begun since (a record of a later version
+    -- stays as it is).
+    local r = UIX.record(sp.id)
+    local later = r ~= nil and r.ver > a.ver
+    if not later and a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0 then
+        box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver, aborted = true}}
+    elseif not later and r ~= nil and not r.aborted then
+        box.space._tarn_meta:delete{'fence:' .. sp.id}
+    end
     fence_fresh()
-    FENCE[sp.id] = cur > 0 and cur or nil
+    if later and not r.aborted then
+        FENCE[sp.id] = r.ver
+    else
+        FENCE[sp.id] = cur > 0 and cur or nil
+    end
     return {OK}
 end
 
@@ -3721,7 +3860,7 @@ function tarn_job_begin(job, wait)
             end
             if busy == nil then
                 local v = {owner = job.owner, ts = clock.realtime(), kind = job.kind, space = job.space,
-                           names = job.names, ver = job.ver, a = job.a, phase = job.phase or 'prepare'}
+                           names = job.names, ver = job.ver, a = job.a, phase = job.phase or 'prepare', gen = 1}
                 for _, n in ipairs(job.names) do box.space._tarn_meta:insert{JOB .. n, v} end
             end
             box.commit()
@@ -3745,13 +3884,22 @@ function tarn_job_phase(owner, phase)
     return job_change(owner, {{'=', '[2].phase', phase}, {'=', '[2].ts', clock.realtime()}})
 end
 
--- Keep the job alive (owner), or take over an abandoned one (owner, from).
+-- Keep the job alive (owner), or take over an abandoned one (owner, from):
+-- then {'ok', generation}. Each takeover counts one more generation of the
+-- job, which its steps carry, so that the shards can tell a later run of the
+-- job from an earlier one (see UIX.filling).
 function tarn_job_touch(owner, from)
     writable()
     if from ~= nil and from ~= box.NULL then
-        local r = job_change(from, {{'=', '[2].owner', owner}, {'=', '[2].ts', clock.realtime()}})
+        local keys = job_keys(from)
+        local cur = keys[1] and job_value(keys[1])
+        local gen = ((cur and cur.gen) or 1) + 1
+        local r = job_change(from, {{'=', '[2].owner', owner}, {'=', '[2].ts', clock.realtime()},
+                                    {'=', '[2].gen', gen}})
+        if r[1] == OK then return {OK, gen} end
         -- (A repeated call whose first one took it over.)
-        if r[1] == 'gone' and #job_keys(owner) > 0 then return {OK} end
+        local mine = job_keys(owner)
+        if r[1] == 'gone' and #mine > 0 then return {OK, job_value(mine[1]).gen or 1} end
         return r
     end
     return job_change(owner, {{'=', '[2].ts', clock.realtime()}})

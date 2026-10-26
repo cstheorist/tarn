@@ -279,23 +279,52 @@ refuses again after the others, and take rows that swap values out before
 writing them.
 
 Finding the row that holds a value (`INSERT IGNORE`, `ON DUPLICATE KEY
-UPDATE`, `REPLACE`, an `UPDATE` to a new value) takes two reads: the entry on
-its shard, then the row by primary key. Serializable transactions read both
-through their streams, so both are validated at commit. READ COMMITTED
-transactions lock the entry's key (X) and the row and read both under the
-locks, so concurrent writers of one value queue on the entry's shard as
-they queue on a local unique key (§2.9); deleting an entry also locks its
-key.
+UPDATE`, `REPLACE`, an `UPDATE` to a new value) takes two reads: the entry
+on its shard, then the row by primary key. So does a lookup by the full key
+(`WHERE tenant_id = ? AND handle = ?`, also with `IN`): one call per shard
+the entries live on, then per shard their rows live on, instead of one per
+shard (issue #88). A READ COMMITTED SELECT that finds a row no longer
+holding its entry's key (the value moved between the two reads) reads again
+in a snapshot; READ COMMITTED UPDATE and DELETE candidates, read outside any
+snapshot, still ask every shard. Serializable transactions read both through
+their streams, so both are validated at commit. READ COMMITTED transactions
+lock the entry's key (X) and the row and read both under the locks, so
+concurrent writers of one value queue on the entry's shard as they queue on
+a local unique key (§2.9); deleting an entry also locks its key.
 
 What it costs: an insert, a delete, or an update of a key column of such a
 table writes up to one more shard per global index, so it becomes a
 cross-shard commit unless the entry happens to live on the row's shard, and
 it leaves the single-call autocommit path. Reads and updates of other
 columns cost nothing more. The table also keeps its own index of the key,
-unique within each shard. `ALTER TABLE` cannot yet add a unique key without
-the shard key to an existing table (1503), nor drop, rename or change the
-columns of one (1846). Writes made directly through Tarantool bypass the
+unique within each shard. Writes made directly through Tarantool bypass the
 global index.
+
+`ALTER TABLE ... ADD UNIQUE` (and `CREATE UNIQUE INDEX`) of such a key on a
+table with rows builds the global index from them (issue #88). PREPARE
+raises the table's fence on every shard (§2.10) and creates the empty space,
+and stores the fence (`fence:<space id>` in `_tarn_meta`) so that it
+outlives a restart or a leader change: only the new definition writes the
+index's entries. Once every shard has prepared, the SQL server reads the
+rows a page at a time and writes their entries in batches to the entries'
+shards, where a value held by two rows fails the change with 1062 (and ABORT
+drops the space). The shards accept those writes only while the change is
+prepared and not applied, and only from the run of the job whose PREPARE
+stored the fence: each takeover of the job counts a generation
+(`tarn_job_touch`), which its steps carry, and a shard refuses the PREPARE
+and the fill of an earlier generation than the one it holds, and any PREPARE
+of a change it has aborted (ABORT leaves a tombstone). Until the first shard
+applies, the rows cannot change, so every fill of the generation writes the
+same entries, and an entry written again (a call sent again) counts once.
+After that, rows written with the new definition change again, but by then
+no earlier run of the job can fill: the later one prepared on every shard
+before it filled. APPLY then installs the definition that maintains the
+index and removes the stored fence. Like a row check, the fill is refused
+(1846) when a shard holds more than `tarn.cfg.alter_check_rows` rows of the
+table. Writes to the table wait meanwhile, as they do while a memtx index is
+built; an online build, as #43 does for vinyl indexes, is still to come.
+Dropping the key drops the space in APPLY. Renaming one, or changing its
+columns or their types, is refused (1846).
 
 ## 2. Isolation and the commit protocol
 
@@ -1151,9 +1180,9 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * Hash sharding: range predicates on the shard key and lookups through
   non-unique secondary indexes go to every shard.
 * Global unique indexes (§1.4): writes to their tables touch the entries'
-  shards too; `ALTER TABLE` can neither add one to an existing table nor
-  change one; lookups by the key do not use them yet (they go to every
-  shard); direct Tarantool writes do not maintain them.
+  shards too; adding one to a table with rows holds up the table's writes
+  while it is built, and one cannot be renamed or changed; direct Tarantool
+  writes do not maintain them.
 * Serializable OCC: long read-only transactions that span shards can starve
   under heavy concurrent writes to what they read (they abort and retry);
   explicit transactions surface 1213 to the client like any serializable
