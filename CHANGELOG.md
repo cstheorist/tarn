@@ -202,6 +202,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with 1846 before publishing the index; empty tables, physically present
   fields and NULL fills remain supported. Automatic backfill is not yet
   implemented. Vinyl builds that need this check run behind the write fence.
+- `SET @var = literal` after a leading `--`, `#` or `/* ... */` comment
+  failed with 1064 because literal normalization turned the value into an
+  unbound placeholder ([#71](https://github.com/cstheorist/tarn/issues/71)).
+  Administrative recognition now skips comments while preserving the
+  original assignment expressions and quoted values.
 - `col <=> NULL` (and `col <=> ?` bound to NULL) on an indexed nullable
   column found no rows: the index lookup it became drops a NULL key part.
   On a nullable column, `<=>` is now a filter, not an index equality, in

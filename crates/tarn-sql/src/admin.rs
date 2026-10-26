@@ -315,6 +315,16 @@ impl Toks {
             let c = b[i];
             if c.is_ascii_whitespace() || c == b';' {
                 i += 1;
+            } else if let Some(end) = crate::prep::line_comment_end(b, i) {
+                i = end;
+            } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
+                // Keep original offsets: SET expressions are sliced from SQL,
+                // not reconstructed from tokens or literal-normalized plans.
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
             } else if c == b'\'' || c == b'"' || c == b'`' {
                 let q = c;
                 let mut j = i + 1;
@@ -869,6 +879,127 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leading_comments_preserve_set_expressions() {
+        let statement = "SET @x = 1, @text = '雪? /* literal */ # --', @nil = NULL, @sum := CONCAT('a,b', 'c')";
+        let expected = Some(Admin::Set(vec![
+            SetItem::Var {
+                scope: VarScope::Session,
+                name: "@x".into(),
+                rhs: "1".into(),
+            },
+            SetItem::Var {
+                scope: VarScope::Session,
+                name: "@text".into(),
+                rhs: "'雪? /* literal */ # --'".into(),
+            },
+            SetItem::Var {
+                scope: VarScope::Session,
+                name: "@nil".into(),
+                rhs: "NULL".into(),
+            },
+            SetItem::Var {
+                scope: VarScope::Session,
+                name: "@sum".into(),
+                rhs: "CONCAT('a,b', 'c')".into(),
+            },
+        ]));
+        for prefix in [
+            "",
+            "/* comment ? */ ",
+            "-- comment ?\n",
+            "# comment ?\n",
+            "--\tcomment\r\n",
+            " \t# first\n/* second */ -- third\n",
+        ] {
+            assert_eq!(
+                recognize(&format!("{prefix}{statement}")).unwrap(),
+                expected,
+                "{prefix:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn interleaved_comments_keep_original_set_rhs_offsets() {
+        let sql = "/* first */ SET /* second */ @x /* target */ = /* value */ 1, # next\n\
+                   @text := '雪? /* literal */', @tail = 2 /* trailing ? */";
+        assert_eq!(
+            recognize(sql).unwrap(),
+            Some(Admin::Set(vec![
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@x".into(),
+                    rhs: "1".into()
+                },
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@text".into(),
+                    rhs: "'雪? /* literal */'".into()
+                },
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@tail".into(),
+                    rhs: "2 /* trailing ? */".into()
+                },
+            ]))
+        );
+        // Comment markers inside quoted assignment names are ordinary text.
+        assert_eq!(
+            recognize("/* leading */ SET @`a#/*--` = 'x', @'b?/*' := 2").unwrap(),
+            Some(Admin::Set(vec![
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@a#/*--".into(),
+                    rhs: "'x'".into()
+                },
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@b?/*".into(),
+                    rhs: "2".into()
+                },
+            ]))
+        );
+    }
+
+    #[test]
+    fn admin_dash_comments_require_mysql_whitespace_or_control() {
+        for prefix in ["-- ", "--\t", "--\r", "--\u{1}"] {
+            assert!(matches!(
+                recognize(&format!("{prefix} ignored\nSET @x = 1")).unwrap(),
+                Some(Admin::Set(_))
+            ));
+        }
+        for sql in [
+            "--not_a_comment\nSET @x = 1",
+            "--雪\nSET @x = 1",
+            "--",
+            "# comment only",
+            "/* comment only */",
+        ] {
+            assert_eq!(recognize(sql).unwrap(), None, "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn prepared_normalization_distinguishes_markers_from_comment_and_literal_text() {
+        use crate::normalize::{normalize, Mode};
+        let literal = "/* ? */ SET @text = '?', @x = 1 -- ?\n";
+        assert!(matches!(recognize(literal).unwrap(), Some(Admin::Set(_))));
+        assert_eq!(crate::prep::count_markers(literal), 0);
+        let normalized = normalize(literal, Mode::Placeholders).unwrap();
+        assert_eq!(normalized.n_params, 0);
+        assert!(normalized.params.is_empty());
+        assert!(normalized.template.contains("'?'"));
+        let marker = "# ?\nSET @x = ?, @text = '?' /* ? */";
+        assert_eq!(crate::prep::count_markers(marker), 1);
+        let normalized = normalize(marker, Mode::Placeholders).unwrap();
+        assert_eq!(normalized.n_params, 1);
+        assert!(normalized.template.contains("@x = ?1"));
+        assert!(normalized.template.contains("'?'"));
+        assert_eq!(normalize(marker, Mode::Literals).unwrap_err().code, 1064);
+    }
 
     #[test]
     fn sql_prepared_statements() {
