@@ -8,6 +8,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ORDER BY <index columns> DESC ... LIMIT n` reads the index backwards, from
+  the upper bound of the range, a page at a time, and stops after `n`
+  (+ `OFFSET`) qualifying rows instead of reading the whole range forwards
+  and sorting it ([#50](https://github.com/cstheorist/tarn/issues/50)).
+  Locking reads page backwards too.
 - Ordered pages read only the page: a `SELECT ... WHERE <index prefix>
   [AND <other conditions>] ORDER BY <next index columns> LIMIT n` picks the
   index that returns rows in `ORDER BY` order, reads it a page at a time,
