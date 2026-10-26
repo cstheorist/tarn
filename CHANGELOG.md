@@ -253,6 +253,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A storage node whose Lua heap was left full of garbage near the limit
+  failed every call, its recovery fiber's too, with "not enough memory"
+  until a manual `collectgarbage()`: LuaJIT starts a collection cycle only
+  when the heap reaches twice what the last cycle left, which was above the
+  limit. A fiber now checks the heap every 100 ms and collects it when less
+  than the read reserve (1/16 of the limit, at least 16 MiB) is free, at
+  most once a second; `tarn_info` counts these in `heap_collects`
+  ([#73](https://github.com/cstheorist/tarn/issues/73)).
 - New indexes on instant-added columns could miss old rows or accept
   duplicate logical keys: short tuples omit the column's non-NULL fill,
   which a native index reads as NULL
