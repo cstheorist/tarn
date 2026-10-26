@@ -506,6 +506,13 @@ CASES = [
      "KEY ka (a) USING BTREE COMMENT 'lookups by a', UNIQUE KEY ub (b) COMMENT 'it''s b') COMMENT 'a table'", "ddl:icm"),
     ("ALTER TABLE icm ADD COLUMN c INT, ADD INDEX kc (c) COMMENT 'by c', RENAME INDEX ka TO ka2", "ddl:icm"),
     ("CREATE INDEX kac ON icm (a, c) COMMENT 'pair' ALGORITHM=INPLACE", "ddl:icm"),
+    # MySQL string escapes in CREATE INDEX comments must survive SHOW INDEX,
+    # including wildcard backslashes retained outside LIKE patterns.
+    (r"CREATE INDEX kec_controls ON icm (a) COMMENT 'back\breturn\rend\Zline\ntab\t'", "ddl:icm"),
+    (r'''CREATE INDEX kec_quotes ON icm (a) COMMENT '雪\'single''quote\"double\\slash' ''', "ddl:icm"),
+    (r'CREATE INDEX kec_double ON icm (a) COMMENT "雪\"double""quote\'single\\slash"', "ddl:icm"),
+    (r"CREATE INDEX kec_wildcards ON icm (a) COMMENT 'percent\%underscore\_'", "ddl:icm"),
+    (r"CREATE INDEX kec_unknown ON icm (a) COMMENT 'unknown\q\B\z\a\f'", "ddl:icm"),
     ("ALTER TABLE icm MODIFY a BIGINT, DROP INDEX kc", "ddl:icm"),
     ("ALTER TABLE icm DROP COLUMN c", "ddl:icm"),
     # user and system variables, executable comments, LOCK TABLES
