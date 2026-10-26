@@ -58,6 +58,17 @@ pub enum Admin {
         like: Option<String>,
     },
     ShowTarnStatus,
+    /// SHOW TARN BUCKETS: which shard owns which buckets, and the moves in
+    /// progress.
+    ShowTarnBuckets,
+    /// TARN MOVE BUCKET n TO SHARD id, TARN MOVE BUCKETS BETWEEN n AND m TO
+    /// SHARD id: move buckets first..=last to the shard with that id (those
+    /// it owns already stay).
+    MoveBuckets {
+        first: u32,
+        last: u32,
+        to: u32,
+    },
     /// SELECT @@a [AS x], @@b ... [LIMIT n]
     SelectVars(Vec<(String, String)>),
     Describe {
@@ -569,10 +580,45 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             t.i += 2;
             Admin::Deallocate(statement_name(&mut t)?)
         }
+        "TARN" if t.peek_up(1) == "MOVE" => {
+            t.i += 2;
+            parse_move(&mut t)?
+        }
         "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
     Ok(Some(r))
+}
+
+/// `TARN MOVE BUCKET n TO SHARD id` | `TARN MOVE BUCKETS BETWEEN n AND m TO
+/// SHARD id` (after `TARN MOVE`).
+fn parse_move(t: &mut Toks) -> SqlResult<Admin> {
+    let usage =
+        || SqlError::parse("expected TARN MOVE BUCKET n TO SHARD id, or TARN MOVE BUCKETS BETWEEN n AND m TO SHARD id");
+    let num = |t: &mut Toks| -> SqlResult<u32> { t.next().and_then(|n| n.parse::<u32>().ok()).ok_or_else(usage) };
+    let (first, last) = if t.is("BUCKET") {
+        let b = num(t)?;
+        (b, b)
+    } else if t.is("BUCKETS") {
+        if !t.is("BETWEEN") {
+            return Err(usage());
+        }
+        let a = num(t)?;
+        if !t.is("AND") {
+            return Err(usage());
+        }
+        (a, num(t)?)
+    } else {
+        return Err(usage());
+    };
+    if !t.is("TO") || !t.is("SHARD") {
+        return Err(usage());
+    }
+    let to = num(t)?;
+    if !t.done() || first == 0 || last < first {
+        return Err(usage());
+    }
+    Ok(Admin::MoveBuckets { first, last, to })
 }
 
 /// The name of an SQL-level prepared statement (case-insensitive).
@@ -895,6 +941,7 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         "COLLATION" => Admin::ShowCollation,
         "CHARSET" | "CHARACTER" => Admin::ShowCharset,
         "PROCESSLIST" => Admin::ShowProcesslist,
+        "TARN" if t.is("BUCKETS") => Admin::ShowTarnBuckets,
         "TARN" => Admin::ShowTarnStatus,
         "ENGINE" | "PLUGINS" | "MASTER" | "SLAVE" | "REPLICA" | "BINARY" | "GRANTS" | "PRIVILEGES" | "TRIGGERS"
         | "EVENTS" | "PROCEDURE" | "FUNCTION" | "OPEN" => Admin::Noop,
@@ -933,6 +980,37 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bucket_statements() {
+        assert_eq!(recognize("SHOW TARN BUCKETS").unwrap(), Some(Admin::ShowTarnBuckets));
+        assert_eq!(recognize("show tarn status").unwrap(), Some(Admin::ShowTarnStatus));
+        assert_eq!(
+            recognize("TARN MOVE BUCKET 17 TO SHARD 2").unwrap(),
+            Some(Admin::MoveBuckets {
+                first: 17,
+                last: 17,
+                to: 2
+            })
+        );
+        assert_eq!(
+            recognize("tarn move buckets between 1 and 100 to shard 3;").unwrap(),
+            Some(Admin::MoveBuckets {
+                first: 1,
+                last: 100,
+                to: 3
+            })
+        );
+        for bad in [
+            "TARN MOVE BUCKET 0 TO SHARD 2",
+            "TARN MOVE BUCKET x TO SHARD 2",
+            "TARN MOVE BUCKETS BETWEEN 9 AND 3 TO SHARD 2",
+            "TARN MOVE BUCKET 5 TO 2",
+            "TARN MOVE BUCKET 5 TO SHARD 2 NOW",
+        ] {
+            assert!(recognize(bad).is_err(), "{}", bad);
+        }
+    }
 
     #[test]
     fn leading_comments_preserve_set_expressions() {

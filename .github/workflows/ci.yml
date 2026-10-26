@@ -101,11 +101,16 @@ jobs:
         run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Schema changes and dumps
         run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+      - name: Bucket moves under load
+        run: ci/annotate.sh movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
       - name: The same suites with vinyl tables, read from disk
         run: |
           scripts/cluster.sh stop
           TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_CHECK_YIELDS=1 \
             scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2 -e vinyl
+          # (moves first: with the tables the other suites leave, which every
+          # move reads from disk, a runner moves too few buckets to tell)
+          ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
@@ -115,6 +120,7 @@ jobs:
         run: |
           ci/annotate.sh faults tests/faults.sh
           ci/annotate.sh ddlfaults tests/ddlfaults.sh
+          ci/annotate.sh movefaults tests/movefaults.sh
       - name: Failover (2 shards x 3 replicas)
         run: SECS=45 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
@@ -124,7 +130,7 @@ jobs:
       - name: Cluster logs
         if: failure()
         run: |
-          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log; do
+          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true
@@ -132,7 +138,7 @@ jobs:
   tla:
     name: TLA+ model checking
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6

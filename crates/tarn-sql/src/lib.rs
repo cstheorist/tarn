@@ -8,6 +8,7 @@
 
 pub mod admin;
 pub mod alter;
+pub mod buckets;
 pub mod catalog;
 pub mod cluster;
 pub mod collation;

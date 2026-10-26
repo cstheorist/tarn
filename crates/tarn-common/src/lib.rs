@@ -211,6 +211,11 @@ pub struct SqlError {
     pub code: u16,
     pub sqlstate: [u8; 5],
     pub message: String,
+    /// A shard refused the request: it does not own the bucket the request
+    /// was routed by, or a move fences it (lua/tarn.lua "Buckets"). Nothing
+    /// was done; the server loads the bucket map again, and a statement that
+    /// can start over runs again with it.
+    pub moved: bool,
 }
 
 impl SqlError {
@@ -223,6 +228,7 @@ impl SqlError {
             code,
             sqlstate: s,
             message: message.into(),
+            moved: false,
         }
     }
     /// ER_LOCK_DEADLOCK: the conventional "retry your transaction" signal.
@@ -235,6 +241,12 @@ impl SqlError {
                 detail.into()
             ),
         )
+    }
+    /// A request refused for its bucket (see `moved`): a retryable 1213.
+    pub fn moved(detail: impl Into<String>) -> SqlError {
+        let mut e = SqlError::conflict(detail);
+        e.moved = true;
+        e
     }
     pub fn parse(msg: impl Into<String>) -> SqlError {
         SqlError::new(1064, "42000", msg)

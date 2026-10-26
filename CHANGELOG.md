@@ -8,6 +8,24 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Online bucket moves ([#24](https://github.com/cstheorist/tarn/issues/24)):
+  `TARN MOVE BUCKET n TO SHARD id` and `TARN MOVE BUCKETS BETWEEN n AND m TO
+  SHARD id` move buckets between shards while transactions run, to add a
+  shard, remove one or take load off one; `SHOW TARN BUCKETS` shows the map
+  and the moves in progress. The shards keep the bucket map, made by the
+  first SQL server on a new cluster (or on one from an earlier version);
+  requests name the buckets they were routed by, a shard refuses those it
+  does not own, and the server reads the map again and runs the statement
+  again. A move copies the bucket while the old shard serves it, fences it,
+  waits for the prepared transactions on its rows, copies the last writes
+  and switches; another server finishes a move whose server stopped. The
+  protocol is model-checked (`Move_*` configurations, three `Bug_Move*`
+  ones that TLC must fail) and `tarn_verified::route::build_owner`, which
+  checks the shards' reports, is proven in Verus. `tests/sql/movetest.py`
+  moves buckets under transfers, READ COMMITTED read-modify-writes and
+  scans of every shard (also during `tests/failover.sh`), and
+  `tests/movefaults.sh` kills the SQL server driving a move.
+
 - Table trees ([#85](https://github.com/cstheorist/tarn/issues/85)): a
   table's `COMMENT 'tarn:parent=<table>'` declares that its rows nest under
   the parent's. `CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check that

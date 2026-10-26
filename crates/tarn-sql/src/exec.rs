@@ -9,8 +9,8 @@ use crate::expr::CmpOp;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
 use crate::txn::{
-    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Row, StoragePred,
-    Txn,
+    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Route, Row,
+    StoragePred, Txn,
 };
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
@@ -100,6 +100,7 @@ async fn scan_pages(
     lock_check: bool,
     pages: Pages,
     keep: Keep<'_, '_>,
+    route: &Route,
 ) -> SqlResult<Scanned> {
     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
     let mut out = Scanned {
@@ -122,6 +123,7 @@ async fn scan_pages(
             lock_check,
             begin,
             after.as_deref(),
+            route,
         )
         .await?;
         begin = false;
@@ -154,6 +156,7 @@ async fn keys_pages(
     limit: Option<u32>,
     lock_check: bool,
     pages: Pages,
+    route: &Route,
 ) -> SqlResult<Vec<Row>> {
     let mut out = Vec::new();
     let mut after: Option<Vec<u8>> = None;
@@ -168,6 +171,7 @@ async fn keys_pages(
             lock_check,
             begin,
             after.as_deref(),
+            route,
         )
         .await?;
         begin = false;
@@ -219,7 +223,7 @@ async fn committed_snapshot(
             }
         };
         match res {
-            Err(e) if e.code == 1213 && attempt < crate::session::MAX_RETRIES => {
+            Err(e) if e.code == 1213 && !e.moved && attempt < crate::session::MAX_RETRIES => {
                 attempt += 1;
                 cluster.stats.retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 crate::session::backoff(attempt).await;
@@ -317,12 +321,44 @@ pub fn route_prefix(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[V
     if cluster.nshards() == 1 {
         return Some(0);
     }
+    route_bucket(cluster, t, idx, prefix).map(|(s, _)| s)
+}
+
+/// The shard and the bucket of every row whose `index` key starts with
+/// `prefix`, if the prefix determines the shard key.
+pub fn route_bucket(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[Value]) -> Option<(usize, u32)> {
     let mut sk = Vec::with_capacity(t.shard_key.len());
     for &c in &t.shard_key {
         let p = idx.cols.iter().position(|&x| x == c)?;
         sk.push(prefix.get(p)?.clone());
     }
-    Some(cluster.shard_of(&sk))
+    Some(cluster.route(&sk))
+}
+
+/// What the shard of a storage read checks (lua/tarn.lua "Buckets"): the
+/// buckets it was routed by; else, outside a transaction's streams, the
+/// shard's epoch in `map` (a read of every shard). The reads of one scan of
+/// every shard take their epochs from one map: each passes only if its
+/// shard's buckets have not changed since the map was read, so together
+/// they read each bucket on the one shard that owned it then. (Epochs from
+/// two maps could read a bucket on the shard it left and, later, on the
+/// one it went to.)
+fn read_route(
+    map: &crate::buckets::BucketMap,
+    in_stream: bool,
+    shard: usize,
+    buckets: &[Option<u32>],
+) -> SqlResult<Route> {
+    if !buckets.is_empty() && buckets.iter().all(|b| b.is_some()) {
+        let mut v: Vec<u32> = buckets.iter().flatten().copied().collect();
+        v.sort_unstable();
+        v.dedup();
+        return Ok(Route::Buckets(v));
+    }
+    if in_stream {
+        return Ok(Route::None);
+    }
+    Ok(Route::Epoch(map.epoch_of(shard)?))
 }
 
 pub fn shard_of_row(cluster: &Cluster, t: &TableDef, row: &[Value]) -> usize {
@@ -342,6 +378,9 @@ pub(crate) fn eval_limit(e: &Option<Expr>, cx: &EvalCtx) -> SqlResult<Option<u64
 
 struct Call {
     shard: usize,
+    /// The bucket the call was routed by (None: one of the calls to every
+    /// shard).
+    bucket: Option<u32>,
     key: Vec<Value>,
     iter: Iter,
     limit: Option<u32>,
@@ -404,35 +443,49 @@ async fn fetch_keys(
     unique: bool,
     limit: Option<u32>,
 ) -> SqlResult<Vec<Row>> {
-    let mut per_shard: BTreeMap<usize, Vec<Vec<Value>>> = BTreeMap::new();
+    // By shard: the keys, and the bucket each was routed by.
+    let mut per_shard: BTreeMap<usize, (Vec<Vec<Value>>, Vec<Option<u32>>)> = BTreeMap::new();
     for k in keys {
-        match route_prefix(cluster, t, idx, &k) {
-            Some(s) => per_shard.entry(s).or_default().push(k),
+        match route_bucket(cluster, t, idx, &k) {
+            Some((s, b)) => {
+                let e = per_shard.entry(s).or_default();
+                e.0.push(k);
+                e.1.push(Some(b));
+            }
             None => {
                 for s in 0..cluster.nshards() {
-                    per_shard.entry(s).or_default().push(k.clone());
+                    let e = per_shard.entry(s).or_default();
+                    e.0.push(k.clone());
+                    e.1.push(None);
                 }
             }
         }
     }
     let mut rows = Vec::new();
     let pages = mode.pages();
+    let in_stream = matches!(mode, ReadMode::Txn(_));
+    let map = cluster.bucket_map();
+    let mut routes = BTreeMap::new();
+    for (s, (_, bs)) in &per_shard {
+        routes.insert(*s, read_route(&map, in_stream, *s, bs)?);
+    }
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += per_shard.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for (s, ks) in &per_shard {
+            for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages).await?);
+                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, &routes[s]).await?);
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
-            for (s, ks) in &per_shard {
+            for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                futs.push(async move { keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages).await });
+                let route = &routes[s];
+                futs.push(async move { keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, route).await });
             }
             for r in futures::future::join_all(futs).await {
                 rows.extend(r?);
@@ -440,11 +493,12 @@ async fn fetch_keys(
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
-            for (s, ks) in &per_shard {
+            for (s, (ks, _)) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
-                futs.push(
-                    async move { keys_pages(&st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages).await },
-                );
+                let route = &routes[s];
+                futs.push(async move {
+                    keys_pages(&st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages, route).await
+                });
             }
             for r in futures::future::join_all(futs).await {
                 match r {
@@ -457,11 +511,11 @@ async fn fetch_keys(
                     }
                 }
             }
-            for (s, ks) in per_shard.iter() {
+            for (s, (ks, bs)) in per_shard.iter() {
                 txn.mark_begun(*s);
-                for k in ks {
+                for (k, b) in ks.iter().zip(bs) {
                     if unique {
-                        txn.note_point(*s, t.space_id, idx.id, k.clone());
+                        txn.note_point(*s, t.space_id, idx.id, k.clone(), *b);
                     } else {
                         txn.note_range(
                             *s,
@@ -472,6 +526,7 @@ async fn fetch_keys(
                                 hi: Some(k.clone()),
                                 lo_incl: true,
                                 hi_incl: true,
+                                bucket: *b,
                             },
                         );
                     }
@@ -695,13 +750,14 @@ async fn fetch_stored_from(
                 }
                 // A unique key without the shard key (a global index, see
                 // catalog) does not say which shard holds the row: ask each.
-                let shards: Vec<usize> = match route_prefix(cluster, t, idx, &key) {
-                    Some(s) => vec![s],
-                    None => (0..cluster.nshards()).collect(),
+                let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &key) {
+                    Some((s, b)) => vec![(s, Some(b))],
+                    None => (0..cluster.nshards()).map(|s| (s, None)).collect(),
                 };
-                for shard in shards {
+                for (shard, bucket) in shards {
                     calls.push(Call {
                         shard,
+                        bucket,
                         key: key.clone(),
                         iter: Iter::Eq,
                         limit: Some(1),
@@ -727,24 +783,30 @@ async fn fetch_stored_from(
         t,
         written: &written,
     };
+    let in_stream = matches!(mode, ReadMode::Txn(_));
+    let map = cluster.bucket_map();
+    let routes = calls
+        .iter()
+        .map(|c| read_route(&map, in_stream, c.shard, &[c.bucket]))
+        .collect::<SqlResult<Vec<Route>>>()?;
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += calls.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep).await?;
+                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await?;
                 read += s.read;
                 rows.extend(s.rows);
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                futs.push(async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep).await });
+                futs.push(async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await });
             }
             for r in futures::future::join_all(futs).await {
                 let s = r?;
@@ -754,11 +816,11 @@ async fn fetch_stored_from(
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
-                futs.push(
-                    async move { scan_pages(&st.client, st.id, st.begin, t, index, c, false, pages, keep).await },
-                );
+                futs.push(async move {
+                    scan_pages(&st.client, st.id, st.begin, t, index, c, false, pages, keep, route).await
+                });
             }
             let results = futures::future::join_all(futs).await;
             // A call that a limit cut short read its range only up to the
@@ -790,7 +852,7 @@ async fn fetch_stored_from(
             for (c, to) in calls.into_iter().zip(read_to) {
                 txn.mark_begun(c.shard);
                 if unique_point {
-                    txn.note_point(c.shard, t.space_id, index, c.key);
+                    txn.note_point(c.shard, t.space_id, index, c.key, c.bucket);
                 } else if let Some(mut r) = c.range {
                     match to {
                         Some(k) if matches!(c.iter, Iter::Le | Iter::Lt) => {
@@ -854,30 +916,31 @@ fn range_calls(
             let Some(prefix) = ks.into_iter().next() else {
                 return Ok(calls);
             };
-            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
-                Some(s) => vec![s],
-                None => (0..cluster.nshards()).collect(),
-            };
-            let range = RangeRead {
-                space: t.space_id,
-                index: idx.id,
-                lo: Some(prefix.clone()),
-                hi: Some(prefix.clone()),
-                lo_incl: true,
-                hi_incl: true,
+            let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &prefix) {
+                Some((s, b)) => vec![(s, Some(b))],
+                None => (0..cluster.nshards()).map(|s| (s, None)).collect(),
             };
             let (key, iter) = match resume {
                 Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
                 None => (prefix.clone(), Iter::Ge),
             };
-            for s in shards {
+            for (s, bucket) in shards {
                 calls.push(Call {
                     shard: s,
+                    bucket,
                     key: key.clone(),
                     iter,
                     limit,
                     end: Some((prefix.clone(), true)),
-                    range: Some(range.clone()),
+                    range: Some(RangeRead {
+                        space: t.space_id,
+                        index: idx.id,
+                        lo: Some(prefix.clone()),
+                        hi: Some(prefix.clone()),
+                        lo_incl: true,
+                        hi_incl: true,
+                        bucket,
+                    }),
                 });
             }
         }
@@ -933,9 +996,9 @@ fn range_calls(
                 None if !prefix.is_empty() => Some((prefix.clone(), true)),
                 None => None,
             };
-            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
-                Some(s) => vec![s],
-                None => (0..cluster.nshards()).collect(),
+            let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &prefix) {
+                Some((s, b)) => vec![(s, Some(b))],
+                None => (0..cluster.nshards()).map(|s| (s, None)).collect(),
             };
             let range = RangeRead {
                 space: t.space_id,
@@ -944,6 +1007,7 @@ fn range_calls(
                 hi: end.as_ref().map(|(k, _)| k.clone()),
                 lo_incl,
                 hi_incl: end.as_ref().map(|(_, i)| *i).unwrap_or(true),
+                bucket: None,
             };
             // Backwards (ORDER BY ... DESC, issue #50): from the upper bound
             // down to the lower one.
@@ -956,14 +1020,18 @@ fn range_calls(
                     None => (Vec::new(), Iter::Le, lower_end(&range)),
                 },
             };
-            for s in shards {
+            for (s, bucket) in shards {
                 calls.push(Call {
                     shard: s,
+                    bucket,
                     key: key.clone(),
                     iter,
                     limit,
                     end: end.clone(),
-                    range: Some(range.clone()),
+                    range: Some(RangeRead {
+                        bucket,
+                        ..range.clone()
+                    }),
                 });
             }
         }
@@ -975,10 +1043,12 @@ fn range_calls(
                 hi: None,
                 lo_incl: true,
                 hi_incl: true,
+                bucket: None,
             };
             for s in 0..cluster.nshards() {
                 calls.push(Call {
                     shard: s,
+                    bucket: None,
                     key: Vec::new(),
                     iter: Iter::All,
                     limit,
@@ -1697,26 +1767,46 @@ async fn storage_count(
             .collect()
     };
     let excl: Vec<Vec<&[Value]>> = calls.iter().map(|c| exclude(c.shard)).collect();
+    let in_stream = matches!(mode, ReadMode::Txn(_));
+    let map = cluster.bucket_map();
+    let routes = calls
+        .iter()
+        .map(|c| read_route(&map, in_stream, c.shard, &[c.bucket]))
+        .collect::<SqlResult<Vec<Route>>>()?;
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += calls.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
                 let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                n += count_rows(&client, 0, t, index, &c.key, c.iter, end, &preds, &[], true, false).await?;
+                n += count_rows(
+                    &client,
+                    0,
+                    t,
+                    index,
+                    &c.key,
+                    c.iter,
+                    end,
+                    &preds,
+                    &[],
+                    true,
+                    false,
+                    route,
+                )
+                .await?;
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
-            for (c, ex) in calls.iter().zip(&excl) {
+            for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
                 let preds = &preds;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false).await
+                    count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false, route).await
                 });
             }
             for r in futures::future::join_all(futs).await {
@@ -1725,13 +1815,13 @@ async fn storage_count(
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
-            for (c, ex) in calls.iter().zip(&excl) {
+            for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
                 let preds = &preds;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
                     count_rows(
-                        &st.client, st.id, t, index, &c.key, c.iter, end, preds, ex, false, st.begin,
+                        &st.client, st.id, t, index, &c.key, c.iter, end, preds, ex, false, st.begin, route,
                     )
                     .await
                 });

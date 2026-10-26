@@ -14,7 +14,7 @@ read them as **key/value**.
 
 > **Status: research prototype (v0.1).** The commit protocol is model-checked
 > and the core is tested hard, but Tarn lacks much of what production use
-> needs (TLS, online resharding, much of MySQL's SQL surface). See
+> needs (TLS, automatic rebalancing, much of MySQL's SQL surface). See
 > [limitations](docs/design.md#6-limitations).
 
 ## Highlights
@@ -30,7 +30,9 @@ read them as **key/value**.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
   sharded with vshard's bucket function and live in RAM (memtx) or, with
-  `ENGINE=vinyl`, on disk; one transaction may span both.
+  `ENGINE=vinyl`, on disk; one transaction may span both. Buckets move
+  between shards online (`TARN MOVE BUCKET`) while transactions use their
+  rows.
 * **Strictly serializable transactions** across shards: lock-aware reads,
   MVCC-validated single-shard commits, and a parallel-commit two-phase commit
   whose recovery survives coordinator crashes and leader failover.
@@ -48,7 +50,7 @@ read them as **key/value**.
   and compiled into the server.
 * **Tested against reality.** Exact differential tests against MariaDB,
   transaction-anomaly tests, a ledger-checked bank workload under leader
-  failover, and fault injection for lost replies.
+  failover and bucket moves, and fault injection for lost replies.
 
 ## Quick start
 
@@ -143,7 +145,7 @@ YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md).
   moves between shards. TLC found a real design flaw early on: single-shard
   reads could break strict serializability. It later caught a flaw in a fix
   too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 61 verified
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 66 verified
   functions and lemmas for routing, coordinator decisions and the MySQL wire
   codec.
 * **Tests**: 74 storage-protocol tests, 99 SQL statements compared exactly
