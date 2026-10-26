@@ -5,7 +5,7 @@ kind of mistake:
 
 | Layer | Checks | Where |
 |---|---|---|
-| TLA+ model, checked with TLC | the commit protocol as a design: strict serializability, atomicity, recovery and record garbage collection under crashes, lost and re-delivered messages, and leader failover; READ COMMITTED transactions with row locks (no lost updates, real-time visibility) | `tla/` |
+| TLA+ model, checked with TLC | the commit protocol as a design: strict serializability, atomicity, recovery and record garbage collection under crashes, lost and re-delivered messages, and leader failover; READ COMMITTED transactions with row locks (no lost updates, real-time visibility); bucket moves between shards while transactions run | `tla/` |
 | Verus proofs | that specific Rust functions do what their specifications say, for every input | `crates/tarn-verified/` |
 | Tests | that the implementation matches the model and MySQL: storage protocol, SQL semantics against MariaDB, transaction anomalies, failover, faults | `lua/test/`, `tests/`, `crates/*/tests` |
 
@@ -18,10 +18,13 @@ What each layer found, and how the findings were fixed, is described in the
 transactions with fixed read and write sets, direct (non-SQL) readers, and
 the actions of execution, single-shard commit, read-only validation,
 PREPARE, APPLY, ABORT, coordinator decisions, timeout-driven recovery,
-record expiry and garbage collection, and READ COMMITTED transactions:
+record expiry and garbage collection, READ COMMITTED transactions:
 plain reads of the latest committed value, pessimistic row locks with a read
 under the lock, their commits, and the window in which a local commit is not
-yet visible to readers outside it. Faults are coordinator crashes, lost and
+yet visible to readers outside it, and bucket moves: rows have a place that
+a move changes in steps (fence and drain on the old shard, a hold on the new
+one, the rows deleted there and inserted here), requests reach the shard
+they were routed to, and scans read every shard (design §2.12). Faults are coordinator crashes, lost and
 re-delivered messages, and shard leader failover (durable state survives,
 the MVCC read tracking of open streams and the row-lock table do not).
 
@@ -35,7 +38,7 @@ Invariants checked in every configuration:
 | `PlainOnlyCommitted` | the plain Tarantool spaces only ever hold committed values |
 | `DirectReadsClean` | direct key/value readers never see uncommitted data |
 | `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
-| `StrictSerializable` | the committed transactions have a serial order, consistent with real time, that explains every value they read (for READ COMMITTED transactions: every value they read under a lock) |
+| `StrictSerializable` | the committed transactions have a serial order, consistent with real time, that explains every value they read (for READ COMMITTED transactions: every value they read under a lock; a scan of every shard must have seen each row exactly once) |
 | `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
 | `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
 | `UniqueHolds` | no key is inserted by two committed transactions (global unique indexes) |
@@ -46,10 +49,11 @@ predecessors, and the invariant searches for a witness order.
 
 ### Configurations
 
-`tla/MC.tla` defines eight workloads on two shards (`Skew`, `Local`,
+`tla/MC.tla` defines ten workloads on two shards (`Skew`, `Local`,
 `Frac`, `Recov` with serializable transactions; `Counter`, `Mixed`, `Local`
 with READ COMMITTED ones; `Uniq`, inserts of one global unique index
-entry), and `tla/gen_cfgs.sh` generates one `.cfg` per
+entry; `MoveScan` and `MoveRC`, a row moved to the other shard while
+transactions run), and `tla/gen_cfgs.sh` generates one `.cfg` per
 combination of workload, fault budget and options. The names say what is
 checked:
 
@@ -62,6 +66,7 @@ checked:
 | `*_GC` | additionally, transactions expire and protocol records are garbage-collected |
 | `RC_*` | READ COMMITTED read-modify-writes racing each other and serializable transactions (`RC_Counter`, `RC_Mixed`, `RC_Local`), with faults, failovers (which empty the row-lock table) or ack-on-prepare |
 | `Uniq*` | two rows with one value of a unique key without the shard key insert one global index entry, across shards and locally (`Uniq_RC`: the local one at READ COMMITTED), with faults or a failover |
+| `Move_*` | a bucket move while a scan of every shard, writers of the moving row and READ COMMITTED read-modify-writes run (`Move_ScanPrepare`: the scan commits through PREPARE), with faults or a failover |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -82,9 +87,11 @@ python3 tla/summarize.py                        # table of every result in tla/o
 ```
 
 `run_all.sh` honours `TLA2TOOLS` (path to the jar), `WORKERS` (default 1)
-and `TLC_HEAP` (default 3g). The large configurations (`Skew*`) take from
-minutes to an hour; `Skew_GC_ROValidate` did not finish within two hours
-(47.8 million states explored without a violation).
+and `TLC_HEAP` (default 3g). The large configurations (`Skew*`,
+`Move_ScanPrepare`), which `check.sh` leaves out, take from minutes to an
+hour (`Move_ScanPrepare`: 48 minutes, 20.6 million states);
+`Skew_GC_ROValidate` did not finish within two hours (47.8 million states
+explored without a violation).
 
 To add a protection switch: add a `Bug*` constant to `TarnCommit.tla`, guard
 the protection with it, add a flag to `gen_cfgs.sh`, and add a `Bug_*`

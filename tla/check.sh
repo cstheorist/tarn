@@ -13,7 +13,8 @@ Recov RecovReaders Recov_AckOnPrepare Local_ROValidate Frac_ROValidate
 LocalFailover_ROValidate FracFailover_ROValidate Recov_GC Local_GC_ROValidate Frac_GC_ROValidate
 Bug_RCNoLockCheck Bug_RCLockIgnoresWLocks Bug_RCReadBeforeLock Bug_IgnorePLocks Bug_RCLockReadsInFlight
 RC_Counter RC_CounterFailover RC_Counter_AckOnPrepare RC_Mixed RC_MixedFailover RC_Local
-Uniq UniqFailover Uniq_RC Bug_InsertNoExistCheck"
+Uniq UniqFailover Uniq_RC Bug_InsertNoExistCheck
+Bug_MoveNoDrain Bug_MoveNoHold Bug_MoveServeStale Move_Scan Move_RC Move_ScanFailover"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

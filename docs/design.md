@@ -356,8 +356,9 @@ columns or their types, is refused (1846).
 
 ### 2.2 The TLA+ model (`tla/TarnCommit.tla`)
 
-The model has shards, keys with owners, three transactions with fixed
-read/write sets, direct (non-SQL) readers, and the actions of the protocol:
+The model has shards, keys with owners (which a bucket move changes,
+§2.12), three transactions with fixed read/write sets, direct (non-SQL)
+readers, and the actions of the protocol:
 reads, single-shard commit, snapshot reads, read-only validation, PREPARE
 (with the decision record), coordinator decision/finish/abort, APPLY, ABORT
 (with tombstones), timeout-triggered recovery (fence record, fence
@@ -381,7 +382,7 @@ Invariants checked in every configuration:
 | `PlainOnlyCommitted` | the plain spaces only ever contain committed values |
 | `DirectReadsClean` | direct readers never observe uncommitted data |
 | `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
-| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock) |
+| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock; a scan of every shard: each row exactly once) |
 | `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
 | `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
 | `UniqueHolds` | no key is inserted by two committed transactions (unique keys, §1.4) |
@@ -405,7 +406,10 @@ reader of the entry and the row; `BugInsertNoExistCheck` drops the check and
 TLC finds two committed holders. The model never deletes keys, so a transaction that
 frees a value and takes another (REPLACE, an UPDATE of the key) is argued
 rather than checked: its deletes and inserts on a shard are in one PREPARE
-or local commit, which applies them together.
+or local commit, which applies them together. *MoveScan* and *MoveRC* move a
+row to the other shard while transactions run (§2.12): rows have a place
+that the move changes, a request reaches the shard it was routed to, and
+scans read every shard.
 
 ### 2.3 What TLC found
 
@@ -430,8 +434,10 @@ resurrects an aborted transaction: `AppliedOnlyIfCommitted` fails), local
 commits that ignore R locks, single-shard reads that ignore W locks,
 read-only validation without the W-lock check or without the "reads
 unchanged" check, garbage collection of applied records regardless of the
-decision record, garbage collection without the expiry horizon, and fencing
-a missing decision record after expiry.
+decision record, garbage collection without the expiry horizon, fencing
+a missing decision record after expiry, and three for bucket moves (§2.12):
+a move without the drain, a receiver that does not hold the bucket, and a
+sender that serves requests for a bucket it has sent.
 
 ### 2.4 A model/implementation gap found by testing: memtx read views
 
@@ -994,6 +1000,90 @@ vinyl shard needs.
 (issue #56). A table cannot move between engines (issue #57). Writes are
 not slowed down when compaction falls behind (issue #58).
 
+### 2.12 Bucket moves
+
+A bucket is the unit that moves between shards (issue #24): to add a
+shard, to remove one, or to take load off one. Every protocol above assumes
+that a row never changes shards, so a move has to keep three things true. A
+request routed with an old map must not be served by a shard the bucket has
+left. A serializable transaction whose reads covered the bucket must not
+commit across the move: a scan of every shard that read the old shard
+before the move and the new one after would see the bucket's rows twice,
+and in the other order not at all. And the locks on the bucket's rows --
+prepared transactions' locks and READ COMMITTED row locks -- must not be
+left behind on the old shard, where nothing would check them any more.
+
+**The protocol.** One SQL server drives a move of bucket *b* from shard S
+to shard R in steps:
+
+1. *Copy*: the rows of *b* are copied to R while S keeps serving them; R
+   keeps the copy aside, where nothing reads it.
+2. *Fence*: from now on S refuses writes to rows of *b*, row locks on them,
+   and PREPAREs that read or write them (read locks taken now would hold
+   the move up); it breaks the row locks held on them, so that their
+   transactions can no longer commit. R *holds* *b*: the validation of a
+   read that could cover a row of *b* there fails. Then S waits until no
+   prepared transaction holds a point lock on a row of *b* and no local
+   commit that writes one is in flight, and the changes made since the
+   copy are copied.
+3. *Send*: S deletes the rows of *b*, and from then on refuses requests for
+   it; their servers load the new map and route them again.
+4. *Receive*: R inserts the copy, owns *b* and releases the hold.
+
+Between the send and the receive the rows are on no shard: requests for
+them are refused everywhere and retried until R has them. A move that
+cannot drain in time is given up before the send, which releases the
+fence and the hold.
+
+**Why each step is needed.** Apart from where rows are, a move changes
+nothing a transaction can see: it is a cross-shard transaction that
+deletes the bucket's rows on S and inserts them on R. MVCC treats it as
+one. A stream that read a row of *b* on S, or scanned a range of an index
+there that held one, fails its validation once S deletes them, and one
+that scanned a range of R that they fall in fails once R inserts them. The
+hold covers the time in between: a transaction that scanned R before the
+rows arrived and S after they left saw them nowhere, and its validation
+on R comes after its scan of S, so after the send -- while R holds the
+bucket, or after the insert. The fence and the drain keep the copy
+current: a local commit in flight when the last copy is taken, or the
+APPLY of a prepared transaction, would write a row on S after it was
+copied, and the write would be lost. Point read locks are drained too: a
+prepared transaction may already be committed, and its read locks protect
+what it read until then, which after the move a writer on R would not
+see. A scan's read locks (a range on every shard) are not waited for: the
+scan read R as well, so it holds them there too, and both its PREPAREs
+come before the send.
+
+**The model.** TarnCommit.tla gives every row a place (`place`). A request
+reaches the shard it was routed to, which refuses rows it does not own; a
+read of a row where it no longer is finds nothing there (`Gone`), which
+the read's validation catches as a changed read. Scans (`SSet`: a range
+read on every shard, as a lookup by a non-unique secondary index or a full
+scan) record what they saw on each shard, and `StrictSerializable`
+requires a scan to have seen each row exactly once, with the value the
+serial order gives it. The move's steps are `MoveFence` (the fence, the
+broken row locks, the hold), `MoveDrained` (the drain and the last copy),
+`MoveSendFlip`, `MoveRecvFlip` and `MoveAbort`; the copy before the fence
+changes nothing a transaction can see. Two workloads move row x from shard
+A to shard B: *MoveScan* (a scan of both shards; a blind write of x, a
+local commit wherever x is, like an autocommit `UPDATE`; and a
+read-modify-write of x and y, through PREPARE/APPLY before the move and a
+local commit after it) and *MoveRC* (READ COMMITTED read-modify-writes of
+x, one of them across shards, and a serializable one whose local commit may
+be in flight when the move fences x). TLC finds a 9-step counterexample for
+each switch:
+
+| Switch | Counterexample |
+|---|---|
+| `BugMoveNoDrain` | a local commit that writes x is still in flight when the move takes its last copy: B gets the value before it, and a transaction that starts after the commit was acknowledged reads x without it |
+| `BugMoveNoHold` | a scan reads B before x arrives and A after x left, validates both, and commits without x |
+| `BugMoveServeStale` | a write of x routed with the old map reaches A after A sent the bucket; A applies it where no row lives any more and acknowledges it, and the write is lost |
+
+Not in the model: READ COMMITTED reads of every shard, which are not
+validated (they check instead that no shard has sent or received a bucket
+since their server loaded its map), and direct key/value readers, who must
+look a row up again where it went.
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
@@ -1080,51 +1170,60 @@ breadth-first into depth 23, without finding a violation;
 recovery racing the coordinator but without crashes or message loss. And
 `Skew`, `SkewFailover` and `Skew_AckOnPrepare` (up to an hour each) were
 last checked before the GC, ApplyMarksCommitted and READ COMMITTED
-extensions of the spec existed: with those options off and no READ
-COMMITTED transactions, the new actions are disabled and the new variables
-stay constant, so the behaviour is unchanged, as re-running every other
-configuration with the final spec confirms (identical numbers of distinct
-states).
+extensions of the spec existed, and the other configurations that
+`tla/check.sh` leaves out (`Frac`, `Local`, their `Failover` variants and
+the other `Skew*`) before bucket moves: with those options off and no READ
+COMMITTED transactions or moves, the new actions are disabled and the new
+variables stay constant, so the behaviour is unchanged, as re-running the
+serializable configurations of `tla/check.sh` with the final spec confirms
+(the same numbers of distinct states as before each extension).
 
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
 |---|---|---:|---:|---:|---|---:|
-| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 112812 | 566854 | 14 | 15s | 14 |
-| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 21733 | 81213 | 11 | 06s | 11 |
-| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2881 | 8063 | 10 | 02s | 9 |
-| Bug_IgnorePLocks | violates StrictSerializable | 4296 | 13823 | 11 | 06s | 11 |
-| Bug_InsertNoExistCheck | violates UniqueHolds | 144 | 231 | 6 | 00s | 5 |
-| Bug_LocalIgnoresRLocks | violates StrictSerializable | 32762 | 134735 | 13 | 07s | 13 |
-| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3539 | 10017 | 10 | 02s | 10 |
-| Bug_NoReadLocks | violates StrictSerializable | 2098 | 7167 | 9 | 02s | 9 |
-| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6596 | 19191 | 9 | 03s | 9 |
-| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12441 | 46334 | 11 | 04s | 11 |
-| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 4420 | 14830 | 11 | 06s | 11 |
-| Bug_RCLockReadsInFlight | violates StrictSerializable | 100 | 186 | 5 | 01s | 5 |
-| Bug_RCNoLockCheck | violates StrictSerializable | 36934 | 110964 | 11 | 15s | 10 |
-| Bug_RCReadBeforeLock | violates StrictSerializable | 3287 | 10040 | 11 | 05s | 11 |
-| Bug_ROValidateNoReadCheck | violates StrictSerializable | 19573 | 72384 | 12 | 05s | 12 |
-| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10636 | 37303 | 11 | 04s | 11 |
+| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 121431 | 621844 | 15 | 18s | 14 |
+| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 21332 | 79730 | 11 | 04s | 11 |
+| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2575 | 7167 | 10 | 02s | 9 |
+| Bug_IgnorePLocks | violates StrictSerializable | 2483 | 7375 | 11 | 02s | 11 |
+| Bug_InsertNoExistCheck | violates UniqueHolds | 113 | 188 | 6 | 01s | 6 |
+| Bug_LocalIgnoresRLocks | violates StrictSerializable | 31653 | 129430 | 13 | 07s | 13 |
+| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3671 | 10501 | 10 | 03s | 10 |
+| Bug_MoveNoDrain | violates StrictSerializable | 4411 | 12090 | 10 | 03s | 9 |
+| Bug_MoveNoHold | violates StrictSerializable | 4643 | 12962 | 10 | 03s | 9 |
+| Bug_MoveServeStale | violates StrictSerializable | 5734 | 15360 | 10 | 03s | 9 |
+| Bug_NoReadLocks | violates StrictSerializable | 2038 | 6929 | 9 | 02s | 9 |
+| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6256 | 17373 | 9 | 03s | 9 |
+| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12308 | 45683 | 11 | 04s | 11 |
+| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3429 | 11749 | 11 | 03s | 11 |
+| Bug_RCLockReadsInFlight | violates StrictSerializable | 83 | 167 | 5 | 01s | 5 |
+| Bug_RCNoLockCheck | violates StrictSerializable | 27871 | 84164 | 11 | 05s | 11 |
+| Bug_RCReadBeforeLock | violates StrictSerializable | 2757 | 8466 | 11 | 02s | 11 |
+| Bug_ROValidateNoReadCheck | violates StrictSerializable | 18969 | 69905 | 12 | 05s | 12 |
+| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10491 | 36671 | 11 | 05s | 11 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
-| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 02min 25s |  |
-| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 05min 39s |  |
+| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 02min 32s |  |
+| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 07min 05s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 16s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
-| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 01min 31s |  |
-| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 03min 44s |  |
-| Local_ROValidate | no errors | 66348 | 377760 | 19 | 12s |  |
-| RC_Counter | no errors | 2289068 | 17877610 | 26 | 05min 09s |  |
-| RC_CounterFailover | no errors | 1246789 | 8726265 | 26 | 02min 35s |  |
-| RC_Counter_AckOnPrepare | no errors | 1252034 | 9355913 | 26 | 03min 11s |  |
-| RC_Local | no errors | 53479 | 287001 | 19 | 10s |  |
-| RC_Mixed | no errors | 171352 | 1029336 | 20 | 48s |  |
-| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 48s |  |
-| Recov | no errors | 71927 | 412881 | 18 | 12s |  |
-| RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
+| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 01min 51s |  |
+| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 03min 10s |  |
+| Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
+| Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 04s |  |
+| Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 27s |  |
+| Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 41s |  |
+| Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
+| RC_Counter | no errors | 2164653 | 17141464 | 26 | 04min 50s |  |
+| RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 34s |  |
+| RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 03min 10s |  |
+| RC_Local | no errors | 50606 | 277842 | 19 | 11s |  |
+| RC_Mixed | no errors | 171352 | 1029336 | 20 | 23s |  |
+| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 02min 29s |  |
+| Recov | no errors | 71927 | 412881 | 18 | 15s |  |
+| RecovReaders | no errors | 28258 | 135451 | 17 | 07s |  |
 | Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 13s |  |
-| Recov_GC | no errors | 1136892 | 8123071 | 23 | 03min 20s |  |
+| Recov_GC | no errors | 1136892 | 8123071 | 23 | 03min 00s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 10min 18s |  |
@@ -1132,11 +1231,11 @@ states).
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
 | Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
-| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 617 | 1165 | 8 | 01s | 7 |
-| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3119 | 9623 | 9 | 02s | 8 |
-| Uniq | no errors | 657499 | 5210697 | 22 | 31s |  |
-| UniqFailover | no errors | 1444398 | 11344964 | 24 | 56s |  |
-| Uniq_RC | no errors | 966902 | 7892907 | 23 | 34s |  |
+| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 633 | 1182 | 7 | 02s | 7 |
+| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3126 | 9646 | 9 | 04s | 8 |
+| Uniq | no errors | 657499 | 5210697 | 22 | 01min 24s |  |
+| UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 22s |  |
+| Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 14s |  |
 
 ### 5.2 Benchmarks
 

@@ -42,7 +42,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (44 configurations, including 15 deliberately
+  and model-checked with TLC (55 configurations, including 19 deliberately
   broken variants that TLC must catch). Shard routing, commit decisions and
   the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
   and compiled into the server.
@@ -139,9 +139,10 @@ YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md).
 * **TLA+** ([`tla/TarnCommit.tla`](tla/TarnCommit.tla)): strict
   serializability, atomicity, clean direct reads and read-your-writes, under
   coordinator crashes, lost and re-delivered messages, recovery racing a
-  live coordinator, leader failover, and record garbage collection. TLC
-  found a real design flaw early on: single-shard reads could break strict
-  serializability. It later caught a flaw in a fix too.
+  live coordinator, leader failover, record garbage collection, and bucket
+  moves between shards. TLC found a real design flaw early on: single-shard
+  reads could break strict serializability. It later caught a flaw in a fix
+  too.
 * **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 61 verified
   functions and lemmas for routing, coordinator decisions and the MySQL wire
   codec.

@@ -4,6 +4,7 @@ mk ()
     shift 6;
     local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked UniqueHolds";
     local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE IK=NoIKeys INE=FALSE;
+    local SS=NoSSet MK=NoMKeys MND=FALSE MNH=FALSE MSS=FALSE;
     for b in "$@";
     do
         case $b in 
@@ -88,6 +89,24 @@ mk ()
             INE)
                 INE=TRUE
             ;;
+            MOVE)
+                MK=MKeysX
+            ;;
+            SCAN)
+                SS=SSetScan
+            ;;
+            RCV)
+                RCS=RCMove; LS=LSetMoveRC
+            ;;
+            MND)
+                MND=TRUE
+            ;;
+            MNH)
+                MNH=TRUE
+            ;;
+            MSS)
+                MSS=TRUE
+            ;;
         esac;
     done;
     cat > $name.cfg <<EOF
@@ -128,6 +147,13 @@ CONSTANTS
   BugRCLockReadsInFlight = $RIF
   IKeys <- $IK
   BugInsertNoExistCheck = $INE
+  SSet <- $SS
+  MKeys <- $MK
+  MFrom <- MCFrom
+  MTo <- MCTo
+  BugMoveNoDrain = $MND
+  BugMoveNoHold = $MNH
+  BugMoveServeStale = $MSS
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
@@ -195,6 +221,17 @@ mk Uniq            RSetUniq WSetUniq 0 1 1 NORD UNQ AMC
 mk UniqFailover    RSetUniq WSetUniq 1 0 0 UNQ AMC
 mk Uniq_RC         RSetUniq WSetUniq 0 1 1 NORD UNQ RCU AMC
 mk Bug_InsertNoExistCheck RSetUniq WSetUniq 0 0 0 NORD UNQ AMC INE
+# Bucket moves (issue #24): x moves from A to B while a scan of both
+# shards, a blind writer of x and a read-modify-write of x and y run (and
+# READ COMMITTED read-modify-writes of x), under commit-phase faults and
+# leader failovers.
+mk Move_Scan          RSetMove   WSetMove   0 1 1 NORD MOVE SCAN ROV AMC
+mk Move_ScanPrepare   RSetMove   WSetMove   0 1 1 NORD MOVE SCAN AMC
+mk Move_ScanFailover  RSetMove   WSetMove   1 0 0 NORD MOVE SCAN ROV AMC
+mk Move_RC            RSetMoveRC WSetMoveRC 0 1 1 NORD MOVE RCV AMC
+mk Bug_MoveNoDrain    RSetMove   WSetMove   0 0 0 NORD MOVE SCAN ROV AMC MND
+mk Bug_MoveNoHold     RSetMove   WSetMove   0 0 0 NORD MOVE SCAN ROV AMC MNH
+mk Bug_MoveServeStale RSetMove   WSetMove   0 0 0 NORD MOVE SCAN ROV AMC MSS
 # Documented trade-offs (expected to be violated):
 mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
 mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW
