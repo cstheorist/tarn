@@ -469,6 +469,47 @@ class T:
                     self.check(n <= most and e >= 1, f"{what}: {n} rows read, {e} estimates")
         q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 
+    def test_batched_join_lookups(self):
+        # issue #84: a join reads its inner table for a batch of outer rows
+        # with one storage read per shard, not one per outer row; the keys
+        # it read are validated as separate lookups would be
+        c = self.fresh("bjo", "CREATE TABLE bjo (id INT PRIMARY KEY, r INT, g INT, KEY kg (g))",
+                       [f"({i}, {'NULL' if i % 50 == 0 else i % 300}, {i % 2})" for i in range(1000)])
+        self.fresh("bjc", "CREATE TABLE bjc (r INT, n INT, v INT, PRIMARY KEY (r, n)) PARTITION BY KEY(r)",
+                   [f"({r}, {n}, {r + n})" for r in range(0, 300, 3) for n in range(2)])
+        reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
+        sql = "SELECT bjo.id, bjc.n FROM bjo LEFT JOIN bjc ON bjc.r = bjo.r WHERE bjo.g = 1 ORDER BY bjo.id, bjc.n"
+        want = []
+        for i in range(1, 1000, 2):
+            r = None if i % 50 == 0 else i % 300
+            want += [(i, n) for n in range(2)] if r is not None and r % 3 == 0 else [(i, None)]
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                if txn:
+                    q(c, "BEGIN")
+                before = reads()
+                got = list(q(c, sql))
+                n = reads() - before
+                if txn:
+                    q(c, "COMMIT")
+                what = f"{iso}, {'in a transaction' if txn else 'autocommit'}"
+                self.check(got == want, f"{what}: rows ({got[:4]}...)")
+                # 500 outer rows: 2 batches x 2 shards, plus the outer read
+                self.check(n <= 12, f"{what}: {n} storage reads for 500 outer rows")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        # a child row inserted under a key the join read conflicts (also a
+        # key that had no rows); one under a key it did not read does not
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for r, conflict in ((3, True), (1, True), (2, False), (300, False)):
+            q(a, "BEGIN")
+            q(a, "SELECT bjo.id, bjc.v FROM bjo JOIN bjc ON bjc.r = bjo.r WHERE bjo.g = 1")
+            q(a, "UPDATE bjo SET g = g WHERE id = 0")
+            q(b, f"INSERT INTO bjc VALUES ({r}, 7, 0)")
+            self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                       f"insert of a child of r = {r}: {'conflict' if conflict else 'no conflict'}")
+            q(b, f"DELETE FROM bjc WHERE r = {r} AND n = 7")
+
     def test_ordered_limit_case_insensitive(self):
         # issue #41: the part of a range a limited read records ends at its
         # last row as the index holds it (a case-insensitive key holds

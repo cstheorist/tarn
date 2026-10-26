@@ -58,6 +58,10 @@ SCHEMA = [
     "UNIQUE KEY th (t, h, live), UNIQUE KEY code (n))",
     # ... with a case-insensitive column (issue #13): the collation decides
     "CREATE TABLE gci (id INT PRIMARY KEY, email VARCHAR(40) COLLATE utf8mb4_general_ci, UNIQUE KEY ue (email))",
+    # joins over many outer rows, whose inner lookups are read in batches
+    # (issue #84): repeated, NULL and missing keys, children by key prefix
+    "CREATE TABLE jo (id INT PRIMARY KEY, r INT, g INT, h VARCHAR(10) COLLATE utf8mb4_general_ci, KEY kg (g))",
+    "CREATE TABLE jc (r INT NOT NULL, n INT NOT NULL, v INT, PRIMARY KEY (r, n)) PARTITION BY KEY(r)",
 ]
 
 
@@ -94,6 +98,11 @@ def seed():
             st = "'paid'" if i % 3 else "'pending'"
             rows.append(f"({tenant}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
     s.append("INSERT INTO ord VALUES " + ", ".join(rows))
+    rows = [f"({i}, {'NULL' if i % 13 == 0 else i % 450}, {i % 4}, {'NULL' if i % 17 == 0 else repr(('Name' if i % 2 else 'name') + str(i % 9))})"
+            for i in range(1, 601)]
+    s.append("INSERT INTO jo VALUES " + ", ".join(rows))
+    rows = [f"({r}, {n}, {r * 10 + n})" for r in range(0, 450, 2) for n in range(r % 3 + 1)]
+    s.append("INSERT INTO jc VALUES " + ", ".join(rows))
     return s
 
 
@@ -959,6 +968,44 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # joins whose inner lookups are read in batches (issue #84): 600 outer
+    # rows, keys repeated, NULL or without rows
+    ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.n = jo.g ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 1 WHERE jo.g = 2", "q"),
+    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.v > 2000 WHERE jo.id > 100 ORDER BY jo.id, jc.v", "q"),
+    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jc.r IS NULL ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n LIMIT 7 OFFSET 300", "q"),
+    ("SELECT jo.g, COUNT(*), SUM(jc.v), COUNT(jc.v) FROM jo LEFT JOIN jc ON jc.r = jo.r GROUP BY jo.g", "q"),
+    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.id = a.r + 1 WHERE a.g IN (1, 3) ORDER BY a.id", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) WHERE jo.id < 40 ORDER BY jo.id, jc.r, jc.n", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON (jc.r, jc.n) IN ((jo.r, 0), (jo.r, 2)) ORDER BY jo.id, jc.n", "q"),
+    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.g = a.g AND b.r = a.r WHERE a.id < 300 ORDER BY a.id, b.id", "q"),
+    ("SELECT jo.id, c1.n, c2.n FROM jo JOIN jc c1 ON c1.r = jo.r LEFT JOIN jc c2 ON c2.r = c1.v - c1.r * 10 "
+     "ORDER BY jo.id, c1.n, c2.n", "q"),
+    ("SELECT jo.id, cih.n FROM jo LEFT JOIN cih ON cih.handle = jo.h WHERE jo.id < 60 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, ci.id FROM jo JOIN ci ON ci.handle = jo.h ORDER BY jo.id, ci.id", "q"),
+    ("SELECT jo.id, gu.id FROM jo JOIN gu ON gu.n = jo.r * 10 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, gu.id FROM jo LEFT JOIN gu ON gu.t = jo.g AND gu.h = 'a' AND gu.live = 1 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.id IN (2, 4, 450) "
+     "ORDER BY jo.id FOR UPDATE", "q"),
+    # ... in a transaction, which sees its own writes
+    ("BEGIN", "q"),
+    ("INSERT INTO jc VALUES (1, 0, -1), (3, 0, -3)", "dml:jc"),
+    ("DELETE FROM jc WHERE r = 2", "dml:jc"),
+    ("UPDATE jc SET v = -v WHERE r = 4 AND n = 1", "dml:jc"),
+    ("UPDATE jc SET r = 5 WHERE r = 6 AND n = 0", "dml:jc"),
+    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jo.id < 20 ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 ORDER BY jo.id", "q"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO jc VALUES (7, 0, -7)", "dml:jc"),
+    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.g = 3 ORDER BY jo.id FOR UPDATE", "q"),
+    ("COMMIT", "dml:jc"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 
 
@@ -975,6 +1022,44 @@ FOUND_ROWS_CASES = [
     ("COMMIT", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
     ("UPDATE t1 SET a = a WHERE id < 10", "dml:t1"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # joins whose inner lookups are read in batches (issue #84): 600 outer
+    # rows, keys repeated, NULL or without rows
+    ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.n = jo.g ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 1 WHERE jo.g = 2", "q"),
+    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.v > 2000 WHERE jo.id > 100 ORDER BY jo.id, jc.v", "q"),
+    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jc.r IS NULL ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n LIMIT 7 OFFSET 300", "q"),
+    ("SELECT jo.g, COUNT(*), SUM(jc.v), COUNT(jc.v) FROM jo LEFT JOIN jc ON jc.r = jo.r GROUP BY jo.g", "q"),
+    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.id = a.r + 1 WHERE a.g IN (1, 3) ORDER BY a.id", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) WHERE jo.id < 40 ORDER BY jo.id, jc.r, jc.n", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON (jc.r, jc.n) IN ((jo.r, 0), (jo.r, 2)) ORDER BY jo.id, jc.n", "q"),
+    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.g = a.g AND b.r = a.r WHERE a.id < 300 ORDER BY a.id, b.id", "q"),
+    ("SELECT jo.id, c1.n, c2.n FROM jo JOIN jc c1 ON c1.r = jo.r LEFT JOIN jc c2 ON c2.r = c1.v - c1.r * 10 "
+     "ORDER BY jo.id, c1.n, c2.n", "q"),
+    ("SELECT jo.id, cih.n FROM jo LEFT JOIN cih ON cih.handle = jo.h WHERE jo.id < 60 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, ci.id FROM jo JOIN ci ON ci.handle = jo.h ORDER BY jo.id, ci.id", "q"),
+    ("SELECT jo.id, gu.id FROM jo JOIN gu ON gu.n = jo.r * 10 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, gu.id FROM jo LEFT JOIN gu ON gu.t = jo.g AND gu.h = 'a' AND gu.live = 1 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.id IN (2, 4, 450) "
+     "ORDER BY jo.id FOR UPDATE", "q"),
+    # ... in a transaction, which sees its own writes
+    ("BEGIN", "q"),
+    ("INSERT INTO jc VALUES (1, 0, -1), (3, 0, -3)", "dml:jc"),
+    ("DELETE FROM jc WHERE r = 2", "dml:jc"),
+    ("UPDATE jc SET v = -v WHERE r = 4 AND n = 1", "dml:jc"),
+    ("UPDATE jc SET r = 5 WHERE r = 6 AND n = 0", "dml:jc"),
+    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jo.id < 20 ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 ORDER BY jo.id", "q"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO jc VALUES (7, 0, -7)", "dml:jc"),
+    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.g = 3 ORDER BY jo.id FOR UPDATE", "q"),
+    ("COMMIT", "dml:jc"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 

@@ -8,6 +8,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A join reads its inner table for a batch of outer rows at once
+  ([#84](https://github.com/cstheorist/tarn/issues/84)): when the inner side
+  is reached by equality on an index key or key prefix (`Point`, `Prefixes`
+  or an unbounded equality prefix), the distinct keys of up to 256 outer
+  rows go to their shards in one `tarn_select_keys` call per shard, in
+  parallel (to every shard for a key without the shard key; through the
+  global index for a unique key without it), and the rows are matched back
+  to their outer rows in memory. Join order, `LEFT JOIN` padding, NULL keys,
+  duplicates and residual `ON` / `WHERE` predicates are as before; in a
+  transaction each key enters the read set as its separate lookup did, and
+  the transaction's own rows are merged into every outer row's lookup. A
+  READ COMMITTED batch longer than one storage page reads its outer rows'
+  lookups one by one, as before. On two shards a join of 500 outer rows
+  makes about 4 storage calls instead of 500 (or 1,000 for a two-row child
+  prefix) and takes 2-4 ms instead of 35-43 ms. `SHOW STATUS` reports
+  `Tarn_storage_reads`, the pages read by index scans and multi-key lookups.
+
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one
   ([#88](https://github.com/cstheorist/tarn/issues/88)): the global index is

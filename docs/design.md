@@ -1156,7 +1156,9 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   inside the statement's transaction); not supported are correlated
   subqueries, derived tables, views, stored procedures, triggers, enforced
   foreign keys, window functions, RIGHT/FULL joins, `information_schema`.
-  Joins are nested-loop with index lookups.
+  Joins are nested-loop with index lookups; the lookups of a batch of up
+  to 256 outer rows are read together, with one call per shard, and each
+  key enters the read set as a separate lookup's would.
 * `ALTER TABLE` does not rewrite rows: conversions between type families
   and `DECIMAL` scale changes are refused, dropped columns keep their
   stored values (no space is reclaimed), and writes to the table wait while
