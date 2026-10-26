@@ -470,6 +470,57 @@ class T:
                     self.check(n <= most and e >= 1, f"{what}: {n} rows read, {e} estimates")
         q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 
+    def test_ordered_limit_merged(self):
+        # issue #86: an ordered page over an index that does not fix the
+        # shard key reads a page per shard and merges them; a serializable
+        # read records, per shard, only what that shard returned
+        c = self.fresh("om", "CREATE TABLE om (tenant_id INT, id INT, st VARCHAR(8), t INT, PRIMARY KEY (tenant_id, id), "
+                             "KEY bst (st, t, id)) PARTITION BY KEY(tenant_id)", [])
+        for lo in range(0, 6000, 1000):
+            q(c, "INSERT INTO om VALUES " + ",".join(f"({i % 97}, {i}, '{'open' if i % 3 else 'done'}', {i // 2})"
+                                                   for i in range(lo, lo + 1000)))
+        rows = sorted(((i // 2, i % 97, i) for i in range(6000) if i % 3), key=lambda r: (r[0], r[2]))
+        page = "SELECT id FROM om WHERE st = 'open' ORDER BY t, id LIMIT 30"
+        rpage = "SELECT id FROM om WHERE st = 'open' ORDER BY t DESC, id DESC LIMIT 30"
+        fpage = "SELECT id FROM om WHERE st = 'open' AND id % 7 = 0 ORDER BY t, id LIMIT 30 OFFSET 10"
+        cases = ((page, [r[2] for r in rows][:30], 200),
+                 (rpage, [r[2] for r in reversed(rows)][:30], 200),
+                 (fpage, [r[2] for r in rows if r[2] % 7 == 0][10:40], 2000))
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                for sql, want, most in cases:
+                    if txn:
+                        q(c, "BEGIN")
+                    before = self.rows_read(c)
+                    got = [r[0] for r in q(c, sql)]
+                    n = self.rows_read(c) - before
+                    if txn:
+                        q(c, "COMMIT")
+                    what = f"{iso}, {'in a transaction' if txn else 'autocommit'}: {sql}"
+                    self.check(got == want, f"{what}: rows ({got[:5]}...)")
+                    self.check(n <= most, f"{what}: {n} rows read of 4000")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        # the transaction's own writes are merged into the page
+        q(c, "BEGIN")
+        q(c, "INSERT INTO om VALUES (5, 9001, 'open', -1)")
+        q(c, "UPDATE om SET st = 'done' WHERE tenant_id = 1 AND id = 1")
+        got = [r[0] for r in q(c, page)]
+        self.check(got == [9001] + [r[2] for r in rows if r[2] != 1][:29], f"own writes merged ({got[:5]}...)")
+        q(c, "ROLLBACK")
+        # on every shard, an insert past the rows it returned does not
+        # conflict, one among them does
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for sql, t, conflict in ((page, 2900, False), (page, 3, True), (rpage, 10, False), (rpage, 2995, True)):
+            for tenant in (0, 1, 2, 3):
+                q(a, "BEGIN")
+                q(a, sql)
+                q(a, "UPDATE om SET t = t WHERE tenant_id = 0 AND id = 0")
+                q(b, f"INSERT INTO om VALUES ({tenant}, {8000 + 10 * t + tenant}, 'open', {t})")
+                self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                           f"insert at t = {t} for tenant {tenant}: {'conflict' if conflict else 'no conflict'}")
+                q(b, f"DELETE FROM om WHERE tenant_id = {tenant} AND id = {8000 + 10 * t + tenant}")
+
     def test_ordered_limit_case_insensitive(self):
         # issue #41: the part of a range a limited read records ends at its
         # last row as the index holds it (a case-insensitive key holds

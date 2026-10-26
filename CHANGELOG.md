@@ -88,6 +88,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `@@warning_count` and the OK packet's warning count report a statement's
   warnings.
 
+- An ordered read with `LIMIT` over an index whose equality prefix does not
+  fix the shard key pages that index on every shard and merges the shards'
+  pages ([#86](https://github.com/cstheorist/tarn/issues/86)), instead of
+  reading every matching row of every shard and sorting them: each shard
+  reads `LIMIT` + `OFFSET` rows in index order (backwards for `DESC`), and
+  only a shard whose page the merge used up is asked for more. `OFFSET`,
+  residual filters, the transaction's own writes, READ COMMITTED's one
+  committed state per range and serializable range recording (per shard, up
+  to the last row it returned) work as on one shard. The pager retains one
+  routing snapshot across refill rounds, so a bucket move or membership change cannot mix pages from different maps.
+
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one
   ([#88](https://github.com/cstheorist/tarn/issues/88)): the global index is

@@ -202,6 +202,8 @@ class Test:
     def audit(self, k, stop):
         a = self.args
         total = a.accounts * a.init
+        ordered_sql = "SELECT id FROM bank WHERE id % 5 = 0 ORDER BY id LIMIT 5 OFFSET 2"
+        ordered_want = [i for i in range(a.accounts) if i % 5 == 0][2:7]
         c = connect(self.server(k))
         rc = connect(self.server(k + 1))
         q(rc, "SET SESSION transaction_isolation = 'READ-COMMITTED'")
@@ -209,11 +211,14 @@ class Test:
             try:
                 q(c, "BEGIN")
                 s = q(c, "SELECT SUM(bal), COUNT(*) FROM bank")[0]
+                page = [r[0] for r in q(c, ordered_sql)]
                 q(c, "COMMIT")
                 with self.lock:
                     self.stats["audits"] += 1
                     if int(s[0]) != total or s[1] != a.accounts:
                         self.stats["bad"].append(("serializable audit", s))
+                    if page != ordered_want:
+                        self.stats["bad"].append(("serializable ordered page", page, ordered_want))
             except pymysql.MySQLError as e:
                 try:
                     q(c, "ROLLBACK")
@@ -226,10 +231,15 @@ class Test:
             try:
                 ids = [r[0] for r in q(rc, "SELECT id FROM bank")]
                 n = q(rc, "SELECT COUNT(*) FROM bank")[0][0]
+                # Stable keys and a selective residual force ordered scatter
+                # refills while buckets move, in both isolation modes.
+                page = [r[0] for r in q(rc, ordered_sql)]
                 with self.lock:
                     self.stats["rc_reads"] += 1
                     if sorted(ids) != list(range(a.accounts)) or n != a.accounts:
                         self.stats["bad"].append(("read committed", len(ids), len(set(ids)), n))
+                    if page != ordered_want:
+                        self.stats["bad"].append(("read committed ordered page", page, ordered_want))
             except pymysql.MySQLError as e:
                 if e.args[0] != CONFLICT:
                     with self.lock:
@@ -321,6 +331,10 @@ class Test:
             print(f"    error: {e}")
         if not a.no_moves:
             self.check(st["moves"] >= a.min_moves, f"buckets moved under load ({st['moves']})")
+        # A stream of retryable conflicts must not make the ordered-page
+        # assertions vacuously pass: both isolation modes must finish reads.
+        self.check(st["audits"] > 0, "serializable ordered reads committed under load")
+        self.check(st["rc_reads"] > 0, "READ COMMITTED ordered reads completed under load")
         self.check(not st["bad"], f"reads saw every row once, and the sum unchanged: {st['bad'][:5]}")
         self.check(sum(bal.values()) == a.accounts * a.init and len(bal) == a.accounts, "final balance sum")
         diff = {i: (bal.get(i), want[i]) for i in want if bal.get(i) != want[i]}

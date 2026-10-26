@@ -46,7 +46,9 @@ servers write to it (`tests/sql/`).
   index count on memtx; on vinyl a sample of the ordered index's first page
   and a count of the prefix up to what paging would read) and the read
   pages the ordered index when that reads fewer rows than reading the
-  longer prefix whole and sorting it.
+  longer prefix whole and sorting it. When `WHERE` fixes no shard key, the
+  ordered index is paged on every shard and the shards' pages are merged,
+  so each shard reads about `LIMIT` + `OFFSET` rows instead of every match.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
   `COUNT(*)`, `COUNT(constant)` and `COUNT(col)` of one table without

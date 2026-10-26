@@ -325,12 +325,22 @@ pub fn route_prefix(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[V
 /// The shard and the bucket of every row whose `index` key starts with
 /// `prefix`, if the prefix determines the shard key.
 pub fn route_bucket(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[Value]) -> Option<(usize, u32)> {
+    route_bucket_in(&cluster.bucket_map(), t, idx, prefix)
+}
+
+fn route_bucket_in(
+    map: &crate::buckets::BucketMap,
+    t: &TableDef,
+    idx: &IndexDef,
+    prefix: &[Value],
+) -> Option<(usize, u32)> {
     let mut sk = Vec::with_capacity(t.shard_key.len());
     for &c in &t.shard_key {
         let p = idx.cols.iter().position(|&x| x == c)?;
         sk.push(prefix.get(p)?.clone());
     }
-    Some(cluster.route(&sk))
+    let b = crate::route::bucket_of(&sk, map.count);
+    Some((map.shard(b), b))
 }
 
 /// What the shard of a storage read checks (lua/tarn.lua "Buckets"): the
@@ -689,6 +699,7 @@ async fn fetch_stored_from(
         cluster.refresh_if_newer().await?;
         return Ok(crate::catalog::information_schema_rows(&cluster.catalog()));
     }
+    let map = cluster.bucket_map();
     let limit = eval_limit(&ta.limit, cx)?.map(|l| l.min(u32::MAX as u64) as u32);
     let mut calls: Vec<Call> = Vec::new();
     let mut unique_point = false;
@@ -747,7 +758,8 @@ async fn fetch_stored_from(
             return Ok(rows);
         }
         AccessPath::Prefixes { .. } | AccessPath::Range { .. } | AccessPath::Full => {
-            calls = range_calls(cluster, t, &ta.path, outer, cx, resume, limit)?;
+            let shards: Vec<usize> = cluster.live_shards().collect();
+            calls = range_calls_in(&map, &shards, t, &ta.path, outer, cx, resume, limit)?;
         }
         AccessPath::Point { index, keys } => {
             let idx = index_def(t, *index);
@@ -771,7 +783,7 @@ async fn fetch_stored_from(
                 }
                 // A unique key without the shard key (a global index, see
                 // catalog) does not say which shard holds the row: ask each.
-                let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &key) {
+                let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(&map, t, idx, &key) {
                     Some((s, b)) => vec![(s, Some(b))],
                     None => cluster.live_shards().map(|s| (s, None)).collect(),
                 };
@@ -790,9 +802,6 @@ async fn fetch_stored_from(
         }
     }
     let index = path_index(&ta.path);
-    let mut rows = Vec::new();
-    let mut read = 0;
-    let pages = mode.pages();
     // (The rows this transaction wrote are left out before WHERE sees them.)
     let written = match (&*mode, filter) {
         (ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn), Some(_)) => txn.written_keys(t),
@@ -804,11 +813,34 @@ async fn fetch_stored_from(
         t,
         written: &written,
     };
+    let scans = read_calls(cluster, &map, mode, t, index, calls, unique_point, keep).await?;
+    Ok(scans.into_iter().flat_map(|s| s.rows).collect())
+}
+
+/// Run the index scans `calls` of `t`'s index `index`, those of different
+/// shards concurrently (one autocommit read makes at most one call), and
+/// return what each scan kept, in the order of `calls`. In a transaction
+/// each scan's range is recorded for validation, only up to its last row
+/// when its limit cut it short; `unique_point`: the calls are point lookups
+/// of a unique key, recorded as points.
+#[allow(clippy::too_many_arguments)]
+async fn read_calls(
+    cluster: &Arc<Cluster>,
+    map: &crate::buckets::BucketMap,
+    mode: &mut ReadMode<'_>,
+    t: &TableDef,
+    index: u32,
+    calls: Vec<Call>,
+    unique_point: bool,
+    keep: Keep<'_, '_>,
+) -> SqlResult<Vec<Scanned>> {
+    let mut out = Vec::with_capacity(calls.len());
+    let mut read = 0;
+    let pages = mode.pages();
     let in_stream = matches!(mode, ReadMode::Txn(_));
-    let map = cluster.bucket_map();
     let routes = calls
         .iter()
-        .map(|c| read_route(&map, in_stream, c.shard, &[c.bucket]))
+        .map(|c| read_route(map, in_stream, c.shard, &[c.bucket]))
         .collect::<SqlResult<Vec<Route>>>()?;
     match mode {
         ReadMode::Auto { calls: made } => {
@@ -820,7 +852,7 @@ async fn fetch_stored_from(
                 let client = cluster.shards[c.shard].client(cluster).await?;
                 let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await?;
                 read += s.read;
-                rows.extend(s.rows);
+                out.push(s);
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
@@ -832,7 +864,7 @@ async fn fetch_stored_from(
             for r in futures::future::join_all(futs).await {
                 let s = r?;
                 read += s.read;
-                rows.extend(s.rows);
+                out.push(s);
             }
         }
         ReadMode::Txn(txn) => {
@@ -860,7 +892,7 @@ async fn fetch_stored_from(
                             _ => None,
                         });
                         read += s.read;
-                        rows.extend(s.rows)
+                        out.push(s);
                     }
                     Err(e) => {
                         if e.code == 1213 {
@@ -892,7 +924,7 @@ async fn fetch_stored_from(
         }
     }
     cluster.stats.rows_read.fetch_add(read as u64, AtomicOrdering::Relaxed);
-    Ok(rows)
+    Ok(out)
 }
 
 /// Whether `fetch_stored_from` applies a filter to the rows of `path`:
@@ -928,6 +960,31 @@ fn range_calls(
     resume: Option<(&[Value], bool)>,
     limit: Option<u32>,
 ) -> SqlResult<Vec<Call>> {
+    range_calls_in(
+        &cluster.bucket_map(),
+        &cluster.live_shards().collect::<Vec<_>>(),
+        t,
+        path,
+        outer,
+        cx,
+        resume,
+        limit,
+    )
+}
+
+/// Build every page against the same ownership and membership snapshot.
+/// A pager must not switch owners or add lanes while retaining older pages.
+#[allow(clippy::too_many_arguments)]
+fn range_calls_in(
+    map: &crate::buckets::BucketMap,
+    shards: &[usize],
+    t: &TableDef,
+    path: &AccessPath,
+    outer: &[Value],
+    cx: &EvalCtx<'_>,
+    resume: Option<(&[Value], bool)>,
+    limit: Option<u32>,
+) -> SqlResult<Vec<Call>> {
     let mut calls = Vec::new();
     match path {
         AccessPath::Prefixes { index, keys } => {
@@ -937,9 +994,9 @@ fn range_calls(
             let Some(prefix) = ks.into_iter().next() else {
                 return Ok(calls);
             };
-            let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &prefix) {
+            let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(map, t, idx, &prefix) {
                 Some((s, b)) => vec![(s, Some(b))],
-                None => cluster.live_shards().map(|s| (s, None)).collect(),
+                None => shards.iter().map(|&s| (s, None)).collect(),
             };
             let (key, iter) = match resume {
                 Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
@@ -1017,9 +1074,9 @@ fn range_calls(
                 None if !prefix.is_empty() => Some((prefix.clone(), true)),
                 None => None,
             };
-            let shards: Vec<(usize, Option<u32>)> = match route_bucket(cluster, t, idx, &prefix) {
+            let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(map, t, idx, &prefix) {
                 Some((s, b)) => vec![(s, Some(b))],
-                None => cluster.live_shards().map(|s| (s, None)).collect(),
+                None => shards.iter().map(|&s| (s, None)).collect(),
             };
             let range = RangeRead {
                 space: t.space_id,
@@ -1066,7 +1123,7 @@ fn range_calls(
                 hi_incl: true,
                 bucket: None,
             };
-            for s in cluster.live_shards() {
+            for &s in shards {
                 calls.push(Call {
                     shard: s,
                     bucket: None,
@@ -1949,6 +2006,13 @@ async fn select_once(
 /// already read: there each attempt reads again from the start of the range
 /// with a larger limit, and only the last one counts.
 ///
+/// A range whose prefix does not fix the shard key is paged on every shard
+/// at once (issue #86), and the shards' pages are merged in index order
+/// (then primary-key order, as each index holds ties): only a shard whose
+/// page the merge has used up, and whose next rows could still come first,
+/// is asked for its next page. Each shard's pages are paged (or, under
+/// READ COMMITTED, read again) as a single-shard range is.
+///
 /// `instead`: the access to page in place of the plan's (issue #81).
 async fn paged_select(
     cluster: &Arc<Cluster>,
@@ -1981,31 +2045,45 @@ async fn paged_select(
     // (A page longer than one storage page reads the statement in a
     // snapshot instead: see `committed_snapshot`.)
     let restart = matches!(mode, ReadMode::Committed(_) | ReadMode::Statement(_));
-    let mut rows: Vec<Row> = Vec::new();
-    let mut seen: HashSet<Bytes> = HashSet::new();
-    // The first page is four times what LIMIT needs (WHERE may reject some
-    // rows), each later one at least twice the last, so a selective
-    // predicate still finishes in a few calls.
-    let mut page = 0usize;
-    while rows.len() < want && !pager.done {
-        let missing = want - rows.len();
-        page = match page {
-            0 => want.saturating_mul(4),
-            _ if restart => page.saturating_mul(2).saturating_add(missing.saturating_mul(2)),
-            _ => page.saturating_mul(2).max(missing.saturating_mul(2)),
+    let lanes = pager.lanes.len();
+    // Per shard: the rows kept so far, in index order, with their sort keys.
+    let mut got: Vec<Vec<(Vec<Value>, Row)>> = (0..lanes).map(|_| Vec::new()).collect();
+    let mut seen: Vec<HashSet<Bytes>> = (0..lanes).map(|_| HashSet::new()).collect();
+    let mut page = vec![0usize; lanes];
+    let mut need: Vec<usize> = if want == 0 { Vec::new() } else { (0..lanes).collect() };
+    while !need.is_empty() {
+        // The first page is four times what LIMIT needs (WHERE may reject
+        // some rows), each later one at least twice the last, so a selective
+        // predicate still finishes in a few calls. With several shards, a
+        // first page of LIMIT + OFFSET rows per shard is what the merge
+        // could use from it; a shard whose page WHERE thins is read again.
+        let missing = want - merged(&pager, &got, want).0.len();
+        let mut reads = Vec::with_capacity(need.len());
+        for &l in &need {
+            page[l] = match page[l] {
+                0 if lanes > 1 => want,
+                0 => want.saturating_mul(4),
+                n if restart => n.saturating_mul(2).saturating_add(missing.saturating_mul(2)),
+                n => n.saturating_mul(2).max(missing.saturating_mul(2)),
+            }
+            .clamp(1, u32::MAX as usize / 2);
+            if restart && pager.lanes[l].last.is_some() {
+                pager.lanes[l].restart();
+                got[l].clear();
+                seen[l].clear();
+            }
+            reads.push((l, page[l]));
         }
-        .min(u32::MAX as usize / 2);
-        if restart && pager.last.is_some() {
-            pager.restart();
-            rows.clear();
-            seen.clear();
-        }
-        for r in pager.next(cluster, mode, cx, page).await? {
-            if seen.insert(crate::txn::key_bytes(&pk_of(t, &r, 0))) && keep(&r)? {
-                rows.push(r);
+        for (&(l, _), more) in reads.iter().zip(pager.pages(cluster, mode, cx, &reads).await?) {
+            for r in more {
+                if seen[l].insert(crate::txn::key_bytes(&pk_of(t, &r, 0))) && keep(&r)? {
+                    got[l].push((pager.sort_key(&r), r));
+                }
             }
         }
+        need = merged(&pager, &got, want).1;
     }
+    let mut rows: Vec<Row> = merged(&pager, &got, want).0.into_iter().cloned().collect();
     if let ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) = mode {
         for r in txn.own_rows(t.space_id) {
             if keep(r)? {
@@ -2016,6 +2094,51 @@ async fn paged_select(
     // Stored rows are in ORDER BY order already; the (stable) sort places
     // the transaction's own rows among them.
     finish_select(rows, p, cx).map(Some)
+}
+
+/// The first `want` rows of the shards' pages `got` in index order, and,
+/// when there are fewer, the shards whose next page could hold the next
+/// row: those whose pages are used up, unless the next row comes before
+/// the last key the shard read (its next page starts at that key).
+fn merged<'r>(pager: &Pager, got: &'r [Vec<(Vec<Value>, Row)>], want: usize) -> (Vec<&'r Row>, Vec<usize>) {
+    let t = &pager.ta.table;
+    let before = |a: &[Value], b: &[Value]| {
+        let o = key_cmp(a, b);
+        if pager.reverse {
+            o.is_gt()
+        } else {
+            o.is_lt()
+        }
+    };
+    let mut at = vec![0usize; got.len()];
+    let mut out = Vec::with_capacity(want.min(1024));
+    while out.len() < want {
+        let head = (0..got.len()).filter(|&l| at[l] < got[l].len()).reduce(|a, b| {
+            if before(&got[b][at[b]].0, &got[a][at[a]].0) {
+                b
+            } else {
+                a
+            }
+        });
+        let dry = (0..got.len()).filter(|&l| at[l] == got[l].len() && !pager.lanes[l].done);
+        let blocked: Vec<usize> = match head {
+            None => dry.collect(),
+            Some(h) => {
+                let key = &got[h][at[h]].1;
+                let ikey: Vec<Value> = pager.key_cols.iter().map(|&c| t.key_part(c, &key[c])).collect();
+                dry.filter(|&l| pager.lanes[l].last.as_ref().is_none_or(|last| !before(&ikey, last)))
+                    .collect()
+            }
+        };
+        match head {
+            Some(h) if blocked.is_empty() => {
+                out.push(&got[h][at[h]].1);
+                at[h] += 1;
+            }
+            _ => return (out, blocked),
+        }
+    }
+    (out, Vec::new())
 }
 
 /// The access to page instead of the planned one (issue #81), when the plan
@@ -2539,10 +2662,11 @@ pub async fn run_locking_select(
             .unwrap_or(512)
     };
     // (Only when the transaction wrote no rows of the table: rows it
-    // inserted or changed would need merging into index order.)
+    // inserted or changed would need merging into index order. And only on
+    // one shard: rows of several would need merging too.)
     let mut pager = match (&p.source, want) {
         (Source::Table(ta), Some(_)) if txn.own_rows(ta.table.space_id).next().is_none() => {
-            Pager::new(cluster, ta, &p.order, cx)?
+            Pager::new(cluster, ta, &p.order, cx)?.filter(|pg| pg.lanes.len() == 1)
         }
         _ => None,
     };
@@ -2576,7 +2700,7 @@ pub async fn run_locking_select(
     while want.is_none_or(|w| accepted.len() < w) {
         if i >= rows.len() {
             match pager.as_mut() {
-                Some(pg) if !pg.done => {
+                Some(pg) if !pg.lanes[0].done => {
                     let more = pg.next_in(cluster, txn, rc, cx, page_size(accepted.len())).await?;
                     rows.extend(filter(more)?);
                     continue;
@@ -2870,20 +2994,43 @@ async fn finish_range_lock(
     finish_select(kept, p, cx)
 }
 
-/// Paged reads of one index range on one shard, forwards or backwards, a
-/// page at a time, each page starting after the last row returned. Only for scans
-/// whose index order is the statement's ORDER BY. Rows the transaction wrote
-/// or deleted are left out; callers merge in its own versions.
+/// Paged reads of one index range, forwards or backwards, a page at a time,
+/// each page starting after the last row returned. Only for scans whose
+/// index order is the statement's ORDER BY. A range whose prefix does not
+/// fix the shard key is read on every shard, a lane per shard, each paged
+/// on its own (issue #86). Rows the transaction wrote or deleted are left
+/// out; callers merge in its own versions.
 struct Pager {
+    /// Retained pages and refills must describe the same routing snapshot.
+    /// In particular, READ COMMITTED scatter reads pin epoch and membership
+    /// checks across rounds, even when the cluster currently has one shard.
+    map: Arc<crate::buckets::BucketMap>,
+    shards: Vec<usize>,
     ta: TableAccess,
     key_cols: Vec<usize>,
     /// The primary key: the next page starts strictly after the last key.
     /// Other indexes may repeat a key: the next page starts at it and skips
     /// the rows already returned with it.
     unique: bool,
+    reverse: bool,
+    lanes: Vec<Lane>,
+}
+
+/// Where the pages of one shard of a `Pager` have got to.
+struct Lane {
+    shard: usize,
     last: Option<Vec<Value>>,
     last_pks: HashSet<Bytes>,
     done: bool,
+}
+
+impl Lane {
+    /// Read again from the start of the range.
+    fn restart(&mut self) {
+        self.last = None;
+        self.last_pks.clear();
+        self.done = false;
+    }
 }
 
 impl Pager {
@@ -2919,9 +3066,16 @@ impl Pager {
         let Some(prefix) = prefix else {
             return Ok(None);
         };
-        if route_prefix(cluster, t, idx, &prefix).is_none() {
-            return Ok(None);
-        }
+        // Capture the map first: membership appends shards before publishing
+        // a newer map. A newer map with fewer lanes could miss a joined shard.
+        // Keep live positions too, so fresh scans skip removed shards and
+        // refills never change the set of retained lanes.
+        let map = cluster.bucket_map();
+        let shards: Vec<usize> = cluster.live_shards().collect();
+        let lanes: Vec<usize> = match route_bucket_in(&map, t, idx, &prefix) {
+            Some((s, _)) => vec![s],
+            None => shards.clone(),
+        };
         // ORDER BY: columns fixed by the equality prefix, then the next index
         // columns in order, in the direction of the scan.
         let mut next = prefix.len();
@@ -2942,15 +3096,25 @@ impl Pager {
             }
         }
         Ok(Some(Pager {
+            map,
+            shards,
             ta: ta.clone(),
             key_cols: idx.cols.clone(),
             unique: idx.id == 0,
-            last: None,
-            last_pks: HashSet::new(),
-            done: false,
+            reverse,
+            lanes: lanes
+                .into_iter()
+                .map(|shard| Lane {
+                    shard,
+                    last: None,
+                    last_pks: HashSet::new(),
+                    done: false,
+                })
+                .collect(),
         }))
     }
 
+    /// The next page of the only lane (a range on one shard).
     async fn next(
         &mut self,
         cluster: &Arc<Cluster>,
@@ -2958,48 +3122,100 @@ impl Pager {
         cx: &EvalCtx<'_>,
         n: usize,
     ) -> SqlResult<Vec<Row>> {
-        let limit = n + if self.unique { 0 } else { self.last_pks.len() };
-        let page = TableAccess {
-            limit: Some(Expr::Lit(Value::Int(limit as i64))),
-            ..self.ta.clone()
-        };
-        let resume = self.last.as_ref().map(|k| (k.as_slice(), !self.unique));
-        let rows = fetch_stored_from(cluster, mode, &page, &[], cx, resume, None).await?;
-        if rows.len() < limit {
-            self.done = true;
-        }
+        Ok(self
+            .pages(cluster, mode, cx, &[(0, n)])
+            .await?
+            .pop()
+            .unwrap_or_default())
+    }
+
+    /// The next page of each lane in `want` (lane, rows), read concurrently.
+    async fn pages(
+        &mut self,
+        cluster: &Arc<Cluster>,
+        mode: &mut ReadMode<'_>,
+        cx: &EvalCtx<'_>,
+        want: &[(usize, usize)],
+    ) -> SqlResult<Vec<Vec<Row>>> {
         let t = &self.ta.table;
+        let mut calls = Vec::with_capacity(want.len());
+        let mut limits = Vec::with_capacity(want.len());
+        for &(l, n) in want {
+            let lane = &self.lanes[l];
+            let limit = (n + if self.unique { 0 } else { lane.last_pks.len() }).min(u32::MAX as usize);
+            let resume = lane.last.as_ref().map(|k| (k.as_slice(), !self.unique));
+            let call = range_calls_in(
+                &self.map,
+                &self.shards,
+                t,
+                &self.ta.path,
+                &[],
+                cx,
+                resume,
+                Some(limit as u32),
+            )?
+            .into_iter()
+            .find(|c| c.shard == lane.shard);
+            match call {
+                Some(c) => calls.push(c),
+                None => {
+                    // no row can match
+                    self.lanes.iter_mut().for_each(|l| l.done = true);
+                    return Ok(want.iter().map(|_| Vec::new()).collect());
+                }
+            }
+            limits.push(limit);
+        }
+        let none = BTreeSet::new();
+        let keep = Keep {
+            filter: None,
+            cx,
+            t,
+            written: &none,
+        };
+        let index = path_index(&self.ta.path);
+        let scans = read_calls(cluster, &self.map, mode, t, index, calls, false, keep).await?;
         let txn = match mode {
             ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) => Some(&**txn),
             ReadMode::Auto { .. } => None,
         };
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let key: Vec<Value> = self.key_cols.iter().map(|&c| t.key_part(c, &r[c])).collect();
-            let pk_vals = pk_of(t, &r, 0);
-            let pk = crate::txn::key_bytes(&pk_vals);
-            let deleted = txn.is_some_and(|txn| txn.buffered(t.space_id, &pk_vals).is_some());
-            if self.last.as_ref() == Some(&key) {
-                if !self.last_pks.insert(pk) {
-                    continue; // returned by the previous page
+        let mut out = Vec::with_capacity(want.len());
+        for ((&(l, _), limit), s) in want.iter().zip(limits).zip(scans) {
+            let lane = &mut self.lanes[l];
+            if s.rows.len() < limit {
+                lane.done = true;
+            }
+            let mut kept = Vec::with_capacity(s.rows.len());
+            for r in s.rows {
+                let key: Vec<Value> = self.key_cols.iter().map(|&c| t.key_part(c, &r[c])).collect();
+                let pk_vals = pk_of(t, &r, 0);
+                let pk = crate::txn::key_bytes(&pk_vals);
+                let deleted = txn.is_some_and(|txn| txn.buffered(t.space_id, &pk_vals).is_some());
+                if lane.last.as_ref() == Some(&key) {
+                    if !lane.last_pks.insert(pk) {
+                        continue; // returned by the previous page
+                    }
+                } else {
+                    lane.last = Some(key);
+                    lane.last_pks.clear();
+                    lane.last_pks.insert(pk);
                 }
-            } else {
-                self.last = Some(key);
-                self.last_pks.clear();
-                self.last_pks.insert(pk);
+                if !deleted {
+                    kept.push(r); // (rows this transaction wrote or deleted are left out)
+                }
             }
-            if !deleted {
-                out.push(r); // (rows this transaction wrote or deleted are left out)
-            }
+            out.push(kept);
         }
         Ok(out)
     }
 
-    /// Read again from the start of the range.
-    fn restart(&mut self) {
-        self.last = None;
-        self.last_pks.clear();
-        self.done = false;
+    /// Where `r` sorts among the rows of every lane: its index key, then
+    /// its primary key, as each shard's index orders them.
+    fn sort_key(&self, r: &Row) -> Vec<Value> {
+        let t = &self.ta.table;
+        let mut k: Vec<Value> = self.key_cols.iter().map(|&c| t.key_part(c, &r[c])).collect();
+        k.extend(pk_of(t, r, 0));
+        k
     }
 
     /// `next` through the transaction: its streams, or (READ COMMITTED) the
@@ -3257,5 +3473,245 @@ mod tests {
         assert!(!pages_fewer(100, 100, 100));
         assert!(pages_fewer(99, 100, 100));
         assert!(!pages_fewer(u64::MAX, u64::MAX, u64::MAX));
+    }
+
+    #[test]
+    fn merging_the_pages_of_several_shards() {
+        // issue #86: shard pages merged in index order; a shard whose page
+        // is used up is asked again only when its next rows could come next
+        let cat = catalog();
+        let t = cat.get("d", "o").unwrap();
+        let row = |id: i64| -> Row {
+            let mut r = vec![Value::Null; t.columns.len()];
+            r[0] = Value::Int(1);
+            r[1] = Value::Int(id);
+            r
+        };
+        let pager = |reverse: bool, lanes: &[(Option<i64>, bool)]| Pager {
+            map: Arc::new(crate::buckets::BucketMap::initial(3000, lanes.len())),
+            shards: (0..lanes.len()).collect(),
+            ta: TableAccess {
+                table: t.clone(),
+                alias: "o".into(),
+                path: AccessPath::Full,
+                offset: 0,
+                limit: None,
+            },
+            key_cols: t.indexes[0].cols.clone(),
+            unique: true,
+            reverse,
+            lanes: lanes
+                .iter()
+                .enumerate()
+                .map(|(shard, &(last, done))| Lane {
+                    shard,
+                    last: last.map(|id| vec![Value::Int(1), Value::Int(id)]),
+                    last_pks: HashSet::new(),
+                    done,
+                })
+                .collect(),
+        };
+        let got = |pg: &Pager, ids: &[&[i64]]| -> Vec<Vec<(Vec<Value>, Row)>> {
+            ids.iter()
+                .map(|l| l.iter().map(|&id| (pg.sort_key(&row(id)), row(id))).collect())
+                .collect()
+        };
+        let ids = |rows: Vec<&Row>| -> Vec<i64> {
+            rows.iter()
+                .map(|r| match r[1] {
+                    Value::Int(i) => i,
+                    _ => panic!(),
+                })
+                .collect()
+        };
+        // shard 0 has no more rows, shard 1 has
+        let pg = pager(false, &[(Some(3), true), (Some(9), false)]);
+        let g = got(&pg, &[&[1, 3], &[2, 9]]);
+        let (m, more) = merged(&pg, &g, 3);
+        assert_eq!((ids(m), more), (vec![1, 2, 3], vec![]));
+        let (m, more) = merged(&pg, &g, 5);
+        assert_eq!((ids(m), more), (vec![1, 2, 3, 9], vec![1]));
+        // shard 1's page is used up at 2: 5 could follow from it
+        let pg = pager(false, &[(Some(5), false), (Some(2), false)]);
+        let g = got(&pg, &[&[5], &[2]]);
+        let (m, more) = merged(&pg, &g, 2);
+        assert_eq!((ids(m), more), (vec![2], vec![1]));
+        // ... but not when it read up to 7 (WHERE rejected the rest)
+        let pg = pager(false, &[(Some(5), false), (Some(7), false)]);
+        let (m, more) = merged(&pg, &g, 2);
+        assert_eq!((ids(m), more), (vec![2, 5], vec![]));
+        // backwards
+        let pg = pager(true, &[(Some(4), false), (Some(1), true)]);
+        let g = got(&pg, &[&[8, 4], &[6, 1]]);
+        let (m, more) = merged(&pg, &g, 3);
+        assert_eq!((ids(m), more), (vec![8, 6, 4], vec![]));
+        let (m, more) = merged(&pg, &g, 4);
+        assert_eq!((ids(m), more), (vec![8, 6, 4], vec![0]));
+        // no rows anywhere
+        let pg = pager(false, &[(None, true), (None, true)]);
+        let g = got(&pg, &[&[], &[]]);
+        let (m, more) = merged(&pg, &g, 5);
+        assert_eq!((ids(m), more), (vec![], vec![]));
+    }
+
+    #[test]
+    fn paging_keeps_a_routed_lane_after_ownership_refresh() {
+        use crate::buckets::{BucketMap, Report};
+
+        let cat = catalog();
+        let mut t = (*cat.get("d", "o").unwrap()).clone();
+        t.shard_key = vec![0]; // a range of one tenant, with more than one primary key
+        let cx = EvalCtx {
+            params: &[],
+            db: Some("d"),
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        };
+        let map = |owner: usize| {
+            let reports = (0..2)
+                .map(|s| Report {
+                    count: 8,
+                    epoch: 10 + owner as u64,
+                    owned: if s == owner { vec![(1, 8)] } else { vec![] },
+                    ..Report::default()
+                })
+                .collect();
+            BucketMap::from_reports(reports, &HashMap::new()).unwrap()
+        };
+        let pinned = Arc::new(map(0));
+        let refreshed = map(1);
+        let prefix = vec![Value::Int(7)];
+        let (_, bucket) = route_bucket_in(&pinned, &t, &t.indexes[0], &prefix).unwrap();
+        assert_eq!(
+            route_bucket_in(&refreshed, &t, &t.indexes[0], &prefix),
+            Some((1, bucket))
+        );
+        let path = AccessPath::Range {
+            index: 0,
+            eq: vec![Expr::Lit(prefix[0].clone())],
+            null_eq: vec![false],
+            lo: None,
+            hi: None,
+            reverse: false,
+        };
+        let first = range_calls_in(&pinned, &[0, 1], &t, &path, &[], &cx, None, Some(20)).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].shard, 0);
+        let resume = vec![Value::Int(7), Value::Int(99)];
+        let refill = range_calls_in(&pinned, &[0, 1], &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
+        assert_eq!(refill.len(), 1, "a map refresh must not make the old lane disappear");
+        assert_eq!(refill[0].shard, first[0].shard);
+        assert_eq!(refill[0].key, resume);
+        assert!(matches!(refill[0].iter, Iter::Gt));
+        let changed = range_calls_in(&refreshed, &[0, 1], &t, &path, &[], &cx, None, Some(20)).unwrap();
+        assert_eq!(changed[0].shard, 1, "the replacement map really changes the route");
+        for c in first.iter().chain(&refill) {
+            assert_eq!(c.bucket, Some(bucket));
+            assert_eq!(c.range.as_ref().unwrap().bucket, Some(bucket));
+            for in_stream in [false, true] {
+                assert_eq!(
+                    read_route(&pinned, in_stream, c.shard, &[c.bucket]).unwrap(),
+                    Route::Buckets(vec![bucket])
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paging_keeps_scatter_epochs_and_membership() {
+        use crate::buckets::BucketMap;
+
+        let cat = catalog();
+        let t = cat.get("d", "o").unwrap();
+        let cx = EvalCtx {
+            params: &[],
+            db: Some("d"),
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        };
+        // No shard-key equality: one lane is still a scatter read when
+        // the membership currently has only one shard.
+        let path = AccessPath::Range {
+            index: 0,
+            eq: vec![],
+            null_eq: vec![],
+            lo: None,
+            hi: None,
+            reverse: false,
+        };
+        for nshards in [1, 2] {
+            let shards: Vec<usize> = (0..nshards).collect();
+            let mut old = BucketMap::initial(8, nshards);
+            old.epochs = (0..nshards).map(|s| 10 + s as u64).collect();
+            old.mver = 4;
+            let pinned = Arc::new(old);
+            let mut refreshed = BucketMap::initial(8, nshards + 1);
+            refreshed.epochs = (0..=nshards).map(|s| 20 + s as u64).collect();
+            refreshed.mver = 5;
+            let first = range_calls_in(&pinned, &shards, &t, &path, &[], &cx, None, Some(20)).unwrap();
+            let resume = vec![Value::Int(7), Value::Int(99)];
+            let refill =
+                range_calls_in(&pinned, &shards, &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
+            assert_eq!(first.len(), nshards);
+            assert_eq!(refill.len(), nshards);
+            for (initial, later) in first.iter().zip(&refill) {
+                assert_eq!(initial.shard, later.shard);
+                assert_eq!(later.key, resume);
+                for c in [initial, later] {
+                    assert_eq!(c.bucket, None);
+                    assert_eq!(
+                        c.range.as_ref().unwrap().bucket,
+                        None,
+                        "commit must retain its all-shard membership fence"
+                    );
+                    let route = read_route(&pinned, false, c.shard, &[c.bucket]).unwrap();
+                    assert_eq!(route, Route::Epoch(10 + c.shard as u64, 4));
+                    assert_ne!(route, read_route(&refreshed, false, c.shard, &[c.bucket]).unwrap());
+                    assert_eq!(read_route(&pinned, true, c.shard, &[c.bucket]).unwrap(), Route::None);
+                }
+            }
+            // A member added after the map snapshot must fail closed if
+            // included before the map catches up, rather than inventing an epoch.
+            assert!(read_route(&pinned, false, nshards, &[None]).unwrap_err().moved);
+        }
+        // Removed positions stay in the map, but a new pager must not
+        // contact their stopped storage. Live lanes need not be contiguous.
+        let reports = vec![
+            crate::buckets::Report {
+                count: 8,
+                epoch: 2,
+                owned: vec![(1, 4)],
+                ..Default::default()
+            },
+            crate::buckets::Report {
+                count: 8,
+                ..Default::default()
+            },
+            crate::buckets::Report {
+                count: 8,
+                epoch: 3,
+                owned: vec![(5, 8)],
+                ..Default::default()
+            },
+        ];
+        let map = BucketMap::from_reports(reports, &HashMap::new()).unwrap();
+        let calls = range_calls_in(&map, &[0, 2], &t, &path, &[], &cx, None, Some(20)).unwrap();
+        assert_eq!(calls.iter().map(|c| c.shard).collect::<Vec<_>>(), vec![0, 2]);
+        assert_eq!(
+            read_route(&map, false, calls[0].shard, &[None]).unwrap(),
+            Route::Epoch(2, 0)
+        );
+        assert_eq!(
+            read_route(&map, false, calls[1].shard, &[None]).unwrap(),
+            Route::Epoch(3, 0)
+        );
     }
 }

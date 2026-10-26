@@ -275,37 +275,72 @@ class T:
         c = self.fresh("mv", "CREATE TABLE mv (id INT PRIMARY KEY, k INT NOT NULL, KEY (k))", [])
         for lo in range(0, n, 1000):
             q(c, "INSERT INTO mv VALUES " + ", ".join(f"({i}, {i})" for i in range(lo, lo + 1000)))
-        stop, moved = [False], [0]
+        stop, moved, writer_errors = [False], [0], []
+        scan_started, burst_finished = threading.Event(), threading.Event()
+        burst_finished.set()
 
         def writer():
-            w, rnd = connect(self.args.tarn), random.Random(77)
-            while not stop[0]:
-                i = rnd.randrange(n)
-                # to the other end of the index, past the rows a scan has yet to read or behind it
-                q(w, "UPDATE mv SET k = IF(k < %s, k + %s, k - %s) WHERE id = %s", (n, 2 * n, 2 * n, i))
-                moved[0] += 1
-                time.sleep(0.1)   # (each move makes the reads that met it retry)
+            w = None
+            try:
+                w, rnd = connect(self.args.tarn), random.Random(77)
+                while not stop[0]:
+                    if not scan_started.wait(0.1):
+                        continue
+                    scan_started.clear()
+                    # Overlap a logical read with a bounded burst. Continuous
+                    # writes can starve validated snapshots on slow vinyl;
+                    # bounded-retry 1213 is allowed, not an inconsistent view.
+                    for _ in range(30):
+                        if stop[0]:
+                            break
+                        i = rnd.randrange(n)
+                        # Move past unread rows or behind the scan's frontier.
+                        q(w, "UPDATE mv SET k = IF(k < %s, k + %s, k - %s) WHERE id = %s", (n, 2 * n, 2 * n, i))
+                        moved[0] += 1
+                        time.sleep(0.002)
+                    burst_finished.set()
+            except Exception as e:
+                writer_errors.append(repr(e))
+            finally:
+                burst_finished.set()  # a failed UPDATE must not strand the reader
+                if w is not None:
+                    w.close()
 
         th = threading.Thread(target=writer, daemon=True)
         th.start()
         a = self.rc(autocommit=False)
         ok = conflicts = 0
+        new_read = True
         t0 = time.time()
-        while (time.time() - t0 < 8 or ok < 3) and time.time() - t0 < 60:
-            try:
-                ids = [r[0] for r in q(a, "SELECT id FROM mv WHERE k >= 0 ORDER BY k")]
-                q(a, "COMMIT")
-            except pymysql.MySQLError as e:
-                if e.args[0] != DEADLOCK:
-                    raise
-                conflicts += 1
-                continue
-            ok += 1
-            if not self.check(len(ids) == n and len(set(ids)) == n,
-                              f"a long read returns every row once: {len(ids)} rows, {len(set(ids))} distinct"):
-                break
-        stop[0] = True
-        th.join(10)
+        try:
+            while (time.time() - t0 < 8 or ok < 3) and time.time() - t0 < 60:
+                if not burst_finished.wait(10) or writer_errors:
+                    self.check(False, f"writer burst completed ({writer_errors})")
+                    break
+                if new_read:
+                    burst_finished.clear()
+                    scan_started.set()
+                try:
+                    ids = [r[0] for r in q(a, "SELECT id FROM mv WHERE k >= 0 ORDER BY k")]
+                    q(a, "COMMIT")
+                except pymysql.MySQLError as e:
+                    if e.args[0] != DEADLOCK:
+                        raise
+                    conflicts += 1
+                    # Wait for the burst, then retry this logical read with
+                    # no new writes. Even a scan slower than the burst can finish.
+                    new_read = False
+                    continue
+                ok += 1
+                new_read = True
+                if not self.check(len(ids) == n and len(set(ids)) == n,
+                                  f"a long read returns every row once: {len(ids)} rows, {len(set(ids))} distinct"):
+                    break
+        finally:
+            stop[0] = True
+            scan_started.set()
+            th.join(10)
+        self.check(not writer_errors and not th.is_alive(), f"bounded writer stopped ({writer_errors})")
         self.check(ok >= 3 and moved[0] > 20, f"reads ({ok}, {conflicts} conflicts) while rows moved ({moved[0]})")
         # The transaction's own writes are overlaid on the snapshot.
         q(a, "BEGIN")

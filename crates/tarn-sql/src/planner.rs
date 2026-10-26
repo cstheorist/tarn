@@ -1397,6 +1397,12 @@ fn choose_paths(
             _ => {}
         }
     }
+    // Does WHERE fix the shard key by equalities (a range may route to one
+    // shard)?
+    let shard_fixed = table
+        .shard_key
+        .iter()
+        .all(|&c| preds[c].iter().any(|p| matches!(p, Pred::Eq(..))));
     let mut best: (i32, AccessPath) = (0, AccessPath::Full);
     let mut best_follows = false;
     let mut ordered: Option<(i32, AccessPath)> = None;
@@ -1501,13 +1507,18 @@ fn choose_paths(
             )
         } else if in_list.is_some() {
             continue; // IN on a non-unique / partial key: fall back to other paths
-        } else if !eq.is_empty() || range.is_some() {
+        } else if !eq.is_empty() || range.is_some() || (!shard_fixed && index_follows_order(idx, 0, order).is_some()) {
+            // (With no condition on it, an index that follows ORDER BY is
+            // still read in pages, from its start: issue #86.)
             let (lo, hi2) = range.unwrap_or((None, None));
             // Following ORDER BY outweighs the primary-key bonus, never a
-            // longer equality prefix or a bound on the next column; only
-            // when the prefix fixes the shard key (one shard, read in pages).
+            // longer equality prefix or a bound on the next column. A prefix
+            // that does not fix the shard key is paged on every shard and
+            // the pages merged (issue #86); it is preferred for its order
+            // only when no equality fixes the shard key, so that it never
+            // displaces a range on one shard.
             let routed = table.shard_key.iter().all(|c| idx.cols[..eq.len()].contains(c));
-            let follows = if routed {
+            let follows = if routed || !shard_fixed {
                 index_follows_order(idx, eq.len(), order)
             } else {
                 None
@@ -1523,7 +1534,7 @@ fn choose_paths(
                 reverse: follows == Some(true),
             };
             this_follows = follows.is_some();
-            if this_follows && ordered.as_ref().is_none_or(|o| s > o.0) {
+            if this_follows && routed && ordered.as_ref().is_none_or(|o| s > o.0) {
                 ordered = Some((s, path.clone()));
             }
             (s, path)
@@ -3448,6 +3459,70 @@ mod tests {
             panic!()
         };
         assert!(s.ordered.is_none());
+    }
+
+    #[test]
+    fn index_that_follows_order_by_without_the_shard_key() {
+        // issue #86: an index whose prefix does not fix the shard key is
+        // paged on every shard when it follows ORDER BY, unless WHERE fixes
+        // the shard key (a range on one shard wins then)
+        let c0 = Catalog::default();
+        let ctx0 = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE t (tenant_id BIGINT NOT NULL, id BIGINT NOT NULL, \
+             state VARCHAR(10) NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (tenant_id, id), \
+             KEY by_state (state, created_at), KEY by_created (created_at)) PARTITION BY KEY (tenant_id)",
+            &ctx0,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let path = |sql: &str| {
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            let Stmt::Select(s) = plan(sql, &ctx).unwrap() else {
+                panic!()
+            };
+            let Source::Table(t) = &s.source else { panic!() };
+            match &t.path {
+                AccessPath::Range { index, eq, reverse, .. } => (*index, eq.len(), *reverse),
+                AccessPath::Full => (99, 0, false),
+                other => panic!("{other:?}"),
+            }
+        };
+        let pending = "SELECT * FROM t WHERE state = 'pending'";
+        assert_eq!(
+            path(&format!("{pending} ORDER BY created_at DESC LIMIT 20")),
+            (1, 1, true)
+        );
+        assert_eq!(path(&format!("{pending} ORDER BY created_at LIMIT 20")), (1, 1, false));
+        // a whole index from its start, and the primary key without its
+        // shard key's equality
+        assert_eq!(path("SELECT * FROM t ORDER BY created_at LIMIT 20"), (2, 0, false));
+        assert_eq!(
+            path("SELECT * FROM t ORDER BY tenant_id DESC, id DESC LIMIT 5"),
+            (0, 0, true)
+        );
+        // without LIMIT nothing is paged
+        assert_eq!(path("SELECT * FROM t ORDER BY created_at"), (99, 0, false));
+        // WHERE fixes the shard key: the primary key's range on one shard
+        assert_eq!(
+            path("SELECT * FROM t WHERE tenant_id = 3 AND state = 'pending' ORDER BY created_at LIMIT 20"),
+            (0, 1, false)
+        );
     }
 
     #[test]

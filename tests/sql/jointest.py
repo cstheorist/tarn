@@ -7,6 +7,8 @@
 
 While the workload of movetest.py runs through the --tarn servers (each
 row's bucket moving between the shards):
+  * an ordered LIMIT read held across ADD SHARD fails validation with the
+    membership-change diagnostic, even on an empty index range;
   * TARN ADD SHARD makes the new shard a member: every SQL server lists it
     in SHOW TARN SHARDS, and it owns no bucket;
   * buckets move to it: a range at once, then the buckets of the rows the
@@ -85,7 +87,8 @@ class JoinTest(movetest.Test):
         self.new_id = int(sid)
         self.new_replicas = reps
         self.stats.update({"join": None, "join_err": None, "range": 0, "to_new": 0, "removed": None,
-                           "remove_err": None})
+                           "remove_err": None, "ordered_scan": False, "ordered_conflict": False,
+                           "ordered_error": None})
 
     def joiner(self, stop):
         """Add the shard, then move buckets to it: a range, and half of the
@@ -93,12 +96,33 @@ class JoinTest(movetest.Test):
         c = connect(self.servers[0])
         time.sleep(self.args.join_after)
         t0 = time.time()
+        probe = connect(self.servers[0])
         try:
+            # Hold an ordered scatter read across the join. The dedicated
+            # empty table has no concurrent writes, so only membership can
+            # invalidate it; a positive LIMIT must still record every shard.
+            q(probe, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            q(probe, "BEGIN")
+            rows = q(probe, "SELECT tenant_id, id FROM ordered_probe WHERE state = 'open' "
+                            "ORDER BY sort_key, id LIMIT 1")
+            self.stats["ordered_scan"] = not rows
             q(c, f"TARN ADD SHARD {self.new_id} '{self.new_replicas}'")
             self.stats["join"] = time.time() - t0
+            try:
+                q(probe, "COMMIT")
+            except pymysql.MySQLError as e:
+                self.stats["ordered_error"] = str(e)
+                self.stats["ordered_conflict"] = (e.args[0] == CONFLICT
+                                                  and "cluster's shards changed" in str(e))
         except pymysql.MySQLError as e:
             self.stats["join_err"] = str(e)
             return
+        finally:
+            try:
+                q(probe, "ROLLBACK")
+            except pymysql.MySQLError:
+                pass
+            probe.close()
         self.shard_ids.append(self.new_id)   # (the mover's choice of shards)
         lo, hi = 1, self.args.range
         try:
@@ -146,6 +170,13 @@ class JoinTest(movetest.Test):
     def run(self):
         a = self.args
         self.setup()
+        c = connect(self.servers[0])
+        try:
+            q(c, "CREATE TABLE ordered_probe (tenant_id INT NOT NULL, id INT NOT NULL, "
+                 "state VARCHAR(8) NOT NULL, sort_key INT NOT NULL, PRIMARY KEY (tenant_id, id), "
+                 "KEY by_state (state, sort_key, id)) PARTITION BY KEY(tenant_id)")
+        finally:
+            c.close()
         print(f"{len(self.servers)} SQL server(s), shards {self.shard_ids}, {self.count} buckets; shard "
               f"{self.new_id} joins after {a.join_after:.0f} s; the workload runs for {a.seconds:.0f} s")
         stop_at = time.time() + a.seconds
@@ -160,6 +191,8 @@ class JoinTest(movetest.Test):
               f"the rows' moved to it")
         if not self.check(st["join"] is not None, f"TARN ADD SHARD {self.new_id} under load ({st['join_err']})"):
             return self.failures
+        self.check(st["ordered_scan"] and st["ordered_conflict"],
+                   f"ordered LIMIT across ADD SHARD fails its membership check ({st['ordered_error']})")
         if a.remove:
             r = st["removed"]
             print(f"  shard {a.remove} left in {r[0] if r else 0:.2f} s, moving {r[1] if r else 0} buckets")
