@@ -154,9 +154,17 @@ prefix (read whole, then sorted) or a range of an index that follows
 `ORDER BY` (paged until `n` + `OFFSET` rows qualify), the SQL server asks
 the shard both prefixes route to for their row counts first
 (`tarn_estimate`, issue #81) and pages when `want * n_ordered / n_prefix <
-n_prefix`. Memtx counts both in its indexes; vinyl, whose counts scan,
-takes the index size for the ordered range and counts the prefix only up
-to where the answer is certain, and not at all past one page. The counts
+n_prefix`. Memtx counts both in its indexes. Vinyl, whose counts scan,
+measures what paging would read instead (issue #93): it reads the ordered
+range's first page (`4 * want` rows, in the page's direction): with
+`want` rows of the prefix in it, paging reads that page; else it
+extrapolates from
+their share of the page, then counts the prefix only up to that cost. When
+the page holds no row of the prefix it takes the index size for the
+ordered range and counts the prefix only up to where the answer is
+certain. No scan goes past one page. Both ways assume that the rows of the
+prefix are what the paged read filters on: a selective condition outside
+the prefix's index makes paging read more than estimated. The counts
 are no reads of the transaction: WHERE filters either path, so they change
 how many rows are read, never which rows qualify.
 

@@ -2285,34 +2285,73 @@ tarn_count = PG.bounded(tarn_count)
 -- `a_index`, would be read whole and sorted; range B, the prefix `b_key` of
 -- `b_index`, follows ORDER BY and would be paged until enough rows qualify,
 -- about budget/n_a * n_b rows when A's conditions are what B filters on.
--- Returns {'ok', n_a, n_b}: memtx counts both in its index (no scan); vinyl,
--- whose counts scan, gives the index size as n_b (at least B's rows) and
--- counts A only up to the point where paging B is sure to read fewer rows,
--- and not at all when that point lies past one page (cfg.scan_page_rows,
--- issue #77): n_a is then 0, which keeps the plan. Neither is a read of the
--- transaction: the counts only pick between two paths to the same rows.
-function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget)
+-- Returns {'ok', n_a, n_b, nil}: memtx counts both in its index (no scan).
+-- Vinyl, whose counts scan, measures instead what paging B would read
+-- (issue #93), when `b_iter` ('EQ', or 'REQ' for a backwards page) says B
+-- is its whole prefix: it reads B's first page (4 * budget rows, as the
+-- paged read's first page): when it holds budget rows of A's prefix,
+-- paging reads that page; with fewer, it reads about as many rows as their
+-- share of the page says (the later pages, which double, may read up to
+-- twice that); a B shorter than the page is read whole. Then it counts A
+-- only up to that cost. Rows of A's prefix stand in for rows that satisfy
+-- WHERE, which may be fewer: a selective condition outside A's index makes
+-- paging read more than the cost, as with the counts of memtx. That returns
+-- {'ok', n_a, 0, cost}: B wins when cost < n_a. Without a sample, or when
+-- the page holds no row of A, it gives the index size as n_b (at least B's
+-- rows) and counts A only up to the point where paging B is sure to read
+-- fewer rows. Either count stops at one page (cfg.scan_page_rows, issue
+-- #77): n_a is 0 when the answer lies past it, which keeps the plan.
+-- Neither is a read of the transaction: the counts only pick between two
+-- paths to the same rows.
+function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget, b_iter)
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local a, b = space.index[a_index], space.index[b_index]
     if a == nil or b == nil then return {'error', 1412, STALE_DEF_MSG} end
     if space.engine ~= 'vinyl' then
-        return {OK, a:count(a_key, {iterator = 'EQ'}), b:count(b_key, {iterator = 'EQ'})}
+        return {OK, a:count(a_key, {iterator = 'EQ'}), b:count(b_key, {iterator = 'EQ'}), box.NULL}
+    end
+    local page = M.cfg.scan_page_rows
+    fiber.set_slice(LONG_SCAN_SLICE)   -- see PG.scan
+    if (b_iter == 'EQ' or b_iter == 'REQ') and budget <= page / 4 then
+        local kd = index_key_def(space_id, a_index)
+        local sample, seen, hits, cost = budget * 4, 0, 0, nil
+        for _, t in b:pairs(b_key, {iterator = b_iter}) do
+            seen = seen + 1
+            if kd:compare_with_key(t, a_key) == 0 then
+                hits = hits + 1
+                -- (the paged read fetches its whole first page anyway)
+                if hits == budget then cost = sample; break end
+            end
+            if seen >= sample then break end
+        end
+        if cost == nil and seen < sample then
+            cost = seen                     -- B ends within its first page
+        elseif cost == nil and hits > 0 then
+            cost = math.ceil(sample * budget / hits)
+        end
+        if cost ~= nil then
+            if cost >= page then return {OK, 0, 0, cost} end
+            local na = 0
+            for _ in a:pairs(a_key, {iterator = 'EQ'}) do
+                na = na + 1
+                if na > cost then break end
+            end
+            return {OK, na, 0, cost}
+        end
     end
     local nb = b:len()
-    local page = M.cfg.scan_page_rows
     -- (budget * nb > page^2 means cap > page; tested before the product,
     -- which a huge budget would overflow)
-    if budget > page * page / math.max(nb, 1) then return {OK, 0, nb} end
+    if budget > page * page / math.max(nb, 1) then return {OK, 0, nb, box.NULL} end
     local cap = math.floor(math.sqrt(budget * nb)) + 1
-    if cap > page then return {OK, 0, nb} end
-    fiber.set_slice(LONG_SCAN_SLICE)   -- see PG.scan
+    if cap > page then return {OK, 0, nb, box.NULL} end
     local na = 0
     for _ in a:pairs(a_key, {iterator = 'EQ'}) do
         na = na + 1
         if na >= cap then break end
     end
-    return {OK, na, nb}
+    return {OK, na, nb, box.NULL}
 end
 
 function tarn_read(space_id, index_id, key, iterator, limit, offset)
