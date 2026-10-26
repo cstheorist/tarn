@@ -17,6 +17,9 @@ pub enum AccessPath {
     Range {
         index: u32,
         eq: Vec<Expr>,
+        /// Per `eq` part: a NULL value selects the NULLs of the column
+        /// (`col IS NULL`, `col <=> x`) instead of nothing (`col = NULL`).
+        null_eq: Vec<bool>,
         lo: Option<(Expr, bool)>,
         hi: Option<(Expr, bool)>,
         reverse: bool,
