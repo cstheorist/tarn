@@ -1256,5 +1256,189 @@ r = {c[1]:call('tarn_drop_prepare', {'test.gt', {ver = 11, timeout = 5, id = 200
      c[1]:call('tarn_drop_apply', {'test.gt', {ver = 11, timeout = 5, id = 20010}})}
 check('DROP drops the global index space', r[2][1] == 'ok' and not uexists(1), r)
 
+-- Issue #77: a read returns its rows a page at a time (at most
+-- scan_page_rows rows, or scan_page_bytes bytes) with the position to go on
+-- from, so the Lua heap of a storage node no longer grows with the range it
+-- scans; a read that finds the heap short anyway fails with 1041 and the
+-- node stays up.
+print('pages')
+local function cfg(k, v) return c[1]:eval('local t = package.loaded.tarn.cfg local o = t[...] t[...] = select(2, ...) return o', {k, v}) end
+local function fill(name, engine, n)
+    c[1]:call('tarn_create_table', {{name = name, engine = engine, format = vfmt,
+        indexes = {vidx[1], {name = 'v', unique = false, parts = {{field = 'v', type = 'integer'}}}}}})
+    c[1]:eval([[local s, n = box.space[...], select(2, ...)
+        for i = 1, n, 1000 do box.begin()
+            for j = i, math.min(i + 999, n) do s:replace{j, j % 7, string.rep('x', 40), 1} end
+            box.commit() end]], {name, n})
+    return c[1]:eval('return box.space[...].id', {name})
+end
+-- Every page of a tarn_select, as the SQL server reads them.
+local function pages(sid_, conn, args)
+    local rows, n, after = {}, 0, box.NULL
+    local a = table.copy(args)
+    while true do
+        a[8], a[9], a[10] = box.NULL, false, after
+        local r = conn:call('tarn_select', {sid_, unpack(a, 1, 10)}, {timeout = 60})
+        if r[1] ~= 'ok' then return nil, r end
+        n = n + 1
+        for _, t in ipairs(r[2]) do rows[#rows + 1] = t[1] end
+        if a[4] ~= box.NULL then a[4] = a[4] - #r[2] end   -- the limit left
+        if r[3] == nil or a[4] == 0 then return rows, n end
+        after = r[3]
+    end
+end
+local function in_order(rows, n)
+    if #rows ~= n then return false end
+    for i = 1, n do if rows[i] ~= i then return false end end
+    return true
+end
+for _, engine in ipairs({'memtx', 'vinyl'}) do
+    local psid = fill('test.pg_' .. engine, engine, 10000)
+    local r = c[1]:call('tarn_select', {psid, 0, {}, 'ALL', box.NULL, box.NULL, true, true})
+    check(engine .. ': an unbounded autocommit read returns one page and where to go on',
+          r[1] == 'ok' and #r[2] == 4096 and r[3] ~= nil, {r[1], #(r[2] or {})})
+    local rows, n = pages(psid, c[1], {0, {}, 'ALL', box.NULL, box.NULL, true, true})
+    check(engine .. ': its pages hold every row once, in order', in_order(rows or {}, 10000) and n == 3, n)
+    rows, n = pages(psid, c[1], {0, {100}, 'GE', 5000, {9000}, true, true})
+    check(engine .. ': a range with a limit and an end key, in pages',
+          rows and #rows == 5000 and rows[1] == 100 and rows[5000] == 5099 and n == 2, {rows and #rows, n})
+    local threes = c[1]:eval('return box.space[...].index[1]:count{3}', {'test.pg_' .. engine})
+    rows, n = pages(psid, c[1], {1, {3}, 'EQ', box.NULL, box.NULL, true, false})
+    check(engine .. ': a secondary-index prefix', rows and #rows == threes and n == 1, {rows and #rows, n, threes})
+    local old = cfg('scan_page_bytes', 4096)
+    rows, n = pages(psid, c[1], {0, {}, 'ALL', box.NULL, box.NULL, true, true})
+    check(engine .. ': pages end at scan_page_bytes too', in_order(rows or {}, 10000) and n > 100, n)
+    local st = c[1]:new_stream()
+    local got, after, calls = 0, nil, 0
+    repeat
+        r = st:call('tarn_select', {psid, 0, {}, 'ALL', box.NULL, box.NULL, true, false, box.NULL, calls == 0, after})
+        got, after, calls = got + #r[2], r[3], calls + 1
+    until r[1] ~= 'ok' or after == nil
+    st:rollback()
+    check(engine .. ': and in a stream', got == 10000 and calls > 100, {got, calls})
+    cfg('scan_page_bytes', old)
+    old = cfg('scan_page_rows', 100)
+    local keys = {{1}, {5}, {9999}, {20000}}
+    local all, after2, calls2 = {}, nil, 0
+    repeat
+        r = c[1]:call('tarn_select_keys', {psid, 1, {{2}, {4}}, 150, true, false, after2})
+        for _, t in ipairs(r[2] or {}) do all[#all + 1] = t[2] end
+        after2, calls2 = r[3], calls2 + 1
+    until r[1] ~= 'ok' or after2 == nil
+    local twos = 0
+    for _, v in ipairs(all) do if v == 2 then twos = twos + 1 end end
+    check(engine .. ': multi-key reads in pages, each key\'s limit kept', #all == 300 and twos == 150 and calls2 == 3,
+          {#all, twos, calls2})
+    r = c[1]:call('tarn_select_keys', {psid, 0, keys, box.NULL, true, false})
+    check(engine .. ': unique keys in one page', r[1] == 'ok' and #r[2] == 3 and r[3] == nil, r)
+    -- Every iterator, in pages of 100 rows, against one read of the index:
+    -- reverse ones, and a non-unique index whose pages end amid equal keys.
+    local function unpaged(iid, key, it)
+        return c[1]:eval([[local s, iid, key, it = ...
+            local out = {}
+            for _, t in box.space[s].index[iid]:pairs(key, {iterator = it}) do out[#out + 1] = t[1] end
+            return out]], {'test.pg_' .. engine, iid, key, it})
+    end
+    for _, q in ipairs({{0, {9000}, 'LE'}, {0, {9000}, 'LT'}, {0, {5000}, 'GT'}, {0, {}, 'LE'},
+                        {1, {3}, 'EQ'}, {1, {3}, 'REQ'}, {1, {3}, 'GE'}, {1, {4}, 'LT'}}) do
+        local want = unpaged(q[1], q[2], q[3])
+        rows, n = pages(psid, c[1], {q[1], q[2], q[3], box.NULL, box.NULL, true, true})
+        local same = rows ~= nil and #rows == #want
+        for i = 1, same and #want or 0 do if rows[i] ~= want[i] then same = false end end
+        check(string.format('%s: %s on index %d in pages, as one read', engine, q[3], q[1]),
+              same and n > 1, {rows and #rows, #want, n})
+    end
+    cfg('scan_page_rows', old)
+    -- A page's lock check covers what it read: a W lock past its last row
+    -- does not hold it up; one inside it does.
+    local wl = function(txid, id)
+        return c[1]:call('tarn_prepare', {txid, 1, {1}, {{'replace', psid, {id, 0, 'w', 1}}}, {}, {}, fiber.time()})
+    end
+    r = wl('PW_' .. engine, 6000)   -- in the second page (4097..8192)
+    -- (Held up, it would fail with a conflict after lock_wait.)
+    local p1 = c[1]:call('tarn_select', {psid, 0, {}, 'ALL', box.NULL, box.NULL, true, true})
+    check(engine .. ': a W lock past the page does not hold it up',
+          r[1] == 'yes' and p1[1] == 'ok' and #p1[2] == 4096, {r, p1[1]})
+    local p2 = c[1]:call('tarn_select', {psid, 0, {}, 'ALL', box.NULL, box.NULL, true, true, box.NULL, false, p1[3]})
+    check('... the page that reaches it does', p2[1] == 'conflict', p2[1])
+    c[1]:call('tarn_abort', {'PW_' .. engine, 1, {1}})
+    -- A stored tuple as the position (what the SQL server passes on after
+    -- a plain IPROTO SELECT).
+    local tup = c[1]:eval('return box.space[...]:get{4096}', {'test.pg_' .. engine})
+    st = c[1]:new_stream()
+    r = st:call('tarn_select', {psid, 0, {}, 'ALL', 3, box.NULL, true, false, box.NULL, true, tup})
+    st:rollback()
+    check(engine .. ': a tuple as the position', r[1] == 'ok' and #r[2] == 3 and r[2][1][1] == 4097, r)
+end
+-- A tarn_lock_range page cut short by its bytes is not the end of the range.
+do
+    local old = cfg('scan_page_bytes', 1)
+    r = lrange('Q77', {{qsid, {1}, 5, {}}}, 'S', {skip = true})
+    check('tarn_lock_range goes on after a page cut by its bytes', r[1] == 'ok' and #r[3][1] == 5, r)
+    c[1]:call('tarn_unlock', {'Q77'})
+    cfg('scan_page_bytes', old)
+end
+-- Reads that would together hold more rows than the Lua heap allows: they
+-- used to kill the node (a memory error where nothing could catch it).
+do
+    local bsid = fill('test.big', 'memtx', 200000)
+    local alloc = "require('internal.alloc')"
+    c[1]:eval('collectgarbage() collectgarbage()')
+    local limit0 = c[1]:eval('return ' .. alloc .. '.getlimit()')
+    local used = c[1]:eval('return ' .. alloc .. '.used()')
+    c[1]:eval(alloc .. '.setlimit(...)', {used + 40 * 1024 * 1024})
+    local res, done = {}, 0
+    for i = 1, 4 do
+        fiber.create(function()
+            local rows, n = pages(bsid, c[1], {0, {}, 'ALL', box.NULL, box.NULL, true, true})
+            res[i] = rows and #rows or n
+            done = done + 1
+        end)
+    end
+    wait_for(function() return done == 4 end, 120)
+    check('four unbounded reads of 200,000 rows each under a 40 MiB heap margin all complete',
+          res[1] == 200000 and res[2] == 200000 and res[3] == 200000 and res[4] == 200000, res)
+    -- Less free than the reserve reads keep (16 MiB): a read fails cleanly.
+    c[1]:eval('collectgarbage() collectgarbage()')
+    used = c[1]:eval('return ' .. alloc .. '.used()')
+    c[1]:eval(alloc .. '.setlimit(...)', {used + 8 * 1024 * 1024})
+    r = c[1]:call('tarn_select', {bsid, 0, {}, 'ALL', box.NULL, box.NULL, true, true})
+    local r2 = c[1]:call('tarn_select', {bsid, 0, {10}, 'GE', box.NULL, {150000}, true, false})
+    c[1]:eval(alloc .. '.setlimit(...)', {limit0})
+    check('a read short of Lua memory fails with 1041', r[1] == 'error' and r[2] == 1041, r)
+    check('... in a scan with an end key too', r2[1] == 'error' and r2[2] == 1041, r2)
+    check('... and the node stays up', c[1]:ping() and c[1]:call('tarn_info').stats.read_oom >= 2)
+    -- A read that starts with enough heap and runs short while it scans
+    -- (pages made large enough to hold the whole table): memtx, vinyl
+    -- (checked_read), and in a stream.
+    local vbsid = fill('test.bigv', 'vinyl', 200000)
+    local oldr, oldb = cfg('scan_page_rows', 10000000), cfg('scan_page_bytes', 1024 * 1024 * 1024)
+    local function mid(name, fn)
+        c[1]:eval('collectgarbage() collectgarbage()')
+        local u = c[1]:eval('return ' .. alloc .. '.used()')
+        -- 4 MiB above the reserve: about 50,000 of the 200,000 rows.
+        local l = math.max(u + 20 * 1024 * 1024, math.ceil((u + 4 * 1024 * 1024) * 16 / 15))
+        c[1]:eval(alloc .. '.setlimit(...)', {l})
+        local res = fn()
+        c[1]:eval(alloc .. '.setlimit(...)', {limit0})
+        check(name .. ' fails with 1041 when the heap runs short as it scans',
+              res[1] == 'error' and res[2] == 1041, {res[1], res[2], type(res[2]) == 'table' and #res[2]})
+    end
+    local oom0 = c[1]:call('tarn_info').stats.read_oom
+    mid('memtx: a scan with an end key',
+        function() return c[1]:call('tarn_select', {bsid, 0, {1}, 'GE', box.NULL, {200000}, true, true}) end)
+    mid('vinyl: an autocommit read',
+        function() return c[1]:call('tarn_select', {vbsid, 0, {}, 'ALL', box.NULL, box.NULL, true, true}) end)
+    mid('a read in a stream', function()
+        local s = c[1]:new_stream()
+        local res = s:call('tarn_select', {bsid, 0, {}, 'ALL', box.NULL, box.NULL, true, false, box.NULL, true})
+        s:rollback()
+        return res
+    end)
+    cfg('scan_page_rows', oldr); cfg('scan_page_bytes', oldb)
+    check('... the scans stopped where they ran short (3 more 1041s), and the node stays up',
+          c[1]:ping() and c[1]:call('tarn_info').stats.read_oom == oom0 + 3)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
