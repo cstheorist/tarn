@@ -86,7 +86,7 @@ servers write to it (`tests/sql/`).
 * `CREATE DATABASE`, `DROP DATABASE`, `USE`.
 * `CREATE TABLE` with column types (below), `NOT NULL`, `DEFAULT`,
   `AUTO_INCREMENT`, `PRIMARY KEY`, `UNIQUE [KEY]`, `KEY` / `INDEX` (with
-  `VISIBLE` / `INVISIBLE`), `FOREIGN KEY` (recorded, not enforced, below),
+  `VISIBLE` / `INVISIBLE` and `COMMENT`), `FOREIGN KEY` (recorded, not enforced, below),
   the table options `AUTO_INCREMENT = n`, `COMMENT` and `ENGINE`, and the
   shard key clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the
   partition count is ignored: rows are spread over the cluster's buckets).
@@ -138,7 +138,7 @@ left half done is finished by the next schema change or server start.
 | `DROP [COLUMN]` | instant (the stored values stay, unused); not primary key or shard key columns, nor columns of a foreign key (1828 / 1553); indexes lose the column |
 | `MODIFY`, `CHANGE` | type changes within one family (integers, `CHAR`/`VARCHAR`/`TEXT`/`JSON`, `DECIMAL` with the same scale, `DATETIME`/`TIMESTAMP`, binary strings, floats), `NULL` / `NOT NULL`, defaults, position, name. Existing rows are checked against the narrower type (1264 / 1265, as MariaDB reports them); writes wait while they are checked, so a change that needs the check is refused (1846) when a shard holds more than a million rows of the table (`tarn.cfg.alter_check_rows`) |
 | `RENAME COLUMN`, `ALTER [COLUMN] SET DEFAULT / DROP DEFAULT` | instant |
-| `ADD [UNIQUE] INDEX / KEY`, `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added column with a non-NULL fill is refused (1846) if existing tuples still omit its stored field; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
+| `ADD [UNIQUE] INDEX / KEY` (with `COMMENT`), `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added column with a non-NULL fill is refused (1846) if existing tuples still omit its stored field; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
 | `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
 | `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
 | `ENGINE` | the table's own engine, or one MySQL names (`InnoDB`, ...): accepted and ignored; moving a table between memtx and vinyl rewrites every row: refused (1235) |

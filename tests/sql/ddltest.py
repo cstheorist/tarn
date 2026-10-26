@@ -92,6 +92,8 @@ class T:
         self.check(q(d, "SELECT email FROM users ORDER BY id") == (("a@acme.test",), ("b@globex.test",)), "users rows")
         create = q(d, "SHOW CREATE TABLE accounts")[0][1]
         self.check("INVISIBLE" in create and "COMMENT='customer accounts'" in create, f"SHOW CREATE TABLE: {create}")
+        self.check("KEY `index_accounts_on_created_at` (`created_at`) COMMENT 'for reports'" in create,
+                   f"index comment kept: {create}")
         create = q(d, "SHOW CREATE TABLE users")[0][1]
         self.check("CONSTRAINT `fk_rails_61ac11da2b` FOREIGN KEY" in create, f"foreign key kept: {create}")
         # AUTO_INCREMENT=4 in the dump: the next generated id is 4
@@ -99,6 +101,40 @@ class T:
         self.check(q(d, "SELECT LAST_INSERT_ID()")[0][0] == 4, "AUTO_INCREMENT table option")
         # the dump's session settings are back to their defaults afterwards
         self.check(q(d, "SELECT @@foreign_key_checks, @@unique_checks")[0] == (1, 1), "restored session variables")
+        # SHOW CREATE TABLE reloads to the same table: quotes and backslashes
+        # in index and table comments and defaults (#80)
+        q(d, "CREATE TABLE esc (id INT PRIMARY KEY, v VARCHAR(9) DEFAULT 'a\\\\b''c', "
+             "KEY kv (v) COMMENT 'd\\\\e''f') COMMENT 'g\\\\h''i'")
+        create = q(d, "SHOW CREATE TABLE esc")[0][1]
+        q(d, "DROP TABLE esc")
+        q(d, create)
+        self.check(q(d, "SHOW CREATE TABLE esc")[0][1] == create, f"SHOW CREATE TABLE reloads: {create}")
+        self.check(q(d, "SHOW INDEX FROM esc")[1][12] == "d\\e'f", "index comment with a backslash and a quote")
+        # MariaDB escapes NUL/LF/CR in a dump's DDL, while TAB/BS/CTRL-Z
+        # remain raw. Check exact literals and reload through the CLI too.
+        controls = "\0\n\r\t\b\x1a\\'\"雪"
+        literal = "'\\0\\n\\r\t\b\x1a\\\\''\"雪'"
+        q(d, "CREATE TABLE esc_controls (id INT PRIMARY KEY, v VARCHAR(32) DEFAULT %s, "
+             "KEY kv (v) COMMENT %s) COMMENT=%s", (controls, controls, controls))
+        q(d, "CREATE INDEX kc ON esc_controls (v) COMMENT %s", (controls,))
+        create = q(d, "SHOW CREATE TABLE esc_controls")[0][1]
+        self.check(f"DEFAULT {literal}" in create and f"COMMENT={literal}" in create
+                   and create.count(f"COMMENT {literal}") == 2,
+                   f"control bytes in SHOW CREATE literals: {create!r}")
+        q(d, "DROP TABLE esc_controls")
+        if cli:
+            r = subprocess.run([cli, "-h", host, "-P", port, "-u", "sb", "--default-character-set=utf8mb4", "ddl_dump"],
+                               input=create + ";\n", capture_output=True, text=True)
+            self.check(r.returncode == 0 and not r.stderr.strip(), f"control DDL reload: {r.stderr.strip()[:400]}")
+        else:
+            q(d, create)
+        self.check(q(d, "SHOW CREATE TABLE esc_controls")[0][1] == create,
+                   "control DDL reload is byte-identical")
+        comments = {row[2]: row[12] for row in q(d, "SHOW INDEX FROM esc_controls") if row[2] in ("kv", "kc")}
+        self.check(comments == {"kv": controls, "kc": controls},
+                   "control index comments survive reload")
+        q(d, "INSERT INTO esc_controls (id) VALUES (1)")
+        self.check(q(d, "SELECT v FROM esc_controls")[0][0] == controls, "control default survives reload")
 
     def test_multi_statements(self):
         """CLIENT_MULTI_STATEMENTS and COM_SET_OPTION: one result per

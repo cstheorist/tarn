@@ -2689,7 +2689,7 @@ impl Session {
                             Value::str(if t.columns[c].nullable { "YES" } else { "" }),
                             Value::str("TREE"),
                             Value::str(""),
-                            Value::str(""),
+                            Value::str(&ix.comment),
                             Value::str(if ix.invisible { "NO" } else { "YES" }),
                             Value::Null,
                         ]);
@@ -3062,6 +3062,23 @@ fn charset_of(collation: &str) -> &str {
     }
 }
 
+/// `s` as the body of a quoted SQL string, as SHOW CREATE TABLE writes it:
+/// NUL, LF and CR escaped, `\` and `'` doubled; other characters stay raw.
+fn sql_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\0' => out.push_str("\\0"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("''"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn show_create(t: &TableDef) -> String {
     let mut s = format!("CREATE TABLE `{}` (\n", t.name);
     let mut lines = Vec::new();
@@ -3081,7 +3098,7 @@ fn show_create(t: &TableDef) -> String {
             if d == "CURRENT_TIMESTAMP" {
                 l.push_str(" DEFAULT CURRENT_TIMESTAMP");
             } else {
-                l.push_str(&format!(" DEFAULT '{}'", d.replace('\'', "''")));
+                l.push_str(&format!(" DEFAULT '{}'", sql_str(d)));
             }
         } else if c.nullable {
             l.push_str(" DEFAULT NULL");
@@ -3096,14 +3113,20 @@ fn show_create(t: &TableDef) -> String {
             continue;
         }
         let colnames: Vec<String> = ix.cols.iter().map(|&c| format!("`{}`", t.columns[c].name)).collect();
+        let comment = if ix.comment.is_empty() {
+            String::new()
+        } else {
+            format!(" COMMENT '{}'", sql_str(&ix.comment))
+        };
         if ix.id == 0 && t.declared_pk() {
-            lines.push(format!("  PRIMARY KEY ({})", colnames.join(",")));
+            lines.push(format!("  PRIMARY KEY ({}){}", colnames.join(","), comment));
         } else {
             lines.push(format!(
-                "  {}KEY `{}` ({}){}",
+                "  {}KEY `{}` ({}){}{}",
                 if ix.unique { "UNIQUE " } else { "" },
                 ix.name,
                 colnames.join(","),
+                comment,
                 if ix.invisible { " /*!80000 INVISIBLE */" } else { "" }
             ));
         }
@@ -3142,7 +3165,7 @@ fn show_create(t: &TableDef) -> String {
         table_coll
     ));
     if !t.comment.is_empty() {
-        s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));
+        s.push_str(&format!(" COMMENT='{}'", sql_str(&t.comment)));
     }
     if t.shard_key.iter().all(|&c| !t.columns[c].hidden) {
         s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
@@ -3156,4 +3179,71 @@ fn first_value(d: &[u8]) -> SqlResult<Value> {
     let mut rd = Rd::new(d);
     rd.array()?;
     rd.value()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sql_string_format_matches_mariadb_bytes() {
+        for (value, encoded) in [
+            ("\0", r"\0"),
+            ("\n", r"\n"),
+            ("\r", r"\r"),
+            ("\t", "\t"),
+            ("\u{8}", "\u{8}"),
+            ("\u{1a}", "\u{1a}"),
+            ("\\", r"\\"),
+            ("'", "''"),
+            ("\"", "\""),
+            (r"\0\n\r", r"\\0\\n\\r"),
+            ("雪\0\n\r\t\u{8}\u{1a}\\'\"", "雪\\0\\n\\r\t\u{8}\u{1a}\\\\''\""),
+        ] {
+            assert_eq!(sql_str(value).as_bytes(), encoded.as_bytes(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn show_create_control_strings_round_trip() {
+        let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("db"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let parse = |sql: &str| {
+            let Stmt::CreateTable { def, .. } = crate::planner::plan(sql, &ctx).unwrap() else {
+                panic!("not CREATE TABLE");
+            };
+            def
+        };
+        let mut def = parse("CREATE TABLE esc (id INT PRIMARY KEY, v VARCHAR(32), KEY kv (v))");
+        let value = "雪\0\n\r\t\u{8}\u{1a}\\'\"";
+        let encoded = "雪\\0\\n\\r\t\u{8}\u{1a}\\\\''\"";
+        def.columns[1].default = Some(value.into());
+        def.comment = value.into();
+        for ix in &mut def.indexes {
+            ix.comment = value.into();
+        }
+        let ddl = show_create(&def);
+        for fragment in [
+            format!("DEFAULT '{encoded}'"),
+            format!("PRIMARY KEY (`id`) COMMENT '{encoded}'"),
+            format!("KEY `kv` (`v`) COMMENT '{encoded}'"),
+            format!("COMMENT='{encoded}'"),
+        ] {
+            assert!(ddl.contains(&fragment), "{ddl:?} lacks {fragment:?}");
+        }
+        let reloaded = parse(&ddl);
+        assert_eq!(reloaded.columns[1].default.as_deref(), Some(value));
+        assert_eq!(reloaded.comment.as_bytes(), value.as_bytes());
+        assert!(reloaded
+            .indexes
+            .iter()
+            .all(|ix| ix.comment.as_bytes() == value.as_bytes()));
+        assert_eq!(show_create(&reloaded).as_bytes(), ddl.as_bytes());
+    }
 }

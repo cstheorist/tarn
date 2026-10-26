@@ -364,6 +364,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   zero and BIGINT overflow with 1690, as in MySQL
   ([#11](https://github.com/cstheorist/tarn/issues/11)).
 
+- An index's `COMMENT` (in `CREATE TABLE`, `ALTER TABLE ... ADD INDEX` and
+  `CREATE INDEX`) is stored, kept by `ALTER TABLE`, and shown by
+  `SHOW CREATE TABLE` and `SHOW INDEX`, so dump/reload preserves it
+  ([#80](https://github.com/cstheorist/tarn/issues/80)). `CREATE INDEX`
+  decodes MySQL string escapes; `SHOW CREATE TABLE` escapes quotes,
+  backslashes, NUL, newline and carriage return as MariaDB does.
+
 ## [0.1.0] - 2026-10-25
 
 First public release: a research prototype.
