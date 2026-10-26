@@ -452,7 +452,9 @@ strictly serializable. READ COMMITTED follows InnoDB:
 
 * **Plain reads** are autocommit-style storage reads of the latest committed
   state, one per statement, overlaid with the transaction's own buffered
-  writes. They take no locks, record no read set and are never validated, so
+  writes (an ordered page with `LIMIT` reads its range again from the start
+  with a larger limit when it needs more, so it sees one state of the
+  range). They take no locks, record no read set and are never validated, so
   they never cause an abort. Like autocommit reads they wait while a
   prepared cross-shard transaction W-locks what they read, because that
   transaction may already be committed and acknowledged (`RCRead`).

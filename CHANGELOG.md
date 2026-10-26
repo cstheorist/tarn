@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Ordered pages read only the page: a `SELECT ... WHERE <index prefix>
+  [AND <other conditions>] ORDER BY <next index columns> LIMIT n` picks the
+  index that returns rows in `ORDER BY` order, reads it a page at a time,
+  filters each page and stops once `n` (+ `OFFSET`) rows qualify, in
+  autocommit, in transactions (with their own writes merged in) and under
+  both isolation levels ([#41](https://github.com/cstheorist/tarn/issues/41)).
+  Serializable reads record only the part of the range they read. With
+  300,000 rows under one key prefix, the first page used to read all of
+  them. `SHOW STATUS` reports `Tarn_rows_read`.
 - Collations ([#13](https://github.com/cstheorist/tarn/issues/13)): text
   columns compare, sort, group and are unique under the collation they
   declare (`COLLATE`, `CHARACTER SET`), the table's (`DEFAULT CHARSET` /
