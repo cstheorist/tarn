@@ -29,6 +29,7 @@ moves to it, and its rows are read and written there. Then shard 2 leaves:
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -38,6 +39,13 @@ import pymysql
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from movefaults import Test as MoveFaults  # noqa: E402
 from movetest import bucket_of  # noqa: E402
+
+
+def reached_count(reply):
+    """How many steps reached a held test hook (its 'reached' reply)."""
+    m = re.search(r'"ok",\s*(\d+)', reply)
+    return int(m.group(1)) if m else 0
+
 
 DB = "joinfaults"
 
@@ -120,7 +128,7 @@ class Test(MoveFaults):
         th, res = self.add_in_thread(2)
         reached = self.hook(hook_shard, hook, "reached")
         t0 = time.time()
-        self.check('"ok",1' in reached.replace(" ", ""), f"{label}: the join reached the step", reached)
+        self.check(reached_count(reached) >= 1, f"{label}: the join reached the step", reached)
         self.kill_server(2)
         done = self.wait_no_job()
         took = time.time() - t0
@@ -176,7 +184,8 @@ class Test(MoveFaults):
         self.hook(1, "bucket_rows", "hold")
         th, res = self.remove_in_thread(2, 2)
         reached = self.hook(1, "bucket_rows", "reached")
-        self.check('"ok",1' in reached.replace(" ", ""), "4: the drain reached a copy", reached)
+        # (as many as the drain's moves in parallel)
+        self.check(reached_count(reached) >= 1, "4: the drain reached a copy", reached)
         self.kill_server(2)
         self.check(self.wait_no_job(secs=20), "4: other servers ended the moves it left")
         states = [self.state_of(i, 2) for i in range(3)]
