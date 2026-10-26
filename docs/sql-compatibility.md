@@ -88,7 +88,7 @@ servers write to it (`tests/sql/`).
 * `CREATE DATABASE`, `DROP DATABASE`, `USE`.
 * `CREATE TABLE` with column types (below), `NOT NULL`, `DEFAULT`,
   `AUTO_INCREMENT`, `PRIMARY KEY`, `UNIQUE [KEY]`, `KEY` / `INDEX` (with
-  `VISIBLE` / `INVISIBLE`), `FOREIGN KEY` (recorded, not enforced, below),
+  `VISIBLE` / `INVISIBLE` and `COMMENT`), `FOREIGN KEY` (recorded, not enforced, below),
   the table options `AUTO_INCREMENT = n`, `COMMENT` and `ENGINE`, and the
   shard key clause `PARTITION BY KEY(col, ...) [PARTITIONS n]` (the
   partition count is ignored: rows are spread over the cluster's buckets).
@@ -140,7 +140,7 @@ left half done is finished by the next schema change or server start.
 | `DROP [COLUMN]` | instant (the stored values stay, unused); not primary key or shard key columns, nor columns of a foreign key (1828 / 1553); indexes lose the column |
 | `MODIFY`, `CHANGE` | type changes within one family (integers, `CHAR`/`VARCHAR`/`TEXT`/`JSON`, `DECIMAL` with the same scale, `DATETIME`/`TIMESTAMP`, binary strings, floats), `NULL` / `NOT NULL`, defaults, position, name. Existing rows are checked against the narrower type (1264 / 1265, as MariaDB reports them); writes wait while they are checked, so a change that needs the check is refused (1846) when a shard holds more than a million rows of the table (`tarn.cfg.alter_check_rows`) |
 | `RENAME COLUMN`, `ALTER [COLUMN] SET DEFAULT / DROP DEFAULT` | instant |
-| `ADD [UNIQUE] INDEX / KEY`, `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added column with a non-NULL fill is refused (1846) if existing tuples still omit its stored field; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
+| `ADD [UNIQUE] INDEX / KEY` (with `COMMENT`), `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added column with a non-NULL fill is refused (1846) if existing tuples still omit its stored field; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
 | `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
 | `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
 | `ENGINE` | the table's own engine, or one MySQL names (`InnoDB`, ...): accepted and ignored; moving a table between memtx and vinyl rewrites every row: refused (1235) |
@@ -164,6 +164,47 @@ writes are fenced and is subject to `tarn.cfg.alter_check_rows`; vinyl builds
 that need it also run behind the fence. Automatic backfill is not implemented.
 For new tables, define the column and index before loading rows. A no-op SQL
 update such as `UPDATE t SET c = c` does not materialize old fields.
+
+#### Table trees
+
+A table can declare that its rows belong to a parent table's rows with
+`COMMENT 'tarn:parent=<table>'` (or `<database>.<table>`; the token may
+share the comment with other text). MySQL and MariaDB store the comment and
+ignore it, so the schema stays portable; foreign keys cannot say the same
+there, because neither accepts them on partitioned tables. A tree keeps a
+root row and all of its descendants on one shard when every child's primary
+key starts with its parent's whole primary key and every table is sharded
+by the root's shard key:
+
+```sql
+CREATE TABLE customer (customer_id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(100));
+CREATE TABLE orders (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL,
+  PRIMARY KEY (customer_id, order_id)) COMMENT 'tarn:parent=customer' PARTITION BY KEY (customer_id);
+CREATE TABLE order_line (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL, line_no INT NOT NULL,
+  PRIMARY KEY (customer_id, order_id, line_no)) COMMENT 'tarn:parent=orders' PARTITION BY KEY (customer_id);
+```
+
+`CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check the trees they touch
+and report what does not line up as warnings (1105, `SHOW WARNINGS`):
+
+* the parent does not exist, or the parent links form a cycle. A dump may
+  create a child before its parent, so a missing parent is only a warning,
+  and the parent's `CREATE TABLE` checks the children that name it;
+* the child's primary key does not start with its parent's primary-key
+  columns (the same names, in order), or one of them would not hash and
+  compare like the parent's: integers need the same signedness, text the
+  same collation, other types the same type (binary strings always match);
+* the child's shard key is not the root's, usually a missing `PARTITION BY
+  KEY`;
+* a note for each unique key outside the shard key: its global index adds a
+  shard to writes that change it.
+
+An `ALTER TABLE` reports only what it makes worse. `SET tarn_tree_checks =
+'ERROR'` makes the findings about the table a statement creates or alters
+errors that refuse it (a missing parent stays a warning); `'OFF'` turns the
+checks off; `'WARN'` is the default. `tarn-server --check-schema FILE
+[--database DB]` runs the same checks over a schema file, such as a
+`mysqldump --no-data` dump, without a cluster.
 
 #### Loading dumps
 
@@ -203,8 +244,11 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   prepared themselves (1295). The text is re-planned at each `EXECUTE`
   through the plan cache, as a text query would be.
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
-  VARIABLES | STATUS | WARNINGS | ENGINES | COLLATION | CHARACTER SET |
+  VARIABLES | STATUS | WARNINGS | ERRORS | ENGINES | COLLATION | CHARACTER SET |
   PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
+  `SHOW WARNINGS` lists the last statement's warnings and notes, whose number
+  the OK packet and `@@warning_count` report; the only ones Tarn raises are
+  those of the [table tree](#table-trees) checks.
 * `information_schema.TABLES`, with MySQL 8's columns: one row per table
   (`TABLE_TYPE` `BASE TABLE`, `ENGINE` memtx or vinyl, `TABLE_COMMENT`) and
   one for itself (`SYSTEM VIEW`). Sizes, row counts and times are NULL. It

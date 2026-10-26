@@ -53,11 +53,20 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
   fields of dropped columns stay, renamed `_dropped_<n>` (§2.10); readers
   should go by field names.
 * Rows are placed by a shard key (default: the primary key; `PARTITION BY
-  KEY(cols)` chooses others). `bucket_id = crc32c(key) % 3000 + 1` using
+  KEY(cols)` chooses others). `bucket_id = crc32c(key) % count + 1` using
   vshard's `mpcrc32` definition (Tarantool's `digest.crc32`, strings hashed as
-  raw bytes, other values as their msgpack encoding). Buckets map to shards in
-  equal contiguous ranges. A case-insensitive text column is hashed by its
-  weight string (§1.3), so `'a'` and `'A'` land on the same shard.
+  raw bytes, other values as their msgpack encoding). A case-insensitive
+  text column is hashed by its weight string (§1.3), so `'a'` and `'A'` land
+  on the same shard.
+* A row's bucket never changes; which shard owns a bucket does. The shards
+  keep the map (`_tarn_buckets`: the buckets each one owns or is moving).
+  The first SQL server on a new cluster makes it, with `count` buckets
+  (`bucket_count`, 30,000 by default; a cluster made by a version from
+  before the map keeps the count its rows were stored with, 3,000), and
+  gives each shard an equal contiguous range; buckets then move between
+  shards online (§2.12). SQL servers route by a copy of the map, and every
+  request names the buckets it was routed by, so a shard refuses one that
+  has moved and the server reads the map again.
 * A case-insensitive text column that is part of an index has a second
   field after `bucket_id`, `_weight_<n>` (varbinary), holding its weight
   string; its indexes are built on that field (§1.3).
@@ -68,7 +77,9 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
 
 Direct reads: a Tarantool client computes the bucket from the key (or simply
 asks each shard) and does `space.index.primary:get{key}`. The `kvbench`
-example does exactly that with the same Verus-verified routing code. A
+example does exactly that with the same Verus-verified routing code (and
+the layout of a new cluster: after a move, a client finds the bucket's
+shard in `tarn_buckets()`). A
 case-insensitive key is looked up (and hashed) by its weight string, which
 `SELECT WEIGHT_STRING(...)` returns (without trailing spaces).
 
@@ -141,7 +152,12 @@ without pages, a scan of millions of rows took that heap to Tarantool's
 Lua memory limit, where an allocation that failed outside a protected call
 killed the node. A read that finds less than a reserve of that heap free
 (1/16 of the limit, at least 16 MiB) fails with 1041 instead; counts
-(`tarn_count`) return no rows. Inside a transaction the pages are reads of
+(`tarn_count`) return no rows. A fiber checks the heap every 100 ms and
+runs a full collection when less than that reserve is free (at most once a
+second): LuaJIT starts a cycle only when the heap reaches twice what the
+last one left, so a heap of garbage near the limit otherwise stays there,
+and every call fails with "not enough memory" until something collects it
+(issue #73). Inside a transaction the pages are reads of
 its stream (one MVCC view), and the whole range is recorded once for
 validation. An autocommit read that needs more than one page runs as an
 implicit read-only transaction, as one that needs several shards does. A
@@ -169,8 +185,8 @@ are no reads of the transaction: WHERE filters either path, so they change
 how many rows are read, never which rows qualify.
 
 **Merged ordered pages.** An ordered `LIMIT` over an index whose equality
-prefix does not fix the shard key (`WHERE status = ? ORDER BY placed_at
-LIMIT n` on a table sharded by customer) pages the range on every shard
+prefix does not fix the shard key (`WHERE state = ? ORDER BY created_at
+LIMIT n` on a table sharded by `tenant_id`) pages the range on every shard
 at once (issue #86): each shard's first page is `n` + `OFFSET` rows in
 index order, and the SQL server merges the pages by index key, then
 primary key (the order of ties within each shard's index). It takes the
@@ -185,6 +201,10 @@ its range again from the start with a larger limit, so every shard's rows
 are one committed state of its range. The planner prefers such an index
 only when no equality in `WHERE` fixes the shard key, so it never displaces
 a range on one shard; locking reads (`FOR UPDATE`) still read and sort.
+The pager retains the same bucket map and shard set across rounds: refills
+use the original bucket ownership, and reads outside transaction streams
+keep that map's epoch and membership checks. A move or join therefore
+refuses an outdated read instead of mixing pages from different maps.
 
 Conflicts surface as MySQL error 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE 40001),
 which clients already treat as "retry the transaction". Autocommit statements
@@ -369,8 +389,9 @@ columns or their types, is refused (1846).
 
 ### 2.2 The TLA+ model (`tla/TarnCommit.tla`)
 
-The model has shards, keys with owners, three transactions with fixed
-read/write sets, direct (non-SQL) readers, and the actions of the protocol:
+The model has shards, keys with owners (which a bucket move changes,
+§2.12), three transactions with fixed read/write sets, direct (non-SQL)
+readers, and the actions of the protocol:
 reads, single-shard commit, snapshot reads, read-only validation, PREPARE
 (with the decision record), coordinator decision/finish/abort, APPLY, ABORT
 (with tombstones), timeout-triggered recovery (fence record, fence
@@ -394,7 +415,7 @@ Invariants checked in every configuration:
 | `PlainOnlyCommitted` | the plain spaces only ever contain committed values |
 | `DirectReadsClean` | direct readers never observe uncommitted data |
 | `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
-| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock) |
+| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock; a scan of every shard: each row exactly once) |
 | `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
 | `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
 | `UniqueHolds` | no key is inserted by two committed transactions (unique keys, §1.4) |
@@ -418,7 +439,10 @@ reader of the entry and the row; `BugInsertNoExistCheck` drops the check and
 TLC finds two committed holders. The model never deletes keys, so a transaction that
 frees a value and takes another (REPLACE, an UPDATE of the key) is argued
 rather than checked: its deletes and inserts on a shard are in one PREPARE
-or local commit, which applies them together.
+or local commit, which applies them together. *MoveScan* and *MoveRC* move a
+row to the other shard while transactions run (§2.12): rows have a place
+that the move changes, a request reaches the shard it was routed to, and
+scans read every shard.
 
 ### 2.3 What TLC found
 
@@ -443,8 +467,10 @@ resurrects an aborted transaction: `AppliedOnlyIfCommitted` fails), local
 commits that ignore R locks, single-shard reads that ignore W locks,
 read-only validation without the W-lock check or without the "reads
 unchanged" check, garbage collection of applied records regardless of the
-decision record, garbage collection without the expiry horizon, and fencing
-a missing decision record after expiry.
+decision record, garbage collection without the expiry horizon, fencing
+a missing decision record after expiry, and three for bucket moves (§2.12):
+a move without the drain, a receiver that does not hold the bucket, and a
+sender that serves requests for a bucket it has sent.
 
 ### 2.4 A model/implementation gap found by testing: memtx read views
 
@@ -1007,18 +1033,253 @@ vinyl shard needs.
 (issue #56). A table cannot move between engines (issue #57). Writes are
 not slowed down when compaction falls behind (issue #58).
 
+### 2.12 Bucket moves
+
+A bucket is the unit that moves between shards (issue #24): to add a
+shard, to remove one, or to take load off one. Every protocol above assumes
+that a row never changes shards, so a move has to keep three things true. A
+request routed with an old map must not be served by a shard the bucket has
+left. A serializable transaction whose reads covered the bucket must not
+commit across the move: a scan of every shard that read the old shard
+before the move and the new one after would see the bucket's rows twice,
+and in the other order not at all. And the locks on the bucket's rows --
+prepared transactions' locks and READ COMMITTED row locks -- must not be
+left behind on the old shard, where nothing would check them any more.
+
+**The protocol.** One SQL server drives a move of bucket *b* from shard S
+to shard R in steps:
+
+1. *Copy*: the rows of *b* are copied to R while S keeps serving them; R
+   keeps the copy aside, where nothing reads it.
+2. *Fence*: from now on S refuses writes to rows of *b*, row locks on them,
+   and PREPAREs that read or write them (read locks taken now would hold
+   the move up); it breaks the row locks held on them, so that their
+   transactions can no longer commit. R *holds* *b*: the validation of a
+   read that could cover a row of *b* there fails. Then S waits until no
+   prepared transaction holds a point lock on a row of *b* and no local
+   commit that writes one is in flight, and the changes made since the
+   copy are copied.
+3. *Send*: S deletes the rows of *b*, and from then on refuses requests for
+   it; their servers load the new map and route them again.
+4. *Receive*: R inserts the copy, owns *b* and releases the hold.
+
+Between the send and the receive the rows are on no shard: requests for
+them are refused everywhere and retried until R has them. A move that
+cannot drain in time is given up before the send, which releases the
+fence and the hold.
+
+**Why each step is needed.** Apart from where rows are, a move changes
+nothing a transaction can see: it is a cross-shard transaction that
+deletes the bucket's rows on S and inserts them on R. MVCC treats it as
+one. A stream that read a row of *b* on S, or scanned a range of an index
+there that held one, fails its validation once S deletes them, and one
+that scanned a range of R that they fall in fails once R inserts them. The
+hold covers the time in between: a transaction that scanned R before the
+rows arrived and S after they left saw them nowhere, and its validation
+on R comes after its scan of S, so after the send -- while R holds the
+bucket, or after the insert. The fence and the drain keep the copy
+current: a local commit in flight when the last copy is taken, or the
+APPLY of a prepared transaction, would write a row on S after it was
+copied, and the write would be lost. Point read locks are drained too: a
+prepared transaction may already be committed, and its read locks protect
+what it read until then, which after the move a writer on R would not
+see. A scan's read locks (a range on every shard) are not waited for: the
+scan read R as well, so it holds them there too, and both its PREPAREs
+come before the send.
+
+**The model.** TarnCommit.tla gives every row a place (`place`). A request
+reaches the shard it was routed to, which refuses rows it does not own; a
+read of a row where it no longer is finds nothing there (`Gone`), which
+the read's validation catches as a changed read. Scans (`SSet`: a range
+read on every shard, as a lookup by a non-unique secondary index or a full
+scan) record what they saw on each shard, and `StrictSerializable`
+requires a scan to have seen each row exactly once, with the value the
+serial order gives it. The move's steps are `MoveFence` (the fence, the
+broken row locks, the hold), `MoveDrained` (the drain and the last copy),
+`MoveSendFlip`, `MoveRecvFlip` and `MoveAbort`; the copy before the fence
+changes nothing a transaction can see. Two workloads move row x from shard
+A to shard B: *MoveScan* (a scan of both shards; a blind write of x, a
+local commit wherever x is, like an autocommit `UPDATE`; and a
+read-modify-write of x and y, through PREPARE/APPLY before the move and a
+local commit after it) and *MoveRC* (READ COMMITTED read-modify-writes of
+x, one of them across shards, and a serializable one whose local commit may
+be in flight when the move fences x). TLC finds a 9-step counterexample for
+each switch:
+
+| Switch | Counterexample |
+|---|---|
+| `BugMoveNoDrain` | a local commit that writes x is still in flight when the move takes its last copy: B gets the value before it, and a transaction that starts after the commit was acknowledged reads x without it |
+| `BugMoveNoHold` | a scan reads B before x arrives and A after x left, validates both, and commits without x |
+| `BugMoveServeStale` | a write of x routed with the old map reaches A after A sent the bucket; A applies it where no row lives any more and acknowledges it, and the write is lost |
+
+Not in the model: READ COMMITTED reads of every shard, which are not
+validated (they check instead that no shard has sent or received a bucket
+since their server loaded its map), and direct key/value readers, who must
+look a row up again where it went.
+
+**The implementation** (`lua/tarn.lua` "Buckets" and "Bucket moves",
+`crates/tarn-sql/src/buckets.rs`). A shard keeps each bucket it owns or is
+moving in `_tarn_buckets`, in a state: *active*; *sending* (the copy runs
+and the writes to its rows are noted); *fenced*; *sent*; *receiving* (the
+copy goes to `_tarn_recv`, which nothing reads); *held*. An *epoch* in
+`_tarn_meta` changes with every send and receive. A SQL server reads every
+shard's part of the map (`tarn_buckets`: the state in memory that the
+shard's checks go by, built once per change), checks with the verified
+`build_owner` (§3) that no two shards claim a bucket, and routes by it.
+
+Every request names what it was routed by: a write the bucket of each row
+it writes (`wb`), a row lock the bucket of its row, a point or range read
+the bucket its key fixes -- also in the read sets that the commit steps
+check, since reads inside a stream are plain `SELECT`s -- and a read of
+every shard outside a transaction (READ COMMITTED) the shard's epoch in
+the server's map. A shard refuses (`moved`, 1213) a bucket it does not own,
+writes and row locks of a fenced one, and a read of every shard whose epoch
+is not its own; it also checks the `bucket_id` of every row it writes,
+which refuses the writes of servers that name no buckets. The server reads
+the map again, and a statement that can start over -- autocommit, or the
+first statement of a transaction -- runs again with it (`StaleRetry`, as
+for a stale table definition); a later statement fails with 1213 and the
+transaction is rolled back. The checks run where the model puts them: in
+each commit step's atomic section (§2.11), and for reads both before and
+after the read, with no yield after it, since a read that waited -- for a
+prepared transaction's lock, or for vinyl -- may have read after a move
+went by. A send or a receive changes the state (and the epoch) in memory
+inside its transaction, before box.commit() lets the deleted or inserted
+rows be seen, and back if it rolls back; a receive owns the bucket only
+once its rows are seen. The epochs of one scan of every shard come from one
+copy of the map: each read passes only if its shard's buckets have not
+changed since that copy was read, so together they read each bucket on the
+one shard that owned it then (epochs from two copies could read a bucket
+on the shard it left and, later, on the one it went to). While a bucket is
+between its send and its receive, such scans are refused.
+
+One SQL server drives a move (`TARN MOVE BUCKET`, operations guide) as a
+job (§2.10), which schema changes and other moves of the bucket wait for:
+`tarn_bucket_recv_begin` on R, `tarn_bucket_send_begin` on S (which waits
+for the local commits in flight, whose writes the notes may have missed),
+the copy a page at a time, `tarn_bucket_hold`, `tarn_bucket_fence` (which
+breaks the row locks on the bucket's rows and waits for the drain), the
+last copy (`tarn_bucket_delta`; after a leader change of S the notes are
+gone, and the bucket is copied again), the job's phase `flip`, then
+`tarn_bucket_send` and `tarn_bucket_recv`. Every step can be repeated, and
+the steps that change a bucket's state run one at a time on a shard. A
+server that finds the job abandoned finishes it (`ddl_job_stale`): forward
+from `flip`, else back -- S first, which refuses to give the bucket back
+once it has sent it (then R takes it over); only then R. A driver gives a
+move up only when it knows the job is not at `flip`: when the reply to its
+write of the phase is lost it reads the job again, and leaves it to a
+takeover if it cannot. The job is kept alive through whichever node leads
+the first shard.
+
+A leader change (or a node that turns read-only and back) makes a shard
+read its map again from `_tarn_buckets`. A step whose commit is still
+waiting for the WAL or the quorum then has a state in memory that the
+stored one does not show yet: a send has made the bucket 'sent' already
+(`BK.early`), a last copy has added its rows to those the hold checks, and
+a receive makes the bucket 'active' only once its rows are seen. So the
+shard reads both the confirmed state and the one with the commits in
+progress, and takes for each bucket the state that serves less, the newer
+epoch, and the rows kept aside in either; steps also apply their state
+again after their commit.
+
+Testing found what the model could not. The recheck after a read compared
+the reply's status with a name defined further down the module (a global,
+nil), so it never refused, and READ COMMITTED scans that waited for a lock
+while a bucket moved returned one of its rows twice, or none
+(`movetest.py`, §4); the storage tests now hold such a scan through a move.
+A review found two more: a shard that read its map again while a send or a
+last copy waited for its quorum lost that step in memory (a read routed by
+an old map then found the bucket's rows gone, and a scan of R missed a row
+of the last copy), and a driver that gave a move up when the reply to its
+write of `flip` was lost left a job that no takeover could finish. The
+storage tests hold each step's commit at a quorum through a map read, and
+`movefaults.sh` has a takeover find the move given up on S after `flip`.
+
+### 2.13 Adding and removing shards
+
+With buckets that move (§2.12), the size of a cluster is a matter of
+membership: a shard that joins starts with no buckets and receives some by
+moves; a shard that leaves first sends all of its buckets away. One more
+thing has to hold (issue #25). A scan reads every shard its SQL server
+knows, and §2.12 relies on that being every shard a bucket can be on: a
+scan that reads the sender after a bucket left and never reads the
+receiver misses the bucket's rows, and nothing it read changed. A
+transaction routed before a shard joined does not know that shard.
+
+**The protocol.** Every shard keeps a membership version, and adding a
+shard raises it on every shard before any bucket may move to the new one.
+A transaction that scanned names the version its server routed it with in
+its commit requests -- a validation, a PREPARE, a local commit -- and in
+its read when it reads a single shard in one call; a shard that has a newer
+version refuses it ('moved', 1213), and its server loads the membership and
+runs the statement again, or rolls the transaction back. A transaction
+routed with the old membership that scanned the sender before the bucket
+left fails its validation there (MVCC, §2.12); one that scanned it after
+can commit only once every shard has the new version, which then refuses
+it. Removing a shard needs no check: a shard leaves once it owns no bucket
+and receives none, and a scan that still reads it finds nothing there.
+
+**The model.** With `MJoin`, B joins the cluster -- `MemberJoin` raises
+`mver` on each shard, in any order -- and x moves from A to B once every
+shard has the new version. `OldTxns` are transactions routed before B
+joined; their scans read every shard but B (`KnownShards`), and
+`MemberOK` is the check above. *JoinScan* is MoveScan's workload with its
+scan routed before B joined, on two shards (every row starts on A, so the
+scan is one read of A: `Join_Scan`, `Join_ScanFailover`) and on three (y
+starts on C, so the scan reads A and C in streams and validates or prepares
+there: `Join3_Scan`, `Join3_ScanPrepare`). Without the check
+(`BugJoinNoCheck`) TLC finds a scan that commits without x: in 7 steps on
+two shards (B joins, x moves, the scan reads A after x left), in 13 on
+three (the scan reads C, B joins, x moves, the scan reads A and validates
+on both, or prepares on both: `Bug_JoinNoCheck3`,
+`Bug_JoinNoCheck3Prepare`).
+
+**In Tarn.** Every shard keeps the membership in `_tarn_meta` ('members':
+a version and the shards with their replicas; without the record, version 0
+and the shards of the SQL servers' configuration). `TARN ADD SHARD` is a
+job of kind `members`, which waits for every other job, as they wait for it
+(`tarn_job_begin`). It checks the new node -- its shard id, no buckets, no
+tables but the cluster's and no rows in them, so that a run that stopped
+can run again -- copies every table from the first shard as it is there
+(`tarn_schema_export`, `tarn_schema_import`: space ids, formats, indexes,
+global index spaces, and the catalog entries the definition fences come
+from), gives it a bucket map with no buckets, records phase `apply` (from
+there a server that finds the job abandoned finishes it forward), and
+writes the new membership on every shard (`tarn_members_set` only raises
+the version) before the job ends; a move to the new shard is a job too, so
+it begins once every shard has the new version, as the model's moves do.
+A transaction takes its server's version when it begins (`Txn::mver`): a
+server adds a joining shard to its list before it takes the shard's
+version, and a scan reads every shard on the list, so the transaction's
+scans read at least that membership's shards. Its commit requests name the
+version when it read every shard (a read routed by no bucket), and a read
+of every shard outside a transaction names its map's version next to the
+epoch (`{e, m}`, §2.12); `BK.member_refused` refuses an older one. A
+server learns a newer membership from the version in each shard's part of
+the bucket map, which it reads again after a refusal, from the first shard
+when it begins a job (a job acts on every shard), and when it starts; the
+shards find the replicas of a shard that joined in the membership too
+(recovery). A shard's list position never changes while a server runs
+(`ShardList`), so the positions in transactions, maps and lock requests
+stay valid as shards join.
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **61 verified, 0 errors**) and compiled into the server as plain
+src/lib.rs`: **66 verified, 0 errors**) and compiled into the server as plain
 Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
   specification (`crc_bytes`) for any input; `bucket_from_crc` returns a
   bucket in `1..=bucket_count`; `shard_of_bucket` returns a shard in
   `0..nshards`, is monotone in the bucket, and every shard owns at least one
-  bucket (the map is a total, onto partition). The SQL layer, the KV
-  benchmark and the bucket ids stored in tuples all use these functions.
+  bucket (the map is a total, onto partition): the layout of a new
+  cluster. `build_owner` turns the bucket ranges the shards report owning
+  into the owner of each bucket: it is proven to give every bucket a range
+  holds that range's shard, and every other bucket `NO_SHARD`, or to refuse
+  the reports when two ranges share a bucket or one is out of range. The
+  SQL layer, the KV benchmark and the bucket ids stored in tuples all use
+  these functions.
 * **Coordinator logic** (`coord.rs`). `decide(votes)` returns COMMIT iff
   every vote is YES and ABORT iff some vote is NO (the TLA+ `CoordDecide`).
   `resolve_step(record, participant states, expired)` is one step of
@@ -1059,15 +1320,18 @@ does not check.
 
 | Suite | Scope | Result |
 |---|---|---|
-| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE` | 266/266 |
-| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection) | all pass |
+| `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts | 392/392 and 138/138 |
+| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings; collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent cross-shard inserts of case variants of one case-insensitive key (serializable and READ COMMITTED: exactly one commits); concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 13/13 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), a UNION ALL of SKIP LOCKED reservations (every unit free or held once while carts reserve and release), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, primary-key point writes locked and read in one step, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 28/28 |
 | `tests/sql/ddltest.py` | a mysqldump file loaded with the `mysql` client; multi-statement batches and `COM_SET_OPTION`; refused alterations; 20 s of writes on two SQL servers (fast-path and read-modify-write autocommits, transfers, READ COMMITTED transactions, readers) while the first server alters the table about 300 times: no error reaches an autocommit statement, no acknowledged increment is lost or duplicated; schema changes from six connections at once; transactions that wrote a table before an ALTER, at both isolation levels (1412, rolled back); tables created through one server used at once through the other while schema changes reload the catalog; writes going on while `ADD INDEX` builds on a vinyl table of 300,000 rows | 8/8 |
-| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload and READ COMMITTED transfers: leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
+| `tests/sql/movetest.py` | bucket moves under load: two SQL servers run serializable transfers with a ledger, READ COMMITTED read-modify-writes and autocommit increments of counters, serializable audits and READ COMMITTED reads of every shard, while one of them moves the buckets of those rows back and forth: no transfer lost or applied twice, no increment lost, audits exact, every READ COMMITTED scan sees each row once | about 190 moves in 30 s, every check holds; also on vinyl tables read from disk |
+| `tests/movefaults.sh` | the SQL server driving a move killed while it copies, while its fence drains, after its flip before the send, and after the send before the receive, and after its flip with the move given up on the sending shard (test hooks hold the steps; the server is started again after each); another server finishes the job (`ddl_job_stale` = 2 s) | 41/41: given up in the first two cases and the last, finished in the third and fourth, each within 3 s; rows checked through SQL and on the shards |
+| `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload, READ COMMITTED transfers and `movetest.py` (buckets moving through the leader changes): leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
+| `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |
 | `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
@@ -1084,8 +1348,8 @@ records; the others model the PREPARE-based variant with the coordinator
 recording COMMITTED, and keep records forever. `Bug_*` configurations switch
 off one protection each and must fail; `Tradeoff_*` check documented weaker
 guarantees and must fail. Each workload has three transactions on two
-shards with one or two faults, so these are bounded checks: small, but
-exhaustive within those bounds. Two caveats. `Skew_GC_ROValidate`, the
+shards (three for `Join3_*`) with one or two faults, so these are bounded
+checks: small, but exhaustive within those bounds. Two caveats. `Skew_GC_ROValidate`, the
 largest workload with garbage collection, a crash and a lost message, did
 not finish in the time available: TLC explored 47.8 million distinct states,
 breadth-first into depth 23, without finding a violation;
@@ -1093,51 +1357,68 @@ breadth-first into depth 23, without finding a violation;
 recovery racing the coordinator but without crashes or message loss. And
 `Skew`, `SkewFailover` and `Skew_AckOnPrepare` (up to an hour each) were
 last checked before the GC, ApplyMarksCommitted and READ COMMITTED
-extensions of the spec existed: with those options off and no READ
-COMMITTED transactions, the new actions are disabled and the new variables
-stay constant, so the behaviour is unchanged, as re-running every other
-configuration with the final spec confirms (identical numbers of distinct
-states).
+extensions of the spec existed, and the other configurations that
+`tla/check.sh` leaves out (`Frac`, `Local`, their `Failover` variants and
+the other `Skew*`) before bucket moves and joining shards: with those
+options off and no READ COMMITTED transactions, moves or joins, the new
+actions are disabled and the new variables stay constant, so the behaviour
+is unchanged, as re-running the
+serializable configurations of `tla/check.sh` with the final spec confirms
+(the same numbers of distinct states as before each extension).
 
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
 |---|---|---:|---:|---:|---|---:|
-| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 112812 | 566854 | 14 | 15s | 14 |
-| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 21733 | 81213 | 11 | 06s | 11 |
-| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2881 | 8063 | 10 | 02s | 9 |
-| Bug_IgnorePLocks | violates StrictSerializable | 4296 | 13823 | 11 | 06s | 11 |
-| Bug_InsertNoExistCheck | violates UniqueHolds | 144 | 231 | 6 | 00s | 5 |
-| Bug_LocalIgnoresRLocks | violates StrictSerializable | 32762 | 134735 | 13 | 07s | 13 |
-| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3539 | 10017 | 10 | 02s | 10 |
-| Bug_NoReadLocks | violates StrictSerializable | 2098 | 7167 | 9 | 02s | 9 |
-| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6596 | 19191 | 9 | 03s | 9 |
-| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12441 | 46334 | 11 | 04s | 11 |
-| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 4420 | 14830 | 11 | 06s | 11 |
-| Bug_RCLockReadsInFlight | violates StrictSerializable | 100 | 186 | 5 | 01s | 5 |
-| Bug_RCNoLockCheck | violates StrictSerializable | 36934 | 110964 | 11 | 15s | 10 |
-| Bug_RCReadBeforeLock | violates StrictSerializable | 3287 | 10040 | 11 | 05s | 11 |
-| Bug_ROValidateNoReadCheck | violates StrictSerializable | 19573 | 72384 | 12 | 05s | 12 |
-| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10636 | 37303 | 11 | 04s | 11 |
+| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
+| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
+| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
+| Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
+| Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
+| Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
+| Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
+| Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
+| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
+| Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
+| Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
+| Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
+| Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
+| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
+| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
+| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
+| Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
+| Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
+| Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
+| Bug_ROValidateNoReadCheck | violates StrictSerializable | 18873 | 69552 | 12 | 05s | 12 |
+| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
-| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 02min 25s |  |
-| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 05min 39s |  |
+| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
+| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 16s |  |
+| Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
+| Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
+| Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
+| Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
-| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 01min 31s |  |
-| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 03min 44s |  |
+| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 56s |  |
+| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
 | Local_ROValidate | no errors | 66348 | 377760 | 19 | 12s |  |
-| RC_Counter | no errors | 2289068 | 17877610 | 26 | 05min 09s |  |
-| RC_CounterFailover | no errors | 1246789 | 8726265 | 26 | 02min 35s |  |
-| RC_Counter_AckOnPrepare | no errors | 1252034 | 9355913 | 26 | 03min 11s |  |
-| RC_Local | no errors | 53479 | 287001 | 19 | 10s |  |
-| RC_Mixed | no errors | 171352 | 1029336 | 20 | 48s |  |
-| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 48s |  |
-| Recov | no errors | 71927 | 412881 | 18 | 12s |  |
+| Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
+| Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
+| Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
+| Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
+| RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
+| RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
+| RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 04min 27s |  |
+| RC_Local | no errors | 50606 | 277842 | 19 | 09s |  |
+| RC_Mixed | no errors | 171352 | 1029336 | 20 | 27s |  |
+| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 56s |  |
+| Recov | no errors | 71927 | 412881 | 18 | 11s |  |
 | RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
-| Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 13s |  |
-| Recov_GC | no errors | 1136892 | 8123071 | 23 | 03min 20s |  |
+| Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 14s |  |
+| Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 10min 18s |  |
@@ -1145,11 +1426,11 @@ states).
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
 | Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
-| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 617 | 1165 | 8 | 01s | 7 |
-| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3119 | 9623 | 9 | 02s | 8 |
-| Uniq | no errors | 657499 | 5210697 | 22 | 31s |  |
-| UniqFailover | no errors | 1444398 | 11344964 | 24 | 56s |  |
-| Uniq_RC | no errors | 966902 | 7892907 | 23 | 34s |  |
+| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
+| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
+| Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
+| UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
+| Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |
 
 ### 5.2 Benchmarks
 
@@ -1245,7 +1526,15 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   table wait too, and fail with 1213 after `lock_wait` (1 s), where MySQL's
   metadata lock makes them wait up to `lock_wait_timeout`. `TRUNCATE` does
   not reset `AUTO_INCREMENT`.
-* The bucket → shard map is static (no online resharding / bucket moves yet),
-  so vshard compatibility is at the level of tuple layout and bucket hashing.
+* Bucket moves (§2.12): one bucket at a time per move, and writes to the
+  bucket's rows wait from its fence to its send (refused and retried; the
+  time to drain the prepared transactions and copy the last writes); a
+  transaction that used the bucket while it moved is rolled back with 1213,
+  as after a leader change. The number of buckets is fixed when a cluster
+  is made. Every SQL server must run a version with bucket moves (an older
+  one names no buckets: its writes are refused by their rows' `bucket_id`,
+  but its reads are not checked) and have every shard in its
+  configuration before buckets move. vshard compatibility is at the level
+  of tuple layout and bucket hashing; the map is Tarn's own.
 * No TLS, no `COM_CHANGE_USER`; users and passwords come from the command
   line.

@@ -81,6 +81,33 @@ fn crc_matches_tarantool() {
 }
 
 #[test]
+fn bucket_owners_from_reports() {
+    let n = route::NO_SHARD;
+    // shard 0 owns 1..=3 and 6, shard 1 owns 4; bucket 5 is between a
+    // move's send and its receive
+    let o = route::build_owner(6, &[(0, 1, 3), (1, 4, 4), (0, 6, 6)]).unwrap();
+    assert_eq!(o, vec![0, 0, 0, 1, n, 0]);
+    // two reports claim bucket 3
+    assert!(route::build_owner(6, &[(0, 1, 3), (1, 3, 4)]).is_none());
+    // out of range, empty, or naming no shard
+    assert!(route::build_owner(6, &[(0, 0, 3)]).is_none());
+    assert!(route::build_owner(6, &[(0, 5, 7)]).is_none());
+    assert!(route::build_owner(6, &[(0, 4, 3)]).is_none());
+    assert!(route::build_owner(6, &[(n, 1, 1)]).is_none());
+    // a new cluster's layout is a partition
+    let ranges: Vec<(u32, u32, u32)> = (0..7u32)
+        .map(|s| {
+            let bs: Vec<u32> = (1..=3000)
+                .filter(|&b| route::shard_of_bucket(b, 3000, 7) == s)
+                .collect();
+            (s, bs[0], *bs.last().unwrap())
+        })
+        .collect();
+    let o = route::build_owner(3000, &ranges).unwrap();
+    assert!(o.iter().all(|&s| s < 7));
+}
+
+#[test]
 fn coordinator_decisions() {
     assert!(matches!(coord::decide(&[Vote::Yes, Vote::Yes]), Decision::Commit));
     assert!(matches!(coord::decide(&[Vote::Yes, Vote::No]), Decision::Abort));

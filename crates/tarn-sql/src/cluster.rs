@@ -2,6 +2,7 @@
 //! DDL broadcast and AUTO_INCREMENT allocation. One `Cluster` is shared by
 //! every client session of a Tarn server.
 
+use crate::buckets::BucketMap;
 use crate::catalog::{self, Catalog, TableDef};
 use crate::mpw::{from_iproto, lua_status, Mp, Rd};
 use crate::route;
@@ -15,9 +16,6 @@ use std::time::{Duration, Instant};
 use tarn_common::{SqlError, SqlResult, Value};
 use tarn_iproto::{Client, Opts};
 
-fn default_buckets() -> u32 {
-    3000
-}
 fn default_user() -> String {
     "tarn".into()
 }
@@ -45,8 +43,12 @@ pub struct ShardConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClusterConfig {
     pub shards: Vec<ShardConfig>,
-    #[serde(default = "default_buckets")]
-    pub bucket_count: u32,
+    /// The number of buckets of a new cluster (default
+    /// `buckets::NEW_CLUSTER_BUCKETS`), fixed when the first SQL server
+    /// makes the bucket map; from then on the map's count is used. See
+    /// `buckets::new_map_count`.
+    #[serde(default)]
+    pub bucket_count: Option<u32>,
     #[serde(default = "default_user")]
     pub user: String,
     #[serde(default = "default_user")]
@@ -92,6 +94,15 @@ pub struct ClusterConfig {
     /// CHARSET option): `collation_server`.
     #[serde(default = "default_collation")]
     pub default_collation: String,
+    /// How long a bucket move waits, at each step, for the transactions
+    /// that hold locks on the bucket's rows (seconds); a move that waits
+    /// longer is given up.
+    #[serde(default = "default_move_timeout")]
+    pub move_timeout: f64,
+}
+
+fn default_move_timeout() -> f64 {
+    10.0
 }
 
 fn default_ddl_job_stale() -> f64 {
@@ -106,13 +117,17 @@ fn default_deadlock_interval() -> f64 {
     1.0
 }
 
-/// What a schema change job does (lua/tarn.lua "Jobs").
+/// What a job does (lua/tarn.lua "Jobs"): a schema change, or a bucket
+/// move (buckets.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum JobKind {
+pub(crate) enum JobKind {
     Alter,
     Create,
     Drop,
     Truncate,
+    Move,
+    /// A change of the cluster's shards (members.rs).
+    Members,
 }
 
 impl JobKind {
@@ -122,6 +137,8 @@ impl JobKind {
             JobKind::Create => "create",
             JobKind::Drop => "drop",
             JobKind::Truncate => "truncate",
+            JobKind::Move => "move",
+            JobKind::Members => "members",
         }
     }
 
@@ -131,6 +148,8 @@ impl JobKind {
             "create" => JobKind::Create,
             "drop" => JobKind::Drop,
             "truncate" => JobKind::Truncate,
+            "move" => JobKind::Move,
+            "members" => JobKind::Members,
             _ => return None,
         })
     }
@@ -147,25 +166,29 @@ impl JobKind {
             JobKind::Create => "CREATE TABLE",
             JobKind::Drop => "DROP TABLE",
             JobKind::Truncate => "TRUNCATE",
+            JobKind::Move => "TARN MOVE BUCKET",
+            JobKind::Members => "TARN ADD SHARD",
         }
     }
 }
 
-/// A schema change in progress: CREATE, DROP, TRUNCATE or ALTER TABLE (its
-/// records on the first shard, one per table name it touches).
-struct Job {
-    owner: String,
-    age: f64,
-    kind: JobKind,
-    space: String,
+/// A job in progress: a schema change -- CREATE, DROP, TRUNCATE or ALTER
+/// TABLE -- or a bucket move (its records on the first shard, one per name
+/// it touches: a table name, or 'bucket:<n>').
+pub(crate) struct Job {
+    pub(crate) owner: String,
+    pub(crate) age: f64,
+    pub(crate) kind: JobKind,
+    pub(crate) space: String,
     /// "prepare" until every shard prepared, then "apply" or "abort" ("run":
-    /// an ALTER TABLE begun by a server from before phases)
-    phase: String,
+    /// an ALTER TABLE begun by a server from before phases); a move:
+    /// "prepare", then "flip" from its send on
+    pub(crate) phase: String,
     /// msgpack of its arguments (`a` of the storage procedures)
-    args: Vec<u8>,
+    pub(crate) args: Vec<u8>,
     /// Which run of the job this is: 1, plus one per takeover
     /// (`tarn_job_touch`). Its steps carry it (see lua/tarn.lua UIX.filling).
-    gen: u64,
+    pub(crate) gen: u64,
 }
 
 /// From the arguments of an ALTER TABLE job: the space ids of its new
@@ -249,9 +272,101 @@ pub struct Shard {
     replicas: Vec<String>,
     leader: RwLock<Option<Arc<Pool>>>,
     discover: tokio::sync::Mutex<()>,
+    /// The shard left the cluster: it owns no bucket, and fan-outs and
+    /// schema changes skip it.
+    removed: std::sync::atomic::AtomicBool,
+}
+
+/// The most shards a cluster may have.
+pub const MAX_SHARDS: usize = 1024;
+
+/// The shards a server knows, by position (`Cluster::shards`). Positions
+/// never change while the server runs: a shard that joins the cluster is
+/// added at the end, and one that leaves stays, marked removed, so that the
+/// positions in transactions, bucket maps and lock requests stay valid.
+pub struct ShardList {
+    slots: Box<[std::sync::OnceLock<Shard>]>,
+    len: AtomicUsize,
+    add: Mutex<()>,
+}
+
+impl ShardList {
+    fn new(shards: Vec<Shard>) -> ShardList {
+        let slots: Box<[std::sync::OnceLock<Shard>]> = (0..MAX_SHARDS).map(|_| std::sync::OnceLock::new()).collect();
+        let n = shards.len();
+        for (i, s) in shards.into_iter().enumerate() {
+            let _ = slots[i].set(s);
+        }
+        ShardList {
+            slots,
+            len: AtomicUsize::new(n),
+            add: Mutex::new(()),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len.load(Ordering::Acquire)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Shard> {
+        (0..self.len()).map(move |i| &self[i])
+    }
+
+    /// Add a shard at the end: its position.
+    fn push(&self, s: Shard) -> SqlResult<usize> {
+        let _g = self.add.lock();
+        let n = self.len();
+        if n == MAX_SHARDS {
+            return Err(SqlError::internal(format!(
+                "a cluster has at most {} shards",
+                MAX_SHARDS
+            )));
+        }
+        let _ = self.slots[n].set(s);
+        self.len.store(n + 1, Ordering::Release);
+        Ok(n)
+    }
+}
+
+impl std::ops::Index<usize> for ShardList {
+    type Output = Shard;
+    fn index(&self, i: usize) -> &Shard {
+        self.slots[i].get().expect("a shard position")
+    }
+}
+
+impl<'a> IntoIterator for &'a ShardList {
+    type Item = &'a Shard;
+    type IntoIter = Box<dyn Iterator<Item = &'a Shard> + 'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.iter())
+    }
 }
 
 impl Shard {
+    pub(crate) fn new(id: u32, replicas: Vec<String>) -> Shard {
+        Shard {
+            id,
+            replicas,
+            leader: RwLock::new(None),
+            discover: tokio::sync::Mutex::new(()),
+            removed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the shard left the cluster.
+    pub fn removed(&self) -> bool {
+        self.removed.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_removed(&self) {
+        self.removed.store(true, Ordering::Release);
+    }
+
     pub async fn client(&self, cluster: &Cluster) -> SqlResult<Client> {
         if let Some(p) = self.leader.read().clone() {
             if let Some(c) = p.pick() {
@@ -356,6 +471,8 @@ pub struct Stats {
     /// Row counts taken to choose the access path of an ordered read with
     /// LIMIT (issue #81).
     pub path_estimates: AtomicU64,
+    /// Buckets this server moved (issue #24).
+    pub bucket_moves: AtomicU64,
 }
 
 pub struct CachedPlan {
@@ -365,7 +482,7 @@ pub struct CachedPlan {
 
 pub struct Cluster {
     pub cfg: ClusterConfig,
-    pub shards: Vec<Shard>,
+    pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
     plans: RwLock<HashMap<(String, String), Arc<CachedPlan>>>,
     /// Blocks of counter values reserved by this server (AUTO_INCREMENT,
@@ -382,8 +499,18 @@ pub struct Cluster {
     /// Row-lock requests in flight, by transaction (each makes one at a
     /// time): where the cross-shard deadlock detector starts.
     lock_requests: Mutex<HashMap<String, LockRequest>>,
-    /// Position in `shards` of each configured shard id.
-    shard_pos: HashMap<u32, usize>,
+    /// Position in `shards` of each shard id.
+    pub(crate) shard_pos: RwLock<HashMap<u32, usize>>,
+    /// Which shard owns each bucket (buckets.rs), the number of times it was
+    /// read, and the lock that makes concurrent reads share one.
+    buckets: RwLock<Arc<BucketMap>>,
+    bucket_reads: AtomicU64,
+    pub(crate) bucket_mu: tokio::sync::Mutex<()>,
+    /// The membership this server knows (members.rs; version 0: its
+    /// configuration's), and the lock that makes reads of it one at a time.
+    pub(crate) members: RwLock<crate::members::Members>,
+    members_ver: AtomicU64,
+    pub(crate) members_mu: tokio::sync::Mutex<()>,
 }
 
 /// A row-lock request in flight (`Txn::lock`).
@@ -437,7 +564,7 @@ async fn lock_waits(c: &Cluster, shards: &[usize]) -> Vec<Wait> {
     c.stats.deadlock_calls.fetch_add(shards.len() as u64, Ordering::Relaxed);
     let mut out = Vec::new();
     for (&s, r) in shards.iter().zip(replies) {
-        if let Ok(v) = r.and_then(|d| parse_waits(&d, s, &c.shard_pos)) {
+        if let Ok(v) = r.and_then(|d| parse_waits(&d, s, &c.shard_pos.read())) {
             out.extend(v);
         }
     }
@@ -687,16 +814,12 @@ impl Cluster {
         if cfg.shards.is_empty() {
             return Err(SqlError::internal("cluster config has no shards"));
         }
-        let shards = cfg
-            .shards
-            .iter()
-            .map(|s| Shard {
-                id: s.id,
-                replicas: s.replicas.clone(),
-                leader: RwLock::new(None),
-                discover: tokio::sync::Mutex::new(()),
-            })
-            .collect();
+        let shards = ShardList::new(
+            cfg.shards
+                .iter()
+                .map(|s| Shard::new(s.id, s.replicas.clone()))
+                .collect(),
+        );
         let boot = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| (d.as_nanos() & 0xFFFF_FFFF) as u32)
@@ -712,6 +835,11 @@ impl Cluster {
             lock_wait_timeout: cfg.lock_wait_timeout,
         });
         let shard_pos = cfg.shards.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
+        // (until the map is read, below)
+        let (bucket_count, nshards) = (
+            cfg.bucket_count.unwrap_or(crate::buckets::LEGACY_BUCKETS),
+            cfg.shards.len(),
+        );
         let c = Arc::new(Cluster {
             cfg,
             shards,
@@ -725,10 +853,29 @@ impl Cluster {
             reloads: AtomicU64::new(0),
             reload_mu: tokio::sync::Mutex::new(()),
             lock_requests: Mutex::new(HashMap::new()),
-            shard_pos,
+            shard_pos: RwLock::new(shard_pos),
+            buckets: RwLock::new(Arc::new(BucketMap::initial(bucket_count, nshards))),
+            bucket_reads: AtomicU64::new(0),
+            bucket_mu: tokio::sync::Mutex::new(()),
+            members: RwLock::new(crate::members::Members::default()),
+            members_ver: AtomicU64::new(0),
+            members_mu: tokio::sync::Mutex::new(()),
         });
         for s in &c.shards {
             s.client(&c).await?;
+        }
+        c.load_members().await?;
+        c.reload_buckets().await?;
+        if let Some(n) = c.cfg.bucket_count {
+            let count = c.bucket_map().count;
+            if n != count {
+                tracing::warn!(
+                    "bucket_count is {} in the configuration, but the cluster has {} buckets (fixed when it was made): using {}",
+                    n,
+                    count,
+                    count
+                );
+            }
         }
         if let Err(e) = c.finish_stale_jobs().await {
             tracing::warn!("finishing abandoned schema changes: {}", e);
@@ -749,14 +896,17 @@ impl Cluster {
                 }
             });
         }
-        if c.shards.len() > 1 && c.cfg.deadlock_interval > 0.0 {
+        if c.cfg.deadlock_interval > 0.0 {
             let weak = Arc::downgrade(&c);
             let every = Duration::from_secs_f64(c.cfg.deadlock_interval);
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(every).await;
                     let Some(c) = weak.upgrade() else { break };
-                    detect_deadlocks(&c).await;
+                    // (shards may join a cluster of one)
+                    if c.nshards() > 1 {
+                        detect_deadlocks(&c).await;
+                    }
                 }
             });
         }
@@ -824,12 +974,81 @@ impl Cluster {
     /// Shard index (0-based position in `shards`) owning a row/key, given the
     /// values of the table's shard-key columns.
     pub fn shard_of(&self, shard_key: &[Value]) -> usize {
-        let b = route::bucket_of(shard_key, self.cfg.bucket_count);
-        route::shard_of_bucket(b, self.cfg.bucket_count, self.shards.len() as u32) as usize
+        self.route(shard_key).0
+    }
+
+    /// The shard (position) and the bucket of a row/key, given the values
+    /// of the table's shard-key columns.
+    pub fn route(&self, shard_key: &[Value]) -> (usize, u32) {
+        let m = self.buckets.read();
+        let b = route::bucket_of(shard_key, m.count);
+        (m.shard(b), b)
     }
 
     pub fn bucket_of(&self, shard_key: &[Value]) -> u32 {
-        route::bucket_of(shard_key, self.cfg.bucket_count)
+        route::bucket_of(shard_key, self.buckets.read().count)
+    }
+
+    /// The bucket of the rows whose key in index `index` of `t` is `key` (a
+    /// prefix of it), if the key determines the shard key.
+    pub fn bucket_of_index_key(&self, t: &TableDef, index: u32, key: &[Value]) -> Option<u32> {
+        let idx = t.indexes.iter().find(|i| i.id == index)?;
+        crate::exec::route_bucket(self, t, idx, key).map(|(_, b)| b)
+    }
+
+    /// The bucket map this server routes by.
+    pub fn bucket_map(&self) -> Arc<BucketMap> {
+        self.buckets.read().clone()
+    }
+
+    /// Route by `map` from now on.
+    pub(crate) fn install_buckets(&self, map: BucketMap) {
+        *self.buckets.write() = Arc::new(map);
+        self.bucket_reads.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub fn bucket_loads(&self) -> u64 {
+        self.bucket_reads.load(Ordering::Acquire)
+    }
+
+    /// Read the bucket map from the shards now (one read at a time).
+    pub async fn reload_buckets(&self) -> SqlResult<()> {
+        let _g = self.bucket_mu.lock().await;
+        self.load_buckets().await
+    }
+
+    /// The position in `shards` of the shard with id `id`.
+    pub fn shard_position(&self, id: u32) -> Option<usize> {
+        self.shard_pos.read().get(&id).copied()
+    }
+
+    /// The membership version this server routes with (members.rs).
+    pub fn member_ver(&self) -> u64 {
+        self.members_ver.load(Ordering::Acquire)
+    }
+
+    /// Take membership `m` if it is not older than the one this server
+    /// has. (Its shards must be in `shards` already.)
+    pub(crate) fn set_members(&self, m: crate::members::Members) {
+        let mut cur = self.members.write();
+        if m.ver < cur.ver {
+            return;
+        }
+        self.members_ver.fetch_max(m.ver, Ordering::AcqRel);
+        *cur = m;
+    }
+
+    /// Add a shard that joined the cluster at the end of `shards`: its
+    /// position.
+    pub(crate) fn add_known_shard(&self, s: Shard) -> SqlResult<usize> {
+        let id = s.id;
+        let mut pos = self.shard_pos.write();
+        if let Some(&p) = pos.get(&id) {
+            return Ok(p);
+        }
+        let p = self.shards.push(s)?;
+        pos.insert(id, p);
+        Ok(p)
     }
 
     /// CALL an idempotent Lua procedure on a shard leader outside any
@@ -1259,7 +1478,7 @@ impl Cluster {
 
     // ---- schema change jobs (lua/tarn.lua "Jobs") ---------------------------
 
-    fn job_owner(&self) -> String {
+    pub(crate) fn job_owner(&self) -> String {
         format!(
             "{}-{:08x}-{}",
             self.cfg.node_id,
@@ -1281,6 +1500,22 @@ impl Cluster {
         deadline: std::time::Instant,
     ) -> SqlResult<Job> {
         let owner = self.job_owner();
+        self.job_begin_as(&owner, kind, space, names, ver, args, deadline).await
+    }
+
+    /// `job_begin` with the job's owner (`job_owner`) given.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn job_begin_as(
+        &self,
+        owner: &str,
+        kind: JobKind,
+        space: &str,
+        names: &[String],
+        ver: u64,
+        args: &[u8],
+        deadline: std::time::Instant,
+    ) -> SqlResult<Job> {
+        let owner = owner.to_string();
         loop {
             let wait = deadline
                 .saturating_duration_since(std::time::Instant::now())
@@ -1302,6 +1537,21 @@ impl Cluster {
             m.f64(wait);
             let d = self.call(0, "tarn_job_begin", &m.0).await?;
             if crate::mpw::status_is(&d, "ok") {
+                // {'ok', mver}: the first shard's membership version. A job
+                // acts on every shard: a newer membership than this server
+                // knows (a shard joined) is read first. (Shards join in a
+                // job of their own, which other jobs wait for and which
+                // ends once every shard has the new membership.)
+                if crate::mpw::status_len(&d) > 1 {
+                    let (_, mut rd) = lua_status(&d)?;
+                    let v = rd.value()?.as_i64().unwrap_or(0).max(0) as u64;
+                    if v > self.member_ver() {
+                        if let Err(e) = self.load_members().await {
+                            let _ = self.job_end(&owner).await;
+                            return Err(e);
+                        }
+                    }
+                }
                 return Ok(Job {
                     owner,
                     age: 0.0,
@@ -1331,7 +1581,11 @@ impl Cluster {
                 return Err(SqlError::new(
                     1205,
                     "HY000",
-                    "Lock wait timeout exceeded; try restarting transaction (another schema change of the table is running)",
+                    if kind == JobKind::Move {
+                        "Lock wait timeout exceeded; try restarting transaction (a schema change or another move of the bucket is running)"
+                    } else {
+                        "Lock wait timeout exceeded; try restarting transaction (another schema change of the table, or a bucket move, is running)"
+                    },
                 ));
             }
             if wait <= 0.0 {
@@ -1355,15 +1609,54 @@ impl Cluster {
         Ok(same)
     }
 
-    async fn job_end(&self, owner: &str) -> SqlResult<()> {
+    pub(crate) async fn job_end(&self, owner: &str) -> SqlResult<()> {
         let mut a = Mp::new();
         a.arr(1).str(owner);
         lua_status(&self.call(0, "tarn_job_end", &a.0).await?).map(|_| ())
     }
 
+    /// Record the job's arguments (a move learns them once it holds its
+    /// bucket).
+    pub(crate) async fn job_args(&self, job: &Job) -> SqlResult<()> {
+        let mut a = Mp::new();
+        a.arr(2).str(&job.owner);
+        a.0.extend_from_slice(&job.args);
+        let d = self.call(0, "tarn_job_args", &a.0).await?;
+        if crate::mpw::status_is(&d, "ok") {
+            return Ok(());
+        }
+        Err(SqlError::internal(format!(
+            "{} of {}: the job is gone",
+            job.kind.statement(),
+            job.space
+        )))
+    }
+
+    /// Run `work` while keeping the job of `owner` alive (`tarn_job_touch`
+    /// through whichever node leads the first shard now, so that a leader
+    /// change there does not let another server take a live job over).
+    pub(crate) async fn with_job_alive<T>(&self, owner: &str, work: impl std::future::Future<Output = T>) -> T {
+        let every = Duration::from_secs_f64((self.cfg.ddl_job_stale / 3.0).clamp(0.05, 5.0));
+        let mut t = Mp::new();
+        t.arr(1).str(owner);
+        let touch = async {
+            loop {
+                tokio::time::sleep(every).await;
+                if let Err(e) = self.call(0, "tarn_job_touch", &t.0).await {
+                    tracing::debug!("keeping job {} alive: {}", owner, e.message);
+                }
+            }
+        };
+        tokio::pin!(work);
+        tokio::select! {
+            r = &mut work => r,
+            _ = touch => unreachable!("the keep-alive loop never ends"),
+        }
+    }
+
     /// Record the job's decision: from now on, whoever finishes it goes
     /// this way.
-    async fn job_phase(&self, job: &Job, phase: &str) -> SqlResult<()> {
+    pub(crate) async fn job_phase(&self, job: &Job, phase: &str) -> SqlResult<()> {
         let mut a = Mp::new();
         a.arr(2).str(&job.owner).str(phase);
         let d = self.call(0, "tarn_job_phase", &a.0).await?;
@@ -1381,8 +1674,8 @@ impl Cluster {
         ))
     }
 
-    /// The schema changes in progress.
-    async fn jobs(&self) -> SqlResult<Vec<Job>> {
+    /// The jobs in progress.
+    pub(crate) async fn jobs(&self) -> SqlResult<Vec<Job>> {
         let d = self.call(0, "tarn_jobs", &[0x90]).await?;
         let mut rd = Rd::new(&d);
         rd.array()?;
@@ -1448,6 +1741,15 @@ impl Cluster {
                 job.phase
             );
             job.owner = me;
+            // (The job acts on every shard: this server may not know them
+            // all yet. No shard joins while the job is in progress.)
+            self.load_members().await?;
+            if job.kind == JobKind::Move {
+                return self.finish_move(&job).await;
+            }
+            if job.kind == JobKind::Members {
+                return self.finish_members(&job).await;
+            }
             match self.run_job(&job).await {
                 // (a job rolled back reports the reason as an error)
                 Err(e) if e.code != 1180 => {
@@ -1476,28 +1778,7 @@ impl Cluster {
 
     /// Run a job to its end, keeping it alive meanwhile.
     async fn run_job(&self, job: &Job) -> SqlResult<()> {
-        let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
-        let toucher = {
-            let owner = job.owner.clone();
-            let s0 = self.shards[0].client(self).await?;
-            let every = Duration::from_secs_f64((self.cfg.ddl_job_stale / 3.0).clamp(0.05, 5.0));
-            tokio::spawn(async move {
-                let mut t = Mp::new();
-                t.arr(1).str(&owner);
-                loop {
-                    tokio::select! {
-                        _ = &mut stop_rx => break,
-                        _ = tokio::time::sleep(every) => {
-                            let _ = s0.call(0, "tarn_job_touch", &t.0).await;
-                        }
-                    }
-                }
-            })
-        };
-        let r = self.run_job_steps(job).await;
-        let _ = stop_tx.send(());
-        let _ = toucher.await;
-        r
+        self.with_job_alive(&job.owner, self.run_job_steps(job)).await
     }
 
     /// BUILD everywhere (ALTER TABLE: new indexes, while writes go on); then

@@ -119,7 +119,8 @@ class T:
         b = kv_get(self.args.kv, f"{DB}.kv", ["beta"])
         self.check(a is not None and a[:3] == ["alpha", "one", 1], f"KV alpha: {a}")
         self.check(b is not None and b[0] == "beta" and b[1] is None and b[2] == -5, f"KV beta: {b}")
-        self.check(a is not None and isinstance(a[3], int) and 1 <= a[3] <= 3000, f"bucket_id field: {a}")
+        count = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_buckets'"))["Tarn_buckets"])
+        self.check(a is not None and isinstance(a[3], int) and 1 <= a[3] <= count, f"bucket_id field: {a}")
 
     def test_lost_update(self):
         self.fresh("lu", "CREATE TABLE lu (id INT PRIMARY KEY, v INT)", ["(1, 100)"])
@@ -473,8 +474,8 @@ class T:
         # issue #86: an ordered page over an index that does not fix the
         # shard key reads a page per shard and merges them; a serializable
         # read records, per shard, only what that shard returned
-        c = self.fresh("om", "CREATE TABLE om (cust INT, id INT, st VARCHAR(8), t INT, PRIMARY KEY (cust, id), "
-                             "KEY bst (st, t, id)) PARTITION BY KEY(cust)", [])
+        c = self.fresh("om", "CREATE TABLE om (tenant_id INT, id INT, st VARCHAR(8), t INT, PRIMARY KEY (tenant_id, id), "
+                             "KEY bst (st, t, id)) PARTITION BY KEY(tenant_id)", [])
         for lo in range(0, 6000, 1000):
             q(c, "INSERT INTO om VALUES " + ",".join(f"({i % 97}, {i}, '{'open' if i % 3 else 'done'}', {i // 2})"
                                                    for i in range(lo, lo + 1000)))
@@ -503,7 +504,7 @@ class T:
         # the transaction's own writes are merged into the page
         q(c, "BEGIN")
         q(c, "INSERT INTO om VALUES (5, 9001, 'open', -1)")
-        q(c, "UPDATE om SET st = 'done' WHERE cust = 1 AND id = 1")
+        q(c, "UPDATE om SET st = 'done' WHERE tenant_id = 1 AND id = 1")
         got = [r[0] for r in q(c, page)]
         self.check(got == [9001] + [r[2] for r in rows if r[2] != 1][:29], f"own writes merged ({got[:5]}...)")
         q(c, "ROLLBACK")
@@ -511,14 +512,14 @@ class T:
         # conflict, one among them does
         a, b = connect(self.args.tarn), connect(self.args.tarn)
         for sql, t, conflict in ((page, 2900, False), (page, 3, True), (rpage, 10, False), (rpage, 2995, True)):
-            for cust in (0, 1, 2, 3):
+            for tenant in (0, 1, 2, 3):
                 q(a, "BEGIN")
                 q(a, sql)
-                q(a, "UPDATE om SET t = t WHERE cust = 0 AND id = 0")
-                q(b, f"INSERT INTO om VALUES ({cust}, {8000 + 10 * t + cust}, 'open', {t})")
+                q(a, "UPDATE om SET t = t WHERE tenant_id = 0 AND id = 0")
+                q(b, f"INSERT INTO om VALUES ({tenant}, {8000 + 10 * t + tenant}, 'open', {t})")
                 self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
-                           f"insert at t = {t} for customer {cust}: {'conflict' if conflict else 'no conflict'}")
-                q(b, f"DELETE FROM om WHERE cust = {cust} AND id = {8000 + 10 * t + cust}")
+                           f"insert at t = {t} for tenant {tenant}: {'conflict' if conflict else 'no conflict'}")
+                q(b, f"DELETE FROM om WHERE tenant_id = {tenant} AND id = {8000 + 10 * t + tenant}")
 
     def test_ordered_limit_case_insensitive(self):
         # issue #41: the part of a range a limited read records ends at its

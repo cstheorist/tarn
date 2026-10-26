@@ -45,7 +45,10 @@ pub enum Admin {
     ShowStatus {
         like: Option<String>,
     },
-    ShowWarnings,
+    /// SHOW WARNINGS, or SHOW ERRORS (`errors`).
+    ShowWarnings {
+        errors: bool,
+    },
     ShowEngines,
     ShowCollation,
     ShowCharset,
@@ -55,6 +58,25 @@ pub enum Admin {
         like: Option<String>,
     },
     ShowTarnStatus,
+    /// SHOW TARN BUCKETS: which shard owns which buckets, and the moves in
+    /// progress.
+    ShowTarnBuckets,
+    /// TARN MOVE BUCKET n TO SHARD id, TARN MOVE BUCKETS BETWEEN n AND m TO
+    /// SHARD id: move buckets first..=last to the shard with that id (those
+    /// it owns already stay).
+    MoveBuckets {
+        first: u32,
+        last: u32,
+        to: u32,
+    },
+    /// TARN ADD SHARD id 'replica[,replica...]': the shard with that id
+    /// joins the cluster, with no buckets (they move to it afterwards).
+    AddShard {
+        id: u32,
+        replicas: Vec<String>,
+    },
+    /// SHOW TARN SHARDS: the cluster's shards (its membership).
+    ShowTarnShards,
     /// SELECT @@a [AS x], @@b ... [LIMIT n]
     SelectVars(Vec<(String, String)>),
     Describe {
@@ -191,6 +213,8 @@ pub struct SessionVars<'a> {
     pub collation_connection: &'a str,
     /// collation_server / collation_database: the default of new tables.
     pub collation_server: &'a str,
+    /// Warnings and notes of the last statement (warning_count).
+    pub warning_count: usize,
 }
 
 /// A system variable name without `@@` and scope prefix, lower-cased.
@@ -258,7 +282,9 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         "binlog_format" => Value::str("ROW"),
         "log_bin" => Value::Int(0),
         "server_id" => Value::Int(1),
-        "warning_count" | "error_count" => Value::Int(0),
+        "warning_count" => Value::Int(sv.warning_count as i64),
+        "error_count" => Value::Int(0),
+        "tarn_tree_checks" => Value::str(TREE_CHECKS_DEFAULT),
         "default_authentication_plugin" => Value::str("mysql_native_password"),
         "sql_notes" | "sql_warnings" => Value::Int(1),
         "sql_safe_updates" | "sql_big_selects" => Value::Int(0),
@@ -289,6 +315,7 @@ pub const SHOWN_VARIABLES: &[&str] = &[
     "performance_schema",
     "sql_mode",
     "system_time_zone",
+    "tarn_tree_checks",
     "time_zone",
     "transaction_isolation",
     "transaction_read_only",
@@ -561,10 +588,76 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             t.i += 2;
             Admin::Deallocate(statement_name(&mut t)?)
         }
+        "TARN" if t.peek_up(1) == "MOVE" => {
+            t.i += 2;
+            parse_move(&mut t)?
+        }
+        "TARN" if t.peek_up(1) == "ADD" => {
+            t.i += 2;
+            parse_add_shard(&mut t)?
+        }
         "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
     Ok(Some(r))
+}
+
+/// `TARN MOVE BUCKET n TO SHARD id` | `TARN MOVE BUCKETS BETWEEN n AND m TO
+/// SHARD id` (after `TARN MOVE`).
+fn parse_move(t: &mut Toks) -> SqlResult<Admin> {
+    let usage =
+        || SqlError::parse("expected TARN MOVE BUCKET n TO SHARD id, or TARN MOVE BUCKETS BETWEEN n AND m TO SHARD id");
+    let num = |t: &mut Toks| -> SqlResult<u32> { t.next().and_then(|n| n.parse::<u32>().ok()).ok_or_else(usage) };
+    let (first, last) = if t.is("BUCKET") {
+        let b = num(t)?;
+        (b, b)
+    } else if t.is("BUCKETS") {
+        if !t.is("BETWEEN") {
+            return Err(usage());
+        }
+        let a = num(t)?;
+        if !t.is("AND") {
+            return Err(usage());
+        }
+        (a, num(t)?)
+    } else {
+        return Err(usage());
+    };
+    if !t.is("TO") || !t.is("SHARD") {
+        return Err(usage());
+    }
+    let to = num(t)?;
+    if !t.done() || first == 0 || last < first {
+        return Err(usage());
+    }
+    Ok(Admin::MoveBuckets { first, last, to })
+}
+
+/// `TARN ADD SHARD id 'replica[,replica...]'` (after `TARN ADD`): the
+/// replicas as `--shard` takes them (host:port, comma-separated).
+fn parse_add_shard(t: &mut Toks) -> SqlResult<Admin> {
+    let usage = || SqlError::parse("expected TARN ADD SHARD id 'host:port[,host:port...]'");
+    if !t.is("SHARD") {
+        return Err(usage());
+    }
+    let id = t
+        .next()
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|&n| n > 0)
+        .ok_or_else(usage)?;
+    let lit = t.next().ok_or_else(usage)?;
+    if !lit.starts_with('\'') && !lit.starts_with('"') {
+        return Err(usage());
+    }
+    let replicas: Vec<String> = unquote(&lit)
+        .split(',')
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .collect();
+    if replicas.is_empty() || !t.done() {
+        return Err(usage());
+    }
+    Ok(Admin::AddShard { id, replicas })
 }
 
 /// The name of an SQL-level prepared statement (case-insensitive).
@@ -577,7 +670,52 @@ fn statement_name(t: &mut Toks) -> SqlResult<String> {
     }
 }
 
-fn bad_value(var: &str, v: &str) -> SqlError {
+/// `tarn_tree_checks`: what the checks of declared table trees (`lint`) do
+/// with a finding about the table a statement creates or alters: report it
+/// as a warning (WARN), refuse the statement (ERROR), or nothing (OFF).
+pub const TREE_CHECKS_DEFAULT: &str = "WARN";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeChecks {
+    Off,
+    Warn,
+    Error,
+}
+
+impl TreeChecks {
+    /// A value SET may give the variable (case-insensitive), normalized.
+    pub fn parse(v: &str) -> Option<TreeChecks> {
+        let v = v.trim().trim_matches(|c| c == '\'' || c == '"');
+        Some(if v.eq_ignore_ascii_case("OFF") || v == "0" {
+            TreeChecks::Off
+        } else if v.eq_ignore_ascii_case("WARN") || v.eq_ignore_ascii_case("ON") || v == "1" {
+            TreeChecks::Warn
+        } else if v.eq_ignore_ascii_case("ERROR") || v.eq_ignore_ascii_case("STRICT") {
+            TreeChecks::Error
+        } else {
+            return None;
+        })
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            TreeChecks::Off => "OFF",
+            TreeChecks::Warn => "WARN",
+            TreeChecks::Error => "ERROR",
+        }
+    }
+}
+
+/// Statements that read the last statement's diagnostics, which they must
+/// not clear: SHOW WARNINGS / ERRORS / COUNT(*) ..., @@warning_count.
+pub fn reads_diagnostics(sql: &str) -> bool {
+    let up = sql.trim_start().to_ascii_uppercase();
+    let words: Vec<&str> = up.split_whitespace().take(2).collect();
+    matches!(words.as_slice(), ["SHOW", w] if w.starts_with("WARNINGS") || w.starts_with("ERRORS") || w.starts_with("COUNT"))
+        || up.contains("WARNING_COUNT")
+        || up.contains("ERROR_COUNT")
+}
+
+pub(crate) fn bad_value(var: &str, v: &str) -> SqlError {
     SqlError::new(
         1231,
         "42000",
@@ -836,11 +974,14 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         }
         "VARIABLES" => Admin::ShowVariables { like: like_clause(t) },
         "STATUS" => Admin::ShowStatus { like: like_clause(t) },
-        "WARNINGS" | "ERRORS" => Admin::ShowWarnings,
+        "WARNINGS" => Admin::ShowWarnings { errors: false },
+        "ERRORS" => Admin::ShowWarnings { errors: true },
         "ENGINES" => Admin::ShowEngines,
         "COLLATION" => Admin::ShowCollation,
         "CHARSET" | "CHARACTER" => Admin::ShowCharset,
         "PROCESSLIST" => Admin::ShowProcesslist,
+        "TARN" if t.is("BUCKETS") => Admin::ShowTarnBuckets,
+        "TARN" if t.is("SHARDS") => Admin::ShowTarnShards,
         "TARN" => Admin::ShowTarnStatus,
         "ENGINE" | "PLUGINS" | "MASTER" | "SLAVE" | "REPLICA" | "BINARY" | "GRANTS" | "PRIVILEGES" | "TRIGGERS"
         | "EVENTS" | "PROCEDURE" | "FUNCTION" | "OPEN" => Admin::Noop,
@@ -879,6 +1020,67 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bucket_statements() {
+        assert_eq!(recognize("SHOW TARN BUCKETS").unwrap(), Some(Admin::ShowTarnBuckets));
+        assert_eq!(recognize("show tarn status").unwrap(), Some(Admin::ShowTarnStatus));
+        assert_eq!(
+            recognize("TARN MOVE BUCKET 17 TO SHARD 2").unwrap(),
+            Some(Admin::MoveBuckets {
+                first: 17,
+                last: 17,
+                to: 2
+            })
+        );
+        assert_eq!(
+            recognize("tarn move buckets between 1 and 100 to shard 3;").unwrap(),
+            Some(Admin::MoveBuckets {
+                first: 1,
+                last: 100,
+                to: 3
+            })
+        );
+        for bad in [
+            "TARN MOVE BUCKET 0 TO SHARD 2",
+            "TARN MOVE BUCKET x TO SHARD 2",
+            "TARN MOVE BUCKETS BETWEEN 9 AND 3 TO SHARD 2",
+            "TARN MOVE BUCKET 5 TO 2",
+            "TARN MOVE BUCKET 5 TO SHARD 2 NOW",
+        ] {
+            assert!(recognize(bad).is_err(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn shard_statements() {
+        assert_eq!(recognize("SHOW TARN SHARDS").unwrap(), Some(Admin::ShowTarnShards));
+        assert_eq!(
+            recognize("TARN ADD SHARD 3 '127.0.0.1:3331, 127.0.0.1:3332'").unwrap(),
+            Some(Admin::AddShard {
+                id: 3,
+                replicas: vec!["127.0.0.1:3331".into(), "127.0.0.1:3332".into()]
+            })
+        );
+        assert_eq!(
+            recognize("tarn add shard 4 \"h:1\";").unwrap(),
+            Some(Admin::AddShard {
+                id: 4,
+                replicas: vec!["h:1".into()]
+            })
+        );
+        for bad in [
+            "TARN ADD SHARD 0 'h:1'",
+            "TARN ADD SHARD x 'h:1'",
+            "TARN ADD SHARD 3",
+            "TARN ADD SHARD 3 ''",
+            "TARN ADD SHARD 3 h",
+            "TARN ADD 3 'h:1'",
+            "TARN ADD SHARD 3 'h:1' NOW",
+        ] {
+            assert!(recognize(bad).is_err(), "{}", bad);
+        }
+    }
 
     #[test]
     fn leading_comments_preserve_set_expressions() {

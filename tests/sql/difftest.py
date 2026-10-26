@@ -54,6 +54,11 @@ SCHEMA = [
     # paged on every shard and the pages merged (issue #86)
     "CREATE TABLE ordc (cust INT NOT NULL, id INT NOT NULL, st VARCHAR(8) NOT NULL, pa DATETIME NOT NULL, "
     "n INT, PRIMARY KEY (cust, id), KEY bst (st, pa, id), KEY bpa (pa)) PARTITION BY KEY(cust)",
+    # Nullable ordered keys, repeated full secondary keys and a composite
+    # shard key. The narrow kv index deliberately omits every PK column.
+    "CREATE TABLE page_keys (p INT NOT NULL, q INT NOT NULL, id INT NOT NULL, k INT, v INT, tag INT NOT NULL, "
+    "PRIMARY KEY (p, q, id), KEY kv (k, v), KEY by_order (k, v, p, q, id), "
+    "KEY by_partial (p, k, v, q, id)) PARTITION BY KEY(p, q)",
     # unique keys without the shard key (issue #14): enforced across shards
     # through global indexes; a nullable column, as in soft-delete keys
     "CREATE TABLE gu (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
@@ -106,6 +111,15 @@ def seed():
         pa = f"'2025-03-{1 + i % 20:02d} 0{i % 4}:00:00'"
         rows.append(f"({i % 40}, {i}, {st}, {pa}, {'NULL' if i % 11 == 0 else i % 9})")
     s.append("INSERT INTO ordc VALUES " + ", ".join(rows))
+    rows = []
+    for p in range(4):
+        for q in range(8):
+            for i in range(1, 13):
+                # id and the entire (k,v) key repeat across composite PKs.
+                k = "NULL" if i % 4 == 0 else i % 3
+                v = "NULL" if i % 5 == 0 else i % 2
+                rows.append(f"({p}, {q}, {i}, {k}, {v}, {(p + q + i) % 5})")
+    s.append("INSERT INTO page_keys VALUES " + ", ".join(rows))
     return s
 
 
@@ -407,7 +421,7 @@ CASES = [
      "(SELECT k1, k2 FROM t3 WHERE k1 = 4 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED)", "q"),
     ("(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 1 FOR UPDATE) UNION ALL "
      "(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 2 FOR UPDATE) ORDER BY 2 DESC", "q"),
-    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 LIMIT 3 FOR UPDATE) UNION ALL "
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 ORDER BY k1, k2 LIMIT 3 FOR UPDATE) UNION ALL "
      "(SELECT id, b FROM t1 WHERE id = 3 FOR UPDATE)", "q"),
     ("COMMIT", "q"),
     ("UPDATE uk SET n = n * 2 WHERE name IN ('a', 'c')", "dml:uk"),
@@ -513,6 +527,20 @@ CASES = [
     ("SELECT * FROM fkc", "err"),
     ("ALTER TABLE fkc2 RENAME TO fkc3, ADD COLUMN z INT", "q"),
     ("SELECT * FROM fkc3", "q"),
+    # index comments are stored and kept by ALTER TABLE (issue #80)
+    ("CREATE TABLE icm (id INT, a INT, b INT, PRIMARY KEY (id) COMMENT 'pk', "
+     "KEY ka (a) USING BTREE COMMENT 'lookups by a', UNIQUE KEY ub (b) COMMENT 'it''s b') COMMENT 'a table'", "ddl:icm"),
+    ("ALTER TABLE icm ADD COLUMN c INT, ADD INDEX kc (c) COMMENT 'by c', RENAME INDEX ka TO ka2", "ddl:icm"),
+    ("CREATE INDEX kac ON icm (a, c) COMMENT 'pair' ALGORITHM=INPLACE", "ddl:icm"),
+    # MySQL string escapes in CREATE INDEX comments must survive SHOW INDEX,
+    # including wildcard backslashes retained outside LIKE patterns.
+    (r"CREATE INDEX kec_controls ON icm (a) COMMENT 'back\breturn\rend\Zline\ntab\t'", "ddl:icm"),
+    (r'''CREATE INDEX kec_quotes ON icm (a) COMMENT '雪\'single''quote\"double\\slash' ''', "ddl:icm"),
+    (r'CREATE INDEX kec_double ON icm (a) COMMENT "雪\"double""quote\'single\\slash"', "ddl:icm"),
+    (r"CREATE INDEX kec_wildcards ON icm (a) COMMENT 'percent\%underscore\_'", "ddl:icm"),
+    (r"CREATE INDEX kec_unknown ON icm (a) COMMENT 'unknown\q\B\z\a\f'", "ddl:icm"),
+    ("ALTER TABLE icm MODIFY a BIGINT, DROP INDEX kc", "ddl:icm"),
+    ("ALTER TABLE icm DROP COLUMN c", "ddl:icm"),
     # user and system variables, executable comments, LOCK TABLES
     ("SET @v = 5, @s = 'it''s', @d = 1.50, @n = NULL", "q"),
     ("SELECT @v, @s, @d, @n, @never_set", "q"),
@@ -963,6 +991,30 @@ CASES = [
     ("SELECT cust, id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 12", "q"),
     ("SELECT cust, id FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
     ("ROLLBACK", "q"),
+    # NULL sorts first ascending and last descending across shards. The
+    # explicit PK suffix makes row identity deterministic at LIMIT boundaries.
+    ("SELECT p, q, id, k, v FROM page_keys ORDER BY k, v, p, q, id LIMIT 23", "q"),
+    ("SELECT p, q, id, k, v FROM page_keys ORDER BY k DESC, v DESC, p DESC, q DESC, id DESC LIMIT 23 OFFSET 19", "q"),
+    ("SELECT p, q, id, v FROM page_keys WHERE k IS NULL ORDER BY v, p, q, id LIMIT 17 OFFSET 9", "q"),
+    ("SELECT p, q, id, v FROM page_keys WHERE k IS NULL ORDER BY v DESC, p DESC, q DESC, id DESC LIMIT 17", "q"),
+    ("SELECT p, q, id FROM page_keys WHERE k <=> NULL ORDER BY v, p, q, id LIMIT 11", "q"),
+    ("SELECT p, q, id FROM page_keys WHERE k <=> 1 ORDER BY v, p, q, id LIMIT 11", "q"),
+    ("SELECT p, q, id FROM page_keys WHERE k = NULL ORDER BY v, p, q, id LIMIT 5", "q"),
+    ("SELECT p, q, id, k FROM page_keys WHERE v IS NULL ORDER BY k, v, p, q, id LIMIT 13 OFFSET 5", "q"),
+    # kv has many identical full keys. Compare only its ordered key values:
+    # SQL does not specify which PK wins a tie. Selective residuals force
+    # additional pages within ties, with id reused under different (p,q).
+    ("SELECT k, v FROM page_keys WHERE k IS NULL AND tag = 3 ORDER BY v LIMIT 20 OFFSET 3", "q"),
+    ("SELECT k, v FROM page_keys WHERE k = 1 AND tag = 2 ORDER BY v LIMIT 7 OFFSET 5", "q"),
+    ("SELECT k, v FROM page_keys WHERE k = 1 AND tag = 2 ORDER BY v DESC LIMIT 7 OFFSET 5", "q"),
+    # Fixing p alone does not route a composite (p,q) shard key. Fixing both
+    # keeps the existing single-shard selection instead of scattered paging.
+    ("SELECT q, id, v FROM page_keys WHERE p = 1 AND k IS NULL ORDER BY v, q, id LIMIT 11 OFFSET 4", "q"),
+    ("SELECT q, id, v FROM page_keys WHERE p = 1 AND k IS NULL ORDER BY v DESC, q DESC, id DESC LIMIT 11", "q"),
+    ("SELECT id, k, v FROM page_keys WHERE p = 1 AND q = 3 ORDER BY k, v, id LIMIT 7", "q"),
+    # Early paging must not trim rows before DISTINCT or aggregation.
+    ("SELECT DISTINCT k, v FROM page_keys ORDER BY k, v LIMIT 5 OFFSET 1", "q"),
+    ("SELECT k, COUNT(*) FROM page_keys GROUP BY k ORDER BY k LIMIT 2", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),
     ("SELECT id FROM t1 WHERE a <=> NULL", "q"),
@@ -981,7 +1033,7 @@ CASES = [
     ("SELECT id FROM nu WHERE e IS NULL AND id = 3", "q"),
     ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL AND id = 3", "q"),
     ("UPDATE nu SET f = 9 WHERE e IS NULL", "dml:nu"),
-    ("DELETE FROM nu WHERE e IS NULL AND f = 9 LIMIT 1", "dml:nu"),
+    ("DELETE FROM nu WHERE e IS NULL AND f = 9 ORDER BY id LIMIT 1", "dml:nu"),
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
      "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
@@ -1145,7 +1197,8 @@ def main():
                 if r[0] != "rows":
                     return r
                 cols = r[2]
-                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name")]
+                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name",
+                                                "Index_comment")]
                 return sorted(tuple(row[i] for i in pick) for row in r[1])
             if ok and keys(ia) != keys(ib):
                 ok = False

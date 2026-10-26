@@ -8,14 +8,17 @@
 
 pub mod admin;
 pub mod alter;
+pub mod buckets;
 pub mod catalog;
 pub mod cluster;
 pub mod collation;
+pub mod members;
 #[rustfmt::skip]
 mod collation_data;
 pub mod complex;
 pub mod exec;
 pub mod expr;
+pub mod lint;
 pub mod mpw;
 pub mod normalize;
 pub mod plan;

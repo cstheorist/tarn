@@ -9,8 +9,8 @@ use crate::expr::CmpOp;
 use crate::expr::{EvalCtx, Expr};
 use crate::plan::*;
 use crate::txn::{
-    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Row, StoragePred,
-    Txn,
+    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Route, Row,
+    StoragePred, Txn,
 };
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
@@ -100,6 +100,7 @@ async fn scan_pages(
     lock_check: bool,
     pages: Pages,
     keep: Keep<'_, '_>,
+    route: &Route,
 ) -> SqlResult<Scanned> {
     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
     let mut out = Scanned {
@@ -122,6 +123,7 @@ async fn scan_pages(
             lock_check,
             begin,
             after.as_deref(),
+            route,
         )
         .await?;
         begin = false;
@@ -154,6 +156,7 @@ async fn keys_pages(
     limit: Option<u32>,
     lock_check: bool,
     pages: Pages,
+    route: &Route,
 ) -> SqlResult<Vec<Row>> {
     let mut out = Vec::new();
     let mut after: Option<Vec<u8>> = None;
@@ -168,6 +171,7 @@ async fn keys_pages(
             lock_check,
             begin,
             after.as_deref(),
+            route,
         )
         .await?;
         begin = false;
@@ -219,7 +223,7 @@ async fn committed_snapshot(
             }
         };
         match res {
-            Err(e) if e.code == 1213 && attempt < crate::session::MAX_RETRIES => {
+            Err(e) if e.code == 1213 && !e.moved && attempt < crate::session::MAX_RETRIES => {
                 attempt += 1;
                 cluster.stats.retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 crate::session::backoff(attempt).await;
@@ -312,17 +316,57 @@ fn index_def(t: &TableDef, id: u32) -> &IndexDef {
 }
 
 /// Shard owning every row whose `index` key starts with `prefix`, if the
-/// prefix determines the shard key.
+/// prefix determines the shard key. (Also on a cluster of one shard: shards
+/// may join it, and buckets move to them.)
 pub fn route_prefix(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[Value]) -> Option<usize> {
-    if cluster.nshards() == 1 {
-        return Some(0);
-    }
+    route_bucket(cluster, t, idx, prefix).map(|(s, _)| s)
+}
+
+/// The shard and the bucket of every row whose `index` key starts with
+/// `prefix`, if the prefix determines the shard key.
+pub fn route_bucket(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[Value]) -> Option<(usize, u32)> {
+    route_bucket_in(&cluster.bucket_map(), t, idx, prefix)
+}
+
+fn route_bucket_in(
+    map: &crate::buckets::BucketMap,
+    t: &TableDef,
+    idx: &IndexDef,
+    prefix: &[Value],
+) -> Option<(usize, u32)> {
     let mut sk = Vec::with_capacity(t.shard_key.len());
     for &c in &t.shard_key {
         let p = idx.cols.iter().position(|&x| x == c)?;
         sk.push(prefix.get(p)?.clone());
     }
-    Some(cluster.shard_of(&sk))
+    let b = crate::route::bucket_of(&sk, map.count);
+    Some((map.shard(b), b))
+}
+
+/// What the shard of a storage read checks (lua/tarn.lua "Buckets"): the
+/// buckets it was routed by; else, outside a transaction's streams, the
+/// shard's epoch in `map` (a read of every shard). The reads of one scan of
+/// every shard take their epochs from one map: each passes only if its
+/// shard's buckets have not changed since the map was read, so together
+/// they read each bucket on the one shard that owned it then. (Epochs from
+/// two maps could read a bucket on the shard it left and, later, on the
+/// one it went to.)
+fn read_route(
+    map: &crate::buckets::BucketMap,
+    in_stream: bool,
+    shard: usize,
+    buckets: &[Option<u32>],
+) -> SqlResult<Route> {
+    if !buckets.is_empty() && buckets.iter().all(|b| b.is_some()) {
+        let mut v: Vec<u32> = buckets.iter().flatten().copied().collect();
+        v.sort_unstable();
+        v.dedup();
+        return Ok(Route::Buckets(v));
+    }
+    if in_stream {
+        return Ok(Route::None);
+    }
+    Ok(Route::Epoch(map.epoch_of(shard)?, map.mver))
 }
 
 pub fn shard_of_row(cluster: &Cluster, t: &TableDef, row: &[Value]) -> usize {
@@ -342,6 +386,9 @@ pub(crate) fn eval_limit(e: &Option<Expr>, cx: &EvalCtx) -> SqlResult<Option<u64
 
 struct Call {
     shard: usize,
+    /// The bucket the call was routed by (None: one of the calls to every
+    /// shard).
+    bucket: Option<u32>,
     key: Vec<Value>,
     iter: Iter,
     limit: Option<u32>,
@@ -404,35 +451,49 @@ async fn fetch_keys(
     unique: bool,
     limit: Option<u32>,
 ) -> SqlResult<Vec<Row>> {
-    let mut per_shard: BTreeMap<usize, Vec<Vec<Value>>> = BTreeMap::new();
+    // By shard: the keys, and the bucket each was routed by.
+    let mut per_shard: BTreeMap<usize, (Vec<Vec<Value>>, Vec<Option<u32>>)> = BTreeMap::new();
     for k in keys {
-        match route_prefix(cluster, t, idx, &k) {
-            Some(s) => per_shard.entry(s).or_default().push(k),
+        match route_bucket(cluster, t, idx, &k) {
+            Some((s, b)) => {
+                let e = per_shard.entry(s).or_default();
+                e.0.push(k);
+                e.1.push(Some(b));
+            }
             None => {
                 for s in 0..cluster.nshards() {
-                    per_shard.entry(s).or_default().push(k.clone());
+                    let e = per_shard.entry(s).or_default();
+                    e.0.push(k.clone());
+                    e.1.push(None);
                 }
             }
         }
     }
     let mut rows = Vec::new();
     let pages = mode.pages();
+    let in_stream = matches!(mode, ReadMode::Txn(_));
+    let map = cluster.bucket_map();
+    let mut routes = BTreeMap::new();
+    for (s, (_, bs)) in &per_shard {
+        routes.insert(*s, read_route(&map, in_stream, *s, bs)?);
+    }
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += per_shard.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for (s, ks) in &per_shard {
+            for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages).await?);
+                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, &routes[s]).await?);
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
-            for (s, ks) in &per_shard {
+            for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                futs.push(async move { keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages).await });
+                let route = &routes[s];
+                futs.push(async move { keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, route).await });
             }
             for r in futures::future::join_all(futs).await {
                 rows.extend(r?);
@@ -440,11 +501,12 @@ async fn fetch_keys(
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
-            for (s, ks) in &per_shard {
+            for (s, (ks, _)) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
-                futs.push(
-                    async move { keys_pages(&st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages).await },
-                );
+                let route = &routes[s];
+                futs.push(async move {
+                    keys_pages(&st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages, route).await
+                });
             }
             for r in futures::future::join_all(futs).await {
                 match r {
@@ -457,11 +519,11 @@ async fn fetch_keys(
                     }
                 }
             }
-            for (s, ks) in per_shard.iter() {
+            for (s, (ks, bs)) in per_shard.iter() {
                 txn.mark_begun(*s);
-                for k in ks {
+                for (k, b) in ks.iter().zip(bs) {
                     if unique {
-                        txn.note_point(*s, t.space_id, idx.id, k.clone());
+                        txn.note_point(*s, t.space_id, idx.id, k.clone(), *b);
                     } else {
                         txn.note_range(
                             *s,
@@ -472,6 +534,7 @@ async fn fetch_keys(
                                 hi: Some(k.clone()),
                                 lo_incl: true,
                                 hi_incl: true,
+                                bucket: *b,
                             },
                         );
                     }
@@ -613,6 +676,8 @@ async fn fetch_stored_from(
         cluster.refresh_if_newer().await?;
         return Ok(crate::catalog::information_schema_rows(&cluster.catalog()));
     }
+    let map = cluster.bucket_map();
+    let nshards = cluster.nshards();
     let limit = eval_limit(&ta.limit, cx)?.map(|l| l.min(u32::MAX as u64) as u32);
     let mut calls: Vec<Call> = Vec::new();
     let mut unique_point = false;
@@ -671,7 +736,7 @@ async fn fetch_stored_from(
             return Ok(rows);
         }
         AccessPath::Prefixes { .. } | AccessPath::Range { .. } | AccessPath::Full => {
-            calls = range_calls(cluster, t, &ta.path, outer, cx, resume, limit)?;
+            calls = range_calls_in(&map, nshards, t, &ta.path, outer, cx, resume, limit)?;
         }
         AccessPath::Point { index, keys } => {
             let idx = index_def(t, *index);
@@ -695,13 +760,14 @@ async fn fetch_stored_from(
                 }
                 // A unique key without the shard key (a global index, see
                 // catalog) does not say which shard holds the row: ask each.
-                let shards: Vec<usize> = match route_prefix(cluster, t, idx, &key) {
-                    Some(s) => vec![s],
-                    None => (0..cluster.nshards()).collect(),
+                let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(&map, t, idx, &key) {
+                    Some((s, b)) => vec![(s, Some(b))],
+                    None => (0..nshards).map(|s| (s, None)).collect(),
                 };
-                for shard in shards {
+                for (shard, bucket) in shards {
                     calls.push(Call {
                         shard,
+                        bucket,
                         key: key.clone(),
                         iter: Iter::Eq,
                         limit: Some(1),
@@ -724,7 +790,7 @@ async fn fetch_stored_from(
         t,
         written: &written,
     };
-    let scans = read_calls(cluster, mode, t, index, calls, unique_point, keep).await?;
+    let scans = read_calls(cluster, &map, mode, t, index, calls, unique_point, keep).await?;
     Ok(scans.into_iter().flat_map(|s| s.rows).collect())
 }
 
@@ -734,8 +800,10 @@ async fn fetch_stored_from(
 /// each scan's range is recorded for validation, only up to its last row
 /// when its limit cut it short; `unique_point`: the calls are point lookups
 /// of a unique key, recorded as points.
+#[allow(clippy::too_many_arguments)]
 async fn read_calls(
     cluster: &Arc<Cluster>,
+    map: &crate::buckets::BucketMap,
     mode: &mut ReadMode<'_>,
     t: &TableDef,
     index: u32,
@@ -746,24 +814,29 @@ async fn read_calls(
     let mut out = Vec::with_capacity(calls.len());
     let mut read = 0;
     let pages = mode.pages();
+    let in_stream = matches!(mode, ReadMode::Txn(_));
+    let routes = calls
+        .iter()
+        .map(|c| read_route(map, in_stream, c.shard, &[c.bucket]))
+        .collect::<SqlResult<Vec<Route>>>()?;
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += calls.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep).await?;
+                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await?;
                 read += s.read;
                 out.push(s);
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                futs.push(async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep).await });
+                futs.push(async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await });
             }
             for r in futures::future::join_all(futs).await {
                 let s = r?;
@@ -773,11 +846,11 @@ async fn read_calls(
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
-                futs.push(
-                    async move { scan_pages(&st.client, st.id, st.begin, t, index, c, false, pages, keep).await },
-                );
+                futs.push(async move {
+                    scan_pages(&st.client, st.id, st.begin, t, index, c, false, pages, keep, route).await
+                });
             }
             let results = futures::future::join_all(futs).await;
             // A call that a limit cut short read its range only up to the
@@ -809,7 +882,7 @@ async fn read_calls(
             for (c, to) in calls.into_iter().zip(read_to) {
                 txn.mark_begun(c.shard);
                 if unique_point {
-                    txn.note_point(c.shard, t.space_id, index, c.key);
+                    txn.note_point(c.shard, t.space_id, index, c.key, c.bucket);
                 } else if let Some(mut r) = c.range {
                     match to {
                         Some(k) if matches!(c.iter, Iter::Le | Iter::Lt) => {
@@ -864,6 +937,31 @@ fn range_calls(
     resume: Option<(&[Value], bool)>,
     limit: Option<u32>,
 ) -> SqlResult<Vec<Call>> {
+    range_calls_in(
+        &cluster.bucket_map(),
+        cluster.nshards(),
+        t,
+        path,
+        outer,
+        cx,
+        resume,
+        limit,
+    )
+}
+
+/// Build every page against the same ownership and membership snapshot.
+/// A pager must not switch owners or add lanes while retaining older pages.
+#[allow(clippy::too_many_arguments)]
+fn range_calls_in(
+    map: &crate::buckets::BucketMap,
+    nshards: usize,
+    t: &TableDef,
+    path: &AccessPath,
+    outer: &[Value],
+    cx: &EvalCtx<'_>,
+    resume: Option<(&[Value], bool)>,
+    limit: Option<u32>,
+) -> SqlResult<Vec<Call>> {
     let mut calls = Vec::new();
     match path {
         AccessPath::Prefixes { index, keys } => {
@@ -873,30 +971,31 @@ fn range_calls(
             let Some(prefix) = ks.into_iter().next() else {
                 return Ok(calls);
             };
-            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
-                Some(s) => vec![s],
-                None => (0..cluster.nshards()).collect(),
-            };
-            let range = RangeRead {
-                space: t.space_id,
-                index: idx.id,
-                lo: Some(prefix.clone()),
-                hi: Some(prefix.clone()),
-                lo_incl: true,
-                hi_incl: true,
+            let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(map, t, idx, &prefix) {
+                Some((s, b)) => vec![(s, Some(b))],
+                None => (0..nshards).map(|s| (s, None)).collect(),
             };
             let (key, iter) = match resume {
                 Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
                 None => (prefix.clone(), Iter::Ge),
             };
-            for s in shards {
+            for (s, bucket) in shards {
                 calls.push(Call {
                     shard: s,
+                    bucket,
                     key: key.clone(),
                     iter,
                     limit,
                     end: Some((prefix.clone(), true)),
-                    range: Some(range.clone()),
+                    range: Some(RangeRead {
+                        space: t.space_id,
+                        index: idx.id,
+                        lo: Some(prefix.clone()),
+                        hi: Some(prefix.clone()),
+                        lo_incl: true,
+                        hi_incl: true,
+                        bucket,
+                    }),
                 });
             }
         }
@@ -952,9 +1051,9 @@ fn range_calls(
                 None if !prefix.is_empty() => Some((prefix.clone(), true)),
                 None => None,
             };
-            let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
-                Some(s) => vec![s],
-                None => (0..cluster.nshards()).collect(),
+            let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(map, t, idx, &prefix) {
+                Some((s, b)) => vec![(s, Some(b))],
+                None => (0..nshards).map(|s| (s, None)).collect(),
             };
             let range = RangeRead {
                 space: t.space_id,
@@ -963,6 +1062,7 @@ fn range_calls(
                 hi: end.as_ref().map(|(k, _)| k.clone()),
                 lo_incl,
                 hi_incl: end.as_ref().map(|(_, i)| *i).unwrap_or(true),
+                bucket: None,
             };
             // Backwards (ORDER BY ... DESC, issue #50): from the upper bound
             // down to the lower one.
@@ -975,14 +1075,18 @@ fn range_calls(
                     None => (Vec::new(), Iter::Le, lower_end(&range)),
                 },
             };
-            for s in shards {
+            for (s, bucket) in shards {
                 calls.push(Call {
                     shard: s,
+                    bucket,
                     key: key.clone(),
                     iter,
                     limit,
                     end: end.clone(),
-                    range: Some(range.clone()),
+                    range: Some(RangeRead {
+                        bucket,
+                        ..range.clone()
+                    }),
                 });
             }
         }
@@ -994,10 +1098,12 @@ fn range_calls(
                 hi: None,
                 lo_incl: true,
                 hi_incl: true,
+                bucket: None,
             };
-            for s in 0..cluster.nshards() {
+            for s in 0..nshards {
                 calls.push(Call {
                     shard: s,
+                    bucket: None,
                     key: Vec::new(),
                     iter: Iter::All,
                     limit,
@@ -1716,26 +1822,46 @@ async fn storage_count(
             .collect()
     };
     let excl: Vec<Vec<&[Value]>> = calls.iter().map(|c| exclude(c.shard)).collect();
+    let in_stream = matches!(mode, ReadMode::Txn(_));
+    let map = cluster.bucket_map();
+    let routes = calls
+        .iter()
+        .map(|c| read_route(&map, in_stream, c.shard, &[c.bucket]))
+        .collect::<SqlResult<Vec<Route>>>()?;
     match mode {
         ReadMode::Auto { calls: made } => {
             *made += calls.len();
             if *made > 1 {
                 return Err(need_txn());
             }
-            for c in &calls {
+            for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
                 let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                n += count_rows(&client, 0, t, index, &c.key, c.iter, end, &preds, &[], true, false).await?;
+                n += count_rows(
+                    &client,
+                    0,
+                    t,
+                    index,
+                    &c.key,
+                    c.iter,
+                    end,
+                    &preds,
+                    &[],
+                    true,
+                    false,
+                    route,
+                )
+                .await?;
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
-            for (c, ex) in calls.iter().zip(&excl) {
+            for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
                 let preds = &preds;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
-                    count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false).await
+                    count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false, route).await
                 });
             }
             for r in futures::future::join_all(futs).await {
@@ -1744,13 +1870,13 @@ async fn storage_count(
         }
         ReadMode::Txn(txn) => {
             let mut futs = Vec::new();
-            for (c, ex) in calls.iter().zip(&excl) {
+            for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
                 let preds = &preds;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
                     count_rows(
-                        &st.client, st.id, t, index, &c.key, c.iter, end, preds, ex, false, st.begin,
+                        &st.client, st.id, t, index, &c.key, c.iter, end, preds, ex, false, st.begin, route,
                     )
                     .await
                 });
@@ -2852,6 +2978,11 @@ async fn finish_range_lock(
 /// on its own (issue #86). Rows the transaction wrote or deleted are left
 /// out; callers merge in its own versions.
 struct Pager {
+    /// Retained pages and refills must describe the same routing snapshot.
+    /// In particular, READ COMMITTED scatter reads pin epoch and membership
+    /// checks across rounds, even when the cluster currently has one shard.
+    map: Arc<crate::buckets::BucketMap>,
+    nshards: usize,
     ta: TableAccess,
     key_cols: Vec<usize>,
     /// The primary key: the next page starts strictly after the last key.
@@ -2912,9 +3043,13 @@ impl Pager {
         let Some(prefix) = prefix else {
             return Ok(None);
         };
-        let shards: Vec<usize> = match route_prefix(cluster, t, idx, &prefix) {
-            Some(s) => vec![s],
-            None => (0..cluster.nshards()).collect(),
+        // Capture the map first: membership appends shards before publishing
+        // a newer map. A newer map with fewer lanes could miss a joined shard.
+        let map = cluster.bucket_map();
+        let nshards = cluster.nshards();
+        let shards: Vec<usize> = match route_bucket_in(&map, t, idx, &prefix) {
+            Some((s, _)) => vec![s],
+            None => (0..nshards).collect(),
         };
         // ORDER BY: columns fixed by the equality prefix, then the next index
         // columns in order, in the direction of the scan.
@@ -2936,6 +3071,8 @@ impl Pager {
             }
         }
         Ok(Some(Pager {
+            map,
+            nshards,
             ta: ta.clone(),
             key_cols: idx.cols.clone(),
             unique: idx.id == 0,
@@ -2982,9 +3119,18 @@ impl Pager {
             let lane = &self.lanes[l];
             let limit = (n + if self.unique { 0 } else { lane.last_pks.len() }).min(u32::MAX as usize);
             let resume = lane.last.as_ref().map(|k| (k.as_slice(), !self.unique));
-            let call = range_calls(cluster, t, &self.ta.path, &[], cx, resume, Some(limit as u32))?
-                .into_iter()
-                .find(|c| c.shard == lane.shard);
+            let call = range_calls_in(
+                &self.map,
+                self.nshards,
+                t,
+                &self.ta.path,
+                &[],
+                cx,
+                resume,
+                Some(limit as u32),
+            )?
+            .into_iter()
+            .find(|c| c.shard == lane.shard);
             match call {
                 Some(c) => calls.push(c),
                 None => {
@@ -3003,7 +3149,7 @@ impl Pager {
             written: &none,
         };
         let index = path_index(&self.ta.path);
-        let scans = read_calls(cluster, mode, t, index, calls, false, keep).await?;
+        let scans = read_calls(cluster, &self.map, mode, t, index, calls, false, keep).await?;
         let txn = match mode {
             ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) => Some(&**txn),
             ReadMode::Auto { .. } => None,
@@ -3317,6 +3463,8 @@ mod tests {
             r
         };
         let pager = |reverse: bool, lanes: &[(Option<i64>, bool)]| Pager {
+            map: Arc::new(crate::buckets::BucketMap::initial(3000, lanes.len())),
+            nshards: lanes.len(),
             ta: TableAccess {
                 table: t.clone(),
                 alias: "o".into(),
@@ -3379,5 +3527,134 @@ mod tests {
         let g = got(&pg, &[&[], &[]]);
         let (m, more) = merged(&pg, &g, 5);
         assert_eq!((ids(m), more), (vec![], vec![]));
+    }
+
+    #[test]
+    fn paging_keeps_a_routed_lane_after_ownership_refresh() {
+        use crate::buckets::{BucketMap, Report};
+
+        let cat = catalog();
+        let mut t = (*cat.get("d", "o").unwrap()).clone();
+        t.shard_key = vec![0]; // a range of one tenant, with more than one primary key
+        let cx = EvalCtx {
+            params: &[],
+            db: Some("d"),
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        };
+        let map = |owner: usize| {
+            let reports = (0..2)
+                .map(|s| Report {
+                    count: 8,
+                    epoch: 10 + owner as u64,
+                    owned: if s == owner { vec![(1, 8)] } else { vec![] },
+                    ..Report::default()
+                })
+                .collect();
+            BucketMap::from_reports(reports, &HashMap::new()).unwrap()
+        };
+        let pinned = Arc::new(map(0));
+        let refreshed = map(1);
+        let prefix = vec![Value::Int(7)];
+        let (_, bucket) = route_bucket_in(&pinned, &t, &t.indexes[0], &prefix).unwrap();
+        assert_eq!(
+            route_bucket_in(&refreshed, &t, &t.indexes[0], &prefix),
+            Some((1, bucket))
+        );
+        let path = AccessPath::Range {
+            index: 0,
+            eq: vec![Expr::Lit(prefix[0].clone())],
+            null_eq: vec![false],
+            lo: None,
+            hi: None,
+            reverse: false,
+        };
+        let first = range_calls_in(&pinned, 2, &t, &path, &[], &cx, None, Some(20)).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].shard, 0);
+        let resume = vec![Value::Int(7), Value::Int(99)];
+        let refill = range_calls_in(&pinned, 2, &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
+        assert_eq!(refill.len(), 1, "a map refresh must not make the old lane disappear");
+        assert_eq!(refill[0].shard, first[0].shard);
+        assert_eq!(refill[0].key, resume);
+        assert!(matches!(refill[0].iter, Iter::Gt));
+        let changed = range_calls_in(&refreshed, 2, &t, &path, &[], &cx, None, Some(20)).unwrap();
+        assert_eq!(changed[0].shard, 1, "the replacement map really changes the route");
+        for c in first.iter().chain(&refill) {
+            assert_eq!(c.bucket, Some(bucket));
+            assert_eq!(c.range.as_ref().unwrap().bucket, Some(bucket));
+            for in_stream in [false, true] {
+                assert_eq!(
+                    read_route(&pinned, in_stream, c.shard, &[c.bucket]).unwrap(),
+                    Route::Buckets(vec![bucket])
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paging_keeps_scatter_epochs_and_membership() {
+        use crate::buckets::BucketMap;
+
+        let cat = catalog();
+        let t = cat.get("d", "o").unwrap();
+        let cx = EvalCtx {
+            params: &[],
+            db: Some("d"),
+            user: "u",
+            conn_id: 1,
+            last_insert_id: 0,
+            found_rows: 0,
+            row_count: 0,
+            now: "2026-01-02 03:04:05",
+        };
+        // No shard-key equality: one lane is still a scatter read when
+        // the membership currently has only one shard.
+        let path = AccessPath::Range {
+            index: 0,
+            eq: vec![],
+            null_eq: vec![],
+            lo: None,
+            hi: None,
+            reverse: false,
+        };
+        for nshards in [1, 2] {
+            let mut old = BucketMap::initial(8, nshards);
+            old.epochs = (0..nshards).map(|s| 10 + s as u64).collect();
+            old.mver = 4;
+            let pinned = Arc::new(old);
+            let mut refreshed = BucketMap::initial(8, nshards + 1);
+            refreshed.epochs = (0..=nshards).map(|s| 20 + s as u64).collect();
+            refreshed.mver = 5;
+            let first = range_calls_in(&pinned, nshards, &t, &path, &[], &cx, None, Some(20)).unwrap();
+            let resume = vec![Value::Int(7), Value::Int(99)];
+            let refill =
+                range_calls_in(&pinned, nshards, &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
+            assert_eq!(first.len(), nshards);
+            assert_eq!(refill.len(), nshards);
+            for (initial, later) in first.iter().zip(&refill) {
+                assert_eq!(initial.shard, later.shard);
+                assert_eq!(later.key, resume);
+                for c in [initial, later] {
+                    assert_eq!(c.bucket, None);
+                    assert_eq!(
+                        c.range.as_ref().unwrap().bucket,
+                        None,
+                        "commit must retain its all-shard membership fence"
+                    );
+                    let route = read_route(&pinned, false, c.shard, &[c.bucket]).unwrap();
+                    assert_eq!(route, Route::Epoch(10 + c.shard as u64, 4));
+                    assert_ne!(route, read_route(&refreshed, false, c.shard, &[c.bucket]).unwrap());
+                    assert_eq!(read_route(&pinned, true, c.shard, &[c.bucket]).unwrap(), Route::None);
+                }
+            }
+            // A member added after the map snapshot must fail closed if
+            // included before the map catches up, rather than inventing an epoch.
+            assert!(read_route(&pinned, false, nshards, &[None]).unwrap_err().moved);
+        }
     }
 }

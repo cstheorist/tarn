@@ -186,6 +186,9 @@ pub struct IndexDef {
     /// (see the module comment); 0 until CREATE TABLE allocates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global: Option<u32>,
+    /// The index's COMMENT.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub comment: String,
 }
 
 /// The global index of a unique key (`IndexDef::global`).
@@ -437,6 +440,7 @@ impl TableDef {
                 unique: true,
                 invisible: false,
                 global: None,
+                comment: String::new(),
             }],
             shard_key: (0..k).collect(),
             auto_inc: None,
@@ -549,6 +553,22 @@ impl TableDef {
     /// The values a row's shard key hashes (see route.rs).
     pub fn shard_key_of(&self, row: &[Value]) -> Vec<Value> {
         self.shard_key.iter().map(|&c| self.key_part(c, &row[c])).collect()
+    }
+
+    /// The shard key of the row with primary key `pk` (as `pk_key` gives
+    /// it): the shard key is part of the primary key.
+    pub fn shard_key_of_pk(&self, pk: &[Value]) -> Vec<Value> {
+        let cols = &self.indexes[0].cols;
+        self.shard_key
+            .iter()
+            .map(|c| {
+                cols.iter()
+                    .position(|x| x == c)
+                    .and_then(|p| pk.get(p))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+            .collect()
     }
 
     /// Order of two values of column `c` as its indexes order them.
@@ -918,6 +938,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
             unique: true,
             invisible: false,
             global: None,
+            comment: String::new(),
         }],
         shard_key: vec![1, 2],
         auto_inc: None,
