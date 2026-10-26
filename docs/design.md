@@ -1263,6 +1263,26 @@ shards find the replicas of a shard that joined in the membership too
 (`ShardList`), so the positions in transactions, maps and lock requests
 stay valid as shards join.
 
+**Removing a shard.** The scans need no check (above), but a shard that
+leaves must not be needed to finish a transaction: a participant prepared
+with it as its decision shard asks it for the outcome when the coordinator
+stops, and would wait forever for a shard that is gone. So `TARN REMOVE
+SHARD` first marks the shard *draining* (a `members` job, as above), and
+from then on a participant refuses a PREPARE whose decision shard is not
+active (in the PREPARE's atomic section, with the 'moved' status that makes
+its server read the membership again; a coordinator takes the lowest
+active participant that writes as its decision shard). Its buckets then
+move to the active shards (a move to a shard that is not active is refused
+under the move's job), and it waits until no shard counts a PREPARE in
+progress or a prepared participant naming the shard as its decision shard,
+nor the shard a decision record in progress (`tarn_shard_records`;
+`BK.prep` counts a PREPARE from before its check until its records are
+written, so that none slips past the count). Then a `members` job marks it
+*removed*. SQL servers leave removed shards out of reads of every shard,
+schema changes and map reads; one that cannot reach a shard reads the
+membership, and runs the statement again if it changed; the shards'
+garbage collection takes a removed shard's records as gone.
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib

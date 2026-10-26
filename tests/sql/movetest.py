@@ -202,8 +202,8 @@ class Test:
     def audit(self, k, stop):
         a = self.args
         total = a.accounts * a.init
-        ordered_sql = "SELECT id FROM bank WHERE id % 17 = 0 ORDER BY id LIMIT 5 OFFSET 2"
-        ordered_want = [i for i in range(a.accounts) if i % 17 == 0][2:7]
+        ordered_sql = "SELECT id FROM bank WHERE id % 5 = 0 ORDER BY id LIMIT 5 OFFSET 2"
+        ordered_want = [i for i in range(a.accounts) if i % 5 == 0][2:7]
         c = connect(self.server(k))
         rc = connect(self.server(k + 1))
         q(rc, "SET SESSION transaction_isolation = 'READ-COMMITTED'")

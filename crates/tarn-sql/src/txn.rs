@@ -967,8 +967,15 @@ impl Txn {
                 "transaction too old (max_txn_age exceeded); retry it",
             ));
         }
-        // Decision shard: the lowest participant that writes.
-        let dshard = self.writes.values().map(|w| w.shard).min().unwrap();
+        // Decision shard: the lowest participant that writes and is not
+        // leaving the cluster (participants refuse one that is: lua/tarn.lua
+        // BK.prep).
+        let writers: BTreeSet<usize> = self.writes.values().map(|w| w.shard).collect();
+        let dshard = writers
+            .iter()
+            .copied()
+            .find(|&p| cluster.shard_active(p))
+            .unwrap_or_else(|| *writers.iter().next().unwrap());
         let did = cluster.shards[dshard].id;
         let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
         // Write-only participants have no stream: their PREPARE runs as its

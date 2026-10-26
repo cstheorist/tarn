@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""A shard joins the cluster under load (issue #25).
+"""A shard joins the cluster under load, and another leaves (issue #25).
 
     tests/sql/jointest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --idle 127.0.0.1:4002 \\
-        --add 3=127.0.0.1:3331[,127.0.0.1:3332] [--seconds 30]
-    tests/sql/jointest.py --verify 127.0.0.1:4002 --add 3=...   (a server started again since)
+        --add 3=127.0.0.1:3331[,127.0.0.1:3332] [--remove 2 --dir DIR] [--seconds 45]
+    tests/sql/jointest.py --verify 127.0.0.1:4002 --add 3=... [--remove 2]   (a server started again since)
 
 While the workload of movetest.py runs through the --tarn servers (each
 row's bucket moving between the shards):
+  * an ordered LIMIT read held across ADD SHARD fails validation with the
+    membership-change diagnostic, even on an empty index range;
   * TARN ADD SHARD makes the new shard a member: every SQL server lists it
     in SHOW TARN SHARDS, and it owns no bucket;
   * buckets move to it: a range at once, then the buckets of the rows the
     workload uses, back and forth between all the shards; the checks of
     movetest.py hold (no transfer lost or applied twice, each read of every
     shard sees each row once, no increment lost);
+  * with --remove, then TARN REMOVE SHARD moves every bucket of that shard
+    to the others and the shard leaves; its storage is stopped (the pid
+    files in --dir), and the workload goes on without it;
   * the rows of the buckets the new shard owns are in its storage (read from
     it directly), and nowhere else;
   * the --idle server ran nothing since before the join: its first reads of
-    every shard, routed with the membership from before, are refused and run
-    again with the new one, and see every row once; it writes rows on the
-    new shard too.
+    every shard, routed with the membership from before, are refused (or
+    find the shard that left gone) and run again with the new one, and see
+    every row once; it writes rows on the new shard too.
 --verify runs the last checks alone, on a server started again since the
 join with its configuration from before (it reads the membership when it
 starts).
@@ -81,8 +86,9 @@ class JoinTest(movetest.Test):
         sid, _, reps = args.add.partition("=")
         self.new_id = int(sid)
         self.new_replicas = reps
-        self.stats.update({"join": None, "join_err": None, "range": 0, "to_new": 0,
-                           "ordered_scan": False, "ordered_conflict": False, "ordered_error": None})
+        self.stats.update({"join": None, "join_err": None, "range": 0, "to_new": 0, "removed": None,
+                           "remove_err": None, "ordered_scan": False, "ordered_conflict": False,
+                           "ordered_error": None})
 
     def joiner(self, stop):
         """Add the shard, then move buckets to it: a range, and half of the
@@ -134,6 +140,32 @@ class JoinTest(movetest.Test):
             except pymysql.MySQLError as e:
                 with self.lock:
                     self.stats["move_errs"].append(str(e))
+        if self.args.remove:
+            self.leaver(c)
+
+    def leaver(self, c):
+        """Remove shard --remove, then stop its storage."""
+        gone = self.args.remove
+        self.shard_ids.remove(gone)   # (the mover moves no bucket to it from now on)
+        t0 = time.time()
+        try:
+            n = q(c, f"TARN REMOVE SHARD {gone}")
+            self.stats["removed"] = (time.time() - t0, n)
+        except pymysql.MySQLError as e:
+            self.stats["remove_err"] = str(e)
+            return
+        got = storage_ids(self.removed_replicas(), f"{DB}.bank")
+        self.check(got == [], f"shard {gone} keeps no row of the table when it has left: {got[:10]}")
+        for f in sorted(os.listdir(self.args.dir)):
+            if f.startswith(f"s{gone}.") and f.endswith(".pid"):
+                with open(os.path.join(self.args.dir, f)) as fh:
+                    os.kill(int(fh.read()), 9)
+        self.stats["stopped"] = time.time()
+
+    def removed_replicas(self):
+        """The replicas of shard --remove, as SHOW TARN SHARDS has them."""
+        c = connect(self.servers[0])
+        return [r[1] for r in q(c, "SHOW TARN SHARDS") if int(r[0]) == self.args.remove][0]
 
     def run(self):
         a = self.args
@@ -147,8 +179,9 @@ class JoinTest(movetest.Test):
             c.close()
         print(f"{len(self.servers)} SQL server(s), shards {self.shard_ids}, {self.count} buckets; shard "
               f"{self.new_id} joins after {a.join_after:.0f} s; the workload runs for {a.seconds:.0f} s")
-        th = self.workload(time.time() + a.seconds)
-        th.append(threading.Thread(target=self.joiner, args=(time.time() + a.seconds,)))
+        stop_at = time.time() + a.seconds
+        th = self.workload(stop_at)
+        th.append(threading.Thread(target=self.joiner, args=(stop_at,)))
         for t in th:
             t.start()
         for t in th:
@@ -160,10 +193,19 @@ class JoinTest(movetest.Test):
             return self.failures
         self.check(st["ordered_scan"] and st["ordered_conflict"],
                    f"ordered LIMIT across ADD SHARD fails its membership check ({st['ordered_error']})")
+        if a.remove:
+            r = st["removed"]
+            print(f"  shard {a.remove} left in {r[0] if r else 0:.2f} s, moving {r[1] if r else 0} buckets")
+            self.check(r is not None and st.get("stopped", stop_at) < stop_at,
+                       f"TARN REMOVE SHARD {a.remove} under load, its storage stopped before the workload ended "
+                       f"({st['remove_err']})")
         self.finish()
         for s in self.servers:
             self.check_members(connect(s), s)
-        self.check(st["range"] == a.range, f"the range of {a.range} buckets moved to the new shard ({st['range']})")
+        # (the mover may have moved some of the range there first: those of
+        # the rows' buckets)
+        self.check(a.range - len(self.buckets) <= st["range"] <= a.range,
+                   f"the range of {a.range} buckets moved to the new shard ({st['range']})")
         self.check_storage(connect(self.servers[0]))
         self.verify(self.args.idle)
         return self.failures
@@ -173,6 +215,11 @@ class JoinTest(movetest.Test):
         mine = [r for r in rows if int(r[0]) == self.new_id]
         self.check(len(mine) == 1 and mine[0][2] == "active" and mine[0][1] == self.new_replicas,
                    f"{server} lists shard {self.new_id} as a member: {rows}")
+        if self.args.remove:
+            gone = [r for r in rows if int(r[0]) == self.args.remove]
+            self.check(len(gone) == 1 and gone[0][2] == "removed", f"{server} lists shard {self.args.remove} as removed")
+            shards = sorted(int(r[0]) for r in q(c, "SHOW TARN BUCKETS"))
+            self.check(self.args.remove not in shards, f"{server}: SHOW TARN BUCKETS leaves it out: {shards}")
 
     def check_storage(self, c):
         """The rows of the buckets the new shard owns are in its storage."""
@@ -239,9 +286,11 @@ def main():
     ap.add_argument("--idle", help="a SQL server the test uses only after the join")
     ap.add_argument("--add", required=True, help="the shard that joins: id=replica[,replica...]")
     ap.add_argument("--verify", help="only check that this SQL server sees the new shard's rows")
-    ap.add_argument("--seconds", type=float, default=30)
+    ap.add_argument("--seconds", type=float, default=45)
     ap.add_argument("--join-after", type=float, default=3)
-    ap.add_argument("--range", type=int, default=100, help="buckets moved to the new shard at once")
+    ap.add_argument("--range", type=int, default=60, help="buckets moved to the new shard at once")
+    ap.add_argument("--remove", type=int, help="a shard to remove once the new one joined")
+    ap.add_argument("--dir", help="the cluster's directory (to stop the storage of the shard that left)")
     ap.add_argument("--threads", type=int, default=6)
     ap.add_argument("--accounts", type=int, default=24)
     ap.add_argument("--init", type=int, default=1000)

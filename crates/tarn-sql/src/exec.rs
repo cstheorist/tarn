@@ -461,7 +461,7 @@ async fn fetch_keys(
                 e.1.push(Some(b));
             }
             None => {
-                for s in 0..cluster.nshards() {
+                for s in cluster.live_shards() {
                     let e = per_shard.entry(s).or_default();
                     e.0.push(k.clone());
                     e.1.push(None);
@@ -677,7 +677,7 @@ async fn fetch_stored_from(
         return Ok(crate::catalog::information_schema_rows(&cluster.catalog()));
     }
     let map = cluster.bucket_map();
-    let nshards = cluster.nshards();
+    let shards: Vec<usize> = cluster.live_shards().collect();
     let limit = eval_limit(&ta.limit, cx)?.map(|l| l.min(u32::MAX as u64) as u32);
     let mut calls: Vec<Call> = Vec::new();
     let mut unique_point = false;
@@ -714,7 +714,7 @@ async fn fetch_stored_from(
         // reads would be missed; they ask every shard.)
         AccessPath::Point { index, keys }
             if resume.is_none()
-                && cluster.nshards() > 1
+                && cluster.nlive() > 1
                 && !matches!(mode, ReadMode::Committed(_))
                 && global_index(t, *index).is_some() =>
         {
@@ -736,7 +736,7 @@ async fn fetch_stored_from(
             return Ok(rows);
         }
         AccessPath::Prefixes { .. } | AccessPath::Range { .. } | AccessPath::Full => {
-            calls = range_calls_in(&map, nshards, t, &ta.path, outer, cx, resume, limit)?;
+            calls = range_calls_in(&map, &shards, t, &ta.path, outer, cx, resume, limit)?;
         }
         AccessPath::Point { index, keys } => {
             let idx = index_def(t, *index);
@@ -762,7 +762,7 @@ async fn fetch_stored_from(
                 // catalog) does not say which shard holds the row: ask each.
                 let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(&map, t, idx, &key) {
                     Some((s, b)) => vec![(s, Some(b))],
-                    None => (0..nshards).map(|s| (s, None)).collect(),
+                    None => shards.iter().map(|&s| (s, None)).collect(),
                 };
                 for (shard, bucket) in shards {
                     calls.push(Call {
@@ -939,7 +939,7 @@ fn range_calls(
 ) -> SqlResult<Vec<Call>> {
     range_calls_in(
         &cluster.bucket_map(),
-        cluster.nshards(),
+        &cluster.live_shards().collect::<Vec<_>>(),
         t,
         path,
         outer,
@@ -954,7 +954,7 @@ fn range_calls(
 #[allow(clippy::too_many_arguments)]
 fn range_calls_in(
     map: &crate::buckets::BucketMap,
-    nshards: usize,
+    shards: &[usize],
     t: &TableDef,
     path: &AccessPath,
     outer: &[Value],
@@ -973,7 +973,7 @@ fn range_calls_in(
             };
             let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(map, t, idx, &prefix) {
                 Some((s, b)) => vec![(s, Some(b))],
-                None => (0..nshards).map(|s| (s, None)).collect(),
+                None => shards.iter().map(|&s| (s, None)).collect(),
             };
             let (key, iter) = match resume {
                 Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
@@ -1053,7 +1053,7 @@ fn range_calls_in(
             };
             let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(map, t, idx, &prefix) {
                 Some((s, b)) => vec![(s, Some(b))],
-                None => (0..nshards).map(|s| (s, None)).collect(),
+                None => shards.iter().map(|&s| (s, None)).collect(),
             };
             let range = RangeRead {
                 space: t.space_id,
@@ -1100,7 +1100,7 @@ fn range_calls_in(
                 hi_incl: true,
                 bucket: None,
             };
-            for s in 0..nshards {
+            for &s in shards {
                 calls.push(Call {
                     shard: s,
                     bucket: None,
@@ -2982,7 +2982,7 @@ struct Pager {
     /// In particular, READ COMMITTED scatter reads pin epoch and membership
     /// checks across rounds, even when the cluster currently has one shard.
     map: Arc<crate::buckets::BucketMap>,
-    nshards: usize,
+    shards: Vec<usize>,
     ta: TableAccess,
     key_cols: Vec<usize>,
     /// The primary key: the next page starts strictly after the last key.
@@ -3045,11 +3045,13 @@ impl Pager {
         };
         // Capture the map first: membership appends shards before publishing
         // a newer map. A newer map with fewer lanes could miss a joined shard.
+        // Keep live positions too, so fresh scans skip removed shards and
+        // refills never change the set of retained lanes.
         let map = cluster.bucket_map();
-        let nshards = cluster.nshards();
-        let shards: Vec<usize> = match route_bucket_in(&map, t, idx, &prefix) {
+        let shards: Vec<usize> = cluster.live_shards().collect();
+        let lanes: Vec<usize> = match route_bucket_in(&map, t, idx, &prefix) {
             Some((s, _)) => vec![s],
-            None => (0..nshards).collect(),
+            None => shards.clone(),
         };
         // ORDER BY: columns fixed by the equality prefix, then the next index
         // columns in order, in the direction of the scan.
@@ -3072,12 +3074,12 @@ impl Pager {
         }
         Ok(Some(Pager {
             map,
-            nshards,
+            shards,
             ta: ta.clone(),
             key_cols: idx.cols.clone(),
             unique: idx.id == 0,
             reverse,
-            lanes: shards
+            lanes: lanes
                 .into_iter()
                 .map(|shard| Lane {
                     shard,
@@ -3121,7 +3123,7 @@ impl Pager {
             let resume = lane.last.as_ref().map(|k| (k.as_slice(), !self.unique));
             let call = range_calls_in(
                 &self.map,
-                self.nshards,
+                &self.shards,
                 t,
                 &self.ta.path,
                 &[],
@@ -3464,7 +3466,7 @@ mod tests {
         };
         let pager = |reverse: bool, lanes: &[(Option<i64>, bool)]| Pager {
             map: Arc::new(crate::buckets::BucketMap::initial(3000, lanes.len())),
-            nshards: lanes.len(),
+            shards: (0..lanes.len()).collect(),
             ta: TableAccess {
                 table: t.clone(),
                 alias: "o".into(),
@@ -3573,16 +3575,16 @@ mod tests {
             hi: None,
             reverse: false,
         };
-        let first = range_calls_in(&pinned, 2, &t, &path, &[], &cx, None, Some(20)).unwrap();
+        let first = range_calls_in(&pinned, &[0, 1], &t, &path, &[], &cx, None, Some(20)).unwrap();
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].shard, 0);
         let resume = vec![Value::Int(7), Value::Int(99)];
-        let refill = range_calls_in(&pinned, 2, &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
+        let refill = range_calls_in(&pinned, &[0, 1], &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
         assert_eq!(refill.len(), 1, "a map refresh must not make the old lane disappear");
         assert_eq!(refill[0].shard, first[0].shard);
         assert_eq!(refill[0].key, resume);
         assert!(matches!(refill[0].iter, Iter::Gt));
-        let changed = range_calls_in(&refreshed, 2, &t, &path, &[], &cx, None, Some(20)).unwrap();
+        let changed = range_calls_in(&refreshed, &[0, 1], &t, &path, &[], &cx, None, Some(20)).unwrap();
         assert_eq!(changed[0].shard, 1, "the replacement map really changes the route");
         for c in first.iter().chain(&refill) {
             assert_eq!(c.bucket, Some(bucket));
@@ -3623,6 +3625,7 @@ mod tests {
             reverse: false,
         };
         for nshards in [1, 2] {
+            let shards: Vec<usize> = (0..nshards).collect();
             let mut old = BucketMap::initial(8, nshards);
             old.epochs = (0..nshards).map(|s| 10 + s as u64).collect();
             old.mver = 4;
@@ -3630,10 +3633,10 @@ mod tests {
             let mut refreshed = BucketMap::initial(8, nshards + 1);
             refreshed.epochs = (0..=nshards).map(|s| 20 + s as u64).collect();
             refreshed.mver = 5;
-            let first = range_calls_in(&pinned, nshards, &t, &path, &[], &cx, None, Some(20)).unwrap();
+            let first = range_calls_in(&pinned, &shards, &t, &path, &[], &cx, None, Some(20)).unwrap();
             let resume = vec![Value::Int(7), Value::Int(99)];
             let refill =
-                range_calls_in(&pinned, nshards, &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
+                range_calls_in(&pinned, &shards, &t, &path, &[], &cx, Some((&resume, false)), Some(40)).unwrap();
             assert_eq!(first.len(), nshards);
             assert_eq!(refill.len(), nshards);
             for (initial, later) in first.iter().zip(&refill) {
@@ -3656,5 +3659,36 @@ mod tests {
             // included before the map catches up, rather than inventing an epoch.
             assert!(read_route(&pinned, false, nshards, &[None]).unwrap_err().moved);
         }
+        // Removed positions stay in the map, but a new pager must not
+        // contact their stopped storage. Live lanes need not be contiguous.
+        let reports = vec![
+            crate::buckets::Report {
+                count: 8,
+                epoch: 2,
+                owned: vec![(1, 4)],
+                ..Default::default()
+            },
+            crate::buckets::Report {
+                count: 8,
+                ..Default::default()
+            },
+            crate::buckets::Report {
+                count: 8,
+                epoch: 3,
+                owned: vec![(5, 8)],
+                ..Default::default()
+            },
+        ];
+        let map = BucketMap::from_reports(reports, &HashMap::new()).unwrap();
+        let calls = range_calls_in(&map, &[0, 2], &t, &path, &[], &cx, None, Some(20)).unwrap();
+        assert_eq!(calls.iter().map(|c| c.shard).collect::<Vec<_>>(), vec![0, 2]);
+        assert_eq!(
+            read_route(&map, false, calls[0].shard, &[None]).unwrap(),
+            Route::Epoch(2, 0)
+        );
+        assert_eq!(
+            read_route(&map, false, calls[1].shard, &[None]).unwrap(),
+            Route::Epoch(3, 0)
+        );
     }
 }

@@ -636,6 +636,24 @@ function BK.member_refused(mv)
                                          BK.mver, mv), box.NULL}
 end
 
+-- The state of shard `id` in this shard's membership: 'active', 'draining'
+-- (it is leaving: its buckets move away) or 'removed'; nil when the
+-- membership does not name it (version 0: the configuration's shards).
+function BK.member_state(id)
+    for _, m in ipairs(BK.members.shards or {}) do
+        if m.id == id then return m.state or 'active' end
+    end
+    return nil
+end
+
+-- A shard that leaves must not be needed to finish a transaction: a
+-- participant prepared with it as its decision shard asks it for the
+-- outcome. So participants refuse a PREPARE whose decision shard is leaving
+-- (prepare_locks), and the shard leaves once no shard counts one
+-- (tarn_shard_records): BK.prep[dshard] counts the PREPAREs in progress by
+-- decision shard, from before their checks until their records are written.
+BK.prep = {}
+
 -- Changes of the state in memory (states, epoch): tarn_buckets builds its
 -- report once per change.
 BK.ver = 0
@@ -3029,6 +3047,12 @@ local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock
     -- locks), and no read of every shard missing a moving bucket's rows.
     local mv = BK.commit_check(wb, rpoints, rranges, true, plans, mver)
     if mv then return {mv[2], mv[3], mv[1]} end
+    -- A decision shard that is leaving the cluster (see BK.prep).
+    local ds = BK.member_state(dshard)
+    if ds ~= nil and ds ~= 'active' then
+        M.stats.moved = M.stats.moved + 1
+        return {1213, string.format('decision shard %d is leaving the cluster', dshard), 'moved'}
+    end
     -- readsOK: no W lock of another prepared txn on anything we read.
     local h = reads_w_locked(txid, rpoints, rranges)
     if h then return {1213, 'read row locked by ' .. h} end
@@ -3202,6 +3226,19 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         return vote_no(f[2], f[3])
     end
     return res
+end
+
+-- (Counted by decision shard while in progress: see BK.prep.)
+do
+    local prepare = tarn_prepare
+    function tarn_prepare(txid, dshard, ...)
+        local d = dshard or 0
+        BK.prep[d] = (BK.prep[d] or 0) + 1
+        local ok, res = pcall(prepare, txid, dshard, ...)
+        BK.prep[d] = BK.prep[d] - 1
+        if not ok then error(res) end
+        return res
+    end
 end
 
 local function release_locks(txid)
@@ -3568,6 +3605,13 @@ end
 -- Statuses of txids on `shard` via fn (tarn_txn_statuses/tarn_part_statuses);
 -- nil if the shard cannot be asked right now.
 local function statuses_on(shard, fn, ids)
+    -- A shard that left the cluster was needed by no transaction when it
+    -- left (see BK.prep), and may be gone: none of its records count.
+    if BK.member_state(shard) == 'removed' then
+        local out = {}
+        for i = 1, #ids do out[i] = 'none' end
+        return out
+    end
     local ok, res = pcall(on_shard, shard, fn, ids)
     if ok then return res end
     log.warn('tarn gc: %s on shard %s failed: %s', fn, tostring(shard), tostring(res))
@@ -5184,6 +5228,23 @@ function tarn_members_set(m)
         BK.ver = BK.ver + 1
         return {OK, m.ver}
     end)
+end
+
+-- Whether shard `id` may still be needed to finish a transaction here:
+-- {'ok', n} with n the PREPAREs in progress that name it as their decision
+-- shard and the participants prepared with it as theirs, and on shard `id`
+-- itself its decision records in progress. A shard leaves the cluster once
+-- every shard reports 0 after it began to leave (see BK.prep).
+function tarn_shard_records(id)
+    writable()
+    local n = BK.prep[id] or 0
+    for _, p in box.space._tarn_part.index.state:pairs({'prepared'}, {iterator = 'EQ'}) do
+        if p.dshard == id then n = n + 1 end
+    end
+    if id == M.cfg.shard_id then
+        n = n + box.space._tarn_txn.index.status:count({'staging'})
+    end
+    return {OK, n}
 end
 
 -- The definitions of this shard's tables, for a shard that joins: per table

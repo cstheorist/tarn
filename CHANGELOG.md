@@ -8,6 +8,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Shards leave a running cluster
+  ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN REMOVE SHARD
+  id` marks the shard draining (no bucket moves to it, and participants
+  refuse it as a decision shard), moves its buckets to the active shards
+  eight at a time, waits until no participant needs it to learn an outcome,
+  and marks it removed on every shard. SQL servers then leave it out, also
+  when they learn of it by finding it unreachable, and start without it when
+  their configuration still lists it. `tests/jointest.sh` removes a shard
+  under load and stops its storage.
+
 - Shards join a running cluster
   ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN ADD SHARD id
   'replica,...'` checks the new shard's storage, creates every table there,
