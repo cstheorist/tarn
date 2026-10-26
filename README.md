@@ -32,7 +32,7 @@ read them as **key/value**.
   sharded with vshard's bucket function and live in RAM (memtx) or, with
   `ENGINE=vinyl`, on disk; one transaction may span both. Buckets move
   between shards online (`TARN MOVE BUCKET`) while transactions use their
-  rows.
+  rows, and shards join a running cluster (`TARN ADD SHARD`).
 * **Strictly serializable transactions** across shards: lock-aware reads,
   MVCC-validated single-shard commits, and a parallel-commit two-phase commit
   whose recovery survives coordinator crashes and leader failover.

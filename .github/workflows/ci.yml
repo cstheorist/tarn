@@ -121,8 +121,13 @@ jobs:
           ci/annotate.sh faults tests/faults.sh
           ci/annotate.sh ddlfaults tests/ddlfaults.sh
           ci/annotate.sh movefaults tests/movefaults.sh
+          ci/annotate.sh joinfaults tests/joinfaults.sh
       - name: Bucket count of new and older clusters
         run: ci/annotate.sh bucketcount tests/bucketcount.sh
+      - name: A shard joins under load
+        run: |
+          ci/annotate.sh jointest tests/jointest.sh
+          R=3 ENGINE=vinyl DIR=/tmp/tarn-join-vinyl ci/annotate.sh vinyl-jointest tests/jointest.sh
       - name: Failover (2 shards x 3 replicas)
         run: SECS=45 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
@@ -132,7 +137,7 @@ jobs:
       - name: Cluster logs
         if: failure()
         run: |
-          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log; do
+          for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true

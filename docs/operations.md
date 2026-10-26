@@ -49,7 +49,7 @@ clients or on the storage machines.
 | `TARN_LISTEN_UNIX` | | optional Unix socket to listen on as well |
 | `TARN_WORKDIR` | `data` | data directory: WAL, snapshots and vinyl's files |
 | `TARN_REPLICAS` | `[]` | JSON list of every replica URI of this shard; more than one enables synchronous replication and elections |
-| `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber) |
+| `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber; shards added with `TARN ADD SHARD` are found in the membership) |
 | `TARN_MEMORY_MB` | `1024` | memtx memory: memtx tables, the protocol's records and the system spaces |
 | `TARN_VINYL_MEMORY_MB` | `128` | vinyl's in-memory level: recent writes of vinyl tables, dumped to disk when full |
 | `TARN_VINYL_CACHE_MB` | `128` | vinyl's cache of recently read rows |
@@ -307,13 +307,38 @@ while it copied), and if its SQL server stops, another server finishes it
 after `ddl_job_stale`: back if the old shard had not deleted the rows yet,
 forward otherwise. Moves and schema changes wait for each other.
 
-To **add a shard**: start its storage nodes, add it to every SQL server's
-configuration and restart them one at a time (a server that finds the new
-shard without a map gives it no buckets), then move buckets to it. To
-**remove a shard**, move all its buckets away first. Before moving buckets,
-every SQL server must run a version with bucket moves and know every
-shard: an older server names no buckets in its requests (shards refuse its
-writes by their rows' `bucket_id`, but its reads are not checked).
+To **add a shard**, start its storage nodes with a new shard id, then, on
+any SQL server:
+
+```sql
+TARN ADD SHARD 3 '10.0.0.31:3301,10.0.0.32:3301';   -- its id and replicas, as --shard takes them
+SHOW TARN SHARDS;                                   -- the cluster's shards: id, replicas, state
+TARN MOVE BUCKETS BETWEEN 1 AND 10000 TO SHARD 3;
+```
+
+`TARN ADD SHARD` checks that the node is a storage node of that shard with
+no buckets and no tables but the cluster's (a run that stopped halfway can
+run again), creates every table there as the first shard has it, gives it a
+bucket map with no buckets, and then records the new membership on every
+shard; the shard serves nothing until buckets move to it. It runs as a job:
+schema changes and moves wait for it, and it waits for them. The other SQL
+servers need no restart and no change of configuration: they learn the new
+shard from the shards -- when a shard refuses a request routed with the
+membership from before, when they read the bucket map, and when they start
+-- and a transaction that read every shard before it joined cannot commit
+once buckets can have moved to it (see design §2.13). Buckets move to the
+cluster's members only: once a shard has joined with `TARN ADD SHARD`, a
+shard added only to the SQL servers' configuration gets none.
+
+To **remove a shard**, move all its buckets away first. (A shard that
+joined with `TARN ADD SHARD` stays a member, which scans read, until a
+change of the membership removes it: not yet available.) Before moving
+buckets, every SQL server must run a version with bucket moves and know
+every shard: an older server names no buckets in its requests (shards
+refuse its writes by their rows' `bucket_id`, but its reads are not
+checked). Likewise, before adding a shard, every SQL server must run a
+version with `TARN ADD SHARD`: an older one names no membership version,
+so its reads of every shard are not checked.
 
 Key/value clients that compute a row's shard themselves find each bucket's
 shard in `tarn_buckets()` on the shards (or in `SHOW TARN BUCKETS`), or ask
@@ -342,6 +367,8 @@ scripts/cluster.sh start [-n SHARDS] [-r REPLICAS] [-p SQL_PORT] [-s SQL_SERVERS
                          [-d DIR] [-b BASE_PORT]
 scripts/cluster.sh status [-d DIR]
 scripts/cluster.sh stop   [-d DIR]
+scripts/cluster.sh restart [-d DIR] INSTANCE...   # a stopped instance: s2.1, tarn1
+scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints its replicas
 ```
 
 `-a` turns on ack-on-prepare and `-u` connects the SQL servers to storage
@@ -361,7 +388,9 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   this server moved (`Tarn_bucket_moves`) and how many times it read the
   bucket map (`Tarn_bucket_map_reads`), the number of buckets
   (`Tarn_buckets`), number of shards. `SHOW TARN BUCKETS` lists each
-  shard's buckets and the moves in progress.
+  shard's buckets and the moves in progress, `SHOW TARN SHARDS` the
+  cluster's shards (`tarn_members()` on a storage node: the membership
+  and its version).
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage

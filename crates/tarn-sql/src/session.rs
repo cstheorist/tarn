@@ -2808,11 +2808,57 @@ impl Session {
                     rows,
                 )
             }
+            Admin::AddShard { id, replicas } => {
+                self.implicit_commit().await?;
+                self.cluster.add_shard(id, replicas).await?;
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info: format!("Shard {} joined the cluster (with no buckets)", id),
+                })
+            }
+            Admin::ShowTarnShards => {
+                let m = self.cluster.show_members().await?;
+                rows_out(
+                    cols(&[
+                        ("Shard", ColumnType::Long),
+                        ("Replicas", ColumnType::VarString),
+                        ("State", ColumnType::VarString),
+                    ]),
+                    m.shards
+                        .iter()
+                        .map(|s| {
+                            vec![
+                                Value::Int(s.id as i64),
+                                Value::str(&s.replicas.join(",")),
+                                Value::str(&s.state),
+                            ]
+                        })
+                        .collect(),
+                )
+            }
             Admin::MoveBuckets { first, last, to } => {
                 self.implicit_commit().await?;
-                let to_pos = self.cluster.shard_position(to).ok_or_else(|| {
-                    SqlError::new(1210, "HY000", format!("there is no shard {} in the configuration", to))
-                })?;
+                // Buckets move to members only: every server knows them
+                // (TARN ADD SHARD), or, before any joined, they are the
+                // shards of the configuration.
+                let is_member = |c: &Cluster| c.members().shards.iter().any(|s| s.id == to && s.state == "active");
+                if !is_member(&self.cluster) {
+                    // (one that joined since this server last looked)
+                    self.cluster.load_members().await?;
+                }
+                let member = is_member(&self.cluster);
+                let to_pos = self
+                    .cluster
+                    .shard_position(to)
+                    .filter(|&p| member && !self.cluster.shards[p].removed())
+                    .ok_or_else(|| {
+                        SqlError::new(
+                            1210,
+                            "HY000",
+                            format!("there is no shard {} in the cluster (TARN ADD SHARD adds one)", to),
+                        )
+                    })?;
                 let count = self.cluster.bucket_map().count;
                 if last > count {
                     return Err(SqlError::new(

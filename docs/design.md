@@ -1212,6 +1212,35 @@ three (the scan reads C, B joins, x moves, the scan reads A and validates
 on both, or prepares on both: `Bug_JoinNoCheck3`,
 `Bug_JoinNoCheck3Prepare`).
 
+**In Tarn.** Every shard keeps the membership in `_tarn_meta` ('members':
+a version and the shards with their replicas; without the record, version 0
+and the shards of the SQL servers' configuration). `TARN ADD SHARD` is a
+job of kind `members`, which waits for every other job, as they wait for it
+(`tarn_job_begin`). It checks the new node -- its shard id, no buckets, no
+tables but the cluster's and no rows in them, so that a run that stopped
+can run again -- copies every table from the first shard as it is there
+(`tarn_schema_export`, `tarn_schema_import`: space ids, formats, indexes,
+global index spaces, and the catalog entries the definition fences come
+from), gives it a bucket map with no buckets, records phase `apply` (from
+there a server that finds the job abandoned finishes it forward), and
+writes the new membership on every shard (`tarn_members_set` only raises
+the version) before the job ends; a move to the new shard is a job too, so
+it begins once every shard has the new version, as the model's moves do.
+A transaction takes its server's version when it begins (`Txn::mver`): a
+server adds a joining shard to its list before it takes the shard's
+version, and a scan reads every shard on the list, so the transaction's
+scans read at least that membership's shards. Its commit requests name the
+version when it read every shard (a read routed by no bucket), and a read
+of every shard outside a transaction names its map's version next to the
+epoch (`{e, m}`, §2.12); `BK.member_refused` refuses an older one. A
+server learns a newer membership from the version in each shard's part of
+the bucket map, which it reads again after a refusal, from the first shard
+when it begins a job (a job acts on every shard), and when it starts; the
+shards find the replicas of a shard that joined in the membership too
+(recovery). A shard's list position never changes while a server runs
+(`ShardList`), so the positions in transactions, maps and lock requests
+stay valid as shards join.
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
