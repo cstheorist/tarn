@@ -1173,6 +1173,45 @@ write of `flip` was lost left a job that no takeover could finish. The
 storage tests hold each step's commit at a quorum through a map read, and
 `movefaults.sh` has a takeover find the move given up on S after `flip`.
 
+### 2.13 Adding and removing shards
+
+With buckets that move (§2.12), the size of a cluster is a matter of
+membership: a shard that joins starts with no buckets and receives some by
+moves; a shard that leaves first sends all of its buckets away. One more
+thing has to hold (issue #25). A scan reads every shard its SQL server
+knows, and §2.12 relies on that being every shard a bucket can be on: a
+scan that reads the sender after a bucket left and never reads the
+receiver misses the bucket's rows, and nothing it read changed. A
+transaction routed before a shard joined does not know that shard.
+
+**The protocol.** Every shard keeps a membership version, and adding a
+shard raises it on every shard before any bucket may move to the new one.
+A transaction that scanned names the version its server routed it with in
+its commit requests -- a validation, a PREPARE, a local commit -- and in
+its read when it reads a single shard in one call; a shard that has a newer
+version refuses it ('moved', 1213), and its server loads the membership and
+runs the statement again, or rolls the transaction back. A transaction
+routed with the old membership that scanned the sender before the bucket
+left fails its validation there (MVCC, §2.12); one that scanned it after
+can commit only once every shard has the new version, which then refuses
+it. Removing a shard needs no check: a shard leaves once it owns no bucket
+and receives none, and a scan that still reads it finds nothing there.
+
+**The model.** With `MJoin`, B joins the cluster -- `MemberJoin` raises
+`mver` on each shard, in any order -- and x moves from A to B once every
+shard has the new version. `OldTxns` are transactions routed before B
+joined; their scans read every shard but B (`KnownShards`), and
+`MemberOK` is the check above. *JoinScan* is MoveScan's workload with its
+scan routed before B joined, on two shards (every row starts on A, so the
+scan is one read of A: `Join_Scan`, `Join_ScanFailover`) and on three (y
+starts on C, so the scan reads A and C in streams and validates or prepares
+there: `Join3_Scan`, `Join3_ScanPrepare`). Without the check
+(`BugJoinNoCheck`) TLC finds a scan that commits without x: in 7 steps on
+two shards (B joins, x moves, the scan reads A after x left), in 13 on
+three (the scan reads C, B joins, x moves, the scan reads A and validates
+on both, or prepares on both: `Bug_JoinNoCheck3`,
+`Bug_JoinNoCheck3Prepare`).
+
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
@@ -1258,8 +1297,8 @@ records; the others model the PREPARE-based variant with the coordinator
 recording COMMITTED, and keep records forever. `Bug_*` configurations switch
 off one protection each and must fail; `Tradeoff_*` check documented weaker
 guarantees and must fail. Each workload has three transactions on two
-shards with one or two faults, so these are bounded checks: small, but
-exhaustive within those bounds. Two caveats. `Skew_GC_ROValidate`, the
+shards (three for `Join3_*`) with one or two faults, so these are bounded
+checks: small, but exhaustive within those bounds. Two caveats. `Skew_GC_ROValidate`, the
 largest workload with garbage collection, a crash and a lost message, did
 not finish in the time available: TLC explored 47.8 million distinct states,
 breadth-first into depth 23, without finding a violation;
@@ -1269,58 +1308,66 @@ recovery racing the coordinator but without crashes or message loss. And
 last checked before the GC, ApplyMarksCommitted and READ COMMITTED
 extensions of the spec existed, and the other configurations that
 `tla/check.sh` leaves out (`Frac`, `Local`, their `Failover` variants and
-the other `Skew*`) before bucket moves: with those options off and no READ
-COMMITTED transactions or moves, the new actions are disabled and the new
-variables stay constant, so the behaviour is unchanged, as re-running the
+the other `Skew*`) before bucket moves and joining shards: with those
+options off and no READ COMMITTED transactions, moves or joins, the new
+actions are disabled and the new variables stay constant, so the behaviour
+is unchanged, as re-running the
 serializable configurations of `tla/check.sh` with the final spec confirms
 (the same numbers of distinct states as before each extension).
 
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
 |---|---|---:|---:|---:|---|---:|
-| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 121431 | 621844 | 15 | 18s | 14 |
-| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 21332 | 79730 | 11 | 04s | 11 |
-| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2575 | 7167 | 10 | 02s | 9 |
-| Bug_IgnorePLocks | violates StrictSerializable | 2483 | 7375 | 11 | 02s | 11 |
-| Bug_InsertNoExistCheck | violates UniqueHolds | 113 | 188 | 6 | 01s | 6 |
-| Bug_LocalIgnoresRLocks | violates StrictSerializable | 31653 | 129430 | 13 | 07s | 13 |
-| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3671 | 10501 | 10 | 03s | 10 |
-| Bug_MoveNoDrain | violates StrictSerializable | 4411 | 12090 | 10 | 03s | 9 |
-| Bug_MoveNoHold | violates StrictSerializable | 4643 | 12962 | 10 | 03s | 9 |
-| Bug_MoveServeStale | violates StrictSerializable | 5734 | 15360 | 10 | 03s | 9 |
-| Bug_NoReadLocks | violates StrictSerializable | 2038 | 6929 | 9 | 02s | 9 |
-| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6256 | 17373 | 9 | 03s | 9 |
-| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12308 | 45683 | 11 | 04s | 11 |
-| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3429 | 11749 | 11 | 03s | 11 |
-| Bug_RCLockReadsInFlight | violates StrictSerializable | 83 | 167 | 5 | 01s | 5 |
-| Bug_RCNoLockCheck | violates StrictSerializable | 27871 | 84164 | 11 | 05s | 11 |
-| Bug_RCReadBeforeLock | violates StrictSerializable | 2757 | 8466 | 11 | 02s | 11 |
-| Bug_ROValidateNoReadCheck | violates StrictSerializable | 18969 | 69905 | 12 | 05s | 12 |
-| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10491 | 36671 | 11 | 05s | 11 |
+| Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
+| Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
+| Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
+| Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
+| Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
+| Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
+| Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
+| Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
+| Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
+| Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
+| Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
+| Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
+| Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
+| Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
+| Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
+| Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
+| Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
+| Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
+| Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
+| Bug_ROValidateNoReadCheck | violates StrictSerializable | 18873 | 69552 | 12 | 05s | 12 |
+| Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
-| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 02min 32s |  |
-| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 07min 05s |  |
+| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
+| Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 16s |  |
+| Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
+| Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
+| Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
+| Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
-| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 01min 51s |  |
-| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 03min 10s |  |
-| Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
-| Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 04s |  |
-| Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 27s |  |
-| Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 41s |  |
+| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 56s |  |
+| Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
+| Local_ROValidate | no errors | 66348 | 377760 | 19 | 12s |  |
+| Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
+| Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
+| Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
-| RC_Counter | no errors | 2164653 | 17141464 | 26 | 04min 50s |  |
-| RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 34s |  |
-| RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 03min 10s |  |
-| RC_Local | no errors | 50606 | 277842 | 19 | 11s |  |
-| RC_Mixed | no errors | 171352 | 1029336 | 20 | 23s |  |
-| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 02min 29s |  |
-| Recov | no errors | 71927 | 412881 | 18 | 15s |  |
-| RecovReaders | no errors | 28258 | 135451 | 17 | 07s |  |
-| Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 13s |  |
-| Recov_GC | no errors | 1136892 | 8123071 | 23 | 03min 00s |  |
+| RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
+| RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
+| RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 04min 27s |  |
+| RC_Local | no errors | 50606 | 277842 | 19 | 09s |  |
+| RC_Mixed | no errors | 171352 | 1029336 | 20 | 27s |  |
+| RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 56s |  |
+| Recov | no errors | 71927 | 412881 | 18 | 11s |  |
+| RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
+| Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 14s |  |
+| Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
 | SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 10min 18s |  |
@@ -1328,11 +1375,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
 | Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
-| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 633 | 1182 | 7 | 02s | 7 |
-| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3126 | 9646 | 9 | 04s | 8 |
-| Uniq | no errors | 657499 | 5210697 | 22 | 01min 24s |  |
-| UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 22s |  |
-| Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 14s |  |
+| Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
+| Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
+| Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
+| UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
+| Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |
 
 ### 5.2 Benchmarks
 

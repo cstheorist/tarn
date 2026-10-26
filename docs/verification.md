@@ -49,13 +49,13 @@ predecessors, and the invariant searches for a witness order.
 
 ### Configurations
 
-`tla/MC.tla` defines ten workloads on two shards (`Skew`, `Local`,
+`tla/MC.tla` defines eleven workloads on two shards (`Skew`, `Local`,
 `Frac`, `Recov` with serializable transactions; `Counter`, `Mixed`, `Local`
 with READ COMMITTED ones; `Uniq`, inserts of one global unique index
 entry; `MoveScan` and `MoveRC`, a row moved to the other shard while
-transactions run), and `tla/gen_cfgs.sh` generates one `.cfg` per
-combination of workload, fault budget and options. The names say what is
-checked:
+transactions run; `JoinScan`, the same to a shard that joins, also on
+three shards), and `tla/gen_cfgs.sh` generates one `.cfg` per combination
+of workload, fault budget and options. The names say what is checked:
 
 | Name | Meaning |
 |---|---|
@@ -67,6 +67,7 @@ checked:
 | `RC_*` | READ COMMITTED read-modify-writes racing each other and serializable transactions (`RC_Counter`, `RC_Mixed`, `RC_Local`), with faults, failovers (which empty the row-lock table) or ack-on-prepare |
 | `Uniq*` | two rows with one value of a unique key without the shard key insert one global index entry, across shards and locally (`Uniq_RC`: the local one at READ COMMITTED), with faults or a failover |
 | `Move_*` | a bucket move while a scan of every shard, writers of the moving row and READ COMMITTED read-modify-writes run (`Move_ScanPrepare`: the scan commits through PREPARE), with faults or a failover |
+| `Join*` | the same move to a shard that joins the cluster, while a scan routed before it joined runs: on two shards (one read of the other shard) and on three (`Join3_*`: reads in streams, validated or prepared) |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
