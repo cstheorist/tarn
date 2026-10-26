@@ -2709,6 +2709,7 @@ impl Session {
             ("Tarn_deadlock_detector_calls", s.deadlock_calls.load(Ordering::Relaxed)),
             ("Tarn_storage_counts", s.storage_counts.load(Ordering::Relaxed)),
             ("Tarn_rows_read", s.rows_read.load(Ordering::Relaxed)),
+            ("Tarn_path_estimates", s.path_estimates.load(Ordering::Relaxed)),
             ("Tarn_shards", self.cluster.nshards() as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));

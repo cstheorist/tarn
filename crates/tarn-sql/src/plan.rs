@@ -152,6 +152,11 @@ pub struct SelectPlan {
     pub distinct_coll: Vec<Collation>,
     pub limit: Option<Expr>,
     pub offset: Option<Expr>,
+    /// A single-table read with LIMIT whose chosen range has the longer
+    /// equality prefix but must be read whole and sorted: the range of an
+    /// index that follows ORDER BY, which the executor pages instead when
+    /// row counts say that reads fewer rows (issue #81).
+    pub ordered: Option<AccessPath>,
     /// FOR UPDATE / FOR SHARE [NOWAIT | SKIP LOCKED].
     pub lock: Option<RowLock>,
 }

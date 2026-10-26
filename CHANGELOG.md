@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An ordered read with `LIMIT` chooses between an index with a longer
+  equality prefix, which it must read whole and sort, and the index that
+  follows `ORDER BY`, which it pages until `LIMIT` (+ `OFFSET`) rows
+  qualify, by row counts: the shard counts both ranges (`tarn_estimate`, an
+  index count on memtx, a capped scan on vinyl) and the read pages the
+  ordered index when about `want * n_ordered / n_prefix` rows are fewer than
+  `n_prefix` ([#81](https://github.com/cstheorist/tarn/issues/81)). On an
+  orders-list benchmark the open-orders page of a tenant with 300,000 rows
+  reads about 200 rows instead of 113,597. `SHOW STATUS` reports
+  `Tarn_path_estimates`.
+
 - Unique keys that do not contain the shard key
   ([#14](https://github.com/cstheorist/tarn/issues/14)), such as
   `PRIMARY KEY (id), UNIQUE KEY (tenant_id, handle)`, are accepted and

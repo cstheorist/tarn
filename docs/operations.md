@@ -275,7 +275,9 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   this server, storage calls its deadlock detector made
   (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), `COUNT`s
   the shards computed without returning rows (`Tarn_storage_counts`), rows
-  read from storage (`Tarn_rows_read`), number of shards.
+  read from storage (`Tarn_rows_read`), row counts taken to choose between
+  an ordered page and a longer index prefix (`Tarn_path_estimates`), number
+  of shards.
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
