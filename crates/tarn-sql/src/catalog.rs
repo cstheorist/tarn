@@ -22,6 +22,16 @@
 //! as the SQL layer's collation does, and the shard key hashes it. Index
 //! keys (lookups, read sets, locks, the write buffer) are therefore in that
 //! form: `TableDef::index_key`.
+//!
+//! A unique key that does not contain the shard key (issue #14) cannot be
+//! enforced by one shard. It gets a *global index*: a hidden space
+//! `_tarn_uix_<table space id>_<index id>` (`TableDef::globals`) with
+//! one entry per row whose key has no NULL part: the key's columns followed
+//! by the row's primary-key columns, keyed by the key and sharded by it. Its
+//! entries are written in the same transaction as the rows, so the commit
+//! protocol keeps them exact and the entry's primary key enforces the
+//! constraint across shards. The table keeps its own unique index too, which
+//! is unique within each shard.
 
 use crate::collation::Collation;
 use crate::mpw::Mp;
@@ -172,7 +182,57 @@ pub struct IndexDef {
     /// INVISIBLE: maintained, but the planner does not use it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub invisible: bool,
+    /// A unique key without the shard key: the space id of its global index
+    /// (see the module comment); 0 until CREATE TABLE allocates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global: Option<u32>,
 }
+
+/// The global index of a unique key (`IndexDef::global`).
+#[derive(Clone, Debug)]
+pub struct GlobalIndex {
+    /// Position of the unique key in `TableDef::indexes`.
+    pub pos: usize,
+    /// The hidden space, as a table: its primary key is the unique key.
+    pub table: Arc<TableDef>,
+    /// The table's column held by each entry column.
+    pub src: Vec<usize>,
+}
+
+impl GlobalIndex {
+    /// Number of key columns (the rest of an entry is the row's primary key).
+    pub fn key_len(&self) -> usize {
+        self.table.indexes[0].cols.len()
+    }
+    /// The entry of row `row` of table `t`, its values as the table's
+    /// indexes hold them (`TableDef::key_part`); None when the key has a
+    /// NULL part (MySQL allows any number of those).
+    pub fn entry(&self, t: &TableDef, row: &[Value]) -> Option<Vec<Value>> {
+        if self.src[..self.key_len()].iter().any(|&c| row[c].is_null()) {
+            return None;
+        }
+        Some(self.src.iter().map(|&c| t.key_part(c, &row[c])).collect())
+    }
+    /// The primary key of the row an entry names, in the table's key order
+    /// (as `TableDef::pk_key` gives it).
+    pub fn holder_pk(&self, t: &TableDef, entry: &[Value]) -> Vec<Value> {
+        t.indexes[0]
+            .cols
+            .iter()
+            .map(|c| {
+                entry[self
+                    .src
+                    .iter()
+                    .position(|s| s == c)
+                    .expect("entry holds the primary key")]
+                .clone()
+            })
+            .collect()
+    }
+}
+
+/// Name of a global index's hidden space (without the database).
+pub const GLOBAL_PREFIX: &str = "_tarn_uix_";
 
 /// A FOREIGN KEY constraint: recorded (SHOW CREATE TABLE, DROP FOREIGN
 /// KEY), not enforced.
@@ -249,6 +309,13 @@ pub struct TableDef {
     pub bucket_index: Option<u32>,
     #[serde(skip)]
     pub layout: Layout,
+    /// The global indexes of unique keys without the shard key.
+    #[serde(skip)]
+    pub globals: Vec<GlobalIndex>,
+    /// A global index's space: the table it indexes (its space id and
+    /// definition version, which the entries' writes are fenced with).
+    #[serde(skip)]
+    pub base: Option<(u32, u64)>,
 }
 
 impl TableDef {
@@ -293,6 +360,104 @@ impl TableDef {
     }
     pub fn index_by_name(&self, name: &str) -> Option<&IndexDef> {
         self.indexes.iter().find(|i| i.name.eq_ignore_ascii_case(name))
+    }
+    /// Whether unique index `idx` needs a global index: the shard key is
+    /// not part of it, so one shard cannot enforce it.
+    pub fn needs_global(&self, idx: &IndexDef) -> bool {
+        idx.id != 0 && idx.unique && !self.shard_key.iter().all(|c| idx.cols.contains(c))
+    }
+    /// The global index of the unique key at position `pos`, if it has one.
+    pub fn global_of(&self, pos: usize) -> Option<&GlobalIndex> {
+        self.globals.iter().find(|g| g.pos == pos)
+    }
+    /// Whether a global index holds a case-insensitive column (by its
+    /// weight string).
+    pub fn global_on_weights(&self) -> bool {
+        self.globals
+            .iter()
+            .any(|g| g.src[..g.key_len()].iter().any(|&c| self.columns[c].weight.is_some()))
+    }
+    /// Whether column `c` is held by a global index.
+    pub fn in_global(&self, c: usize) -> bool {
+        self.globals.iter().any(|g| g.src.contains(&c))
+    }
+    /// The columns of the entries of unique key `idx`: its own, then the
+    /// primary key's that it lacks.
+    pub fn global_cols(&self, idx: &IndexDef) -> Vec<usize> {
+        let mut cols = idx.cols.clone();
+        for &c in &self.indexes[0].cols {
+            if !cols.contains(&c) {
+                cols.push(c);
+            }
+        }
+        cols
+    }
+    /// The hidden space of the global index at position `pos`, as a table.
+    fn global_table(&self, pos: usize) -> SqlResult<GlobalIndex> {
+        let idx = &self.indexes[pos];
+        let src = self.global_cols(idx);
+        let columns = src
+            .iter()
+            .map(|&c| {
+                let s = &self.columns[c];
+                ColumnDef {
+                    name: s.name.clone(),
+                    // entries hold index keys: a case-insensitive column's
+                    // weight string, so its collation decides uniqueness
+                    ty: if s.weight.is_some() {
+                        "varbinary(3072)".to_string()
+                    } else {
+                        s.ty.clone()
+                    },
+                    // entries never have a NULL key part
+                    nullable: false,
+                    default: None,
+                    default_null: false,
+                    auto_increment: false,
+                    field: None,
+                    storage_nullable: None,
+                    fill: None,
+                    hidden: false,
+                    collation: None,
+                    weight: None,
+                    sql_type: None,
+                }
+            })
+            .collect();
+        let k = idx.cols.len();
+        let mut t = TableDef {
+            db: self.db.clone(),
+            name: format!("{}{}_{}", GLOBAL_PREFIX, self.space_id, idx.id),
+            space_id: idx.global.unwrap_or(0),
+            columns,
+            indexes: vec![IndexDef {
+                name: idx.name.clone(),
+                id: 0,
+                cols: (0..k).collect(),
+                unique: true,
+                invisible: false,
+                global: None,
+            }],
+            shard_key: (0..k).collect(),
+            auto_inc: None,
+            comment: String::new(),
+            engine: self.engine,
+            ver: self.ver,
+            bucket: None,
+            dropped: Vec::new(),
+            collation: None,
+            foreign_keys: Vec::new(),
+            bucket_index: Some(1),
+            layout: Default::default(),
+            globals: Vec::new(),
+            base: Some((self.space_id, self.ver)),
+        };
+        t.resolve_types()?;
+        Ok(GlobalIndex {
+            pos,
+            table: Arc::new(t),
+            src,
+        })
     }
     /// Resolve column types and compute the layout; called on every
     /// definition loaded or built.
@@ -343,6 +508,15 @@ impl TableDef {
             col_weight,
             field_weight,
         };
+        self.resolve_globals()
+    }
+
+    /// Build `globals` from the indexes (again once `space_id` is known).
+    pub fn resolve_globals(&mut self) -> SqlResult<()> {
+        self.globals = (0..self.indexes.len())
+            .filter(|&i| self.indexes[i].global.is_some_and(|g| g != 0))
+            .map(|i| self.global_table(i))
+            .collect::<SqlResult<_>>()?;
         Ok(())
     }
 
@@ -569,7 +743,9 @@ impl TableDef {
         for idx in &self.indexes {
             let parts = self.index_parts(idx);
             indexes.push((
-                if idx.id == 0 {
+                // A global index's space names its primary key after the
+                // unique key, for the storage's duplicate-key messages.
+                if idx.id == 0 && self.base.is_none() {
                     "primary".to_string()
                 } else {
                     idx.name.clone()
@@ -584,12 +760,18 @@ impl TableDef {
             vec![(BUCKET_FIELD.to_string(), "unsigned".to_string(), false)],
         ));
         LuaDef {
-            name: self.space_name(),
+            // (a global index's space has no database in its name)
+            name: if self.base.is_some() {
+                self.name.clone()
+            } else {
+                self.space_name()
+            },
             id: self.space_id,
             engine: self.engine.name(),
             format,
             indexes,
             json: serde_json::to_string(self).expect("table def serializes"),
+            uix: self.globals.iter().map(|g| g.table.lua_def()).collect(),
         }
     }
 }
@@ -604,6 +786,8 @@ pub struct LuaDef {
     /// (index name, unique, parts (field, type, nullable))
     pub indexes: Vec<(String, bool, Vec<(String, String, bool)>)>,
     pub json: String,
+    /// The hidden spaces of the global indexes (their `json` is unused).
+    pub uix: Vec<LuaDef>,
 }
 
 pub fn space_name(db: &str, table: &str) -> String {
@@ -733,6 +917,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
             cols: vec![1, 2],
             unique: true,
             invisible: false,
+            global: None,
         }],
         shard_key: vec![1, 2],
         auto_inc: None,
@@ -745,6 +930,8 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
         bucket_index: None,
         collation: None,
         layout: Default::default(),
+        globals: Vec::new(),
+        base: None,
     };
     def.resolve_types()?;
     Ok(def)
@@ -789,10 +976,9 @@ pub fn parse_def_json(json: &str) -> SqlResult<TableDef> {
 }
 
 /// Check the invariants Tarn relies on: no column takes the hidden row id's
-/// name (1166, as in InnoDB), a primary key exists and is NOT NULL,
-/// the shard key is part of the primary key, and every unique index contains
-/// the shard key (MySQL's rule for partitioned tables), so uniqueness can be
-/// enforced by a single shard.
+/// name (1166, as in InnoDB), a primary key exists and is NOT NULL, and the
+/// shard key is part of the primary key. (A unique key without the shard key
+/// gets a global index: see the module comment.)
 pub fn validate(def: &TableDef) -> SqlResult<()> {
     if def.indexes.is_empty() || def.indexes[0].id != 0 || def.indexes[0].cols.is_empty() {
         return Err(SqlError::new(1173, "42000", "This table type requires a primary key"));
@@ -834,18 +1020,6 @@ pub fn validate(def: &TableDef) -> SqlResult<()> {
                     idx.name, def.columns[c].name
                 )));
             }
-        }
-    }
-    for idx in &def.indexes[1..] {
-        if idx.unique && !def.shard_key.iter().all(|c| idx.cols.contains(c)) {
-            return Err(SqlError::new(
-                1503,
-                "HY000",
-                format!(
-                    "A UNIQUE INDEX must include all columns in the table's partitioning function ({})",
-                    idx.name
-                ),
-            ));
         }
     }
     Ok(())

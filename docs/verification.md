@@ -38,6 +38,7 @@ Invariants checked in every configuration:
 | `StrictSerializable` | the committed transactions have a serial order, consistent with real time, that explains every value they read (for READ COMMITTED transactions: every value they read under a lock) |
 | `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
 | `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
+| `UniqueHolds` | no key is inserted by two committed transactions (global unique indexes) |
 
 `StrictSerializable` is checked constructively: the spec records the order in
 which writes reached each key and each transaction's real-time
@@ -45,9 +46,10 @@ predecessors, and the invariant searches for a witness order.
 
 ### Configurations
 
-`tla/MC.tla` defines seven workloads on two shards (`Skew`, `Local`,
+`tla/MC.tla` defines eight workloads on two shards (`Skew`, `Local`,
 `Frac`, `Recov` with serializable transactions; `Counter`, `Mixed`, `Local`
-with READ COMMITTED ones), and `tla/gen_cfgs.sh` generates one `.cfg` per
+with READ COMMITTED ones; `Uniq`, inserts of one global unique index
+entry), and `tla/gen_cfgs.sh` generates one `.cfg` per
 combination of workload, fault budget and options. The names say what is
 checked:
 
@@ -59,6 +61,7 @@ checked:
 | `*_ROValidate` | the implementation's commit paths: cross-shard read-only transactions validate instead of preparing, and the decision shard's APPLY records COMMITTED |
 | `*_GC` | additionally, transactions expire and protocol records are garbage-collected |
 | `RC_*` | READ COMMITTED read-modify-writes racing each other and serializable transactions (`RC_Counter`, `RC_Mixed`, `RC_Local`), with faults, failovers (which empty the row-lock table) or ack-on-prepare |
+| `Uniq*` | two rows with one value of a unique key without the shard key insert one global index entry, across shards and locally (`Uniq_RC`: the local one at READ COMMITTED), with faults or a failover |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -121,7 +124,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 59 verified, 0 errors
+# verification results:: 61 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with

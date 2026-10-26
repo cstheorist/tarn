@@ -32,11 +32,16 @@ servers write to it (`tests/sql/`).
   `OFFSET` (both syntaxes), `DISTINCT`, column aliases, ordinal `ORDER BY 2`.
 * Joins: `[INNER] JOIN`, `LEFT [OUTER] JOIN`, comma joins, `ON` / `USING`.
   Joins are nested loops with index lookups on the inner table.
-* Index access: equality and range predicates on an index prefix, and
+* Index access: equality (including `IS NULL` and `<=>`) and range
+  predicates on an index prefix, and
   multi-key lookups for `col IN (...)`, `OR`s of equalities and row-value
   `IN` on any index (one storage call per shard, rows in index order). An
   `OR` whose branches use different indexes becomes a union of lookups,
-  like MySQL's `index_merge`.
+  like MySQL's `index_merge`. With `LIMIT`, an index whose columns after
+  the equality prefix match `ORDER BY` (all ascending, or all descending: the
+  index is then read backwards) is preferred, and the single-table
+  read then goes through it a page at a time, filtering as it goes, and
+  stops once `LIMIT` (+ `OFFSET`) rows qualify.
 * Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`,
   `ANY_VALUE`, `GROUP_CONCAT([DISTINCT] ... [ORDER BY ...] [SEPARATOR s])`.
   `COUNT(*)`, `COUNT(constant)` and `COUNT(col)` of one table without
@@ -96,8 +101,11 @@ servers write to it (`tests/sql/`).
   *`, `INSERT` without a column list, `DESCRIBE`, `SHOW INDEX` and `SHOW
   CREATE TABLE` leave out and statements cannot name. No column may be
   called `DB_ROW_ID` (1166).
-* Every unique key must include the shard key (by default the primary key),
-  so that uniqueness is enforced on one shard.
+* A unique key that does not include the shard key (by default the primary
+  key) is enforced across shards through a global index, maintained in the
+  same transaction as the rows: writes to such a table touch one more shard
+  per such key. `ALTER TABLE` cannot add one to an existing table yet
+  (1503), nor drop, rename or change the columns of one (1846).
 * `CREATE` / `DROP TABLE` and `CREATE` / `DROP DATABASE` are not
   transactional; another SQL server sees their result within its catalog
   poll (0.3 s), and a statement that meets an older catalog there is run

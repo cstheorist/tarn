@@ -310,6 +310,8 @@ pub struct Stats {
     pub deadlock_calls: AtomicU64,
     /// COUNTs the shards computed without returning rows (issue #52).
     pub storage_counts: AtomicU64,
+    /// Rows read from storage by SELECT, UPDATE and DELETE.
+    pub rows_read: AtomicU64,
 }
 
 pub struct CachedPlan {
@@ -894,6 +896,7 @@ impl Cluster {
             let mut def = catalog::parse_def_json(&json)?;
             def.space_id = id;
             def.bucket_index = bucket_index;
+            def.resolve_globals()?;
             defs.push(def);
         }
         let d = self.call(0, "tarn_db_list", &[0x90]).await?;
@@ -1007,6 +1010,7 @@ impl Cluster {
         if !cat.has_db(&def.db) {
             return Err(SqlError::new(1049, "42000", format!("Unknown database '{}'", def.db)));
         }
+        let table_name = def.name.clone();
         let exists = || {
             if if_not_exists {
                 Ok(())
@@ -1014,7 +1018,7 @@ impl Cluster {
                 Err(SqlError::new(
                     1050,
                     "42S01",
-                    format!("Table '{}' already exists", def.name),
+                    format!("Table '{}' already exists", table_name),
                 ))
             }
         };
@@ -1029,49 +1033,22 @@ impl Cluster {
                 ));
             }
         }
-        let mut a = Mp::new();
-        a.arr(2).str("space_id").uint(1);
-        let d = self.call(0, "tarn_counter_alloc", &a.0).await?;
-        let mut rd = Rd::new(&d);
-        rd.array()?;
-        def.space_id = 10_000 + rd.value()?.as_i64().unwrap_or(0) as u32;
+        // Space ids: the table's, then one per global index (unique keys
+        // without the shard key).
+        let globals: Vec<usize> = (0..def.indexes.len())
+            .filter(|&i| def.needs_global(&def.indexes[i]))
+            .collect();
+        let first = self.alloc_space_ids(1 + globals.len() as u64).await?;
+        def.space_id = first;
+        for (k, &i) in globals.iter().enumerate() {
+            def.indexes[i].global = Some(first + 1 + k as u32);
+        }
+        def.resolve_types()?;
         let ld = def.lua_def();
         // The arguments of the job's steps: {def = the catalog entry}.
         let mut m = Mp::new();
-        m.map(1).str("def").map(6);
-        m.str("name").str(&ld.name);
-        m.str("id").uint(ld.id as u64);
-        m.str("engine").str(ld.engine);
-        m.str("format").arr(ld.format.len());
-        for (n, t, nullable) in &ld.format {
-            m.map(3)
-                .str("name")
-                .str(n)
-                .str("type")
-                .str(t)
-                .str("is_nullable")
-                .bool(*nullable);
-        }
-        m.str("indexes").arr(ld.indexes.len());
-        for (n, unique, parts) in &ld.indexes {
-            m.map(3)
-                .str("name")
-                .str(n)
-                .str("unique")
-                .bool(*unique)
-                .str("parts")
-                .arr(parts.len());
-            for (f, t, nullable) in parts {
-                m.map(3)
-                    .str("field")
-                    .str(f)
-                    .str("type")
-                    .str(t)
-                    .str("is_nullable")
-                    .bool(*nullable);
-            }
-        }
-        m.str("json").str(&ld.json);
+        m.map(1).str("def");
+        crate::alter::lua_def_entry(&mut m, &ld, None);
         let name = def.space_name();
         let deadline = std::time::Instant::now() + Duration::from_secs_f64(lock_timeout.max(1.0));
         let job = self
@@ -1163,6 +1140,16 @@ impl Cluster {
             }
             return self.run_job(&job).await;
         }
+    }
+
+    /// `n` consecutive unused space ids.
+    async fn alloc_space_ids(&self, n: u64) -> SqlResult<u32> {
+        let mut a = Mp::new();
+        a.arr(2).str("space_id").uint(n);
+        let d = self.call(0, "tarn_counter_alloc", &a.0).await?;
+        let mut rd = Rd::new(&d);
+        rd.array()?;
+        Ok(10_000 + rd.value()?.as_i64().unwrap_or(0) as u32)
     }
 
     /// The current catalog version, plus one: the version of a schema change.

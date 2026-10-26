@@ -15,6 +15,7 @@ use crate::txn::{
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::Arc;
 use tarn_common::{Column, SqlError, SqlResult, Value};
 use tarn_iproto::Iter;
@@ -281,6 +282,10 @@ async fn fetch_keys(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     }
+    cluster
+        .stats
+        .rows_read
+        .fetch_add(rows.len() as u64, AtomicOrdering::Relaxed);
     Ok(rows)
 }
 
@@ -392,15 +397,22 @@ async fn fetch_stored_from(
                 if keys.len() > 1 && !seen.insert(crate::txn::key_bytes(&key)) {
                     continue;
                 }
-                let shard = route_prefix(cluster, t, idx, &key).unwrap_or(0);
-                calls.push(Call {
-                    shard,
-                    key,
-                    iter: Iter::Eq,
-                    limit: Some(1),
-                    end: None,
-                    range: None,
-                });
+                // A unique key without the shard key (a global index, see
+                // catalog) does not say which shard holds the row: ask each.
+                let shards: Vec<usize> = match route_prefix(cluster, t, idx, &key) {
+                    Some(s) => vec![s],
+                    None => (0..cluster.nshards()).collect(),
+                };
+                for shard in shards {
+                    calls.push(Call {
+                        shard,
+                        key: key.clone(),
+                        iter: Iter::Eq,
+                        limit: Some(1),
+                        end: None,
+                        range: None,
+                    });
+                }
             }
         }
     }
@@ -444,9 +456,22 @@ async fn fetch_stored_from(
                 });
             }
             let results = futures::future::join_all(futs).await;
-            for r in results {
+            // A call that a limit cut short read its range only up to the
+            // last row it returned: record that much (issue #41), so that
+            // writes to the unread rest of the range do not conflict.
+            // (As the index holds the key: weight strings for a
+            // case-insensitive column.)
+            let idx = index_def(t, index);
+            let mut read_to: Vec<Option<Vec<Value>>> = Vec::with_capacity(calls.len());
+            for (r, c) in results.into_iter().zip(&calls) {
                 match r {
-                    Ok(v) => rows.extend(v),
+                    Ok(v) => {
+                        read_to.push(match (c.limit, v.last()) {
+                            (Some(l), Some(last)) if v.len() >= l as usize => Some(t.index_key(idx, last)),
+                            _ => None,
+                        });
+                        rows.extend(v)
+                    }
                     Err(e) => {
                         if e.code == 1213 {
                             txn.doomed = Some(e.clone());
@@ -455,16 +480,31 @@ async fn fetch_stored_from(
                     }
                 }
             }
-            for c in calls {
+            for (c, to) in calls.into_iter().zip(read_to) {
                 txn.mark_begun(c.shard);
                 if unique_point {
                     txn.note_point(c.shard, t.space_id, index, c.key);
-                } else if let Some(r) = c.range {
+                } else if let Some(mut r) = c.range {
+                    match to {
+                        Some(k) if matches!(c.iter, Iter::Le | Iter::Lt) => {
+                            r.lo = Some(k);
+                            r.lo_incl = true;
+                        }
+                        Some(k) => {
+                            r.hi = Some(k);
+                            r.hi_incl = true;
+                        }
+                        None => {}
+                    }
                     txn.note_range(c.shard, r);
                 }
             }
         }
     }
+    cluster
+        .stats
+        .rows_read
+        .fetch_add(rows.len() as u64, AtomicOrdering::Relaxed);
     Ok(rows)
 }
 
@@ -529,19 +569,15 @@ fn range_calls(
         AccessPath::Range {
             index,
             eq,
+            null_eq,
             lo,
             hi,
-            reverse: _,
+            reverse,
         } => {
             let idx = index_def(t, *index);
-            let mut prefix = Vec::with_capacity(eq.len() + 1);
-            for (i, e) in eq.iter().enumerate() {
-                let v = e.eval(outer, cx)?;
-                match (v.is_null(), t.lookup_part(idx.cols[i], &v)) {
-                    (false, Some(x)) => prefix.push(x),
-                    _ => return Ok(calls),
-                }
-            }
+            let Some(prefix) = range_prefix(t, idx, eq, null_eq, outer, cx)? else {
+                return Ok(calls);
+            };
             let next_col = idx.cols.get(eq.len()).copied();
             let bound = |b: &Option<(Expr, bool)>| -> SqlResult<Option<(Value, bool)>> {
                 match (b, next_col) {
@@ -594,9 +630,16 @@ fn range_calls(
                 lo_incl,
                 hi_incl: end.as_ref().map(|(_, i)| *i).unwrap_or(true),
             };
-            let (key, iter) = match resume {
-                Some((k, incl)) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }),
-                None => (key, iter),
+            // Backwards (ORDER BY ... DESC, issue #50): from the upper bound
+            // down to the lower one.
+            let (key, iter, end) = match (*reverse, resume) {
+                (false, Some((k, incl))) => (k.to_vec(), if incl { Iter::Ge } else { Iter::Gt }, end),
+                (false, None) => (key, iter, end),
+                (true, Some((k, incl))) => (k.to_vec(), if incl { Iter::Le } else { Iter::Lt }, lower_end(&range)),
+                (true, None) => match &end {
+                    Some((k, incl)) => (k.clone(), if *incl { Iter::Le } else { Iter::Lt }, lower_end(&range)),
+                    None => (Vec::new(), Iter::Le, lower_end(&range)),
+                },
             };
             for s in shards {
                 calls.push(Call {
@@ -632,6 +675,41 @@ fn range_calls(
         AccessPath::Point { .. } | AccessPath::Union(_) => unreachable!("not a range access"),
     }
     Ok(calls)
+}
+
+/// The equality prefix of a `Range` path, or None when no row can match: a
+/// NULL matches nothing, except where `null_eq` marks the part (`IS NULL`,
+/// `<=>`) and the column stores NULLs (issue #51).
+fn range_prefix(
+    t: &TableDef,
+    idx: &IndexDef,
+    eq: &[Expr],
+    null_eq: &[bool],
+    outer: &[Value],
+    cx: &EvalCtx,
+) -> SqlResult<Option<Vec<Value>>> {
+    let mut prefix = Vec::with_capacity(eq.len() + 1);
+    for (i, e) in eq.iter().enumerate() {
+        let v = e.eval(outer, cx)?;
+        let col = &t.columns[idx.cols[i]];
+        if v.is_null() {
+            if !(null_eq[i] && col.storage_nullable()) {
+                return Ok(None);
+            }
+            prefix.push(Value::Null);
+            continue;
+        }
+        match t.lookup_part(idx.cols[i], &v) {
+            Some(x) => prefix.push(x),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(prefix))
+}
+
+/// Where a backwards scan of `r` stops: its lower bound (None: unbounded).
+fn lower_end(r: &RangeRead) -> Option<(Vec<Value>, bool)> {
+    r.lo.as_ref().map(|k| (k.clone(), r.lo_incl))
 }
 
 fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
@@ -1061,13 +1139,23 @@ fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Optio
 /// on the prefix columns, the bounds on the next one.
 fn path_atoms<'e>(t: &TableDef, path: &'e AccessPath) -> Vec<Atom<'e>> {
     let mut out = Vec::new();
-    let (index, eq, lo, hi) = match path {
-        AccessPath::Range { index, eq, lo, hi, .. } => (*index, eq.as_slice(), lo.as_ref(), hi.as_ref()),
-        AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, keys[0].as_slice(), None, None),
+    let (index, eq, null_eq, lo, hi) = match path {
+        AccessPath::Range {
+            index,
+            eq,
+            null_eq,
+            lo,
+            hi,
+            ..
+        } => (*index, eq.as_slice(), null_eq.as_slice(), lo.as_ref(), hi.as_ref()),
+        AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, keys[0].as_slice(), &[][..], None, None),
         _ => return out,
     };
     let idx = index_def(t, index);
     for (i, e) in eq.iter().enumerate() {
+        if null_eq.get(i) == Some(&true) {
+            continue; // `IS NULL` / `<=>`: not `col = e`, left to the residual
+        }
         out.push(Atom {
             col: idx.cols[i],
             op: CmpOp::Eq,
@@ -1373,6 +1461,9 @@ pub async fn run_select(
         let row: Row = ap.aggs.iter().map(|_| Value::Int(n as i64)).collect();
         return finish_aggregated(vec![row], p, cx);
     }
+    if let Some(rows) = paged_select(cluster, mode, p, cx).await? {
+        return Ok(rows);
+    }
     let mut rows = source_rows(cluster, mode, &p.source, cx).await?;
     if let Some(f) = &p.filter {
         let mut kept = Vec::with_capacity(rows.len());
@@ -1384,6 +1475,81 @@ pub async fn run_select(
         rows = kept;
     }
     finish_select(rows, p, cx)
+}
+
+/// A single-table SELECT with LIMIT whose ORDER BY follows the index range
+/// it reads (issue #41): read the range a page at a time, filter each page
+/// and stop once LIMIT + OFFSET rows qualify, instead of reading, filtering
+/// and sorting the whole range. Rows the transaction wrote are merged in.
+/// None when the plan does not qualify.
+///
+/// Serializable reads run in one stream transaction, where pages continue
+/// after the last row, and record each page's range up to its last row; an
+/// autocommit read that needs a second page is retried in a read-only
+/// transaction. READ COMMITTED reads see one committed state per storage
+/// call, so a later page could miss a row that an update moved into the part
+/// already read: there each attempt reads again from the start of the range
+/// with a larger limit, and only the last one counts.
+async fn paged_select(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    p: &SelectPlan,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Option<Vec<Row>>> {
+    let Source::Table(ta) = &p.source else { return Ok(None) };
+    if p.order.is_empty() || p.agg.is_some() || p.having.is_some() || p.distinct || ta.limit.is_some() {
+        return Ok(None);
+    }
+    let Some(limit) = eval_limit(&p.limit, cx)? else {
+        return Ok(None);
+    };
+    let want = limit.saturating_add(eval_limit(&p.offset, cx)?.unwrap_or(0)) as usize;
+    let Some(mut pager) = Pager::new(cluster, ta, &p.order, cx)? else {
+        return Ok(None);
+    };
+    let t = &ta.table;
+    let keep = |r: &Row| -> SqlResult<bool> {
+        match &p.filter {
+            Some(f) => f.eval_bool(r, cx),
+            None => Ok(true),
+        }
+    };
+    let restart = matches!(mode, ReadMode::Committed(_));
+    let mut rows: Vec<Row> = Vec::new();
+    let mut seen: HashSet<Bytes> = HashSet::new();
+    // The first page is four times what LIMIT needs (WHERE may reject some
+    // rows), each later one at least twice the last, so a selective
+    // predicate still finishes in a few calls.
+    let mut page = 0usize;
+    while rows.len() < want && !pager.done {
+        let missing = want - rows.len();
+        page = match page {
+            0 => want.saturating_mul(4),
+            _ if restart => page.saturating_mul(2).saturating_add(missing.saturating_mul(2)),
+            _ => page.saturating_mul(2).max(missing.saturating_mul(2)),
+        }
+        .min(u32::MAX as usize / 2);
+        if restart && pager.last.is_some() {
+            pager.restart();
+            rows.clear();
+            seen.clear();
+        }
+        for r in pager.next(cluster, mode, cx, page).await? {
+            if seen.insert(crate::txn::key_bytes(&pk_of(t, &r, 0))) && keep(&r)? {
+                rows.push(r);
+            }
+        }
+    }
+    if let ReadMode::Txn(txn) | ReadMode::Committed(txn) = mode {
+        for r in txn.own_rows(t.space_id) {
+            if keep(r)? {
+                rows.push(r.clone());
+            }
+        }
+    }
+    // Stored rows are in ORDER BY order already; the (stable) sort places
+    // the transaction's own rows among them.
+    finish_select(rows, p, cx).map(Some)
 }
 
 /// The rest of a SELECT over its filtered FROM rows: aggregation, HAVING,
@@ -1758,12 +1924,16 @@ pub async fn run_locking_select(
         want.map(|w| (2 * w.saturating_sub(accepted)).clamp(16, 512))
             .unwrap_or(512)
     };
+    // (Only when the transaction wrote no rows of the table: rows it
+    // inserted or changed would need merging into index order.)
     let mut pager = match (&p.source, want) {
-        (Source::Table(ta), Some(_)) => Pager::new(cluster, txn, ta, &p.order, cx)?,
+        (Source::Table(ta), Some(_)) if txn.own_rows(ta.table.space_id).next().is_none() => {
+            Pager::new(cluster, ta, &p.order, cx)?
+        }
         _ => None,
     };
     let mut rows = match pager.as_mut() {
-        Some(pg) => filter(pg.next(cluster, txn, rc, cx, page_size(0)).await?)?,
+        Some(pg) => filter(pg.next_in(cluster, txn, rc, cx, page_size(0)).await?)?,
         None => {
             let rows = if rc {
                 let mut mode = ReadMode::Committed(txn);
@@ -1793,7 +1963,7 @@ pub async fn run_locking_select(
         if i >= rows.len() {
             match pager.as_mut() {
                 Some(pg) if !pg.done => {
-                    let more = pg.next(cluster, txn, rc, cx, page_size(accepted.len())).await?;
+                    let more = pg.next_in(cluster, txn, rc, cx, page_size(accepted.len())).await?;
                     rows.extend(filter(more)?);
                     continue;
                 }
@@ -1962,10 +2132,11 @@ fn lock_range_of(
         AccessPath::Range {
             index: 0,
             eq,
+            null_eq,
             lo: None,
             hi: None,
             reverse: false,
-        } => eq,
+        } if !null_eq.contains(&true) => eq,
         AccessPath::Prefixes { index: 0, keys } if keys.len() == 1 => &keys[0],
         _ => return Ok(None),
     };
@@ -2085,11 +2256,10 @@ async fn finish_range_lock(
     finish_select(kept, p, cx)
 }
 
-/// Paged candidates of a locking read: a forward scan of one index range on
-/// one shard, a page at a time, each page starting after the last row
-/// returned. Only for scans whose index order is the statement's ORDER BY,
-/// on a table where the transaction has at most deleted rows (those are left
-/// out; rows it inserted or changed would need merging into index order).
+/// Paged reads of one index range on one shard, forwards or backwards, a
+/// page at a time, each page starting after the last row returned. Only for scans
+/// whose index order is the statement's ORDER BY. Rows the transaction wrote
+/// or deleted are left out; callers merge in its own versions.
 struct Pager {
     ta: TableAccess,
     key_cols: Vec<usize>,
@@ -2105,36 +2275,41 @@ struct Pager {
 impl Pager {
     fn new(
         cluster: &Arc<Cluster>,
-        txn: &Txn,
         ta: &TableAccess,
         order: &[(Expr, bool)],
         cx: &EvalCtx<'_>,
     ) -> SqlResult<Option<Pager>> {
         let t = &ta.table;
-        let (index, prefix) = match &ta.path {
+        let (index, prefix, reverse) = match &ta.path {
             AccessPath::Range {
                 index,
                 eq,
-                reverse: false,
+                null_eq,
+                reverse,
                 ..
-            } => (*index, eq),
-            AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, &keys[0]),
+            } => {
+                let idx = index_def(t, *index);
+                (*index, range_prefix(t, idx, eq, null_eq, &[], cx)?, *reverse)
+            }
+            AccessPath::Prefixes { index, keys } if keys.len() == 1 => {
+                let idx = index_def(t, *index);
+                (
+                    *index,
+                    eval_keys(t, idx, std::slice::from_ref(&keys[0]), &[], cx)?.pop(),
+                    false,
+                )
+            }
             _ => return Ok(None),
         };
         let idx = index_def(t, index);
-        let Some(prefix) = eval_keys(t, idx, std::slice::from_ref(prefix), &[], cx)?.pop() else {
+        let Some(prefix) = prefix else {
             return Ok(None);
         };
-        let wrote_rows = txn
-            .writes
-            .range((t.space_id, Bytes::new())..)
-            .take_while(|((sp, _), _)| *sp == t.space_id)
-            .any(|(_, w)| w.row.is_some());
-        if wrote_rows || route_prefix(cluster, t, idx, &prefix).is_none() {
+        if route_prefix(cluster, t, idx, &prefix).is_none() {
             return Ok(None);
         }
         // ORDER BY: columns fixed by the equality prefix, then the next index
-        // columns in order, ascending.
+        // columns in order, in the direction of the scan.
         let mut next = prefix.len();
         for (e, desc) in order {
             // (a case-insensitive column sorts by its key, as its index does)
@@ -2148,7 +2323,7 @@ impl Pager {
             };
             match idx.cols.iter().position(|x| x == c) {
                 Some(pos) if pos < prefix.len() => {}
-                Some(pos) if pos == next && !desc => next += 1,
+                Some(pos) if pos == next && *desc == reverse => next += 1,
                 _ => return Ok(None),
             }
         }
@@ -2165,8 +2340,7 @@ impl Pager {
     async fn next(
         &mut self,
         cluster: &Arc<Cluster>,
-        txn: &mut Txn,
-        rc: bool,
+        mode: &mut ReadMode<'_>,
         cx: &EvalCtx<'_>,
         n: usize,
     ) -> SqlResult<Vec<Row>> {
@@ -2176,23 +2350,21 @@ impl Pager {
             ..self.ta.clone()
         };
         let resume = self.last.as_ref().map(|k| (k.as_slice(), !self.unique));
-        let rows = if rc {
-            let mut mode = ReadMode::Committed(txn);
-            fetch_stored_from(cluster, &mut mode, &page, &[], cx, resume).await?
-        } else {
-            let mut mode = ReadMode::Txn(txn);
-            fetch_stored_from(cluster, &mut mode, &page, &[], cx, resume).await?
-        };
+        let rows = fetch_stored_from(cluster, mode, &page, &[], cx, resume).await?;
         if rows.len() < limit {
             self.done = true;
         }
         let t = &self.ta.table;
+        let txn = match mode {
+            ReadMode::Txn(txn) | ReadMode::Committed(txn) => Some(&**txn),
+            ReadMode::Auto { .. } => None,
+        };
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let key: Vec<Value> = self.key_cols.iter().map(|&c| t.key_part(c, &r[c])).collect();
             let pk_vals = pk_of(t, &r, 0);
             let pk = crate::txn::key_bytes(&pk_vals);
-            let deleted = txn.buffered(t.space_id, &pk_vals).is_some();
+            let deleted = txn.is_some_and(|txn| txn.buffered(t.space_id, &pk_vals).is_some());
             if self.last.as_ref() == Some(&key) {
                 if !self.last_pks.insert(pk) {
                     continue; // returned by the previous page
@@ -2203,10 +2375,35 @@ impl Pager {
                 self.last_pks.insert(pk);
             }
             if !deleted {
-                out.push(r); // (rows this transaction deleted are left out)
+                out.push(r); // (rows this transaction wrote or deleted are left out)
             }
         }
         Ok(out)
+    }
+
+    /// Read again from the start of the range.
+    fn restart(&mut self) {
+        self.last = None;
+        self.last_pks.clear();
+        self.done = false;
+    }
+
+    /// `next` through the transaction: its streams, or (READ COMMITTED) the
+    /// latest committed state.
+    async fn next_in(
+        &mut self,
+        cluster: &Arc<Cluster>,
+        txn: &mut Txn,
+        rc: bool,
+        cx: &EvalCtx<'_>,
+        n: usize,
+    ) -> SqlResult<Vec<Row>> {
+        let mut mode = if rc {
+            ReadMode::Committed(txn)
+        } else {
+            ReadMode::Txn(txn)
+        };
+        self.next(cluster, &mut mode, cx, n).await
     }
 }
 
@@ -2361,6 +2558,7 @@ mod tests {
         let path = AccessPath::Range {
             index: t.index_by_name("st").unwrap().id,
             eq: vec![k.clone()],
+            null_eq: vec![false],
             lo: None,
             hi: Some((Expr::Lit(Value::str("2025-01-01")), false)),
             reverse: false,
@@ -2373,6 +2571,7 @@ mod tests {
         let path = AccessPath::Range {
             index: t.index_by_name("st").unwrap().id,
             eq: vec![k],
+            null_eq: vec![false],
             lo: Some((Expr::Lit(Value::str("2024-01-01")), true)),
             hi: Some((Expr::Lit(Value::str("2025-01-01")), false)),
             reverse: false,

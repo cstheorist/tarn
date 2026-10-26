@@ -8,6 +8,41 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Unique keys that do not contain the shard key
+  ([#14](https://github.com/cstheorist/tarn/issues/14)), such as
+  `PRIMARY KEY (id), UNIQUE KEY (tenant_id, handle)`, are accepted and
+  enforced across shards: each gets a global index, a hidden space sharded
+  by the key, whose entries are written in the same transaction as the rows.
+  1062 names the unique key; `INSERT IGNORE`, `ON DUPLICATE KEY UPDATE`,
+  `REPLACE` and updates find the holder of a value through it; NULLs take
+  no entry. READ COMMITTED transactions lock the value on the entry's shard.
+  Writes to such tables touch one more shard per such key. `ALTER TABLE`
+  cannot add one to an existing table yet (1503), nor change one (1846). The
+  TLA+ model gains inserts and the `UniqueHolds` invariant (`Uniq*`,
+  `Bug_InsertNoExistCheck`); Verus proves the entry maintenance (61
+  verified).
+- `col IS NULL` and `col <=> x` on a nullable index column are used as an
+  equality whose NULL selects the column's NULLs when choosing the access
+  path (the index lookup reads them), so an index
+  `(a, b, c)` serves `a = 1 AND b IS NULL AND c = 0` with one prefix
+  instead of scanning all of `a = 1`
+  ([#51](https://github.com/cstheorist/tarn/issues/51)). A unique key, which
+  holds any number of NULLs, is then read as a range. `IS NOT NULL` and
+  comparisons with NULL keep their semantics.
+- `ORDER BY <index columns> DESC ... LIMIT n` reads the index backwards, from
+  the upper bound of the range, a page at a time, and stops after `n`
+  (+ `OFFSET`) qualifying rows instead of reading the whole range forwards
+  and sorting it ([#50](https://github.com/cstheorist/tarn/issues/50)).
+  Locking reads page backwards too.
+- Ordered pages read only the page: a `SELECT ... WHERE <index prefix>
+  [AND <other conditions>] ORDER BY <next index columns> LIMIT n` picks the
+  index that returns rows in `ORDER BY` order, reads it a page at a time,
+  filters each page and stops once `n` (+ `OFFSET`) rows qualify, in
+  autocommit, in transactions (with their own writes merged in) and under
+  both isolation levels ([#41](https://github.com/cstheorist/tarn/issues/41)).
+  Serializable reads record only the part of the range they read. With
+  300,000 rows under one key prefix, the first page used to read all of
+  them. `SHOW STATUS` reports `Tarn_rows_read`.
 - Collations ([#13](https://github.com/cstheorist/tarn/issues/13)): text
   columns compare, sort, group and are unique under the collation they
   declare (`COLLATE`, `CHARACTER SET`), the table's (`DEFAULT CHARSET` /
@@ -209,12 +244,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   original assignment expressions and quoted values.
 - `col <=> NULL` (and `col <=> ?` bound to NULL) on an indexed nullable
   column found no rows: the index lookup it became drops a NULL key part.
-  On a nullable column, `<=>` is now a filter, not an index equality, in
-  `SELECT`, `UPDATE` and `DELETE`
-  ([#72](https://github.com/cstheorist/tarn/issues/72)). Such a query
-  scans where it used to look up (wrongly), and so does a join `ON` a
-  nullable column with `<=>`, for each outer row; `=` and `NOT NULL`
-  columns keep their indexes.
+  It now matches the rows whose column is NULL in `SELECT`, `UPDATE` and
+  `DELETE` ([#72](https://github.com/cstheorist/tarn/issues/72)).
 - `SELECT ... HAVING <condition> LIMIT n` without aggregation pushed the
   `LIMIT` down to storage before `HAVING` filtered, and returned too few
   rows, often none ([#38](https://github.com/cstheorist/tarn/issues/38)).

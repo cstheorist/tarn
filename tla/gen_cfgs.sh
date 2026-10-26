@@ -2,8 +2,8 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked";
-    local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE;
+    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked UniqueHolds";
+    local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE IK=NoIKeys INE=FALSE;
     for b in "$@";
     do
         case $b in 
@@ -79,6 +79,15 @@ mk ()
             RCL)
                 RCS=RCLocal; LS=LSetRCLocal
             ;;
+            UNQ)
+                IK=IKeysUniq
+            ;;
+            RCU)
+                RCS=RCUniq; LS=LSetUniq
+            ;;
+            INE)
+                INE=TRUE
+            ;;
         esac;
     done;
     cat > $name.cfg <<EOF
@@ -117,6 +126,8 @@ CONSTANTS
   BugRCReadBeforeLock = $RRB
   BugIgnorePLocks = $IPL
   BugRCLockReadsInFlight = $RIF
+  IKeys <- $IK
+  BugInsertNoExistCheck = $INE
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
@@ -178,6 +189,12 @@ mk Bug_RCLockIgnoresWLocks RSetCounter WSetCounter 0 0 0 NORD RCC AMC RIW
 mk Bug_RCReadBeforeLock    RSetCounter WSetCounter 0 0 0 NORD RCC AMC RRB
 mk Bug_IgnorePLocks        RSetCounter WSetCounter 0 0 0 NORD RCC AMC IPL
 mk Bug_RCLockReadsInFlight RSetRCLocal WSetRCLocal 0 0 0 NORD RCL AMC RIF
+# Unique keys without the shard key (issue #14): two rows with one value
+# insert one global index entry, across shards and locally, under faults.
+mk Uniq            RSetUniq WSetUniq 0 1 1 NORD UNQ AMC
+mk UniqFailover    RSetUniq WSetUniq 1 0 0 UNQ AMC
+mk Uniq_RC         RSetUniq WSetUniq 0 1 1 NORD UNQ RCU AMC
+mk Bug_InsertNoExistCheck RSetUniq WSetUniq 0 0 0 NORD UNQ AMC INE
 # Documented trade-offs (expected to be violated):
 mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
 mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW
