@@ -132,6 +132,22 @@ one local Tarantool transaction (lock check + apply + commit).
   that horizon, under the rules of §2.6 that keep "no record" meaningful for
   recovery.
 
+**Pages.** A storage read returns at most 4096 rows, or rows of 4 MiB,
+per call (`scan_page_rows`, `scan_page_bytes` of `lua/tarn.lua`) with the
+position of its last row, and the SQL server continues after it, applying
+a single-table WHERE to each page as it arrives (issue #77). Every row of
+a reply is held in the storage node's Lua heap until the reply is sent:
+without pages, a scan of millions of rows took that heap to Tarantool's
+Lua memory limit, where an allocation that failed outside a protected call
+killed the node. A read that finds less than a reserve of that heap free
+(1/16 of the limit, at least 16 MiB) fails with 1041 instead; counts
+(`tarn_count`) return no rows. Inside a transaction the pages are reads of
+its stream (one MVCC view), and the whole range is recorded once for
+validation. An autocommit read that needs more than one page runs as an
+implicit read-only transaction, as one that needs several shards does. A
+READ COMMITTED SELECT that needs more than one page reads in a read-only
+serializable transaction overlaid with its transaction's writes (§2.9).
+
 Conflicts surface as MySQL error 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE 40001),
 which clients already treat as "retry the transaction". Autocommit statements
 are retried transparently (up to 20 times with backoff). A shard leader
@@ -517,7 +533,17 @@ strictly serializable. READ COMMITTED follows InnoDB:
   range). They take no locks, record no read set and are never validated, so
   they never cause an abort. Like autocommit reads they wait while a
   prepared cross-shard transaction W-locks what they read, because that
-  transaction may already be committed and acknowledged (`RCRead`).
+  transaction may already be committed and acknowledged (`RCRead`). A
+  `SELECT` whose reads need more than one storage page (§1.2) reads them
+  in one state instead, as InnoDB's statement reads one view: in a
+  read-only serializable transaction overlaid with the transaction's own
+  writes, validated when the statement ends. Page by page from the latest
+  state, a row moved within an index meanwhile could be missed or read
+  twice. Such a statement may therefore fail with 1213 when writes keep
+  changing what it reads (after 20 retries), like an autocommit read, and
+  as with any 1213 the transaction is then rolled back; short ones never
+  do. UPDATE and DELETE read their candidates page by
+  page: each is read again under its lock.
 * **Row locks** (`tarn_lock`) are taken by writes and locking reads and held
   until the transaction ends. A lock is named by (space, index, key): a row
   by its primary key, or a value of a unique key. Modes are S and X; a

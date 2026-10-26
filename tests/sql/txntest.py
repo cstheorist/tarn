@@ -218,6 +218,41 @@ class T:
         aborted = expect_conflict(lambda: q(a, "COMMIT"))
         self.check(aborted and n1 == n2, f"counted range validated (n1={n1} n2={n2} aborted={aborted})")
 
+    def test_long_reads_in_pages(self):
+        # Issue #77: storage returns a long read a page at a time (4096
+        # rows or 4 MiB). Autocommit and inside a transaction, a read of
+        # several pages returns what one read would, with a residual WHERE
+        # applied page by page and the transaction's own writes overlaid;
+        # the whole range is validated at commit.
+        n = 13000
+        c = self.fresh("lr", "CREATE TABLE lr (id INT PRIMARY KEY, g INT NOT NULL, pad VARCHAR(400))", [])
+        for lo in range(0, n, 1000):
+            q(c, "INSERT INTO lr VALUES " + ", ".join(f"({i}, {i % 10}, REPEAT('x', {i % 400}))"
+                                                     for i in range(lo, lo + 1000)))
+        total = sum(range(n))
+        sum7 = sum(i for i in range(n) if i % 10 == 7)
+        self.check(q(c, "SELECT COUNT(*), SUM(id) FROM lr") == ((n, total),), "autocommit, every row")
+        self.check(q(c, "SELECT SUM(id) FROM lr WHERE g = 7")[0][0] == sum7, "autocommit, an unindexed WHERE")
+        ids = [r[0] for r in q(c, "SELECT id FROM lr WHERE id >= 100 AND pad LIKE 'xx%' ORDER BY id LIMIT 9000")]
+        want = [i for i in range(100, n) if i % 400 >= 2][:9000]
+        self.check(ids == want, f"a range, a LIKE and a LIMIT across pages: {len(ids)} rows")
+        self.check(len(q(c, "SELECT pad FROM lr")) == n, "every row with its text")
+        q(c, "BEGIN")
+        q(c, "UPDATE lr SET g = 7 WHERE id IN (1, 12999)")
+        q(c, "DELETE FROM lr WHERE id = 17")
+        q(c, "INSERT INTO lr VALUES (20000, 7, '')")
+        mine = sum7 + 1 + 12999 - 17 + 20000
+        self.check(q(c, "SELECT SUM(id) FROM lr WHERE g = 7")[0][0] == mine, "in a transaction, its writes overlaid")
+        q(c, "ROLLBACK")
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        q(a, "BEGIN")
+        s1 = q(a, "SELECT SUM(id) FROM lr WHERE g = 7")[0][0]
+        q(b, "UPDATE lr SET g = 7 WHERE id = 12998")   # in the last page of the scan
+        s2 = q(a, "SELECT SUM(id) FROM lr WHERE g = 7")[0][0]
+        q(a, "INSERT INTO lr VALUES (20001, 0, '')")
+        aborted = expect_conflict(lambda: q(a, "COMMIT"))
+        self.check(s1 == s2 == sum7 and aborted, f"a long read is validated as a whole ({s1} {s2} {aborted})")
+
     def test_fractured_read(self):
         # R reads y, then T updates x and y atomically (across shards for
         # most pairs) and commits, then R reads x. R must not commit having
