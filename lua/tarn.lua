@@ -2280,6 +2280,41 @@ end
 -- out anyway.)
 tarn_count = PG.bounded(tarn_count)
 
+-- tarn_estimate: row counts that choose the access path of an ordered read
+-- with LIMIT (issue #81). Range A, the equality prefix `a_key` of index
+-- `a_index`, would be read whole and sorted; range B, the prefix `b_key` of
+-- `b_index`, follows ORDER BY and would be paged until enough rows qualify,
+-- about budget/n_a * n_b rows when A's conditions are what B filters on.
+-- Returns {'ok', n_a, n_b}: memtx counts both in its index (no scan); vinyl,
+-- whose counts scan, gives the index size as n_b (at least B's rows) and
+-- counts A only up to the point where paging B is sure to read fewer rows,
+-- and not at all when that point lies past one page (cfg.scan_page_rows,
+-- issue #77): n_a is then 0, which keeps the plan. Neither is a read of the
+-- transaction: the counts only pick between two paths to the same rows.
+function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget)
+    local space = box.space[space_id]
+    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    local a, b = space.index[a_index], space.index[b_index]
+    if a == nil or b == nil then return {'error', 1412, STALE_DEF_MSG} end
+    if space.engine ~= 'vinyl' then
+        return {OK, a:count(a_key, {iterator = 'EQ'}), b:count(b_key, {iterator = 'EQ'})}
+    end
+    local nb = b:len()
+    local page = M.cfg.scan_page_rows
+    -- (budget * nb > page^2 means cap > page; tested before the product,
+    -- which a huge budget would overflow)
+    if budget > page * page / math.max(nb, 1) then return {OK, 0, nb} end
+    local cap = math.floor(math.sqrt(budget * nb)) + 1
+    if cap > page then return {OK, 0, nb} end
+    fiber.set_slice(LONG_SCAN_SLICE)   -- see PG.scan
+    local na = 0
+    for _ in a:pairs(a_key, {iterator = 'EQ'}) do
+        na = na + 1
+        if na >= cap then break end
+    end
+    return {OK, na, nb}
+end
+
 function tarn_read(space_id, index_id, key, iterator, limit, offset)
     return tarn_select(space_id, index_id, key, iterator, limit, nil, true, true, offset)
 end

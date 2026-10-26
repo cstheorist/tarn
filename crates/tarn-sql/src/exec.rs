@@ -1708,7 +1708,8 @@ async fn select_once(
         let row: Row = ap.aggs.iter().map(|_| Value::Int(n as i64)).collect();
         return finish_aggregated(vec![row], p, cx);
     }
-    if let Some(rows) = paged_select(cluster, mode, p, cx).await? {
+    let ordered = ordered_instead(cluster, p, cx).await?;
+    if let Some(rows) = paged_select(cluster, mode, p, ordered.as_ref(), cx).await? {
         return Ok(rows);
     }
     let filter = |rows: Vec<Row>| -> SqlResult<Vec<Row>> {
@@ -1753,13 +1754,19 @@ async fn select_once(
 /// call, so a later page could miss a row that an update moved into the part
 /// already read: there each attempt reads again from the start of the range
 /// with a larger limit, and only the last one counts.
+///
+/// `instead`: the access to page in place of the plan's (issue #81).
 async fn paged_select(
     cluster: &Arc<Cluster>,
     mode: &mut ReadMode<'_>,
     p: &SelectPlan,
+    instead: Option<&TableAccess>,
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Option<Vec<Row>>> {
-    let Source::Table(ta) = &p.source else { return Ok(None) };
+    let ta = match (instead, &p.source) {
+        (Some(ta), _) | (None, Source::Table(ta)) => ta,
+        _ => return Ok(None),
+    };
     if p.order.is_empty() || p.agg.is_some() || p.having.is_some() || p.distinct || ta.limit.is_some() {
         return Ok(None);
     }
@@ -1815,6 +1822,122 @@ async fn paged_select(
     // Stored rows are in ORDER BY order already; the (stable) sort places
     // the transaction's own rows among them.
     finish_select(rows, p, cx).map(Some)
+}
+
+/// The access to page instead of the planned one (issue #81), when the plan
+/// reads a range A by a longer equality prefix that it must read whole and
+/// sort, and offers a range B, of an index that follows ORDER BY, that
+/// would stop after LIMIT + OFFSET rows qualify. With n_a rows in A and n_b
+/// in B, and the rows of A spread over B, paging B reads about want * n_b /
+/// n_a rows: B wins when that is fewer than n_a. (On vinyl n_b is the size
+/// of the index, an upper bound: the choice may then read A where B would
+/// have been faster, as before, but not the other way.) Both prefixes must
+/// route to one shard, which counts them (`tarn_estimate`); A must have no
+/// bound on its next column, which its prefix count would overstate. WHERE
+/// filters either way, so the choice changes only how many rows are read.
+/// (A read retried in a transaction or a snapshot counts again.)
+async fn ordered_instead(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<TableAccess>> {
+    let (Some(b_path), Source::Table(ta)) = (&p.ordered, &p.source) else {
+        return Ok(None);
+    };
+    let (
+        AccessPath::Range {
+            index: a_index,
+            eq: a_eq,
+            null_eq: a_null,
+            lo: None,
+            hi: None,
+            ..
+        },
+        AccessPath::Range {
+            index: b_index,
+            eq: b_eq,
+            null_eq: b_null,
+            ..
+        },
+    ) = (&ta.path, b_path)
+    else {
+        return Ok(None);
+    };
+    if p.agg.is_some() || p.having.is_some() || p.distinct || p.order.is_empty() {
+        return Ok(None);
+    }
+    let Some(limit) = eval_limit(&p.limit, cx)? else {
+        return Ok(None);
+    };
+    let want = limit.saturating_add(eval_limit(&p.offset, cx)?.unwrap_or(0));
+    if want == 0 {
+        return Ok(None);
+    }
+    let t = &ta.table;
+    let (a_idx, b_idx) = (index_def(t, *a_index), index_def(t, *b_index));
+    let (Some(a_key), Some(b_key)) = (
+        range_prefix(t, a_idx, a_eq, a_null, &[], cx)?,
+        range_prefix(t, b_idx, b_eq, b_null, &[], cx)?,
+    ) else {
+        return Ok(None); // no row can match: nothing to choose
+    };
+    let shard = match (
+        route_prefix(cluster, t, a_idx, &a_key),
+        route_prefix(cluster, t, b_idx, &b_key),
+    ) {
+        (Some(a), Some(b)) if a == b => a,
+        _ => return Ok(None),
+    };
+    // (A count that fails leaves the plan as it is: the read reports what
+    // is wrong, if anything still is.)
+    let Ok((n_a, n_b)) = estimate(cluster, shard, t, a_idx.id, &a_key, b_idx.id, &b_key, want).await else {
+        return Ok(None);
+    };
+    cluster.stats.path_estimates.fetch_add(1, AtomicOrdering::Relaxed);
+    if !pages_fewer(want, n_a, n_b) {
+        return Ok(None);
+    }
+    Ok(Some(TableAccess {
+        path: b_path.clone(),
+        ..ta.clone()
+    }))
+}
+
+/// Whether paging a range of `n_b` rows until `want` rows qualify reads
+/// fewer rows than reading the `n_a` rows of the other range (and sorting
+/// them), when the rows that qualify are those of the other range spread
+/// evenly over the paged one: want * n_b / n_a < n_a.
+fn pages_fewer(want: u64, n_a: u64, n_b: u64) -> bool {
+    n_a > 0 && (want as u128) * (n_b as u128) < (n_a as u128) * (n_a as u128)
+}
+
+/// `tarn_estimate` on `shard`: the rows of the `a_key` prefix of index
+/// `a_index` and of the `b_key` prefix of `b_index` (see there).
+#[allow(clippy::too_many_arguments)]
+async fn estimate(
+    cluster: &Arc<Cluster>,
+    shard: usize,
+    t: &TableDef,
+    a_index: u32,
+    a_key: &[Value],
+    b_index: u32,
+    b_key: &[Value],
+    budget: u64,
+) -> SqlResult<(u64, u64)> {
+    let mut m = crate::mpw::Mp::new();
+    m.arr(6)
+        .uint(t.space_id as u64)
+        .uint(a_index as u64)
+        .vals(a_key)
+        .uint(b_index as u64)
+        .vals(b_key)
+        .uint(budget);
+    let d = cluster.call(shard, "tarn_estimate", &m.0).await?;
+    let (_, mut rd) = crate::mpw::lua_status(&d)?;
+    let mut n = || -> SqlResult<u64> {
+        match rd.value()? {
+            Value::Int(n) if n >= 0 => Ok(n as u64),
+            Value::UInt(n) => Ok(n),
+            other => Err(crate::mpw::proto(format!("bad estimate {:?}", other))),
+        }
+    };
+    Ok((n()?, n()?))
 }
 
 /// The rest of a SELECT over its filtered FROM rows: aggregation, HAVING,
@@ -2893,5 +3016,20 @@ mod tests {
         // a column fixed twice
         let twice = Expr::And(Box::new(eq(0, 1)), Box::new(eq(0, 2)));
         assert!(!only_prefix(&Some(twice), &[0], &[]));
+    }
+
+    #[test]
+    fn paging_the_ordered_index_or_reading_the_prefix() {
+        // issue #81: 112,726 open rows of 300,000, a page of 51: paging
+        // created_at reads ~136 rows, the status prefix 112,726
+        assert!(pages_fewer(51, 112_726, 300_000));
+        // 60 rows of one customer: reading them beats paging the tenant
+        assert!(!pages_fewer(51, 60, 300_000));
+        // an empty prefix is read in no time
+        assert!(!pages_fewer(51, 0, 300_000));
+        // the break-even point: want * n_b = n_a^2
+        assert!(!pages_fewer(100, 100, 100));
+        assert!(pages_fewer(99, 100, 100));
+        assert!(!pages_fewer(u64::MAX, u64::MAX, u64::MAX));
     }
 }

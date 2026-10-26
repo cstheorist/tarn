@@ -1303,9 +1303,22 @@ fn index_follows_order(idx: &crate::catalog::IndexDef, eq_len: usize, order: &[(
 /// indexes with the same equality prefix, one that returns rows in that order
 /// wins, so a plain read can page through it and stop (issue #41).
 fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, bool)]) -> AccessPath {
+    choose_paths(table, offset, conj, order).0
+}
+
+/// `choose_path`, and the best range that follows `order` when the chosen
+/// range does not: a longer equality prefix wins, but its rows must all be
+/// read and sorted, so the executor compares the two by row counts and may
+/// page the ordered one instead (issue #81).
+fn choose_paths(
+    table: &TableDef,
+    offset: usize,
+    conj: &[Expr],
+    order: &[(usize, bool)],
+) -> (AccessPath, Option<AccessPath>) {
     if table.is_virtual() {
         // information_schema: rows come from the catalog; WHERE filters them
-        return AccessPath::Full;
+        return (AccessPath::Full, None);
     }
     let hi = offset + table.columns.len();
     let mut preds: Vec<Vec<Pred>> = (0..table.columns.len()).map(|_| Vec::new()).collect();
@@ -1385,6 +1398,8 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
         }
     }
     let mut best: (i32, AccessPath) = (0, AccessPath::Full);
+    let mut best_follows = false;
+    let mut ordered: Option<(i32, AccessPath)> = None;
     // Several equality keys (IN lists, ORs of equalities, row-value IN):
     // look each one up instead of scanning (issue #10).
     let indep = |e: &Expr| independent_of(e, offset, hi, offset);
@@ -1466,6 +1481,7 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
         }
         let full = eq.len() == idx.cols.len();
         let pk_bonus = if idx.id == 0 { 1 } else { 0 };
+        let mut this_follows = false;
         // A unique key holds any number of NULLs: `IS NULL` on it is a range.
         let (score, path) = if full && idx.unique && !null_eq.contains(&true) {
             let keys = match &in_list {
@@ -1496,27 +1512,36 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, 
             } else {
                 None
             };
-            let ordered = if follows.is_some() { 3 } else { 0 };
-            let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus + ordered;
-            (
-                s,
-                AccessPath::Range {
-                    index: idx.id,
-                    eq,
-                    null_eq,
-                    lo,
-                    hi: hi2,
-                    reverse: follows == Some(true),
-                },
-            )
+            let bonus = if follows.is_some() { 3 } else { 0 };
+            let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus + bonus;
+            let path = AccessPath::Range {
+                index: idx.id,
+                eq,
+                null_eq,
+                lo,
+                hi: hi2,
+                reverse: follows == Some(true),
+            };
+            this_follows = follows.is_some();
+            if this_follows && ordered.as_ref().is_none_or(|o| s > o.0) {
+                ordered = Some((s, path.clone()));
+            }
+            (s, path)
         } else {
             continue;
         };
         if score > best.0 {
+            best_follows = this_follows;
             best = (score, path);
         }
     }
-    best.1
+    // Only a range is read whole and sorted: a point lookup returns a row
+    // per key, and an IN list or a union is read key by key anyway.
+    let alt = match &best.1 {
+        AccessPath::Range { .. } if !best_follows => ordered.map(|o| o.1),
+        _ => None,
+    };
+    (best.1, alt)
 }
 
 // ---------------------------------------------------------------------------
@@ -1931,7 +1956,9 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
 
     // FROM: access paths. A single-table read with LIMIT prefers an index
     // that returns rows in ORDER BY order (the executor then pages through
-    // it and stops early).
+    // it and stops early); when another index fixes a longer prefix, the
+    // plan keeps the ordered range too, for the executor to choose between
+    // them by row counts (issue #81).
     let order_cols: Vec<(usize, bool)> =
         if scope.tables.len() == 1 && limit.is_some() && !aggregated && sel.distinct.is_none() {
             order
@@ -1945,7 +1972,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         } else {
             Vec::new()
         };
-    let source = build_source(&scope, &joins, &on_exprs, &conj, &order_cols)?;
+    let (source, ordered) = build_source(&scope, &joins, &on_exprs, &conj, &order_cols)?;
     let filter = join_and(conj.clone());
 
     // Push LIMIT to storage when every row read is a result row (HAVING
@@ -1989,6 +2016,7 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
             .collect(),
         limit,
         offset,
+        ordered,
         lock: q.locks.first().filter(|_| lockable).map(|l| RowLock {
             exclusive: q.locks.iter().any(|l| matches!(l.lock_type, A::LockType::Update)),
             nowait: matches!(l.nonblock, Some(A::NonBlock::Nowait)),
@@ -2105,15 +2133,16 @@ fn build_source(
     on: &[Option<Expr>],
     conj: &[Expr],
     order: &[(usize, bool)],
-) -> SqlResult<Source> {
+) -> SqlResult<(Source, Option<AccessPath>)> {
     if scope.tables.is_empty() {
-        return Ok(Source::Dual);
+        return Ok((Source::Dual, None));
     }
     let t0 = &scope.tables[0];
+    let (path, ordered) = choose_paths(&t0.table, 0, conj, order);
     let mut src = Source::Table(TableAccess {
         table: t0.table.clone(),
         alias: t0.alias.clone(),
-        path: choose_path(&t0.table, 0, conj, order),
+        path,
         offset: 0,
         limit: None,
     });
@@ -2142,7 +2171,7 @@ fn build_source(
             on: on_e,
         };
     }
-    Ok(src)
+    Ok((src, ordered))
 }
 
 // ---------------------------------------------------------------------------
@@ -3301,6 +3330,98 @@ mod tests {
             panic!()
         };
         assert!(matches!(&s.source, Source::Table(t) if matches!(t.path, AccessPath::Range { index: 0, .. })));
+    }
+
+    #[test]
+    fn longer_prefix_or_the_index_that_follows_order_by() {
+        // issue #81: a longer equality prefix wins the plan, and the range of
+        // the index that follows ORDER BY rides along for the executor to
+        // page instead when row counts favour it
+        let c0 = Catalog::default();
+        let ctx0 = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE orders (tenant_id BIGINT NOT NULL, id BIGINT NOT NULL, created_at DATETIME, \
+             closed_at DATETIME, voided_at DATETIME, deleted TINYINT NOT NULL DEFAULT 0, \
+             status VARCHAR(20), customer_id BIGINT, PRIMARY KEY (tenant_id, id), \
+             KEY by_created (tenant_id, created_at, id), \
+             KEY by_status (tenant_id, closed_at, deleted, voided_at, status, id), \
+             KEY by_customer (tenant_id, customer_id, id)) PARTITION BY KEY (tenant_id)",
+            &ctx0,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let paths = |sql: &str| {
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            let Stmt::Select(s) = plan(sql, &ctx).unwrap() else {
+                panic!()
+            };
+            let shape = |p: &AccessPath| match p {
+                AccessPath::Range { index, eq, reverse, .. } => (*index, eq.len(), *reverse),
+                other => panic!("{other:?}"),
+            };
+            let Source::Table(t) = &s.source else { panic!() };
+            (shape(&t.path), s.ordered.as_ref().map(shape))
+        };
+        let status = "SELECT * FROM orders WHERE tenant_id = 1 AND deleted = 0 \
+                      AND closed_at IS NULL AND voided_at IS NULL";
+        assert_eq!(
+            paths(&format!("{status} ORDER BY created_at, id LIMIT 51")),
+            ((2, 4, false), Some((1, 1, false)))
+        );
+        assert_eq!(
+            paths(&format!("{status} ORDER BY created_at DESC, id DESC LIMIT 51")),
+            ((2, 4, false), Some((1, 1, true)))
+        );
+        // the selective shape: the same choice, decided at run time
+        assert_eq!(
+            paths("SELECT * FROM orders WHERE tenant_id = 1 AND customer_id = 7 ORDER BY created_at, id LIMIT 51"),
+            ((3, 2, false), Some((1, 1, false)))
+        );
+        // the default page follows ORDER BY already; without LIMIT, or with
+        // an order no index follows, there is nothing to page
+        assert_eq!(
+            paths("SELECT * FROM orders WHERE tenant_id = 1 AND deleted = 0 ORDER BY created_at, id LIMIT 51"),
+            ((1, 1, false), None)
+        );
+        assert_eq!(
+            paths(&format!("{status} ORDER BY created_at, id")),
+            ((2, 4, false), None)
+        );
+        assert_eq!(
+            paths(&format!("{status} ORDER BY status, created_at LIMIT 5")),
+            ((2, 4, false), None)
+        );
+        // a point lookup is never traded for a page
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::Select(s) = plan(
+            "SELECT * FROM orders WHERE tenant_id = 1 AND id = 5 ORDER BY created_at LIMIT 5",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert!(s.ordered.is_none());
     }
 
     #[test]
