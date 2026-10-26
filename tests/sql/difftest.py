@@ -46,10 +46,10 @@ SCHEMA = [
     "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci PARTITION BY KEY(t)",
     # unique keys on nullable columns hold several NULLs (issue #51)
     "CREATE TABLE nu (id INT PRIMARY KEY, e VARCHAR(10), f INT, UNIQUE KEY ue (e, id), UNIQUE KEY uef (e, f, id))",
-    # an orders list: pages in the order of a secondary index (issue #41)
-    "CREATE TABLE ord (shop INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
-    "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (shop, id), KEY bypa (shop, pa, id), "
-    "KEY bystatus (shop, closed, del, id)) PARTITION BY KEY(shop)",
+    # pages in the order of a secondary index (issue #41)
+    "CREATE TABLE ord (tenant INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
+    "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (tenant, id), KEY bypa (tenant, pa, id), "
+    "KEY bystatus (tenant, closed, del, id)) PARTITION BY KEY(tenant)",
     # unique keys without the shard key (issue #14): enforced across shards
     # through global indexes; a nullable column, as in soft-delete keys
     "CREATE TABLE gu (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
@@ -86,13 +86,13 @@ def seed():
              "(7, 'Eve ', 'straße', 'd4', 'x', 70), (8, 'a_b', 'Straße', 'D4', 'w', 80), "
              "(9, 'ab', 'Œuvre', 'e5', 'v', 90), (10, 'a-b', 'oeuvre', 'E5', 'u', 100)")
     rows = []
-    for shop, n in ((1, 700), (2, 30), (3, 1)):
+    for tenant, n in ((1, 700), (2, 30), (3, 1)):
         for i in range(1, n + 1):
-            # processed_at repeats (ties broken by id); 1 in 5 deleted, 2 in 5 open
+            # pa repeats (ties broken by id); 1 in 5 deleted, 2 in 5 open
             pa = f"'2025-01-{1 + i % 28:02d} 1{i % 7}:00:00'"
             closed = "NULL" if i % 5 in (1, 3) else f"'2025-02-{1 + i % 28:02d} 00:00:00'"
             st = "'paid'" if i % 3 else "'pending'"
-            rows.append(f"({shop}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
+            rows.append(f"({tenant}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
     s.append("INSERT INTO ord VALUES " + ", ".join(rows))
     return s
 
@@ -843,78 +843,78 @@ CASES = [
     # ordered pages with LIMIT read the index that follows ORDER BY a page at
     # a time and stop early (issue #41): residuals, OFFSET, ties, bounds,
     # selective filters, an empty range, and the transaction's own writes
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
-    ("SELECT * FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 20 OFFSET 300", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 300, 10", "q"),
-    ("SELECT pa FROM ord WHERE shop = 1 ORDER BY pa LIMIT 40", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 ORDER BY shop, pa, id LIMIT 7", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa, id LIMIT 30", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND id % 97 = 0 ORDER BY pa, id LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND id > 690 ORDER BY pa, id LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa >= '2025-01-20' ORDER BY pa, id LIMIT 12", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
+    ("SELECT * FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 20 OFFSET 300", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 300, 10", "q"),
+    ("SELECT pa FROM ord WHERE tenant = 1 ORDER BY pa LIMIT 40", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 ORDER BY tenant, pa, id LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa, id LIMIT 30", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND id % 97 = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND id > 690 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa >= '2025-01-20' ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
      "ORDER BY pa, id LIMIT 25", "q"),
-    ("SELECT id FROM ord WHERE shop = 2 AND del = 0 ORDER BY pa, id LIMIT 100", "q"),
-    ("SELECT id FROM ord WHERE shop = 3 AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 9 ORDER BY pa, id LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 0", "q"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY id LIMIT 9", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL ORDER BY closed, del, id LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE tenant = 2 AND del = 0 ORDER BY pa, id LIMIT 100", "q"),
+    ("SELECT id FROM ord WHERE tenant = 3 AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 9 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 0", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY id LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL ORDER BY closed, del, id LIMIT 9", "q"),
     # ... and backwards for ORDER BY ... DESC (issue #50): with and without
     # bounds, residuals, OFFSET, ties, mixed directions (sorted instead)
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 51", "q"),
-    ("SELECT * FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 20 OFFSET 300", "q"),
-    ("SELECT pa FROM ord WHERE shop = 1 ORDER BY pa DESC LIMIT 40", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 ORDER BY id DESC LIMIT 7", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 ORDER BY shop DESC, pa DESC, id DESC LIMIT 7", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa DESC, id DESC LIMIT 30", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND id % 97 = 0 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa >= '2025-01-20' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-20' ORDER BY pa DESC, id DESC LIMIT 1000", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa < '2025-01-03' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa <= '2025-01-03 12:00:00' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 51", "q"),
+    ("SELECT * FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 20 OFFSET 300", "q"),
+    ("SELECT pa FROM ord WHERE tenant = 1 ORDER BY pa DESC LIMIT 40", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 ORDER BY id DESC LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 ORDER BY tenant DESC, pa DESC, id DESC LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND st = 'pending' AND closed IS NULL ORDER BY pa DESC, id DESC LIMIT 30", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND id % 97 = 0 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa >= '2025-01-20' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa > '2025-01-20' ORDER BY pa DESC, id DESC LIMIT 1000", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa < '2025-01-03' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa <= '2025-01-03 12:00:00' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND pa > '2025-01-05' AND pa < '2025-01-07' AND del = 0 "
      "ORDER BY pa DESC, id DESC LIMIT 25", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND id < 40 ORDER BY id DESC LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND id >= 690 ORDER BY id DESC LIMIT 50", "q"),
-    ("SELECT id FROM ord WHERE shop = 2 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 100", "q"),
-    ("SELECT id FROM ord WHERE shop = 9 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id LIMIT 9", "q"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id DESC LIMIT 9", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL ORDER BY closed DESC, del DESC, id DESC LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND id < 40 ORDER BY id DESC LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND id >= 690 ORDER BY id DESC LIMIT 50", "q"),
+    ("SELECT id FROM ord WHERE tenant = 2 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 100", "q"),
+    ("SELECT id FROM ord WHERE tenant = 9 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id LIMIT 9", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id DESC LIMIT 9", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL ORDER BY closed DESC, del DESC, id DESC LIMIT 9", "q"),
     # IS NULL as an index predicate (issue #51): single-column and composite
     # indexes, with and without further key columns, unique keys holding
     # several NULLs, <=>, and comparisons with NULL that match nothing
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY id", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 20", "q"),
-    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NULL", "q"),
-    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NOT NULL", "q"),
-    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NULL AND del = 1 AND id > 600", "q"),
-    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed = NULL", "q"),
-    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed <=> NULL AND del = 0", "q"),
-    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed > NULL", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY closed, del, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY id", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 20", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed IS NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed IS NOT NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 1 AND id > 600", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed = NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed <=> NULL AND del = 0", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed > NULL", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY closed, del, id LIMIT 5", "q"),
     # the longer prefix or the index that follows ORDER BY, by row counts
     # (issue #81): unselective prefixes page bypa, selective or empty ones
     # are read and sorted; OFFSET, DESC, a LIMIT past the prefix, a filter
     # the prefix does not cover, and the transaction's own writes
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 51", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 10 OFFSET 250", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 1000", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 AND st = 'pending' "
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 51", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 10 OFFSET 250", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 1000", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 AND st = 'pending' "
      "ORDER BY pa, id LIMIT 7", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 2 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 3 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed = '2025-02-02 00:00:00' AND del = 0 ORDER BY pa, id LIMIT 5",
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 2 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 3 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed = '2025-02-02 00:00:00' AND del = 0 ORDER BY pa, id LIMIT 5",
      "q"),
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1003, '2024-12-30 00:00:00', 0, 'paid', NULL)", "dml:ord"),
-    ("UPDATE ord SET closed = '2025-03-01 00:00:00' WHERE shop = 1 AND id = 1", "dml:ord"),
-    ("UPDATE ord SET closed = NULL WHERE shop = 1 AND id = 2", "dml:ord"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 12", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("UPDATE ord SET closed = '2025-03-01 00:00:00' WHERE tenant = 1 AND id = 1", "dml:ord"),
+    ("UPDATE ord SET closed = NULL WHERE tenant = 1 AND id = 2", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 12", "q"),
     ("ROLLBACK", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),
@@ -938,26 +938,26 @@ CASES = [
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
      "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
-    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE shop = 1 AND id = 400", "dml:ord"),
-    ("UPDATE ord SET del = 1 WHERE shop = 1 AND id = 28", "dml:ord"),
-    ("DELETE FROM ord WHERE shop = 1 AND id = 56", "dml:ord"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8 OFFSET 2", "q"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
-    ("UPDATE ord SET pa = '2026-01-01 00:00:00' WHERE shop = 1 AND id = 402", "dml:ord"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8 OFFSET 1", "q"),
+    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE tenant = 1 AND id = 400", "dml:ord"),
+    ("UPDATE ord SET del = 1 WHERE tenant = 1 AND id = 28", "dml:ord"),
+    ("DELETE FROM ord WHERE tenant = 1 AND id = 56", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8 OFFSET 2", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
+    ("UPDATE ord SET pa = '2026-01-01 00:00:00' WHERE tenant = 1 AND id = 402", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8 OFFSET 1", "q"),
     ("ROLLBACK", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
     ("BEGIN", "q"),
-    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE shop = 1 AND id = 401", "dml:ord"),
-    ("DELETE FROM ord WHERE shop = 1 AND id = 84", "dml:ord"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 3 FOR UPDATE", "q"),
-    ("SELECT id FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 3 FOR UPDATE", "q"),
-    ("SELECT id FROM ord WHERE shop = 2 ORDER BY pa DESC, id DESC LIMIT 4 FOR UPDATE SKIP LOCKED", "q"),
+    ("UPDATE ord SET pa = '2024-12-31 00:00:00' WHERE tenant = 1 AND id = 401", "dml:ord"),
+    ("DELETE FROM ord WHERE tenant = 1 AND id = 84", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 3 FOR UPDATE", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 3 FOR UPDATE", "q"),
+    ("SELECT id FROM ord WHERE tenant = 2 ORDER BY pa DESC, id DESC LIMIT 4 FOR UPDATE SKIP LOCKED", "q"),
     ("COMMIT", "dml:ord"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
-    ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 

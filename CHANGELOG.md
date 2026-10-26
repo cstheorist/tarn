@@ -22,14 +22,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   qualify, by row counts: the shard counts both ranges (`tarn_estimate`, an
   index count on memtx, a sample and a capped scan on vinyl) and the read
   pages the ordered index when about `want * n_ordered / n_prefix` rows are fewer than
-  `n_prefix` ([#81](https://github.com/cstheorist/tarn/issues/81)). On an
-  orders-list benchmark the open-orders page of a tenant with 300,000 rows
-  reads 204 rows instead of 112,726. `SHOW STATUS` reports
+  `n_prefix` ([#81](https://github.com/cstheorist/tarn/issues/81)). With
+  300,000 rows under one tenant, a page of its 112,726 open rows reads 204
+  rows instead of all of them. `SHOW STATUS` reports
   `Tarn_path_estimates`. On vinyl the estimate samples the ordered index's
   first page (`4 * want` rows) to measure what paging would read, and
   counts the prefix only up to that
-  ([#93](https://github.com/cstheorist/tarn/issues/93)): the open-orders
-  page takes about 2 ms there instead of 15-19 ms.
+  ([#93](https://github.com/cstheorist/tarn/issues/93)): that page takes
+  about 2 ms there instead of 15-19 ms.
 
 - Unique keys that do not contain the shard key
   ([#14](https://github.com/cstheorist/tarn/issues/14)), such as
@@ -63,9 +63,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   filters each page and stops once `n` (+ `OFFSET`) rows qualify, in
   autocommit, in transactions (with their own writes merged in) and under
   both isolation levels ([#41](https://github.com/cstheorist/tarn/issues/41)).
-  Serializable reads record only the part of the range they read. On an
-  orders-list benchmark with 300,000 rows in one shop the first page used
-  to read the whole shop. `SHOW STATUS` reports `Tarn_rows_read`.
+  Serializable reads record only the part of the range they read. With
+  300,000 rows under one key prefix, the first page used to read all of
+  them. `SHOW STATUS` reports `Tarn_rows_read`.
 - Collations ([#13](https://github.com/cstheorist/tarn/issues/13)): text
   columns compare, sort, group and are unique under the collation they
   declare (`COLLATE`, `CHARACTER SET`), the table's (`DEFAULT CHARSET` /
@@ -227,9 +227,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and character columns; an equality prefix alone is counted by the index
   ([#52](https://github.com/cstheorist/tarn/issues/52)). Counts see the
   transaction's own writes and are validated at commit as reads of their
-  ranges. Counting a 300,000-row prefix of an orders-list benchmark takes
-  85 ms instead of 305 ms with a residual condition, and 0.2 ms instead of
-  330 ms without one. `SHOW STATUS` reports them as `Tarn_storage_counts`.
+  ranges. Counting a 300,000-row prefix takes 85 ms instead of 305 ms with
+  a residual condition, and 0.2 ms instead of 330 ms without one.
+  `SHOW STATUS` reports them as `Tarn_storage_counts`.
 - `col IN (...)`, `OR`s of equalities and row-value `IN` are index lookups
   on any index, batched into one storage call per shard, and an `OR` across
   indexes is a union of lookups (MySQL's `index_merge`); they used to scan

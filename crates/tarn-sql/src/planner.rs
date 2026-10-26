@@ -3201,10 +3201,10 @@ mod tests {
             default_coll: "utf8mb4_bin",
         };
         let Stmt::CreateTable { mut def, .. } = plan(
-            "CREATE TABLE orders (shop_id BIGINT NOT NULL, id BIGINT NOT NULL, processed_at DATETIME, \
-             is_deleted TINYINT NOT NULL DEFAULT 0, number INT, PRIMARY KEY (shop_id, id), \
-             KEY by_processed (shop_id, processed_at, id), KEY by_number (shop_id, number, id)) \
-             PARTITION BY KEY (shop_id)",
+            "CREATE TABLE orders (tenant_id BIGINT NOT NULL, id BIGINT NOT NULL, created_at DATETIME, \
+             deleted TINYINT NOT NULL DEFAULT 0, number INT, PRIMARY KEY (tenant_id, id), \
+             KEY by_created (tenant_id, created_at, id), KEY by_number (tenant_id, number, id)) \
+             PARTITION BY KEY (tenant_id)",
             &ctx0,
         )
         .unwrap() else {
@@ -3232,37 +3232,37 @@ mod tests {
             AccessPath::Range { index, eq, .. } => (index, eq.len()),
             other => panic!("{other:?}"),
         };
-        let page = "SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at, id";
+        let page = "SELECT * FROM orders WHERE tenant_id = 1 AND deleted = 0 ORDER BY created_at, id";
         assert_eq!(index(path(&format!("{page} LIMIT 51"))), (1, 1));
         assert_eq!(
             index(path(
-                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at LIMIT 5"
+                "SELECT * FROM orders WHERE tenant_id = 1 ORDER BY created_at LIMIT 5"
             )),
             (1, 1)
         );
         assert_eq!(
             index(path(
-                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY number, id LIMIT 5"
+                "SELECT * FROM orders WHERE tenant_id = 1 ORDER BY number, id LIMIT 5"
             )),
             (2, 1)
         );
         // the primary key follows ORDER BY id
         assert_eq!(
-            index(path("SELECT * FROM orders WHERE shop_id = 1 ORDER BY id LIMIT 5")),
+            index(path("SELECT * FROM orders WHERE tenant_id = 1 ORDER BY id LIMIT 5")),
             (0, 1)
         );
         // without LIMIT, or with an order no index follows: the primary key
         assert_eq!(index(path(page)), (0, 1));
         assert_eq!(
             index(path(
-                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY is_deleted LIMIT 5"
+                "SELECT * FROM orders WHERE tenant_id = 1 ORDER BY deleted LIMIT 5"
             )),
             (0, 1)
         );
         // a longer equality prefix still beats the order
         assert_eq!(
             index(path(
-                "SELECT * FROM orders WHERE shop_id = 1 AND number = 3 ORDER BY processed_at LIMIT 5"
+                "SELECT * FROM orders WHERE tenant_id = 1 AND number = 3 ORDER BY created_at LIMIT 5"
             )),
             (2, 2)
         );
@@ -3273,23 +3273,23 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert_eq!(
-            rev("SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at DESC, id DESC LIMIT 51"),
+            rev("SELECT * FROM orders WHERE tenant_id = 1 AND deleted = 0 ORDER BY created_at DESC, id DESC LIMIT 51"),
             (1, true)
         );
         assert_eq!(
-            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY shop_id, id DESC LIMIT 5"),
+            rev("SELECT * FROM orders WHERE tenant_id = 1 ORDER BY tenant_id, id DESC LIMIT 5"),
             (0, true)
         );
         assert_eq!(
-            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at, id LIMIT 5"),
+            rev("SELECT * FROM orders WHERE tenant_id = 1 ORDER BY created_at, id LIMIT 5"),
             (1, false)
         );
         assert_eq!(
-            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at DESC, id LIMIT 5"),
+            rev("SELECT * FROM orders WHERE tenant_id = 1 ORDER BY created_at DESC, id LIMIT 5"),
             (0, false)
         );
         assert_eq!(
-            rev("SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at DESC, id DESC"),
+            rev("SELECT * FROM orders WHERE tenant_id = 1 ORDER BY created_at DESC, id DESC"),
             (0, false)
         );
         // issue #51: IS NULL fixes an index part like an equality
@@ -3298,20 +3298,20 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert_eq!(
-            prefix("SELECT * FROM orders WHERE shop_id = 1 AND number IS NULL"),
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND number IS NULL"),
             (2, 2, vec![false, true])
         );
         assert_eq!(
-            prefix("SELECT * FROM orders WHERE shop_id = 1 AND number <=> NULL AND id > 5"),
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND number <=> NULL AND id > 5"),
             (2, 2, vec![false, true])
         );
         // IS NOT NULL, and IS NULL on a NOT NULL column, fix nothing
         assert_eq!(
-            prefix("SELECT * FROM orders WHERE shop_id = 1 AND number IS NOT NULL"),
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND number IS NOT NULL"),
             (0, 1, vec![false])
         );
         assert_eq!(
-            prefix("SELECT * FROM orders WHERE shop_id = 1 AND is_deleted IS NULL"),
+            prefix("SELECT * FROM orders WHERE tenant_id = 1 AND deleted IS NULL"),
             (0, 1, vec![false])
         );
         // aggregates read every row anyway
@@ -3323,7 +3323,7 @@ mod tests {
             default_coll: "utf8mb4_bin",
         };
         let Stmt::Select(s) = plan(
-            "SELECT COUNT(*) FROM orders WHERE shop_id = 1 ORDER BY processed_at LIMIT 5",
+            "SELECT COUNT(*) FROM orders WHERE tenant_id = 1 ORDER BY created_at LIMIT 5",
             &ctx,
         )
         .unwrap() else {
@@ -3346,12 +3346,12 @@ mod tests {
             default_coll: "utf8mb4_bin",
         };
         let Stmt::CreateTable { mut def, .. } = plan(
-            "CREATE TABLE orders (shop_id BIGINT NOT NULL, id BIGINT NOT NULL, processed_at DATETIME, \
-             closed_at DATETIME, cancelled_at DATETIME, is_deleted TINYINT NOT NULL DEFAULT 0, \
-             financial_status VARCHAR(20), customer_id BIGINT, PRIMARY KEY (shop_id, id), \
-             KEY by_processed (shop_id, processed_at, id), \
-             KEY by_status (shop_id, closed_at, is_deleted, cancelled_at, financial_status, id), \
-             KEY by_customer (shop_id, customer_id, id)) PARTITION BY KEY (shop_id)",
+            "CREATE TABLE orders (tenant_id BIGINT NOT NULL, id BIGINT NOT NULL, created_at DATETIME, \
+             closed_at DATETIME, voided_at DATETIME, deleted TINYINT NOT NULL DEFAULT 0, \
+             status VARCHAR(20), customer_id BIGINT, PRIMARY KEY (tenant_id, id), \
+             KEY by_created (tenant_id, created_at, id), \
+             KEY by_status (tenant_id, closed_at, deleted, voided_at, status, id), \
+             KEY by_customer (tenant_id, customer_id, id)) PARTITION BY KEY (tenant_id)",
             &ctx0,
         )
         .unwrap() else {
@@ -3377,33 +3377,33 @@ mod tests {
             let Source::Table(t) = &s.source else { panic!() };
             (shape(&t.path), s.ordered.as_ref().map(shape))
         };
-        let status = "SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 \
-                      AND closed_at IS NULL AND cancelled_at IS NULL";
+        let status = "SELECT * FROM orders WHERE tenant_id = 1 AND deleted = 0 \
+                      AND closed_at IS NULL AND voided_at IS NULL";
         assert_eq!(
-            paths(&format!("{status} ORDER BY processed_at, id LIMIT 51")),
+            paths(&format!("{status} ORDER BY created_at, id LIMIT 51")),
             ((2, 4, false), Some((1, 1, false)))
         );
         assert_eq!(
-            paths(&format!("{status} ORDER BY processed_at DESC, id DESC LIMIT 51")),
+            paths(&format!("{status} ORDER BY created_at DESC, id DESC LIMIT 51")),
             ((2, 4, false), Some((1, 1, true)))
         );
         // the selective shape: the same choice, decided at run time
         assert_eq!(
-            paths("SELECT * FROM orders WHERE shop_id = 1 AND customer_id = 7 ORDER BY processed_at, id LIMIT 51"),
+            paths("SELECT * FROM orders WHERE tenant_id = 1 AND customer_id = 7 ORDER BY created_at, id LIMIT 51"),
             ((3, 2, false), Some((1, 1, false)))
         );
         // the default page follows ORDER BY already; without LIMIT, or with
         // an order no index follows, there is nothing to page
         assert_eq!(
-            paths("SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at, id LIMIT 51"),
+            paths("SELECT * FROM orders WHERE tenant_id = 1 AND deleted = 0 ORDER BY created_at, id LIMIT 51"),
             ((1, 1, false), None)
         );
         assert_eq!(
-            paths(&format!("{status} ORDER BY processed_at, id")),
+            paths(&format!("{status} ORDER BY created_at, id")),
             ((2, 4, false), None)
         );
         assert_eq!(
-            paths(&format!("{status} ORDER BY financial_status, processed_at LIMIT 5")),
+            paths(&format!("{status} ORDER BY status, created_at LIMIT 5")),
             ((2, 4, false), None)
         );
         // a point lookup is never traded for a page
@@ -3415,7 +3415,7 @@ mod tests {
             default_coll: "utf8mb4_bin",
         };
         let Stmt::Select(s) = plan(
-            "SELECT * FROM orders WHERE shop_id = 1 AND id = 5 ORDER BY processed_at LIMIT 5",
+            "SELECT * FROM orders WHERE tenant_id = 1 AND id = 5 ORDER BY created_at LIMIT 5",
             &ctx,
         )
         .unwrap() else {
@@ -3778,9 +3778,9 @@ mod tests {
     #[test]
     fn partition_by_key() {
         let (sql, key) = extract_partition_by_key(
-            "CREATE TABLE o (shop_id INT, id INT, PRIMARY KEY (shop_id, id)) PARTITION BY KEY (shop_id) PARTITIONS 16",
+            "CREATE TABLE o (tenant_id INT, id INT, PRIMARY KEY (tenant_id, id)) PARTITION BY KEY (tenant_id) PARTITIONS 16",
         );
-        assert_eq!(key, Some(vec!["shop_id".to_string()]));
+        assert_eq!(key, Some(vec!["tenant_id".to_string()]));
         assert!(!sql.to_uppercase().contains("PARTITION"));
         let c0 = Catalog::default();
         let ctx = PlanCtx {
@@ -3791,7 +3791,7 @@ mod tests {
             default_coll: "utf8mb4_bin",
         };
         // a unique key without the shard key gets a global index (#14)
-        let sql = "CREATE TABLE o (shop_id INT, id INT, email VARCHAR(10), PRIMARY KEY (shop_id, id), UNIQUE KEY (email)) PARTITION BY KEY (shop_id)";
+        let sql = "CREATE TABLE o (tenant_id INT, id INT, email VARCHAR(10), PRIMARY KEY (tenant_id, id), UNIQUE KEY (email)) PARTITION BY KEY (tenant_id)";
         let Ok(Stmt::CreateTable { def, .. }) = plan(sql, &ctx) else {
             panic!()
         };
