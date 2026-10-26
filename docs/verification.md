@@ -87,9 +87,11 @@ python3 tla/summarize.py                        # table of every result in tla/o
 ```
 
 `run_all.sh` honours `TLA2TOOLS` (path to the jar), `WORKERS` (default 1)
-and `TLC_HEAP` (default 3g). The large configurations (`Skew*`) take from
-minutes to an hour; `Skew_GC_ROValidate` did not finish within two hours
-(47.8 million states explored without a violation).
+and `TLC_HEAP` (default 3g). The large configurations (`Skew*`,
+`Move_ScanPrepare`), which `check.sh` leaves out, take from minutes to an
+hour (`Move_ScanPrepare`: 48 minutes, 20.6 million states);
+`Skew_GC_ROValidate` did not finish within two hours (47.8 million states
+explored without a violation).
 
 To add a protection switch: add a `Bug*` constant to `TarnCommit.tla`, guard
 the protection with it, add a flag to `gen_cfgs.sh`, and add a `Bug_*`
