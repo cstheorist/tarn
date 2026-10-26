@@ -78,7 +78,7 @@ SCHEMA = [
     "CREATE TABLE jdo (id INT PRIMARY KEY, k DECIMAL(20,0), s VARCHAR(8))",
     "CREATE TABLE jdi (id INT PRIMARY KEY, k DECIMAL(20,0), KEY jk (k))",
     "CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
-    "PRIMARY KEY (p, id), UNIQUE KEY us (s)) PARTITION BY KEY(p)",
+    "PRIMARY KEY (p, id), UNIQUE KEY us (s))",
 ]
 
 
