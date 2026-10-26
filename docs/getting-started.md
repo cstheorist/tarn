@@ -76,8 +76,10 @@ SHOW TARN STATUS;   -- counters: queries, local / read-only / 2PC commits, confl
 ```
 
 Rows are placed by a hash of the primary key unless the table declares
-another shard key with `PARTITION BY KEY(col, ...)`. Unique keys must include
-the shard key (as in MySQL's partitioned tables). See
+another shard key with `PARTITION BY KEY(col, ...)`. Tables whose rows nest
+under a parent table's can say so with `COMMENT 'tarn:parent=<table>'`, and
+Tarn checks that their keys keep each tree on one shard
+([table trees](sql-compatibility.md#table-trees)). See
 [SQL compatibility](sql-compatibility.md) for what is supported.
 
 ## Read the same rows as key/value
