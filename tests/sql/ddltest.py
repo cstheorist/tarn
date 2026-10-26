@@ -92,6 +92,8 @@ class T:
         self.check(q(d, "SELECT email FROM users ORDER BY id") == (("a@acme.test",), ("b@globex.test",)), "users rows")
         create = q(d, "SHOW CREATE TABLE accounts")[0][1]
         self.check("INVISIBLE" in create and "COMMENT='customer accounts'" in create, f"SHOW CREATE TABLE: {create}")
+        self.check("KEY `index_accounts_on_created_at` (`created_at`) COMMENT 'for reports'" in create,
+                   f"index comment kept: {create}")
         create = q(d, "SHOW CREATE TABLE users")[0][1]
         self.check("CONSTRAINT `fk_rails_61ac11da2b` FOREIGN KEY" in create, f"foreign key kept: {create}")
         # AUTO_INCREMENT=4 in the dump: the next generated id is 4
@@ -99,6 +101,40 @@ class T:
         self.check(q(d, "SELECT LAST_INSERT_ID()")[0][0] == 4, "AUTO_INCREMENT table option")
         # the dump's session settings are back to their defaults afterwards
         self.check(q(d, "SELECT @@foreign_key_checks, @@unique_checks")[0] == (1, 1), "restored session variables")
+        # SHOW CREATE TABLE reloads to the same table: quotes and backslashes
+        # in index and table comments and defaults (#80)
+        q(d, "CREATE TABLE esc (id INT PRIMARY KEY, v VARCHAR(9) DEFAULT 'a\\\\b''c', "
+             "KEY kv (v) COMMENT 'd\\\\e''f') COMMENT 'g\\\\h''i'")
+        create = q(d, "SHOW CREATE TABLE esc")[0][1]
+        q(d, "DROP TABLE esc")
+        q(d, create)
+        self.check(q(d, "SHOW CREATE TABLE esc")[0][1] == create, f"SHOW CREATE TABLE reloads: {create}")
+        self.check(q(d, "SHOW INDEX FROM esc")[1][12] == "d\\e'f", "index comment with a backslash and a quote")
+        # MariaDB escapes NUL/LF/CR in a dump's DDL, while TAB/BS/CTRL-Z
+        # remain raw. Check exact literals and reload through the CLI too.
+        controls = "\0\n\r\t\b\x1a\\'\"雪"
+        literal = "'\\0\\n\\r\t\b\x1a\\\\''\"雪'"
+        q(d, "CREATE TABLE esc_controls (id INT PRIMARY KEY, v VARCHAR(32) DEFAULT %s, "
+             "KEY kv (v) COMMENT %s) COMMENT=%s", (controls, controls, controls))
+        q(d, "CREATE INDEX kc ON esc_controls (v) COMMENT %s", (controls,))
+        create = q(d, "SHOW CREATE TABLE esc_controls")[0][1]
+        self.check(f"DEFAULT {literal}" in create and f"COMMENT={literal}" in create
+                   and create.count(f"COMMENT {literal}") == 2,
+                   f"control bytes in SHOW CREATE literals: {create!r}")
+        q(d, "DROP TABLE esc_controls")
+        if cli:
+            r = subprocess.run([cli, "-h", host, "-P", port, "-u", "sb", "--default-character-set=utf8mb4", "ddl_dump"],
+                               input=create + ";\n", capture_output=True, text=True)
+            self.check(r.returncode == 0 and not r.stderr.strip(), f"control DDL reload: {r.stderr.strip()[:400]}")
+        else:
+            q(d, create)
+        self.check(q(d, "SHOW CREATE TABLE esc_controls")[0][1] == create,
+                   "control DDL reload is byte-identical")
+        comments = {row[2]: row[12] for row in q(d, "SHOW INDEX FROM esc_controls") if row[2] in ("kv", "kc")}
+        self.check(comments == {"kv": controls, "kc": controls},
+                   "control index comments survive reload")
+        q(d, "INSERT INTO esc_controls (id) VALUES (1)")
+        self.check(q(d, "SELECT v FROM esc_controls")[0][0] == controls, "control default survives reload")
 
     def test_multi_statements(self):
         """CLIENT_MULTI_STATEMENTS and COM_SET_OPTION: one result per
@@ -297,6 +333,74 @@ class T:
         self.check(code(lambda: q(c, "INSERT INTO gk2 VALUES (4005, 2, 'h1', 1)")) == 1062,
                    "RENAME TO and ADD UNIQUE in one statement")
         q(c, "DROP TABLE gk2")
+
+    def test_table_trees(self):
+        """COMMENT 'tarn:parent=...' declares a tree of tables (issue #85):
+        keys that do not line up are warnings (SHOW WARNINGS), or errors
+        under tarn_tree_checks = ERROR; the parent's CREATE and DROP check the
+        children that name it, also when another SQL server made them."""
+        a, b = self.c(0), self.c(1)
+        for t in ["tt_line", "tt_bad", "tt_bad2", "tt_orders", "tt_customer", "tt_off"]:
+            q(a, f"DROP TABLE IF EXISTS {t}")
+
+        def warnings(c):
+            return [(r[0], r[1], r[2]) for r in q(c, "SHOW WARNINGS")]
+
+        def created(c, sql):
+            cur = c.cursor()
+            cur.execute(sql)
+            n = c._result.warning_count
+            cur.close()
+            return n
+
+        line = ("CREATE TABLE tt_line (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL, line_no INT NOT NULL, "
+                "PRIMARY KEY (customer_id, order_id, line_no)) COMMENT 'tarn:parent=tt_orders' "
+                "PARTITION BY KEY (customer_id)")
+        # a dump may create a child before its parent: a warning, never an error
+        q(a, "SET tarn_tree_checks = 'ERROR'")
+        self.check(created(a, line) == 1, "warning count in the OK packet")
+        w = warnings(a)
+        self.check(w == [("Warning", 1105, f"{DB}.tt_line: tarn:parent=tt_orders: table {DB}.tt_orders does not exist (yet)")],
+                   f"missing parent: {w}")
+        self.check(q(a, "SELECT @@warning_count")[0][0] == 1 and len(warnings(a)) == 1, "SHOW WARNINGS keeps them")
+        q(a, "SELECT 1")
+        self.check(warnings(a) == [], "the next statement clears them")
+        q(a, "SET tarn_tree_checks = DEFAULT")
+        # the parent, through the other SQL server: no warning about the child
+        self.check(created(b, "CREATE TABLE tt_customer (customer_id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(20))") == 0,
+                   "a root")
+        self.check(created(b, "CREATE TABLE tt_orders (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL, "
+                              "PRIMARY KEY (customer_id, order_id)) COMMENT 'tarn:parent=tt_customer' "
+                              "PARTITION BY KEY (customer_id)") == 0, f"the parent: {warnings(b)}")
+        # keys that do not line up
+        bad = ("CREATE TABLE tt_bad (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL, line_no INT NOT NULL, "
+               "PRIMARY KEY (customer_id, line_no)) COMMENT 'tarn:parent=tt_orders' PARTITION BY KEY (customer_id)")
+        self.check(created(a, bad) == 1 and "must start with the primary key of tt_orders" in warnings(a)[0][2],
+                   f"a child keyed without its parent: {warnings(a)}")
+        q(a, "SET tarn_tree_checks = 'error'")
+        self.check(q(a, "SELECT @@tarn_tree_checks")[0][0] == "ERROR", "tarn_tree_checks")
+        bad2 = ("CREATE TABLE tt_bad2 (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL, line_no INT NOT NULL, "
+                "PRIMARY KEY (customer_id, order_id, line_no)) COMMENT 'tarn:parent=tt_orders'")
+        self.check(code(lambda: q(a, bad2)) == 1105, "ERROR refuses a child sharded by its own key")
+        self.check(code(lambda: q(a, "SELECT 1 FROM tt_bad2")) == 1146, "the refused table does not exist")
+        # an unrelated change to a table that was already off is allowed
+        self.check(code(lambda: q(a, "ALTER TABLE tt_bad ADD COLUMN qty INT")) is None, "unrelated ALTER TABLE")
+        self.check(code(lambda: q(a, "ALTER TABLE tt_customer COMMENT = 'tarn:parent=tt_line'")) == 1105,
+                   "ERROR refuses a cycle")
+        # dropping the parent: the children that name it are warned about
+        q(a, "SET tarn_tree_checks = WARN")
+        cur = a.cursor()
+        cur.execute("DROP TABLE tt_orders")
+        self.check(a._result.warning_count == 2, f"DROP TABLE: {a._result.warning_count} warnings")
+        w = sorted(x[2] for x in warnings(a))
+        self.check(w == [f"{DB}.tt_bad: tarn:parent=tt_orders: table {DB}.tt_orders does not exist (yet)",
+                         f"{DB}.tt_line: tarn:parent=tt_orders: table {DB}.tt_orders does not exist (yet)"],
+                   f"orphans: {w}")
+        # off, and bad values
+        q(a, "SET tarn_tree_checks = OFF")
+        self.check(created(a, "CREATE TABLE tt_off (id INT PRIMARY KEY) COMMENT 'tarn:parent=nosuch'") == 0, "OFF")
+        self.check(code(lambda: q(a, "SET tarn_tree_checks = 'sometimes'")) == 1231, "bad value")
+        self.check(code(lambda: q(a, "SET GLOBAL tarn_tree_checks = 'ERROR'")) == 1228, "a session variable")
 
     def test_concurrent_ddl(self):
         """Schema changes from several connections at once (as sysbench's

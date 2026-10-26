@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Table trees ([#85](https://github.com/cstheorist/tarn/issues/85)): a
+  table's `COMMENT 'tarn:parent=<table>'` declares that its rows nest under
+  the parent's. `CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check that
+  each child's primary key starts with its parent's, with key types that
+  hash alike, and that the tree is sharded by the root's key, and report
+  what does not line up as warnings; `SET tarn_tree_checks = 'ERROR'` refuses
+  such statements instead. `tarn-server --check-schema FILE` runs the checks
+  over a schema file without a cluster. `SHOW WARNINGS`, `SHOW ERRORS`,
+  `@@warning_count` and the OK packet's warning count report a statement's
+  warnings.
+
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one
   ([#88](https://github.com/cstheorist/tarn/issues/88)): the global index is
@@ -253,14 +264,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- A storage node whose Lua heap was left full of garbage near the limit
-  failed every call, its recovery fiber's too, with "not enough memory"
-  until a manual `collectgarbage()`: LuaJIT starts a collection cycle only
-  when the heap reaches twice what the last cycle left, which was above the
-  limit. A fiber now checks the heap every 100 ms and collects it when less
-  than the read reserve (1/16 of the limit, at least 16 MiB) is free, at
-  most once a second; `tarn_info` counts these in `heap_collects`
-  ([#73](https://github.com/cstheorist/tarn/issues/73)).
+- An OK packet's info string, such as `PREPARE`'s "Statement prepared",
+  is length-encoded, as MySQL and MariaDB write it. MariaDB's client
+  checked the length and failed every `PREPARE` with 2027 (malformed
+  packet) ([#61](https://github.com/cstheorist/tarn/issues/61)).
 - New indexes on instant-added columns could miss old rows or accept
   duplicate logical keys: short tuples omit the column's non-NULL fill,
   which a native index reads as NULL
@@ -360,6 +367,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   was negative. Arithmetic on an unsigned integer now fails with 1690 below
   zero and BIGINT overflow with 1690, as in MySQL
   ([#11](https://github.com/cstheorist/tarn/issues/11)).
+
+- An index's `COMMENT` (in `CREATE TABLE`, `ALTER TABLE ... ADD INDEX` and
+  `CREATE INDEX`) is stored, kept by `ALTER TABLE`, and shown by
+  `SHOW CREATE TABLE` and `SHOW INDEX`, so dump/reload preserves it
+  ([#80](https://github.com/cstheorist/tarn/issues/80)). `CREATE INDEX`
+  decodes MySQL string escapes; `SHOW CREATE TABLE` escapes quotes,
+  backslashes, NUL, newline and carriage return as MariaDB does.
+
+- A storage node whose Lua heap was left full of garbage near the limit
+  failed every call, its recovery fiber's too, with "not enough memory"
+  until a manual `collectgarbage()`: LuaJIT starts a collection cycle only
+  when the heap reaches twice what the last cycle left, which was above the
+  limit. A fiber now checks the heap every 100 ms and collects it when less
+  than the read reserve (1/16 of the limit, at least 16 MiB) is free, at
+  most once a second; `tarn_info` counts these in `heap_collects`
+  ([#73](https://github.com/cstheorist/tarn/issues/73)).
 
 ## [0.1.0] - 2026-10-25
 

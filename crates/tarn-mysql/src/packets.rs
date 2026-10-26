@@ -254,7 +254,13 @@ pub fn ok(out: &mut Vec<u8>, header: u8, affected: u64, last_insert_id: u64, sta
     write_lenenc_int(out, last_insert_id);
     out.extend_from_slice(&status.to_le_bytes());
     out.extend_from_slice(&warnings.to_le_bytes());
-    out.extend_from_slice(info.as_bytes());
+    // Length-encoded, as MySQL and MariaDB write it (`net_store_data`);
+    // MariaDB's client checks the length against the packet. (With
+    // CLIENT_SESSION_TRACK an empty info is written too; SERVER_CAPS does
+    // not offer it.)
+    if !info.is_empty() {
+        write_lenenc_str(out, info.as_bytes());
+    }
 }
 
 pub fn eof(out: &mut Vec<u8>, status: u16) {
@@ -837,6 +843,16 @@ mod tests {
             &[Value::Int(-42), Value::Null, Value::UInt(7), Value::Float(1.5)],
         );
         assert_eq!(out, b"\x03-42\xfb\x017\x031.5");
+    }
+
+    #[test]
+    fn ok_info_is_length_encoded() {
+        let mut out = Vec::new();
+        ok(&mut out, 0x00, 0, 0, 2, 0, "Statement prepared");
+        assert_eq!(out, b"\x00\x00\x00\x02\x00\x00\x00\x12Statement prepared");
+        out.clear();
+        ok(&mut out, 0x00, 1, 0, 2, 0, "");
+        assert_eq!(out, b"\x00\x01\x00\x02\x00\x00\x00");
     }
 
     #[test]

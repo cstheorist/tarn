@@ -191,7 +191,15 @@ tarn-server (--config cluster.json | --shard ADDR[,ADDR..] ...)
             [--lock-wait-timeout S]   default innodb_lock_wait_timeout, seconds (default 50)
             [--default-engine E]      memtx or vinyl: tables without ENGINE= (default memtx)
             [--default-collation C]   collation of text in tables that name none (default utf8mb4_bin)
+tarn-server --check-schema FILE [--database DB] [--default-collation C]
 ```
+
+`--check-schema` checks the table trees a schema file declares
+([table trees](sql-compatibility.md#table-trees)) without a cluster: it
+reads the file's `CREATE DATABASE`, `USE` and `CREATE TABLE` statements,
+prints one line per finding, and exits 1 when there is a warning (2 when
+the file cannot be read or a table in it cannot be planned). `--database`
+names the database of tables before any `USE`.
 
 `--shard` takes the comma-separated replica addresses of one shard and may
 be repeated, one per shard in order. `cluster.json` says the same with more
@@ -319,6 +327,7 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 | 1062 | 23000 | duplicate key | |
 | 1264 | 22003 | value out of range for the column | |
 | 1235 | 42000 | not supported | |
+| 1105 | HY000 | under `tarn_tree_checks = 'ERROR'`: a declared [table tree](sql-compatibility.md#table-trees) does not line up (otherwise a warning) | fix the keys or `PARTITION BY KEY` |
 | 1153 | 08S01 | packet larger than 64 MiB | |
 | 1461 | 42000 | too many prepared statements on the connection | close statements |
 | 1045 | 28000 | access denied | |

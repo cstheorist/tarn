@@ -23,7 +23,9 @@ struct Conn {
     s: Session,
 }
 
-fn convert(o: Output) -> QueryResult {
+/// A statement's output as the protocol sends it; `warnings`: how many
+/// warnings and notes it left for SHOW WARNINGS.
+fn convert(o: Output, warnings: u16) -> QueryResult {
     match o {
         Output::Ok {
             affected,
@@ -33,7 +35,7 @@ fn convert(o: Output) -> QueryResult {
             affected_rows: affected,
             last_insert_id,
             info,
-            warnings: 0,
+            warnings,
         },
         Output::Rows { columns, rows } => QueryResult::Rows { columns, rows },
     }
@@ -59,7 +61,8 @@ impl Backend for Conn {
     }
 
     async fn on_query(&mut self, sql: &str) -> SqlResult<QueryResult> {
-        self.s.query(sql).await.map(convert)
+        let r = self.s.query(sql).await;
+        r.map(|o| convert(o, self.s.warning_count()))
     }
 
     async fn on_prepare(&mut self, stmt_id: u32, sql: &str) -> SqlResult<PrepareInfo> {
@@ -71,7 +74,8 @@ impl Backend for Conn {
     }
 
     async fn on_execute(&mut self, stmt_id: u32, params: &[Value]) -> SqlResult<QueryResult> {
-        self.s.execute(stmt_id, params).await.map(convert)
+        let r = self.s.execute(stmt_id, params).await;
+        r.map(|o| convert(o, self.s.warning_count()))
     }
 
     async fn on_close_stmt(&mut self, stmt_id: u32) {
@@ -105,6 +109,11 @@ struct Args {
     lock_wait_timeout: Option<f64>,
     default_engine: Option<String>,
     default_collation: Option<String>,
+    /// `--check-schema FILE`: check the table trees a schema file declares
+    /// and exit, without a cluster.
+    check_schema: Option<String>,
+    /// `--database DB`: the database of a schema file's tables before any USE.
+    database: Option<String>,
 }
 
 fn usage() -> ! {
@@ -112,7 +121,8 @@ fn usage() -> ! {
         "usage: tarn-server (--config FILE | --shard ADDR[,ADDR..] ...) [--listen HOST:PORT] \
          [--threads N] [--user NAME:PASSWORD]... [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N] \
          [--isolation READ-COMMITTED|REPEATABLE-READ|SERIALIZABLE] [--lock-wait-timeout SECONDS] \
-         [--default-engine memtx|vinyl] [--default-collation NAME]"
+         [--default-engine memtx|vinyl] [--default-collation NAME]\n       \
+         tarn-server --check-schema FILE [--database DB] [--default-collation NAME]"
     );
     std::process::exit(2)
 }
@@ -132,6 +142,8 @@ fn parse_args() -> Args {
         lock_wait_timeout: None,
         default_engine: None,
         default_collation: None,
+        check_schema: None,
+        database: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -154,6 +166,8 @@ fn parse_args() -> Args {
             "--lock-wait-timeout" => a.lock_wait_timeout = Some(val().parse().unwrap_or_else(|_| usage())),
             "--default-engine" => a.default_engine = Some(val()),
             "--default-collation" => a.default_collation = Some(val()),
+            "--check-schema" => a.check_schema = Some(val()),
+            "--database" => a.database = Some(val()),
             "-h" | "--help" => usage(),
             _ => {
                 eprintln!("unknown argument {arg}");
@@ -161,10 +175,38 @@ fn parse_args() -> Args {
             }
         }
     }
-    if a.config.is_none() && a.shards.is_empty() {
+    if a.config.is_none() && a.shards.is_empty() && a.check_schema.is_none() {
         usage()
     }
     a
+}
+
+/// `--check-schema FILE`: the checks of declared table trees (issue #85)
+/// over a schema file such as a dump, without a cluster: prints each
+/// finding and returns the exit code, 1 when there is a warning, 2 when the
+/// file cannot be read or a `CREATE TABLE` in it cannot be planned.
+fn check_schema(path: &str, db: Option<&str>, collation: &str) -> i32 {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let statements = tarn_mysql::split_statements(&text);
+    match tarn_sql::lint::check_schema(&statements, db, collation) {
+        Ok(found) => {
+            for f in &found {
+                println!("{}: {}.{}: {}", f.level.name(), f.db, f.table, f.message);
+            }
+            i32::from(found.iter().any(|f| f.level == tarn_sql::lint::Level::Warning))
+        }
+        Err(e) => {
+            let hint = if e.code == 1046 { " (pass --database DB)" } else { "" };
+            eprintln!("{path}: {}{hint}", e.message);
+            2
+        }
+    }
 }
 
 fn load_config(a: &Args) -> ClusterConfig {
@@ -237,6 +279,14 @@ fn main() {
         .with_writer(std::io::stderr)
         .init();
     let args = parse_args();
+    if let Some(path) = &args.check_schema {
+        let collation = args
+            .default_collation
+            .as_deref()
+            .unwrap_or("utf8mb4_bin")
+            .to_ascii_lowercase();
+        std::process::exit(check_schema(path, args.database.as_deref(), &collation));
+    }
     let cfg = load_config(&args);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(args.threads.max(1))

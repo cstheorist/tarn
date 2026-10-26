@@ -70,6 +70,10 @@ and, depending on what you changed:
   "Add ..."), a blank line, then the reasoning.
 * Keep [CHANGELOG.md](CHANGELOG.md) up to date under *Unreleased* for
   user-visible changes.
+* Keep examples, tests, issues and pull requests application-neutral: use
+  generic tables and columns (`t`, `tenant_id`, `created_at`, ...) and
+  describe a workload by its shape (rows per key prefix, how selective a
+  filter is), not by a particular application's schema or benchmark.
 
 ## License
 
