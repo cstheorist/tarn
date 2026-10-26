@@ -8,6 +8,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `col IS NULL` and `col <=> x` on a nullable index column are used as an
+  equality whose NULL selects the column's NULLs when choosing the access
+  path (the index lookup reads them), so an index
+  `(a, b, c)` serves `a = 1 AND b IS NULL AND c = 0` with one prefix
+  instead of scanning all of `a = 1`
+  ([#51](https://github.com/cstheorist/tarn/issues/51)). A unique key, which
+  holds any number of NULLs, is then read as a range. `IS NOT NULL` and
+  comparisons with NULL keep their semantics.
 - `ORDER BY <index columns> DESC ... LIMIT n` reads the index backwards, from
   the upper bound of the range, a page at a time, and stops after `n`
   (+ `OFFSET`) qualifying rows instead of reading the whole range forwards
@@ -216,12 +224,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   original assignment expressions and quoted values.
 - `col <=> NULL` (and `col <=> ?` bound to NULL) on an indexed nullable
   column found no rows: the index lookup it became drops a NULL key part.
-  On a nullable column, `<=>` is now a filter, not an index equality, in
-  `SELECT`, `UPDATE` and `DELETE`
-  ([#72](https://github.com/cstheorist/tarn/issues/72)). Such a query
-  scans where it used to look up (wrongly), and so does a join `ON` a
-  nullable column with `<=>`, for each outer row; `=` and `NOT NULL`
-  columns keep their indexes.
+  It now matches the rows whose column is NULL in `SELECT`, `UPDATE` and
+  `DELETE` ([#72](https://github.com/cstheorist/tarn/issues/72)).
 - `SELECT ... HAVING <condition> LIMIT n` without aggregation pushed the
   `LIMIT` down to storage before `HAVING` filtered, and returned too few
   rows, often none ([#38](https://github.com/cstheorist/tarn/issues/38)).

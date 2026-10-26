@@ -44,6 +44,8 @@ SCHEMA = [
     "CREATE TABLE cih (handle VARCHAR(20) PRIMARY KEY, n INT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
     "CREATE TABLE ciu (t INT, id INT, email VARCHAR(40), PRIMARY KEY (t, id), UNIQUE KEY ue (t, email)) "
     "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci PARTITION BY KEY(t)",
+    # unique keys on nullable columns hold several NULLs (issue #51)
+    "CREATE TABLE nu (id INT PRIMARY KEY, e VARCHAR(10), f INT, UNIQUE KEY ue (e, id), UNIQUE KEY uef (e, f, id))",
     # an orders list: pages in the order of a secondary index (issue #41)
     "CREATE TABLE ord (shop INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
     "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (shop, id), KEY bypa (shop, pa, id), "
@@ -763,6 +765,37 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa DESC, id LIMIT 9", "q"),
     ("SELECT id, pa FROM ord WHERE shop = 1 AND del = 0 ORDER BY pa, id DESC LIMIT 9", "q"),
     ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL ORDER BY closed DESC, del DESC, id DESC LIMIT 9", "q"),
+    # IS NULL as an index predicate (issue #51): single-column and composite
+    # indexes, with and without further key columns, unique keys holding
+    # several NULLs, <=>, and comparisons with NULL that match nothing
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY id", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 20", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NOT NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed IS NULL AND del = 1 AND id > 600", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed = NULL", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed <=> NULL AND del = 0", "q"),
+    ("SELECT COUNT(*) FROM ord WHERE shop = 1 AND closed > NULL", "q"),
+    ("SELECT id FROM ord WHERE shop = 1 AND closed IS NULL AND del = 0 ORDER BY closed, del, id LIMIT 5", "q"),
+    ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),
+    ("SELECT id FROM t1 WHERE a <=> NULL", "q"),
+    ("SELECT id FROM t1 WHERE a <=> 3 ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE a IS NULL OR a = 1 ORDER BY id", "q"),
+    ("SELECT id FROM t1 WHERE NOT (a IS NULL) AND a < 2 ORDER BY id", "q"),
+    ("SELECT t2.id FROM t2 JOIN t1 ON t1.id = t2.t1_id WHERE t1.a IS NULL ORDER BY t2.id", "q"),
+    ("SELECT t1.id FROM t1 LEFT JOIN t2 ON t2.t1_id = t1.id WHERE t2.t1_id IS NULL ORDER BY t1.id", "q"),
+    ("SELECT x.id, y.id FROM t1 x JOIN t1 y ON y.a <=> x.a WHERE x.id < 15 ORDER BY x.id, y.id", "q"),
+    ("SELECT id FROM t1 WHERE id IS NULL", "q"),
+    ("INSERT INTO nu VALUES (1, NULL, 1), (2, 'b', NULL), (3, NULL, NULL), (4, 'd', 4)", "dml:nu"),
+    ("SELECT id FROM nu WHERE e IS NULL ORDER BY id", "q"),
+    ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL", "q"),
+    ("SELECT id FROM nu WHERE e <=> NULL AND f <=> 1", "q"),
+    ("SELECT id FROM nu WHERE e = 'b'", "q"),
+    ("SELECT id FROM nu WHERE e IS NULL AND id = 3", "q"),
+    ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL AND id = 3", "q"),
+    ("UPDATE nu SET f = 9 WHERE e IS NULL", "dml:nu"),
+    ("DELETE FROM nu WHERE e IS NULL AND f = 9 LIMIT 1", "dml:nu"),
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
      "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
