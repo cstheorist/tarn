@@ -605,8 +605,35 @@ function BK.rebuild()
     BK.state, BK.peer, BK.move, BK.staged = st, peer, mv, held
     BK.count = math.max(a.count, c.count)
     BK.epoch = math.max(a.epoch, c.epoch)
+    BK.load_members()
     BK.stale = false
     BK.ver = BK.ver + 1
+end
+
+-- Membership (issue #25): the shards of the cluster, kept on every shard
+-- ('members' in _tarn_meta: {ver, shards = {{id, replicas, state}, ...}},
+-- state 'active' or 'removed'), written on every shard by the SQL server
+-- that adds or removes one (as a job). Its version only rises. A
+-- transaction that read every shard it knows names the version it was
+-- routed with in its commit requests (mver), as does a read of every shard
+-- in its route; a shard with a newer version refuses them: they may have
+-- missed a shard that joined since (TarnCommit: MemberOK, docs/design.md
+-- §2.13). A shard without a membership record has version 0: the shards of
+-- the SQL servers' configuration.
+BK.members, BK.mver = {ver = 0, shards = {}}, 0
+function BK.load_members()
+    local m = box.space._tarn_meta:get{'members'}
+    BK.members = m ~= nil and m.value or {ver = 0, shards = {}}
+    BK.mver = BK.members.ver or 0
+end
+
+-- The status refusing a request routed with membership version `mv`, or
+-- nil.
+function BK.member_refused(mv)
+    if type(mv) ~= 'number' or mv >= BK.mver then return nil end
+    M.stats.moved = M.stats.moved + 1
+    return {'moved', 1213, string.format("the cluster's shards changed (version %d; the request's %d)",
+                                         BK.mver, mv), box.NULL}
 end
 
 -- Changes of the state in memory (states, epoch): tarn_buckets builds its
@@ -692,6 +719,10 @@ end
 
 -- BK.check_read without reading the map again (does not yield).
 function BK.check_now(route)
+    if type(route) == 'table' and route.m ~= nil then
+        local r = BK.member_refused(route.m)
+        if r then return r end
+    end
     if BK.count == 0 then return nil end
     if type(route) == 'number' then
         return BK.bad(route, false) and BK.moved(route) or nil
@@ -1066,7 +1097,9 @@ local P_SPACE, P_PK, P_OLD, P_NEW, P_RES, P_SKIP = 1, 2, 3, 4, 5, 6
 -- its read locks would hold a move up. Its reads of every shard must not
 -- cover rows of a bucket held here. A status, or nil. Does not yield; call
 -- BK.fresh() first.
-function BK.commit_check(wb, rpoints, rranges, fence_reads, plans)
+function BK.commit_check(wb, rpoints, rranges, fence_reads, plans, mver)
+    local r = BK.member_refused(mver)
+    if r then return r end
     if BK.count == 0 then return nil end
     local b = BK.refused(wb, true) or BK.reads_refused(rpoints, rranges, fence_reads) or BK.rows_refused(plans)
     if b then return BK.moved(b) end
@@ -2021,9 +2054,9 @@ end
 -- stream's transaction is rolled back.
 -- Step 2 of CommitLocal (see "Yields"): its checks, on the state the commit
 -- is prepared in.
-local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plans, wb)
+local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plans, wb, mver)
     if not still_fresh() then return conflict(FRESH_MSG) end
-    local mv = BK.commit_check(wb, rpoints, rranges, false, plans)
+    local mv = BK.commit_check(wb, rpoints, rranges, false, plans, mver)
     if mv then return mv end
     -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read under
     -- those locks, outside its stream: the locks must have survived.
@@ -2040,8 +2073,9 @@ local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plan
 end
 
 -- wb: the bucket of each write (see "Buckets"; nil from SQL servers that
--- predate them, which name none).
-function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb)
+-- predate them, which name none). mver: the membership version a
+-- transaction that read every shard was routed with (see "Membership").
+function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, mver)
     writable()
     local seq = inflight_begin()
     local ok, res = pcall(function()
@@ -2050,7 +2084,7 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb)
         BK.fresh()
         -- Checked again below, where it counts; here to fail before writing.
         if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
-        local stale = stale_definition(fence) or BK.commit_check(wb, rpoints, rranges, false)
+        local stale = stale_definition(fence) or BK.commit_check(wb, rpoints, rranges, false, nil, mver)
         if stale then return stale end
         -- Without reads on this shard the coordinator sends no stream: the
         -- commit is then its own local transaction.
@@ -2060,7 +2094,8 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb)
             if plans[i][P_RES] ~= nil then n = n + 1 end
         end
         inflight_writes(seq, plans)
-        local r = atomic('CommitLocal', commit_local_checks, txid, lock_gen, fence, rpoints, rranges, plans, wb)
+        local r = atomic('CommitLocal', commit_local_checks, txid, lock_gen, fence, rpoints, rranges, plans, wb,
+                         mver)
         if r ~= nil then return r end
         box.on_commit(function() pl_release_all(txid) end)
         box.commit()
@@ -2096,7 +2131,7 @@ end
 -- the stream's reads, but it misses writes committed by its successor, and
 -- the probe write below goes to a data-temporary space, which Tarantool
 -- accepts even on read-only instances.
-function tarn_validate(txid, rpoints, rranges, cross, lock_gen)
+function tarn_validate(txid, rpoints, rranges, cross, lock_gen, mver)
     writable()
     if not pl_intact(txid, lock_gen) then
         if box.is_in_txn() then box.rollback() end
@@ -2141,7 +2176,7 @@ function tarn_validate(txid, rpoints, rranges, cross, lock_gen)
     end
     -- A read routed to a bucket this shard no longer owns, or a read of
     -- every shard that may have missed the rows of a bucket moving here.
-    local mv = BK.commit_check(nil, rpoints, rranges, false)
+    local mv = BK.commit_check(nil, rpoints, rranges, false, nil, mver)
     if mv then
         if box.is_in_txn() then box.rollback() end
         return mv
@@ -2986,13 +3021,13 @@ local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
 -- the PREPARE is prepared in, then the locks and the records. Returns
 -- {code, message} for a NO vote, or nil.
 local P_KEYS = 7
-local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock_gen, fence, plans, wb)
+local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock_gen, fence, plans, wb, mver)
     if not still_fresh() then return {1213, FRESH_MSG} end
     if not pl_intact(txid, lock_gen) then return {1213, BROKEN_MSG} end
     if stale_definition(fence) then return {1412, STALE_DEF_MSG} end
     -- The buckets: owned, not fenced by a move (it would wait for these
     -- locks), and no read of every shard missing a moving bucket's rows.
-    local mv = BK.commit_check(wb, rpoints, rranges, true, plans)
+    local mv = BK.commit_check(wb, rpoints, rranges, true, plans, mver)
     if mv then return {mv[2], mv[3], mv[1]} end
     -- readsOK: no W lock of another prepared txn on anything we read.
     local h = reads_w_locked(txid, rpoints, rranges)
@@ -3054,7 +3089,7 @@ end
 
 -- wb: the bucket of each write (see "Buckets"); a PREPARE refused for a
 -- bucket answers 'moved' (a NO vote, with a tombstone like any).
-function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen, fence, wb)
+function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen, fence, wb, mver)
     writable()
     rpoints, rranges = rpoints or {}, rranges or {}
     local function vote_no(code, msg, status)
@@ -3099,7 +3134,7 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         if not pl_intact(txid, lock_gen) then return vote_no(1213, BROKEN_MSG) end
         -- Writes encoded with a table definition an ALTER TABLE replaced.
         if stale_definition(fence) then return vote_no(1412, STALE_DEF_MSG) end
-        local mv = BK.commit_check(wb, rpoints, rranges, true)
+        local mv = BK.commit_check(wb, rpoints, rranges, true, nil, mver)
         if mv then return vote_no(mv[2], mv[3], mv[1]) end
         -- Reads (may yield, see "Yields"): the rows the writes replace and the
         -- holders of the unique values the new rows take (tracked by MVCC).
@@ -3152,7 +3187,7 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         -- TarnCommit!Prepare: the checks and the locks, then the commit, with
         -- no yield in between.
         local no = atomic('Prepare', prepare_locks, txid, dshard, parts, writes, rpoints, rranges,
-                          lock_gen, fence, plans, wb)
+                          lock_gen, fence, plans, wb, mver)
         if no ~= nil then return vote_no(no[1], no[2], no[3]) end
         -- MVCC validates every read this stream made; may raise conflict.
         -- Tracked: an ALTER TABLE waits for PREPAREs that passed its fence.
@@ -3421,11 +3456,22 @@ end
 
 local conns = {}
 
+-- The replicas of shard `shard`: from the configuration, else from the
+-- membership (a shard that joined since).
+local function shard_uris(shard)
+    local uris = M.cfg.peers[shard] or M.cfg.peers[tostring(shard)]
+    if uris ~= nil then return uris end
+    for _, m in ipairs(BK.members.shards or {}) do
+        if m.id == shard then return m.replicas or {} end
+    end
+    return {}
+end
+
 local function shard_conn(shard)
     if shard == M.cfg.shard_id then return nil end  -- local calls
     local c = conns[shard]
     if c ~= nil and c:is_connected() then return c end
-    for _, uri in ipairs(M.cfg.peers[shard] or M.cfg.peers[tostring(shard)] or {}) do
+    for _, uri in ipairs(shard_uris(shard)) do
         local ok, cand = pcall(net_box.connect, uri, {user = M.cfg.user, password = M.cfg.password,
                                                       wait_connected = 1, connect_timeout = 1})
         if ok and cand:is_connected() then
@@ -4303,9 +4349,12 @@ local function job_change(owner, ops)
 end
 
 -- Begin a job, waiting up to `wait` seconds while another holds one of its
--- names. {OK}, or {'busy', owner, age} of the job in the way.
+-- names: {'ok', mver}, or {'busy', owner, age} of the job in the way. mver:
+-- this shard's membership version (see "Membership"); a job acts on every
+-- shard, and its server reads a newer membership first.
 function tarn_job_begin(job, wait)
     writable()
+    BK.fresh()
     local deadline = clock.monotonic() + (tonumber(wait) or 0)
     while true do
         local busy
@@ -4320,11 +4369,16 @@ function tarn_job_begin(job, wait)
             end
             -- Bucket moves and schema changes wait for each other: a move
             -- copies the rows of every table, and a schema change of a
-            -- table acts on its rows on every shard.
+            -- table acts on its rows on every shard. A change of the
+            -- cluster's shards (kind 'members') waits for every other job,
+            -- and every job for it: it copies every table to a shard that
+            -- joins, and moves wait until every shard knows it.
             if busy == nil then
                 for _, t in box.space._tarn_meta:pairs({JOB}, {iterator = 'GE'}) do
                     if t.key:sub(1, #JOB) ~= JOB then break end
-                    if (t.value.kind == 'move') ~= (job.kind == 'move') and t.value.owner ~= job.owner then
+                    local k = t.value.kind
+                    if t.value.owner ~= job.owner and
+                       ((k == 'move') ~= (job.kind == 'move') or k == 'members' or job.kind == 'members') then
                         busy = t.value
                         break
                     end
@@ -4338,9 +4392,9 @@ function tarn_job_begin(job, wait)
             box.commit()
         end)
         if box.is_in_txn() then box.rollback() end
-        if ok and busy == nil then return {OK} end
+        if ok and busy == nil then return {OK, BK.mver} end
         -- (A repeated call whose first one began the job: see Cluster::call.)
-        if busy ~= nil and busy.owner == job.owner then return {OK} end
+        if busy ~= nil and busy.owner == job.owner then return {OK, BK.mver} end
         local left = deadline - clock.monotonic()
         if left <= 0 then
             if busy == nil then return {'busy', '', 0} end   -- (one began at the same moment)
@@ -4725,9 +4779,10 @@ function tarn_bucket_init(count, ranges)
     return res
 end
 
--- This shard's map: {'ok', count, epoch, owned, others}: owned = the
+-- This shard's map: {'ok', count, epoch, owned, others, mver}: owned = the
 -- buckets it owns, as ranges {{lo, hi}, ...}; others = {{bucket, state,
--- peer, move}, ...} for those it has in other states. Without a map {'ok',
+-- peer, move}, ...} for those it has in other states; mver = its
+-- membership version (see "Membership"). Without a map {'ok',
 -- 0, tables}: the number of Tarn tables on the shard, whose rows were
 -- stored by a version from before the map (with the count of that time).
 -- It reports the state in memory, which the shard's checks go by (a step's
@@ -4757,7 +4812,7 @@ function tarn_buckets()
         end
     end
     if lo ~= nil then owned[#owned + 1] = {lo, hi} end
-    BK.report = {ver = BK.ver, reply = {OK, BK.count, BK.epoch, owned, others}}
+    BK.report = {ver = BK.ver, reply = {OK, BK.count, BK.epoch, owned, others, BK.mver}}
     return BK.report.reply
 end
 
@@ -5100,6 +5155,118 @@ function tarn_bucket_recv_abort(b, move)
         end
         return {OK}
     end)
+end
+
+-- Membership (see BK.load_members) ------------------------------------------
+
+-- {'ok', ver, shards}: this shard's record of the cluster's shards.
+function tarn_members()
+    writable()
+    BK.fresh()
+    return {OK, BK.members.ver or 0, BK.members.shards or {}}
+end
+
+-- Record membership `m` ({ver, shards}) if it is newer than this shard's:
+-- {'ok', ver} with the version this shard has now. Run on every shard by
+-- the SQL server that adds or removes a shard (a job).
+function tarn_members_set(m)
+    writable()
+    yield_point('members_set')   -- (tests: a join held while it records the membership)
+    BK.fresh()
+    return BK.locked(function()
+        local cur = box.space._tarn_meta:get{'members'}
+        local v = cur ~= nil and cur.value.ver or 0
+        if (m.ver or 0) <= v then return {OK, v} end
+        box.begin(RW)
+        box.space._tarn_meta:replace{'members', {ver = m.ver, shards = m.shards}}
+        BK.commit()
+        BK.load_members()
+        BK.ver = BK.ver + 1
+        return {OK, m.ver}
+    end)
+end
+
+-- The definitions of this shard's tables, for a shard that joins: per table
+-- its catalog entry and its space as it is (id, engine, format, indexes),
+-- and the same of its global index spaces.
+function tarn_schema_export()
+    writable()
+    local function space_of(sp)
+        local idx = {}
+        for id, x in pairs(sp.index) do
+            if type(id) == 'number' then
+                local parts = {}
+                for _, pt in ipairs(x.parts) do
+                    parts[#parts + 1] = {field = pt.fieldno, type = pt.type, is_nullable = pt.is_nullable,
+                                         collation = pt.collation, path = pt.path}
+                end
+                idx[#idx + 1] = {id = x.id, name = x.name, unique = x.unique, parts = parts}
+            end
+        end
+        -- (the primary index first)
+        table.sort(idx, function(a, b) return a.id < b.id end)
+        return {id = sp.id, name = sp.name, engine = sp.engine, format = sp:format(), indexes = idx}
+    end
+    local out = {}
+    for _, t in box.space._tarn_catalog:pairs() do
+        local sp = box.space[t.name]
+        if sp ~= nil then
+            local uix = {}
+            for _, u in ipairs(UIX.spaces(sp.id)) do uix[#uix + 1] = space_of(u) end
+            out[#out + 1] = {name = t.name, def = t.def, space = space_of(sp), uix = uix}
+        end
+    end
+    return {OK, out}
+end
+
+-- Make the tables of `export` (tarn_schema_export of another shard) here,
+-- with the same space ids, formats and indexes: {'ok', n made}. Run again (a
+-- join that stopped is run again), it makes what is missing. Refused when
+-- this shard has other tables, or rows in these: it is no new shard.
+function tarn_schema_import(export)
+    writable()
+    yield_point('schema_import')   -- (tests: a join held before the shard has the tables)
+    local want = {}
+    for _, t in ipairs(export) do want[t.name] = true end
+    for _, c in box.space._tarn_catalog:pairs() do
+        if not want[c.name] then
+            return {'error', 1210, string.format('the shard has table %s, which the cluster has not', c.name)}
+        end
+    end
+    local function refused(d)
+        local sp = box.space[d.name]
+        if sp == nil then return nil end
+        if sp.id ~= d.id then
+            return string.format('the shard has space %s with id %d, not %d', d.name, sp.id, d.id)
+        end
+        if sp.index[0] ~= nil and sp.index[0]:min() ~= nil then
+            return string.format('the shard has rows in %s', d.name)
+        end
+        return nil
+    end
+    for _, t in ipairs(export) do
+        local e = refused(t.space)
+        for _, u in ipairs(t.uix or {}) do e = e or refused(u) end
+        if e ~= nil then return {'error', 1210, e} end
+    end
+    local n = 0
+    local function make(d)
+        if box.space[d.name] == nil then n = n + 1 end
+        local sp = box.schema.space.create(d.name, {id = d.id, engine = d.engine, format = d.format,
+                                                    is_sync = M.cfg.sync, if_not_exists = true})
+        for _, x in ipairs(d.indexes) do
+            sp:create_index(x.name, {id = x.id, type = 'tree', unique = x.unique, parts = x.parts,
+                                     if_not_exists = true})
+        end
+    end
+    for _, t in ipairs(export) do
+        make(t.space)
+        for _, u in ipairs(t.uix or {}) do make(u) end
+        box.space._tarn_catalog:replace{t.name, t.def}
+    end
+    invalidate_key_defs()
+    M.stale_fences()
+    return {OK, n}
 end
 
 function tarn_info()

@@ -80,8 +80,10 @@ pub enum Route {
     /// The buckets the read was routed by: the shard must own them.
     Buckets(Vec<u32>),
     /// A read of every shard outside a transaction: the shard's epoch in
-    /// this server's map, which it refuses if its buckets changed since.
-    Epoch(u64),
+    /// this server's map, which it refuses if its buckets changed since,
+    /// and the membership version the read was routed with (lua/tarn.lua
+    /// "Membership"), which it refuses if a shard joined since.
+    Epoch(u64, u64),
 }
 
 impl Route {
@@ -104,8 +106,8 @@ impl Route {
                     m.uint(x as u64);
                 }
             }
-            Route::Epoch(e) => {
-                m.map(1).str("e").uint(*e);
+            Route::Epoch(e, v) => {
+                m.map(2).str("e").uint(*e).str("m").uint(*v);
             }
         }
     }
@@ -208,6 +210,13 @@ pub struct Txn {
     /// Set after an error that leaves the transaction unusable (e.g. a
     /// conflict detected mid-transaction); COMMIT then fails.
     pub doomed: Option<SqlError>,
+    /// The membership version (members.rs) of this server when the
+    /// transaction began. Its reads of every shard covered at least that
+    /// membership's shards (shards only join this server's list, before
+    /// it takes their version): when it made such reads, its commit
+    /// requests name the version, and a shard that knows a newer one refuses
+    /// them (lua/tarn.lua "Membership").
+    pub mver: u64,
 }
 
 pub fn definition_changed() -> SqlError {
@@ -259,6 +268,7 @@ impl Txn {
             rranges: BTreeMap::new(),
             defs: BTreeMap::new(),
             doomed: None,
+            mver: cluster.member_ver(),
         }
     }
 
@@ -742,6 +752,23 @@ impl Txn {
         wb
     }
 
+    /// Whether the transaction read every shard (a read routed by no
+    /// bucket).
+    fn scanned(&self) -> bool {
+        self.rpoints.values().flatten().any(|p| p.3.is_none())
+            || self.rranges.values().flatten().any(|r| r.bucket.is_none())
+    }
+
+    /// The membership version its commit requests name (`mver` of the
+    /// commit procedures): nil unless it read every shard.
+    fn encode_mver(&self, m: &mut Mp) {
+        if self.scanned() {
+            m.uint(self.mver);
+        } else {
+            m.nil();
+        }
+    }
+
     fn encode_reads(&self, shard: usize, m: &mut Mp) {
         let pts = self.rpoints.get(&shard).map(|v| v.as_slice()).unwrap_or(&[]);
         m.arr(pts.len());
@@ -826,10 +853,11 @@ impl Txn {
                 None => (self.conn(cluster, p).await?, 0),
             };
             let mut m = Mp::new();
-            m.arr(5).str(&self.id);
+            m.arr(6).str(&self.id);
             self.encode_reads(p, &mut m);
             m.bool(cross);
             self.encode_gen(p, &mut m);
+            self.encode_mver(&mut m);
             futs.push(async move {
                 // Read-only: a lost connection or a demoted leader just
                 // means "retry" (nothing was written).
@@ -866,12 +894,13 @@ impl Txn {
             None => (self.conn(cluster, shard).await?, 0),
         };
         let mut m = Mp::new();
-        m.arr(7).str(&self.id);
+        m.arr(8).str(&self.id);
         let wb = self.encode_writes(cluster, shard, &mut m);
         self.encode_reads(shard, &mut m);
         self.encode_gen(shard, &mut m);
         self.encode_fence(shard, &mut m);
         encode_buckets(&mut m, &wb);
+        self.encode_mver(&mut m);
         let shard_id = cluster.shards[shard].id;
         let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
             // The commit may have happened: report the outcome as unknown.
@@ -955,7 +984,7 @@ impl Txn {
         let mut futs = Vec::new();
         for (&p, (client, id)) in parts.iter().zip(targets) {
             let mut m = Mp::new();
-            m.arr(10).str(&self.id).uint(did as u64);
+            m.arr(11).str(&self.id).uint(did as u64);
             m.arr(part_ids.len());
             for &x in &part_ids {
                 m.uint(x as u64);
@@ -966,6 +995,7 @@ impl Txn {
             self.encode_gen(p, &mut m);
             self.encode_fence(p, &mut m);
             encode_buckets(&mut m, &wb);
+            self.encode_mver(&mut m);
             futs.push(async move {
                 match client.call(id, "tarn_prepare", &m.0).await {
                     Ok(r) => match r.data() {

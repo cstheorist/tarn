@@ -69,6 +69,14 @@ pub enum Admin {
         last: u32,
         to: u32,
     },
+    /// TARN ADD SHARD id 'replica[,replica...]': the shard with that id
+    /// joins the cluster, with no buckets (they move to it afterwards).
+    AddShard {
+        id: u32,
+        replicas: Vec<String>,
+    },
+    /// SHOW TARN SHARDS: the cluster's shards (its membership).
+    ShowTarnShards,
     /// SELECT @@a [AS x], @@b ... [LIMIT n]
     SelectVars(Vec<(String, String)>),
     Describe {
@@ -584,6 +592,10 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             t.i += 2;
             parse_move(&mut t)?
         }
+        "TARN" if t.peek_up(1) == "ADD" => {
+            t.i += 2;
+            parse_add_shard(&mut t)?
+        }
         "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
@@ -619,6 +631,33 @@ fn parse_move(t: &mut Toks) -> SqlResult<Admin> {
         return Err(usage());
     }
     Ok(Admin::MoveBuckets { first, last, to })
+}
+
+/// `TARN ADD SHARD id 'replica[,replica...]'` (after `TARN ADD`): the
+/// replicas as `--shard` takes them (host:port, comma-separated).
+fn parse_add_shard(t: &mut Toks) -> SqlResult<Admin> {
+    let usage = || SqlError::parse("expected TARN ADD SHARD id 'host:port[,host:port...]'");
+    if !t.is("SHARD") {
+        return Err(usage());
+    }
+    let id = t
+        .next()
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|&n| n > 0)
+        .ok_or_else(usage)?;
+    let lit = t.next().ok_or_else(usage)?;
+    if !lit.starts_with('\'') && !lit.starts_with('"') {
+        return Err(usage());
+    }
+    let replicas: Vec<String> = unquote(&lit)
+        .split(',')
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .collect();
+    if replicas.is_empty() || !t.done() {
+        return Err(usage());
+    }
+    Ok(Admin::AddShard { id, replicas })
 }
 
 /// The name of an SQL-level prepared statement (case-insensitive).
@@ -942,6 +981,7 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         "CHARSET" | "CHARACTER" => Admin::ShowCharset,
         "PROCESSLIST" => Admin::ShowProcesslist,
         "TARN" if t.is("BUCKETS") => Admin::ShowTarnBuckets,
+        "TARN" if t.is("SHARDS") => Admin::ShowTarnShards,
         "TARN" => Admin::ShowTarnStatus,
         "ENGINE" | "PLUGINS" | "MASTER" | "SLAVE" | "REPLICA" | "BINARY" | "GRANTS" | "PRIVILEGES" | "TRIGGERS"
         | "EVENTS" | "PROCEDURE" | "FUNCTION" | "OPEN" => Admin::Noop,
@@ -1007,6 +1047,36 @@ mod tests {
             "TARN MOVE BUCKETS BETWEEN 9 AND 3 TO SHARD 2",
             "TARN MOVE BUCKET 5 TO 2",
             "TARN MOVE BUCKET 5 TO SHARD 2 NOW",
+        ] {
+            assert!(recognize(bad).is_err(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn shard_statements() {
+        assert_eq!(recognize("SHOW TARN SHARDS").unwrap(), Some(Admin::ShowTarnShards));
+        assert_eq!(
+            recognize("TARN ADD SHARD 3 '127.0.0.1:3331, 127.0.0.1:3332'").unwrap(),
+            Some(Admin::AddShard {
+                id: 3,
+                replicas: vec!["127.0.0.1:3331".into(), "127.0.0.1:3332".into()]
+            })
+        );
+        assert_eq!(
+            recognize("tarn add shard 4 \"h:1\";").unwrap(),
+            Some(Admin::AddShard {
+                id: 4,
+                replicas: vec!["h:1".into()]
+            })
+        );
+        for bad in [
+            "TARN ADD SHARD 0 'h:1'",
+            "TARN ADD SHARD x 'h:1'",
+            "TARN ADD SHARD 3",
+            "TARN ADD SHARD 3 ''",
+            "TARN ADD SHARD 3 h",
+            "TARN ADD 3 'h:1'",
+            "TARN ADD SHARD 3 'h:1' NOW",
         ] {
             assert!(recognize(bad).is_err(), "{}", bad);
         }

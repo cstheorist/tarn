@@ -126,6 +126,8 @@ pub(crate) enum JobKind {
     Drop,
     Truncate,
     Move,
+    /// A change of the cluster's shards (members.rs).
+    Members,
 }
 
 impl JobKind {
@@ -136,6 +138,7 @@ impl JobKind {
             JobKind::Drop => "drop",
             JobKind::Truncate => "truncate",
             JobKind::Move => "move",
+            JobKind::Members => "members",
         }
     }
 
@@ -146,6 +149,7 @@ impl JobKind {
             "drop" => JobKind::Drop,
             "truncate" => JobKind::Truncate,
             "move" => JobKind::Move,
+            "members" => JobKind::Members,
             _ => return None,
         })
     }
@@ -163,6 +167,7 @@ impl JobKind {
             JobKind::Drop => "DROP TABLE",
             JobKind::Truncate => "TRUNCATE",
             JobKind::Move => "TARN MOVE BUCKET",
+            JobKind::Members => "TARN ADD SHARD",
         }
     }
 }
@@ -267,9 +272,101 @@ pub struct Shard {
     replicas: Vec<String>,
     leader: RwLock<Option<Arc<Pool>>>,
     discover: tokio::sync::Mutex<()>,
+    /// The shard left the cluster: it owns no bucket, and fan-outs and
+    /// schema changes skip it.
+    removed: std::sync::atomic::AtomicBool,
+}
+
+/// The most shards a cluster may have.
+pub const MAX_SHARDS: usize = 1024;
+
+/// The shards a server knows, by position (`Cluster::shards`). Positions
+/// never change while the server runs: a shard that joins the cluster is
+/// added at the end, and one that leaves stays, marked removed, so that the
+/// positions in transactions, bucket maps and lock requests stay valid.
+pub struct ShardList {
+    slots: Box<[std::sync::OnceLock<Shard>]>,
+    len: AtomicUsize,
+    add: Mutex<()>,
+}
+
+impl ShardList {
+    fn new(shards: Vec<Shard>) -> ShardList {
+        let slots: Box<[std::sync::OnceLock<Shard>]> = (0..MAX_SHARDS).map(|_| std::sync::OnceLock::new()).collect();
+        let n = shards.len();
+        for (i, s) in shards.into_iter().enumerate() {
+            let _ = slots[i].set(s);
+        }
+        ShardList {
+            slots,
+            len: AtomicUsize::new(n),
+            add: Mutex::new(()),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len.load(Ordering::Acquire)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Shard> {
+        (0..self.len()).map(move |i| &self[i])
+    }
+
+    /// Add a shard at the end: its position.
+    fn push(&self, s: Shard) -> SqlResult<usize> {
+        let _g = self.add.lock();
+        let n = self.len();
+        if n == MAX_SHARDS {
+            return Err(SqlError::internal(format!(
+                "a cluster has at most {} shards",
+                MAX_SHARDS
+            )));
+        }
+        let _ = self.slots[n].set(s);
+        self.len.store(n + 1, Ordering::Release);
+        Ok(n)
+    }
+}
+
+impl std::ops::Index<usize> for ShardList {
+    type Output = Shard;
+    fn index(&self, i: usize) -> &Shard {
+        self.slots[i].get().expect("a shard position")
+    }
+}
+
+impl<'a> IntoIterator for &'a ShardList {
+    type Item = &'a Shard;
+    type IntoIter = Box<dyn Iterator<Item = &'a Shard> + 'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.iter())
+    }
 }
 
 impl Shard {
+    pub(crate) fn new(id: u32, replicas: Vec<String>) -> Shard {
+        Shard {
+            id,
+            replicas,
+            leader: RwLock::new(None),
+            discover: tokio::sync::Mutex::new(()),
+            removed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the shard left the cluster.
+    pub fn removed(&self) -> bool {
+        self.removed.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_removed(&self) {
+        self.removed.store(true, Ordering::Release);
+    }
+
     pub async fn client(&self, cluster: &Cluster) -> SqlResult<Client> {
         if let Some(p) = self.leader.read().clone() {
             if let Some(c) = p.pick() {
@@ -385,7 +482,7 @@ pub struct CachedPlan {
 
 pub struct Cluster {
     pub cfg: ClusterConfig,
-    pub shards: Vec<Shard>,
+    pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
     plans: RwLock<HashMap<(String, String), Arc<CachedPlan>>>,
     /// Blocks of counter values reserved by this server (AUTO_INCREMENT,
@@ -402,13 +499,18 @@ pub struct Cluster {
     /// Row-lock requests in flight, by transaction (each makes one at a
     /// time): where the cross-shard deadlock detector starts.
     lock_requests: Mutex<HashMap<String, LockRequest>>,
-    /// Position in `shards` of each configured shard id.
-    pub(crate) shard_pos: HashMap<u32, usize>,
+    /// Position in `shards` of each shard id.
+    pub(crate) shard_pos: RwLock<HashMap<u32, usize>>,
     /// Which shard owns each bucket (buckets.rs), the number of times it was
     /// read, and the lock that makes concurrent reads share one.
     buckets: RwLock<Arc<BucketMap>>,
     bucket_reads: AtomicU64,
     pub(crate) bucket_mu: tokio::sync::Mutex<()>,
+    /// The membership this server knows (members.rs; version 0: its
+    /// configuration's), and the lock that makes reads of it one at a time.
+    pub(crate) members: RwLock<crate::members::Members>,
+    members_ver: AtomicU64,
+    pub(crate) members_mu: tokio::sync::Mutex<()>,
 }
 
 /// A row-lock request in flight (`Txn::lock`).
@@ -462,7 +564,7 @@ async fn lock_waits(c: &Cluster, shards: &[usize]) -> Vec<Wait> {
     c.stats.deadlock_calls.fetch_add(shards.len() as u64, Ordering::Relaxed);
     let mut out = Vec::new();
     for (&s, r) in shards.iter().zip(replies) {
-        if let Ok(v) = r.and_then(|d| parse_waits(&d, s, &c.shard_pos)) {
+        if let Ok(v) = r.and_then(|d| parse_waits(&d, s, &c.shard_pos.read())) {
             out.extend(v);
         }
     }
@@ -712,16 +814,12 @@ impl Cluster {
         if cfg.shards.is_empty() {
             return Err(SqlError::internal("cluster config has no shards"));
         }
-        let shards = cfg
-            .shards
-            .iter()
-            .map(|s| Shard {
-                id: s.id,
-                replicas: s.replicas.clone(),
-                leader: RwLock::new(None),
-                discover: tokio::sync::Mutex::new(()),
-            })
-            .collect();
+        let shards = ShardList::new(
+            cfg.shards
+                .iter()
+                .map(|s| Shard::new(s.id, s.replicas.clone()))
+                .collect(),
+        );
         let boot = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| (d.as_nanos() & 0xFFFF_FFFF) as u32)
@@ -755,14 +853,18 @@ impl Cluster {
             reloads: AtomicU64::new(0),
             reload_mu: tokio::sync::Mutex::new(()),
             lock_requests: Mutex::new(HashMap::new()),
-            shard_pos,
+            shard_pos: RwLock::new(shard_pos),
             buckets: RwLock::new(Arc::new(BucketMap::initial(bucket_count, nshards))),
             bucket_reads: AtomicU64::new(0),
             bucket_mu: tokio::sync::Mutex::new(()),
+            members: RwLock::new(crate::members::Members::default()),
+            members_ver: AtomicU64::new(0),
+            members_mu: tokio::sync::Mutex::new(()),
         });
         for s in &c.shards {
             s.client(&c).await?;
         }
+        c.load_members().await?;
         c.reload_buckets().await?;
         if let Some(n) = c.cfg.bucket_count {
             let count = c.bucket_map().count;
@@ -794,14 +896,17 @@ impl Cluster {
                 }
             });
         }
-        if c.shards.len() > 1 && c.cfg.deadlock_interval > 0.0 {
+        if c.cfg.deadlock_interval > 0.0 {
             let weak = Arc::downgrade(&c);
             let every = Duration::from_secs_f64(c.cfg.deadlock_interval);
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(every).await;
                     let Some(c) = weak.upgrade() else { break };
-                    detect_deadlocks(&c).await;
+                    // (shards may join a cluster of one)
+                    if c.nshards() > 1 {
+                        detect_deadlocks(&c).await;
+                    }
                 }
             });
         }
@@ -914,7 +1019,36 @@ impl Cluster {
 
     /// The position in `shards` of the shard with id `id`.
     pub fn shard_position(&self, id: u32) -> Option<usize> {
-        self.shard_pos.get(&id).copied()
+        self.shard_pos.read().get(&id).copied()
+    }
+
+    /// The membership version this server routes with (members.rs).
+    pub fn member_ver(&self) -> u64 {
+        self.members_ver.load(Ordering::Acquire)
+    }
+
+    /// Take membership `m` if it is not older than the one this server
+    /// has. (Its shards must be in `shards` already.)
+    pub(crate) fn set_members(&self, m: crate::members::Members) {
+        let mut cur = self.members.write();
+        if m.ver < cur.ver {
+            return;
+        }
+        self.members_ver.fetch_max(m.ver, Ordering::AcqRel);
+        *cur = m;
+    }
+
+    /// Add a shard that joined the cluster at the end of `shards`: its
+    /// position.
+    pub(crate) fn add_known_shard(&self, s: Shard) -> SqlResult<usize> {
+        let id = s.id;
+        let mut pos = self.shard_pos.write();
+        if let Some(&p) = pos.get(&id) {
+            return Ok(p);
+        }
+        let p = self.shards.push(s)?;
+        pos.insert(id, p);
+        Ok(p)
     }
 
     /// CALL an idempotent Lua procedure on a shard leader outside any
@@ -1403,6 +1537,21 @@ impl Cluster {
             m.f64(wait);
             let d = self.call(0, "tarn_job_begin", &m.0).await?;
             if crate::mpw::status_is(&d, "ok") {
+                // {'ok', mver}: the first shard's membership version. A job
+                // acts on every shard: a newer membership than this server
+                // knows (a shard joined) is read first. (Shards join in a
+                // job of their own, which other jobs wait for and which
+                // ends once every shard has the new membership.)
+                if crate::mpw::status_len(&d) > 1 {
+                    let (_, mut rd) = lua_status(&d)?;
+                    let v = rd.value()?.as_i64().unwrap_or(0).max(0) as u64;
+                    if v > self.member_ver() {
+                        if let Err(e) = self.load_members().await {
+                            let _ = self.job_end(&owner).await;
+                            return Err(e);
+                        }
+                    }
+                }
                 return Ok(Job {
                     owner,
                     age: 0.0,
@@ -1592,8 +1741,14 @@ impl Cluster {
                 job.phase
             );
             job.owner = me;
+            // (The job acts on every shard: this server may not know them
+            // all yet. No shard joins while the job is in progress.)
+            self.load_members().await?;
             if job.kind == JobKind::Move {
                 return self.finish_move(&job).await;
+            }
+            if job.kind == JobKind::Members {
+                return self.finish_members(&job).await;
             }
             match self.run_job(&job).await {
                 // (a job rolled back reports the reason as an error)

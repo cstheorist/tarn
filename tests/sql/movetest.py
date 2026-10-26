@@ -260,22 +260,32 @@ class Test:
             time.sleep(self.args.move_pause)
 
     # ---- checks -------------------------------------------------------------
-    def run(self):
+    def workload(self, stop):
+        """The threads of the workload, until `stop` (not started)."""
         a = self.args
-        self.setup()
-        print(f"{len(self.servers)} SQL server(s), shards {self.shard_ids}, {self.count} buckets; "
-              f"moving the {len(self.buckets)} buckets of the rows for {a.seconds:.0f} s")
-        stop = time.time() + a.seconds
         th = [threading.Thread(target=self.transfer, args=(k, stop)) for k in range(a.threads)]
         th += [threading.Thread(target=self.rc_counter, args=(k, stop)) for k in range(2)]
         th += [threading.Thread(target=self.increment, args=(k, stop)) for k in range(2)]
         th += [threading.Thread(target=self.audit, args=(k, stop)) for k in range(2)]
         if not a.no_moves:
             th += [threading.Thread(target=self.mover, args=(stop,))]
+        return th
+
+    def run(self):
+        a = self.args
+        self.setup()
+        print(f"{len(self.servers)} SQL server(s), shards {self.shard_ids}, {self.count} buckets; "
+              f"moving the {len(self.buckets)} buckets of the rows for {a.seconds:.0f} s")
+        th = self.workload(time.time() + a.seconds)
         for t in th:
             t.start()
         for t in th:
             t.join()
+        return self.finish()
+
+    def finish(self):
+        """The checks once the workload stopped: the number of failures."""
+        a = self.args
         st = self.stats
         c = connect(self.servers[0])
         # (recovery may still be applying a transaction whose APPLY was cut

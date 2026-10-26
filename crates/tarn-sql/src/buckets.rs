@@ -56,6 +56,8 @@ pub struct Report {
     /// states are lua/tarn.lua's ('sending', 'fenced', 'sent', 'receiving',
     /// 'held').
     pub others: Vec<(u32, String, Option<u32>, Option<String>)>,
+    /// The shard's membership version (lua/tarn.lua "Membership").
+    pub mver: u64,
 }
 
 /// Decode a `tarn_buckets` reply: `{'ok', count, epoch, owned, others}`.
@@ -111,6 +113,9 @@ pub fn parse_report(d: &[u8]) -> SqlResult<Report> {
         }
         r.others.push((b, state, peer, mv));
     }
+    if n_fields >= 6 {
+        r.mver = rd.value()?.as_i64().unwrap_or(0).max(0) as u64;
+    }
     Ok(r)
 }
 
@@ -161,6 +166,9 @@ pub struct BucketMap {
     pub moving: Vec<u32>,
     /// What the shards reported (`SHOW TARN BUCKETS`).
     pub reports: Vec<Report>,
+    /// The membership version the map was read with: reads of every shard
+    /// routed by it name it.
+    pub mver: u64,
 }
 
 impl BucketMap {
@@ -174,6 +182,7 @@ impl BucketMap {
             epochs: vec![0; nshards],
             moving: Vec::new(),
             reports: Vec::new(),
+            mver: 0,
         }
     }
 
@@ -246,6 +255,7 @@ impl BucketMap {
             epochs: reports.iter().map(|r| r.epoch).collect(),
             moving,
             reports,
+            mver: 0,
         })
     }
 
@@ -271,7 +281,13 @@ impl BucketMap {
                 self.moving[0]
             )));
         }
-        Ok(self.epochs.get(shard).copied().unwrap_or(0))
+        // (A shard that joined after the map was read: read it again.)
+        self.epochs.get(shard).copied().ok_or_else(|| {
+            SqlError::moved(format!(
+                "shard position {} is not in this server's bucket map yet; try again",
+                shard
+            ))
+        })
     }
 }
 
@@ -415,13 +431,22 @@ impl Cluster {
             }
             reports = self.bucket_reports().await?;
         }
+        // A shard that knows a newer membership: read it first (shards
+        // may have joined), and the map from every shard then.
+        if reports.iter().any(|r| r.mver > self.member_ver()) {
+            self.load_members().await?;
+            reports = self.bucket_reports().await?;
+        }
         // (Again while a move is between its send and its receive, and when
         // the shards' parts disagree: read at different moments, they may
         // straddle a send and the receive after it.)
         let deadline = Instant::now() + SETTLE_WAIT;
         loop {
-            match BucketMap::from_reports(reports, &self.shard_pos) {
-                Ok(map) if map.settled() || Instant::now() >= deadline => {
+            let pos = self.shard_pos.read().clone();
+            let mver = self.member_ver();
+            match BucketMap::from_reports(reports, &pos) {
+                Ok(mut map) if map.settled() || Instant::now() >= deadline => {
+                    map.mver = mver;
                     self.install_buckets(map);
                     return Ok(());
                 }
@@ -854,6 +879,7 @@ impl Cluster {
     /// `SHOW TARN BUCKETS`: per shard, the buckets it owns and those in a
     /// move.
     pub async fn show_buckets(&self) -> SqlResult<Vec<(u32, u32, String, u64, String)>> {
+        self.load_members().await?;
         let reports = self.bucket_reports().await?;
         let mut out = Vec::new();
         for (i, r) in reports.iter().enumerate() {
@@ -897,6 +923,7 @@ mod tests {
                 .iter()
                 .map(|&(b, s, p)| (b, s.to_string(), Some(p), Some("m".to_string())))
                 .collect(),
+            mver: 0,
         }
     }
 
@@ -979,6 +1006,17 @@ mod tests {
     }
 
     #[test]
+    fn a_shard_the_map_does_not_have_is_refused() {
+        // (a shard that joined after the map was read: the read of every
+        // shard reads the map again)
+        let map =
+            BucketMap::from_reports(vec![report(8, 4, &[(1, 4)], &[]), report(8, 2, &[(5, 8)], &[])], &pos()).unwrap();
+        assert_eq!(map.epoch_of(1).unwrap(), 2);
+        let e = map.epoch_of(2).unwrap_err();
+        assert!(e.moved, "{}", e.message);
+    }
+
+    #[test]
     fn bad_maps_are_refused() {
         let e = BucketMap::from_reports(vec![report(8, 1, &[(1, 5)], &[]), report(8, 1, &[(5, 8)], &[])], &pos())
             .unwrap_err();
@@ -1002,6 +1040,22 @@ mod tests {
         assert_eq!(r.epoch, 3);
         assert_eq!(r.owned, vec![(1, 4), (6, 8)]);
         assert_eq!(r.others, vec![(5, "sent".to_string(), Some(2), Some("mv".to_string()))]);
+        assert_eq!(r.mver, 0);
+        // with the shard's membership version
+        let mut m6 = Mp::new();
+        m6.arr(1)
+            .arr(6)
+            .str("ok")
+            .uint(16)
+            .uint(3)
+            .arr(1)
+            .arr(2)
+            .uint(1)
+            .uint(16)
+            .arr(0)
+            .uint(7);
+        let r6 = parse_report(&m6.0).unwrap();
+        assert_eq!((r6.owned.clone(), r6.others.len(), r6.mver), (vec![(1, 16)], 0, 7));
         let mut m3 = Mp::new();
         m3.arr(1).arr(2).str("ok").uint(0);
         assert_eq!(parse_report(&m3.0).unwrap().count, 0);

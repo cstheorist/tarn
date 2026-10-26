@@ -8,6 +8,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Shards join a running cluster
+  ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN ADD SHARD id
+  'replica,...'` checks the new shard's storage, creates every table there,
+  gives it a bucket map with no buckets and records the new membership on
+  every shard; buckets then move to it with `TARN MOVE BUCKETS`, and `SHOW
+  TARN SHARDS` lists the shards. SQL servers learn new shards from the
+  shards, with no restart or change of configuration. Every shard keeps the
+  membership's version: a transaction that read every shard names the
+  version it was routed with when it commits, as does a read of every shard
+  outside a transaction, and shards with a newer one refuse them (it may
+  have missed a shard that joined since; model-checked, `Join*` and
+  `Bug_JoinNoCheck*` configurations). `tests/jointest.sh` adds a shard
+  under the workload of `tests/sql/movetest.py`, `tests/joinfaults.sh`
+  kills the SQL server driving a join (another server gives it up or
+  finishes it), and `scripts/cluster.sh add-shard` starts a new shard's
+  storage.
+
 - Online bucket moves ([#24](https://github.com/cstheorist/tarn/issues/24)):
   `TARN MOVE BUCKET n TO SHARD id` and `TARN MOVE BUCKETS BETWEEN n AND m TO
   SHARD id` move buckets between shards while transactions run, to add a

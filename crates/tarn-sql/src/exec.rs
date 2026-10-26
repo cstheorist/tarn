@@ -316,11 +316,9 @@ fn index_def(t: &TableDef, id: u32) -> &IndexDef {
 }
 
 /// Shard owning every row whose `index` key starts with `prefix`, if the
-/// prefix determines the shard key.
+/// prefix determines the shard key. (Also on a cluster of one shard: shards
+/// may join it, and buckets move to them.)
 pub fn route_prefix(cluster: &Cluster, t: &TableDef, idx: &IndexDef, prefix: &[Value]) -> Option<usize> {
-    if cluster.nshards() == 1 {
-        return Some(0);
-    }
     route_bucket(cluster, t, idx, prefix).map(|(s, _)| s)
 }
 
@@ -358,7 +356,7 @@ fn read_route(
     if in_stream {
         return Ok(Route::None);
     }
-    Ok(Route::Epoch(map.epoch_of(shard)?))
+    Ok(Route::Epoch(map.epoch_of(shard)?, map.mver))
 }
 
 pub fn shard_of_row(cluster: &Cluster, t: &TableDef, row: &[Value]) -> usize {
