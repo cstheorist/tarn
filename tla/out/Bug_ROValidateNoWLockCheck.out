@@ -1,15 +1,15 @@
 Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=45515 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 7 and seed -6508696001663302043 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 16323] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/MC.tla
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/TarnCommit.tla
-Parsing file /tmp/tlc-4858917258696798745/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-4858917258696798745/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-4858917258696798745/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-4858917258696798745/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-4858917258696798745/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-4858917258696798745/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-4858917258696798745/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-model/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 83 and seed -7322126366019184681 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 15962] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/MC.tla
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/TarnCommit.tla
+Parsing file /tmp/tlc-1725718227041180647/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1725718227041180647/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1725718227041180647/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1725718227041180647/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1725718227041180647/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1725718227041180647/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1725718227041180647/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -23,10 +23,10 @@ Linting of module TarnCommit
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MC
-Starting... (2026-10-26 11:01:16)
+Starting... (2026-10-26 13:43:43)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-26 11:01:16.
-Progress(10) at 2026-10-26 11:01:19: 13,961 states generated (13,961 s/min), 4,479 distinct states found (4,479 ds/min), 2,212 states left on queue.
+Finished computing initial states: 1 distinct state generated at 2026-10-26 13:43:44.
+Progress(11) at 2026-10-26 13:43:47: 21,264 states generated (21,264 s/min), 6,375 distinct states found (6,375 ds/min), 3,038 states left on queue.
 Error: Invariant StrictSerializable is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -66,6 +66,7 @@ State 1: <Initial predicate>
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -85,7 +86,7 @@ State 1: <Initial predicate>
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 2: <ReadH("T2","x") line 923, col 16 to line 923, col 40 of module TarnCommit>
+State 2: <ReadH("T2","x") line 969, col 16 to line 969, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -122,6 +123,7 @@ State 2: <ReadH("T2","x") line 923, col 16 to line 923, col 40 of module TarnCom
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -141,7 +143,7 @@ State 2: <ReadH("T2","x") line 923, col 16 to line 923, col 40 of module TarnCom
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 3: <SendPrepareH("T1") line 930, col 20 to line 930, col 48 of module TarnCommit>
+State 3: <SendPrepareH("T1") line 976, col 20 to line 976, col 48 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -179,6 +181,7 @@ State 3: <SendPrepareH("T1") line 930, col 20 to line 930, col 48 of module Tarn
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -198,7 +201,7 @@ State 3: <SendPrepareH("T1") line 930, col 20 to line 930, col 48 of module Tarn
 /\ nTimeout = 0
 /\ coord = [T1 |-> "preparing", T2 |-> "exec", T3 |-> "exec"]
 
-State 4: <PrepareH("T1","A") line 935, col 19 to line 935, col 51 of module TarnCommit>
+State 4: <PrepareH("T1","A") line 981, col 19 to line 981, col 51 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -237,6 +240,7 @@ State 4: <PrepareH("T1","A") line 935, col 19 to line 935, col 51 of module Tarn
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -256,7 +260,7 @@ State 4: <PrepareH("T1","A") line 935, col 19 to line 935, col 51 of module Tarn
 /\ nTimeout = 0
 /\ coord = [T1 |-> "preparing", T2 |-> "exec", T3 |-> "exec"]
 
-State 5: <PrepareH("T1","B") line 935, col 19 to line 935, col 51 of module TarnCommit>
+State 5: <PrepareH("T1","B") line 981, col 19 to line 981, col 51 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -297,6 +301,7 @@ State 5: <PrepareH("T1","B") line 935, col 19 to line 935, col 51 of module Tarn
   B |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -316,7 +321,7 @@ State 5: <PrepareH("T1","B") line 935, col 19 to line 935, col 51 of module Tarn
 /\ nTimeout = 0
 /\ coord = [T1 |-> "preparing", T2 |-> "exec", T3 |-> "exec"]
 
-State 6: <CoordDecideH("T1") line 931, col 20 to line 931, col 53 of module TarnCommit>
+State 6: <CoordDecideH("T1") line 977, col 20 to line 977, col 53 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -359,6 +364,7 @@ State 6: <CoordDecideH("T1") line 931, col 20 to line 931, col 53 of module Tarn
   B |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -378,7 +384,7 @@ State 6: <CoordDecideH("T1") line 931, col 20 to line 931, col 53 of module Tarn
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 7: <ApplyAtH("T1","B") line 937, col 19 to line 937, col 65 of module TarnCommit>
+State 7: <ApplyAtH("T1","B") line 983, col 19 to line 983, col 65 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -420,6 +426,7 @@ State 7: <ApplyAtH("T1","B") line 937, col 19 to line 937, col 65 of module Tarn
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -439,7 +446,7 @@ State 7: <ApplyAtH("T1","B") line 937, col 19 to line 937, col 65 of module Tarn
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 8: <ReadH("T2","y") line 923, col 16 to line 923, col 40 of module TarnCommit>
+State 8: <ReadH("T2","y") line 969, col 16 to line 969, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -481,6 +488,7 @@ State 8: <ReadH("T2","y") line 923, col 16 to line 923, col 40 of module TarnCom
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -500,7 +508,7 @@ State 8: <ReadH("T2","y") line 923, col 16 to line 923, col 40 of module TarnCom
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 9: <ValidateROH("T2","A") line 942, col 22 to line 942, col 57 of module TarnCommit>
+State 9: <ValidateROH("T2","A") line 988, col 22 to line 988, col 57 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -542,6 +550,7 @@ State 9: <ValidateROH("T2","A") line 942, col 22 to line 942, col 57 of module T
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -561,7 +570,7 @@ State 9: <ValidateROH("T2","A") line 942, col 22 to line 942, col 57 of module T
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 10: <ValidateROH("T2","B") line 942, col 22 to line 942, col 57 of module TarnCommit>
+State 10: <ValidateROH("T2","B") line 988, col 22 to line 988, col 57 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -603,6 +612,7 @@ State 10: <ValidateROH("T2","B") line 942, col 22 to line 942, col 57 of module 
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -622,7 +632,7 @@ State 10: <ValidateROH("T2","B") line 942, col 22 to line 942, col 57 of module 
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 11: <FinishROH("T2") line 943, col 17 to line 943, col 47 of module TarnCommit>
+State 11: <FinishROH("T2") line 989, col 17 to line 989, col 47 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -664,6 +674,7 @@ State 11: <FinishROH("T2") line 943, col 17 to line 943, col 47 of module TarnCo
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
 /\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
 /\ staged = [x |-> "init", y |-> "init"]
 /\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
@@ -683,7 +694,7 @@ State 11: <FinishROH("T2") line 943, col 17 to line 943, col 47 of module TarnCo
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "finished", T3 |-> "exec"]
 
-36671 states generated, 10491 distinct states found, 4769 states left on queue.
+37003 states generated, 10550 distinct states found, 4784 states left on queue.
 The depth of the complete state graph search is 11.
-Finished in 05s at (2026-10-26 11:01:20)
-Trace exploration spec path: ./MC_TTrace_1793026875.tla
+Finished in 04s at (2026-10-26 13:43:47)
+Trace exploration spec path: ./MC_TTrace_1793036623.tla
