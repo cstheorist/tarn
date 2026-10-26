@@ -395,7 +395,7 @@ CASES = [
      "(SELECT k1, k2 FROM t3 WHERE k1 = 4 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED)", "q"),
     ("(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 1 FOR UPDATE) UNION ALL "
      "(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 2 FOR UPDATE) ORDER BY 2 DESC", "q"),
-    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 LIMIT 3 FOR UPDATE) UNION ALL "
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 ORDER BY k1, k2 LIMIT 3 FOR UPDATE) UNION ALL "
      "(SELECT id, b FROM t1 WHERE id = 3 FOR UPDATE)", "q"),
     ("COMMIT", "q"),
     ("UPDATE uk SET n = n * 2 WHERE name IN ('a', 'c')", "dml:uk"),

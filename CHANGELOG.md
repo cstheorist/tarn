@@ -26,6 +26,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scans of every shard (also during `tests/failover.sh`), and
   `tests/movefaults.sh` kills the SQL server driving a move.
 
+- The number of buckets is chosen when a cluster is made
+  ([#24](https://github.com/cstheorist/tarn/issues/24)): `bucket_count` in
+  `cluster.json`, now 30,000 by default (it was 3,000), so that the shards
+  of a large cluster can be balanced to about 1%. The first SQL server
+  makes the map with it, and the map keeps it. A cluster made by an earlier
+  version keeps the count its rows were stored with: 3,000, or the
+  `bucket_count` it set. Two servers making the map at once agree on one
+  count. `SHOW STATUS` reports it (`Tarn_buckets`), and the `kvbench`
+  example routes by the shards' map.
+
 - Table trees ([#85](https://github.com/cstheorist/tarn/issues/85)): a
   table's `COMMENT 'tarn:parent=<table>'` declares that its rows nest under
   the parent's. `CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check that

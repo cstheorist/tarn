@@ -27,9 +27,9 @@ flowchart LR
 * **Storage nodes** are Tarantool 3.x instances running `lua/storage.lua`,
   which loads the Tarn module (`lua/tarn.lua`). A shard is one instance, or a
   replica set with synchronous replication (quorum ⌊N/2⌋+1) and Raft leader
-  election. Rows are hashed into 3,000 buckets; each shard owns some of
-  them (an equal, contiguous range in a new cluster), and buckets move
-  between shards online ([Buckets](#buckets)).
+  election. Rows are hashed into buckets (30,000 in a new cluster); each
+  shard owns some of them (an equal, contiguous range in a new cluster),
+  and buckets move between shards online ([Buckets](#buckets)).
 * **`tarn-server`** is stateless. Run as many as you like (each with a
   distinct `--node-id`); each one finds every shard's leader by itself.
 * **Key/value clients** read the spaces directly from any shard leader.
@@ -212,7 +212,7 @@ options:
     {"id": 1, "replicas": ["10.0.0.11:3301", "10.0.0.12:3301", "10.0.0.13:3301"]},
     {"id": 2, "replicas": ["10.0.0.21:3301", "10.0.0.22:3301", "10.0.0.23:3301"]}
   ],
-  "bucket_count": 3000,
+  "bucket_count": 30000,
   "user": "tarn", "password": "tarn",
   "pool_size": 4,
   "node_id": 1,
@@ -253,6 +253,15 @@ touching it before another server takes it over and finishes it: back if
 not every shard had prepared it, forward if every shard had (`docs/design.md`
 §2.10). Every server looks for such jobs at startup and every
 `ddl_job_stale / 2` seconds (at most 10).
+
+`bucket_count` is the number of buckets of a new cluster (default 30,000).
+The first SQL server to start on a new cluster makes the bucket map with it,
+and from then on it cannot change: every row's `bucket_id` depends on it.
+Later servers use the map's count (one whose `bucket_count` differs logs a
+warning). A cluster made by a version from before bucket moves keeps the
+count its rows were stored with: 3,000, that version's default, or the
+`bucket_count` its configuration set -- keep that setting. See
+[Buckets](#buckets) for choosing it.
 
 `move_timeout` is how long, in seconds, a bucket move waits at each of its
 steps for the transactions that hold locks on the bucket's rows before it
@@ -309,6 +318,18 @@ writes by their rows' `bucket_id`, but its reads are not checked).
 Key/value clients that compute a row's shard themselves find each bucket's
 shard in `tarn_buckets()` on the shards (or in `SHOW TARN BUCKETS`), or ask
 every shard.
+
+**How many buckets.** A shard owns whole buckets, so the shards' sizes can
+differ by a bucket, one part in the number of buckets per shard: 3,000
+buckets on 300 shards are 10 per shard, so a shard with 11 holds 10% more
+than one with 10; 30,000 buckets make that 1%. (Rows with one shard key
+value stay in one bucket whatever the count: more buckets do not split a
+hot key.) More buckets cost more moves for the same share of rows -- each
+move is one job of about a dozen storage calls, plus the copy -- and a
+record per bucket on its shard and an entry in each SQL server's map. The
+count is fixed when the cluster is made (`bucket_count`), so choose it for
+the largest number of shards the cluster may grow to: about 100 buckets per
+shard or more.
 
 ## Local clusters
 

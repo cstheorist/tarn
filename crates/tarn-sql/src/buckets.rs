@@ -26,11 +26,28 @@ use std::time::{Duration, Instant};
 use tarn_common::{SqlError, SqlResult};
 use tarn_verified::route::{build_owner, shard_of_bucket, NO_SHARD};
 
+/// The number of buckets of a new cluster, unless `bucket_count` in the
+/// configuration says otherwise. Buckets are the unit a move moves: a
+/// shard owns whole buckets, so with n buckets per shard the shards' sizes
+/// can differ by one part in n; but each bucket is moved separately and has
+/// a record on its shard (docs/operations.md "Buckets").
+pub const NEW_CLUSTER_BUCKETS: u32 = 30_000;
+
+/// The number of buckets of a cluster made by a version from before the
+/// bucket map, unless its configuration set `bucket_count`: its rows'
+/// bucket ids were computed with it.
+pub const LEGACY_BUCKETS: u32 = 3_000;
+
+/// The most buckets a cluster may have.
+pub const MAX_BUCKETS: u32 = 1_000_000;
+
 /// One shard's map (`tarn_buckets`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Report {
     /// Buckets in the cluster; 0: the shard has no map yet.
     pub count: u32,
+    /// Without a map: the Tarn tables on the shard.
+    pub tables: u32,
     /// Bumped by every send and receive on the shard.
     pub epoch: u64,
     /// The buckets it owns, as ranges (lo, hi).
@@ -56,6 +73,12 @@ pub fn parse_report(d: &[u8]) -> SqlResult<Report> {
         return Ok(r);
     }
     r.count = rd.value()?.as_i64().unwrap_or(0) as u32;
+    if r.count == 0 {
+        if n_fields >= 3 {
+            r.tables = rd.value()?.as_i64().unwrap_or(0) as u32;
+        }
+        return Ok(r);
+    }
     if n_fields < 5 {
         return Ok(r);
     }
@@ -89,6 +112,25 @@ pub fn parse_report(d: &[u8]) -> SqlResult<Report> {
         r.others.push((b, state, peer, mv));
     }
     Ok(r)
+}
+
+/// The number of buckets of a map made now, from the shards' reports: that
+/// of a shard that has a map; else `bucket_count` from the configuration;
+/// else, when the shards have tables (made by a version from before the
+/// map, which computed their rows' bucket ids with its default),
+/// `LEGACY_BUCKETS`; else (a new cluster) `NEW_CLUSTER_BUCKETS`.
+pub fn new_map_count(configured: Option<u32>, reports: &[Report]) -> u32 {
+    if let Some(c) = reports.iter().map(|r| r.count).find(|&c| c > 0) {
+        return c;
+    }
+    if let Some(c) = configured {
+        return c;
+    }
+    if reports.iter().any(|r| r.tables > 0) {
+        LEGACY_BUCKETS
+    } else {
+        NEW_CLUSTER_BUCKETS
+    }
 }
 
 /// The shard (position) of each bucket of a new cluster: contiguous ranges,
@@ -352,13 +394,25 @@ impl Cluster {
             // of a new cluster, as servers did then.
             Err(e) if e.message.contains("'tarn_buckets' is not defined") => {
                 tracing::warn!("the shards keep no bucket map (an older version): buckets cannot move");
-                self.install_buckets(BucketMap::initial(self.cfg.bucket_count, self.shards.len()));
+                let count = self.cfg.bucket_count.unwrap_or(LEGACY_BUCKETS);
+                self.install_buckets(BucketMap::initial(count, self.shards.len()));
                 return Ok(());
             }
             Err(e) => return Err(e),
         };
         if reports.iter().any(|r| r.count == 0) {
-            self.init_buckets(&reports).await?;
+            // (again when another server made some shards' maps meanwhile
+            // with another count: then with that one)
+            let mut tries = 0;
+            while !self.init_buckets(&reports).await? {
+                tries += 1;
+                if tries == 3 {
+                    return Err(SqlError::internal(
+                        "the shards' bucket maps are being made with different counts",
+                    ));
+                }
+                reports = self.bucket_reports().await?;
+            }
             reports = self.bucket_reports().await?;
         }
         // (Again while a move is between its send and its receive, and when
@@ -379,14 +433,16 @@ impl Cluster {
         }
     }
 
-    async fn init_buckets(&self, reports: &[Report]) -> SqlResult<()> {
-        let count = reports
-            .iter()
-            .map(|r| r.count)
-            .find(|&c| c > 0)
-            .unwrap_or(self.cfg.bucket_count);
-        if count == 0 {
-            return Err(SqlError::internal("bucket_count must be positive"));
+    /// Make the map of each shard without one. False: a shard had one
+    /// already with another count (another server made it at the same
+    /// moment): the caller reads the reports again.
+    async fn init_buckets(&self, reports: &[Report]) -> SqlResult<bool> {
+        let count = new_map_count(self.cfg.bucket_count, reports);
+        if count == 0 || count > MAX_BUCKETS {
+            return Err(SqlError::internal(format!(
+                "bucket_count must be between 1 and {} (it is {})",
+                MAX_BUCKETS, count
+            )));
         }
         // Buckets that a shard with a map owns or moves.
         let mut taken = vec![false; count as usize + 1];
@@ -426,7 +482,18 @@ impl Cluster {
                 m.arr(2).uint(*lo as u64).uint(*hi as u64);
             }
             let d = self.call(i, "tarn_bucket_init", &m.0).await?;
-            lua_status(&d)?; // 'exists': another server made it meanwhile
+            if crate::mpw::status_is(&d, "exists") {
+                // another server made it meanwhile
+                let mut rd = Rd::new(&d);
+                rd.array()?; // the return values
+                rd.array()?; // {'exists', count}
+                rd.skip()?;
+                if rd.value()?.as_i64() != Some(count as i64) {
+                    return Ok(false);
+                }
+                continue;
+            }
+            lua_status(&d)?;
             tracing::info!(
                 shard = self.shards[i].id,
                 "made the bucket map: {} of {} buckets ({})",
@@ -435,7 +502,7 @@ impl Cluster {
                 ranges_text(&mine)
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Read the map again after a request was refused for its bucket;
@@ -823,6 +890,7 @@ mod tests {
     fn report(count: u32, epoch: u64, owned: &[(u32, u32)], others: &[(u32, &str, u32)]) -> Report {
         Report {
             count,
+            tables: 0,
             epoch,
             owned: owned.to_vec(),
             others: others
@@ -938,5 +1006,33 @@ mod tests {
         m3.arr(1).arr(2).str("ok").uint(0);
         assert_eq!(parse_report(&m3.0).unwrap().count, 0);
         assert_eq!(ranges_text(&r.owned), "1-4, 6-8");
+        // no map, two tables
+        let mut m4 = Mp::new();
+        m4.arr(1).arr(3).str("ok").uint(0).uint(2);
+        let r4 = parse_report(&m4.0).unwrap();
+        assert_eq!((r4.count, r4.tables), (0, 2));
+    }
+
+    #[test]
+    fn the_bucket_count_of_a_new_map() {
+        let none = Report::default();
+        let tables = Report {
+            tables: 3,
+            ..Report::default()
+        };
+        let mapped = Report {
+            count: 512,
+            owned: vec![(1, 512)],
+            ..Report::default()
+        };
+        // a new cluster
+        assert_eq!(new_map_count(None, &[none.clone(), none.clone()]), NEW_CLUSTER_BUCKETS);
+        assert_eq!(new_map_count(Some(64), &[none.clone(), none.clone()]), 64);
+        // made by a version from before the map: the count its rows use
+        assert_eq!(new_map_count(None, &[none.clone(), tables.clone()]), LEGACY_BUCKETS);
+        assert_eq!(new_map_count(Some(4096), &[tables.clone(), tables.clone()]), 4096);
+        // a shard with a map (another server made it, or a shard was added)
+        assert_eq!(new_map_count(None, &[mapped.clone(), none.clone()]), 512);
+        assert_eq!(new_map_count(Some(64), &[tables, none, mapped]), 512);
     }
 }

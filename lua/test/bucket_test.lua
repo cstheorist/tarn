@@ -73,10 +73,19 @@ print('the bucket map')
 local r = c[1]:call('tarn_select', {sid, 0, {21}, 'EQ', 1, box.NULL, true, true, box.NULL, false, box.NULL, 12})
 check('a shard without a map refuses nothing', r[1] == 'ok', r)
 r = c[1]:call('tarn_buckets')
-check('... and has none', r[1] == 'ok' and r[2] == 0, r)
+check('... and has none; it reports its tables (a server then keeps the count their rows use)',
+      r[1] == 'ok' and r[2] == 0 and type(r[3]) == 'number' and r[3] >= 1, r)
 r = c[1]:call('tarn_bucket_init', {16, {{1, 8}}})
-local r2 = c[2]:call('tarn_bucket_init', {16, {{9, 16}}})
+-- Two servers make shard 2's map at once, with different counts: one map
+-- is made, and the other server learns its count.
+local f1 = c[2]:call('tarn_bucket_init', {16, {{9, 16}}}, {is_async = true})
+local f2 = c[2]:call('tarn_bucket_init', {32, {{9, 32}}}, {is_async = true})
+local r2, r3 = f1:wait_result(5)[1], f2:wait_result(5)[1]   -- (a future returns its results as a list)
 check('16 buckets: shard 1 owns 1..8, shard 2 owns 9..16', r[1] == 'ok' and r2[1] == 'ok', {r, r2})
+check('... a map made at the same moment with 32 is not made, and says 16', r3[1] == 'exists' and r3[2] == 16, r3)
+r = c[2]:call('tarn_buckets')
+check('... nor any of its buckets', r[2] == 16 and #r[4] == 1 and r[4][1][1] == 9 and r[4][1][2] == 16
+      and c[2]:eval('return box.space._tarn_buckets:count()') == 8, r)
 r = c[1]:call('tarn_bucket_init', {16, {{1, 16}}})
 check('a second map is not made', r[1] == 'exists' and r[2] == 16, r)
 r = c[1]:call('tarn_buckets')

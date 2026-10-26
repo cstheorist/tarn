@@ -12,7 +12,8 @@
 #                TARN_CHECK_YIELDS=1 (an atomic protocol step that yields fails: tests),
 #                TARN_TEST_HOOKS=1 (tarn_test_hook may hold protocol steps: tests),
 #                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests),
-#                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests)
+#                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests),
+#                TARN_BUCKET_COUNT=N (bucket_count in cluster.json: buckets of a new cluster)
 #   scripts/cluster.sh stop  [-d DIR]
 #   scripts/cluster.sh status [-d DIR]
 #   scripts/cluster.sh restart [-d DIR] INSTANCE...   (e.g. s2.1: start a stopped storage instance again)
@@ -101,6 +102,7 @@ write_config() {
   done
   out+="]"
   [ -n "${TARN_DDL_JOB_STALE:-}" ] && out+=",\"ddl_job_stale\":$TARN_DDL_JOB_STALE"
+  [ -n "${TARN_BUCKET_COUNT:-}" ] && out+=",\"bucket_count\":$TARN_BUCKET_COUNT"
   echo "$out}" > "$DIR/cluster.json"
 }
 

@@ -102,10 +102,13 @@ end
 ```
 
 A real client computes the owning shard from the key instead of asking every
-shard: `crates/tarn-sql/examples/kvbench.rs` does that with the same
-(Verus-verified) bucket function the SQL layer uses. Direct readers only ever
-see committed data, and a direct read issued after a `COMMIT` returned sees
-that commit.
+shard: the key's bucket, and the bucket's shard in the map the shards keep
+(`tarn_buckets()`). `crates/tarn-sql/examples/kvbench.rs` does that with the
+same (Verus-verified) functions the SQL layer uses. Once a bucket has moved
+(`TARN MOVE BUCKET`), its rows are on another shard: a client that finds no
+row reads the map again, or asks every shard. Direct readers only ever see
+committed data, and a direct read issued after a `COMMIT` returned sees that
+commit.
 
 ## High availability and failover
 
