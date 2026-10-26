@@ -993,6 +993,10 @@ pub struct Change {
     pub auto_inc_from: Option<u32>,
     /// The definition changed (else nothing to do on the shards).
     pub changed: bool,
+    /// Space ids of global indexes this change drops (their unique keys go).
+    pub uix_drop: Vec<u32>,
+    /// Space ids of global indexes it adds (allocated by `Cluster::alter_table`).
+    pub uix_new: Vec<u32>,
 }
 
 fn not_found_col(c: &str) -> SqlError {
@@ -1727,7 +1731,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
     let old_width = def.layout.width as u32;
     nd.assign_weight_fields(&|c| c.field.is_some_and(|f| f >= old_width))?;
     catalog::validate(&nd)?;
-    check_globals(def, &nd)?;
+    let uix_drop = check_globals(def, &mut nd)?;
     // Storage: format and indexes, by difference.
     let old_format = def.lua_format();
     let new_format = nd.lua_format();
@@ -1790,24 +1794,21 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         auto_increment,
         auto_inc_from,
         changed,
+        uix_drop,
+        uix_new: Vec::new(),
     })
 }
 
-/// Global indexes (unique keys without the shard key, see `catalog`) are
-/// made with the table and stay as they are: a change that would need a new
-/// one (1503, as before they existed), or would drop, rename or change the
-/// columns of one, is refused.
-fn check_globals(def: &TableDef, nd: &TableDef) -> SqlResult<()> {
-    for ix in &nd.indexes {
-        if nd.needs_global(ix) && ix.global.is_none() {
-            return Err(SqlError::new(
-                1503,
-                "HY000",
-                format!(
-                    "A UNIQUE INDEX must include all columns in the table's partitioning function ({})",
-                    ix.name
-                ),
-            ));
+/// Global indexes (unique keys without the shard key, see `catalog`): a new
+/// unique key that needs one is marked `global: Some(0)` (the space id is
+/// allocated when the change runs, `Cluster::alter_table`, and the shards
+/// fill it from the existing rows); a dropped one is returned (its space
+/// id). Renaming one or changing its columns or their types is refused
+/// (1846): its entries would have to be rewritten.
+fn check_globals(def: &TableDef, nd: &mut TableDef) -> SqlResult<Vec<u32>> {
+    for k in 0..nd.indexes.len() {
+        if nd.needs_global(&nd.indexes[k]) && nd.indexes[k].global.is_none() {
+            nd.indexes[k].global = Some(0);
         }
     }
     let entry_cols = |t: &TableDef, g: &catalog::GlobalIndex| -> Vec<(String, String)> {
@@ -1816,17 +1817,15 @@ fn check_globals(def: &TableDef, nd: &TableDef) -> SqlResult<()> {
             .map(|&c| (t.columns[c].name.clone(), t.columns[c].ty.clone()))
             .collect()
     };
+    let mut dropped = Vec::new();
     for g in &def.globals {
         let old = &def.indexes[g.pos];
-        let same = nd
-            .globals
-            .iter()
-            .find(|n| n.table.space_id == g.table.space_id)
-            .filter(|n| {
-                let new = &nd.indexes[n.pos];
-                new.name == old.name && entry_cols(nd, n) == entry_cols(def, g)
-            });
-        if same.is_none() {
+        let Some(n) = nd.globals.iter().find(|n| n.table.space_id == g.table.space_id) else {
+            dropped.push(g.table.space_id);
+            continue;
+        };
+        let new = &nd.indexes[n.pos];
+        if new.name != old.name || entry_cols(nd, n) != entry_cols(def, g) {
             return Err(SqlError::new(
                 1846,
                 "0A000",
@@ -1838,14 +1837,31 @@ fn check_globals(def: &TableDef, nd: &TableDef) -> SqlResult<()> {
             ));
         }
     }
-    Ok(())
+    Ok(dropped)
 }
 
 /// The argument of `tarn_alter_prepare` / `_apply` / `_abort` (`ch.def`
 /// carries version `ver`).
 pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     let mut m = Mp::new();
-    m.map(9);
+    m.map(11);
+    // Global indexes: the spaces of new ones (PREPARE creates them, the SQL
+    // server fills them, `Cluster::fill_globals`) and the ids of dropped
+    // ones (APPLY drops them).
+    let new_uix: Vec<&catalog::GlobalIndex> = ch
+        .def
+        .globals
+        .iter()
+        .filter(|g| ch.uix_new.contains(&g.table.space_id))
+        .collect();
+    m.str("uix").arr(new_uix.len());
+    for g in &new_uix {
+        lua_def_entry(&mut m, &g.table.lua_def(), None);
+    }
+    m.str("uix_drop").arr(ch.uix_drop.len());
+    for id in &ch.uix_drop {
+        m.uint(*id as u64);
+    }
     m.str("ver").uint(ver);
     m.str("timeout").f64(timeout);
     m.str("checks").arr(ch.checks.len());
@@ -2400,12 +2416,12 @@ mod tests {
             [(1, "integer".into(), false), (3, "string".into(), true)]
         );
         assert_eq!(ch.renames, [(1, "kb".to_string())]);
-        assert_eq!(
-            alter(&def, &cat, "ALTER TABLE t ADD UNIQUE KEY us (s)")
-                .unwrap_err()
-                .code,
-            1503
-        );
+        // a unique key without the shard key gets a global index (#88):
+        // its space id comes from the cluster when the change runs
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD UNIQUE KEY us (s)").unwrap();
+        let us = ch.def.index_by_name("us").unwrap();
+        assert_eq!(us.global, Some(0));
+        assert!(ch.uix_drop.is_empty());
         assert_eq!(
             alter(&def, &cat, "ALTER TABLE t ADD INDEX ka (s)").unwrap_err().code,
             1061

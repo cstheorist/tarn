@@ -1554,6 +1554,23 @@ impl Session {
         g: &crate::catalog::GlobalIndex,
         key: Vec<Value>,
     ) -> SqlResult<Option<Row>> {
+        // A key dropped meanwhile (its space gone): the catalog changed.
+        self.global_holder_once(txn, t, g, key).await.map_err(|e| {
+            if e.code == 1146 {
+                crate::txn::definition_changed()
+            } else {
+                e
+            }
+        })
+    }
+
+    async fn global_holder_once(
+        &self,
+        txn: &mut Txn,
+        t: &Arc<TableDef>,
+        g: &crate::catalog::GlobalIndex,
+        key: Vec<Value>,
+    ) -> SqlResult<Option<Row>> {
         let shard = self.cluster.shard_of(&key);
         let entry = if txn.mode == TxnMode::ReadCommitted {
             let x = LockOpts {
