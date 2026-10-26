@@ -331,6 +331,10 @@ class Test:
             print(f"    error: {e}")
         if not a.no_moves:
             self.check(st["moves"] >= a.min_moves, f"buckets moved under load ({st['moves']})")
+        # A stream of retryable conflicts must not make the ordered-page
+        # assertions vacuously pass: both isolation modes must finish reads.
+        self.check(st["audits"] > 0, "serializable ordered reads committed under load")
+        self.check(st["rc_reads"] > 0, "READ COMMITTED ordered reads completed under load")
         self.check(not st["bad"], f"reads saw every row once, and the sum unchanged: {st['bad'][:5]}")
         self.check(sum(bal.values()) == a.accounts * a.init and len(bal) == a.accounts, "final balance sum")
         diff = {i: (bal.get(i), want[i]) for i in want if bal.get(i) != want[i]}
