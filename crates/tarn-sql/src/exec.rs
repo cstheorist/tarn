@@ -1831,10 +1831,11 @@ async fn paged_select(
 /// in B, and the rows of A spread over B, paging B reads about want * n_b /
 /// n_a rows: B wins when that is fewer than n_a. (On vinyl n_b is the size
 /// of the index, an upper bound: the choice may then read A where B would
-/// have been faster, as before, but not the other way.) Both prefixes must route to
-/// one shard, which counts them (`tarn_estimate`); A must have no bound on
-/// its next column, which its prefix count would overstate. WHERE filters
-/// either way, so the choice changes only how many rows are read.
+/// have been faster, as before, but not the other way.) Both prefixes must
+/// route to one shard, which counts them (`tarn_estimate`); A must have no
+/// bound on its next column, which its prefix count would overstate. WHERE
+/// filters either way, so the choice changes only how many rows are read.
+/// (A read retried in a transaction or a snapshot counts again.)
 async fn ordered_instead(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<TableAccess>> {
     let (Some(b_path), Source::Table(ta)) = (&p.ordered, &p.source) else {
         return Ok(None);
@@ -3019,9 +3020,9 @@ mod tests {
 
     #[test]
     fn paging_the_ordered_index_or_reading_the_prefix() {
-        // issue #81: 113,597 open rows of 300,000, a page of 51: paging
-        // created_at reads ~134 rows, the status prefix 113,597
-        assert!(pages_fewer(51, 113_597, 300_000));
+        // issue #81: 112,726 open rows of 300,000, a page of 51: paging
+        // created_at reads ~136 rows, the status prefix 112,726
+        assert!(pages_fewer(51, 112_726, 300_000));
         // 60 rows of one customer: reading them beats paging the tenant
         assert!(!pages_fewer(51, 60, 300_000));
         // an empty prefix is read in no time

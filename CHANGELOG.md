@@ -15,7 +15,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   index count on memtx, a capped scan on vinyl) and the read pages the
   ordered index when about `want * n_ordered / n_prefix` rows are fewer than
   `n_prefix` ([#81](https://github.com/cstheorist/tarn/issues/81)). With
-  300,000 rows under one tenant, a page of its 113,597 open rows reads about 200
+  300,000 rows under one tenant, a page of its 112,726 open rows reads 204
   rows instead of all of them. `SHOW STATUS` reports
   `Tarn_path_estimates`.
 

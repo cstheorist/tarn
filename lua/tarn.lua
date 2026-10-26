@@ -2287,9 +2287,10 @@ tarn_count = PG.bounded(tarn_count)
 -- about budget/n_a * n_b rows when A's conditions are what B filters on.
 -- Returns {'ok', n_a, n_b}: memtx counts both in its index (no scan); vinyl,
 -- whose counts scan, gives the index size as n_b (at least B's rows) and
--- counts A only up to the point where paging B is sure to read fewer rows.
--- Neither is a read of the transaction: the counts only pick between two
--- paths to the same rows.
+-- counts A only up to the point where paging B is sure to read fewer rows,
+-- and not at all when that point lies past one page (cfg.scan_page_rows,
+-- issue #77): n_a is then 0, which keeps the plan. Neither is a read of the
+-- transaction: the counts only pick between two paths to the same rows.
 function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget)
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
@@ -2299,7 +2300,13 @@ function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget)
         return {OK, a:count(a_key, {iterator = 'EQ'}), b:count(b_key, {iterator = 'EQ'})}
     end
     local nb = b:len()
+    local page = M.cfg.scan_page_rows
+    -- (budget * nb > page^2 means cap > page; tested before the product,
+    -- which a huge budget would overflow)
+    if budget > page * page / math.max(nb, 1) then return {OK, 0, nb} end
     local cap = math.floor(math.sqrt(budget * nb)) + 1
+    if cap > page then return {OK, 0, nb} end
+    fiber.set_slice(LONG_SCAN_SLICE)   -- see PG.scan
     local na = 0
     for _ in a:pairs(a_key, {iterator = 'EQ'}) do
         na = na + 1
