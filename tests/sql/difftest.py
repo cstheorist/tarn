@@ -882,6 +882,28 @@ CASES = [
     ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed <=> NULL AND del = 0", "q"),
     ("SELECT COUNT(*) FROM ord WHERE tenant = 1 AND closed > NULL", "q"),
     ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY closed, del, id LIMIT 5", "q"),
+    # the longer prefix or the index that follows ORDER BY, by row counts
+    # (issue #81): unselective prefixes page bypa, selective or empty ones
+    # are read and sorted; OFFSET, DESC, a LIMIT past the prefix, a filter
+    # the prefix does not cover, and the transaction's own writes
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 51", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 51", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 10 OFFSET 250", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 1000", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 AND st = 'pending' "
+     "ORDER BY pa, id LIMIT 7", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 1 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 2 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 3 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 5", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed = '2025-02-02 00:00:00' AND del = 0 ORDER BY pa, id LIMIT 5",
+     "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO ord VALUES (1, 1003, '2024-12-30 00:00:00', 0, 'paid', NULL)", "dml:ord"),
+    ("UPDATE ord SET closed = '2025-03-01 00:00:00' WHERE tenant = 1 AND id = 1", "dml:ord"),
+    ("UPDATE ord SET closed = NULL WHERE tenant = 1 AND id = 2", "dml:ord"),
+    ("SELECT id, pa FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("ROLLBACK", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),
     ("SELECT id FROM t1 WHERE a <=> NULL", "q"),
