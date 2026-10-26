@@ -677,7 +677,6 @@ async fn fetch_stored_from(
         return Ok(crate::catalog::information_schema_rows(&cluster.catalog()));
     }
     let map = cluster.bucket_map();
-    let shards: Vec<usize> = cluster.live_shards().collect();
     let limit = eval_limit(&ta.limit, cx)?.map(|l| l.min(u32::MAX as u64) as u32);
     let mut calls: Vec<Call> = Vec::new();
     let mut unique_point = false;
@@ -736,6 +735,7 @@ async fn fetch_stored_from(
             return Ok(rows);
         }
         AccessPath::Prefixes { .. } | AccessPath::Range { .. } | AccessPath::Full => {
+            let shards: Vec<usize> = cluster.live_shards().collect();
             calls = range_calls_in(&map, &shards, t, &ta.path, outer, cx, resume, limit)?;
         }
         AccessPath::Point { index, keys } => {
@@ -762,7 +762,7 @@ async fn fetch_stored_from(
                 // catalog) does not say which shard holds the row: ask each.
                 let shards: Vec<(usize, Option<u32>)> = match route_bucket_in(&map, t, idx, &key) {
                     Some((s, b)) => vec![(s, Some(b))],
-                    None => shards.iter().map(|&s| (s, None)).collect(),
+                    None => cluster.live_shards().map(|s| (s, None)).collect(),
                 };
                 for (shard, bucket) in shards {
                     calls.push(Call {
