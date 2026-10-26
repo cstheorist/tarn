@@ -562,19 +562,15 @@ fn range_calls(
         AccessPath::Range {
             index,
             eq,
+            null_eq,
             lo,
             hi,
             reverse,
         } => {
             let idx = index_def(t, *index);
-            let mut prefix = Vec::with_capacity(eq.len() + 1);
-            for (i, e) in eq.iter().enumerate() {
-                let v = e.eval(outer, cx)?;
-                match (v.is_null(), t.lookup_part(idx.cols[i], &v)) {
-                    (false, Some(x)) => prefix.push(x),
-                    _ => return Ok(calls),
-                }
-            }
+            let Some(prefix) = range_prefix(t, idx, eq, null_eq, outer, cx)? else {
+                return Ok(calls);
+            };
             let next_col = idx.cols.get(eq.len()).copied();
             let bound = |b: &Option<(Expr, bool)>| -> SqlResult<Option<(Value, bool)>> {
                 match (b, next_col) {
@@ -672,6 +668,36 @@ fn range_calls(
         AccessPath::Point { .. } | AccessPath::Union(_) => unreachable!("not a range access"),
     }
     Ok(calls)
+}
+
+/// The equality prefix of a `Range` path, or None when no row can match: a
+/// NULL matches nothing, except where `null_eq` marks the part (`IS NULL`,
+/// `<=>`) and the column stores NULLs (issue #51).
+fn range_prefix(
+    t: &TableDef,
+    idx: &IndexDef,
+    eq: &[Expr],
+    null_eq: &[bool],
+    outer: &[Value],
+    cx: &EvalCtx,
+) -> SqlResult<Option<Vec<Value>>> {
+    let mut prefix = Vec::with_capacity(eq.len() + 1);
+    for (i, e) in eq.iter().enumerate() {
+        let v = e.eval(outer, cx)?;
+        let col = &t.columns[idx.cols[i]];
+        if v.is_null() {
+            if !(null_eq[i] && col.storage_nullable()) {
+                return Ok(None);
+            }
+            prefix.push(Value::Null);
+            continue;
+        }
+        match t.lookup_part(idx.cols[i], &v) {
+            Some(x) => prefix.push(x),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(prefix))
 }
 
 /// Where a backwards scan of `r` stops: its lower bound (None: unbounded).
@@ -1106,13 +1132,23 @@ fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Optio
 /// on the prefix columns, the bounds on the next one.
 fn path_atoms<'e>(t: &TableDef, path: &'e AccessPath) -> Vec<Atom<'e>> {
     let mut out = Vec::new();
-    let (index, eq, lo, hi) = match path {
-        AccessPath::Range { index, eq, lo, hi, .. } => (*index, eq.as_slice(), lo.as_ref(), hi.as_ref()),
-        AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, keys[0].as_slice(), None, None),
+    let (index, eq, null_eq, lo, hi) = match path {
+        AccessPath::Range {
+            index,
+            eq,
+            null_eq,
+            lo,
+            hi,
+            ..
+        } => (*index, eq.as_slice(), null_eq.as_slice(), lo.as_ref(), hi.as_ref()),
+        AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, keys[0].as_slice(), &[][..], None, None),
         _ => return out,
     };
     let idx = index_def(t, index);
     for (i, e) in eq.iter().enumerate() {
+        if null_eq.get(i) == Some(&true) {
+            continue; // `IS NULL` / `<=>`: not `col = e`, left to the residual
+        }
         out.push(Atom {
             col: idx.cols[i],
             op: CmpOp::Eq,
@@ -2089,10 +2125,11 @@ fn lock_range_of(
         AccessPath::Range {
             index: 0,
             eq,
+            null_eq,
             lo: None,
             hi: None,
             reverse: false,
-        } => eq,
+        } if !null_eq.contains(&true) => eq,
         AccessPath::Prefixes { index: 0, keys } if keys.len() == 1 => &keys[0],
         _ => return Ok(None),
     };
@@ -2237,12 +2274,28 @@ impl Pager {
     ) -> SqlResult<Option<Pager>> {
         let t = &ta.table;
         let (index, prefix, reverse) = match &ta.path {
-            AccessPath::Range { index, eq, reverse, .. } => (*index, eq, *reverse),
-            AccessPath::Prefixes { index, keys } if keys.len() == 1 => (*index, &keys[0], false),
+            AccessPath::Range {
+                index,
+                eq,
+                null_eq,
+                reverse,
+                ..
+            } => {
+                let idx = index_def(t, *index);
+                (*index, range_prefix(t, idx, eq, null_eq, &[], cx)?, *reverse)
+            }
+            AccessPath::Prefixes { index, keys } if keys.len() == 1 => {
+                let idx = index_def(t, *index);
+                (
+                    *index,
+                    eval_keys(t, idx, std::slice::from_ref(&keys[0]), &[], cx)?.pop(),
+                    false,
+                )
+            }
             _ => return Ok(None),
         };
         let idx = index_def(t, index);
-        let Some(prefix) = eval_keys(t, idx, std::slice::from_ref(prefix), &[], cx)?.pop() else {
+        let Some(prefix) = prefix else {
             return Ok(None);
         };
         if route_prefix(cluster, t, idx, &prefix).is_none() {
@@ -2498,6 +2551,7 @@ mod tests {
         let path = AccessPath::Range {
             index: t.index_by_name("st").unwrap().id,
             eq: vec![k.clone()],
+            null_eq: vec![false],
             lo: None,
             hi: Some((Expr::Lit(Value::str("2025-01-01")), false)),
             reverse: false,
@@ -2510,6 +2564,7 @@ mod tests {
         let path = AccessPath::Range {
             index: t.index_by_name("st").unwrap().id,
             eq: vec![k],
+            null_eq: vec![false],
             lo: Some((Expr::Lit(Value::str("2024-01-01")), true)),
             hi: Some((Expr::Lit(Value::str("2025-01-01")), false)),
             reverse: false,
