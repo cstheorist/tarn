@@ -186,6 +186,9 @@ pub struct IndexDef {
     /// (see the module comment); 0 until CREATE TABLE allocates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global: Option<u32>,
+    /// The index's COMMENT.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub comment: String,
 }
 
 /// The global index of a unique key (`IndexDef::global`).
@@ -437,6 +440,7 @@ impl TableDef {
                 unique: true,
                 invisible: false,
                 global: None,
+                comment: String::new(),
             }],
             shard_key: (0..k).collect(),
             auto_inc: None,
@@ -918,6 +922,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
             unique: true,
             invisible: false,
             global: None,
+            comment: String::new(),
         }],
         shard_key: vec![1, 2],
         auto_inc: None,

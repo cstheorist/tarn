@@ -73,6 +73,7 @@ pub enum AlterOp {
         cols: Vec<String>,
         unique: bool,
         invisible: bool,
+        comment: String,
         if_not_exists: bool,
     },
     DropIndex {
@@ -466,6 +467,7 @@ fn table_element(sql: &str, spec: &[Tok], ctx: &PlanCtx) -> SqlResult<AlterOp> {
             cols: planner::index_col_names(&u.columns)?,
             unique: true,
             invisible,
+            comment: planner::index_comment(&u.index_options),
             if_not_exists: false,
         },
         A::TableConstraint::Index(ix) => AlterOp::AddIndex {
@@ -473,6 +475,7 @@ fn table_element(sql: &str, spec: &[Tok], ctx: &PlanCtx) -> SqlResult<AlterOp> {
             cols: planner::index_col_names(&ix.columns)?,
             unique: false,
             invisible,
+            comment: planner::index_comment(&ix.index_options),
             if_not_exists: false,
         },
         A::TableConstraint::ForeignKey(fk) => {
@@ -915,7 +918,15 @@ pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Option<Vec<AlterPlan>>> {
             let cols_text = c.text_from(start).to_string();
             c.i += 1;
             let (rest, invisible) = strip_visibility(&toks[c.i.min(toks.len())..]);
-            let _ = rest; // USING, COMMENT, ALGORITHM, LOCK: accepted
+            // USING, ALGORITHM, LOCK: accepted
+            let comment = rest
+                .windows(2)
+                .rev()
+                .find_map(|w| match (&w[0].t, &w[1].t) {
+                    (T::Word(k), T::Str(s)) if k.eq_ignore_ascii_case("COMMENT") => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
             let ct = parse_create_table_body(&format!("_tarn_x INT, KEY _tarn_k ({})", cols_text))?;
             let cols = match ct.constraints.first() {
                 Some(A::TableConstraint::Index(ix)) => planner::index_col_names(&ix.columns)?,
@@ -929,6 +940,7 @@ pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Option<Vec<AlterPlan>>> {
                     cols,
                     unique,
                     invisible,
+                    comment,
                     if_not_exists,
                 }],
             }]))
@@ -1268,6 +1280,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         unique: true,
                         invisible: false,
                         global: None,
+                        comment: String::new(),
                     });
                 }
                 changed = true;
@@ -1464,6 +1477,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         unique: true,
                         invisible: false,
                         global: None,
+                        comment: String::new(),
                     });
                 }
                 changed = true;
@@ -1520,6 +1534,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 cols,
                 unique,
                 invisible,
+                comment,
                 if_not_exists,
             } => {
                 let mut ix = Vec::new();
@@ -1548,6 +1563,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                     unique: *unique,
                     invisible: *invisible,
                     global: None,
+                    comment: comment.clone(),
                 });
                 changed = true;
             }
@@ -2269,6 +2285,37 @@ mod tests {
         assert!(plan("SELECT 1", &ctx).unwrap().is_none());
         assert!(plan("ALTER TABLE t PARTITION BY KEY(a)", &ctx).is_err());
         assert_eq!(plan("ALTER TABLE t FROBNICATE", &ctx).unwrap_err().code, 1064);
+    }
+
+    #[test]
+    fn index_comments_are_kept() {
+        let (def, cat) = table(
+            "CREATE TABLE t (id INT, a INT, b INT, PRIMARY KEY (id) COMMENT 'pk', \
+             KEY ka (a) USING BTREE COMMENT 'by a', UNIQUE KEY ub (b) COMMENT 'it''s b')",
+        );
+        let comments = |d: &TableDef| d.indexes.iter().map(|i| i.comment.clone()).collect::<Vec<_>>();
+        assert_eq!(comments(&def), ["pk", "by a", "it's b"]);
+        let ch = alter(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD INDEX kb (b) COMMENT 'by b', RENAME INDEX ka TO ka2, ADD COLUMN c INT",
+        )
+        .unwrap();
+        assert_eq!(comments(&ch.def), ["pk", "by a", "it's b", "by b"]);
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("db"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let v = plan(
+            "CREATE INDEX kab ON t (a, b) USING BTREE COMMENT 'pair' ALGORITHM=INPLACE",
+            &ctx,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(&v[0].ops[0], AlterOp::AddIndex { comment, .. } if comment == "pair"));
     }
 
     #[test]
