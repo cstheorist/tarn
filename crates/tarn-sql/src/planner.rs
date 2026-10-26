@@ -2642,6 +2642,7 @@ pub(crate) fn add_foreign_key(def: &mut TableDef, name: Option<String>, mut fk: 
             cols,
             unique: false,
             invisible: false,
+            global: None,
         });
     }
     def.foreign_keys.push(fk);
@@ -2836,6 +2837,7 @@ fn plan_create_table(
         cols: pk.clone(),
         unique: true,
         invisible: false,
+        global: None,
     }];
     for (n, cols, unique) in secondary.into_iter() {
         let name = match n {
@@ -2856,6 +2858,7 @@ fn plan_create_table(
             cols,
             unique,
             invisible,
+            global: None,
         });
     }
     let shard_key = match partition_key {
@@ -2926,6 +2929,8 @@ fn plan_create_table(
         foreign_keys: Vec::new(),
         bucket_index: None,
         layout: Default::default(),
+        globals: Vec::new(),
+        base: None,
     };
     // Index ids so far are 0..n; the bucket_id index takes n at creation,
     // so indexes a foreign key adds come after it.
@@ -3339,8 +3344,10 @@ mod tests {
         assert_eq!(t.col_index(catalog::ROW_ID), None);
         // the hidden column's name is reserved, as in InnoDB
         assert_eq!(def("CREATE TABLE r (db_row_id INT PRIMARY KEY)").err(), Some(1166));
-        // a nullable unique key would need the row id as its shard key (#14)
-        assert_eq!(def("CREATE TABLE n (a INT, UNIQUE KEY ua (a))").err(), Some(1503));
+        // a nullable unique key does not contain the shard key (the row id):
+        // it gets a global index (#14)
+        let n = def("CREATE TABLE n (a INT, UNIQUE KEY ua (a))").unwrap();
+        assert!(n.needs_global(&n.indexes[1]));
         // statements never see the hidden column
         let mut log = *def("CREATE TABLE log (msg VARCHAR(20), n INT)").unwrap();
         log.space_id = 600;
@@ -3662,7 +3669,73 @@ mod tests {
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
         };
-        let bad = "CREATE TABLE o (shop_id INT, id INT, email VARCHAR(10), PRIMARY KEY (shop_id, id), UNIQUE KEY (email)) PARTITION BY KEY (shop_id)";
-        assert!(plan(bad, &ctx).is_err());
+        // a unique key without the shard key gets a global index (#14)
+        let sql = "CREATE TABLE o (shop_id INT, id INT, email VARCHAR(10), PRIMARY KEY (shop_id, id), UNIQUE KEY (email)) PARTITION BY KEY (shop_id)";
+        let Ok(Stmt::CreateTable { def, .. }) = plan(sql, &ctx) else {
+            panic!()
+        };
+        assert!(def.needs_global(&def.indexes[1]));
+        assert!(!def.needs_global(&def.indexes[0]));
+        // a shard key outside the primary key is still refused
+        let bad = "CREATE TABLE o (a INT, id INT PRIMARY KEY) PARTITION BY KEY (a)";
+        assert_eq!(plan(bad, &ctx).err().map(|e| e.code), Some(1503));
+    }
+}
+
+#[cfg(test)]
+mod global_index_tests {
+    use super::*;
+    use crate::catalog::Catalog;
+    use tarn_common::Value;
+
+    #[test]
+    fn entries_of_a_global_index() {
+        let c0 = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let sql = "CREATE TABLE p (id BIGINT PRIMARY KEY, tenant BIGINT NOT NULL, handle VARCHAR(20), \
+                   live TINYINT, UNIQUE KEY th (tenant, handle, live), UNIQUE KEY ti (id, tenant))";
+        let Ok(Stmt::CreateTable { def, .. }) = plan(sql, &ctx) else {
+            panic!()
+        };
+        let mut def = *def;
+        // th lacks the shard key (id); ti contains it and stays local
+        assert!(def.needs_global(&def.indexes[1]));
+        assert!(!def.needs_global(&def.indexes[2]));
+        assert_eq!(def.global_cols(&def.indexes[1]), vec![1, 2, 3, 0]);
+        def.space_id = 10_007;
+        def.indexes[1].global = Some(10_008);
+        def.resolve_types().unwrap();
+        assert_eq!(def.globals.len(), 1);
+        let g = &def.globals[0];
+        assert_eq!(g.table.name, "_tarn_uix_10007_1");
+        assert_eq!(g.table.space_id, 10_008);
+        assert_eq!(g.table.shard_key, vec![0, 1, 2]);
+        assert_eq!(g.table.base, Some((10_007, 0)));
+        let row = vec![Value::Int(5), Value::Int(9), Value::str("hat"), Value::Int(1)];
+        let e = g.entry(&def, &row).unwrap();
+        assert_eq!(e, vec![Value::Int(9), Value::str("hat"), Value::Int(1), Value::Int(5)]);
+        assert_eq!(g.holder_pk(&def, &e), vec![Value::Int(5)]);
+        // a NULL key part takes no entry
+        let soft = vec![Value::Int(6), Value::Int(9), Value::str("hat"), Value::Null];
+        assert!(g.entry(&def, &soft).is_none());
+        assert!(def.in_global(3) && def.in_global(0));
+        // the storage gets the hidden space with the table; its primary
+        // index carries the unique key's name (duplicate-key messages)
+        let ld = def.lua_def();
+        assert_eq!(ld.uix.len(), 1);
+        assert_eq!(ld.uix[0].name, "_tarn_uix_10007_1");
+        assert_eq!(ld.uix[0].indexes[0].0, "th");
+        assert_eq!(ld.uix[0].indexes.len(), 2); // + bucket_id
+                                                // the definition survives the catalog round trip
+        let mut back = crate::catalog::parse_def_json(&ld.json).unwrap();
+        back.space_id = 10_007;
+        back.resolve_globals().unwrap();
+        assert_eq!(back.globals.len(), 1);
     }
 }

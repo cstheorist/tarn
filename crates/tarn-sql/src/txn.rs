@@ -485,8 +485,11 @@ impl Txn {
     fn encode_fence(&self, shard: usize, m: &mut Mp) {
         let mut f: BTreeMap<u32, u64> = BTreeMap::new();
         for w in self.writes.values().filter(|w| w.shard == shard) {
-            let v = f.entry(w.table.space_id).or_insert(w.table.ver);
-            *v = (*v).min(w.table.ver);
+            // A global index entry is fenced with its table's definition: a
+            // TRUNCATE, DROP or ALTER of the table refuses it too.
+            let (sid, ver) = w.table.base.unwrap_or((w.table.space_id, w.table.ver));
+            let v = f.entry(sid).or_insert(ver);
+            *v = (*v).min(ver);
         }
         m.arr(f.len() * 2);
         for (sid, ver) in f {
@@ -562,6 +565,24 @@ impl Txn {
         self.check_def(&w.table)?;
         self.defs.insert(w.table.space_id, w.table.ver);
         let k = (w.table.space_id, key_bytes(&w.pk));
+        if w.table.base.is_some() {
+            // A global index entry (catalog: unique keys without the shard
+            // key). Its key may already be taken by another row this
+            // transaction wrote; and an entry it inserted and then deleted
+            // was never there, so a later insert must still find the key
+            // free (it may not turn into a replace).
+            match (self.writes.get(&k).map(|p| p.op), w.op) {
+                (Some(WOp::Insert | WOp::Replace), WOp::Insert) => {
+                    let shown: Vec<String> = w.pk.iter().map(|v| v.to_string()).collect();
+                    return Err(SqlError::dup_key(&shown.join("-"), &w.table.indexes[0].name));
+                }
+                (Some(WOp::Insert), WOp::Delete) => {
+                    self.writes.remove(&k);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         // An insert after a buffered delete of the same key is a replace.
         let w = match (self.writes.get(&k), w.op) {
             (Some(prev), WOp::Insert) if prev.op == WOp::Delete => BufWrite { op: WOp::Replace, ..w },

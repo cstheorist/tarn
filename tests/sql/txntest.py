@@ -412,6 +412,69 @@ class T:
             self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
                        f"insert of {h}: {'conflict' if conflict else 'no conflict'}")
 
+    def test_global_unique(self):
+        # A unique key without the shard key (issue #14): sessions insert,
+        # rename and delete rows with values from a small set, from rows on
+        # every shard, in autocommit statements and transactions. No value
+        # may ever be held twice, and the global index must name exactly the
+        # rows that hold each value.
+        c = self.fresh("gx", "CREATE TABLE gx (id INT PRIMARY KEY, h VARCHAR(10), UNIQUE KEY uh (h))", [])
+        stop = time.time() + 4
+        errors = []
+        counts = {"ok": 0, "dup": 0, "conflict": 0}
+
+        def worker(w):
+            s = connect(self.args.tarn)
+            rnd = random.Random(w)
+            while time.time() < stop:
+                k = rnd.randrange(60)
+                v = f"v{rnd.randrange(12)}"
+                try:
+                    op = rnd.randrange(4)
+                    if op == 0:
+                        q(s, "INSERT INTO gx VALUES (%s, %s)", (k, v))
+                    elif op == 1:
+                        q(s, "UPDATE gx SET h = %s WHERE id = %s", (v, k))
+                    elif op == 2:
+                        q(s, "DELETE FROM gx WHERE id = %s", (k,))
+                    else:
+                        q(s, "BEGIN")
+                        q(s, "INSERT INTO gx VALUES (%s, %s) ON DUPLICATE KEY UPDATE h = NULL", (k, v))
+                        q(s, "UPDATE gx SET h = %s WHERE id = %s", (f"v{rnd.randrange(12)}", rnd.randrange(60)))
+                        q(s, "COMMIT")
+                    counts["ok"] += 1
+                except pymysql.MySQLError as e:
+                    code = e.args[0]
+                    try:
+                        q(s, "ROLLBACK")
+                    except pymysql.MySQLError:
+                        pass
+                    if code == 1062:
+                        counts["dup"] += 1
+                    elif code == 1213:
+                        counts["conflict"] += 1
+                    else:
+                        errors.append(e.args)
+
+        ths = [threading.Thread(target=worker, args=(w,)) for w in range(8)]
+        for t in ths:
+            t.start()
+        for t in ths:
+            t.join()
+        print(f"    global unique: {counts}")
+        self.check(not errors, f"no other errors ({errors[:3]})")
+        dups = q(c, "SELECT h, COUNT(*) FROM gx WHERE h IS NOT NULL GROUP BY h HAVING COUNT(*) > 1")
+        self.check(not dups, f"no value held twice: {dups}")
+        # every value is found through the index by exactly its row
+        rows = q(c, "SELECT id, h FROM gx WHERE h IS NOT NULL")
+        for k, h in rows:
+            q(c, "INSERT INTO gx VALUES (1000, %s) ON DUPLICATE KEY UPDATE id = id", (h,))
+            self.check(not q(c, "SELECT id FROM gx WHERE id = 1000"), f"the index finds the holder of {h}")
+        free = {f"v{i}" for i in range(12)} - {h for _, h in rows}
+        for h in free:
+            q(c, "INSERT INTO gx VALUES (1000, %s)", (h,))
+            q(c, "DELETE FROM gx WHERE id = 1000")
+
     def test_select_for_update(self):
         # FOR UPDATE takes a row lock (as in InnoDB): a concurrent writer
         # waits for the transaction instead of making it abort.
