@@ -7,6 +7,7 @@ use crate::cluster::{CachedPlan, Cluster};
 use crate::collation::Collation;
 use crate::exec::{self, matching_rows, run_select, shard_of_row, ReadMode, NEED_TXN};
 use crate::expr::{now_string, EvalCtx, Expr};
+use crate::lint;
 use crate::mpw::{lua_status, Mp, Rd};
 use crate::normalize::{normalize, Mode};
 use crate::plan::*;
@@ -88,6 +89,21 @@ pub struct Session {
     /// asked for in its handshake, until SET NAMES / SET collation_connection.
     collation_connection: String,
     client_collation: String,
+    /// Warnings and notes of the last statement (SHOW WARNINGS).
+    warnings: Vec<Warning>,
+}
+
+/// A warning or note of a statement, as SHOW WARNINGS lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Warning {
+    pub level: &'static str,
+    pub code: u16,
+    pub message: String,
+}
+
+/// A finding of the tree checks as a warning or error message.
+fn tree_message(f: &lint::Finding) -> String {
+    format!("{}.{}: {}", f.db, f.table, f.message)
 }
 
 /// Name of the collation a handshake asks for by id (MySQL / MariaDB ids of
@@ -320,8 +336,19 @@ impl Session {
             no_auto_value_on_zero: false,
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
+            warnings: Vec::new(),
             cluster,
         }
+    }
+
+    /// Number of warnings and notes of the last statement (the count OK and
+    /// EOF packets carry).
+    pub fn warning_count(&self) -> u16 {
+        self.warnings.len().min(u16::MAX as usize) as u16
+    }
+
+    pub fn warnings(&self) -> &[Warning] {
+        &self.warnings
     }
 
     /// The character set and collation id from the client's handshake:
@@ -353,6 +380,7 @@ impl Session {
             overrides: Some(&self.sys_vars),
             collation_connection: &self.collation_connection,
             collation_server: &self.cluster.cfg.default_collation,
+            warning_count: self.warnings.len(),
         }
     }
 
@@ -521,6 +549,25 @@ impl Session {
                     )));
                 }
             }
+            "tarn_tree_checks" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "Variable 'tarn_tree_checks' is a SESSION variable and can't be used with SET GLOBAL",
+                    ));
+                }
+                match value.as_ref() {
+                    None | Some(Value::Null) => {
+                        self.sys_vars.remove(name);
+                    }
+                    Some(_) => {
+                        let v = admin::TreeChecks::parse(&text).ok_or_else(|| admin::bad_value(name, &text))?;
+                        self.sys_vars.insert(name.to_string(), Value::str(v.name()));
+                    }
+                }
+                return Ok(());
+            }
             "sql_mode" => {
                 self.no_auto_value_on_zero = value.is_some()
                     && text
@@ -578,6 +625,9 @@ impl Session {
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        if !admin::reads_diagnostics(sql) {
+            self.warnings.clear();
+        }
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
         // again with the new catalog.
@@ -737,6 +787,13 @@ impl Session {
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        if !self
+            .prepared
+            .get(&id)
+            .is_some_and(|p| matches!(p.admin, Some(Admin::ShowWarnings { .. })))
+        {
+            self.warnings.clear();
+        }
         let rp = self.restart_point();
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
         loop {
@@ -2223,15 +2280,65 @@ impl Session {
             } => {
                 let mut def = (**def).clone();
                 def.engine = engine.unwrap_or(c.cfg.default_engine);
+                let mut found = Vec::new();
+                if self.tree_checks() != admin::TreeChecks::Off {
+                    c.refresh_if_newer().await?;
+                    // IF NOT EXISTS of an existing table changes nothing
+                    if !(*if_not_exists && c.catalog().get(&def.db, &def.name).is_some()) {
+                        found = self.tree_findings(vec![def.clone()], &[]);
+                    }
+                }
+                self.refuse_tree(&found, &def.db, &def.name)?;
                 c.create_table(def, *if_not_exists, *auto_increment, self.lock_wait_timeout)
-                    .await?
+                    .await?;
+                self.note_tree(found);
             }
             Stmt::Alter(plans) => {
                 for p in plans {
+                    let mut found = Vec::new();
+                    if self.tree_checks() != admin::TreeChecks::Off {
+                        c.refresh_if_newer().await?;
+                        let cat = c.catalog();
+                        if let Some(old) = cat.get(&p.db, &p.table) {
+                            // an ALTER TABLE that would fail reports its own error
+                            if let Ok(ch) = crate::alter::apply(&old, p, &cat, &now_string()) {
+                                let new = ch.def;
+                                let gone =
+                                    !(new.db.eq_ignore_ascii_case(&p.db) && new.name.eq_ignore_ascii_case(&p.table));
+                                let removed = if gone {
+                                    vec![(p.db.clone(), p.table.clone())]
+                                } else {
+                                    vec![]
+                                };
+                                let before = self.tree_findings(vec![(*old).clone()], &[]);
+                                let (db, name) = (new.db.clone(), new.name.clone());
+                                found = self.tree_findings(vec![new], &removed);
+                                found.retain(|f| !before.contains(f));
+                                self.refuse_tree(&found, &db, &name)?;
+                            }
+                        }
+                    }
                     c.alter_table(p, self.lock_wait_timeout).await?;
+                    self.note_tree(found);
                 }
             }
-            Stmt::DropTable { tables, if_exists } => c.drop_tables(tables, *if_exists, self.lock_wait_timeout).await?,
+            Stmt::DropTable { tables, if_exists } => {
+                let mut found = Vec::new();
+                if self.tree_checks() != admin::TreeChecks::Off {
+                    c.refresh_if_newer().await?;
+                    let cat = c.catalog();
+                    let dropped: Vec<TableDef> = tables
+                        .iter()
+                        .filter_map(|(d, n)| cat.get(d, n))
+                        .map(|t| (*t).clone())
+                        .collect();
+                    let before = self.tree_findings(dropped, &[]);
+                    found = self.tree_findings(Vec::new(), tables);
+                    found.retain(|f| !before.contains(f));
+                }
+                c.drop_tables(tables, *if_exists, self.lock_wait_timeout).await?;
+                self.note_tree(found);
+            }
             Stmt::Truncate { db, table } => c.truncate(db, table, self.lock_wait_timeout).await?,
             Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
             Stmt::DropDatabase { name, if_exists } => {
@@ -2244,6 +2351,69 @@ impl Session {
             _ => return Err(SqlError::internal("not DDL")),
         }
         Ok(Output::ok(0))
+    }
+
+    /// `tarn_tree_checks` of this session.
+    fn tree_checks(&self) -> admin::TreeChecks {
+        self.sys_vars
+            .get("tarn_tree_checks")
+            .and_then(|v| admin::TreeChecks::parse(&v.to_string()))
+            .unwrap_or(admin::TreeChecks::Warn)
+    }
+
+    /// The checks of declared table trees (issue #85) around a schema
+    /// change: the tables it creates or alters, as they will be (`changed`),
+    /// and the tables that name one of those, or one it drops or renames
+    /// away (`removed`), as their parent.
+    fn tree_findings(&self, changed: Vec<TableDef>, removed: &[(String, String)]) -> Vec<lint::Finding> {
+        let cat = self.cluster.catalog();
+        let changed: Vec<Arc<TableDef>> = changed
+            .into_iter()
+            .filter_map(|mut d| d.resolve_types().ok().map(|_| Arc::new(d)))
+            .collect();
+        let look = lint::lookup_with(&cat, &changed, removed);
+        let mut out: Vec<lint::Finding> = changed.iter().flat_map(|t| lint::check_table(&look, t)).collect();
+        let is = |t: &TableDef, (d, n): (&str, &str)| t.db.eq_ignore_ascii_case(d) && t.name.eq_ignore_ascii_case(n);
+        let names: Vec<(String, String)> = changed
+            .iter()
+            .map(|t| (t.db.clone(), t.name.clone()))
+            .chain(removed.iter().cloned())
+            .collect();
+        let mut checked: Vec<Arc<TableDef>> = Vec::new();
+        for (db, name) in &names {
+            for child in lint::children_of(&cat, db, name) {
+                let skip = names.iter().any(|(d, n)| is(&child, (d, n)))
+                    || checked.iter().any(|t| is(t, (&child.db, &child.name)));
+                if !skip {
+                    out.extend(lint::check_table(&look, &child));
+                    checked.push(child);
+                }
+            }
+        }
+        out
+    }
+
+    /// Under `tarn_tree_checks = ERROR`, a finding about the table a
+    /// statement creates or alters refuses the statement.
+    fn refuse_tree(&self, found: &[lint::Finding], db: &str, name: &str) -> SqlResult<()> {
+        if self.tree_checks() != admin::TreeChecks::Error {
+            return Ok(());
+        }
+        match found
+            .iter()
+            .find(|f| f.strict && f.db.eq_ignore_ascii_case(db) && f.table.eq_ignore_ascii_case(name))
+        {
+            Some(f) => Err(SqlError::new(lint::CODE, "HY000", tree_message(f))),
+            None => Ok(()),
+        }
+    }
+
+    fn note_tree(&mut self, found: Vec<lint::Finding>) {
+        self.warnings.extend(found.iter().map(|f| Warning {
+            level: f.level.name(),
+            code: lint::CODE,
+            message: tree_message(f),
+        }));
     }
 
     // ---- session statements --------------------------------------------------
@@ -2573,13 +2743,17 @@ impl Session {
             }
             Admin::ShowStatus { like } => Ok(self.show_status(&like)),
             Admin::ShowTarnStatus => Ok(self.show_status(&None)),
-            Admin::ShowWarnings => rows_out(
+            Admin::ShowWarnings { errors } => rows_out(
                 cols(&[
                     ("Level", ColumnType::VarString),
                     ("Code", ColumnType::Long),
                     ("Message", ColumnType::VarString),
                 ]),
-                vec![],
+                self.warnings
+                    .iter()
+                    .filter(|w| !errors || w.level == "Error")
+                    .map(|w| vec![Value::str(w.level), Value::Int(w.code as i64), Value::str(&w.message)])
+                    .collect(),
             ),
             Admin::ShowEngines => rows_out(
                 cols(&[

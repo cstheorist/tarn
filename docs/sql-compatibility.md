@@ -163,6 +163,47 @@ that need it also run behind the fence. Automatic backfill is not implemented.
 For new tables, define the column and index before loading rows. A no-op SQL
 update such as `UPDATE t SET c = c` does not materialize old fields.
 
+#### Table trees
+
+A table can declare that its rows belong to a parent table's rows with
+`COMMENT 'tarn:parent=<table>'` (or `<database>.<table>`; the token may
+share the comment with other text). MySQL and MariaDB store the comment and
+ignore it, so the schema stays portable; foreign keys cannot say the same
+there, because neither accepts them on partitioned tables. A tree keeps a
+root row and all of its descendants on one shard when every child's primary
+key starts with its parent's whole primary key and every table is sharded
+by the root's shard key:
+
+```sql
+CREATE TABLE customer (customer_id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(100));
+CREATE TABLE orders (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL,
+  PRIMARY KEY (customer_id, order_id)) COMMENT 'tarn:parent=customer' PARTITION BY KEY (customer_id);
+CREATE TABLE order_line (customer_id BIGINT NOT NULL, order_id BIGINT NOT NULL, line_no INT NOT NULL,
+  PRIMARY KEY (customer_id, order_id, line_no)) COMMENT 'tarn:parent=orders' PARTITION BY KEY (customer_id);
+```
+
+`CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check the trees they touch
+and report what does not line up as warnings (1105, `SHOW WARNINGS`):
+
+* the parent does not exist, or the parent links form a cycle. A dump may
+  create a child before its parent, so a missing parent is only a warning,
+  and the parent's `CREATE TABLE` checks the children that name it;
+* the child's primary key does not start with its parent's primary-key
+  columns (the same names, in order), or one of them would not hash and
+  compare like the parent's: integers need the same signedness, text the
+  same collation, other types the same type (binary strings always match);
+* the child's shard key is not the root's, usually a missing `PARTITION BY
+  KEY`;
+* a note for each unique key outside the shard key: its global index adds a
+  shard to writes that change it.
+
+An `ALTER TABLE` reports only what it makes worse. `SET tarn_tree_checks =
+'ERROR'` makes the findings about the table a statement creates or alters
+errors that refuse it (a missing parent stays a warning); `'OFF'` turns the
+checks off; `'WARN'` is the default. `tarn-server --check-schema FILE
+[--database DB]` runs the same checks over a schema file, such as a
+`mysqldump --no-data` dump, without a cluster.
+
 #### Loading dumps
 
 Files written by `mysqldump` load with the `mysql` client or as one
@@ -201,8 +242,11 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   prepared themselves (1295). The text is re-planned at each `EXECUTE`
   through the plan cache, as a text query would be.
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
-  VARIABLES | STATUS | WARNINGS | ENGINES | COLLATION | CHARACTER SET |
+  VARIABLES | STATUS | WARNINGS | ERRORS | ENGINES | COLLATION | CHARACTER SET |
   PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
+  `SHOW WARNINGS` lists the last statement's warnings and notes, whose number
+  the OK packet and `@@warning_count` report; the only ones Tarn raises are
+  those of the [table tree](#table-trees) checks.
 * `information_schema.TABLES`, with MySQL 8's columns: one row per table
   (`TABLE_TYPE` `BASE TABLE`, `ENGINE` memtx or vinyl, `TABLE_COMMENT`) and
   one for itself (`SYSTEM VIEW`). Sizes, row counts and times are NULL. It

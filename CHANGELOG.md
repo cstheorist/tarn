@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Table trees ([#85](https://github.com/cstheorist/tarn/issues/85)): a
+  table's `COMMENT 'tarn:parent=<table>'` declares that its rows nest under
+  the parent's. `CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check that
+  each child's primary key starts with its parent's, with key types that
+  hash alike, and that the tree is sharded by the root's key, and report
+  what does not line up as warnings; `SET tarn_tree_checks = 'ERROR'` refuses
+  such statements instead. `tarn-server --check-schema FILE` runs the checks
+  over a schema file without a cluster. `SHOW WARNINGS`, `SHOW ERRORS`,
+  `@@warning_count` and the OK packet's warning count report a statement's
+  warnings.
+
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one
   ([#88](https://github.com/cstheorist/tarn/issues/88)): the global index is
