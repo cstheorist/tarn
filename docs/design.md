@@ -356,8 +356,9 @@ columns or their types, is refused (1846).
 
 ### 2.2 The TLA+ model (`tla/TarnCommit.tla`)
 
-The model has shards, keys with owners, three transactions with fixed
-read/write sets, direct (non-SQL) readers, and the actions of the protocol:
+The model has shards, keys with owners (which a bucket move changes,
+§2.12), three transactions with fixed read/write sets, direct (non-SQL)
+readers, and the actions of the protocol:
 reads, single-shard commit, snapshot reads, read-only validation, PREPARE
 (with the decision record), coordinator decision/finish/abort, APPLY, ABORT
 (with tombstones), timeout-triggered recovery (fence record, fence
@@ -381,7 +382,7 @@ Invariants checked in every configuration:
 | `PlainOnlyCommitted` | the plain spaces only ever contain committed values |
 | `DirectReadsClean` | direct readers never observe uncommitted data |
 | `DirectReadYourWrites` | a direct read after an acknowledged commit sees it |
-| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock) |
+| `StrictSerializable` | the acknowledged transactions have a serial order, consistent with real time, that explains every value they read (READ COMMITTED transactions: every value they read under a lock; a scan of every shard: each row exactly once) |
 | `NoLostUpdate` | every READ COMMITTED write lands on the value its transaction read under the lock |
 | `RCReadsSeeAcked` | a READ COMMITTED read sees every transaction acknowledged before it started |
 | `UniqueHolds` | no key is inserted by two committed transactions (unique keys, §1.4) |
@@ -405,7 +406,10 @@ reader of the entry and the row; `BugInsertNoExistCheck` drops the check and
 TLC finds two committed holders. The model never deletes keys, so a transaction that
 frees a value and takes another (REPLACE, an UPDATE of the key) is argued
 rather than checked: its deletes and inserts on a shard are in one PREPARE
-or local commit, which applies them together.
+or local commit, which applies them together. *MoveScan* and *MoveRC* move a
+row to the other shard while transactions run (§2.12): rows have a place
+that the move changes, a request reaches the shard it was routed to, and
+scans read every shard.
 
 ### 2.3 What TLC found
 
@@ -430,8 +434,10 @@ resurrects an aborted transaction: `AppliedOnlyIfCommitted` fails), local
 commits that ignore R locks, single-shard reads that ignore W locks,
 read-only validation without the W-lock check or without the "reads
 unchanged" check, garbage collection of applied records regardless of the
-decision record, garbage collection without the expiry horizon, and fencing
-a missing decision record after expiry.
+decision record, garbage collection without the expiry horizon, fencing
+a missing decision record after expiry, and three for bucket moves (§2.12):
+a move without the drain, a receiver that does not hold the bucket, and a
+sender that serves requests for a bucket it has sent.
 
 ### 2.4 A model/implementation gap found by testing: memtx read views
 
@@ -993,6 +999,90 @@ vinyl shard needs.
 **Not yet.** Replica bootstrap and backups copy a shard's whole data set
 (issue #56). A table cannot move between engines (issue #57). Writes are
 not slowed down when compaction falls behind (issue #58).
+
+### 2.12 Bucket moves
+
+A bucket is the unit that moves between shards (issue #24): to add a
+shard, to remove one, or to take load off one. Every protocol above assumes
+that a row never changes shards, so a move has to keep three things true. A
+request routed with an old map must not be served by a shard the bucket has
+left. A serializable transaction whose reads covered the bucket must not
+commit across the move: a scan of every shard that read the old shard
+before the move and the new one after would see the bucket's rows twice,
+and in the other order not at all. And the locks on the bucket's rows --
+prepared transactions' locks and READ COMMITTED row locks -- must not be
+left behind on the old shard, where nothing would check them any more.
+
+**The protocol.** One SQL server drives a move of bucket *b* from shard S
+to shard R in steps:
+
+1. *Copy*: the rows of *b* are copied to R while S keeps serving them; R
+   keeps the copy aside, where nothing reads it.
+2. *Fence*: from now on S refuses writes to rows of *b*, row locks on them,
+   and PREPAREs that read or write them (read locks taken now would hold
+   the move up); it breaks the row locks held on them, so that their
+   transactions can no longer commit. R *holds* *b*: the validation of a
+   read that could cover a row of *b* there fails. Then S waits until no
+   prepared transaction holds a point lock on a row of *b* and no local
+   commit that writes one is in flight, and the changes made since the
+   copy are copied.
+3. *Send*: S deletes the rows of *b*, and from then on refuses requests for
+   it; their servers load the new map and route them again.
+4. *Receive*: R inserts the copy, owns *b* and releases the hold.
+
+Between the send and the receive the rows are on no shard: requests for
+them are refused everywhere and retried until R has them. A move that
+cannot drain in time is given up before the send, which releases the
+fence and the hold.
+
+**Why each step is needed.** Apart from where rows are, a move changes
+nothing a transaction can see: it is a cross-shard transaction that
+deletes the bucket's rows on S and inserts them on R. MVCC treats it as
+one. A stream that read a row of *b* on S, or scanned a range of an index
+there that held one, fails its validation once S deletes them, and one
+that scanned a range of R that they fall in fails once R inserts them. The
+hold covers the time in between: a transaction that scanned R before the
+rows arrived and S after they left saw them nowhere, and its validation
+on R comes after its scan of S, so after the send -- while R holds the
+bucket, or after the insert. The fence and the drain keep the copy
+current: a local commit in flight when the last copy is taken, or the
+APPLY of a prepared transaction, would write a row on S after it was
+copied, and the write would be lost. Point read locks are drained too: a
+prepared transaction may already be committed, and its read locks protect
+what it read until then, which after the move a writer on R would not
+see. A scan's read locks (a range on every shard) are not waited for: the
+scan read R as well, so it holds them there too, and both its PREPAREs
+come before the send.
+
+**The model.** TarnCommit.tla gives every row a place (`place`). A request
+reaches the shard it was routed to, which refuses rows it does not own; a
+read of a row where it no longer is finds nothing there (`Gone`), which
+the read's validation catches as a changed read. Scans (`SSet`: a range
+read on every shard, as a lookup by a non-unique secondary index or a full
+scan) record what they saw on each shard, and `StrictSerializable`
+requires a scan to have seen each row exactly once, with the value the
+serial order gives it. The move's steps are `MoveFence` (the fence, the
+broken row locks, the hold), `MoveDrained` (the drain and the last copy),
+`MoveSendFlip`, `MoveRecvFlip` and `MoveAbort`; the copy before the fence
+changes nothing a transaction can see. Two workloads move row x from shard
+A to shard B: *MoveScan* (a scan of both shards; a blind write of x, a
+local commit wherever x is, like an autocommit `UPDATE`; and a
+read-modify-write of x and y, through PREPARE/APPLY before the move and a
+local commit after it) and *MoveRC* (READ COMMITTED read-modify-writes of
+x, one of them across shards, and a serializable one whose local commit may
+be in flight when the move fences x). TLC finds a 9-step counterexample for
+each switch:
+
+| Switch | Counterexample |
+|---|---|
+| `BugMoveNoDrain` | a local commit that writes x is still in flight when the move takes its last copy: B gets the value before it, and a transaction that starts after the commit was acknowledged reads x without it |
+| `BugMoveNoHold` | a scan reads B before x arrives and A after x left, validates both, and commits without x |
+| `BugMoveServeStale` | a write of x routed with the old map reaches A after A sent the bucket; A applies it where no row lives any more and acknowledges it, and the write is lost |
+
+Not in the model: READ COMMITTED reads of every shard, which are not
+validated (they check instead that no shard has sent or received a bucket
+since their server loaded its map), and direct key/value readers, who must
+look a row up again where it went.
 
 ## 3. Verus
 

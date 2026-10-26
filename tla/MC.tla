@@ -79,4 +79,27 @@ IKeysUniq == [t \in MCTxns |-> CASE t = "T1" -> {"x", "y"} [] t = "T2" -> {"x"} 
 \* ... and with T2 at READ COMMITTED, locking the entry key first.
 RCUniq    == {"T2"}
 LSetUniq  == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {"x"} [] t = "T3" -> {}]
+\* Bucket moves (issue #24): none in the workloads above, and no scans.
+NoSSet  == [t \in MCTxns |-> {}]
+NoMKeys == {}
+MCFrom  == "A"
+MCTo    == "B"
+\* x moves from A to B.
+MKeysX  == {"x"}
+
+\* MoveScan: T1 scans both shards for x and y (a range read on every shard:
+\* a lookup by a non-unique index, a full scan); T2 writes x blindly (an
+\* autocommit UPDATE: a local commit where x is); T3 a read-modify-write of
+\* x and y (PREPARE/APPLY while x is on A, a local commit on B after).
+SSetScan == [t \in MCTxns |-> IF t = "T1" THEN {"x", "y"} ELSE {}]
+RSetMove == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {} [] t = "T3" -> {"x", "y"}]
+WSetMove == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {"x"} [] t = "T3" -> {"x", "y"}]
+
+\* MoveRC: T1 a READ COMMITTED read-modify-write of x (it locks x where x
+\* is), T2 one of x and y, T3 a serializable read-modify-write of x (a
+\* local commit, which may still be in flight when the move fences x).
+RCMove     == {"T1", "T2"}
+RSetMoveRC == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {} [] t = "T3" -> {"x"}]
+WSetMoveRC == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {"x"}]
+LSetMoveRC == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"x", "y"} [] t = "T3" -> {}]
 =============================================================================
