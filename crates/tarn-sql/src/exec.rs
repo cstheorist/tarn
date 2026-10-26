@@ -397,15 +397,22 @@ async fn fetch_stored_from(
                 if keys.len() > 1 && !seen.insert(crate::txn::key_bytes(&key)) {
                     continue;
                 }
-                let shard = route_prefix(cluster, t, idx, &key).unwrap_or(0);
-                calls.push(Call {
-                    shard,
-                    key,
-                    iter: Iter::Eq,
-                    limit: Some(1),
-                    end: None,
-                    range: None,
-                });
+                // A unique key without the shard key (a global index, see
+                // catalog) does not say which shard holds the row: ask each.
+                let shards: Vec<usize> = match route_prefix(cluster, t, idx, &key) {
+                    Some(s) => vec![s],
+                    None => (0..cluster.nshards()).collect(),
+                };
+                for shard in shards {
+                    calls.push(Call {
+                        shard,
+                        key: key.clone(),
+                        iter: Iter::Eq,
+                        limit: Some(1),
+                        end: None,
+                        range: None,
+                    });
+                }
             }
         }
     }
