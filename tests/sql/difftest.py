@@ -347,6 +347,18 @@ CASES = [
     ("UPDATE gu SET h = 'b', n = 500 WHERE id = 13", "dml:gu"),
     ("COMMIT", "dml:gu"),
     ("SELECT * FROM gu ORDER BY id", "q"),
+    # dropping and adding them on a table with rows (issue #88)
+    ("ALTER TABLE gu DROP INDEX code", "ddl:gu"),
+    ("INSERT INTO gu VALUES (20, 7, 'q', 1, 500)", "dml:gu"),
+    ("ALTER TABLE gu ADD UNIQUE KEY code (n)", "err"),
+    ("DELETE FROM gu WHERE id = 20", "dml:gu"),
+    ("ALTER TABLE gu ADD UNIQUE KEY code (n)", "ddl:gu"),
+    ("INSERT INTO gu VALUES (20, 7, 'q', 1, 500)", "err"),
+    ("ALTER TABLE gu ADD UNIQUE KEY hh (h)", "err"),
+    ("CREATE UNIQUE INDEX tl ON gu (t, live, h)", "ddl:gu"),
+    ("INSERT INTO gu VALUES (21, 1, 'b', 1, 999)", "err"),
+    ("SELECT id FROM gu WHERE n = 500", "q"),
+    ("SELECT id FROM gu WHERE t = 1 AND live = 1 AND h = 'b'", "q"),
     ("SELECT * FROM gu ORDER BY id", "q"),
     # session isolation level, lock wait timeout, locking reads (issue #17);
     # the rest of the cases run at READ COMMITTED on both servers

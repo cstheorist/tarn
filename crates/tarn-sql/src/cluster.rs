@@ -163,6 +163,47 @@ struct Job {
     phase: String,
     /// msgpack of its arguments (`a` of the storage procedures)
     args: Vec<u8>,
+    /// Which run of the job this is: 1, plus one per takeover
+    /// (`tarn_job_touch`). Its steps carry it (see lua/tarn.lua UIX.filling).
+    gen: u64,
+}
+
+/// From the arguments of an ALTER TABLE job: the space ids of its new
+/// global indexes (`uix`), its new definition (`def.json`), the table's
+/// space id (`def.id`) and the change's version (`ver`).
+fn alter_uix_args(args: &[u8]) -> SqlResult<(Vec<u32>, String, u32, u64)> {
+    let mut rd = Rd::new(args);
+    let n = tarn_iproto::mp::read_map_len(&mut rd.buf).map_err(crate::mpw::proto)?;
+    let (mut ids, mut json, mut sid, mut ver) = (Vec::new(), String::new(), 0, 0);
+    for _ in 0..n {
+        match rd.string()?.as_str() {
+            "ver" => ver = rd.value()?.as_i64().unwrap_or(0) as u64,
+            "uix" => {
+                for _ in 0..rd.array()? {
+                    let m = tarn_iproto::mp::read_map_len(&mut rd.buf).map_err(crate::mpw::proto)?;
+                    for _ in 0..m {
+                        if rd.string()? == "id" {
+                            ids.push(rd.value()?.as_i64().unwrap_or(0) as u32);
+                        } else {
+                            rd.skip()?;
+                        }
+                    }
+                }
+            }
+            "def" => {
+                let m = tarn_iproto::mp::read_map_len(&mut rd.buf).map_err(crate::mpw::proto)?;
+                for _ in 0..m {
+                    match rd.string()?.as_str() {
+                        "json" => json = rd.string()?,
+                        "id" => sid = rd.value()?.as_i64().unwrap_or(0) as u32,
+                        _ => rd.skip()?,
+                    }
+                }
+            }
+            _ => rd.skip()?,
+        }
+    }
+    Ok((ids, json, sid, ver))
 }
 
 /// `{'ok', 'applied'}`: a step found its job already applied on that shard.
@@ -1188,6 +1229,19 @@ impl Cluster {
             }
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
+            // New unique keys without the shard key: space ids for their
+            // global indexes, which the job fills from the existing rows.
+            let need: Vec<usize> = (0..ch.def.indexes.len())
+                .filter(|&i| ch.def.indexes[i].global == Some(0))
+                .collect();
+            if !need.is_empty() {
+                let first = self.alloc_space_ids(need.len() as u64).await?;
+                for (k, &i) in need.iter().enumerate() {
+                    ch.def.indexes[i].global = Some(first + k as u32);
+                    ch.uix_new.push(first + k as u32);
+                }
+            }
+            ch.def.resolve_globals()?;
             let args = crate::alter::lua_args(&ch, ver, lock_timeout);
             let space = def.space_name();
             let mut names = vec![space.clone()];
@@ -1255,6 +1309,7 @@ impl Cluster {
                     space: space.to_string(),
                     phase: "prepare".to_string(),
                     args: args.to_vec(),
+                    gen: 1,
                 });
             }
             // {'busy', owner, age} of the job in the way
@@ -1354,6 +1409,7 @@ impl Cluster {
                     space,
                     phase,
                     args,
+                    gen: 0,
                 });
             }
         }
@@ -1373,8 +1429,16 @@ impl Cluster {
             let me = self.job_owner();
             let mut t = Mp::new();
             t.arr(2).str(&me).str(owner);
-            if !crate::mpw::status_is(&self.call(0, "tarn_job_touch", &t.0).await?, "ok") {
+            let d = self.call(0, "tarn_job_touch", &t.0).await?;
+            if !crate::mpw::status_is(&d, "ok") {
                 return Ok(()); // another server took it over
+            }
+            // {'ok', generation}: this run's
+            let mut rd = Rd::new(&d);
+            rd.array()?;
+            if rd.array()? > 1 {
+                rd.skip()?;
+                job.gen = rd.value()?.as_i64().unwrap_or(0) as u64;
             }
             tracing::warn!(
                 "finishing the {} of {} that {} left in phase {}",
@@ -1443,9 +1507,13 @@ impl Cluster {
     /// finishes runs again from its phase. A job applied on some shard can
     /// only go forward.
     async fn run_job_steps(&self, job: &Job) -> SqlResult<()> {
+        // (name, a, generation): ALTER TABLE's PREPARE records the
+        // generation, whose run alone may fill new global indexes; other
+        // steps ignore it.
         let mut call = Mp::new();
-        call.arr(2).str(&job.space);
+        call.arr(3).str(&job.space);
         call.0.extend_from_slice(&job.args);
+        call.uint(job.gen);
         let n = self.shards.len();
         let step = |i: usize, proc: String| {
             let call = &call;
@@ -1479,6 +1547,13 @@ impl Cluster {
                             failed.get_or_insert(e);
                         }
                     }
+                }
+            }
+            // New global indexes are filled once every shard has prepared:
+            // the table's writes are fenced everywhere, so the rows stay put.
+            if failed.is_none() && !applied && job.kind == JobKind::Alter {
+                if let Err(e) = self.fill_globals(&job.args, job.gen).await {
+                    failed = Some(e);
                 }
             }
             phase = if failed.is_some() && !applied { "abort" } else { "apply" };
@@ -1527,6 +1602,108 @@ impl Cluster {
         }
         self.bump_catalog().await?;
         self.job_end(&job.owner).await
+    }
+
+    /// Fill the new global indexes of an ALTER TABLE (`uix` in its job
+    /// arguments) from the table's rows on every shard, read a page at a
+    /// time and written in batches to the entries' shards. A value two rows
+    /// hold fails the change with 1062. Runs while every shard fences the
+    /// table's writes, so every fill of the change (again after a takeover)
+    /// writes the same entries.
+    async fn fill_globals(&self, args: &[u8], gen: u64) -> SqlResult<()> {
+        let (ids, json, sid, ver) = alter_uix_args(args)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut nd = catalog::parse_def_json(&json)?;
+        nd.space_id = sid;
+        nd.resolve_globals()?;
+        let globals: Vec<&catalog::GlobalIndex> =
+            nd.globals.iter().filter(|g| ids.contains(&g.table.space_id)).collect();
+        // (No emptying first: every fill of this change writes the same
+        // entries, see tarn_uix_fill.)
+        const PAGE: u32 = 1000;
+        // per global index and target shard: (entry, the row's key values shown in 1062)
+        let mut pending: Vec<HashMap<usize, Vec<(Vec<Value>, String)>>> = vec![HashMap::new(); globals.len()];
+        for shard in 0..self.shards.len() {
+            let client = self.shards[shard].client(self).await?;
+            let mut after: Option<Vec<Value>> = None;
+            loop {
+                let mut key = Mp::new();
+                let iter = match &after {
+                    Some(k) => {
+                        key.vals(k);
+                        tarn_iproto::Iter::Gt
+                    }
+                    None => {
+                        key.arr(0);
+                        tarn_iproto::Iter::All
+                    }
+                };
+                let r = client
+                    .select(0, sid, 0, iter, 0, PAGE, &key.0)
+                    .await
+                    .map_err(from_iproto)?;
+                let mut n = 0;
+                for tup in r.tuples().map_err(crate::mpw::proto)? {
+                    let row = Rd::shared(&tup).row_of(&nd)?;
+                    n += 1;
+                    for (gi, g) in globals.iter().enumerate() {
+                        if let Some(e) = g.entry(&nd, &row) {
+                            let shown: Vec<String> = g.src[..g.key_len()].iter().map(|&c| row[c].to_string()).collect();
+                            let to = self.shard_of(&e[..g.key_len()]);
+                            let batch = pending[gi].entry(to).or_default();
+                            batch.push((e, shown.join("-")));
+                            if batch.len() >= PAGE as usize {
+                                let b = std::mem::take(batch);
+                                self.fill_batch(g, &nd, ver, gen, to, b).await?;
+                            }
+                        }
+                    }
+                    after = Some(nd.pk_key(&row));
+                }
+                if n < PAGE as usize {
+                    break;
+                }
+            }
+        }
+        for (gi, g) in globals.iter().enumerate() {
+            for (to, b) in std::mem::take(&mut pending[gi]) {
+                if !b.is_empty() {
+                    self.fill_batch(g, &nd, ver, gen, to, b).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn fill_batch(
+        &self,
+        g: &catalog::GlobalIndex,
+        t: &TableDef,
+        ver: u64,
+        gen: u64,
+        shard: usize,
+        batch: Vec<(Vec<Value>, String)>,
+    ) -> SqlResult<()> {
+        let k = g.key_len();
+        let mut m = Mp::new();
+        m.arr(5).uint(g.table.space_id as u64).arr(batch.len());
+        for (e, _) in &batch {
+            g.table.encode_tuple(e, self.bucket_of(&e[..k]) as u64, &mut m);
+        }
+        m.uint(t.space_id as u64).uint(ver).uint(gen);
+        let d = self.call(shard, "tarn_uix_fill", &m.0).await?;
+        if crate::mpw::status_is(&d, "duplicate") {
+            let mut rd = Rd::new(&d);
+            rd.array()?;
+            rd.array()?;
+            rd.skip()?;
+            let i = rd.value()?.as_i64().unwrap_or(1).max(1) as usize;
+            let shown = batch.get(i - 1).map(|(_, s)| s.as_str()).unwrap_or("");
+            return Err(SqlError::dup_key(shown, &t.indexes[g.pos].name));
+        }
+        lua_status(&d).map(|_| ())
     }
 
     /// AUTO_INCREMENT = n, and a column that became AUTO_INCREMENT: the

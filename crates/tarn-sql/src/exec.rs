@@ -498,6 +498,73 @@ async fn fetch_keys(
     Ok(rows)
 }
 
+/// The global index of the unique index with Tarantool id `index`, if it has
+/// one (a unique key without the shard key, see `catalog`).
+fn global_index(t: &TableDef, index: u32) -> Option<&crate::catalog::GlobalIndex> {
+    t.indexes
+        .iter()
+        .position(|i| i.id == index)
+        .and_then(|p| t.global_of(p))
+}
+
+/// Rows of `t` with the full keys `keys` (as the index holds them) of a
+/// unique key that has global index `g`: the entries on the keys' shards,
+/// then the rows by primary key on theirs -- one call per shard the keys
+/// (then the rows) live on, instead of one per shard. Reads are tracked as
+/// any reads of `mode` (both validated in a serializable transaction). A
+/// READ COMMITTED statement whose row no longer holds its entry's key (the
+/// value moved between the two reads) is read again in a snapshot.
+async fn global_lookup(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    t: &TableDef,
+    g: &crate::catalog::GlobalIndex,
+    keys: Vec<Vec<Value>>,
+) -> SqlResult<Vec<Row>> {
+    if matches!(mode, ReadMode::Auto { .. }) {
+        return Err(need_txn()); // two reads: never one autocommit call
+    }
+    // A key dropped meanwhile (its space gone): the catalog changed (1412).
+    let gone = |e: SqlError| {
+        if e.code == 1146 {
+            crate::txn::definition_changed()
+        } else {
+            e
+        }
+    };
+    let entries = fetch_keys(cluster, mode, &g.table, &g.table.indexes[0], keys, true, Some(1))
+        .await
+        .map_err(gone)?;
+    let mut pks: Vec<Vec<Value>> = entries.iter().map(|e| g.holder_pk(t, e)).collect();
+    if pks.is_empty() {
+        return Ok(Vec::new());
+    }
+    pks.sort_by(|a, b| key_cmp(a, b));
+    pks.dedup_by(|a, b| key_cmp(a, b) == std::cmp::Ordering::Equal);
+    let mut rows = fetch_keys(cluster, mode, t, &t.indexes[0], pks, true, Some(1)).await?;
+    if matches!(mode, ReadMode::Statement(_)) {
+        let k = g.key_len();
+        let held: HashSet<Bytes> = rows
+            .iter()
+            .filter_map(|r| g.entry(t, r))
+            .map(|e| crate::txn::key_bytes(&e[..k]))
+            .collect();
+        if entries.iter().any(|e| !held.contains(&crate::txn::key_bytes(&e[..k]))) {
+            return Err(need_snapshot());
+        }
+    }
+    // in the unique key's order, as a lookup through its index returns them
+    let idx = &t.indexes[g.pos];
+    rows.sort_by(|a, b| {
+        idx.cols
+            .iter()
+            .map(|&c| t.key_cmp(c, &a[c], &b[c]))
+            .find(|o| *o != std::cmp::Ordering::Equal)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(rows)
+}
+
 /// Read the rows of one table access (for the outer row `outer`).
 pub async fn fetch(
     cluster: &Arc<Cluster>,
@@ -576,6 +643,22 @@ async fn fetch_stored_from(
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             return Ok(rows_all);
+        }
+        // (Not for READ COMMITTED UPDATE / DELETE candidates, which page
+        // outside any snapshot: a value moving between rows between the two
+        // reads would be missed; they ask every shard.)
+        AccessPath::Point { index, keys }
+            if resume.is_none()
+                && cluster.nshards() > 1
+                && !matches!(mode, ReadMode::Committed(_))
+                && global_index(t, *index).is_some() =>
+        {
+            let idx = index_def(t, *index);
+            let ks = eval_keys(t, idx, keys, outer, cx)?;
+            if ks.is_empty() {
+                return Ok(Vec::new());
+            }
+            return global_lookup(cluster, mode, t, global_index(t, *index).unwrap(), ks).await;
         }
         AccessPath::Point { index, keys } | AccessPath::Prefixes { index, keys } if keys.len() > 1 => {
             let idx = index_def(t, *index);

@@ -150,8 +150,6 @@ class T:
                     "ALTER TABLE rf MODIFY id BIGINT UNSIGNED NOT NULL",
                     "ALTER TABLE rf ADD COLUMN k INT AUTO_INCREMENT", "ALTER TABLE rf ADD FULLTEXT INDEX f (s)"]:
             self.check(code(lambda: q(c, sql)) == 1235, sql)
-        # a unique key must contain the shard key, as at CREATE TABLE
-        self.check(code(lambda: q(c, "ALTER TABLE rf ADD UNIQUE KEY us (s)")) == 1503, "unique key without the shard key")
         self.check(q(c, "SELECT * FROM rf")[0][:3] == (1, 1, "a"), "table unchanged")
 
     def test_indexed_default_guard(self):
@@ -268,6 +266,37 @@ class T:
         q(c, "INSERT INTO df_unique (tenant, id, v, c) VALUES (2, 5, 50, 3)")
         self.check(q(c, "SELECT tenant, id FROM df_unique WHERE c = 3 ORDER BY tenant, id") == ((1, 1), (2, 5)),
                    "all composite key parts participate in uniqueness and indexed reads")
+
+    def test_global_unique(self):
+        """ALTER TABLE ADD / DROP of unique keys without the shard key
+        (issue #88): built from the existing rows across shards, a value held
+        twice fails the change (1062), and the key works afterwards."""
+        c = self.c()
+        q(c, "DROP TABLE IF EXISTS gk")
+        q(c, "CREATE TABLE gk (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10), n INT)")
+        q(c, "INSERT INTO gk VALUES " + ", ".join(f"({i}, {i % 3}, 'h{i}', {i % 50})" for i in range(1, 2501)))
+        q(c, "INSERT INTO gk VALUES (3001, 1, NULL, NULL), (3002, 1, NULL, NULL)")
+        self.check(code(lambda: q(c, "ALTER TABLE gk ADD UNIQUE KEY un (n)")) == 1062, "a duplicate fails the change")
+        self.check(code(lambda: q(c, "INSERT INTO gk VALUES (4000, 1, 'x', 7)")) is None, "... which leaves no key")
+        q(c, "DELETE FROM gk WHERE id = 4000")
+        q(c, "ALTER TABLE gk ADD UNIQUE KEY th (t, h)")
+        self.check(code(lambda: q(c, "INSERT INTO gk VALUES (4001, 1, 'h1', 0)")) == 1062, "the new key holds across shards")
+        self.check(code(lambda: q(c, "INSERT INTO gk VALUES (4002, 1, NULL, 0)")) is None, "... NULLs take no entry")
+        self.check(q(c, "SELECT id FROM gk WHERE t = 2 AND h = 'h2000'") == ((2000,),), "lookups through it")
+        self.check(code(lambda: q(c, "UPDATE gk SET h = 'h4' WHERE id = 7")) == 1062, "updates check it")
+        q(c, "ALTER TABLE gk DROP INDEX th")
+        self.check(code(lambda: q(c, "INSERT INTO gk VALUES (4003, 1, 'h1', 0)")) is None, "a dropped key holds no more")
+        self.check(code(lambda: q(c, "ALTER TABLE gk ADD UNIQUE KEY th (t, h)")) == 1062,
+                   "adding it again finds the duplicate it now has")
+        q(c, "DELETE FROM gk WHERE id = 4003")
+        q(c, "CREATE UNIQUE INDEX th ON gk (t, h)")
+        self.check(code(lambda: q(c, "INSERT INTO gk VALUES (4004, 2, 'h2', 0)")) == 1062, "CREATE UNIQUE INDEX")
+        self.check(code(lambda: q(c, "ALTER TABLE gk RENAME INDEX th TO th2")) == 1846, "renaming one is refused")
+        q(c, "DROP TABLE IF EXISTS gk2")
+        q(c, "ALTER TABLE gk RENAME TO gk2, ADD UNIQUE KEY un2 (h, n)")
+        self.check(code(lambda: q(c, "INSERT INTO gk2 VALUES (4005, 2, 'h1', 1)")) == 1062,
+                   "RENAME TO and ADD UNIQUE in one statement")
+        q(c, "DROP TABLE gk2")
 
     def test_concurrent_ddl(self):
         """Schema changes from several connections at once (as sysbench's

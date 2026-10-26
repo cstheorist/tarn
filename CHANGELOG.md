@@ -8,6 +8,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
+  without the shard key on a table with rows, and dropping one
+  ([#88](https://github.com/cstheorist/tarn/issues/88)): the global index is
+  built from the existing rows while the table's writes wait, and a value
+  two rows hold fails the change with 1062 (refused above
+  `tarn.cfg.alter_check_rows` rows per shard, as row checks are). Lookups by
+  the full key of such a unique key read its global index instead of asking
+  every shard.
 - An ordered read with `LIMIT` chooses between an index with a longer
   equality prefix, which it must read whole and sort, and the index that
   follows `ORDER BY`, which it pages until `LIMIT` (+ `OFFSET`) rows
