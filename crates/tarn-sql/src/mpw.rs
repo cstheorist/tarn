@@ -257,6 +257,14 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
     let status = rd.string()?;
     match status.as_str() {
         "ok" | "yes" | "exists" => Ok((status, rd)),
+        "moved" => {
+            // {'moved', 1213, message, shard it went to}: see SqlError::moved
+            if m > 1 {
+                rd.skip()?;
+            }
+            let msg = if m > 2 { rd.string()? } else { status.clone() };
+            Err(SqlError::moved(msg))
+        }
         "conflict" | "no" | "duplicate" | "error" | "locked" | "timeout" | "deadlock" => {
             let code = if m > 1 { rd.value()?.as_i64().unwrap_or(0) } else { 0 };
             let msg = if m > 2 { rd.string()? } else { status.clone() };

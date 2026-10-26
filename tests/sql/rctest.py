@@ -74,7 +74,9 @@ class Bg:
 
 
 # Row placement (src/route.rs): CRC-32C over the shard key's msgpack bytes,
-# initial value 0xFFFFFFFF and no final xor; bucket = crc % 3000 + 1.
+# initial value 0xFFFFFFFF and no final xor; bucket = crc % count + 1
+# (count: SHOW STATUS Tarn_buckets), and SHOW TARN BUCKETS says which shard
+# owns each bucket.
 def _crc32c(data, crc=0xFFFFFFFF):
     for b in data:
         crc ^= b
@@ -99,6 +101,12 @@ class T:
         self.failures = 0
         c = connect(args.tarn)
         self.nshards = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_shards'"))["Tarn_shards"])
+        self.count = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_buckets'"))["Tarn_buckets"])
+        self.owners = []   # (first bucket, last bucket, shard position)
+        for i, (_, _, ranges, _, _) in enumerate(q(c, "SHOW TARN BUCKETS")):
+            for r in filter(None, ranges.split(", ")):
+                lo, _, hi = r.partition("-")
+                self.owners.append((int(lo), int(hi or lo), i))
 
     def check(self, cond, what):
         if not cond:
@@ -107,8 +115,8 @@ class T:
         return cond
 
     def shard(self, k):
-        b = _crc32c(_mp_uint(k)) % 3000 + 1
-        return (b - 1) * self.nshards // 3000
+        b = _crc32c(_mp_uint(k)) % self.count + 1
+        return next(s for lo, hi, s in self.owners if lo <= b <= hi)
 
     def two_shards(self, ids):
         """Two ids from `ids` that live on different shards."""

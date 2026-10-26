@@ -119,7 +119,8 @@ class T:
         b = kv_get(self.args.kv, f"{DB}.kv", ["beta"])
         self.check(a is not None and a[:3] == ["alpha", "one", 1], f"KV alpha: {a}")
         self.check(b is not None and b[0] == "beta" and b[1] is None and b[2] == -5, f"KV beta: {b}")
-        self.check(a is not None and isinstance(a[3], int) and 1 <= a[3] <= 3000, f"bucket_id field: {a}")
+        count = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_buckets'"))["Tarn_buckets"])
+        self.check(a is not None and isinstance(a[3], int) and 1 <= a[3] <= count, f"bucket_id field: {a}")
 
     def test_lost_update(self):
         self.fresh("lu", "CREATE TABLE lu (id INT PRIMARY KEY, v INT)", ["(1, 100)"])

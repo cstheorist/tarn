@@ -17,8 +17,23 @@ for i in 1 2; do
   echo $! > "$WORK/s$i.pid"
 done
 for p in $P1 $P2; do for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null && break; sleep 0.1; done; done
-S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 timeout 120 $T "${TEST:-$DIR/test/storage_test.lua}" < /dev/null 2>&1 | tee "$WORK/test.out"
-rc=${PIPESTATUS[0]}
+# The port opens before the module has made its schema (tarn.init): a table
+# a test makes in between gets another space id on that shard. Wait for it.
+for p in $P1 $P2; do
+  for _ in $(seq 100); do
+    $T -e "local c = require('net.box').connect('tarn:tarn@127.0.0.1:$p', {wait_connected = 1})
+           local ok, r = pcall(c.eval, c, 'return rawget(_G, \"tarn\") ~= nil')
+           os.exit((ok and r) and 0 or 1)" < /dev/null > /dev/null 2>&1 && break
+    sleep 0.1
+  done
+done
+# The files run in turn on the same shards (each uses its own tables).
+rc=0
+for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/bucket_test.lua}; do
+  S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 timeout 120 $T "$f" < /dev/null 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+done
 kill $(cat "$WORK"/s*.pid) 2>/dev/null
 if [ "$rc" -ne 0 ]; then
   echo "--- shard logs ($WORK)"; grep -iE "error|warn" "$WORK"/s*.log | tail -20

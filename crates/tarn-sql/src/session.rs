@@ -12,7 +12,7 @@ use crate::mpw::{lua_status, Mp, Rd};
 use crate::normalize::{normalize, Mode};
 use crate::plan::*;
 use crate::planner::{self, PlanCtx};
-use crate::txn::{key_bytes, select_rows, BufWrite, LockKey, LockOpts, Locked, Mode as TxnMode, Row, Txn, WOp};
+use crate::txn::{key_bytes, select_rows, BufWrite, LockKey, LockOpts, Locked, Mode as TxnMode, Route, Row, Txn, WOp};
 use crate::types::Arith;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::Ordering;
@@ -156,6 +156,21 @@ impl StaleRetry {
 
     async fn again<T>(&mut self, cluster: &Cluster, r: &SqlResult<T>, autocommit: bool) -> SqlResult<Stale> {
         let Err(e) = r else { return Ok(Stale::Done) };
+        if e.moved {
+            // A shard refused a bucket the statement was routed by: it did
+            // nothing. Read the map again; a statement that can start over
+            // runs again with it, until the move lands (between a move's
+            // send and its receive, its bucket is nowhere for a moment).
+            cluster.refresh_buckets().await?;
+            if !autocommit || std::time::Instant::now() > self.deadline {
+                return Ok(Stale::Done);
+            }
+            self.attempt += 1;
+            cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
+            let ms = (5u64 << self.attempt.min(4)).min(100);
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            return Ok(Stale::Retry);
+        }
         match e.code {
             1412 => {
                 cluster.refresh_catalog().await?;
@@ -1010,7 +1025,7 @@ impl Session {
                     self.found_rows = rows.len() as u64;
                     return Ok(Output::Rows { columns, rows });
                 }
-                Err(e) if e.code == 1213 && attempt < MAX_RETRIES => {
+                Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
@@ -1134,7 +1149,7 @@ impl Session {
             };
             match res {
                 Ok((n, id)) => return Ok(self.dml_output(n, id)),
-                Err(e) if e.code == 1213 && attempt < MAX_RETRIES => {
+                Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
@@ -1166,7 +1181,8 @@ impl Session {
         pre: Option<&(Vec<Row>, Option<u64>)>,
     ) -> SqlResult<Option<Output>> {
         let cx = self.cx(params, now);
-        let (shard, writes, insert_id, table) = match stmt {
+        // wb: the bucket of each write (lua/tarn.lua "Buckets")
+        let (shard, writes, insert_id, table, wb) = match stmt {
             // REPLACE on a table with another unique key may have to delete
             // other rows (those it collides with on that key): not here.
             // Nor writes that change a global index (catalog: unique keys
@@ -1193,13 +1209,15 @@ impl Session {
                 }
                 let mut m = Mp::new();
                 m.arr(2).arr(rows.len());
+                let mut wb = Vec::with_capacity(rows.len());
                 for r in &rows {
                     m.arr(3)
                         .str(if p.replace { "replace" } else { "insert" })
                         .uint(p.table.space_id as u64);
+                    wb.push(self.cluster.bucket_of(&p.table.shard_key_of(r)));
                     self.encode_tuple(&p.table, r, &mut m);
                 }
-                (shard, m, id, p.table.clone())
+                (shard, m, id, p.table.clone(), wb)
             }
             Stmt::Update(p) => {
                 let Some((pk, ops)) = self.simple_update(p, &cx)? else {
@@ -1208,6 +1226,7 @@ impl Session {
                 let t = &p.access.table;
                 let idx = &t.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, t, idx, &pk).unwrap_or(0);
+                let wb = vec![self.cluster.bucket_of(&t.shard_key_of_pk(&pk))];
                 let mut m = Mp::new();
                 m.arr(2).arr(1).arr(6).str("update").uint(t.space_id as u64).vals(&pk);
                 // Fields by number (1-based): rows written before an ALTER
@@ -1267,7 +1286,7 @@ impl Session {
                         m.nil();
                     }
                 }
-                (shard, m, None, t.clone())
+                (shard, m, None, t.clone(), wb)
             }
             Stmt::Delete(p) if p.access.table.globals.is_empty() => {
                 let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, &cx)? else {
@@ -1275,6 +1294,7 @@ impl Session {
                 };
                 let idx = &p.access.table.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, &p.access.table, idx, &pk).unwrap_or(0);
+                let wb = vec![self.cluster.bucket_of(&p.access.table.shard_key_of_pk(&pk))];
                 let mut m = Mp::new();
                 m.arr(2)
                     .arr(1)
@@ -1282,7 +1302,7 @@ impl Session {
                     .str("delete")
                     .uint(p.access.table.space_id as u64)
                     .vals(&pk);
-                (shard, m, None, p.access.table.clone())
+                (shard, m, None, p.access.table.clone(), wb)
             }
             _ => return Ok(None),
         };
@@ -1290,9 +1310,13 @@ impl Session {
         // the session's innodb_lock_wait_timeout (then 1205); the shard
         // refuses writes made with a replaced table definition (1412).
         let mut writes = writes;
-        writes.map(3).str("lock_timeout").f64(self.lock_wait_timeout);
+        writes.map(4).str("lock_timeout").f64(self.lock_wait_timeout);
         writes.str("found_rows").bool(self.found_rows_flag);
         writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
+        writes.str("wb").arr(wb.len());
+        for b in wb {
+            writes.uint(b as u64);
+        }
         let mut attempt = 0;
         loop {
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
@@ -1302,7 +1326,9 @@ impl Session {
                     let n = rd.value()?.as_i64().unwrap_or(0) as u64;
                     return Ok(Some(self.dml_output(n, insert_id)));
                 }
-                Err(e) if e.code == 1213 && attempt < MAX_RETRIES => {
+                // (A bucket refused: nothing was written; the statement
+                // runs again, routed by the map read again.)
+                Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
@@ -1646,6 +1672,7 @@ impl Session {
             }
         } else {
             let st = txn.stream(&self.cluster, shard).await?;
+            let bucket = Some(self.cluster.bucket_of(&key));
             let (rows, _) = select_rows(
                 &st.client,
                 st.id,
@@ -1658,10 +1685,11 @@ impl Session {
                 false,
                 st.begin,
                 None,
+                &Route::in_stream(bucket),
             )
             .await?;
             txn.mark_begun(shard);
-            txn.note_point(shard, g.table.space_id, 0, key);
+            txn.note_point(shard, g.table.space_id, 0, key, bucket);
             rows.into_iter().next()
         };
         let Some(entry) = entry else { return Ok(None) };
@@ -1691,6 +1719,7 @@ impl Session {
             return Ok(b.cloned());
         }
         let st = txn.stream(&self.cluster, shard).await?;
+        let bucket = Some(self.cluster.bucket_of(&t.shard_key_of_pk(pk)));
         let (rows, _) = select_rows(
             &st.client,
             st.id,
@@ -1703,10 +1732,11 @@ impl Session {
             false,
             st.begin,
             None,
+            &Route::in_stream(bucket),
         )
         .await?;
         txn.mark_begun(shard);
-        txn.note_point(shard, t.space_id, 0, pk.to_vec());
+        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket);
         Ok(rows.into_iter().next())
     }
 
@@ -2024,7 +2054,12 @@ impl Session {
                 }
                 pending.push((l, txn.stream(&self.cluster, l.2).await?));
             }
-            let futs = pending.iter().map(|(l, st)| {
+            let buckets: Vec<Option<u32>> = pending
+                .iter()
+                .map(|(l, _)| self.cluster.bucket_of_index_key(t, l.3, &l.4))
+                .collect();
+            let routes: Vec<Route> = buckets.iter().map(|&b| Route::in_stream(b)).collect();
+            let futs = pending.iter().zip(&routes).map(|((l, st), route)| {
                 select_rows(
                     &st.client,
                     st.id,
@@ -2037,13 +2072,14 @@ impl Session {
                     false,
                     st.begin,
                     None,
+                    route,
                 )
             });
             let results = futures::future::join_all(futs).await;
-            for ((l, _), r) in pending.into_iter().zip(results) {
+            for (((l, _), r), b) in pending.into_iter().zip(results).zip(buckets) {
                 let (r, _) = r?;
                 txn.mark_begun(l.2);
-                txn.note_point(l.2, t.space_id, l.3, l.4.clone());
+                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b);
                 place(&mut out, l.0, l.1, r.into_iter().next());
             }
         }
@@ -2115,6 +2151,7 @@ impl Session {
                 let st = txn.stream(&self.cluster, shard).await?;
                 let key = key_of(i);
                 let id = t.indexes[i].id;
+                let bucket = self.cluster.bucket_of_index_key(t, id, &key);
                 let (rows, _) = select_rows(
                     &st.client,
                     st.id,
@@ -2127,10 +2164,11 @@ impl Session {
                     false,
                     st.begin,
                     None,
+                    &Route::in_stream(bucket),
                 )
                 .await?;
                 txn.mark_begun(shard);
-                txn.note_point(shard, t.space_id, id, key);
+                txn.note_point(shard, t.space_id, id, key, bucket);
                 stored.push(rows.into_iter().next());
             }
         }
@@ -2743,6 +2781,63 @@ impl Session {
             }
             Admin::ShowStatus { like } => Ok(self.show_status(&like)),
             Admin::ShowTarnStatus => Ok(self.show_status(&None)),
+            Admin::ShowTarnBuckets => {
+                let rows = self
+                    .cluster
+                    .show_buckets()
+                    .await?
+                    .into_iter()
+                    .map(|(id, n, ranges, epoch, moving)| {
+                        vec![
+                            Value::Int(id as i64),
+                            Value::Int(n as i64),
+                            Value::str(&ranges),
+                            Value::Int(epoch as i64),
+                            Value::str(&moving),
+                        ]
+                    })
+                    .collect();
+                rows_out(
+                    cols(&[
+                        ("Shard", ColumnType::Long),
+                        ("Buckets", ColumnType::Long),
+                        ("Ranges", ColumnType::VarString),
+                        ("Epoch", ColumnType::LongLong),
+                        ("Moving", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
+            }
+            Admin::MoveBuckets { first, last, to } => {
+                self.implicit_commit().await?;
+                let to_pos = self.cluster.shard_position(to).ok_or_else(|| {
+                    SqlError::new(1210, "HY000", format!("there is no shard {} in the configuration", to))
+                })?;
+                let count = self.cluster.bucket_map().count;
+                if last > count {
+                    return Err(SqlError::new(
+                        1210,
+                        "HY000",
+                        format!("bucket {} does not exist (there are {})", last, count),
+                    ));
+                }
+                let mut moved = 0u64;
+                for b in first..=last {
+                    if self
+                        .cluster
+                        .move_bucket(b, to_pos, self.cluster.cfg.move_timeout)
+                        .await?
+                    {
+                        moved += 1;
+                    }
+                }
+                let total = (last - first + 1) as u64;
+                Ok(Output::Ok {
+                    affected: moved,
+                    last_insert_id: 0,
+                    info: format!("Buckets: {} moved, {} there already", moved, total - moved),
+                })
+            }
             Admin::ShowWarnings { errors } => rows_out(
                 cols(&[
                     ("Level", ColumnType::VarString),
@@ -2901,6 +2996,9 @@ impl Session {
             ("Tarn_storage_counts", s.storage_counts.load(Ordering::Relaxed)),
             ("Tarn_rows_read", s.rows_read.load(Ordering::Relaxed)),
             ("Tarn_path_estimates", s.path_estimates.load(Ordering::Relaxed)),
+            ("Tarn_bucket_moves", s.bucket_moves.load(Ordering::Relaxed)),
+            ("Tarn_bucket_map_reads", self.cluster.bucket_loads()),
+            ("Tarn_buckets", self.cluster.bucket_map().count as u64),
             ("Tarn_shards", self.cluster.nshards() as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));

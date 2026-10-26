@@ -555,6 +555,22 @@ impl TableDef {
         self.shard_key.iter().map(|&c| self.key_part(c, &row[c])).collect()
     }
 
+    /// The shard key of the row with primary key `pk` (as `pk_key` gives
+    /// it): the shard key is part of the primary key.
+    pub fn shard_key_of_pk(&self, pk: &[Value]) -> Vec<Value> {
+        let cols = &self.indexes[0].cols;
+        self.shard_key
+            .iter()
+            .map(|c| {
+                cols.iter()
+                    .position(|x| x == c)
+                    .and_then(|p| pk.get(p))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+            .collect()
+    }
+
     /// Order of two values of column `c` as its indexes order them.
     pub fn key_cmp(&self, c: usize, a: &Value, b: &Value) -> std::cmp::Ordering {
         crate::types::sort_cmp_coll(a, b, self.layout.colls[c])

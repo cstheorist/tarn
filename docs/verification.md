@@ -105,7 +105,10 @@ result. Verus proves:
 
 * **Routing** (`route.rs`): the CRC-32C used for bucket hashing equals a
   bitwise specification for every input; bucket and shard numbers are in
-  range; the bucket-to-shard map is monotone and onto.
+  range; the bucket-to-shard map of a new cluster is monotone and onto; the
+  map built from the buckets the shards report owning gives each bucket the
+  shard of the report that holds it, or none, and refuses reports that
+  claim a bucket twice.
 * **Coordinator decisions** (`coord.rs`): `decide` commits exactly on
   unanimous YES and aborts exactly when some vote is NO; `resolve_step`
   (one step of recovery) decides COMMIT only when the states it is given
@@ -131,7 +134,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 61 verified, 0 errors
+# verification results:: 66 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with
@@ -142,13 +145,15 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`) |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 465 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
 | READ COMMITTED | `python3 tests/sql/rctest.py --tarn HOST:PORT[,HOST:PORT...]` (every SQL server) | a Tarn cluster with two or more shards | isolation variables, lock waits, lock wait timeouts, local and cross-shard deadlocks (also across SQL servers), no deadlock-detector calls without lock waits, locks of failed lock requests released with their transaction, concurrent counters without lost updates, semi-consistent `UPDATE`/`DELETE`, `SKIP LOCKED` job queues, `NOWAIT`, `FOR SHARE`, duplicate inserts and concurrent upserts on unique keys, savepoints, statement rollback, locks released on disconnect |
 | Schema changes | `python3 tests/sql/ddltest.py --tarn HOST:PORT[,HOST:PORT]` | a Tarn cluster, ideally with two SQL servers (`cluster.sh -s 2`); the `mysql` client | a mysqldump file, multi-statement batches and `COM_SET_OPTION`, refused alterations, `ALTER TABLE` about 300 times while both servers write the table: no autocommit statement fails, no acknowledged write is lost or duplicated; concurrent schema changes; transactions spanning an `ALTER` |
-| Failover | `tests/failover.sh` (`ENGINE=vinyl`: vinyl tables) | Tarantool | 2 shards × 3 replicas under the bank workload and READ COMMITTED transfers: a live leader change, then two leader kills; every check must hold |
+| Bucket moves | `python3 tests/sql/movetest.py --tarn HOST:PORT[,HOST:PORT...]` | a Tarn cluster with two or more shards | transfers with a ledger, READ COMMITTED read-modify-writes, audits and READ COMMITTED scans of every shard while the buckets of their rows keep moving: nothing lost or applied twice, every scan sees each row once |
+| Move faults | `tests/movefaults.sh` | Tarantool | the SQL server driving a move killed while it copies, while its fence drains, between its flip and its send, and between its send and its receive, and after its flip with the move given up on the sending shard: another server gives the move up, or finishes it |
+| Failover | `tests/failover.sh` (`ENGINE=vinyl`: vinyl tables) | Tarantool | 2 shards × 3 replicas under the bank workload, READ COMMITTED transfers and `movetest.py`: a live leader change, then two leader kills; every check must hold |
 | DDL faults | `tests/ddlfaults.sh` | Tarantool | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with a shard down, and with a shard killed while it applies: each takes effect on every shard or on none, checked on the shards directly |
 | Faults | `tests/faults.sh` (`ENGINE=vinyl`: a vinyl table) | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
 
@@ -163,7 +168,7 @@ a `sb` user for the differential tests (or point `--ref` at any MariaDB
 * **lint**: `cargo fmt --check` and `cargo clippy -D warnings`;
 * **test**: unit and integration tests, storage protocol tests, the SQL
   suites against MariaDB 10.11 (on a cluster with two SQL servers), the
-  schema-change, fault-injection and failover tests;
+  schema-change, bucket-move, fault-injection and failover tests;
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.

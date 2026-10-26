@@ -27,8 +27,9 @@ flowchart LR
 * **Storage nodes** are Tarantool 3.x instances running `lua/storage.lua`,
   which loads the Tarn module (`lua/tarn.lua`). A shard is one instance, or a
   replica set with synchronous replication (quorum ⌊N/2⌋+1) and Raft leader
-  election. Each shard owns an equal, contiguous range of the 3,000 hash
-  buckets.
+  election. Rows are hashed into 3,000 buckets; each shard owns some of
+  them (an equal, contiguous range in a new cluster), and buckets move
+  between shards online ([Buckets](#buckets)).
 * **`tarn-server`** is stateless. Run as many as you like (each with a
   distinct `--node-id`); each one finds every shard's leader by itself.
 * **Key/value clients** read the spaces directly from any shard leader.
@@ -221,6 +222,7 @@ options:
   "lock_wait_timeout": 50,
   "deadlock_interval": 1.0,
   "ddl_job_stale": 30,
+  "move_timeout": 10,
   "default_collation": "utf8mb4_bin"
 }
 ```
@@ -252,11 +254,61 @@ not every shard had prepared it, forward if every shard had (`docs/design.md`
 §2.10). Every server looks for such jobs at startup and every
 `ddl_job_stale / 2` seconds (at most 10).
 
+`move_timeout` is how long, in seconds, a bucket move waits at each of its
+steps for the transactions that hold locks on the bucket's rows before it
+gives up (see [Buckets](#buckets)).
+
 **Ack-on-prepare** acknowledges a cross-shard commit as soon as every
 participant has prepared (one round trip instead of two) and applies it in
 the background. SQL readers still see strict serializability (they wait on
 the transaction's locks); direct key/value readers may briefly not see a
 just-acknowledged commit. The model checker covers both modes.
+
+## Buckets
+
+A row's bucket is a hash of its shard key; a shard owns a set of buckets,
+and buckets move between shards while the cluster serves. The shards keep
+the map: the first SQL server to start on a new cluster -- or on one made by
+a version without bucket moves -- gives each shard an equal, contiguous
+range of buckets, and from then on only moves change it. SQL servers read
+the map when they start, and again when a shard refuses a request for a
+bucket it no longer owns.
+
+```sql
+SHOW TARN BUCKETS;                               -- per shard: buckets, ranges, epoch, moves in progress
+TARN MOVE BUCKET 1614 TO SHARD 2;
+TARN MOVE BUCKETS BETWEEN 2001 AND 3000 TO SHARD 3;   -- one at a time; those already there stay
+```
+
+A move copies the bucket's rows to the new shard while the old one serves
+them, then fences the bucket on the old shard -- writes and row locks on its
+rows are refused from then on, and the row locks held on them are broken --,
+waits for the transactions holding locks on its rows, copies the rows
+written since the copy began, deletes the rows on the old shard and inserts
+them on the new one. Clients see this as follows: an autocommit statement,
+or the first statement of a transaction, that meets the move runs again
+with the new map (`Tarn_retries`); a transaction that already used the
+bucket's rows is rolled back with 1213, as after a leader change. Writes to
+the bucket wait from its fence to its switch: the time to drain the
+prepared transactions that hold its rows' locks and to copy the last
+writes. A step that waits longer than `move_timeout` gives the move up
+(1205): the bucket stays where it was. A move survives leader changes of
+either shard (it copies the bucket again if the old shard's leader changed
+while it copied), and if its SQL server stops, another server finishes it
+after `ddl_job_stale`: back if the old shard had not deleted the rows yet,
+forward otherwise. Moves and schema changes wait for each other.
+
+To **add a shard**: start its storage nodes, add it to every SQL server's
+configuration and restart them one at a time (a server that finds the new
+shard without a map gives it no buckets), then move buckets to it. To
+**remove a shard**, move all its buckets away first. Before moving buckets,
+every SQL server must run a version with bucket moves and know every
+shard: an older server names no buckets in its requests (shards refuse its
+writes by their rows' `bucket_id`, but its reads are not checked).
+
+Key/value clients that compute a row's shard themselves find each bucket's
+shard in `tarn_buckets()` on the shards (or in `SHOW TARN BUCKETS`), or ask
+every shard.
 
 ## Local clusters
 
@@ -284,8 +336,11 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), `COUNT`s
   the shards computed without returning rows (`Tarn_storage_counts`), rows
   read from storage (`Tarn_rows_read`), row counts taken to choose between
-  an ordered page and a longer index prefix (`Tarn_path_estimates`), number
-  of shards.
+  an ordered page and a longer index prefix (`Tarn_path_estimates`), buckets
+  this server moved (`Tarn_bucket_moves`) and how many times it read the
+  bucket map (`Tarn_bucket_map_reads`), the number of buckets
+  (`Tarn_buckets`), number of shards. `SHOW TARN BUCKETS` lists each
+  shard's buckets and the moves in progress.
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
@@ -293,7 +348,9 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   `DROP TABLE` in progress (`ddl_held`), and counters (`prepare_yes`,
   `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `recovered`,
   `gc_part`, `gc_txn`, `validate_changed`; for row locks `plock_waits`,
-  `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`).
+  `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`; for buckets
+  `buckets` and `bucket_epoch`, and the counters `moved` (requests refused
+  for their bucket), `move_broken_locks`, `bucket_sends`, `bucket_recvs`).
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted
@@ -310,13 +367,15 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 | Connection lost while a commit is in flight | The client gets 1180 / SQLSTATE 40003: the outcome is unknown, and the write is not re-sent. |
 | A shard is down for a while | Transactions that touch it fail; rows of transactions that committed but were not yet applied there stay locked until it returns and recovery applies them. |
 | A shard fails during `CREATE TABLE`, `DROP TABLE`, `TRUNCATE` or `ALTER TABLE` | Before every shard prepared: the statement fails and the change is undone on every shard (once the shard is back, for that shard). After: the statement reports 1180 and the change is completed on every shard once the shard is back. Either way a SQL server finishes the job by itself (`ddl_job_stale`); until then, other schema changes of the same table wait. |
+| A bucket moves | Statements that meet it run again with the new map; a transaction that used its rows while it moved is rolled back with 1213. Writes to its rows wait from the move's fence to its switch. |
+| A move's SQL server stops, or a shard leader dies during a move | Another SQL server finishes the move after `ddl_job_stale`: back if the old shard had not sent the bucket, forward otherwise; a leader change alone does not stop a move. |
 | Partitioned old leader | It steps down after the election timeout (`election_fencing_mode = 'strict'`); until then it may still answer autocommit reads from its own data (the usual leader-lease assumption). |
 
 ## Error codes
 
 | Code | SQLSTATE | Meaning | Client action |
 |---|---|---|---|
-| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
+| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, a bucket the transaction used moved, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
 | 1205 | HY000 | lock wait timeout (`innodb_lock_wait_timeout`); only the statement was rolled back | retry the statement or roll back |
 | 3572 | HY000 | `NOWAIT` and the row is locked; only the statement was rolled back | |
 | 1305 | 42000 | no such savepoint | |
