@@ -1273,7 +1273,29 @@ fn union_path(table: &TableDef, alts: &[EqAlt]) -> Option<AccessPath> {
     ))
 }
 
-fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
+/// Whether reading `idx` with `eq_len` leading columns fixed returns rows in
+/// the order of `order` (table columns, descending?): every ORDER BY column
+/// is fixed by the equality prefix or is the next index column, ascending.
+fn index_follows_order(idx: &crate::catalog::IndexDef, eq_len: usize, order: &[(usize, bool)]) -> bool {
+    let mut next = eq_len;
+    !order.is_empty()
+        && order
+            .iter()
+            .all(|&(c, desc)| match idx.cols.iter().position(|&x| x == c) {
+                Some(pos) if pos < eq_len => true,
+                Some(pos) if pos == next && !desc => {
+                    next += 1;
+                    true
+                }
+                _ => false,
+            })
+}
+
+/// Access path for the conjuncts `conj`. `order` is the statement's ORDER BY
+/// as table columns when a LIMIT may stop the scan early (else empty): among
+/// indexes with the same equality prefix, one that returns rows in that order
+/// wins, so a plain read can page through it and stop (issue #41).
+fn choose_path(table: &TableDef, offset: usize, conj: &[Expr], order: &[(usize, bool)]) -> AccessPath {
     if table.is_virtual() {
         // information_schema: rows come from the catalog; WHERE filters them
         return AccessPath::Full;
@@ -1449,7 +1471,16 @@ fn choose_path(table: &TableDef, offset: usize, conj: &[Expr]) -> AccessPath {
             continue; // IN on a non-unique / partial key: fall back to other paths
         } else if !eq.is_empty() || range.is_some() {
             let (lo, hi2) = range.unwrap_or((None, None));
-            let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus;
+            // Following ORDER BY outweighs the primary-key bonus, never a
+            // longer equality prefix or a bound on the next column; only
+            // when the prefix fixes the shard key (one shard, read in pages).
+            let routed = table.shard_key.iter().all(|c| idx.cols[..eq.len()].contains(c));
+            let ordered = if routed && index_follows_order(idx, eq.len(), order) {
+                3
+            } else {
+                0
+            };
+            let s = 10 * eq.len() as i32 + if lo.is_some() || hi2.is_some() { 5 } else { 0 } + pk_bonus + ordered;
             (
                 s,
                 AccessPath::Range {
@@ -1880,8 +1911,23 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         limit_exprs(q, &mut lb)?
     };
 
-    // FROM: access paths
-    let source = build_source(&scope, &joins, &on_exprs, &conj)?;
+    // FROM: access paths. A single-table read with LIMIT prefers an index
+    // that returns rows in ORDER BY order (the executor then pages through
+    // it and stops early).
+    let order_cols: Vec<(usize, bool)> =
+        if scope.tables.len() == 1 && limit.is_some() && !aggregated && sel.distinct.is_none() {
+            order
+                .iter()
+                .map(|(e, desc)| match e {
+                    Expr::Col(c) if *c < scope.tables[0].table.columns.len() => Some((*c, *desc)),
+                    _ => None,
+                })
+                .collect::<Option<_>>()
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+    let source = build_source(&scope, &joins, &on_exprs, &conj, &order_cols)?;
     let filter = join_and(conj.clone());
 
     // Push LIMIT to storage when every row read is a result row (HAVING
@@ -2040,6 +2086,7 @@ fn build_source(
     joins: &[(JoinKind, Option<A::Expr>)],
     on: &[Option<Expr>],
     conj: &[Expr],
+    order: &[(usize, bool)],
 ) -> SqlResult<Source> {
     if scope.tables.is_empty() {
         return Ok(Source::Dual);
@@ -2048,7 +2095,7 @@ fn build_source(
     let mut src = Source::Table(TableAccess {
         table: t0.table.clone(),
         alias: t0.alias.clone(),
-        path: choose_path(&t0.table, 0, conj),
+        path: choose_path(&t0.table, 0, conj, order),
         offset: 0,
         limit: None,
     });
@@ -2063,7 +2110,7 @@ fn build_source(
         if kind == JoinKind::Inner {
             cands.extend(conj.iter().cloned());
         }
-        let path = choose_path(&t.table, t.offset, &cands);
+        let path = choose_path(&t.table, t.offset, &cands, &[]);
         src = Source::Join {
             left: Box::new(src),
             right: TableAccess {
@@ -2252,7 +2299,7 @@ fn plan_update(u: &A::Update, ctx: &PlanCtx) -> SqlResult<UpdatePlan> {
         Some(l) => Some(b.bind(l)?),
         None => None,
     };
-    let path = choose_path(&table, 0, &conj);
+    let path = choose_path(&table, 0, &conj, &[]);
     Ok(UpdatePlan {
         access: TableAccess {
             table: table.clone(),
@@ -2290,7 +2337,7 @@ fn plan_delete(d: &A::Delete, ctx: &PlanCtx) -> SqlResult<DeletePlan> {
         Some(l) => Some(b.bind(l)?),
         None => None,
     };
-    let path = choose_path(&table, 0, &conj);
+    let path = choose_path(&table, 0, &conj, &[]);
     Ok(DeletePlan {
         access: TableAccess {
             table: table.clone(),
@@ -3087,6 +3134,102 @@ mod tests {
             Source::Table(t) => assert!(matches!(&t.path, AccessPath::Point { keys, .. } if keys.len() == 3)),
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn index_that_follows_order_by() {
+        // issue #41: with LIMIT, an index whose columns after the equality
+        // prefix are the ORDER BY wins over the primary-key prefix
+        let c0 = Catalog::default();
+        let ctx0 = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE orders (shop_id BIGINT NOT NULL, id BIGINT NOT NULL, processed_at DATETIME, \
+             is_deleted TINYINT NOT NULL DEFAULT 0, number INT, PRIMARY KEY (shop_id, id), \
+             KEY by_processed (shop_id, processed_at, id), KEY by_number (shop_id, number, id)) \
+             PARTITION BY KEY (shop_id)",
+            &ctx0,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let path = |sql: &str| {
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            match plan(sql, &ctx).unwrap() {
+                Stmt::Select(s) => match &s.source {
+                    Source::Table(t) => t.path.clone(),
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            }
+        };
+        let index = |p: AccessPath| match p {
+            AccessPath::Range { index, eq, .. } => (index, eq.len()),
+            other => panic!("{other:?}"),
+        };
+        let page = "SELECT * FROM orders WHERE shop_id = 1 AND is_deleted = 0 ORDER BY processed_at, id";
+        assert_eq!(index(path(&format!("{page} LIMIT 51"))), (1, 1));
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY processed_at LIMIT 5"
+            )),
+            (1, 1)
+        );
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY number, id LIMIT 5"
+            )),
+            (2, 1)
+        );
+        // the primary key follows ORDER BY id
+        assert_eq!(
+            index(path("SELECT * FROM orders WHERE shop_id = 1 ORDER BY id LIMIT 5")),
+            (0, 1)
+        );
+        // without LIMIT, or with an order no index follows: the primary key
+        assert_eq!(index(path(page)), (0, 1));
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 ORDER BY is_deleted LIMIT 5"
+            )),
+            (0, 1)
+        );
+        // a longer equality prefix still beats the order
+        assert_eq!(
+            index(path(
+                "SELECT * FROM orders WHERE shop_id = 1 AND number = 3 ORDER BY processed_at LIMIT 5"
+            )),
+            (2, 2)
+        );
+        // aggregates read every row anyway
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::Select(s) = plan(
+            "SELECT COUNT(*) FROM orders WHERE shop_id = 1 ORDER BY processed_at LIMIT 5",
+            &ctx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert!(matches!(&s.source, Source::Table(t) if matches!(t.path, AccessPath::Range { index: 0, .. })));
     }
 
     #[test]
