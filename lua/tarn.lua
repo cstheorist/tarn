@@ -606,7 +606,12 @@ function BK.rebuild()
     BK.count = math.max(a.count, c.count)
     BK.epoch = math.max(a.epoch, c.epoch)
     BK.stale = false
+    BK.ver = BK.ver + 1
 end
+
+-- Changes of the state in memory (states, epoch): tarn_buckets builds its
+-- report once per change.
+BK.ver = 0
 
 -- Like lk_fresh: in a separate fiber, so that a caller inside a transaction
 -- gets no read trackers on _tarn_buckets.
@@ -4564,6 +4569,7 @@ function BK.applied(b, state, peer, move, epoch)
         BK.track[b] = nil
         BK.track_n = BK.track_n - 1
     end
+    BK.ver = BK.ver + 1
 end
 
 -- Run fn(...) while no other step changes the state of a bucket here:
@@ -4622,13 +4628,13 @@ function BK.early(b, state, peer, move, epoch)
     if state ~= nil then
         BK.applied(b, state, peer, move, epoch)
     else
-        BK.epoch = epoch
+        BK.epoch, BK.ver = epoch, BK.ver + 1
     end
     box.on_rollback(function()
         if state ~= nil then
             BK.applied(b, old[1], old[2], old[3], old[4])
         else
-            BK.epoch = old[4]
+            BK.epoch, BK.ver = old[4], BK.ver + 1
         end
     end)
 end
@@ -4680,44 +4686,79 @@ end
 
 -- The map of a new cluster, made by the first SQL server: this shard's
 -- buckets, as ranges {{lo, hi}, ...}, out of `count`. {'ok'}, or
--- {'exists', count} when the shard has a map (which stays as it is).
+-- {'exists', count} when the shard has a map (which stays as it is) -- also
+-- when another server made it at the same moment, perhaps with another
+-- count: the server then makes the other shards' maps with that one.
+function BK.map_count()
+    -- (read-committed: also a map whose WAL write is in progress)
+    box.begin(RW)
+    local m = box.space._tarn_meta:get{'buckets'}
+    box.commit()
+    return m and m.value.count
+end
+
 function tarn_bucket_init(count, ranges)
     writable()
-    local m = box.space._tarn_meta:get{'buckets'}
-    if m ~= nil then return {'exists', m.value.count} end
-    box.begin(RW)
-    for _, r in ipairs(ranges) do
-        for b = r[1], r[2] do box.space._tarn_buckets:replace{b, 'active', box.NULL, box.NULL} end
+    local ok, res = pcall(function()
+        box.begin(RW)
+        local m = box.space._tarn_meta:get{'buckets'}
+        if m ~= nil then
+            box.rollback()
+            return {'exists', m.value.count}
+        end
+        for _, r in ipairs(ranges) do
+            for b = r[1], r[2] do box.space._tarn_buckets:replace{b, 'active', box.NULL, box.NULL} end
+        end
+        -- (insert: of two servers making the map at once, one fails here or
+        -- in its commit, and its bucket records go with it)
+        box.space._tarn_meta:insert{'buckets', {count = count, epoch = 1}}
+        box.commit()
+        return {OK}
+    end)
+    if box.is_in_txn() then box.rollback() end
+    if not ok then
+        local c = BK.map_count()
+        if c == nil then error(res) end
+        return {'exists', c}
     end
-    box.space._tarn_meta:replace{'buckets', {count = count, epoch = 1}}
-    box.commit()
-    BK.stale = true
-    return {OK}
+    if res[1] == OK then BK.stale = true end
+    return res
 end
 
 -- This shard's map: {'ok', count, epoch, owned, others}: owned = the
 -- buckets it owns, as ranges {{lo, hi}, ...}; others = {{bucket, state,
--- peer, move}, ...} for those it has in other states. {'ok', 0} without
--- a map.
+-- peer, move}, ...} for those it has in other states. Without a map {'ok',
+-- 0, tables}: the number of Tarn tables on the shard, whose rows were
+-- stored by a version from before the map (with the count of that time).
+-- It reports the state in memory, which the shard's checks go by (a step's
+-- change shows once the step made it, as BK.early does), and builds the
+-- report once per change: reading 15,000 buckets from _tarn_buckets takes
+-- about 11 ms, and SQL servers read the map after every move.
 function tarn_buckets()
     writable()
-    local m = box.space._tarn_meta:get{'buckets'}
-    if m == nil then return {OK, 0} end
+    BK.fresh()
+    if BK.count == 0 then return {OK, 0, #BK.spaces()} end
+    local r = BK.report
+    if r ~= nil and r.ver == BK.ver then return r.reply end
     local owned, others, lo, hi = {}, {}, nil, nil
-    for _, t in box.space._tarn_buckets:pairs() do   -- (in bucket order)
-        local s = t.state
+    local st = BK.state
+    for b = 1, BK.count do
+        local s = st[b]
         if s == 'active' or s == 'sending' or s == 'fenced' then
-            if hi ~= nil and t.bucket == hi + 1 then
-                hi = t.bucket
+            if hi ~= nil and b == hi + 1 then
+                hi = b
             else
                 if lo ~= nil then owned[#owned + 1] = {lo, hi} end
-                lo, hi = t.bucket, t.bucket
+                lo, hi = b, b
             end
         end
-        if s ~= 'active' then others[#others + 1] = {t.bucket, s, t.peer, t.move} end
+        if s ~= nil and s ~= 'active' then
+            others[#others + 1] = {b, s, BK.peer[b] or box.NULL, BK.move[b] or box.NULL}
+        end
     end
     if lo ~= nil then owned[#owned + 1] = {lo, hi} end
-    return {OK, m.value.count, m.value.epoch, owned, others}
+    BK.report = {ver = BK.ver, reply = {OK, BK.count, BK.epoch, owned, others}}
+    return BK.report.reply
 end
 
 -- R: receive bucket b from shard `from` in move `move`.

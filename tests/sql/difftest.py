@@ -395,7 +395,7 @@ CASES = [
      "(SELECT k1, k2 FROM t3 WHERE k1 = 4 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED)", "q"),
     ("(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 1 FOR UPDATE) UNION ALL "
      "(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 2 FOR UPDATE) ORDER BY 2 DESC", "q"),
-    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 LIMIT 3 FOR UPDATE) UNION ALL "
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 ORDER BY k1, k2 LIMIT 3 FOR UPDATE) UNION ALL "
      "(SELECT id, b FROM t1 WHERE id = 3 FOR UPDATE)", "q"),
     ("COMMIT", "q"),
     ("UPDATE uk SET n = n * 2 WHERE name IN ('a', 'c')", "dml:uk"),
@@ -948,7 +948,7 @@ CASES = [
     ("SELECT id FROM nu WHERE e IS NULL AND id = 3", "q"),
     ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL AND id = 3", "q"),
     ("UPDATE nu SET f = 9 WHERE e IS NULL", "dml:nu"),
-    ("DELETE FROM nu WHERE e IS NULL AND f = 9 LIMIT 1", "dml:nu"),
+    ("DELETE FROM nu WHERE e IS NULL AND f = 9 ORDER BY id LIMIT 1", "dml:nu"),
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
      "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),

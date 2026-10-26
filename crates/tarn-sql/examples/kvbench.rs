@@ -1,7 +1,8 @@
 //! Direct Key/Value reads of SQL rows: N tasks read random primary keys of
 //! a Tarn table straight from the Tarantool shards (IPROTO SELECT on the
-//! table's space, index 0), routing each key with the same bucket function
-//! the SQL layer uses. No SQL server is involved.
+//! table's space, index 0), routing each key as the SQL layer does: its
+//! bucket, and the bucket's shard in the map the shards keep
+//! (`tarn_buckets`, read once at the start). No SQL server is involved.
 //!
 //! ```text
 //! cargo run --release -p tarn-sql --example kvbench -- \
@@ -11,6 +12,7 @@
 //! `--check` verifies every read returned the row whose primary key was
 //! asked for (and that the key exists).
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,7 +27,6 @@ struct Args {
     secs: f64,
     conns: usize,
     check: bool,
-    buckets: u32,
 }
 
 fn parse() -> Args {
@@ -37,7 +38,6 @@ fn parse() -> Args {
         secs: 10.0,
         conns: 1,
         check: false,
-        buckets: 3000,
     };
     let mut it = std::env::args().skip(1);
     while let Some(f) = it.next() {
@@ -49,7 +49,6 @@ fn parse() -> Args {
             "--tasks" => a.tasks = v().parse().unwrap(),
             "--secs" => a.secs = v().parse().unwrap(),
             "--conns" => a.conns = v().parse().unwrap(),
-            "--buckets" => a.buckets = v().parse().unwrap(),
             "--check" => a.check = true,
             other => panic!("unknown flag {other}"),
         }
@@ -91,15 +90,21 @@ async fn main() {
             .as_i64()
             .expect("no such space") as u32
     };
+    // The bucket map, as a SQL server reads it.
+    let mut reports = Vec::new();
+    for p in &pools {
+        let r = p[0].call(0, "tarn_buckets", &[0x90]).await.expect("tarn_buckets");
+        reports.push(tarn_sql::buckets::parse_report(&r.data().unwrap()).expect("bucket map"));
+    }
+    let map = Arc::new(tarn_sql::buckets::BucketMap::from_reports(reports, &HashMap::new()).expect("bucket map"));
     let pools = Arc::new(pools);
     let stop = Arc::new(AtomicBool::new(false));
     let ops = Arc::new(AtomicU64::new(0));
     let bad = Arc::new(AtomicU64::new(0));
-    let nshards = a.shards.len() as u32;
     let mut handles = Vec::new();
     for t in 0..a.tasks {
-        let (pools, stop, ops, bad) = (pools.clone(), stop.clone(), ops.clone(), bad.clone());
-        let (keys, check, buckets) = (a.keys, a.check, a.buckets);
+        let (pools, stop, ops, bad, map) = (pools.clone(), stop.clone(), ops.clone(), bad.clone(), map.clone());
+        let (keys, check) = (a.keys, a.check);
         handles.push(tokio::spawn(async move {
             let mut lat = Vec::with_capacity(1 << 16);
             let mut x: u64 = 0x9E37_79B9_7F4A_7C15 ^ (t as u64 + 1);
@@ -110,8 +115,8 @@ async fn main() {
                 x ^= x << 17;
                 let id = (x % keys as u64) as i64 + 1;
                 let v = Value::Int(id);
-                let bucket = tarn_sql::route::bucket_of(std::slice::from_ref(&v), buckets);
-                let shard = tarn_sql::route::shard_of_bucket(bucket, buckets, nshards) as usize;
+                let bucket = tarn_sql::route::bucket_of(std::slice::from_ref(&v), map.count);
+                let shard = map.shard(bucket);
                 let pool = &pools[shard];
                 let c = &pool[(x as usize >> 3) % pool.len()];
                 key.clear();

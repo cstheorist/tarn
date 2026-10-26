@@ -16,9 +16,6 @@ use std::time::{Duration, Instant};
 use tarn_common::{SqlError, SqlResult, Value};
 use tarn_iproto::{Client, Opts};
 
-fn default_buckets() -> u32 {
-    3000
-}
 fn default_user() -> String {
     "tarn".into()
 }
@@ -46,8 +43,12 @@ pub struct ShardConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClusterConfig {
     pub shards: Vec<ShardConfig>,
-    #[serde(default = "default_buckets")]
-    pub bucket_count: u32,
+    /// The number of buckets of a new cluster (default
+    /// `buckets::NEW_CLUSTER_BUCKETS`), fixed when the first SQL server
+    /// makes the bucket map; from then on the map's count is used. See
+    /// `buckets::new_map_count`.
+    #[serde(default)]
+    pub bucket_count: Option<u32>,
     #[serde(default = "default_user")]
     pub user: String,
     #[serde(default = "default_user")]
@@ -736,7 +737,11 @@ impl Cluster {
             lock_wait_timeout: cfg.lock_wait_timeout,
         });
         let shard_pos = cfg.shards.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
-        let (bucket_count, nshards) = (cfg.bucket_count, cfg.shards.len());
+        // (until the map is read, below)
+        let (bucket_count, nshards) = (
+            cfg.bucket_count.unwrap_or(crate::buckets::LEGACY_BUCKETS),
+            cfg.shards.len(),
+        );
         let c = Arc::new(Cluster {
             cfg,
             shards,
@@ -759,6 +764,17 @@ impl Cluster {
             s.client(&c).await?;
         }
         c.reload_buckets().await?;
+        if let Some(n) = c.cfg.bucket_count {
+            let count = c.bucket_map().count;
+            if n != count {
+                tracing::warn!(
+                    "bucket_count is {} in the configuration, but the cluster has {} buckets (fixed when it was made): using {}",
+                    n,
+                    count,
+                    count
+                );
+            }
+        }
         if let Err(e) = c.finish_stale_jobs().await {
             tracing::warn!("finishing abandoned schema changes: {}", e);
         }
