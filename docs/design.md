@@ -141,7 +141,12 @@ without pages, a scan of millions of rows took that heap to Tarantool's
 Lua memory limit, where an allocation that failed outside a protected call
 killed the node. A read that finds less than a reserve of that heap free
 (1/16 of the limit, at least 16 MiB) fails with 1041 instead; counts
-(`tarn_count`) return no rows. Inside a transaction the pages are reads of
+(`tarn_count`) return no rows. A fiber checks the heap every 100 ms and
+runs a full collection when less than that reserve is free (at most once a
+second): LuaJIT starts a cycle only when the heap reaches twice what the
+last one left, so a heap of garbage near the limit otherwise stays there,
+and every call fails with "not enough memory" until something collects it
+(issue #73). Inside a transaction the pages are reads of
 its stream (one MVCC view), and the whole range is recorded once for
 validation. An autocommit read that needs more than one page runs as an
 implicit read-only transaction, as one that needs several shards does. A

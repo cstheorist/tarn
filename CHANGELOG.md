@@ -375,6 +375,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   decodes MySQL string escapes; `SHOW CREATE TABLE` escapes quotes,
   backslashes, NUL, newline and carriage return as MariaDB does.
 
+- A storage node whose Lua heap was left full of garbage near the limit
+  failed every call, its recovery fiber's too, with "not enough memory"
+  until a manual `collectgarbage()`: LuaJIT starts a collection cycle only
+  when the heap reaches twice what the last cycle left, which was above the
+  limit. A fiber now checks the heap every 100 ms and collects it when less
+  than the read reserve (1/16 of the limit, at least 16 MiB) is free, at
+  most once a second; `tarn_info` counts these in `heap_collects`
+  ([#73](https://github.com/cstheorist/tarn/issues/73)).
+
 ## [0.1.0] - 2026-10-25
 
 First public release: a research prototype.

@@ -68,7 +68,7 @@ local M = {
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
              stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0,
-             creates = 0, drops = 0, truncates = 0, ddl_doomed = 0, read_oom = 0},
+             creates = 0, drops = 0, truncates = 0, ddl_doomed = 0, read_oom = 0, heap_collects = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -1790,18 +1790,48 @@ local LONG_SCAN_SLICE = {warn = 1.0, err = 30.0}
 -- need while reads run.
 -- (A full collection runs at most every 100 ms: a heap that stays near the
 -- reserve must not make every read collect it.)
+--
+-- A heap of garbage near the limit does not empty by itself (issue #73):
+-- LuaJIT starts a collection cycle when the heap reaches a threshold, twice
+-- what the last cycle left by default, and does not collect when an
+-- allocation fails. With the threshold above the limit, every allocation
+-- fails, the heap never reaches it, and every call (the recovery fiber's
+-- too) fails with "not enough memory" until a manual collect. The heap
+-- watchdog (PG.watch_heap) collects such a heap.
 do
     local alloc_ok, alloc = pcall(require, 'internal.alloc')
     local collected = -math.huge
-    function PG.heap_low()
-        if not alloc_ok then return false end
-        local reserve = math.max(alloc.getlimit() / 16, 16 * 1024 * 1024)
-        if alloc.unused() >= reserve then return false end
-        if clock.monotonic() - collected > 0.1 then
+    local function reserve() return math.max(alloc.getlimit() / 16, 16 * 1024 * 1024) end
+    -- A full collection when the heap is short and none ran for `every` s.
+    local function collect(every)
+        if clock.monotonic() - collected > every then
             collectgarbage()   -- (what is in use may be mostly garbage)
             collected = clock.monotonic()
         end
-        return alloc.unused() < reserve
+    end
+    function PG.heap_low()
+        if not alloc_ok then return false end
+        if alloc.unused() >= reserve() then return false end
+        collect(0.1)
+        return alloc.unused() < reserve()
+    end
+    -- Check the heap every 100 ms (with no allocation while it is fine) and
+    -- collect it when less than the reserve is free, at most every second
+    -- (a heap that is full of live data is collected for nothing).
+    function PG.watch_heap()
+        if not alloc_ok then return end
+        fiber.create(function()
+            fiber.name('tarn_heap')
+            while true do
+                fiber.sleep(0.1)
+                if alloc.unused() < reserve() then
+                    local ok = pcall(collect, 1)
+                    if ok and alloc.unused() >= reserve() then
+                        M.stats.heap_collects = M.stats.heap_collects + 1
+                    end
+                end
+            end
+        end)
     end
 end
 
@@ -4102,6 +4132,7 @@ function M.init(cfg)
     box.space._index:on_replace(function() invalidate_key_defs() end)
     box.session.on_disconnect(pl_on_disconnect)
     M.start_recovery()
+    PG.watch_heap()
     rawset(_G, 'tarn', M)
     return M
 end
