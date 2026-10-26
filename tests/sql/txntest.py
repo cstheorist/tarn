@@ -119,7 +119,8 @@ class T:
         b = kv_get(self.args.kv, f"{DB}.kv", ["beta"])
         self.check(a is not None and a[:3] == ["alpha", "one", 1], f"KV alpha: {a}")
         self.check(b is not None and b[0] == "beta" and b[1] is None and b[2] == -5, f"KV beta: {b}")
-        self.check(a is not None and isinstance(a[3], int) and 1 <= a[3] <= 3000, f"bucket_id field: {a}")
+        count = int(dict(q(c, "SHOW STATUS LIKE 'Tarn_buckets'"))["Tarn_buckets"])
+        self.check(a is not None and isinstance(a[3], int) and 1 <= a[3] <= count, f"bucket_id field: {a}")
 
     def test_lost_update(self):
         self.fresh("lu", "CREATE TABLE lu (id INT PRIMARY KEY, v INT)", ["(1, 100)"])
@@ -474,14 +475,14 @@ class T:
         # with one storage read per shard, not one per outer row; the keys
         # it read are validated as separate lookups would be
         c = self.fresh("bjo", "CREATE TABLE bjo (id INT PRIMARY KEY, r INT, g INT, KEY kg (g))",
-                       [f"({i}, {'NULL' if i % 50 == 0 else i % 300}, {i % 2})" for i in range(1000)])
+                       [f"({i}, {'NULL' if i % 50 == 49 else i % 300}, {i % 2})" for i in range(1000)])
         self.fresh("bjc", "CREATE TABLE bjc (r INT, n INT, v INT, PRIMARY KEY (r, n)) PARTITION BY KEY(r)",
                    [f"({r}, {n}, {r + n})" for r in range(0, 300, 3) for n in range(2)])
         reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
         sql = "SELECT bjo.id, bjc.n FROM bjo LEFT JOIN bjc ON bjc.r = bjo.r WHERE bjo.g = 1 ORDER BY bjo.id, bjc.n"
         want = []
         for i in range(1, 1000, 2):
-            r = None if i % 50 == 0 else i % 300
+            r = None if i % 50 == 49 else i % 300
             want += [(i, n) for n in range(2)] if r is not None and r % 3 == 0 else [(i, None)]
         for iso in ("SERIALIZABLE", "READ COMMITTED"):
             q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
@@ -496,7 +497,7 @@ class T:
                 what = f"{iso}, {'in a transaction' if txn else 'autocommit'}"
                 self.check(got == want, f"{what}: rows ({got[:4]}...)")
                 # 500 outer rows: 2 batches x 2 shards, plus the outer read
-                self.check(n <= 12, f"{what}: {n} storage reads for 500 outer rows")
+                self.check(0 < n <= 12, f"{what}: {n} storage reads for 500 outer rows")
         q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
         # a child row inserted under a key the join read conflicts (also a
         # key that had no rows); one under a key it did not read does not
@@ -509,6 +510,98 @@ class T:
             self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
                        f"insert of a child of r = {r}: {'conflict' if conflict else 'no conflict'}")
             q(b, f"DELETE FROM bjc WHERE r = {r} AND n = 7")
+
+    def test_batched_join_read_committed_pages(self):
+        # issue #84: the default storage page is 4096 rows (lua/tarn.lua).
+        # All 256 distinct inner prefixes route by the same tenant to one
+        # shard: together they return 5120 rows, but each lookup is only
+        # 20 rows. READ COMMITTED must discard the partial batch and fall
+        # back to the individual lookups without dropping or repeating rows.
+        c = self.fresh("bpo", "CREATE TABLE bpo (tenant_id INT, id INT, PRIMARY KEY (tenant_id, id)) "
+                             "PARTITION BY KEY(tenant_id)", [f"(7, {r})" for r in range(256)])
+        inner = self.fresh("bpc", "CREATE TABLE bpc (tenant_id INT, r INT, n INT, v INT, "
+                                 "PRIMARY KEY (tenant_id, r, n)) PARTITION BY KEY(tenant_id)", [])
+        inner.close()
+        want = [(r, n, r * 100 + n) for r in range(256) for n in range(20)]
+        for lo in range(0, len(want), 1000):
+            q(c, "INSERT INTO bpc VALUES " + ", ".join(f"(7, {r}, {n}, {v})" for r, n, v in want[lo:lo + 1000]))
+        sql = ("SELECT bpo.id, bpc.n, bpc.v FROM bpo LEFT JOIN bpc "
+               "ON bpc.tenant_id = bpo.tenant_id AND bpc.r = bpo.id "
+               "WHERE bpo.tenant_id = 7 ORDER BY bpo.id, bpc.n")
+        reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
+
+        def check_rows(expected, what):
+            before = reads()
+            got = list(q(c, sql))
+            n = reads() - before
+            self.check(got == expected, f"{what}: {len(got)} rows, expected {len(expected)}")
+            # The rejected batched page plus 256 individual lookups proves
+            # this exercised the fallback, rather than a small single page.
+            self.check(n >= 257, f"{what}: {n} storage reads, expected the per-key fallback")
+
+        try:
+            q(c, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            check_rows(want, "READ COMMITTED batched multi-page join")
+            q(c, "BEGIN")
+            q(c, "DELETE FROM bpc WHERE tenant_id = 7 AND r = 0 AND n = 0")
+            q(c, "UPDATE bpc SET r = 255, n = 20 WHERE tenant_id = 7 AND r = 1 AND n = 0")
+            own = [row for row in want if row[:2] not in ((0, 0), (1, 0))]
+            own.append((255, 20, 100))
+            check_rows(sorted(own), "READ COMMITTED batched multi-page join with own writes")
+        finally:
+            q(c, "ROLLBACK")
+            c.close()
+
+    def test_ordered_limit_merged(self):
+        # issue #86: an ordered page over an index that does not fix the
+        # shard key reads a page per shard and merges them; a serializable
+        # read records, per shard, only what that shard returned
+        c = self.fresh("om", "CREATE TABLE om (tenant_id INT, id INT, st VARCHAR(8), t INT, PRIMARY KEY (tenant_id, id), "
+                             "KEY bst (st, t, id)) PARTITION BY KEY(tenant_id)", [])
+        for lo in range(0, 6000, 1000):
+            q(c, "INSERT INTO om VALUES " + ",".join(f"({i % 97}, {i}, '{'open' if i % 3 else 'done'}', {i // 2})"
+                                                   for i in range(lo, lo + 1000)))
+        rows = sorted(((i // 2, i % 97, i) for i in range(6000) if i % 3), key=lambda r: (r[0], r[2]))
+        page = "SELECT id FROM om WHERE st = 'open' ORDER BY t, id LIMIT 30"
+        rpage = "SELECT id FROM om WHERE st = 'open' ORDER BY t DESC, id DESC LIMIT 30"
+        fpage = "SELECT id FROM om WHERE st = 'open' AND id % 7 = 0 ORDER BY t, id LIMIT 30 OFFSET 10"
+        cases = ((page, [r[2] for r in rows][:30], 200),
+                 (rpage, [r[2] for r in reversed(rows)][:30], 200),
+                 (fpage, [r[2] for r in rows if r[2] % 7 == 0][10:40], 2000))
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                for sql, want, most in cases:
+                    if txn:
+                        q(c, "BEGIN")
+                    before = self.rows_read(c)
+                    got = [r[0] for r in q(c, sql)]
+                    n = self.rows_read(c) - before
+                    if txn:
+                        q(c, "COMMIT")
+                    what = f"{iso}, {'in a transaction' if txn else 'autocommit'}: {sql}"
+                    self.check(got == want, f"{what}: rows ({got[:5]}...)")
+                    self.check(n <= most, f"{what}: {n} rows read of 4000")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        # the transaction's own writes are merged into the page
+        q(c, "BEGIN")
+        q(c, "INSERT INTO om VALUES (5, 9001, 'open', -1)")
+        q(c, "UPDATE om SET st = 'done' WHERE tenant_id = 1 AND id = 1")
+        got = [r[0] for r in q(c, page)]
+        self.check(got == [9001] + [r[2] for r in rows if r[2] != 1][:29], f"own writes merged ({got[:5]}...)")
+        q(c, "ROLLBACK")
+        # on every shard, an insert past the rows it returned does not
+        # conflict, one among them does
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for sql, t, conflict in ((page, 2900, False), (page, 3, True), (rpage, 10, False), (rpage, 2995, True)):
+            for tenant in (0, 1, 2, 3):
+                q(a, "BEGIN")
+                q(a, sql)
+                q(a, "UPDATE om SET t = t WHERE tenant_id = 0 AND id = 0")
+                q(b, f"INSERT INTO om VALUES ({tenant}, {8000 + 10 * t + tenant}, 'open', {t})")
+                self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                           f"insert at t = {t} for tenant {tenant}: {'conflict' if conflict else 'no conflict'}")
+                q(b, f"DELETE FROM om WHERE tenant_id = {tenant} AND id = {8000 + 10 * t + tenant}")
 
     def test_ordered_limit_case_insensitive(self):
         # issue #41: the part of a range a limited read records ends at its

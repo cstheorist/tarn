@@ -8,6 +8,96 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Rebalancing ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN
+  REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes]` moves
+  buckets in the background, in rounds, from the heaviest active shard to
+  the lightest until the shards are even -- in the bytes of their rows, or
+  in the requests to their buckets, which the shards count -- and hold even
+  shares of the buckets, with at most n moves at a time and a limit of
+  bytes per second. One runs at a time; `TARN REBALANCE PAUSE`, `RESUME`
+  and `CANCEL` control it, `SHOW TARN REBALANCE`, `SHOW TARN MOVES` and
+  `information_schema.TARN_MOVES` show it, and another SQL server takes it
+  over if its server stops. A schema change or a change of the shards that
+  waits for moves now holds new moves back. `tests/growshrink.sh` grows a
+  cluster from two shards to four and shrinks it to three under the bank
+  workloads of `txntest.py` and `rctest.py`.
+
+- Shards leave a running cluster
+  ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN REMOVE SHARD
+  id` marks the shard draining (no bucket moves to it, and participants
+  refuse it as a decision shard), moves its buckets to the active shards
+  eight at a time, waits until no participant needs it to learn an outcome,
+  and marks it removed on every shard. SQL servers then leave it out, also
+  when they learn of it by finding it unreachable, and start without it when
+  their configuration still lists it. `tests/jointest.sh` removes a shard
+  under load and stops its storage.
+
+- Shards join a running cluster
+  ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN ADD SHARD id
+  'replica,...'` checks the new shard's storage, creates every table there,
+  gives it a bucket map with no buckets and records the new membership on
+  every shard; buckets then move to it with `TARN MOVE BUCKETS`, and `SHOW
+  TARN SHARDS` lists the shards. SQL servers learn new shards from the
+  shards, with no restart or change of configuration. Every shard keeps the
+  membership's version: a transaction that read every shard names the
+  version it was routed with when it commits, as does a read of every shard
+  outside a transaction, and shards with a newer one refuse them (it may
+  have missed a shard that joined since; model-checked, `Join*` and
+  `Bug_JoinNoCheck*` configurations). `tests/jointest.sh` adds a shard
+  under the workload of `tests/sql/movetest.py`, `tests/joinfaults.sh`
+  kills the SQL server driving a join (another server gives it up or
+  finishes it), and `scripts/cluster.sh add-shard` starts a new shard's
+  storage.
+
+- Online bucket moves ([#24](https://github.com/cstheorist/tarn/issues/24)):
+  `TARN MOVE BUCKET n TO SHARD id` and `TARN MOVE BUCKETS BETWEEN n AND m TO
+  SHARD id` move buckets between shards while transactions run, to add a
+  shard, remove one or take load off one; `SHOW TARN BUCKETS` shows the map
+  and the moves in progress. The shards keep the bucket map, made by the
+  first SQL server on a new cluster (or on one from an earlier version);
+  requests name the buckets they were routed by, a shard refuses those it
+  does not own, and the server reads the map again and runs the statement
+  again. A move copies the bucket while the old shard serves it, fences it,
+  waits for the prepared transactions on its rows, copies the last writes
+  and switches; another server finishes a move whose server stopped. The
+  protocol is model-checked (`Move_*` configurations, three `Bug_Move*`
+  ones that TLC must fail) and `tarn_verified::route::build_owner`, which
+  checks the shards' reports, is proven in Verus. `tests/sql/movetest.py`
+  moves buckets under transfers, READ COMMITTED read-modify-writes and
+  scans of every shard (also during `tests/failover.sh`), and
+  `tests/movefaults.sh` kills the SQL server driving a move.
+
+- The number of buckets is chosen when a cluster is made
+  ([#24](https://github.com/cstheorist/tarn/issues/24)): `bucket_count` in
+  `cluster.json`, now 30,000 by default (it was 3,000), so that the shards
+  of a large cluster can be balanced to about 1%. The first SQL server
+  makes the map with it, and the map keeps it. A cluster made by an earlier
+  version keeps the count its rows were stored with: 3,000, or the
+  `bucket_count` it set. Two servers making the map at once agree on one
+  count. `SHOW STATUS` reports it (`Tarn_buckets`), and the `kvbench`
+  example routes by the shards' map.
+
+- Table trees ([#85](https://github.com/cstheorist/tarn/issues/85)): a
+  table's `COMMENT 'tarn:parent=<table>'` declares that its rows nest under
+  the parent's. `CREATE TABLE`, `ALTER TABLE` and `DROP TABLE` check that
+  each child's primary key starts with its parent's, with key types that
+  hash alike, and that the tree is sharded by the root's key, and report
+  what does not line up as warnings; `SET tarn_tree_checks = 'ERROR'` refuses
+  such statements instead. `tarn-server --check-schema FILE` runs the checks
+  over a schema file without a cluster. `SHOW WARNINGS`, `SHOW ERRORS`,
+  `@@warning_count` and the OK packet's warning count report a statement's
+  warnings.
+
+- An ordered read with `LIMIT` over an index whose equality prefix does not
+  fix the shard key pages that index on every shard and merges the shards'
+  pages ([#86](https://github.com/cstheorist/tarn/issues/86)), instead of
+  reading every matching row of every shard and sorting them: each shard
+  reads `LIMIT` + `OFFSET` rows in index order (backwards for `DESC`), and
+  only a shard whose page the merge used up is asked for more. `OFFSET`,
+  residual filters, the transaction's own writes, READ COMMITTED's one
+  committed state per range and serializable range recording (per shard, up
+  to the last row it returned) work as on one shard. The pager retains one
+  routing snapshot across refill rounds, so a bucket move or membership change cannot mix pages from different maps.
 - A join reads its inner table for a batch of outer rows at once
   ([#84](https://github.com/cstheorist/tarn/issues/84)): when the inner side
   is reached by equality on an index key or key prefix (`Point`, `Prefixes`
@@ -20,10 +110,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transaction each key enters the read set as its separate lookup did, and
   the transaction's own rows are merged into every outer row's lookup. A
   READ COMMITTED batch longer than one storage page reads its outer rows'
-  lookups one by one, as before. On two shards a join of 500 outer rows
-  makes about 4 storage calls instead of 500 (or 1,000 for a two-row child
-  prefix) and takes 2-4 ms instead of 35-43 ms. `SHOW STATUS` reports
-  `Tarn_storage_reads`, the pages read by index scans and multi-key lookups.
+  lookups one by one, as before. DECIMAL lookup parts, and global lookups
+  whose base primary key contains DECIMAL, keep per-row reads to preserve
+  exact native key matching. All keys in a batch use one routing snapshot.
+  `SHOW STATUS` reports `Tarn_storage_reads`, attempted index-scan and
+  multi-key page reads, including failed or discarded attempts.
 
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one
@@ -270,6 +361,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An OK packet's info string, such as `PREPARE`'s "Statement prepared",
+  is length-encoded, as MySQL and MariaDB write it. MariaDB's client
+  checked the length and failed every `PREPARE` with 2027 (malformed
+  packet) ([#61](https://github.com/cstheorist/tarn/issues/61)).
 - New indexes on instant-added columns could miss old rows or accept
   duplicate logical keys: short tuples omit the column's non-NULL fill,
   which a native index reads as NULL
@@ -369,6 +464,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   was negative. Arithmetic on an unsigned integer now fails with 1690 below
   zero and BIGINT overflow with 1690, as in MySQL
   ([#11](https://github.com/cstheorist/tarn/issues/11)).
+
+- An index's `COMMENT` (in `CREATE TABLE`, `ALTER TABLE ... ADD INDEX` and
+  `CREATE INDEX`) is stored, kept by `ALTER TABLE`, and shown by
+  `SHOW CREATE TABLE` and `SHOW INDEX`, so dump/reload preserves it
+  ([#80](https://github.com/cstheorist/tarn/issues/80)). `CREATE INDEX`
+  decodes MySQL string escapes; `SHOW CREATE TABLE` escapes quotes,
+  backslashes, NUL, newline and carriage return as MariaDB does.
+
+- A storage node whose Lua heap was left full of garbage near the limit
+  failed every call, its recovery fiber's too, with "not enough memory"
+  until a manual `collectgarbage()`: LuaJIT starts a collection cycle only
+  when the heap reaches twice what the last cycle left, which was above the
+  limit. A fiber now checks the heap every 100 ms and collects it when less
+  than the read reserve (1/16 of the limit, at least 16 MiB) is free, at
+  most once a second; `tarn_info` counts these in `heap_collects`
+  ([#73](https://github.com/cstheorist/tarn/issues/73)).
 
 ## [0.1.0] - 2026-10-25
 

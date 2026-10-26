@@ -1,15 +1,15 @@
-Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=34593 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=45515 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 10 and seed 6848696351821732636 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 28325] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /home/claude/tarn/tla/MC.tla
-Parsing file /home/claude/tarn/tla/TarnCommit.tla
-Parsing file /tmp/tlc-4575499435830350150/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-4575499435830350150/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-4575499435830350150/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-4575499435830350150/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-4575499435830350150/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-4575499435830350150/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-4575499435830350150/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 83 and seed -7322126366019184681 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 15962] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/MC.tla
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/TarnCommit.tla
+Parsing file /tmp/tlc-1725718227041180647/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1725718227041180647/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1725718227041180647/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1725718227041180647/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1725718227041180647/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1725718227041180647/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1725718227041180647/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -23,10 +23,10 @@ Linting of module TarnCommit
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MC
-Starting... (2026-10-25 04:26:32)
+Starting... (2026-10-26 13:43:43)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-25 04:26:33.
-Progress(11) at 2026-10-25 04:26:36: 23,577 states generated (23,577 s/min), 6,996 distinct states found (6,996 ds/min), 3,318 states left on queue.
+Finished computing initial states: 1 distinct state generated at 2026-10-26 13:43:44.
+Progress(11) at 2026-10-26 13:43:47: 21,264 states generated (21,264 s/min), 6,375 distinct states found (6,375 ds/min), 3,038 states left on queue.
 Error: Invariant StrictSerializable is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -48,6 +48,7 @@ State 1: <Initial predicate>
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -58,20 +59,34 @@ State 1: <Initial predicate>
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 2: <ReadH("T2","x") line 654, col 16 to line 654, col 35 of module TarnCommit>
+State 2: <ReadH("T2","x") line 969, col 16 to line 969, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -90,6 +105,7 @@ State 2: <ReadH("T2","x") line 654, col 16 to line 654, col 35 of module TarnCom
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -100,20 +116,34 @@ State 2: <ReadH("T2","x") line 654, col 16 to line 654, col 35 of module TarnCom
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 3: <SendPrepareH("T1") line 658, col 20 to line 658, col 43 of module TarnCommit>
+State 3: <SendPrepareH("T1") line 976, col 20 to line 976, col 48 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -122,8 +152,8 @@ State 3: <SendPrepareH("T1") line 658, col 20 to line 658, col 43 of module Tarn
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -133,6 +163,7 @@ State 3: <SendPrepareH("T1") line 658, col 20 to line 658, col 43 of module Tarn
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -143,20 +174,34 @@ State 3: <SendPrepareH("T1") line 658, col 20 to line 658, col 43 of module Tarn
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "preparing", T2 |-> "exec", T3 |-> "exec"]
 
-State 4: <PrepareH("T1","A") line 663, col 19 to line 663, col 41 of module TarnCommit>
+State 4: <PrepareH("T1","A") line 981, col 19 to line 981, col 51 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -165,9 +210,9 @@ State 4: <PrepareH("T1","A") line 663, col 19 to line 663, col 41 of module Tarn
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -177,6 +222,7 @@ State 4: <PrepareH("T1","A") line 663, col 19 to line 663, col 41 of module Tarn
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -187,20 +233,34 @@ State 4: <PrepareH("T1","A") line 663, col 19 to line 663, col 41 of module Tarn
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "preparing", T2 |-> "exec", T3 |-> "exec"]
 
-State 5: <PrepareH("T1","B") line 663, col 19 to line 663, col 41 of module TarnCommit>
+State 5: <PrepareH("T1","B") line 981, col 19 to line 981, col 51 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -209,10 +269,10 @@ State 5: <PrepareH("T1","B") line 663, col 19 to line 663, col 41 of module Tarn
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -222,6 +282,7 @@ State 5: <PrepareH("T1","B") line 663, col 19 to line 663, col 41 of module Tarn
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -233,20 +294,34 @@ State 5: <PrepareH("T1","B") line 663, col 19 to line 663, col 41 of module Tarn
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "preparing", T2 |-> "exec", T3 |-> "exec"]
 
-State 6: <CoordDecideH("T1") line 659, col 20 to line 659, col 43 of module TarnCommit>
+State 6: <CoordDecideH("T1") line 977, col 20 to line 977, col 53 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -255,12 +330,12 @@ State 6: <CoordDecideH("T1") line 659, col 20 to line 659, col 43 of module Tarn
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "A", type |-> "apply", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "apply", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE],
+  [t |-> "T1", type |-> "apply", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "apply", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -270,6 +345,7 @@ State 6: <CoordDecideH("T1") line 659, col 20 to line 659, col 43 of module Tarn
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -281,20 +357,34 @@ State 6: <CoordDecideH("T1") line 659, col 20 to line 659, col 43 of module Tarn
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 7: <ApplyAtH("T1","B") line 665, col 19 to line 665, col 55 of module TarnCommit>
+State 7: <ApplyAtH("T1","B") line 983, col 19 to line 983, col 65 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -303,12 +393,12 @@ State 7: <ApplyAtH("T1","B") line 665, col 19 to line 665, col 55 of module Tarn
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "A", type |-> "apply", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "apply", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE],
+  [t |-> "T1", type |-> "apply", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "apply", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -318,6 +408,7 @@ State 7: <ApplyAtH("T1","B") line 665, col 19 to line 665, col 55 of module Tarn
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "unread"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -328,20 +419,34 @@ State 7: <ApplyAtH("T1","B") line 665, col 19 to line 665, col 55 of module Tarn
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "T1"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<"T1">>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 8: <ReadH("T2","y") line 654, col 16 to line 654, col 35 of module TarnCommit>
+State 8: <ReadH("T2","y") line 969, col 16 to line 969, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -350,12 +455,12 @@ State 8: <ReadH("T2","y") line 654, col 16 to line 654, col 35 of module TarnCom
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "A", type |-> "apply", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "apply", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE],
+  [t |-> "T1", type |-> "apply", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "apply", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -365,6 +470,7 @@ State 8: <ReadH("T2","y") line 654, col 16 to line 654, col 35 of module TarnCom
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "T1"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -375,20 +481,34 @@ State 8: <ReadH("T2","y") line 654, col 16 to line 654, col 35 of module TarnCom
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "T1"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "B"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<"T1">>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 9: <ValidateROH("T2","A") line 670, col 22 to line 670, col 47 of module TarnCommit>
+State 9: <ValidateROH("T2","A") line 988, col 22 to line 988, col 57 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -397,12 +517,12 @@ State 9: <ValidateROH("T2","A") line 670, col 22 to line 670, col 47 of module T
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "A", type |-> "apply", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "apply", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE],
+  [t |-> "T1", type |-> "apply", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "apply", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -412,6 +532,7 @@ State 9: <ValidateROH("T2","A") line 670, col 22 to line 670, col 47 of module T
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "T1"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -422,20 +543,34 @@ State 9: <ValidateROH("T2","A") line 670, col 22 to line 670, col 47 of module T
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "T1"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "B"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<"T1">>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {"A"}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 10: <ValidateROH("T2","B") line 670, col 22 to line 670, col 47 of module TarnCommit>
+State 10: <ValidateROH("T2","B") line 988, col 22 to line 988, col 57 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -444,12 +579,12 @@ State 10: <ValidateROH("T2","B") line 670, col 22 to line 670, col 47 of module 
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "A", type |-> "apply", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "apply", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE],
+  [t |-> "T1", type |-> "apply", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "apply", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -459,6 +594,7 @@ State 10: <ValidateROH("T2","B") line 670, col 22 to line 670, col 47 of module 
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "T1"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -469,20 +605,34 @@ State 10: <ValidateROH("T2","B") line 670, col 22 to line 670, col 47 of module 
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "T1"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "B"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<"T1">>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {"A", "B"}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "exec", T3 |-> "exec"]
 
-State 11: <FinishROH("T2") line 671, col 17 to line 671, col 37 of module TarnCommit>
+State 11: <FinishROH("T2") line 989, col 17 to line 989, col 47 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -491,12 +641,12 @@ State 11: <FinishROH("T2") line 671, col 17 to line 671, col 37 of module TarnCo
   T3 |-> [x |-> "unread", y |-> "unread"] ]
 /\ rec = [T1 |-> "staging", T2 |-> "none", T3 |-> "none"]
 /\ dpos = [R1 |-> [x |-> 0, y |-> 0]]
-/\ msgs = { [t |-> "T1", s |-> "A", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "A", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "A", type |-> "apply", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "prepare", yes |-> FALSE],
-  [t |-> "T1", s |-> "B", type |-> "vote", yes |-> TRUE],
-  [t |-> "T1", s |-> "B", type |-> "apply", yes |-> FALSE] }
+/\ msgs = { [t |-> "T1", type |-> "prepare", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "prepare", s |-> "B", yes |-> FALSE],
+  [t |-> "T1", type |-> "vote", s |-> "A", yes |-> TRUE],
+  [t |-> "T1", type |-> "vote", s |-> "B", yes |-> TRUE],
+  [t |-> "T1", type |-> "apply", s |-> "A", yes |-> FALSE],
+  [t |-> "T1", type |-> "apply", s |-> "B", yes |-> FALSE] }
 /\ expired = {}
 /\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
   T2 |-> [x |-> 0, y |-> 0],
@@ -506,6 +656,7 @@ State 11: <FinishROH("T2") line 671, col 17 to line 671, col 37 of module TarnCo
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "init", y |-> "T1"],
   T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
 /\ acked = {"T2"}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ dobs = [R1 |-> [x |-> "unread", y |-> "unread"]]
@@ -516,20 +667,34 @@ State 11: <FinishROH("T2") line 671, col 17 to line 671, col 37 of module TarnCo
 /\ nFail = 0
 /\ recovering = {}
 /\ started = {"T1", "T2"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "T1"]
 /\ everC = [T1 |-> TRUE, T2 |-> TRUE, T3 |-> FALSE]
 /\ part = [ A |-> [T1 |-> "prepared", T2 |-> "none", T3 |-> "none"],
   B |-> [T1 |-> "applied", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
 /\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
 /\ dirty = [R1 |-> FALSE]
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
 /\ local = [T1 |-> "none", T2 |-> "committed", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "A", y |-> "B"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<"T1">>]
+/\ wt = [ T1 |-> [x |-> "A", y |-> "B"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
 /\ validated = [T1 |-> {}, T2 |-> {"A", "B"}, T3 |-> {}]
+/\ parts = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ nTimeout = 0
 /\ coord = [T1 |-> "applying", T2 |-> "finished", T3 |-> "exec"]
 
-37303 states generated, 10636 distinct states found, 4829 states left on queue.
+37003 states generated, 10550 distinct states found, 4784 states left on queue.
 The depth of the complete state graph search is 11.
-Finished in 04s at (2026-10-25 04:26:36)
-Trace exploration spec path: ./MC_TTrace_1792916791.tla
+Finished in 04s at (2026-10-26 13:43:47)
+Trace exploration spec path: ./MC_TTrace_1793036623.tla

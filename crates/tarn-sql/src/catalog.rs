@@ -186,6 +186,9 @@ pub struct IndexDef {
     /// (see the module comment); 0 until CREATE TABLE allocates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global: Option<u32>,
+    /// The index's COMMENT.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub comment: String,
 }
 
 /// The global index of a unique key (`IndexDef::global`).
@@ -437,6 +440,7 @@ impl TableDef {
                 unique: true,
                 invisible: false,
                 global: None,
+                comment: String::new(),
             }],
             shard_key: (0..k).collect(),
             auto_inc: None,
@@ -549,6 +553,22 @@ impl TableDef {
     /// The values a row's shard key hashes (see route.rs).
     pub fn shard_key_of(&self, row: &[Value]) -> Vec<Value> {
         self.shard_key.iter().map(|&c| self.key_part(c, &row[c])).collect()
+    }
+
+    /// The shard key of the row with primary key `pk` (as `pk_key` gives
+    /// it): the shard key is part of the primary key.
+    pub fn shard_key_of_pk(&self, pk: &[Value]) -> Vec<Value> {
+        let cols = &self.indexes[0].cols;
+        self.shard_key
+            .iter()
+            .map(|c| {
+                cols.iter()
+                    .position(|x| x == c)
+                    .and_then(|p| pk.get(p))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+            .collect()
     }
 
     /// Order of two values of column `c` as its indexes order them.
@@ -878,22 +898,42 @@ const IS_TABLES: &[(&str, &str)] = &[
     ("TABLE_COMMENT", "varchar(2048)"),
 ];
 
-/// The definition of an `information_schema` table (only `TABLES` exists):
-/// error 1109 for the others, as in MySQL.
+/// The columns of `information_schema.TARN_MOVES`: the moves of the current
+/// (or last) round of the rebalancer (`SHOW TARN MOVES`).
+pub const IS_TARN_MOVES: &[(&str, &str)] = &[
+    ("BUCKET", "bigint unsigned"),
+    ("FROM_SHARD", "bigint unsigned"),
+    ("TO_SHARD", "bigint unsigned"),
+    ("BYTES", "bigint unsigned"),
+    ("STATE", "varchar(16)"),
+    ("ERROR", "varchar(1024)"),
+];
+
+/// The definition of an `information_schema` table (`TABLES`, and
+/// `TARN_MOVES`): error 1109 for the others, as in MySQL.
 pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
-    if !name.eq_ignore_ascii_case("TABLES") {
+    let moves = name.eq_ignore_ascii_case("TARN_MOVES");
+    if !name.eq_ignore_ascii_case("TABLES") && !moves {
         return Err(SqlError::new(
             1109,
             "42S02",
             format!("Unknown table '{}' in {}", name, INFORMATION_SCHEMA),
         ));
     }
-    let columns = IS_TABLES
+    let (spec, key): (&[(&str, &str)], Vec<usize>) = if moves {
+        (IS_TARN_MOVES, vec![0])
+    } else {
+        (IS_TABLES, vec![1, 2])
+    };
+    let columns = spec
         .iter()
         .map(|(n, ty)| ColumnDef {
             name: n.to_string(),
             ty: ty.to_string(),
-            nullable: !matches!(*n, "TABLE_CATALOG" | "TABLE_SCHEMA" | "TABLE_NAME" | "TABLE_TYPE"),
+            nullable: !matches!(
+                *n,
+                "TABLE_CATALOG" | "TABLE_SCHEMA" | "TABLE_NAME" | "TABLE_TYPE" | "BUCKET" | "STATE"
+            ),
             default: None,
             default_null: false,
             auto_increment: false,
@@ -908,18 +948,19 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
         .collect();
     let mut def = TableDef {
         db: INFORMATION_SCHEMA.into(),
-        name: "TABLES".into(),
+        name: if moves { "TARN_MOVES" } else { "TABLES" }.into(),
         space_id: INFORMATION_SCHEMA_SPACE,
         columns,
         indexes: vec![IndexDef {
             name: "PRIMARY".into(),
             id: 0,
-            cols: vec![1, 2],
+            cols: key.clone(),
             unique: true,
             invisible: false,
             global: None,
+            comment: String::new(),
         }],
-        shard_key: vec![1, 2],
+        shard_key: key,
         auto_inc: None,
         comment: String::new(),
         engine: Engine::Memtx,

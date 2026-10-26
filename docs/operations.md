@@ -27,8 +27,9 @@ flowchart LR
 * **Storage nodes** are Tarantool 3.x instances running `lua/storage.lua`,
   which loads the Tarn module (`lua/tarn.lua`). A shard is one instance, or a
   replica set with synchronous replication (quorum ⌊N/2⌋+1) and Raft leader
-  election. Each shard owns an equal, contiguous range of the 3,000 hash
-  buckets.
+  election. Rows are hashed into buckets (30,000 in a new cluster); each
+  shard owns some of them (an equal, contiguous range in a new cluster),
+  and buckets move between shards online ([Buckets](#buckets)).
 * **`tarn-server`** is stateless. Run as many as you like (each with a
   distinct `--node-id`); each one finds every shard's leader by itself.
 * **Key/value clients** read the spaces directly from any shard leader.
@@ -48,7 +49,7 @@ clients or on the storage machines.
 | `TARN_LISTEN_UNIX` | | optional Unix socket to listen on as well |
 | `TARN_WORKDIR` | `data` | data directory: WAL, snapshots and vinyl's files |
 | `TARN_REPLICAS` | `[]` | JSON list of every replica URI of this shard; more than one enables synchronous replication and elections |
-| `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber) |
+| `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber; shards added with `TARN ADD SHARD` are found in the membership) |
 | `TARN_MEMORY_MB` | `1024` | memtx memory: memtx tables, the protocol's records and the system spaces |
 | `TARN_VINYL_MEMORY_MB` | `128` | vinyl's in-memory level: recent writes of vinyl tables, dumped to disk when full |
 | `TARN_VINYL_CACHE_MB` | `128` | vinyl's cache of recently read rows |
@@ -58,6 +59,7 @@ clients or on the storage machines.
 | `TARN_WAL_MODE` | `write` | `write` (no fsync per commit, like `innodb_flush_log_at_trx_commit=2`), `fsync`, or `none` |
 | `TARN_IPROTO_THREADS` | `1` | Tarantool network threads |
 | `TARN_LOG_LEVEL` | `5` | Tarantool log level |
+| `TARN_LOAD_WINDOW` | `60` | seconds per window of the requests counted for each bucket: `TARN REBALANCE BY LOAD` sees the last one to two windows |
 
 The bootstrap enables memtx MVCC, sets the default isolation to
 `read-confirmed` (plain reads never see data that a failover could roll
@@ -191,7 +193,15 @@ tarn-server (--config cluster.json | --shard ADDR[,ADDR..] ...)
             [--lock-wait-timeout S]   default innodb_lock_wait_timeout, seconds (default 50)
             [--default-engine E]      memtx or vinyl: tables without ENGINE= (default memtx)
             [--default-collation C]   collation of text in tables that name none (default utf8mb4_bin)
+tarn-server --check-schema FILE [--database DB] [--default-collation C]
 ```
+
+`--check-schema` checks the table trees a schema file declares
+([table trees](sql-compatibility.md#table-trees)) without a cluster: it
+reads the file's `CREATE DATABASE`, `USE` and `CREATE TABLE` statements,
+prints one line per finding, and exits 1 when there is a warning (2 when
+the file cannot be read or a table in it cannot be planned). `--database`
+names the database of tables before any `USE`.
 
 `--shard` takes the comma-separated replica addresses of one shard and may
 be repeated, one per shard in order. `cluster.json` says the same with more
@@ -203,7 +213,7 @@ options:
     {"id": 1, "replicas": ["10.0.0.11:3301", "10.0.0.12:3301", "10.0.0.13:3301"]},
     {"id": 2, "replicas": ["10.0.0.21:3301", "10.0.0.22:3301", "10.0.0.23:3301"]}
   ],
-  "bucket_count": 3000,
+  "bucket_count": 30000,
   "user": "tarn", "password": "tarn",
   "pool_size": 4,
   "node_id": 1,
@@ -213,6 +223,7 @@ options:
   "lock_wait_timeout": 50,
   "deadlock_interval": 1.0,
   "ddl_job_stale": 30,
+  "move_timeout": 10,
   "default_collation": "utf8mb4_bin"
 }
 ```
@@ -244,11 +255,160 @@ not every shard had prepared it, forward if every shard had (`docs/design.md`
 §2.10). Every server looks for such jobs at startup and every
 `ddl_job_stale / 2` seconds (at most 10).
 
+`bucket_count` is the number of buckets of a new cluster (default 30,000).
+The first SQL server to start on a new cluster makes the bucket map with it,
+and from then on it cannot change: every row's `bucket_id` depends on it.
+Later servers use the map's count (one whose `bucket_count` differs logs a
+warning). A cluster made by a version from before bucket moves keeps the
+count its rows were stored with: 3,000, that version's default, or the
+`bucket_count` its configuration set -- keep that setting. See
+[Buckets](#buckets) for choosing it.
+
+`move_timeout` is how long, in seconds, a bucket move waits at each of its
+steps for the transactions that hold locks on the bucket's rows before it
+gives up (see [Buckets](#buckets)).
+
 **Ack-on-prepare** acknowledges a cross-shard commit as soon as every
 participant has prepared (one round trip instead of two) and applies it in
 the background. SQL readers still see strict serializability (they wait on
 the transaction's locks); direct key/value readers may briefly not see a
 just-acknowledged commit. The model checker covers both modes.
+
+## Buckets
+
+A row's bucket is a hash of its shard key; a shard owns a set of buckets,
+and buckets move between shards while the cluster serves. The shards keep
+the map: the first SQL server to start on a new cluster -- or on one made by
+a version without bucket moves -- gives each shard an equal, contiguous
+range of buckets, and from then on only moves change it. SQL servers read
+the map when they start, and again when a shard refuses a request for a
+bucket it no longer owns.
+
+```sql
+SHOW TARN BUCKETS;                               -- per shard: buckets, ranges, epoch, moves in progress
+TARN MOVE BUCKET 1614 TO SHARD 2;
+TARN MOVE BUCKETS BETWEEN 2001 AND 3000 TO SHARD 3;   -- one at a time; those already there stay
+```
+
+A move copies the bucket's rows to the new shard while the old one serves
+them, then fences the bucket on the old shard -- writes and row locks on its
+rows are refused from then on, and the row locks held on them are broken --,
+waits for the transactions holding locks on its rows, copies the rows
+written since the copy began, deletes the rows on the old shard and inserts
+them on the new one. Clients see this as follows: an autocommit statement,
+or the first statement of a transaction, that meets the move runs again
+with the new map (`Tarn_retries`); a transaction that already used the
+bucket's rows is rolled back with 1213, as after a leader change. Writes to
+the bucket wait from its fence to its switch: the time to drain the
+prepared transactions that hold its rows' locks and to copy the last
+writes. A step that waits longer than `move_timeout` gives the move up
+(1205): the bucket stays where it was. A move survives leader changes of
+either shard (it copies the bucket again if the old shard's leader changed
+while it copied), and if its SQL server stops, another server finishes it
+after `ddl_job_stale`: back if the old shard had not deleted the rows yet,
+forward otherwise. Moves and schema changes wait for each other; while a
+schema change (or a change of the cluster's shards) waits for moves to end,
+no new move begins.
+
+To **add a shard**, start its storage nodes with a new shard id, then, on
+any SQL server:
+
+```sql
+TARN ADD SHARD 3 '10.0.0.31:3301,10.0.0.32:3301';   -- its id and replicas, as --shard takes them
+SHOW TARN SHARDS;                                   -- the cluster's shards: id, replicas, state (active, draining, removed)
+TARN MOVE BUCKETS BETWEEN 1 AND 10000 TO SHARD 3;
+```
+
+`TARN ADD SHARD` checks that the node is a storage node of that shard with
+no buckets and no tables but the cluster's (a run that stopped halfway can
+run again), creates every table there as the first shard has it, gives it a
+bucket map with no buckets, and then records the new membership on every
+shard; the shard serves nothing until buckets move to it. It runs as a job:
+schema changes and moves wait for it, and it waits for them. The other SQL
+servers need no restart and no change of configuration: they learn the new
+shard from the shards -- when a shard refuses a request routed with the
+membership from before, when they read the bucket map, and when they start
+-- and a transaction that read every shard before it joined cannot commit
+once buckets can have moved to it (see design §2.13). Buckets move to the
+cluster's members only: once a shard has joined with `TARN ADD SHARD`, a
+shard added only to the SQL servers' configuration gets none.
+
+To **remove a shard**, run on any SQL server:
+
+```sql
+TARN REMOVE SHARD 2;   -- its buckets move to the other shards, then it leaves
+```
+
+It marks the shard *draining* on every shard: no bucket moves to it from
+then on, and it decides no new transaction (participants refuse it as a
+decision shard, whose outcome they would have to ask it for). Its buckets
+then move to the active shards, eight at a time, each to the one with the
+fewest; it waits until no participant still needs the shard to learn an
+outcome, and marks it *removed* on every shard. From then on the SQL
+servers leave it out -- they learn it as they learn of a shard that joins,
+or when the shard cannot be reached -- and its storage can be stopped; a
+server whose configuration still lists it starts without it. The first
+shard of the configuration keeps the cluster's jobs and catalog and cannot
+be removed. A `TARN REMOVE SHARD` that stops (an error, a lost connection)
+goes on when run again.
+
+To **rebalance** -- after adding a shard, or when the shards' sizes have
+drifted apart --, run on any SQL server:
+
+```sql
+TARN REBALANCE;                                  -- by size, four moves at a time
+TARN REBALANCE BY LOAD MAX MOVES 2 MAX RATE 50000000;   -- by requests; at most 50 MB/s of buckets
+SHOW TARN REBALANCE;     -- status, owner, moves done and failed, planned, moving, bytes moved, limits
+SHOW TARN MOVES;         -- the current (or last) round's moves: bucket, from, to, bytes, state (planned, copying, fenced, done, failed)
+SELECT * FROM information_schema.TARN_MOVES WHERE STATE = 'failed';
+TARN REBALANCE PAUSE;    -- the moves in flight end; no new one starts
+TARN REBALANCE RESUME;
+TARN REBALANCE CANCEL;   -- the planned moves are dropped
+```
+
+A rebalance runs in the background, one at a time in the cluster, and
+plans in rounds of up to 64 moves: from the shards' sizes (`BY SIZE`, the
+default: each bucket's rows and their bytes, which the shards count) or
+from their load (`BY LOAD`: each bucket's reads and written rows over the
+last one to two minutes, `TARN_LOAD_WINDOW`), it moves buckets from the
+heaviest active shard to the lightest -- the bucket that best halves the
+gap between them -- until the shards are even within a bucket's average
+weight or 2% of a shard's share, whichever is more. A bucket's weight also
+counts that average, so the shards end with even shares of the buckets as
+well: the rows written later spread over them. Each round reads the sizes
+again; the rebalance ends (`done`) when a round finds nothing to move.
+`MAX MOVES` (1 to 64, default 4) bounds the moves in flight and `MAX RATE`
+the bytes per second of the buckets moved (default: no limit). Each move is
+a `TARN MOVE BUCKET`: a move that fails is shown with its error and the
+rebalance goes on (it fails after ten failures in a row); a move that waits
+for a schema change is planned again for later. The rebalance runs on the
+SQL server that started it; if that server stops, another one takes it over
+after `ddl_job_stale` and goes on, as it does for a paused one. Moves only
+go to active shards: a rebalance can run while a shard is being removed,
+and leaves that shard's buckets to the drain.
+
+Before moving buckets, every SQL server must run a version with bucket
+moves and know every shard: an older server names no buckets in its
+requests (shards refuse its writes by their rows' `bucket_id`, but its
+reads are not checked). Likewise, before adding or removing a shard, every
+SQL server must run a version with `TARN ADD SHARD`: an older one names no
+membership version, so its reads of every shard are not checked.
+
+Key/value clients that compute a row's shard themselves find each bucket's
+shard in `tarn_buckets()` on the shards (or in `SHOW TARN BUCKETS`), or ask
+every shard.
+
+**How many buckets.** A shard owns whole buckets, so the shards' sizes can
+differ by a bucket, one part in the number of buckets per shard: 3,000
+buckets on 300 shards are 10 per shard, so a shard with 11 holds 10% more
+than one with 10; 30,000 buckets make that 1%. (Rows with one shard key
+value stay in one bucket whatever the count: more buckets do not split a
+hot key.) More buckets cost more moves for the same share of rows -- each
+move is one job of about a dozen storage calls, plus the copy -- and a
+record per bucket on its shard and an entry in each SQL server's map. The
+count is fixed when the cluster is made (`bucket_count`), so choose it for
+the largest number of shards the cluster may grow to: about 100 buckets per
+shard or more.
 
 ## Local clusters
 
@@ -261,6 +421,8 @@ scripts/cluster.sh start [-n SHARDS] [-r REPLICAS] [-p SQL_PORT] [-s SQL_SERVERS
                          [-d DIR] [-b BASE_PORT]
 scripts/cluster.sh status [-d DIR]
 scripts/cluster.sh stop   [-d DIR]
+scripts/cluster.sh restart [-d DIR] INSTANCE...   # a stopped instance: s2.1, tarn1
+scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints its replicas
 ```
 
 `-a` turns on ack-on-prepare and `-u` connects the SQL servers to storage
@@ -275,10 +437,16 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   this server, storage calls its deadlock detector made
   (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), `COUNT`s
   the shards computed without returning rows (`Tarn_storage_counts`), rows
-  read from storage (`Tarn_rows_read`) and the storage reads that returned
-  them (`Tarn_storage_reads`, one per page), row counts taken to choose between
-  an ordered page and a longer index prefix (`Tarn_path_estimates`), number
-  of shards.
+  read from storage (`Tarn_rows_read`), attempted storage reads (`Tarn_storage_reads`,
+  one per index-scan or multi-key page, including failed or discarded
+  attempts), row counts taken to choose between
+  an ordered page and a longer index prefix (`Tarn_path_estimates`), buckets
+  this server moved (`Tarn_bucket_moves`) and how many times it read the
+  bucket map (`Tarn_bucket_map_reads`), the number of buckets
+  (`Tarn_buckets`), number of shards. `SHOW TARN BUCKETS` lists each
+  shard's buckets and the moves in progress, `SHOW TARN SHARDS` the
+  cluster's shards (`tarn_members()` on a storage node: the membership
+  and its version).
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
@@ -286,7 +454,9 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   `DROP TABLE` in progress (`ddl_held`), and counters (`prepare_yes`,
   `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `recovered`,
   `gc_part`, `gc_txn`, `validate_changed`; for row locks `plock_waits`,
-  `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`).
+  `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`; for buckets
+  `buckets` and `bucket_epoch`, and the counters `moved` (requests refused
+  for their bucket), `move_broken_locks`, `bucket_sends`, `bucket_recvs`).
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted
@@ -303,13 +473,15 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 | Connection lost while a commit is in flight | The client gets 1180 / SQLSTATE 40003: the outcome is unknown, and the write is not re-sent. |
 | A shard is down for a while | Transactions that touch it fail; rows of transactions that committed but were not yet applied there stay locked until it returns and recovery applies them. |
 | A shard fails during `CREATE TABLE`, `DROP TABLE`, `TRUNCATE` or `ALTER TABLE` | Before every shard prepared: the statement fails and the change is undone on every shard (once the shard is back, for that shard). After: the statement reports 1180 and the change is completed on every shard once the shard is back. Either way a SQL server finishes the job by itself (`ddl_job_stale`); until then, other schema changes of the same table wait. |
+| A bucket moves | Statements that meet it run again with the new map; a transaction that used its rows while it moved is rolled back with 1213. Writes to its rows wait from the move's fence to its switch. |
+| A move's SQL server stops, or a shard leader dies during a move | Another SQL server finishes the move after `ddl_job_stale`: back if the old shard had not sent the bucket, forward otherwise; a leader change alone does not stop a move. |
 | Partitioned old leader | It steps down after the election timeout (`election_fencing_mode = 'strict'`); until then it may still answer autocommit reads from its own data (the usual leader-lease assumption). |
 
 ## Error codes
 
 | Code | SQLSTATE | Meaning | Client action |
 |---|---|---|---|
-| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
+| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, a bucket the transaction used moved, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
 | 1205 | HY000 | lock wait timeout (`innodb_lock_wait_timeout`); only the statement was rolled back | retry the statement or roll back |
 | 3572 | HY000 | `NOWAIT` and the row is locked; only the statement was rolled back | |
 | 1305 | 42000 | no such savepoint | |
@@ -320,6 +492,7 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 | 1062 | 23000 | duplicate key | |
 | 1264 | 22003 | value out of range for the column | |
 | 1235 | 42000 | not supported | |
+| 1105 | HY000 | under `tarn_tree_checks = 'ERROR'`: a declared [table tree](sql-compatibility.md#table-trees) does not line up (otherwise a warning) | fix the keys or `PARTITION BY KEY` |
 | 1153 | 08S01 | packet larger than 64 MiB | |
 | 1461 | 42000 | too many prepared statements on the connection | close statements |
 | 1045 | 28000 | access denied | |

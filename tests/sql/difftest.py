@@ -50,6 +50,15 @@ SCHEMA = [
     "CREATE TABLE ord (tenant INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
     "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (tenant, id), KEY bypa (tenant, pa, id), "
     "KEY bystatus (tenant, closed, del, id)) PARTITION BY KEY(tenant)",
+    # ... sharded by customer: an index that does not fix the shard key is
+    # paged on every shard and the pages merged (issue #86)
+    "CREATE TABLE ordc (cust INT NOT NULL, id INT NOT NULL, st VARCHAR(8) NOT NULL, pa DATETIME NOT NULL, "
+    "n INT, PRIMARY KEY (cust, id), KEY bst (st, pa, id), KEY bpa (pa)) PARTITION BY KEY(cust)",
+    # Nullable ordered keys, repeated full secondary keys and a composite
+    # shard key. The narrow kv index deliberately omits every PK column.
+    "CREATE TABLE page_keys (p INT NOT NULL, q INT NOT NULL, id INT NOT NULL, k INT, v INT, tag INT NOT NULL, "
+    "PRIMARY KEY (p, q, id), KEY kv (k, v), KEY by_order (k, v, p, q, id), "
+    "KEY by_partial (p, k, v, q, id)) PARTITION BY KEY(p, q)",
     # unique keys without the shard key (issue #14): enforced across shards
     # through global indexes; a nullable column, as in soft-delete keys
     "CREATE TABLE gu (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
@@ -62,6 +71,14 @@ SCHEMA = [
     # (issue #84): repeated, NULL and missing keys, children by key prefix
     "CREATE TABLE jo (id INT PRIMARY KEY, r INT, g INT, h VARCHAR(10) COLLATE utf8mb4_general_ci, KEY kg (g))",
     "CREATE TABLE jc (r INT NOT NULL, n INT NOT NULL, v INT, PRIMARY KEY (r, n)) PARTITION BY KEY(r)",
+    "CREATE TABLE jn (id INT PRIMARY KEY, a INT, b INT, s VARCHAR(10) COLLATE utf8mb4_unicode_ci, "
+    "KEY ab (a, b), KEY ks (s))",
+    # Adjacent DECIMALs above 2^53 must remain separate both as lookup keys
+    # and as base PKs reached through a text global unique index.
+    "CREATE TABLE jdo (id INT PRIMARY KEY, k DECIMAL(20,0), s VARCHAR(8))",
+    "CREATE TABLE jdi (id INT PRIMARY KEY, k DECIMAL(20,0), KEY jk (k))",
+    "CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
+    "PRIMARY KEY (p, id), UNIQUE KEY us (s)) PARTITION BY KEY(p)",
 ]
 
 
@@ -101,8 +118,34 @@ def seed():
     rows = [f"({i}, {'NULL' if i % 13 == 0 else i % 450}, {i % 4}, {'NULL' if i % 17 == 0 else repr(('Name' if i % 2 else 'name') + str(i % 9))})"
             for i in range(1, 601)]
     s.append("INSERT INTO jo VALUES " + ", ".join(rows))
+    # Positive Unicode, case and PAD SPACE matches for the indexed join.
+    s.append("UPDATE jo SET h = CASE id WHEN 1 THEN 'Á' WHEN 2 THEN 'a' WHEN 3 THEN 'ß' "
+             "WHEN 4 THEN 'SS' WHEN 5 THEN 'pad ' WHEN 6 THEN 'pAd' END WHERE id <= 6")
     rows = [f"({r}, {n}, {r * 10 + n})" for r in range(0, 450, 2) for n in range(r % 3 + 1)]
     s.append("INSERT INTO jc VALUES " + ", ".join(rows))
+    s.append("INSERT INTO jn VALUES (1, NULL, NULL, 'a'), (2, NULL, 1, 'ss'), (3, 2, NULL, 'pad'), "
+             "(4, 2, 2, 'a'), (5, 3, 3, 'ss'), (6, 3, NULL, 'pad'), (7, 4, 0, NULL), "
+             "(8, 99, 1, 'none'), (9, NULL, NULL, 'a')")
+    s.append("INSERT INTO jdo VALUES (1, 9007199254740992, 'a'), (2, 9007199254740993, 'b')")
+    s.append("INSERT INTO jdi VALUES (1, 9007199254740992), (2, 9007199254740993)")
+    s.append("INSERT INTO jdg VALUES (1, 9007199254740992, 'a'), (1, 9007199254740993, 'b')")
+    rows = []
+    for i in range(1, 601):
+        # 40 customers; placed_at repeats across customers (ties on every
+        # shard); 'held' only for one customer, so most shards have none
+        st = "'held'" if i % 40 == 7 else "'pending'" if i % 3 else "'paid'"
+        pa = f"'2025-03-{1 + i % 20:02d} 0{i % 4}:00:00'"
+        rows.append(f"({i % 40}, {i}, {st}, {pa}, {'NULL' if i % 11 == 0 else i % 9})")
+    s.append("INSERT INTO ordc VALUES " + ", ".join(rows))
+    rows = []
+    for p in range(4):
+        for q in range(8):
+            for i in range(1, 13):
+                # id and the entire (k,v) key repeat across composite PKs.
+                k = "NULL" if i % 4 == 0 else i % 3
+                v = "NULL" if i % 5 == 0 else i % 2
+                rows.append(f"({p}, {q}, {i}, {k}, {v}, {(p + q + i) % 5})")
+    s.append("INSERT INTO page_keys VALUES " + ", ".join(rows))
     return s
 
 
@@ -404,7 +447,7 @@ CASES = [
      "(SELECT k1, k2 FROM t3 WHERE k1 = 4 ORDER BY k1, k2 LIMIT 2 FOR UPDATE SKIP LOCKED)", "q"),
     ("(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 1 FOR UPDATE) UNION ALL "
      "(SELECT k1, k2 FROM t3 WHERE k1 = 1 ORDER BY k1, k2 LIMIT 2 FOR UPDATE) ORDER BY 2 DESC", "q"),
-    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 LIMIT 3 FOR UPDATE) UNION ALL "
+    ("(SELECT k1, k2 FROM t3 WHERE k1 = 5 ORDER BY k1, k2 LIMIT 3 FOR UPDATE) UNION ALL "
      "(SELECT id, b FROM t1 WHERE id = 3 FOR UPDATE)", "q"),
     ("COMMIT", "q"),
     ("UPDATE uk SET n = n * 2 WHERE name IN ('a', 'c')", "dml:uk"),
@@ -510,6 +553,20 @@ CASES = [
     ("SELECT * FROM fkc", "err"),
     ("ALTER TABLE fkc2 RENAME TO fkc3, ADD COLUMN z INT", "q"),
     ("SELECT * FROM fkc3", "q"),
+    # index comments are stored and kept by ALTER TABLE (issue #80)
+    ("CREATE TABLE icm (id INT, a INT, b INT, PRIMARY KEY (id) COMMENT 'pk', "
+     "KEY ka (a) USING BTREE COMMENT 'lookups by a', UNIQUE KEY ub (b) COMMENT 'it''s b') COMMENT 'a table'", "ddl:icm"),
+    ("ALTER TABLE icm ADD COLUMN c INT, ADD INDEX kc (c) COMMENT 'by c', RENAME INDEX ka TO ka2", "ddl:icm"),
+    ("CREATE INDEX kac ON icm (a, c) COMMENT 'pair' ALGORITHM=INPLACE", "ddl:icm"),
+    # MySQL string escapes in CREATE INDEX comments must survive SHOW INDEX,
+    # including wildcard backslashes retained outside LIKE patterns.
+    (r"CREATE INDEX kec_controls ON icm (a) COMMENT 'back\breturn\rend\Zline\ntab\t'", "ddl:icm"),
+    (r'''CREATE INDEX kec_quotes ON icm (a) COMMENT '雪\'single''quote\"double\\slash' ''', "ddl:icm"),
+    (r'CREATE INDEX kec_double ON icm (a) COMMENT "雪\"double""quote\'single\\slash"', "ddl:icm"),
+    (r"CREATE INDEX kec_wildcards ON icm (a) COMMENT 'percent\%underscore\_'", "ddl:icm"),
+    (r"CREATE INDEX kec_unknown ON icm (a) COMMENT 'unknown\q\B\z\a\f'", "ddl:icm"),
+    ("ALTER TABLE icm MODIFY a BIGINT, DROP INDEX kc", "ddl:icm"),
+    ("ALTER TABLE icm DROP COLUMN c", "ddl:icm"),
     # user and system variables, executable comments, LOCK TABLES
     ("SET @v = 5, @s = 'it''s', @d = 1.50, @n = NULL", "q"),
     ("SELECT @v, @s, @d, @n, @never_set", "q"),
@@ -925,6 +982,65 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 12", "q"),
     ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 12", "q"),
     ("ROLLBACK", "q"),
+    # an ordered page over an index that does not fix the shard key (issue
+    # #86): every shard is paged and the pages merged; ties across shards,
+    # OFFSET, DESC, bounds, residual filters, shards without matches, the
+    # primary key without its shard key, a whole table, and the
+    # transaction's own writes
+    ("SELECT cust, id, pa FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 20", "q"),
+    ("SELECT cust, id, pa FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 20", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 15 OFFSET 200", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 200, 15", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY st, pa, id LIMIT 9", "q"),
+    ("SELECT pa FROM ordc WHERE st = 'paid' ORDER BY pa LIMIT 30", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND n = 4 ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND n IS NULL ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND id % 97 = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND cust > 30 ORDER BY pa, id LIMIT 25", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND pa >= '2025-03-15' ORDER BY pa, id LIMIT 10", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND pa < '2025-03-03' ORDER BY pa DESC, id DESC LIMIT 10", "q"),
+    ("SELECT id FROM ordc WHERE st = 'held' ORDER BY pa, id LIMIT 4", "q"),
+    ("SELECT id FROM ordc WHERE st = 'held' ORDER BY pa DESC, id DESC LIMIT 100", "q"),
+    ("SELECT id FROM ordc WHERE st = 'none' ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 1000", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 0", "q"),
+    ("SELECT cust, id FROM ordc ORDER BY cust, id LIMIT 30", "q"),
+    ("SELECT cust, id FROM ordc ORDER BY cust DESC, id DESC LIMIT 10 OFFSET 45", "q"),
+    ("SELECT cust, id FROM ordc WHERE cust BETWEEN 5 AND 9 ORDER BY cust, id LIMIT 8", "q"),
+    ("SELECT cust, id FROM ordc WHERE id < 100 ORDER BY cust DESC, id DESC LIMIT 7", "q"),
+    ("SELECT id, pa FROM ordc WHERE st = 'pending' ORDER BY pa, id DESC LIMIT 9", "q"),
+    ("SELECT id FROM ordc WHERE cust = 3 AND st = 'pending' ORDER BY pa, id LIMIT 5", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO ordc VALUES (2, 9001, 'pending', '2025-02-28 00:00:00', 1)", "dml:ordc"),
+    ("UPDATE ordc SET st = 'paid' WHERE cust = 1 AND id = 41", "dml:ordc"),
+    ("UPDATE ordc SET pa = '2025-04-01 00:00:00' WHERE cust = 2 AND id = 2", "dml:ordc"),
+    ("SELECT cust, id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT cust, id FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("ROLLBACK", "q"),
+    # NULL sorts first ascending and last descending across shards. The
+    # explicit PK suffix makes row identity deterministic at LIMIT boundaries.
+    ("SELECT p, q, id, k, v FROM page_keys ORDER BY k, v, p, q, id LIMIT 23", "q"),
+    ("SELECT p, q, id, k, v FROM page_keys ORDER BY k DESC, v DESC, p DESC, q DESC, id DESC LIMIT 23 OFFSET 19", "q"),
+    ("SELECT p, q, id, v FROM page_keys WHERE k IS NULL ORDER BY v, p, q, id LIMIT 17 OFFSET 9", "q"),
+    ("SELECT p, q, id, v FROM page_keys WHERE k IS NULL ORDER BY v DESC, p DESC, q DESC, id DESC LIMIT 17", "q"),
+    ("SELECT p, q, id FROM page_keys WHERE k <=> NULL ORDER BY v, p, q, id LIMIT 11", "q"),
+    ("SELECT p, q, id FROM page_keys WHERE k <=> 1 ORDER BY v, p, q, id LIMIT 11", "q"),
+    ("SELECT p, q, id FROM page_keys WHERE k = NULL ORDER BY v, p, q, id LIMIT 5", "q"),
+    ("SELECT p, q, id, k FROM page_keys WHERE v IS NULL ORDER BY k, v, p, q, id LIMIT 13 OFFSET 5", "q"),
+    # kv has many identical full keys. Compare only its ordered key values:
+    # SQL does not specify which PK wins a tie. Selective residuals force
+    # additional pages within ties, with id reused under different (p,q).
+    ("SELECT k, v FROM page_keys WHERE k IS NULL AND tag = 3 ORDER BY v LIMIT 20 OFFSET 3", "q"),
+    ("SELECT k, v FROM page_keys WHERE k = 1 AND tag = 2 ORDER BY v LIMIT 7 OFFSET 5", "q"),
+    ("SELECT k, v FROM page_keys WHERE k = 1 AND tag = 2 ORDER BY v DESC LIMIT 7 OFFSET 5", "q"),
+    # Fixing p alone does not route a composite (p,q) shard key. Fixing both
+    # keeps the existing single-shard selection instead of scattered paging.
+    ("SELECT q, id, v FROM page_keys WHERE p = 1 AND k IS NULL ORDER BY v, q, id LIMIT 11 OFFSET 4", "q"),
+    ("SELECT q, id, v FROM page_keys WHERE p = 1 AND k IS NULL ORDER BY v DESC, q DESC, id DESC LIMIT 11", "q"),
+    ("SELECT id, k, v FROM page_keys WHERE p = 1 AND q = 3 ORDER BY k, v, id LIMIT 7", "q"),
+    # Early paging must not trim rows before DISTINCT or aggregation.
+    ("SELECT DISTINCT k, v FROM page_keys ORDER BY k, v LIMIT 5 OFFSET 1", "q"),
+    ("SELECT k, COUNT(*) FROM page_keys GROUP BY k ORDER BY k LIMIT 2", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),
     ("SELECT id FROM t1 WHERE a <=> NULL", "q"),
@@ -943,7 +1059,7 @@ CASES = [
     ("SELECT id FROM nu WHERE e IS NULL AND id = 3", "q"),
     ("SELECT id FROM nu WHERE e IS NULL AND f IS NULL AND id = 3", "q"),
     ("UPDATE nu SET f = 9 WHERE e IS NULL", "dml:nu"),
-    ("DELETE FROM nu WHERE e IS NULL AND f = 9 LIMIT 1", "dml:nu"),
+    ("DELETE FROM nu WHERE e IS NULL AND f = 9 ORDER BY id LIMIT 1", "dml:nu"),
     ("BEGIN", "q"),
     ("INSERT INTO ord VALUES (1, 1001, '2025-01-01 00:00:00', 0, 'paid', NULL), "
      "(1, 1002, '2025-01-01 10:00:00', 1, 'paid', NULL)", "dml:ord"),
@@ -980,12 +1096,37 @@ CASES = [
     ("SELECT jo.g, COUNT(*), SUM(jc.v), COUNT(jc.v) FROM jo LEFT JOIN jc ON jc.r = jo.r GROUP BY jo.g", "q"),
     ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.id = a.r + 1 WHERE a.g IN (1, 3) ORDER BY a.id", "q"),
     ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) WHERE jo.id < 40 ORDER BY jo.id, jc.r, jc.n", "q"),
+    # Two keys per outer row: 299 rows cross three 128-row lookup batches.
+    ("SELECT jo.id, jc.r, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) "
+     "WHERE jo.id < 300 ORDER BY jo.id, jc.r, jc.n", "q"),
     ("SELECT jo.id, jc.n FROM jo JOIN jc ON (jc.r, jc.n) IN ((jo.r, 0), (jo.r, 2)) ORDER BY jo.id, jc.n", "q"),
     ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.g = a.g AND b.r = a.r WHERE a.id < 300 ORDER BY a.id, b.id", "q"),
     ("SELECT jo.id, c1.n, c2.n FROM jo JOIN jc c1 ON c1.r = jo.r LEFT JOIN jc c2 ON c2.r = c1.v - c1.r * 10 "
      "ORDER BY jo.id, c1.n, c2.n", "q"),
     ("SELECT jo.id, cih.n FROM jo LEFT JOIN cih ON cih.handle = jo.h WHERE jo.id < 60 ORDER BY jo.id", "q"),
     ("SELECT jo.id, ci.id FROM jo JOIN ci ON ci.handle = jo.h ORDER BY jo.id, ci.id", "q"),
+    # A real indexed collation match, including Á=a, ß=ss and trailing
+    # spaces. The explicit collation matches the inner index's weights.
+    ("SELECT jo.id, jn.id FROM jo JOIN jn ON jn.s = jo.h COLLATE utf8mb4_unicode_ci "
+     "WHERE jo.id <= 6 ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, COUNT(jn.id) FROM jo LEFT JOIN jn ON jn.s = jo.h COLLATE utf8mb4_unicode_ci "
+     "WHERE jo.id <= 7 GROUP BY jo.id ORDER BY jo.id", "q"),
+    # Composite nullable keys must keep NULL-safe parts on the fallback;
+    # ordinary equality drops NULL keys. Duplicate (NULL,NULL) rows and an
+    # ON residual distinguish multiple matches from LEFT JOIN padding.
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a <=> jo.r AND jn.b <=> NULLIF(jo.g, 0) "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a = jo.r AND jn.b = NULLIF(jo.g, 0) "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a = jo.r AND jn.b <=> NULLIF(jo.g, 0) "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a <=> jo.r AND jn.id > 4 "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    # Each outer row has exactly one distinct native-index match. Rounded
+    # batch distribution would give four pairs; rounded global PK dedup
+    # would lose one of the two text-key matches.
+    ("SELECT o.id, i.id FROM jdo o JOIN jdi i ON i.k = o.k ORDER BY o.id, i.id", "q"),
+    ("SELECT o.id, i.id FROM jdo o JOIN jdg i ON i.s = o.s ORDER BY o.id, i.id", "q"),
     ("SELECT jo.id, gu.id FROM jo JOIN gu ON gu.n = jo.r * 10 ORDER BY jo.id", "q"),
     ("SELECT jo.id, gu.id FROM jo LEFT JOIN gu ON gu.t = jo.g AND gu.h = 'a' AND gu.live = 1 ORDER BY jo.id", "q"),
     ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.id IN (2, 4, 450) "
@@ -1022,44 +1163,6 @@ FOUND_ROWS_CASES = [
     ("COMMIT", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
     ("UPDATE t1 SET a = a WHERE id < 10", "dml:t1"),
-    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
-    # joins whose inner lookups are read in batches (issue #84): 600 outer
-    # rows, keys repeated, NULL or without rows
-    ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
-    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
-    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.n = jo.g ORDER BY jo.id", "q"),
-    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 1 WHERE jo.g = 2", "q"),
-    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.v > 2000 WHERE jo.id > 100 ORDER BY jo.id, jc.v", "q"),
-    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jc.r IS NULL ORDER BY jo.id", "q"),
-    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n LIMIT 7 OFFSET 300", "q"),
-    ("SELECT jo.g, COUNT(*), SUM(jc.v), COUNT(jc.v) FROM jo LEFT JOIN jc ON jc.r = jo.r GROUP BY jo.g", "q"),
-    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.id = a.r + 1 WHERE a.g IN (1, 3) ORDER BY a.id", "q"),
-    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) WHERE jo.id < 40 ORDER BY jo.id, jc.r, jc.n", "q"),
-    ("SELECT jo.id, jc.n FROM jo JOIN jc ON (jc.r, jc.n) IN ((jo.r, 0), (jo.r, 2)) ORDER BY jo.id, jc.n", "q"),
-    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.g = a.g AND b.r = a.r WHERE a.id < 300 ORDER BY a.id, b.id", "q"),
-    ("SELECT jo.id, c1.n, c2.n FROM jo JOIN jc c1 ON c1.r = jo.r LEFT JOIN jc c2 ON c2.r = c1.v - c1.r * 10 "
-     "ORDER BY jo.id, c1.n, c2.n", "q"),
-    ("SELECT jo.id, cih.n FROM jo LEFT JOIN cih ON cih.handle = jo.h WHERE jo.id < 60 ORDER BY jo.id", "q"),
-    ("SELECT jo.id, ci.id FROM jo JOIN ci ON ci.handle = jo.h ORDER BY jo.id, ci.id", "q"),
-    ("SELECT jo.id, gu.id FROM jo JOIN gu ON gu.n = jo.r * 10 ORDER BY jo.id", "q"),
-    ("SELECT jo.id, gu.id FROM jo LEFT JOIN gu ON gu.t = jo.g AND gu.h = 'a' AND gu.live = 1 ORDER BY jo.id", "q"),
-    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.id IN (2, 4, 450) "
-     "ORDER BY jo.id FOR UPDATE", "q"),
-    # ... in a transaction, which sees its own writes
-    ("BEGIN", "q"),
-    ("INSERT INTO jc VALUES (1, 0, -1), (3, 0, -3)", "dml:jc"),
-    ("DELETE FROM jc WHERE r = 2", "dml:jc"),
-    ("UPDATE jc SET v = -v WHERE r = 4 AND n = 1", "dml:jc"),
-    ("UPDATE jc SET r = 5 WHERE r = 6 AND n = 0", "dml:jc"),
-    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jo.id < 20 ORDER BY jo.id, jc.n", "q"),
-    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 ORDER BY jo.id", "q"),
-    ("ROLLBACK", "q"),
-    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
-    ("BEGIN", "q"),
-    ("INSERT INTO jc VALUES (7, 0, -7)", "dml:jc"),
-    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
-    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.g = 3 ORDER BY jo.id FOR UPDATE", "q"),
-    ("COMMIT", "dml:jc"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 
@@ -1183,7 +1286,8 @@ def main():
                 if r[0] != "rows":
                     return r
                 cols = r[2]
-                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name")]
+                pick = [cols.index(c) for c in ("Non_unique", "Key_name", "Seq_in_index", "Column_name",
+                                                "Index_comment")]
                 return sorted(tuple(row[i] for i in pick) for row in r[1])
             if ok and keys(ia) != keys(ib):
                 ok = False

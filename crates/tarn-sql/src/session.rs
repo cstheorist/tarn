@@ -7,11 +7,12 @@ use crate::cluster::{CachedPlan, Cluster};
 use crate::collation::Collation;
 use crate::exec::{self, matching_rows, run_select, shard_of_row, ReadMode, NEED_TXN};
 use crate::expr::{now_string, EvalCtx, Expr};
+use crate::lint;
 use crate::mpw::{lua_status, Mp, Rd};
 use crate::normalize::{normalize, Mode};
 use crate::plan::*;
 use crate::planner::{self, PlanCtx};
-use crate::txn::{key_bytes, select_rows, BufWrite, LockKey, LockOpts, Locked, Mode as TxnMode, Row, Txn, WOp};
+use crate::txn::{key_bytes, select_rows, BufWrite, LockKey, LockOpts, Locked, Mode as TxnMode, Route, Row, Txn, WOp};
 use crate::types::Arith;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::Ordering;
@@ -88,6 +89,21 @@ pub struct Session {
     /// asked for in its handshake, until SET NAMES / SET collation_connection.
     collation_connection: String,
     client_collation: String,
+    /// Warnings and notes of the last statement (SHOW WARNINGS).
+    warnings: Vec<Warning>,
+}
+
+/// A warning or note of a statement, as SHOW WARNINGS lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Warning {
+    pub level: &'static str,
+    pub code: u16,
+    pub message: String,
+}
+
+/// A finding of the tree checks as a warning or error message.
+fn tree_message(f: &lint::Finding) -> String {
+    format!("{}.{}: {}", f.db, f.table, f.message)
 }
 
 /// Name of the collation a handshake asks for by id (MySQL / MariaDB ids of
@@ -140,6 +156,21 @@ impl StaleRetry {
 
     async fn again<T>(&mut self, cluster: &Cluster, r: &SqlResult<T>, autocommit: bool) -> SqlResult<Stale> {
         let Err(e) = r else { return Ok(Stale::Done) };
+        if e.moved {
+            // A shard refused a bucket the statement was routed by: it did
+            // nothing. Read the map again; a statement that can start over
+            // runs again with it, until the move lands (between a move's
+            // send and its receive, its bucket is nowhere for a moment).
+            cluster.refresh_buckets().await?;
+            if !autocommit || std::time::Instant::now() > self.deadline {
+                return Ok(Stale::Done);
+            }
+            self.attempt += 1;
+            cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
+            let ms = (5u64 << self.attempt.min(4)).min(100);
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            return Ok(Stale::Retry);
+        }
         match e.code {
             1412 => {
                 cluster.refresh_catalog().await?;
@@ -168,6 +199,22 @@ impl StaleRetry {
                 } else {
                     Stale::Changed
                 })
+            }
+            // A shard that cannot be reached may have left the cluster: the
+            // statement runs again once this server learns that it has (the
+            // others' membership says so).
+            2003 | 2013 => {
+                let v = cluster.member_ver();
+                if !autocommit || std::time::Instant::now() > self.deadline || self.attempt >= 3 {
+                    return Ok(Stale::Done);
+                }
+                if cluster.load_members().await.is_err() || cluster.member_ver() == v {
+                    return Ok(Stale::Done);
+                }
+                cluster.refresh_buckets().await?;
+                self.attempt += 1;
+                cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
+                Ok(Stale::Retry)
             }
             _ => Ok(Stale::Done),
         }
@@ -320,8 +367,19 @@ impl Session {
             no_auto_value_on_zero: false,
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
+            warnings: Vec::new(),
             cluster,
         }
+    }
+
+    /// Number of warnings and notes of the last statement (the count OK and
+    /// EOF packets carry).
+    pub fn warning_count(&self) -> u16 {
+        self.warnings.len().min(u16::MAX as usize) as u16
+    }
+
+    pub fn warnings(&self) -> &[Warning] {
+        &self.warnings
     }
 
     /// The character set and collation id from the client's handshake:
@@ -353,6 +411,7 @@ impl Session {
             overrides: Some(&self.sys_vars),
             collation_connection: &self.collation_connection,
             collation_server: &self.cluster.cfg.default_collation,
+            warning_count: self.warnings.len(),
         }
     }
 
@@ -521,6 +580,25 @@ impl Session {
                     )));
                 }
             }
+            "tarn_tree_checks" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "Variable 'tarn_tree_checks' is a SESSION variable and can't be used with SET GLOBAL",
+                    ));
+                }
+                match value.as_ref() {
+                    None | Some(Value::Null) => {
+                        self.sys_vars.remove(name);
+                    }
+                    Some(_) => {
+                        let v = admin::TreeChecks::parse(&text).ok_or_else(|| admin::bad_value(name, &text))?;
+                        self.sys_vars.insert(name.to_string(), Value::str(v.name()));
+                    }
+                }
+                return Ok(());
+            }
             "sql_mode" => {
                 self.no_auto_value_on_zero = value.is_some()
                     && text
@@ -578,6 +656,9 @@ impl Session {
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        if !admin::reads_diagnostics(sql) {
+            self.warnings.clear();
+        }
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
         // again with the new catalog.
@@ -737,6 +818,13 @@ impl Session {
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
+        if !self
+            .prepared
+            .get(&id)
+            .is_some_and(|p| matches!(p.admin, Some(Admin::ShowWarnings { .. })))
+        {
+            self.warnings.clear();
+        }
         let rp = self.restart_point();
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
         loop {
@@ -953,7 +1041,7 @@ impl Session {
                     self.found_rows = rows.len() as u64;
                     return Ok(Output::Rows { columns, rows });
                 }
-                Err(e) if e.code == 1213 && attempt < MAX_RETRIES => {
+                Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
@@ -1077,7 +1165,7 @@ impl Session {
             };
             match res {
                 Ok((n, id)) => return Ok(self.dml_output(n, id)),
-                Err(e) if e.code == 1213 && attempt < MAX_RETRIES => {
+                Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
@@ -1109,7 +1197,8 @@ impl Session {
         pre: Option<&(Vec<Row>, Option<u64>)>,
     ) -> SqlResult<Option<Output>> {
         let cx = self.cx(params, now);
-        let (shard, writes, insert_id, table) = match stmt {
+        // wb: the bucket of each write (lua/tarn.lua "Buckets")
+        let (shard, writes, insert_id, table, wb) = match stmt {
             // REPLACE on a table with another unique key may have to delete
             // other rows (those it collides with on that key): not here.
             // Nor writes that change a global index (catalog: unique keys
@@ -1136,13 +1225,15 @@ impl Session {
                 }
                 let mut m = Mp::new();
                 m.arr(2).arr(rows.len());
+                let mut wb = Vec::with_capacity(rows.len());
                 for r in &rows {
                     m.arr(3)
                         .str(if p.replace { "replace" } else { "insert" })
                         .uint(p.table.space_id as u64);
+                    wb.push(self.cluster.bucket_of(&p.table.shard_key_of(r)));
                     self.encode_tuple(&p.table, r, &mut m);
                 }
-                (shard, m, id, p.table.clone())
+                (shard, m, id, p.table.clone(), wb)
             }
             Stmt::Update(p) => {
                 let Some((pk, ops)) = self.simple_update(p, &cx)? else {
@@ -1151,6 +1242,7 @@ impl Session {
                 let t = &p.access.table;
                 let idx = &t.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, t, idx, &pk).unwrap_or(0);
+                let wb = vec![self.cluster.bucket_of(&t.shard_key_of_pk(&pk))];
                 let mut m = Mp::new();
                 m.arr(2).arr(1).arr(6).str("update").uint(t.space_id as u64).vals(&pk);
                 // Fields by number (1-based): rows written before an ALTER
@@ -1210,7 +1302,7 @@ impl Session {
                         m.nil();
                     }
                 }
-                (shard, m, None, t.clone())
+                (shard, m, None, t.clone(), wb)
             }
             Stmt::Delete(p) if p.access.table.globals.is_empty() => {
                 let Some(pk) = self.simple_pk_target(&p.access, &p.filter, &p.order, &cx)? else {
@@ -1218,6 +1310,7 @@ impl Session {
                 };
                 let idx = &p.access.table.indexes[0];
                 let shard = exec::route_prefix(&self.cluster, &p.access.table, idx, &pk).unwrap_or(0);
+                let wb = vec![self.cluster.bucket_of(&p.access.table.shard_key_of_pk(&pk))];
                 let mut m = Mp::new();
                 m.arr(2)
                     .arr(1)
@@ -1225,7 +1318,7 @@ impl Session {
                     .str("delete")
                     .uint(p.access.table.space_id as u64)
                     .vals(&pk);
-                (shard, m, None, p.access.table.clone())
+                (shard, m, None, p.access.table.clone(), wb)
             }
             _ => return Ok(None),
         };
@@ -1233,9 +1326,13 @@ impl Session {
         // the session's innodb_lock_wait_timeout (then 1205); the shard
         // refuses writes made with a replaced table definition (1412).
         let mut writes = writes;
-        writes.map(3).str("lock_timeout").f64(self.lock_wait_timeout);
+        writes.map(4).str("lock_timeout").f64(self.lock_wait_timeout);
         writes.str("found_rows").bool(self.found_rows_flag);
         writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
+        writes.str("wb").arr(wb.len());
+        for b in wb {
+            writes.uint(b as u64);
+        }
         let mut attempt = 0;
         loop {
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
@@ -1245,7 +1342,9 @@ impl Session {
                     let n = rd.value()?.as_i64().unwrap_or(0) as u64;
                     return Ok(Some(self.dml_output(n, insert_id)));
                 }
-                Err(e) if e.code == 1213 && attempt < MAX_RETRIES => {
+                // (A bucket refused: nothing was written; the statement
+                // runs again, routed by the map read again.)
+                Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
@@ -1589,6 +1688,7 @@ impl Session {
             }
         } else {
             let st = txn.stream(&self.cluster, shard).await?;
+            let bucket = Some(self.cluster.bucket_of(&key));
             let (rows, _) = select_rows(
                 &st.client,
                 st.id,
@@ -1601,10 +1701,11 @@ impl Session {
                 false,
                 st.begin,
                 None,
+                &Route::in_stream(bucket),
             )
             .await?;
             txn.mark_begun(shard);
-            txn.note_point(shard, g.table.space_id, 0, key);
+            txn.note_point(shard, g.table.space_id, 0, key, bucket);
             rows.into_iter().next()
         };
         let Some(entry) = entry else { return Ok(None) };
@@ -1634,6 +1735,7 @@ impl Session {
             return Ok(b.cloned());
         }
         let st = txn.stream(&self.cluster, shard).await?;
+        let bucket = Some(self.cluster.bucket_of(&t.shard_key_of_pk(pk)));
         let (rows, _) = select_rows(
             &st.client,
             st.id,
@@ -1646,10 +1748,11 @@ impl Session {
             false,
             st.begin,
             None,
+            &Route::in_stream(bucket),
         )
         .await?;
         txn.mark_begun(shard);
-        txn.note_point(shard, t.space_id, 0, pk.to_vec());
+        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket);
         Ok(rows.into_iter().next())
     }
 
@@ -1967,7 +2070,12 @@ impl Session {
                 }
                 pending.push((l, txn.stream(&self.cluster, l.2).await?));
             }
-            let futs = pending.iter().map(|(l, st)| {
+            let buckets: Vec<Option<u32>> = pending
+                .iter()
+                .map(|(l, _)| self.cluster.bucket_of_index_key(t, l.3, &l.4))
+                .collect();
+            let routes: Vec<Route> = buckets.iter().map(|&b| Route::in_stream(b)).collect();
+            let futs = pending.iter().zip(&routes).map(|((l, st), route)| {
                 select_rows(
                     &st.client,
                     st.id,
@@ -1980,13 +2088,14 @@ impl Session {
                     false,
                     st.begin,
                     None,
+                    route,
                 )
             });
             let results = futures::future::join_all(futs).await;
-            for ((l, _), r) in pending.into_iter().zip(results) {
+            for (((l, _), r), b) in pending.into_iter().zip(results).zip(buckets) {
                 let (r, _) = r?;
                 txn.mark_begun(l.2);
-                txn.note_point(l.2, t.space_id, l.3, l.4.clone());
+                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b);
                 place(&mut out, l.0, l.1, r.into_iter().next());
             }
         }
@@ -2058,6 +2167,7 @@ impl Session {
                 let st = txn.stream(&self.cluster, shard).await?;
                 let key = key_of(i);
                 let id = t.indexes[i].id;
+                let bucket = self.cluster.bucket_of_index_key(t, id, &key);
                 let (rows, _) = select_rows(
                     &st.client,
                     st.id,
@@ -2070,10 +2180,11 @@ impl Session {
                     false,
                     st.begin,
                     None,
+                    &Route::in_stream(bucket),
                 )
                 .await?;
                 txn.mark_begun(shard);
-                txn.note_point(shard, t.space_id, id, key);
+                txn.note_point(shard, t.space_id, id, key, bucket);
                 stored.push(rows.into_iter().next());
             }
         }
@@ -2223,15 +2334,65 @@ impl Session {
             } => {
                 let mut def = (**def).clone();
                 def.engine = engine.unwrap_or(c.cfg.default_engine);
+                let mut found = Vec::new();
+                if self.tree_checks() != admin::TreeChecks::Off {
+                    c.refresh_if_newer().await?;
+                    // IF NOT EXISTS of an existing table changes nothing
+                    if !(*if_not_exists && c.catalog().get(&def.db, &def.name).is_some()) {
+                        found = self.tree_findings(vec![def.clone()], &[]);
+                    }
+                }
+                self.refuse_tree(&found, &def.db, &def.name)?;
                 c.create_table(def, *if_not_exists, *auto_increment, self.lock_wait_timeout)
-                    .await?
+                    .await?;
+                self.note_tree(found);
             }
             Stmt::Alter(plans) => {
                 for p in plans {
+                    let mut found = Vec::new();
+                    if self.tree_checks() != admin::TreeChecks::Off {
+                        c.refresh_if_newer().await?;
+                        let cat = c.catalog();
+                        if let Some(old) = cat.get(&p.db, &p.table) {
+                            // an ALTER TABLE that would fail reports its own error
+                            if let Ok(ch) = crate::alter::apply(&old, p, &cat, &now_string()) {
+                                let new = ch.def;
+                                let gone =
+                                    !(new.db.eq_ignore_ascii_case(&p.db) && new.name.eq_ignore_ascii_case(&p.table));
+                                let removed = if gone {
+                                    vec![(p.db.clone(), p.table.clone())]
+                                } else {
+                                    vec![]
+                                };
+                                let before = self.tree_findings(vec![(*old).clone()], &[]);
+                                let (db, name) = (new.db.clone(), new.name.clone());
+                                found = self.tree_findings(vec![new], &removed);
+                                found.retain(|f| !before.contains(f));
+                                self.refuse_tree(&found, &db, &name)?;
+                            }
+                        }
+                    }
                     c.alter_table(p, self.lock_wait_timeout).await?;
+                    self.note_tree(found);
                 }
             }
-            Stmt::DropTable { tables, if_exists } => c.drop_tables(tables, *if_exists, self.lock_wait_timeout).await?,
+            Stmt::DropTable { tables, if_exists } => {
+                let mut found = Vec::new();
+                if self.tree_checks() != admin::TreeChecks::Off {
+                    c.refresh_if_newer().await?;
+                    let cat = c.catalog();
+                    let dropped: Vec<TableDef> = tables
+                        .iter()
+                        .filter_map(|(d, n)| cat.get(d, n))
+                        .map(|t| (*t).clone())
+                        .collect();
+                    let before = self.tree_findings(dropped, &[]);
+                    found = self.tree_findings(Vec::new(), tables);
+                    found.retain(|f| !before.contains(f));
+                }
+                c.drop_tables(tables, *if_exists, self.lock_wait_timeout).await?;
+                self.note_tree(found);
+            }
             Stmt::Truncate { db, table } => c.truncate(db, table, self.lock_wait_timeout).await?,
             Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
             Stmt::DropDatabase { name, if_exists } => {
@@ -2244,6 +2405,69 @@ impl Session {
             _ => return Err(SqlError::internal("not DDL")),
         }
         Ok(Output::ok(0))
+    }
+
+    /// `tarn_tree_checks` of this session.
+    fn tree_checks(&self) -> admin::TreeChecks {
+        self.sys_vars
+            .get("tarn_tree_checks")
+            .and_then(|v| admin::TreeChecks::parse(&v.to_string()))
+            .unwrap_or(admin::TreeChecks::Warn)
+    }
+
+    /// The checks of declared table trees (issue #85) around a schema
+    /// change: the tables it creates or alters, as they will be (`changed`),
+    /// and the tables that name one of those, or one it drops or renames
+    /// away (`removed`), as their parent.
+    fn tree_findings(&self, changed: Vec<TableDef>, removed: &[(String, String)]) -> Vec<lint::Finding> {
+        let cat = self.cluster.catalog();
+        let changed: Vec<Arc<TableDef>> = changed
+            .into_iter()
+            .filter_map(|mut d| d.resolve_types().ok().map(|_| Arc::new(d)))
+            .collect();
+        let look = lint::lookup_with(&cat, &changed, removed);
+        let mut out: Vec<lint::Finding> = changed.iter().flat_map(|t| lint::check_table(&look, t)).collect();
+        let is = |t: &TableDef, (d, n): (&str, &str)| t.db.eq_ignore_ascii_case(d) && t.name.eq_ignore_ascii_case(n);
+        let names: Vec<(String, String)> = changed
+            .iter()
+            .map(|t| (t.db.clone(), t.name.clone()))
+            .chain(removed.iter().cloned())
+            .collect();
+        let mut checked: Vec<Arc<TableDef>> = Vec::new();
+        for (db, name) in &names {
+            for child in lint::children_of(&cat, db, name) {
+                let skip = names.iter().any(|(d, n)| is(&child, (d, n)))
+                    || checked.iter().any(|t| is(t, (&child.db, &child.name)));
+                if !skip {
+                    out.extend(lint::check_table(&look, &child));
+                    checked.push(child);
+                }
+            }
+        }
+        out
+    }
+
+    /// Under `tarn_tree_checks = ERROR`, a finding about the table a
+    /// statement creates or alters refuses the statement.
+    fn refuse_tree(&self, found: &[lint::Finding], db: &str, name: &str) -> SqlResult<()> {
+        if self.tree_checks() != admin::TreeChecks::Error {
+            return Ok(());
+        }
+        match found
+            .iter()
+            .find(|f| f.strict && f.db.eq_ignore_ascii_case(db) && f.table.eq_ignore_ascii_case(name))
+        {
+            Some(f) => Err(SqlError::new(lint::CODE, "HY000", tree_message(f))),
+            None => Ok(()),
+        }
+    }
+
+    fn note_tree(&mut self, found: Vec<lint::Finding>) {
+        self.warnings.extend(found.iter().map(|f| Warning {
+            level: f.level.name(),
+            code: lint::CODE,
+            message: tree_message(f),
+        }));
     }
 
     // ---- session statements --------------------------------------------------
@@ -2519,7 +2743,7 @@ impl Session {
                             Value::str(if t.columns[c].nullable { "YES" } else { "" }),
                             Value::str("TREE"),
                             Value::str(""),
-                            Value::str(""),
+                            Value::str(&ix.comment),
                             Value::str(if ix.invisible { "NO" } else { "YES" }),
                             Value::Null,
                         ]);
@@ -2573,13 +2797,222 @@ impl Session {
             }
             Admin::ShowStatus { like } => Ok(self.show_status(&like)),
             Admin::ShowTarnStatus => Ok(self.show_status(&None)),
-            Admin::ShowWarnings => rows_out(
+            Admin::ShowTarnBuckets => {
+                let rows = self
+                    .cluster
+                    .show_buckets()
+                    .await?
+                    .into_iter()
+                    .map(|(id, n, ranges, epoch, moving)| {
+                        vec![
+                            Value::Int(id as i64),
+                            Value::Int(n as i64),
+                            Value::str(&ranges),
+                            Value::Int(epoch as i64),
+                            Value::str(&moving),
+                        ]
+                    })
+                    .collect();
+                rows_out(
+                    cols(&[
+                        ("Shard", ColumnType::Long),
+                        ("Buckets", ColumnType::Long),
+                        ("Ranges", ColumnType::VarString),
+                        ("Epoch", ColumnType::LongLong),
+                        ("Moving", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
+            }
+            Admin::AddShard { id, replicas } => {
+                self.implicit_commit().await?;
+                self.cluster.add_shard(id, replicas).await?;
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info: format!("Shard {} joined the cluster (with no buckets)", id),
+                })
+            }
+            Admin::RemoveShard { id } => {
+                self.implicit_commit().await?;
+                let moved = self.cluster.remove_shard(id).await?;
+                Ok(Output::Ok {
+                    affected: moved,
+                    last_insert_id: 0,
+                    info: format!("Shard {} left the cluster ({} buckets moved off it)", id, moved),
+                })
+            }
+            Admin::Rebalance {
+                by,
+                max_moves,
+                max_rate,
+            } => {
+                self.implicit_commit().await?;
+                let info = self.cluster.rebalance_start(&by, max_moves, max_rate).await?;
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info,
+                })
+            }
+            Admin::RebalanceControl(action) => {
+                self.implicit_commit().await?;
+                let info = self.cluster.rebalance_control(&action).await?;
+                Ok(Output::Ok {
+                    affected: 0,
+                    last_insert_id: 0,
+                    info,
+                })
+            }
+            Admin::ShowTarnRebalance => {
+                let r = self.cluster.rebalance_status().await?;
+                let rows = r
+                    .into_iter()
+                    .map(|r| {
+                        let count = |st: &[&str]| r.moves.iter().filter(|x| st.contains(&x.state.as_str())).count();
+                        vec![
+                            Value::str(&r.status),
+                            Value::str(&r.by),
+                            Value::str(&r.owner),
+                            Value::Float(r.started),
+                            Value::UInt(r.done),
+                            Value::UInt(r.failed),
+                            Value::UInt(count(&["planned"]) as u64),
+                            Value::UInt(count(&["moving", "copying", "fenced"]) as u64),
+                            Value::UInt(r.bytes),
+                            Value::UInt(r.max_moves as u64),
+                            Value::UInt(r.max_rate),
+                            Value::str(&r.message),
+                        ]
+                    })
+                    .collect();
+                rows_out(
+                    cols(&[
+                        ("Status", ColumnType::VarString),
+                        ("By", ColumnType::VarString),
+                        ("Owner", ColumnType::VarString),
+                        ("Started", ColumnType::Double),
+                        ("Moves_done", ColumnType::LongLong),
+                        ("Moves_failed", ColumnType::LongLong),
+                        ("Planned", ColumnType::LongLong),
+                        ("Moving", ColumnType::LongLong),
+                        ("Bytes_moved", ColumnType::LongLong),
+                        ("Max_moves", ColumnType::LongLong),
+                        ("Max_rate", ColumnType::LongLong),
+                        ("Message", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
+            }
+            Admin::ShowTarnMoves => {
+                let moves = self
+                    .cluster
+                    .rebalance_status()
+                    .await?
+                    .map(|r| r.moves)
+                    .unwrap_or_default();
+                rows_out(
+                    cols(&[
+                        ("Bucket", ColumnType::LongLong),
+                        ("From_shard", ColumnType::LongLong),
+                        ("To_shard", ColumnType::LongLong),
+                        ("Bytes", ColumnType::LongLong),
+                        ("State", ColumnType::VarString),
+                        ("Error", ColumnType::VarString),
+                    ]),
+                    moves
+                        .into_iter()
+                        .map(|x| {
+                            vec![
+                                Value::UInt(x.bucket as u64),
+                                Value::UInt(x.from as u64),
+                                Value::UInt(x.to as u64),
+                                Value::UInt(x.bytes),
+                                Value::str(&x.state),
+                                Value::str(&x.error),
+                            ]
+                        })
+                        .collect(),
+                )
+            }
+            Admin::ShowTarnShards => {
+                let m = self.cluster.show_members().await?;
+                rows_out(
+                    cols(&[
+                        ("Shard", ColumnType::Long),
+                        ("Replicas", ColumnType::VarString),
+                        ("State", ColumnType::VarString),
+                    ]),
+                    m.shards
+                        .iter()
+                        .map(|s| {
+                            vec![
+                                Value::Int(s.id as i64),
+                                Value::str(&s.replicas.join(",")),
+                                Value::str(&s.state),
+                            ]
+                        })
+                        .collect(),
+                )
+            }
+            Admin::MoveBuckets { first, last, to } => {
+                self.implicit_commit().await?;
+                // Buckets move to members only: every server knows them
+                // (TARN ADD SHARD), or, before any joined, they are the
+                // shards of the configuration.
+                let is_member = |c: &Cluster| c.members().shards.iter().any(|s| s.id == to && s.state == "active");
+                if !is_member(&self.cluster) {
+                    // (one that joined since this server last looked)
+                    self.cluster.load_members().await?;
+                }
+                let member = is_member(&self.cluster);
+                let to_pos = self
+                    .cluster
+                    .shard_position(to)
+                    .filter(|&p| member && !self.cluster.shards[p].removed())
+                    .ok_or_else(|| {
+                        SqlError::new(
+                            1210,
+                            "HY000",
+                            format!("there is no shard {} in the cluster (TARN ADD SHARD adds one)", to),
+                        )
+                    })?;
+                let count = self.cluster.bucket_map().count;
+                if last > count {
+                    return Err(SqlError::new(
+                        1210,
+                        "HY000",
+                        format!("bucket {} does not exist (there are {})", last, count),
+                    ));
+                }
+                let mut moved = 0u64;
+                for b in first..=last {
+                    if self
+                        .cluster
+                        .move_bucket(b, to_pos, self.cluster.cfg.move_timeout)
+                        .await?
+                    {
+                        moved += 1;
+                    }
+                }
+                let total = (last - first + 1) as u64;
+                Ok(Output::Ok {
+                    affected: moved,
+                    last_insert_id: 0,
+                    info: format!("Buckets: {} moved, {} there already", moved, total - moved),
+                })
+            }
+            Admin::ShowWarnings { errors } => rows_out(
                 cols(&[
                     ("Level", ColumnType::VarString),
                     ("Code", ColumnType::Long),
                     ("Message", ColumnType::VarString),
                 ]),
-                vec![],
+                self.warnings
+                    .iter()
+                    .filter(|w| !errors || w.level == "Error")
+                    .map(|w| vec![Value::str(w.level), Value::Int(w.code as i64), Value::str(&w.message)])
+                    .collect(),
             ),
             Admin::ShowEngines => rows_out(
                 cols(&[
@@ -2728,7 +3161,10 @@ impl Session {
             ("Tarn_rows_read", s.rows_read.load(Ordering::Relaxed)),
             ("Tarn_storage_reads", s.storage_reads.load(Ordering::Relaxed)),
             ("Tarn_path_estimates", s.path_estimates.load(Ordering::Relaxed)),
-            ("Tarn_shards", self.cluster.nshards() as u64),
+            ("Tarn_bucket_moves", s.bucket_moves.load(Ordering::Relaxed)),
+            ("Tarn_bucket_map_reads", self.cluster.bucket_loads()),
+            ("Tarn_buckets", self.cluster.bucket_map().count as u64),
+            ("Tarn_shards", self.cluster.nlive() as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));
         let rows = stats
@@ -2889,6 +3325,23 @@ fn charset_of(collation: &str) -> &str {
     }
 }
 
+/// `s` as the body of a quoted SQL string, as SHOW CREATE TABLE writes it:
+/// NUL, LF and CR escaped, `\` and `'` doubled; other characters stay raw.
+fn sql_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\0' => out.push_str("\\0"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("''"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn show_create(t: &TableDef) -> String {
     let mut s = format!("CREATE TABLE `{}` (\n", t.name);
     let mut lines = Vec::new();
@@ -2908,7 +3361,7 @@ fn show_create(t: &TableDef) -> String {
             if d == "CURRENT_TIMESTAMP" {
                 l.push_str(" DEFAULT CURRENT_TIMESTAMP");
             } else {
-                l.push_str(&format!(" DEFAULT '{}'", d.replace('\'', "''")));
+                l.push_str(&format!(" DEFAULT '{}'", sql_str(d)));
             }
         } else if c.nullable {
             l.push_str(" DEFAULT NULL");
@@ -2923,14 +3376,20 @@ fn show_create(t: &TableDef) -> String {
             continue;
         }
         let colnames: Vec<String> = ix.cols.iter().map(|&c| format!("`{}`", t.columns[c].name)).collect();
+        let comment = if ix.comment.is_empty() {
+            String::new()
+        } else {
+            format!(" COMMENT '{}'", sql_str(&ix.comment))
+        };
         if ix.id == 0 && t.declared_pk() {
-            lines.push(format!("  PRIMARY KEY ({})", colnames.join(",")));
+            lines.push(format!("  PRIMARY KEY ({}){}", colnames.join(","), comment));
         } else {
             lines.push(format!(
-                "  {}KEY `{}` ({}){}",
+                "  {}KEY `{}` ({}){}{}",
                 if ix.unique { "UNIQUE " } else { "" },
                 ix.name,
                 colnames.join(","),
+                comment,
                 if ix.invisible { " /*!80000 INVISIBLE */" } else { "" }
             ));
         }
@@ -2969,7 +3428,7 @@ fn show_create(t: &TableDef) -> String {
         table_coll
     ));
     if !t.comment.is_empty() {
-        s.push_str(&format!(" COMMENT='{}'", t.comment.replace('\'', "''")));
+        s.push_str(&format!(" COMMENT='{}'", sql_str(&t.comment)));
     }
     if t.shard_key.iter().all(|&c| !t.columns[c].hidden) {
         s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
@@ -2983,4 +3442,71 @@ fn first_value(d: &[u8]) -> SqlResult<Value> {
     let mut rd = Rd::new(d);
     rd.array()?;
     rd.value()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sql_string_format_matches_mariadb_bytes() {
+        for (value, encoded) in [
+            ("\0", r"\0"),
+            ("\n", r"\n"),
+            ("\r", r"\r"),
+            ("\t", "\t"),
+            ("\u{8}", "\u{8}"),
+            ("\u{1a}", "\u{1a}"),
+            ("\\", r"\\"),
+            ("'", "''"),
+            ("\"", "\""),
+            (r"\0\n\r", r"\\0\\n\\r"),
+            ("雪\0\n\r\t\u{8}\u{1a}\\'\"", "雪\\0\\n\\r\t\u{8}\u{1a}\\\\''\""),
+        ] {
+            assert_eq!(sql_str(value).as_bytes(), encoded.as_bytes(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn show_create_control_strings_round_trip() {
+        let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("db"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let parse = |sql: &str| {
+            let Stmt::CreateTable { def, .. } = crate::planner::plan(sql, &ctx).unwrap() else {
+                panic!("not CREATE TABLE");
+            };
+            def
+        };
+        let mut def = parse("CREATE TABLE esc (id INT PRIMARY KEY, v VARCHAR(32), KEY kv (v))");
+        let value = "雪\0\n\r\t\u{8}\u{1a}\\'\"";
+        let encoded = "雪\\0\\n\\r\t\u{8}\u{1a}\\\\''\"";
+        def.columns[1].default = Some(value.into());
+        def.comment = value.into();
+        for ix in &mut def.indexes {
+            ix.comment = value.into();
+        }
+        let ddl = show_create(&def);
+        for fragment in [
+            format!("DEFAULT '{encoded}'"),
+            format!("PRIMARY KEY (`id`) COMMENT '{encoded}'"),
+            format!("KEY `kv` (`v`) COMMENT '{encoded}'"),
+            format!("COMMENT='{encoded}'"),
+        ] {
+            assert!(ddl.contains(&fragment), "{ddl:?} lacks {fragment:?}");
+        }
+        let reloaded = parse(&ddl);
+        assert_eq!(reloaded.columns[1].default.as_deref(), Some(value));
+        assert_eq!(reloaded.comment.as_bytes(), value.as_bytes());
+        assert!(reloaded
+            .indexes
+            .iter()
+            .all(|ix| ix.comment.as_bytes() == value.as_bytes()));
+        assert_eq!(show_create(&reloaded).as_bytes(), ddl.as_bytes());
+    }
 }

@@ -127,6 +127,19 @@ impl<'a> Rd<'a> {
     pub fn is_nil(&self) -> bool {
         self.buf.first() == Some(&0xc0)
     }
+    /// The length of the map that comes next.
+    pub fn map(&mut self) -> SqlResult<usize> {
+        tarn_iproto::mp::read_map_len(&mut self.buf)
+            .map(|n| n as usize)
+            .map_err(proto)
+    }
+    /// Whether a map comes next.
+    pub fn peek_map(&self) -> Option<()> {
+        match self.buf.first() {
+            Some(0x80..=0x8f) | Some(0xde) | Some(0xdf) => Some(()),
+            _ => None,
+        }
+    }
     /// Decode a stored tuple of `t` into a row: each column from its field,
     /// or its fill value when the tuple ends before it (a row written before
     /// ALTER TABLE added the column).
@@ -242,6 +255,16 @@ pub fn status_is(data: &[u8], status: &str) -> bool {
         && rd.string().is_ok_and(|s| s == status)
 }
 
+/// The number of fields of the `{status, ...}` table a Tarn Lua procedure
+/// returned (0 if there is none).
+pub fn status_len(data: &[u8]) -> usize {
+    let mut rd = Rd::new(data);
+    match rd.array() {
+        Ok(n) if n > 0 => rd.array().unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// Decode the `{status, ...}` table returned by a Tarn Lua procedure:
 /// returns a reader positioned after the status for `ok`/`yes`, or the error.
 pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
@@ -257,6 +280,14 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
     let status = rd.string()?;
     match status.as_str() {
         "ok" | "yes" | "exists" => Ok((status, rd)),
+        "moved" => {
+            // {'moved', 1213, message, shard it went to}: see SqlError::moved
+            if m > 1 {
+                rd.skip()?;
+            }
+            let msg = if m > 2 { rd.string()? } else { status.clone() };
+            Err(SqlError::moved(msg))
+        }
         "conflict" | "no" | "duplicate" | "error" | "locked" | "timeout" | "deadlock" => {
             let code = if m > 1 { rd.value()?.as_i64().unwrap_or(0) } else { 0 };
             let msg = if m > 2 { rd.string()? } else { status.clone() };

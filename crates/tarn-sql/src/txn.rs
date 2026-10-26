@@ -67,6 +67,50 @@ pub struct RangeRead {
     pub hi: Option<Vec<Value>>,
     pub lo_incl: bool,
     pub hi_incl: bool,
+    /// The bucket the read was routed by (None: a read of every shard).
+    pub bucket: Option<u32>,
+}
+
+/// What a shard checks before it serves a read (lua/tarn.lua "Buckets").
+#[derive(Clone, Debug, PartialEq)]
+pub enum Route {
+    /// Nothing: a read of every shard in a transaction's stream (its
+    /// validation covers it), or for a storage node that predates buckets.
+    None,
+    /// The buckets the read was routed by: the shard must own them.
+    Buckets(Vec<u32>),
+    /// A read of every shard outside a transaction: the shard's epoch in
+    /// this server's map, which it refuses if its buckets changed since,
+    /// and the membership version the read was routed with (lua/tarn.lua
+    /// "Membership"), which it refuses if a shard joined since.
+    Epoch(u64, u64),
+}
+
+impl Route {
+    /// A read in a transaction's stream: by its bucket, if it has one.
+    pub fn in_stream(bucket: Option<u32>) -> Route {
+        bucket.map_or(Route::None, |b| Route::Buckets(vec![b]))
+    }
+
+    pub fn encode(&self, m: &mut Mp) {
+        match self {
+            Route::None => {
+                m.nil();
+            }
+            Route::Buckets(b) if b.len() == 1 => {
+                m.uint(b[0] as u64);
+            }
+            Route::Buckets(b) => {
+                m.arr(b.len());
+                for &x in b {
+                    m.uint(x as u64);
+                }
+            }
+            Route::Epoch(e, v) => {
+                m.map(2).str("e").uint(*e).str("m").uint(*v);
+            }
+        }
+    }
 }
 
 pub struct Stream {
@@ -156,7 +200,9 @@ pub struct Txn {
     pub savepoints: Vec<(String, BTreeMap<(u32, Bytes), BufWrite>)>,
     pub streams: BTreeMap<usize, Stream>,
     pub writes: BTreeMap<(u32, Bytes), BufWrite>,
-    pub rpoints: BTreeMap<usize, Vec<(u32, u32, Vec<Value>)>>,
+    /// Point reads by shard: (space, index, key, the bucket they were
+    /// routed by).
+    pub rpoints: BTreeMap<usize, Vec<(u32, u32, Vec<Value>, Option<u32>)>>,
     pub rranges: BTreeMap<usize, Vec<RangeRead>>,
     /// Definition version (`TableDef::ver`) each table was written with,
     /// by space id (see [`Txn::check_def`]).
@@ -164,6 +210,13 @@ pub struct Txn {
     /// Set after an error that leaves the transaction unusable (e.g. a
     /// conflict detected mid-transaction); COMMIT then fails.
     pub doomed: Option<SqlError>,
+    /// The membership version (members.rs) of this server when the
+    /// transaction began. Its reads of every shard covered at least that
+    /// membership's shards (shards only join this server's list, before
+    /// it takes their version): when it made such reads, its commit
+    /// requests name the version, and a shard that knows a newer one refuses
+    /// them (lua/tarn.lua "Membership").
+    pub mver: u64,
 }
 
 pub fn definition_changed() -> SqlError {
@@ -215,6 +268,7 @@ impl Txn {
             rranges: BTreeMap::new(),
             defs: BTreeMap::new(),
             doomed: None,
+            mver: cluster.member_ver(),
         }
     }
 
@@ -261,7 +315,8 @@ impl Txn {
         let mut m = Mp::new();
         m.arr(4).str(&self.id).arr(keys.len());
         for k in keys {
-            m.arr(3).uint(k.table.space_id as u64).uint(k.index as u64).vals(&k.key);
+            m.arr(4).uint(k.table.space_id as u64).uint(k.index as u64).vals(&k.key);
+            opt_uint(&mut m, cluster.bucket_of_index_key(&k.table, k.index, &k.key));
         }
         self.encode_lock_opts(&mut m, cluster, o, &held);
         // NOWAIT and SKIP LOCKED requests never queue.
@@ -368,11 +423,12 @@ impl Txn {
             let mut m = Mp::new();
             m.arr(4).str(&txn.id).arr(ranges.len());
             for r in ranges {
-                m.arr(4).uint(r.table.space_id as u64).vals(&r.prefix).uint(r.n as u64);
+                m.arr(5).uint(r.table.space_id as u64).vals(&r.prefix).uint(r.n as u64);
                 m.arr(r.skip.len());
                 for k in &r.skip {
                     m.vals(k);
                 }
+                opt_uint(&mut m, cluster.bucket_of_index_key(&r.table, 0, &r.prefix));
             }
             txn.encode_lock_opts(&mut m, cluster, *o, &held);
             (m, held)
@@ -553,8 +609,8 @@ impl Txn {
         }
     }
 
-    pub fn note_point(&mut self, shard: usize, space: u32, index: u32, key: Vec<Value>) {
-        self.rpoints.entry(shard).or_default().push((space, index, key));
+    pub fn note_point(&mut self, shard: usize, space: u32, index: u32, key: Vec<Value>, bucket: Option<u32>) {
+        self.rpoints.entry(shard).or_default().push((space, index, key, bucket));
     }
 
     pub fn note_range(&mut self, shard: usize, r: RangeRead) {
@@ -666,13 +722,17 @@ impl Txn {
         p
     }
 
-    fn encode_writes(&self, cluster: &Cluster, shard: usize, m: &mut Mp) {
+    /// The writes to `shard`, and the bucket of each (`wb`, in their order).
+    fn encode_writes(&self, cluster: &Cluster, shard: usize, m: &mut Mp) -> Vec<u32> {
         // Deletes first: a row inserted in place of a deleted one (REPLACE
         // over a unique key, delete-then-insert) may reuse its unique values.
         let mut ws: Vec<&BufWrite> = self.writes.values().filter(|w| w.shard == shard).collect();
         ws.sort_by_key(|w| w.op != WOp::Delete);
         m.arr(ws.len());
+        let mut wb = Vec::with_capacity(ws.len());
         for w in ws {
+            let bucket = cluster.bucket_of(&w.table.shard_key_of_pk(&w.pk));
+            wb.push(bucket);
             m.arr(3);
             m.str(match w.op {
                 WOp::Insert => "insert",
@@ -682,27 +742,46 @@ impl Txn {
             m.uint(w.table.space_id as u64);
             match &w.row {
                 Some(r) if w.op != WOp::Delete => {
-                    w.table
-                        .encode_tuple(r, cluster.bucket_of(&w.table.shard_key_of(r)) as u64, m);
+                    w.table.encode_tuple(r, bucket as u64, m);
                 }
                 _ => {
                     m.vals(&w.pk);
                 }
             }
         }
+        wb
+    }
+
+    /// Whether the transaction read every shard (a read routed by no
+    /// bucket).
+    fn scanned(&self) -> bool {
+        self.rpoints.values().flatten().any(|p| p.3.is_none())
+            || self.rranges.values().flatten().any(|r| r.bucket.is_none())
+    }
+
+    /// The membership version its commit requests name (`mver` of the
+    /// commit procedures): nil unless it read every shard.
+    fn encode_mver(&self, m: &mut Mp) {
+        if self.scanned() {
+            m.uint(self.mver);
+        } else {
+            m.nil();
+        }
     }
 
     fn encode_reads(&self, shard: usize, m: &mut Mp) {
         let pts = self.rpoints.get(&shard).map(|v| v.as_slice()).unwrap_or(&[]);
         m.arr(pts.len());
-        for (s, i, k) in pts {
-            m.arr(3).uint(*s as u64).uint(*i as u64).vals(k);
+        for (s, i, k, b) in pts {
+            m.arr(4).uint(*s as u64).uint(*i as u64).vals(k);
+            opt_uint(m, *b);
         }
         let rs = self.rranges.get(&shard).map(|v| v.as_slice()).unwrap_or(&[]);
         m.arr(rs.len());
         for r in rs {
-            m.arr(6).uint(r.space as u64).uint(r.index as u64);
+            m.arr(7).uint(r.space as u64).uint(r.index as u64);
             m.opt_vals(&r.lo).opt_vals(&r.hi).bool(r.lo_incl).bool(r.hi_incl);
+            opt_uint(m, r.bucket);
         }
     }
 
@@ -774,10 +853,11 @@ impl Txn {
                 None => (self.conn(cluster, p).await?, 0),
             };
             let mut m = Mp::new();
-            m.arr(5).str(&self.id);
+            m.arr(6).str(&self.id);
             self.encode_reads(p, &mut m);
             m.bool(cross);
             self.encode_gen(p, &mut m);
+            self.encode_mver(&mut m);
             futs.push(async move {
                 // Read-only: a lost connection or a demoted leader just
                 // means "retry" (nothing was written).
@@ -814,11 +894,13 @@ impl Txn {
             None => (self.conn(cluster, shard).await?, 0),
         };
         let mut m = Mp::new();
-        m.arr(6).str(&self.id);
-        self.encode_writes(cluster, shard, &mut m);
+        m.arr(8).str(&self.id);
+        let wb = self.encode_writes(cluster, shard, &mut m);
         self.encode_reads(shard, &mut m);
         self.encode_gen(shard, &mut m);
         self.encode_fence(shard, &mut m);
+        encode_buckets(&mut m, &wb);
+        self.encode_mver(&mut m);
         let shard_id = cluster.shards[shard].id;
         let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
             // The commit may have happened: report the outcome as unknown.
@@ -848,10 +930,11 @@ impl Txn {
             ));
         }
         let mut m = Mp::new();
-        m.arr(4).str(&self.id);
-        self.encode_writes(cluster, shard, &mut m);
+        m.arr(5).str(&self.id);
+        let wb = self.encode_writes(cluster, shard, &mut m);
         self.encode_gen(shard, &mut m);
         self.encode_fence(shard, &mut m);
+        encode_buckets(&mut m, &wb);
         let shard_id = cluster.shards[shard].id;
         let r = client.call(0, "tarn_commit_rc", &m.0).await.map_err(|e| match e {
             e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => ambiguous(shard_id, &e),
@@ -884,8 +967,15 @@ impl Txn {
                 "transaction too old (max_txn_age exceeded); retry it",
             ));
         }
-        // Decision shard: the lowest participant that writes.
-        let dshard = self.writes.values().map(|w| w.shard).min().unwrap();
+        // Decision shard: the lowest participant that writes and is not
+        // leaving the cluster (participants refuse one that is: lua/tarn.lua
+        // BK.prep).
+        let writers: BTreeSet<usize> = self.writes.values().map(|w| w.shard).collect();
+        let dshard = writers
+            .iter()
+            .copied()
+            .find(|&p| cluster.shard_active(p))
+            .unwrap_or_else(|| *writers.iter().next().unwrap());
         let did = cluster.shards[dshard].id;
         let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
         // Write-only participants have no stream: their PREPARE runs as its
@@ -901,16 +991,18 @@ impl Txn {
         let mut futs = Vec::new();
         for (&p, (client, id)) in parts.iter().zip(targets) {
             let mut m = Mp::new();
-            m.arr(9).str(&self.id).uint(did as u64);
+            m.arr(11).str(&self.id).uint(did as u64);
             m.arr(part_ids.len());
             for &x in &part_ids {
                 m.uint(x as u64);
             }
-            self.encode_writes(cluster, p, &mut m);
+            let wb = self.encode_writes(cluster, p, &mut m);
             self.encode_reads(p, &mut m);
             m.f64(self.ts);
             self.encode_gen(p, &mut m);
             self.encode_fence(p, &mut m);
+            encode_buckets(&mut m, &wb);
+            self.encode_mver(&mut m);
             futs.push(async move {
                 match client.call(id, "tarn_prepare", &m.0).await {
                     Ok(r) => match r.data() {
@@ -972,6 +1064,22 @@ impl Txn {
                 }
             }
         }
+    }
+}
+
+/// A bucket, or nil.
+fn opt_uint(m: &mut Mp, b: Option<u32>) {
+    match b {
+        Some(b) => m.uint(b as u64),
+        None => m.nil(),
+    };
+}
+
+/// The bucket of each write (`wb` of the commit procedures).
+fn encode_buckets(m: &mut Mp, wb: &[u32]) {
+    m.arr(wb.len());
+    for &b in wb {
+        m.uint(b as u64);
     }
 }
 
@@ -1151,12 +1259,10 @@ pub async fn select_keys(
     lock_check: bool,
     begin: bool,
     after: Option<&[u8]>,
+    route: &Route,
 ) -> SqlResult<Page> {
     let mut m = Mp::new();
-    m.arr(if after.is_some() { 7 } else { 6 })
-        .uint(t.space_id as u64)
-        .uint(index as u64)
-        .arr(keys.len());
+    m.arr(8).uint(t.space_id as u64).uint(index as u64).arr(keys.len());
     for k in keys {
         m.vals(k);
     }
@@ -1165,9 +1271,11 @@ pub async fn select_keys(
         None => m.nil(),
     };
     m.bool(lock_check).bool(begin);
-    if let Some(a) = after {
-        m.raw(a);
-    }
+    match after {
+        Some(a) => m.raw(a),
+        None => m.nil(),
+    };
+    route.encode(&mut m);
     let r = client
         .call(stream, "tarn_select_keys", &m.0)
         .await
@@ -1210,9 +1318,10 @@ pub async fn count_rows(
     exclude: &[&[Value]],
     lock_check: bool,
     begin: bool,
+    route: &Route,
 ) -> SqlResult<u64> {
     let mut m = Mp::new();
-    m.arr(10)
+    m.arr(11)
         .uint(t.space_id as u64)
         .uint(index as u64)
         .vals(key)
@@ -1237,6 +1346,7 @@ pub async fn count_rows(
         m.vals(k);
     }
     m.bool(lock_check).bool(begin);
+    route.encode(&mut m);
     let r = client
         .call(stream, "tarn_count", &m.0)
         .await
@@ -1266,10 +1376,12 @@ pub async fn select_rows(
     lock_check: bool,
     begin: bool,
     after: Option<&[u8]>,
+    route: &Route,
 ) -> SqlResult<Page> {
     // Unbounded point/prefix lookups inside a running stream transaction use
     // plain IPROTO SELECT; a full page goes on after its last tuple (which
-    // tarn_select takes as a position too).
+    // tarn_select takes as a position too). (Nothing checks their bucket
+    // here: the transaction's validation does, as they are in its read set.)
     if end.is_none() && !lock_check && !begin && after.is_none() {
         let mut k = Mp::new();
         k.vals(key);
@@ -1290,17 +1402,11 @@ pub async fn select_rows(
         return Ok((out, next));
     }
     let mut m = Mp::new();
-    m.arr(if after.is_some() {
-        11
-    } else if begin {
-        10
-    } else {
-        8
-    })
-    .uint(t.space_id as u64)
-    .uint(index as u64)
-    .vals(key)
-    .uint(iter as u64);
+    m.arr(12)
+        .uint(t.space_id as u64)
+        .uint(index as u64)
+        .vals(key)
+        .uint(iter as u64);
     match limit {
         Some(l) => m.uint(l as u64),
         None => m.nil(),
@@ -1314,12 +1420,12 @@ pub async fn select_rows(
         }
     }
     m.bool(lock_check);
-    if begin || after.is_some() {
-        m.nil().bool(begin); // offset, begin
-    }
-    if let Some(a) = after {
-        m.raw(a);
-    }
+    m.nil().bool(begin); // offset, begin
+    match after {
+        Some(a) => m.raw(a),
+        None => m.nil(),
+    };
+    route.encode(&mut m);
     let r = client
         .call(stream, "tarn_select", &m.0)
         .await

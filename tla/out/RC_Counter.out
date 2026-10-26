@@ -1,15 +1,15 @@
-Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=34593 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=45515 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 0 and seed 595213041028121670 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 30311] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /home/claude/tarn/tla/MC.tla
-Parsing file /home/claude/tarn/tla/TarnCommit.tla
-Parsing file /tmp/tlc-14747468623391400615/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-14747468623391400615/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-14747468623391400615/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-14747468623391400615/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-14747468623391400615/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-14747468623391400615/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-14747468623391400615/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 15 and seed 1566317642119812225 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 17655] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/MC.tla
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/TarnCommit.tla
+Parsing file /tmp/tlc-4344136568091355093/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-4344136568091355093/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-4344136568091355093/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-4344136568091355093/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-4344136568091355093/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-4344136568091355093/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-4344136568091355093/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -23,21 +23,21 @@ Linting of module TarnCommit
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MC
-Starting... (2026-10-25 04:45:36)
+Starting... (2026-10-26 13:57:11)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-25 04:45:36.
-Progress(10) at 2026-10-25 04:45:39: 23,953 states generated (23,953 s/min), 7,988 distinct states found (7,988 ds/min), 4,684 states left on queue.
-Progress(17) at 2026-10-25 04:46:39: 2,191,814 states generated (2,167,861 s/min), 418,593 distinct states found (410,605 ds/min), 130,548 states left on queue.
-Progress(19) at 2026-10-25 04:47:39: 5,551,776 states generated (3,359,962 s/min), 928,704 distinct states found (510,111 ds/min), 242,244 states left on queue.
-Progress(21) at 2026-10-25 04:48:39: 9,617,309 states generated (4,065,533 s/min), 1,473,253 distinct states found (544,549 ds/min), 301,059 states left on queue.
-Progress(23) at 2026-10-25 04:49:39: 13,416,474 states generated (3,799,165 s/min), 1,920,708 distinct states found (447,455 ds/min), 275,833 states left on queue.
-Progress(26) at 2026-10-25 04:50:39: 17,579,164 states generated (4,162,690 s/min), 2,276,801 distinct states found (356,093 ds/min), 39,926 states left on queue.
+Finished computing initial states: 1 distinct state generated at 2026-10-26 13:57:11.
+Progress(10) at 2026-10-26 13:57:14: 32,567 states generated (32,567 s/min), 10,091 distinct states found (10,091 ds/min), 5,839 states left on queue.
+Progress(18) at 2026-10-26 13:58:14: 3,570,549 states generated (3,537,982 s/min), 625,060 distinct states found (614,969 ds/min), 190,621 states left on queue.
+Progress(20) at 2026-10-26 13:59:14: 7,090,301 states generated (3,519,752 s/min), 1,119,182 distinct states found (494,122 ds/min), 282,681 states left on queue.
+Progress(22) at 2026-10-26 14:00:14: 10,637,827 states generated (3,547,526 s/min), 1,568,506 distinct states found (449,324 ds/min), 306,049 states left on queue.
+Progress(23) at 2026-10-26 14:01:14: 14,191,728 states generated (3,553,901 s/min), 1,941,604 distinct states found (373,098 ds/min), 218,248 states left on queue.
+Progress(26) at 2026-10-26 14:02:14: 16,936,985 states generated (2,745,257 s/min), 2,156,733 distinct states found (215,129 ds/min), 28,279 states left on queue.
 Model checking completed. No error has been found.
   Estimates of the probability that TLC did not check all reachable states
   because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = 1.9E-6
-  based on the actual fingerprints:  val = 1.4E-7
-17877610 states generated, 2289068 distinct states found, 0 states left on queue.
+  calculated (optimistic):  val = 1.8E-6
+  based on the actual fingerprints:  val = 5.9E-8
+17141464 states generated, 2164653 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 26.
-The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 20 and the 95th percentile is 4).
-Finished in 05min 09s at (2026-10-25 04:50:44)
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 19 and the 95th percentile is 4).
+Finished in 05min 07s at (2026-10-26 14:02:18)

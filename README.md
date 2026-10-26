@@ -14,7 +14,7 @@ read them as **key/value**.
 
 > **Status: research prototype (v0.1).** The commit protocol is model-checked
 > and the core is tested hard, but Tarn lacks much of what production use
-> needs (TLS, online resharding, much of MySQL's SQL surface). See
+> needs (TLS, automatic rebalancing, much of MySQL's SQL surface). See
 > [limitations](docs/design.md#6-limitations).
 
 ## Highlights
@@ -30,7 +30,11 @@ read them as **key/value**.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
   sharded with vshard's bucket function and live in RAM (memtx) or, with
-  `ENGINE=vinyl`, on disk; one transaction may span both.
+  `ENGINE=vinyl`, on disk; one transaction may span both. Buckets move
+  between shards online (`TARN MOVE BUCKET`) while transactions use their
+  rows, and shards join and leave a running cluster (`TARN ADD SHARD`,
+  `TARN REMOVE SHARD`), which `TARN REBALANCE` evens out by size or by
+  load.
 * **Strictly serializable transactions** across shards: lock-aware reads,
   MVCC-validated single-shard commits, and a parallel-commit two-phase commit
   whose recovery survives coordinator crashes and leader failover.
@@ -42,13 +46,13 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (44 configurations, including 15 deliberately
+  and model-checked with TLC (62 configurations, including 22 deliberately
   broken variants that TLC must catch). Shard routing, commit decisions and
   the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
   and compiled into the server.
 * **Tested against reality.** Exact differential tests against MariaDB,
   transaction-anomaly tests, a ledger-checked bank workload under leader
-  failover, and fault injection for lost replies.
+  failover and bucket moves, and fault injection for lost replies.
 
 ## Quick start
 
@@ -139,10 +143,11 @@ YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md).
 * **TLA+** ([`tla/TarnCommit.tla`](tla/TarnCommit.tla)): strict
   serializability, atomicity, clean direct reads and read-your-writes, under
   coordinator crashes, lost and re-delivered messages, recovery racing a
-  live coordinator, leader failover, and record garbage collection. TLC
-  found a real design flaw early on: single-shard reads could break strict
-  serializability. It later caught a flaw in a fix too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 61 verified
+  live coordinator, leader failover, record garbage collection, and bucket
+  moves between shards. TLC found a real design flaw early on: single-shard
+  reads could break strict serializability. It later caught a flaw in a fix
+  too.
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 66 verified
   functions and lemmas for routing, coordinator decisions and the MySQL wire
   codec.
 * **Tests**: 74 storage-protocol tests, 99 SQL statements compared exactly

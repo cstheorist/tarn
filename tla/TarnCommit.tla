@@ -55,6 +55,29 @@
 (* locks: until the WAL has it, readers outside it still see the previous  *)
 (* versions (infl), so a lock granted meanwhile must wait before reading.  *)
 (*                                                                         *)
+(* Bucket moves (MKeys: the rows of one bucket, moved from MFrom to MTo).  *)
+(* Every row has a place, the shard that stores and serves it; a request   *)
+(* for a row reaches the shard it was routed to, which refuses rows it     *)
+(* does not own.  A move fences the bucket on the sender (writes, row      *)
+(* locks and the read locks of PREPAREs are refused; the row locks it      *)
+(* holds are broken), waits until no prepared transaction holds a point    *)
+(* lock on its rows and no local commit to them is in flight, and copies   *)
+(* the rows; the receiver holds the bucket meanwhile.  Then the sender     *)
+(* deletes the rows (they are nowhere for a moment), and the receiver      *)
+(* inserts the copy and releases the hold.  Reads of a row where it no     *)
+(* longer is see it gone: MVCC fails the validation of a read a move       *)
+(* changed.  Scans (SSet: a range read on every shard, as a secondary-     *)
+(* index lookup or a full scan) record what they saw on each shard, so a   *)
+(* row seen twice or not at all is a violation.                           *)
+(*                                                                         *)
+(* A shard that joins (MJoin: the receiver, MTo, joins the cluster).  A   *)
+(* transaction routed with the membership from before it joined (OldTxns) *)
+(* scans every shard but MTo.  Every shard keeps a membership version      *)
+(* (mver), which the join raises on each before any bucket moves to MTo;  *)
+(* a transaction that scanned names the version it was routed with in    *)
+(* its commit requests (in its read, when it reads one shard), and a       *)
+(* shard with a newer one refuses them: the scan may have missed MTo.     *)
+(*                                                                         *)
 (* The Bug* constants switch on deliberately weakened variants so that TLC *)
 (* can demonstrate why each piece of the protocol is needed.              *)
 (***************************************************************************)
@@ -85,7 +108,18 @@ CONSTANTS
     BugIgnorePLocks,            \* serializable commits ignore other txns' plocks
     BugRCLockReadsInFlight,     \* RC lock reads a key while a local commit to it is in flight
     IKeys,                      \* IKeys[t] \subseteq WSet[t]: keys t inserts (fails if present)
-    BugInsertNoExistCheck       \* commits do not check that inserted keys are free
+    BugInsertNoExistCheck,      \* commits do not check that inserted keys are free
+    SSet,                       \* SSet[t]: keys t reads by scanning every shard
+    MKeys, MFrom, MTo,          \* a bucket move: its rows, the sender, the receiver
+    BugMoveNoDrain,             \* the move neither waits for prepared txns' locks and local
+                                \* commits in flight on the bucket nor breaks its row locks
+    BugMoveNoHold,              \* the receiver does not hold the bucket during the move
+    BugMoveServeStale,          \* the sender serves requests for the bucket after sending it
+    MJoin,                      \* MTo joins the cluster: the move starts once every shard
+                                \* has the membership with it (mver)
+    OldTxns,                    \* transactions routed with the membership from before MTo
+                                \* joined: their scans read every shard but MTo
+    BugJoinNoCheck              \* shards accept requests routed with an old membership
 
 ASSUME Owner \in [Keys -> Shards]
 ASSUME RSet \in [Txns -> SUBSET Keys] /\ WSet \in [Txns -> SUBSET Keys]
@@ -93,20 +127,29 @@ ASSUME RKeys \in [Readers -> SUBSET Keys]
 ASSUME RC \subseteq Txns /\ LSet \in [Txns -> SUBSET Keys]
 ASSUME \A t \in Txns : IF t \in RC THEN WSet[t] \subseteq LSet[t] ELSE LSet[t] = {}
 ASSUME IKeys \in [Txns -> SUBSET Keys] /\ \A t \in Txns : IKeys[t] \subseteq WSet[t]
+ASSUME SSet \in [Txns -> SUBSET Keys] /\ \A t \in RC : SSet[t] = {}
+ASSUME MKeys \subseteq Keys /\ MFrom \in Shards /\ MTo \in Shards
+ASSUME MKeys # {} => MFrom # MTo /\ \A k \in MKeys : Owner[k] = MFrom
+ASSUME MJoin \in BOOLEAN /\ OldTxns \subseteq Txns /\ (MJoin => MKeys # {})
 
-NoVal  == "init"     \* value of a key before any transaction wrote it
-Unread == "unread"
+NoVal   == "init"     \* value of a key before any transaction wrote it
+Unread  == "unread"
+Gone    == "gone"     \* what a shard returns for a row it does not have
+Nowhere == "none"     \* place of a row between the two flips of a move
 
-\* Participants: shards an RC transaction locks rows on (its plain reads are
-\* not validated); shards a serializable transaction reads or writes.
-Part(t)        == IF t \in RC THEN {Owner[k] : k \in LSet[t]}
+\* The shards t's server knows: all of them, or for a transaction routed
+\* before MTo joined, all but MTo.
+KnownShards(t) == IF MJoin /\ t \in OldTxns THEN Shards \ {MTo} ELSE Shards
+
+\* The shards a transaction touches when every row is where it starts
+\* (Owner): what picks the path of a read-only transaction, an atomic
+\* SnapshotRead on one shard or reads in streams on several.  A scan reads
+\* every shard its server knows.
+StaticParts(t) == IF t \in RC THEN {Owner[k] : k \in LSet[t]}
                   ELSE {Owner[k] : k \in RSet[t] \cup WSet[t]}
-SingleShard(t) == Cardinality(Part(t)) = 1
+                       \cup (IF SSet[t] # {} THEN KnownShards(t) ELSE {})
+SingleShard(t) == Cardinality(StaticParts(t)) = 1
 ReadOnly(t)    == WSet[t] = {}
-\* Decision shard: holds the transaction record.  Prefer a shard t writes to.
-D(t) == IF WSet[t] # {} THEN CHOOSE s \in {Owner[k] : k \in WSet[t]} : TRUE
-                        ELSE CHOOSE s \in Part(t) : TRUE
-KeysOn(S, s) == {k \in S : Owner[k] = s}
 
 VARIABLES
     data,        \* data[k]: writer of the committed value in the plain space
@@ -136,21 +179,82 @@ VARIABLES
     rcpos,       \* history: position in wh[k] seen by RC t's plain read of k
     rcacked,     \* history: txns already acknowledged when that read happened
     lostUpd,     \* history: an RC write was applied over a value it did not read
-    infl         \* [t, k, prev]: t's local commit wrote k and is not in the WAL yet;
-                 \* other readers still see prev (tracked only when RC # {})
+    infl,        \* [t, k, prev]: t's local commit wrote k and is not in the WAL yet;
+                 \* other readers still see prev (tracked only with RC txns or a move)
+    place,       \* place[k]: the shard that stores and serves k (Nowhere mid-move)
+    loc,         \* loc[t][k]: where t read k (serializable) or locked it (RC)
+    wt,          \* wt[t][k]: the shard t's PREPAREs write k on (fixed at SendPrepare)
+    parts,       \* parts[t]: the participants of t's PREPAREs (fixed at SendPrepare)
+    scanned,     \* scanned[t]: shards t's scan has read
+    sobs,        \* sobs[t][k]: what t's scan saw of k: a set of [s, v], one per shard it saw k on
+    mv,          \* the move: idle, fencing, fenced, sent, done, aborted
+    staged,      \* staged[k]: the receiver's copy of moving row k
+    mver         \* mver[s]: the membership version s has (1: with MTo, when MJoin)
 
 rcvars == <<plocks, lobs, rcpos, rcacked, lostUpd, infl>>
+mvars  == <<place, mv, staged, mver>>
+tvars  == <<loc, wt, parts, scanned, sobs>>
 vars == <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, everC,
           acked, started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
-          recovering, nTimeout, validated, expired, plocks, lobs, rcpos, rcacked, lostUpd, infl>>
+          recovering, nTimeout, validated, expired, plocks, lobs, rcpos, rcacked, lostUpd, infl,
+          place, loc, wt, parts, scanned, sobs, mv, staged, mver>>
 
 Msg(type, t, s, yes) == [type |-> type, t |-> t, s |-> s, yes |-> yes]
+
+\* The shards t touches now: where it read or locked rows, every shard its
+\* scan read, and where the rows it writes are (a write is routed when the
+\* commit begins).  At the commit, this decides between one local
+\* transaction and PREPARE/APPLY; SendPrepare fixes it as parts[t].
+CurParts(t) ==
+    IF t \in RC THEN {loc[t][k] : k \in LSet[t]}
+    ELSE {loc[t][k] : k \in RSet[t]} \cup scanned[t] \cup {place[k] : k \in WSet[t]}
+\* Decision shard: holds the transaction record.  Prefer a shard t writes to.
+D(t) == IF WSet[t] # {} THEN CHOOSE s \in {wt[t][k] : k \in WSet[t]} : TRUE
+                        ELSE CHOOSE s \in parts[t] : TRUE
+RKeysOn(t, s) == {k \in RSet[t] : loc[t][k] = s}    \* point reads made on s
+LKeysOn(t, s) == {k \in LSet[t] : loc[t][k] = s}    \* RC row locks taken on s
+WKeysOn(t, s) == {k \in WSet[t] : wt[t][k] = s}     \* writes PREPAREd on s
+IKeysOn(t, s) == {k \in IKeys[t] : wt[t][k] = s}
+
+\* What shard s returns for row k: its value where k is, else nothing.
+ValAt(k, s) == IF place[k] = s THEN data[k] ELSE Gone
+
+\* A move fences writes, row locks and the read locks of PREPAREs on the
+\* moving rows (some of K) on the sender, from its start until the sender
+\* sends them (or the move is aborted).
+Fenced(s, K) == MKeys # {} /\ s = MFrom /\ mv \in {"fencing", "fenced"} /\ K \cap MKeys # {}
+\* The receiver holds the bucket from the fence until it takes the rows
+\* over: the validation of a scan of it fails meanwhile (the rows may
+\* already be gone from the sender, and are not here yet).
+HoldOK(t, s) ==
+    \/ BugMoveNoHold
+    \/ ~(MKeys # {} /\ s = MTo /\ mv \in {"fencing", "fenced", "sent"} /\ s \in scanned[t])
+
+\* A transaction that scanned names the membership it was routed with; a
+\* shard that has a newer one refuses it (its scan may have missed a shard
+\* that joined since).
+MemberOK(t, s) ==
+    \/ BugJoinNoCheck
+    \/ ~(MJoin /\ t \in OldTxns /\ SSet[t] # {} /\ mver[s] = 1)
+
+\* The keys t's scan saw on s.
+ScanSeen(t, s) == {k \in SSet[t] : \E o \in sobs[t][k] : o.s = s}
+\* Validation of t's scan of s (if t scanned s): s still holds exactly the
+\* rows it saw there, with the values it saw (MVCC: an insert, a delete or
+\* an update in the range fails it), and no other transaction W-locks a
+\* row of the range (unless noW).  noRead: skip the first part.
+ScanValid(t, s, noRead, noW) ==
+    s \in scanned[t] =>
+        /\ s \notin lost[t]
+        /\ noRead \/ /\ {k \in SSet[t] : place[k] = s} = ScanSeen(t, s)
+                     /\ \A k \in ScanSeen(t, s) : \A o \in sobs[t][k] : o.s = s => o.v = data[k]
+        /\ noW \/ ~\E l \in locks[s] : l.t # t /\ l.k \in SSet[t] /\ l.m = "W"
 
 \* t is committed now: explicitly, implicitly (parallel commit), or locally.
 CommittedNow(t) ==
     \/ local[t] = "committed"
     \/ rec[t] = "committed"
-    \/ rec[t] = "staging" /\ \A s \in Part(t) : part[s][t] \in {"prepared", "applied"}
+    \/ rec[t] = "staging" /\ \A s \in parts[t] : part[s][t] \in {"prepared", "applied"}
 
 Init ==
     /\ data    = [k \in Keys |-> NoVal]
@@ -181,6 +285,15 @@ Init ==
     /\ rcacked = [t \in Txns |-> [k \in Keys |-> {}]]
     /\ lostUpd = FALSE
     /\ infl    = {}
+    /\ place   = Owner
+    /\ loc     = [t \in Txns |-> [k \in Keys |-> Nowhere]]
+    /\ wt      = [t \in Txns |-> [k \in Keys |-> Nowhere]]
+    /\ parts   = [t \in Txns |-> {}]
+    /\ scanned = [t \in Txns |-> {}]
+    /\ sobs    = [t \in Txns |-> [k \in Keys |-> {}]]
+    /\ mv      = "idle"
+    /\ staged  = [k \in Keys |-> NoVal]
+    /\ mver    = [s \in Shards |-> 0]
 
 \* Record the real-time predecessors of t at its first operation.
 Start(t) ==
@@ -190,24 +303,58 @@ Start(t) ==
 
 ReadsDone(t) == /\ \A k \in RSet[t] : obs[t][k] # Unread
                 /\ \A k \in LSet[t] : lobs[t][k] # Unread
+                /\ SSet[t] # {} => scanned[t] = KnownShards(t)
 
 -----------------------------------------------------------------------------
 (* Execution phase *)
 
+\* A point read in t's stream, on the shard where k is.
 Read(t, k) ==
     /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none"
     /\ ~(SingleShard(t) /\ ReadOnly(t))
     /\ k \in RSet[t] /\ obs[t][k] = Unread
-    /\ Owner[k] \notin lost[t]
+    /\ place[k] # Nowhere /\ place[k] \notin lost[t]
     /\ obs' = [obs EXCEPT ![t][k] = data[k]]
+    /\ loc' = [loc EXCEPT ![t][k] = place[k]]
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, coord, lost, msgs, local, wh,
-                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
+                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired,
+                   wt, parts, scanned, sobs>>
 
-\* No other transaction holds a W lock on any key in S: a W lock may belong
-\* to a transaction that is committed but not yet applied on this shard.
-NoWLocks(t, S) == \A k \in S : ~\E l \in locks[Owner[k]] : l.t # t /\ l.k = k /\ l.m = "W"
+\* A read routed with a stale map to the sender after it sent the bucket,
+\* which the sender serves (BugMoveServeStale): the row is gone there.
+StaleRead(t, k) ==
+    /\ BugMoveServeStale /\ k \in MKeys /\ mv \in {"sent", "done"}
+    /\ t \notin RC
+    /\ coord[t] = "exec" /\ local[t] = "none"
+    /\ ~(SingleShard(t) /\ ReadOnly(t))
+    /\ k \in RSet[t] /\ obs[t][k] = Unread
+    /\ MFrom \notin lost[t]
+    /\ obs' = [obs EXCEPT ![t][k] = Gone]
+    /\ loc' = [loc EXCEPT ![t][k] = MFrom]
+    /\ Start(t)
+    /\ UNCHANGED <<data, locks, part, rec, coord, lost, msgs, local, wh,
+                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired,
+                   wt, parts, scanned, sobs>>
+
+\* t's scan of shard s (a range read on every shard, in t's stream there):
+\* the rows of SSet[t] that s holds now.
+Scan(t, s) ==
+    /\ t \notin RC /\ SSet[t] # {}
+    /\ coord[t] = "exec" /\ local[t] = "none"
+    /\ s \in KnownShards(t) /\ s \notin scanned[t] /\ s \notin lost[t]
+    /\ scanned' = [scanned EXCEPT ![t] = @ \cup {s}]
+    /\ sobs' = [sobs EXCEPT ![t] = [k \in Keys |->
+                    IF k \in SSet[t] /\ place[k] = s THEN @[k] \cup {[s |-> s, v |-> data[k]]} ELSE @[k]]]
+    /\ Start(t)
+    /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh,
+                   acked, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired,
+                   loc, wt, parts>>
+
+\* No other transaction holds a W lock on s on any key in S: a W lock may
+\* belong to a transaction that is committed but not yet applied there.
+NoWLocksAt(t, S, s) == \A k \in S : ~\E l \in locks[s] : l.t # t /\ l.k = k /\ l.m = "W"
 
 \* Inserts (IKeys): a key a transaction inserts must not hold a value yet.
 \* This is how a unique key is enforced across shards: its global index
@@ -218,46 +365,84 @@ InsertsFree(S) == BugInsertNoExistCheck \/ \A k \in S : data[k] = NoVal
 \* A single-shard read-only transaction sees one MVCC read view and then
 \* checks the lock table in that same view (autocommit SELECTs check before
 \* reading).  If a read key is W-locked the read is retried, so the action
-\* is simply not enabled in that state.
+\* is simply not enabled in that state.  A scan reads one shard here when
+\* its server knows one (a transaction routed before MTo joined).
 SnapshotRead(t) ==
+    LET at == {place[k] : k \in RSet[t]} \cup (IF SSet[t] # {} THEN KnownShards(t) ELSE {})
+        s  == CHOOSE x \in at : TRUE
+    IN
     /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none"
     /\ SingleShard(t) /\ ReadOnly(t)
-    /\ BugLocalReadsIgnoreWLocks \/ NoWLocks(t, RSet[t])
+    /\ Cardinality(at) = 1 /\ s # Nowhere
+    /\ BugLocalReadsIgnoreWLocks \/ NoWLocksAt(t, RSet[t] \cup SSet[t], s)
+    /\ MemberOK(t, s)
     /\ obs' = [obs EXCEPT ![t] = [k \in Keys |-> IF k \in RSet[t] THEN data[k] ELSE Unread]]
+    /\ loc' = [loc EXCEPT ![t] = [k \in Keys |-> IF k \in RSet[t] THEN s ELSE Nowhere]]
+    /\ scanned' = [scanned EXCEPT ![t] = IF SSet[t] # {} THEN {s} ELSE @]
+    /\ sobs' = [sobs EXCEPT ![t] = [k \in Keys |->
+                    IF k \in SSet[t] /\ place[k] = s THEN {[s |-> s, v |-> data[k]]} ELSE @[k]]]
     /\ local' = [local EXCEPT ![t] = "committed"]
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ acked' = acked \cup {t}
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, lost, msgs, wh, dobs, dpos, dacked, dirty,
-                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired,
+                   wt, parts>>
 
-\* Single-shard read-write commit: one local Tarantool transaction.
+\* Local commits in flight are tracked when something reads around them:
+\* row locks (RC) and moves.
+Track == RC # {} \/ MKeys # {}
+
+\* Read-write commit on one shard: one local Tarantool transaction.
 CommitLocal(t) ==
-    LET s      == D(t)
+    LET ps     == CurParts(t)
+        s      == CHOOSE x \in ps : TRUE
         valid  == /\ s \notin lost[t]
-                  /\ \A k \in RSet[t] : data[k] = obs[t][k]
-                  /\ BugLocalReadsIgnoreWLocks \/ NoWLocks(t, RSet[t])
+                  /\ \A k \in RSet[t] : ValAt(k, s) = obs[t][k]
+                  /\ BugLocalReadsIgnoreWLocks \/ NoWLocksAt(t, RSet[t], s)
+                  /\ ScanValid(t, s, FALSE, BugLocalReadsIgnoreWLocks)
+                  /\ MemberOK(t, s)
         noConf == /\ \A l \in locks[s] :
                         l.t # t => (l.k \notin WSet[t] \/ (BugLocalIgnoresRLocks /\ l.m = "R"))
                   /\ BugIgnorePLocks \/ ~\E pl \in plocks[s] : pl.t # t /\ pl.k \in WSet[t]
     IN
     /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none"
-    /\ SingleShard(t) /\ ~ReadOnly(t) /\ ReadsDone(t)
-    /\ IF valid /\ noConf /\ InsertsFree(IKeys[t])
+    /\ ~ReadOnly(t) /\ ReadsDone(t)
+    /\ Cardinality(ps) = 1 /\ s # Nowhere
+    /\ IF valid /\ noConf /\ ~Fenced(s, WSet[t]) /\ InsertsFree(IKeys[t])
        THEN /\ data' = [k \in Keys |-> IF k \in WSet[t] THEN t ELSE data[k]]
             /\ wh' = [k \in Keys |-> IF k \in WSet[t] THEN Append(wh[k], t) ELSE wh[k]]
             /\ local' = [local EXCEPT ![t] = "committed"]
             /\ acked' = acked \cup {t}
-            /\ infl' = IF RC = {} THEN infl
-                       ELSE infl \cup {[t |-> t, k |-> k, prev |-> data[k]] : k \in WSet[t]}
+            /\ infl' = IF Track THEN infl \cup {[t |-> t, k |-> k, prev |-> data[k]] : k \in WSet[t]}
+                       ELSE infl
        ELSE /\ local' = [local EXCEPT ![t] = "aborted"]
             /\ UNCHANGED <<data, wh, acked, infl>>
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ Start(t)
     /\ UNCHANGED <<locks, part, rec, obs, lost, msgs, dobs, dpos, dacked, dirty,
-                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired, tvars>>
+
+\* A local commit routed with a stale map to the sender after it sent the
+\* bucket, which the sender serves (BugMoveServeStale): its writes of the
+\* moving rows land where no row lives any more, and nobody reads them.
+StaleCommitLocal(t) ==
+    /\ BugMoveServeStale /\ mv \in {"sent", "done"}
+    /\ t \notin RC /\ SSet[t] = {}
+    /\ coord[t] = "exec" /\ local[t] = "none"
+    /\ ~ReadOnly(t) /\ ReadsDone(t) /\ WSet[t] \cap MKeys # {}
+    /\ \A k \in RSet[t] : loc[t][k] = MFrom /\ ValAt(k, MFrom) = obs[t][k]
+    /\ \A k \in WSet[t] \ MKeys : place[k] = MFrom
+    /\ data' = [k \in Keys |-> IF k \in WSet[t] \ MKeys THEN t ELSE data[k]]
+    /\ wh' = [k \in Keys |-> IF k \in WSet[t] \ MKeys THEN Append(wh[k], t) ELSE wh[k]]
+    /\ local' = [local EXCEPT ![t] = "committed"]
+    /\ acked' = acked \cup {t}
+    /\ coord' = [coord EXCEPT ![t] = "finished"]
+    /\ Start(t)
+    /\ UNCHANGED <<locks, part, rec, obs, lost, msgs, dobs, dpos, dacked, dirty,
+                   nFail, nCrash, nLoss, recovering, nTimeout, validated, expired, infl, tvars>>
 
 \* The WAL (and the replication quorum) has t's local commit: readers
 \* outside it see its writes from now on.  (Atomic with CommitLocal for
@@ -278,15 +463,18 @@ ConfirmLocal(t) ==
 \* write (refused from a read view); BugROValidateNoReadCheck models the
 \* implementation without the probe.
 ValidateRO(t, s) ==
-    LET rk    == KeysOn(RSet[t], s)
+    LET rk    == RKeysOn(t, s)
         valid == /\ s \notin lost[t]
-                 /\ BugROValidateNoReadCheck \/ \A k \in rk : data[k] = obs[t][k]
-                 /\ BugLocalReadsIgnoreWLocks \/ NoWLocks(t, rk)
+                 /\ BugROValidateNoReadCheck \/ \A k \in rk : ValAt(k, s) = obs[t][k]
+                 /\ BugLocalReadsIgnoreWLocks \/ NoWLocksAt(t, rk, s)
+                 /\ ScanValid(t, s, BugROValidateNoReadCheck, BugLocalReadsIgnoreWLocks)
+                 /\ HoldOK(t, s)
+                 /\ MemberOK(t, s)
     IN
     /\ ROValidateOnly /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none"
     /\ ~SingleShard(t) /\ ReadOnly(t) /\ ReadsDone(t)
-    /\ s \in Part(t) /\ s \notin validated[t]
+    /\ s \in CurParts(t) /\ s \notin validated[t]
     /\ IF valid
        THEN /\ validated' = [validated EXCEPT ![t] = @ \cup {s}]
             /\ UNCHANGED <<local, coord>>
@@ -299,7 +487,7 @@ ValidateRO(t, s) ==
 FinishRO(t) ==
     /\ ROValidateOnly /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none" /\ ~SingleShard(t) /\ ReadOnly(t)
-    /\ validated[t] = Part(t)
+    /\ ReadsDone(t) /\ validated[t] = CurParts(t)
     /\ local' = [local EXCEPT ![t] = "committed"]
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ acked' = acked \cup {t}
@@ -309,25 +497,33 @@ FinishRO(t) ==
 -----------------------------------------------------------------------------
 (* Multi-shard commit: coordinator *)
 
+\* The rows t writes are routed to where they are now (an RC transaction's
+\* to where it locked them); the participants are fixed from here on.
 SendPrepare(t) ==
-    /\ coord[t] = "exec" /\ local[t] = "none" /\ ~SingleShard(t) /\ ReadsDone(t)
+    LET ps == CurParts(t) IN
+    /\ coord[t] = "exec" /\ local[t] = "none" /\ ReadsDone(t)
+    /\ Cardinality(ps) > 1 /\ Nowhere \notin ps
     /\ ~(ROValidateOnly /\ ReadOnly(t))
     /\ t \in RC => ~ReadOnly(t)     \* read-only RC txns just release their locks
     /\ coord' = [coord EXCEPT ![t] = "preparing"]
-    /\ msgs' = msgs \cup {Msg("prepare", t, s, FALSE) : s \in Part(t)}
+    /\ parts' = [parts EXCEPT ![t] = ps]
+    /\ wt' = [wt EXCEPT ![t] = [k \in Keys |-> IF k \notin WSet[t] THEN Nowhere
+                                              ELSE IF t \in RC THEN loc[t][k] ELSE place[k]]]
+    /\ msgs' = msgs \cup {Msg("prepare", t, s, FALSE) : s \in ps}
     /\ Start(t)
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, local, wh, acked,
-                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
+                   dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired,
+                   loc, scanned, sobs>>
 
 CoordDecide(t) ==
     /\ coord[t] = "preparing"
-    /\ \/ /\ \A s \in Part(t) : Msg("vote", t, s, TRUE) \in msgs
+    /\ \/ /\ \A s \in parts[t] : Msg("vote", t, s, TRUE) \in msgs
           /\ coord' = [coord EXCEPT ![t] = "applying"]
-          /\ msgs' = msgs \cup {Msg("apply", t, s, FALSE) : s \in Part(t)}
+          /\ msgs' = msgs \cup {Msg("apply", t, s, FALSE) : s \in parts[t]}
           /\ acked' = IF AckOnPrepare THEN acked \cup {t} ELSE acked
-       \/ /\ \E s \in Part(t) : Msg("vote", t, s, FALSE) \in msgs
+       \/ /\ \E s \in parts[t] : Msg("vote", t, s, FALSE) \in msgs
           /\ coord' = [coord EXCEPT ![t] = "aborting"]
-          /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
+          /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in parts[t]}
           /\ UNCHANGED acked
     /\ UNCHANGED <<data, locks, part, rec, obs, lost, local, wh, started, rtPred,
                    dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
@@ -335,7 +531,7 @@ CoordDecide(t) ==
 \* Acknowledge the client once every participant applied; mark the record.
 CoordFinish(t) ==
     /\ coord[t] = "applying"
-    /\ \A s \in Part(t) : part[s][t] = "applied"
+    /\ \A s \in parts[t] : part[s][t] = "applied"
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ acked' = acked \cup {t}
     /\ rec' = [rec EXCEPT ![t] = IF @ = "staging" THEN "committed" ELSE @]
@@ -359,22 +555,33 @@ CoordCrash(t) ==
 -----------------------------------------------------------------------------
 (* Multi-shard commit: participants (each action is one local transaction) *)
 
+\* A scan's read locks (mode "S") cover its range on the shard: they keep
+\* writes out of it, but a move does not wait for them -- the scan read
+\* every shard, so it holds them on the receiver too.
 Prepare(t, s) ==
-    LET rk       == KeysOn(RSet[t], s)
-        wk       == KeysOn(WSet[t], s)
+    LET rk       == RKeysOn(t, s)
+        wk       == WKeysOn(t, s)
         others   == {l \in locks[s] : l.t # t}
         \* RC: no read validation, but the locks must have survived.
         readsOK  == IF t \in RC
-                    THEN BugRCNoLockCheck \/ \A k \in KeysOn(LSet[t], s) : [t |-> t, k |-> k] \in plocks[s]
+                    THEN BugRCNoLockCheck \/ \A k \in LKeysOn(t, s) : [t |-> t, k |-> k] \in plocks[s]
                     ELSE /\ s \notin lost[t]
-                         /\ \A k \in rk : data[k] = obs[t][k]
+                         /\ \A k \in rk : ValAt(k, s) = obs[t][k]
                          /\ BugNoWLockCheckOnRead \/ ~\E l \in others : l.k \in rk /\ l.m = "W"
+                         /\ ScanValid(t, s, FALSE, BugNoWLockCheckOnRead)
+                         /\ HoldOK(t, s)
+                         /\ MemberOK(t, s)
         writesOK == /\ ~\E l \in others : l.k \in wk
                     /\ BugIgnorePLocks \/ ~\E pl \in plocks[s] : pl.t # t /\ pl.k \in wk
         recOK    == s = D(t) => rec[t] = "none"
+        \* s owns every row the PREPARE names, and none is fenced by a move
+        ownOK    == /\ \A k \in wk \cup rk : place[k] = s
+                    /\ ~Fenced(s, wk \cup rk)
         newLocks == {[t |-> t, k |-> k, m |-> "W"] : k \in wk}
                     \cup (IF BugNoReadLocks \/ t \in RC THEN {}
-                          ELSE {[t |-> t, k |-> k, m |-> "R"] : k \in rk \ wk})
+                          ELSE {[t |-> t, k |-> k, m |-> "R"] : k \in rk \ wk}
+                               \cup {[t |-> t, k |-> k, m |-> "S"] :
+                                       k \in {x \in SSet[t] : place[x] = s} \ (wk \cup rk)})
     IN
     /\ Msg("prepare", t, s, FALSE) \in msgs
     /\ part[s][t] = "none"
@@ -383,7 +590,7 @@ Prepare(t, s) ==
     \* participant whose records were already collected, so a NO here could
     \* contradict a commit.  The coordinator treats the reply as unknown.
     /\ t \notin expired
-    /\ IF readsOK /\ writesOK /\ recOK /\ InsertsFree(KeysOn(IKeys[t], s))
+    /\ IF readsOK /\ writesOK /\ recOK /\ ownOK /\ InsertsFree(IKeysOn(t, s))
        THEN /\ locks' = [locks EXCEPT ![s] = @ \cup newLocks]
             /\ part' = [part EXCEPT ![s][t] = "prepared"]
             /\ rec' = IF s = D(t) THEN [rec EXCEPT ![t] = "staging"] ELSE rec
@@ -406,13 +613,17 @@ Revote(t, s) ==
 
 \* With ApplyMarksCommitted the decision shard's APPLY also records COMMITTED
 \* (and refuses to apply if its record says ABORTED, which never happens).
+\* (A row a move took away from s meanwhile -- only possible without the
+\* move's drain -- is written where it no longer lives: nobody sees it.)
 ApplyAt(t, s) ==
-    LET wk == KeysOn(WSet[t], s) IN
+    LET wk   == WKeysOn(t, s)
+        live == {k \in wk : place[k] = s}
+    IN
     /\ Msg("apply", t, s, FALSE) \in msgs
     /\ part[s][t] = "prepared"
     /\ ApplyMarksCommitted /\ s = D(t) => rec[t] # "aborted"
-    /\ data' = [k \in Keys |-> IF k \in wk THEN t ELSE data[k]]
-    /\ wh' = [k \in Keys |-> IF k \in wk THEN Append(wh[k], t) ELSE wh[k]]
+    /\ data' = [k \in Keys |-> IF k \in live THEN t ELSE data[k]]
+    /\ wh' = [k \in Keys |-> IF k \in live THEN Append(wh[k], t) ELSE wh[k]]
     /\ locks' = [locks EXCEPT ![s] = {l \in @ : l.t # t}]
     /\ part' = [part EXCEPT ![s][t] = "applied"]
     /\ rec' = IF ApplyMarksCommitted /\ s = D(t) /\ rec[t] = "staging"
@@ -434,10 +645,12 @@ AbortAt(t, s) ==
 (* Recovery: when t's commit times out, any Tarn server may resolve it,    *)
 (* possibly while the original coordinator is merely slow (not crashed).   *)
 
+\* (Recovery finds a transaction by its records, which only PREPAREs write:
+\* a transaction that sent none -- it committed locally, validated its
+\* reads, or rolled back during execution -- is never recovered.)
 Timeout(t) ==
     /\ nTimeout < MaxTimeouts
-    /\ coord[t] # "exec" /\ ~SingleShard(t) /\ t \notin recovering
-    /\ ~(ROValidateOnly /\ ReadOnly(t))   \* validate-only txns leave no records
+    /\ parts[t] # {} /\ t \notin recovering
     /\ recovering' = recovering \cup {t}
     /\ nTimeout' = nTimeout + 1
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
@@ -450,10 +663,10 @@ RecoverFenceRecord(t) ==
     /\ t \in recovering
     /\ rec[t] = "none"
     /\ \/ t \notin expired
-       \/ \E s \in Part(t) : part[s][t] = "prepared"
+       \/ \E s \in parts[t] : part[s][t] = "prepared"
        \/ BugFenceAfterExpiry
     /\ rec' = [rec EXCEPT ![t] = "aborted"]
-    /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
+    /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in parts[t]}
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, local, wh, acked, started,
                    rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
 
@@ -461,10 +674,10 @@ RecoverFenceRecord(t) ==
 \* (Bug variant: give up on the transaction without fencing.)
 RecoverFenceParticipant(t, s) ==
     /\ t \in recovering
-    /\ rec[t] = "staging" /\ s \in Part(t) /\ part[s][t] = "none"
+    /\ rec[t] = "staging" /\ s \in parts[t] /\ part[s][t] = "none"
     /\ IF BugNoTombstone
        THEN /\ rec' = [rec EXCEPT ![t] = "aborted"]
-            /\ msgs' = msgs \cup {Msg("abort", t, p, FALSE) : p \in Part(t) \ {s}}
+            /\ msgs' = msgs \cup {Msg("abort", t, p, FALSE) : p \in parts[t] \ {s}}
             /\ UNCHANGED part
        ELSE /\ part' = [part EXCEPT ![s][t] = "aborted"]
             /\ UNCHANGED <<rec, msgs, recovering, nTimeout, validated, expired>>
@@ -474,18 +687,18 @@ RecoverFenceParticipant(t, s) ==
 RecoverDecide(t) ==
     /\ t \in recovering
     /\ \/ /\ rec[t] = "staging"
-          /\ \A s \in Part(t) : part[s][t] \in {"prepared", "applied"}
+          /\ \A s \in parts[t] : part[s][t] \in {"prepared", "applied"}
           /\ rec' = [rec EXCEPT ![t] = "committed"]
-          /\ msgs' = msgs \cup {Msg("apply", t, s, FALSE) : s \in Part(t)}
+          /\ msgs' = msgs \cup {Msg("apply", t, s, FALSE) : s \in parts[t]}
        \/ /\ rec[t] = "staging"
-          /\ \E s \in Part(t) : part[s][t] = "aborted"
+          /\ \E s \in parts[t] : part[s][t] = "aborted"
           /\ rec' = [rec EXCEPT ![t] = "aborted"]
-          /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
+          /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in parts[t]}
        \/ /\ rec[t] = "committed"
-          /\ msgs' = msgs \cup {Msg("apply", t, s, FALSE) : s \in Part(t)}
+          /\ msgs' = msgs \cup {Msg("apply", t, s, FALSE) : s \in parts[t]}
           /\ UNCHANGED rec
        \/ /\ rec[t] = "aborted"
-          /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in Part(t)}
+          /\ msgs' = msgs \cup {Msg("abort", t, s, FALSE) : s \in parts[t]}
           /\ UNCHANGED rec
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, local, wh, acked, started,
                    rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout, validated, expired>>
@@ -499,7 +712,8 @@ RecoverDecide(t) ==
 RCRead(t, k) ==
     /\ t \in RC /\ coord[t] = "exec" /\ local[t] = "none"
     /\ k \in RSet[t] /\ obs[t][k] = Unread
-    /\ NoWLocks(t, {k})
+    /\ place[k] # Nowhere
+    /\ NoWLocksAt(t, {k}, place[k])
     /\ obs' = [obs EXCEPT ![t][k] = data[k]]
     /\ rcpos' = [rcpos EXCEPT ![t][k] = Len(wh[k])]
     /\ rcacked' = [rcacked EXCEPT ![t][k] = acked]
@@ -520,14 +734,18 @@ Confirmed(k) == IF InFlight(k) THEN (CHOOSE i \in infl : i.k = k).prev ELSE data
 \* in flight when the lock is granted can still change k).  (Bug variants:
 \* the write is computed from the value of an earlier plain read; the lock
 \* reads k while a local commit to it is in flight, i.e. the value before.)
+\* (On the shard where k is; a move's fence refuses it.)
 RCLock(t, k) ==
+    LET s == place[k] IN
     /\ t \in RC /\ coord[t] = "exec" /\ local[t] = "none"
     /\ k \in LSet[t] /\ lobs[t][k] = Unread
+    /\ s # Nowhere /\ ~Fenced(s, {k})
     /\ BugRCReadBeforeLock => (k \in RSet[t] => obs[t][k] # Unread)
-    /\ ~\E pl \in plocks[Owner[k]] : pl.t # t /\ pl.k = k
-    /\ BugRCLockIgnoresWLocks \/ NoWLocks(t, {k})
+    /\ ~\E pl \in plocks[s] : pl.t # t /\ pl.k = k
+    /\ BugRCLockIgnoresWLocks \/ NoWLocksAt(t, {k}, s)
     /\ BugRCLockReadsInFlight \/ ~InFlight(k)
-    /\ plocks' = [plocks EXCEPT ![Owner[k]] = @ \cup {[t |-> t, k |-> k]}]
+    /\ plocks' = [plocks EXCEPT ![s] = @ \cup {[t |-> t, k |-> k]}]
+    /\ loc' = [loc EXCEPT ![t][k] = s]
     /\ lobs' = [lobs EXCEPT ![t][k] = IF BugRCReadBeforeLock /\ k \in RSet[t]
                                       THEN obs[t][k] ELSE Confirmed(k)]
     /\ Start(t)
@@ -535,32 +753,42 @@ RCLock(t, k) ==
                    dobs, dpos, dacked, dirty, nFail, nCrash, nLoss, recovering, nTimeout,
                    validated, expired, rcpos, rcacked, lostUpd, infl>>
 
-HoldsLocks(t) == \A k \in LSet[t] : [t |-> t, k |-> k] \in plocks[Owner[k]]
+HoldsLocks(t) == \A k \in LSet[t] : loc[t][k] # Nowhere /\ [t |-> t, k |-> k] \in plocks[loc[t][k]]
 
 \* Commit of a read-only RC transaction (on any shards: it just releases its
 \* locks) or of a single-shard RC transaction with writes: one local
 \* transaction that checks the locks survived, waits out prepared
 \* transactions' locks on what it writes, applies the writes and releases
 \* the locks.
+\* (The shard where its locks are must own every row it writes, none fenced
+\* by a move.  Like CommitLocal, its commit is in flight until confirmed:
+\* tracked here only with a move, which must wait for it -- no row lock
+\* can be granted on its rows before it is confirmed.)
 CommitRC(t) ==
-    LET intact == BugRCNoLockCheck \/ HoldsLocks(t) IN
+    LET ps     == CurParts(t)
+        s      == CHOOSE x \in ps : TRUE
+        intact == BugRCNoLockCheck \/ HoldsLocks(t)
+        owned  == \A k \in WSet[t] : place[k] = s
+    IN
     /\ t \in RC /\ coord[t] = "exec" /\ local[t] = "none" /\ ReadsDone(t)
-    /\ ReadOnly(t) \/ SingleShard(t)
-    /\ ~\E s \in Shards : \E l \in locks[s] : l.t # t /\ l.k \in WSet[t]
-    /\ IF ReadOnly(t) \/ (intact /\ InsertsFree(IKeys[t]))
+    /\ ReadOnly(t) \/ Cardinality(ps) = 1
+    /\ ~\E x \in Shards : \E l \in locks[x] : l.t # t /\ l.k \in WSet[t]
+    /\ IF ReadOnly(t) \/ (intact /\ owned /\ ~Fenced(s, WSet[t]) /\ InsertsFree(IKeys[t]))
        THEN /\ data' = [k \in Keys |-> IF k \in WSet[t] THEN t ELSE data[k]]
             /\ wh' = [k \in Keys |-> IF k \in WSet[t] THEN Append(wh[k], t) ELSE wh[k]]
             /\ lostUpd' = (lostUpd \/ \E k \in WSet[t] : data[k] # lobs[t][k])
             /\ local' = [local EXCEPT ![t] = "committed"]
             /\ acked' = acked \cup {t}
+            /\ infl' = IF MKeys # {} THEN infl \cup {[t |-> t, k |-> k, prev |-> data[k]] : k \in WSet[t]}
+                       ELSE infl
        ELSE /\ local' = [local EXCEPT ![t] = "aborted"]
-            /\ UNCHANGED <<data, wh, acked, lostUpd>>
-    /\ plocks' = [s \in Shards |-> {l \in plocks[s] : l.t # t}]
+            /\ UNCHANGED <<data, wh, acked, lostUpd, infl>>
+    /\ plocks' = [x \in Shards |-> {l \in plocks[x] : l.t # t}]
     /\ coord' = [coord EXCEPT ![t] = "finished"]
     /\ Start(t)
     /\ UNCHANGED <<locks, part, rec, obs, lost, msgs, dobs, dpos, dacked, dirty,
                    nFail, nCrash, nLoss, recovering, nTimeout, validated, expired,
-                   lobs, rcpos, rcacked, infl>>
+                   lobs, rcpos, rcacked>>
 
 \* Rollback during execution (by the client, a deadlock or a lock wait
 \* timeout): release the locks.
@@ -579,7 +807,7 @@ RCAbort(t) ==
 RCApplied(t, s) ==
     /\ plocks' = [plocks EXCEPT ![s] = {l \in @ : l.t # t}]
     /\ lostUpd' = (lostUpd \/ (t \in RC /\ part[s][t] = "prepared"
-                               /\ \E k \in KeysOn(WSet[t], s) : data[k] # lobs[t][k]))
+                               /\ \E k \in WKeysOn(t, s) : data[k] # lobs[t][k]))
     /\ UNCHANGED <<lobs, rcpos, rcacked, infl>>
 RCReleased(t, s) ==
     /\ plocks' = [plocks EXCEPT ![s] = {l \in @ : l.t # t}]
@@ -606,9 +834,12 @@ Lose(m) ==
     /\ UNCHANGED <<data, locks, part, rec, coord, obs, lost, local, wh, acked,
                    started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, recovering, nTimeout, validated, expired>>
 
-\* A plain Tarantool get on the owning shard, bypassing Tarn entirely.
+\* A plain Tarantool get on the shard where the row is, bypassing Tarn
+\* entirely (a reader that asks a shard the row has left finds nothing
+\* there and asks again).
 DirectRead(r, k) ==
     /\ k \in RKeys[r] /\ dobs[r][k] = Unread
+    /\ place[k] # Nowhere
     /\ dobs' = [dobs EXCEPT ![r][k] = data[k]]
     /\ dpos' = [dpos EXCEPT ![r][k] = Len(wh[k])]
     /\ dacked' = [dacked EXCEPT ![r][k] = acked]
@@ -645,11 +876,84 @@ GCPart(t, s) ==
 GCRec(t) ==
     /\ GC /\ GCAllowed(t)
     /\ rec[t] \in {"committed", "aborted"}
-    /\ \A s \in Part(t) : part[s][t] # "prepared"
+    /\ \A s \in parts[t] : part[s][t] # "prepared"
     /\ rec' = [rec EXCEPT ![t] = "none"]
     /\ UNCHANGED <<data, locks, part, coord, obs, lost, msgs, local, wh, acked,
                    started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
                    recovering, nTimeout, validated, expired>>
+
+-----------------------------------------------------------------------------
+(* A bucket move (MKeys from MFrom to MTo), in the steps one SQL server    *)
+(* drives.  Each step is one local transaction on one shard; the fence and *)
+(* the hold are durable, so leader failovers leave them in place.          *)
+
+Others == <<data, locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
+            started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
+            recovering, nTimeout, validated, expired, lobs, rcpos, rcacked, lostUpd, infl, tvars>>
+
+\* The sender fences the bucket (writes, row locks and the read locks of
+\* PREPAREs on its rows are refused from now on) and breaks the row locks
+\* held on its rows, whose transactions then cannot commit; the receiver
+\* holds it.  (Before this, the rows are copied while the sender serves
+\* them; nothing a transaction can see changes.)
+MoveFence ==
+    /\ MKeys # {} /\ mv = "idle"
+    /\ MJoin => \A s \in Shards : mver[s] = 1
+    /\ mv' = "fencing"
+    /\ plocks' = IF BugMoveNoDrain THEN plocks
+                 ELSE [plocks EXCEPT ![MFrom] = {pl \in @ : pl.k \notin MKeys}]
+    /\ UNCHANGED <<place, staged, mver>>
+    /\ UNCHANGED Others
+
+\* Drained: no prepared transaction holds a point lock on a row of the
+\* bucket on the sender (its APPLY may still write the row) and no local
+\* commit that writes one is in flight (the copy would miss it).  The
+\* last copy of the rows is taken now.
+MoveDrained ==
+    /\ mv = "fencing"
+    /\ BugMoveNoDrain \/ ~\E l \in locks[MFrom] : l.k \in MKeys /\ l.m \in {"R", "W"}
+    /\ BugMoveNoDrain \/ ~\E i \in infl : i.k \in MKeys
+    /\ mv' = "fenced"
+    /\ staged' = [k \in Keys |-> IF k \in MKeys THEN Confirmed(k) ELSE NoVal]
+    /\ UNCHANGED <<place, plocks, mver>>
+    /\ UNCHANGED Others
+
+\* The sender deletes the rows: from now on it refuses the bucket.  Until
+\* the receiver takes them over, the rows are nowhere.
+MoveSendFlip ==
+    /\ mv = "fenced"
+    /\ mv' = "sent"
+    /\ place' = [k \in Keys |-> IF k \in MKeys THEN Nowhere ELSE place[k]]
+    /\ UNCHANGED <<staged, plocks, mver>>
+    /\ UNCHANGED Others
+
+\* The receiver inserts the copy, owns the bucket and releases the hold.
+MoveRecvFlip ==
+    /\ mv = "sent"
+    /\ mv' = "done"
+    /\ place' = [k \in Keys |-> IF k \in MKeys THEN MTo ELSE place[k]]
+    /\ data' = [k \in Keys |-> IF k \in MKeys THEN staged[k] ELSE data[k]]
+    /\ UNCHANGED <<staged, plocks, mver>>
+    /\ UNCHANGED <<locks, part, rec, coord, obs, lost, msgs, local, wh, acked,
+                   started, rtPred, dobs, dpos, dacked, dirty, nFail, nCrash, nLoss,
+                   recovering, nTimeout, validated, expired, lobs, rcpos, rcacked, lostUpd, infl, tvars>>
+
+\* A move that cannot drain in time is given up before the sender sends:
+\* the fence and the hold are released (and the copy dropped).
+MoveAbort ==
+    /\ mv \in {"fencing", "fenced"}
+    /\ mv' = "aborted"
+    /\ UNCHANGED <<place, staged, plocks, mver>>
+    /\ UNCHANGED Others
+
+\* MTo joins: shard s learns the membership with it (a SQL server writes it
+\* on every shard, then the move may start).  Servers that learn it route
+\* new transactions with it; those of OldTxns were routed before.
+MemberJoin(s) ==
+    /\ MJoin /\ mver[s] = 0
+    /\ mver' = [mver EXCEPT ![s] = 1]
+    /\ UNCHANGED <<place, mv, staged, plocks>>
+    /\ UNCHANGED Others
 
 -----------------------------------------------------------------------------
 
@@ -660,41 +964,55 @@ H == everC' = [t \in Txns |-> everC[t] \/ CommittedNow(t)']
 \* serializable protocol leave the RC state alone, except APPLY and ABORT
 \* (which release plocks) and failovers (which empty the lock table).
 U == UNCHANGED rcvars
-ReadH(t, k) == Read(t, k) /\ H /\ U
-SnapshotReadH(t) == SnapshotRead(t) /\ H /\ U
-CommitLocalH(t) == CommitLocal(t) /\ H /\ UNCHANGED <<plocks, lobs, rcpos, rcacked, lostUpd>>
-ConfirmLocalH(t) == ConfirmLocal(t) /\ H
-SendPrepareH(t) == SendPrepare(t) /\ H /\ U
-CoordDecideH(t) == CoordDecide(t) /\ H /\ U
-CoordFinishH(t) == CoordFinish(t) /\ H /\ U
-CoordAbortDoneH(t) == CoordAbortDone(t) /\ H /\ U
-CoordCrashH(t) == CoordCrash(t) /\ H /\ U
-PrepareH(t, s) == Prepare(t, s) /\ H /\ U
-RevoteH(t, s) == Revote(t, s) /\ H /\ U
-ApplyAtH(t, s) == ApplyAt(t, s) /\ H /\ RCApplied(t, s)
-AbortAtH(t, s) == AbortAt(t, s) /\ H /\ RCReleased(t, s)
-RecoverFenceRecordH(t) == RecoverFenceRecord(t) /\ H /\ U
-RecoverFenceParticipantH(t, s) == RecoverFenceParticipant(t, s) /\ H /\ U
-RecoverDecideH(t) == RecoverDecide(t) /\ H /\ U
-ValidateROH(t, s) == ValidateRO(t, s) /\ H /\ U
-FinishROH(t) == FinishRO(t) /\ H /\ U
-TimeoutH(t) == Timeout(t) /\ H /\ U
-FailoverH(s) == Failover(s) /\ H /\ plocks' = [plocks EXCEPT ![s] = {}]
-                /\ UNCHANGED <<lobs, rcpos, rcacked, lostUpd, infl>>
-LoseH(m) == Lose(m) /\ H /\ U
-DirectReadH(r, k) == DirectRead(r, k) /\ H /\ U
-ExpireH(t) == Expire(t) /\ H /\ U
-GCPartH(t, s) == GCPart(t, s) /\ H /\ U
-GCRecH(t) == GCRec(t) /\ H /\ U
-RCReadH(t, k) == RCRead(t, k) /\ H
-RCLockH(t, k) == RCLock(t, k) /\ H
-CommitRCH(t) == CommitRC(t) /\ H
-RCAbortH(t) == RCAbort(t) /\ H
+M == UNCHANGED mvars    \* the move's state: only the Move* actions change it
+T == UNCHANGED tvars
+ReadH(t, k) == Read(t, k) /\ U /\ M /\ H
+StaleReadH(t, k) == StaleRead(t, k) /\ U /\ M /\ H
+ScanH(t, s) == Scan(t, s) /\ U /\ M /\ H
+SnapshotReadH(t) == SnapshotRead(t) /\ U /\ M /\ H
+CommitLocalH(t) == CommitLocal(t) /\ UNCHANGED <<plocks, lobs, rcpos, rcacked, lostUpd>> /\ M /\ H
+StaleCommitLocalH(t) == StaleCommitLocal(t) /\ UNCHANGED <<plocks, lobs, rcpos, rcacked, lostUpd>> /\ M /\ H
+ConfirmLocalH(t) == ConfirmLocal(t) /\ M /\ T /\ H
+SendPrepareH(t) == SendPrepare(t) /\ U /\ M /\ H
+CoordDecideH(t) == CoordDecide(t) /\ U /\ M /\ T /\ H
+CoordFinishH(t) == CoordFinish(t) /\ U /\ M /\ T /\ H
+CoordAbortDoneH(t) == CoordAbortDone(t) /\ U /\ M /\ T /\ H
+CoordCrashH(t) == CoordCrash(t) /\ U /\ M /\ T /\ H
+PrepareH(t, s) == Prepare(t, s) /\ U /\ M /\ T /\ H
+RevoteH(t, s) == Revote(t, s) /\ U /\ M /\ T /\ H
+ApplyAtH(t, s) == ApplyAt(t, s) /\ RCApplied(t, s) /\ M /\ T /\ H
+AbortAtH(t, s) == AbortAt(t, s) /\ RCReleased(t, s) /\ M /\ T /\ H
+RecoverFenceRecordH(t) == RecoverFenceRecord(t) /\ U /\ M /\ T /\ H
+RecoverFenceParticipantH(t, s) == RecoverFenceParticipant(t, s) /\ U /\ M /\ T /\ H
+RecoverDecideH(t) == RecoverDecide(t) /\ U /\ M /\ T /\ H
+ValidateROH(t, s) == ValidateRO(t, s) /\ U /\ M /\ T /\ H
+FinishROH(t) == FinishRO(t) /\ U /\ M /\ T /\ H
+TimeoutH(t) == Timeout(t) /\ U /\ M /\ T /\ H
+FailoverH(s) == Failover(s) /\ plocks' = [plocks EXCEPT ![s] = {}]
+                /\ UNCHANGED <<lobs, rcpos, rcacked, lostUpd, infl>> /\ M /\ T /\ H
+LoseH(m) == Lose(m) /\ U /\ M /\ T /\ H
+DirectReadH(r, k) == DirectRead(r, k) /\ U /\ M /\ T /\ H
+ExpireH(t) == Expire(t) /\ U /\ M /\ T /\ H
+GCPartH(t, s) == GCPart(t, s) /\ U /\ M /\ T /\ H
+GCRecH(t) == GCRec(t) /\ U /\ M /\ T /\ H
+RCReadH(t, k) == RCRead(t, k) /\ M /\ T /\ H
+RCLockH(t, k) == RCLock(t, k) /\ M /\ UNCHANGED <<wt, parts, scanned, sobs>> /\ H
+CommitRCH(t) == CommitRC(t) /\ M /\ T /\ H
+RCAbortH(t) == RCAbort(t) /\ M /\ T /\ H
+MoveFenceH == MoveFence /\ H
+MoveDrainedH == MoveDrained /\ H
+MoveSendFlipH == MoveSendFlip /\ H
+MoveRecvFlipH == MoveRecvFlip /\ H
+MoveAbortH == MoveAbort /\ H
+MemberJoinH(s) == MemberJoin(s) /\ H
 
 Next ==
     \/ \E t \in Txns, k \in Keys : ReadH(t, k)
+    \/ \E t \in Txns, k \in Keys : StaleReadH(t, k)
+    \/ \E t \in Txns, s \in Shards : ScanH(t, s)
     \/ \E t \in Txns : SnapshotReadH(t)
     \/ \E t \in Txns : CommitLocalH(t)
+    \/ \E t \in Txns : StaleCommitLocalH(t)
     \/ \E t \in Txns : ConfirmLocalH(t)
     \/ \E t \in Txns : SendPrepareH(t)
     \/ \E t \in Txns : CoordDecideH(t)
@@ -721,6 +1039,8 @@ Next ==
     \/ \E t \in Txns, k \in Keys : RCLockH(t, k)
     \/ \E t \in Txns : CommitRCH(t)
     \/ \E t \in Txns : RCAbortH(t)
+    \/ MoveFenceH \/ MoveDrainedH \/ MoveSendFlipH \/ MoveRecvFlipH \/ MoveAbortH
+    \/ \E s \in Shards : MemberJoinH(s)
 
 Spec == Init /\ [][Next]_vars
 
@@ -731,23 +1051,28 @@ Vals == Txns \cup {NoVal}
 
 TypeOK ==
     /\ data \in [Keys -> Vals]
-    /\ \A s \in Shards : locks[s] \subseteq [t : Txns, k : Keys, m : {"R", "W"}]
+    /\ \A s \in Shards : locks[s] \subseteq [t : Txns, k : Keys, m : {"R", "W", "S"}]
     /\ part \in [Shards -> [Txns -> {"none", "prepared", "applied", "aborted"}]]
     /\ rec \in [Txns -> {"none", "staging", "committed", "aborted"}]
-    /\ obs \in [Txns -> [Keys -> Vals \cup {Unread}]]
+    /\ obs \in [Txns -> [Keys -> Vals \cup {Unread, Gone}]]
     /\ local \in [Txns -> {"none", "committed", "aborted"}]
     /\ expired \subseteq Txns
     /\ \A s \in Shards : plocks[s] \subseteq [t : RC, k : Keys]
     /\ lobs \in [Txns -> [Keys -> Vals \cup {Unread}]]
     /\ lostUpd \in BOOLEAN
     /\ infl \subseteq [t : Txns, k : Keys, prev : Vals]
+    /\ place \in [Keys -> Shards \cup {Nowhere}]
+    /\ loc \in [Txns -> [Keys -> Shards \cup {Nowhere}]]
+    /\ \A t \in Txns : sobs[t] \in [Keys -> SUBSET [s : Shards, v : Vals]]
+    /\ mv \in {"idle", "fencing", "fenced", "sent", "done", "aborted"}
+    /\ mver \in [Shards -> {0, 1}]
 
 \* Atomicity: writes reach a plain space only for committed transactions ...
 AppliedOnlyIfCommitted ==
     \A s \in Shards, t \in Txns : part[s][t] = "applied" => everC[t]
 \* ... and a committed transaction is never rolled back anywhere.
 NoAbortAfterCommit ==
-    \A t \in Txns : everC[t] => \A s \in Part(t) : part[s][t] # "aborted"
+    \A t \in Txns : everC[t] => \A s \in parts[t] : part[s][t] # "aborted"
 
 \* The plain Tarantool spaces only ever hold committed values, so direct
 \* key/value readers never see uncommitted data.
@@ -768,11 +1093,14 @@ LastWriter(f, i, k) ==
 Pos(f, t) == CHOOSE i \in DOMAIN f : f[i] = t
 \* RC transactions' plain reads need no explanation (READ COMMITTED); the
 \* values they read under their locks do, which makes their writes ordered
-\* exactly like strict two-phase locking.
+\* exactly like strict two-phase locking.  A scan must have seen each row
+\* exactly once (on one shard), with its value.
 ReadsExplained(f) ==
     \A i \in DOMAIN f :
         IF f[i] \in RC THEN \A k \in LSet[f[i]] : lobs[f[i]][k] = LastWriter(f, i, k)
-        ELSE \A k \in RSet[f[i]] : obs[f[i]][k] = LastWriter(f, i, k)
+        ELSE /\ \A k \in RSet[f[i]] : obs[f[i]][k] = LastWriter(f, i, k)
+             /\ \A k \in SSet[f[i]] : \E o \in sobs[f[i]][k] :
+                    sobs[f[i]][k] = {o} /\ o.v = LastWriter(f, i, k)
 WritesOrdered(f) ==
     \A k \in Keys :
         LET seq == SelectSeq(f, LAMBDA t : k \in WSet[t])

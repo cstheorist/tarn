@@ -9,7 +9,13 @@
 //!     bucket (so shards own contiguous bucket ranges), and every shard owns
 //!     at least one bucket - i.e. the map is a total function onto all shards,
 //!     which is the partition property routing relies on: every row has
-//!     exactly one owning shard, and no shard is left without buckets.
+//!     exactly one owning shard, and no shard is left without buckets. This
+//!     is the layout of a new cluster; buckets move from there (issue #24);
+//!   * `build_owner` turns the bucket ranges the shards report owning into
+//!     the owner of each bucket, or refuses them when two reports claim one
+//!     bucket: every bucket a report holds maps to that report's shard, and
+//!     a bucket no report holds (one between the send and the receive of a
+//!     move) to `NO_SHARD`.
 
 use vstd::prelude::*;
 
@@ -194,6 +200,139 @@ pub proof fn lemma_every_shard_owns_a_bucket(k: int, bucket_count: int, nshards:
         }
     }
     assert(shard_spec(b, bucket_count, nshards) == k);
+}
+
+/// The owner of a bucket that no shard owns: between the send and the
+/// receive of a move (lua/tarn.lua "Bucket moves").
+pub const NO_SHARD: u32 = 0xFFFF_FFFF;
+
+/// A shard's report `r = (shard, lo, hi)` holds bucket `b`: lo <= b <= hi.
+pub open spec fn holds(r: (u32, u32, u32), b: int) -> bool {
+    r.1 as int <= b && b <= r.2 as int
+}
+
+/// The owner of each bucket, `owner[b - 1]`, from the ranges the shards
+/// report owning: `ranges[i] = (shard, lo, hi)`, buckets lo..=hi. None when
+/// a range is empty, outside 1..=count or names NO_SHARD, or when two
+/// ranges share a bucket: the reports do not give each bucket one owner.
+pub fn build_owner(count: u32, ranges: &[(u32, u32, u32)]) -> (r: Option<Vec<u32>>)
+    requires
+        count < 0xFFFF_FFFF,
+    ensures
+        match r {
+            Some(o) => {
+                &&& o@.len() == count
+                // a bucket a report holds is that report's shard's ...
+                &&& forall|b: int, i: int|
+                    #![trigger o@[b], ranges@[i]]
+                    0 <= b < count && 0 <= i < ranges@.len() && holds(ranges@[i], b + 1) ==> o@[b]
+                        == ranges@[i].0
+                // ... and no report holding it is NO_SHARD's
+                &&& forall|b: int|
+                    #![trigger o@[b]]
+                    0 <= b < count ==> (o@[b] == NO_SHARD <==> forall|i: int|
+                        0 <= i < ranges@.len() ==> !holds(#[trigger] ranges@[i], b + 1))
+            },
+            None => true,
+        },
+{
+    let mut owner: Vec<u32> = Vec::new();
+    let mut k: u32 = 0;
+    while k < count
+        invariant
+            k <= count,
+            owner@.len() == k,
+            forall|x: int| 0 <= x < k ==> owner@[x] == NO_SHARD,
+        decreases count - k,
+    {
+        owner.push(NO_SHARD);
+        k = k + 1;
+    }
+    let mut i: usize = 0;
+    while i < ranges.len()
+        invariant
+            i <= ranges@.len(),
+            count < 0xFFFF_FFFF,
+            owner@.len() == count,
+            forall|x: int, j: int|
+                #![trigger owner@[x], ranges@[j]]
+                0 <= x < count && 0 <= j < i && holds(ranges@[j], x + 1) ==> owner@[x] == ranges@[j].0,
+            forall|x: int|
+                #![trigger owner@[x]]
+                0 <= x < count ==> (owner@[x] == NO_SHARD <==> forall|j: int|
+                    0 <= j < i ==> !holds(#[trigger] ranges@[j], x + 1)),
+        decreases ranges@.len() - i,
+    {
+        let (s, lo, hi) = ranges[i];
+        if s == NO_SHARD || lo < 1 || lo > hi || hi > count {
+            return None;
+        }
+        let ghost before = owner@;
+        let mut b: u32 = lo;
+        while b <= hi
+            invariant
+                1 <= lo <= b,
+                b <= hi + 1,
+                hi <= count,
+                count < 0xFFFF_FFFF,
+                s != NO_SHARD,
+                owner@.len() == count,
+                before.len() == count,
+                forall|x: int|
+                    #![trigger owner@[x]]
+                    0 <= x < count && !(lo - 1 <= x && x < b - 1) ==> owner@[x] == before[x],
+                forall|x: int|
+                    #![trigger owner@[x]]
+                    lo - 1 <= x && x < b - 1 ==> owner@[x] == s && before[x] == NO_SHARD,
+            decreases hi + 1 - b,
+        {
+            if owner[(b - 1) as usize] != NO_SHARD {
+                return None;  // another report holds bucket b too
+            }
+            owner.set((b - 1) as usize, s);
+            b = b + 1;
+        }
+        proof {
+            let r = ranges@[i as int];
+            assert(r == (s, lo, hi));
+            assert forall|x: int, j: int|
+                #![trigger owner@[x], ranges@[j]]
+                0 <= x < count && 0 <= j < i + 1 && holds(ranges@[j], x + 1) implies owner@[x]
+                    == ranges@[j].0 by {
+                if j == i as int {
+                    assert(lo - 1 <= x && x < hi);
+                } else if lo - 1 <= x && x < hi {
+                    // before[x] == NO_SHARD: no earlier report holds x
+                    assert(owner@[x] == s);
+                    assert(before[x] == NO_SHARD);
+                    assert(!holds(ranges@[j], x + 1));
+                }
+            }
+            assert forall|x: int|
+                #![trigger owner@[x]]
+                0 <= x < count implies (owner@[x] == NO_SHARD <==> forall|j: int|
+                    0 <= j < i + 1 ==> !holds(#[trigger] ranges@[j], x + 1)) by {
+                if lo - 1 <= x && x < hi {
+                    assert(holds(ranges@[i as int], x + 1));
+                } else {
+                    assert(!holds(ranges@[i as int], x + 1));
+                    assert(owner@[x] == before[x]);
+                    if owner@[x] == NO_SHARD {
+                        assert forall|j: int| 0 <= j < i + 1 implies !holds(#[trigger] ranges@[j], x + 1) by {
+                            if j < i as int {
+                                assert(!holds(ranges@[j], x + 1));
+                            }
+                        }
+                    } else {
+                        let j0 = choose|j: int| 0 <= j < i && holds(#[trigger] ranges@[j], x + 1);
+                        assert(0 <= j0 < i + 1 && holds(ranges@[j0], x + 1));
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    Some(owner)
 }
 
 } // verus!

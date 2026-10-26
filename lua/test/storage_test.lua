@@ -1593,5 +1593,37 @@ do
           c[1]:ping() and c[1]:call('tarn_info').stats.read_oom == oom0 + 3)
 end
 
+-- A heap left full of garbage near the limit is collected by the node
+-- (issue #73): LuaJIT's next cycle would start above the limit, so without
+-- the heap watchdog every call failed with "not enough memory" until a
+-- manual collect.
+do
+    local alloc = "require('internal.alloc')"
+    local collects0 = c[1]:call('tarn_info').stats.heap_collects
+    local limit0 = c[1]:eval('return ' .. alloc .. '.getlimit()')
+    -- 40 MiB live through a full cycle puts the next threshold near 80 MiB
+    -- over the base, above a limit 64 MiB over it; then the 40 MiB is garbage.
+    c[1]:eval([[
+        local a = require('internal.alloc')
+        collectgarbage() collectgarbage()
+        a.setlimit(a.used() + 64 * 1048576)
+        _G.__t73 = {}
+        for i = 1, 40 * 1024 do _G.__t73[i] = string.rep('l', 1000) .. i end
+        collectgarbage()
+        _G.__t73 = nil
+    ]])
+    -- garbage in small calls, as requests leave it, past the limit
+    for _ = 1, 6000 do
+        pcall(c[1].eval, c[1], "for i = 1, 100 do local _ = {i, string.rep('g', 300) .. i} end")
+    end
+    local ok = wait_for(function()
+        return pcall(c[1].call, c[1], 'tarn_info') and pcall(c[1].eval, c[1], 'return 1')
+    end, 5)
+    local info = ok and c[1]:call('tarn_info')
+    pcall(c[1].eval, c[1], 'collectgarbage() ' .. alloc .. '.setlimit(...)', {limit0})
+    check('a heap of garbage at the limit is collected without a manual collect, and calls succeed',
+          ok and info.stats.heap_collects > collects0, info and info.stats.heap_collects)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -1397,6 +1397,12 @@ fn choose_paths(
             _ => {}
         }
     }
+    // Does WHERE fix the shard key by equalities (a range may route to one
+    // shard)?
+    let shard_fixed = table
+        .shard_key
+        .iter()
+        .all(|&c| preds[c].iter().any(|p| matches!(p, Pred::Eq(..))));
     let mut best: (i32, AccessPath) = (0, AccessPath::Full);
     let mut best_follows = false;
     let mut ordered: Option<(i32, AccessPath)> = None;
@@ -1501,13 +1507,18 @@ fn choose_paths(
             )
         } else if in_list.is_some() {
             continue; // IN on a non-unique / partial key: fall back to other paths
-        } else if !eq.is_empty() || range.is_some() {
+        } else if !eq.is_empty() || range.is_some() || (!shard_fixed && index_follows_order(idx, 0, order).is_some()) {
+            // (With no condition on it, an index that follows ORDER BY is
+            // still read in pages, from its start: issue #86.)
             let (lo, hi2) = range.unwrap_or((None, None));
             // Following ORDER BY outweighs the primary-key bonus, never a
-            // longer equality prefix or a bound on the next column; only
-            // when the prefix fixes the shard key (one shard, read in pages).
+            // longer equality prefix or a bound on the next column. A prefix
+            // that does not fix the shard key is paged on every shard and
+            // the pages merged (issue #86); it is preferred for its order
+            // only when no equality fixes the shard key, so that it never
+            // displaces a range on one shard.
             let routed = table.shard_key.iter().all(|c| idx.cols[..eq.len()].contains(c));
-            let follows = if routed {
+            let follows = if routed || !shard_fixed {
                 index_follows_order(idx, eq.len(), order)
             } else {
                 None
@@ -1523,7 +1534,7 @@ fn choose_paths(
                 reverse: follows == Some(true),
             };
             this_follows = follows.is_some();
-            if this_follows && ordered.as_ref().is_none_or(|o| s > o.0) {
+            if this_follows && routed && ordered.as_ref().is_none_or(|o| s > o.0) {
                 ordered = Some((s, path.clone()));
             }
             (s, path)
@@ -2580,6 +2591,17 @@ pub(crate) fn index_col_names(list: &[A::IndexColumn]) -> SqlResult<Vec<String>>
         .collect()
 }
 
+/// The COMMENT among an index's options (empty without one).
+pub(crate) fn index_comment(opts: &[A::IndexOption]) -> String {
+    opts.iter()
+        .rev()
+        .find_map(|o| match o {
+            A::IndexOption::Comment(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 /// A FOREIGN KEY constraint as written (name None: generated).
 pub(crate) fn foreign_key_spec(
     fk: &A::ForeignKeyConstraint,
@@ -2672,6 +2694,7 @@ pub(crate) fn add_foreign_key(def: &mut TableDef, name: Option<String>, mut fk: 
             unique: false,
             invisible: false,
             global: None,
+            comment: String::new(),
         });
     }
     def.foreign_keys.push(fk);
@@ -2780,7 +2803,9 @@ fn plan_create_table(
     let (db, name) = table_name(&ct.name, ctx)?;
     let mut columns: Vec<ColumnDef> = Vec::new();
     let mut pk: Option<Vec<usize>> = None;
-    let mut secondary: Vec<(Option<String>, Vec<usize>, bool)> = Vec::new();
+    // (name, columns, unique, comment)
+    let mut secondary: Vec<(Option<String>, Vec<usize>, bool, String)> = Vec::new();
+    let mut pk_comment = String::new();
     let mut auto_inc = None;
     for (i, c) in ct.columns.iter().enumerate() {
         let spec = column_spec(c)?;
@@ -2795,7 +2820,7 @@ fn plan_create_table(
             pk = Some(vec![i]);
         }
         if spec.unique {
-            secondary.push((Some(spec.def.name.clone()), vec![i], true));
+            secondary.push((Some(spec.def.name.clone()), vec![i], true, String::new()));
         }
         if spec.def.auto_increment {
             if auto_inc.is_some() {
@@ -2820,16 +2845,25 @@ fn plan_create_table(
     let mut fks = Vec::new();
     for con in &ct.constraints {
         match con {
-            A::TableConstraint::PrimaryKey(p) => pk = Some(index_cols(&p.columns, &columns)?),
+            A::TableConstraint::PrimaryKey(p) => {
+                pk = Some(index_cols(&p.columns, &columns)?);
+                pk_comment = index_comment(&p.index_options);
+            }
             A::TableConstraint::Unique(u) => {
                 let name = u.name.as_ref().or(u.index_name.as_ref()).map(|n| n.value.clone());
-                secondary.push((name, index_cols(&u.columns, &columns)?, true));
+                secondary.push((
+                    name,
+                    index_cols(&u.columns, &columns)?,
+                    true,
+                    index_comment(&u.index_options),
+                ));
             }
             A::TableConstraint::Index(ix) => {
                 secondary.push((
                     ix.name.as_ref().map(|n| n.value.clone()),
                     index_cols(&ix.columns, &columns)?,
                     false,
+                    index_comment(&ix.index_options),
                 ));
             }
             A::TableConstraint::ForeignKey(fk) => fks.push(foreign_key_spec(fk, ctx)?),
@@ -2844,11 +2878,12 @@ fn plan_create_table(
         Some(pk) => (pk, "PRIMARY".to_string()),
         None => match secondary
             .iter()
-            .position(|(_, cols, unique)| *unique && cols.iter().all(|&c| !columns[c].nullable))
+            .position(|(_, cols, unique, _)| *unique && cols.iter().all(|&c| !columns[c].nullable))
         {
             Some(k) => {
-                let (n, cols, _) = secondary.remove(k);
+                let (n, cols, _, comment) = secondary.remove(k);
                 let n = n.unwrap_or_else(|| columns[cols[0]].name.clone());
+                pk_comment = comment;
                 (cols, n)
             }
             None => {
@@ -2867,8 +2902,9 @@ fn plan_create_table(
         unique: true,
         invisible: false,
         global: None,
+        comment: pk_comment,
     }];
-    for (n, cols, unique) in secondary.into_iter() {
+    for (n, cols, unique, comment) in secondary.into_iter() {
         let name = match n {
             Some(n) => {
                 if indexes.iter().any(|i| i.name.eq_ignore_ascii_case(&n)) {
@@ -2888,6 +2924,7 @@ fn plan_create_table(
             unique,
             invisible,
             global: None,
+            comment,
         });
     }
     let shard_key = match partition_key {
@@ -3422,6 +3459,70 @@ mod tests {
             panic!()
         };
         assert!(s.ordered.is_none());
+    }
+
+    #[test]
+    fn index_that_follows_order_by_without_the_shard_key() {
+        // issue #86: an index whose prefix does not fix the shard key is
+        // paged on every shard when it follows ORDER BY, unless WHERE fixes
+        // the shard key (a range on one shard wins then)
+        let c0 = Catalog::default();
+        let ctx0 = PlanCtx {
+            catalog: &c0,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE t (tenant_id BIGINT NOT NULL, id BIGINT NOT NULL, \
+             state VARCHAR(10) NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (tenant_id, id), \
+             KEY by_state (state, created_at), KEY by_created (created_at)) PARTITION BY KEY (tenant_id)",
+            &ctx0,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
+        let path = |sql: &str| {
+            let ctx = PlanCtx {
+                catalog: &cat,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            let Stmt::Select(s) = plan(sql, &ctx).unwrap() else {
+                panic!()
+            };
+            let Source::Table(t) = &s.source else { panic!() };
+            match &t.path {
+                AccessPath::Range { index, eq, reverse, .. } => (*index, eq.len(), *reverse),
+                AccessPath::Full => (99, 0, false),
+                other => panic!("{other:?}"),
+            }
+        };
+        let pending = "SELECT * FROM t WHERE state = 'pending'";
+        assert_eq!(
+            path(&format!("{pending} ORDER BY created_at DESC LIMIT 20")),
+            (1, 1, true)
+        );
+        assert_eq!(path(&format!("{pending} ORDER BY created_at LIMIT 20")), (1, 1, false));
+        // a whole index from its start, and the primary key without its
+        // shard key's equality
+        assert_eq!(path("SELECT * FROM t ORDER BY created_at LIMIT 20"), (2, 0, false));
+        assert_eq!(
+            path("SELECT * FROM t ORDER BY tenant_id DESC, id DESC LIMIT 5"),
+            (0, 0, true)
+        );
+        // without LIMIT nothing is paged
+        assert_eq!(path("SELECT * FROM t ORDER BY created_at"), (99, 0, false));
+        // WHERE fixes the shard key: the primary key's range on one shard
+        assert_eq!(
+            path("SELECT * FROM t WHERE tenant_id = 3 AND state = 'pending' ORDER BY created_at LIMIT 20"),
+            (0, 1, false)
+        );
     }
 
     #[test]
