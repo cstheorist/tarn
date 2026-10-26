@@ -50,6 +50,10 @@ SCHEMA = [
     "CREATE TABLE ord (tenant INT NOT NULL, id INT NOT NULL, pa DATETIME NOT NULL, del TINYINT NOT NULL DEFAULT 0, "
     "st VARCHAR(8), closed DATETIME NULL, PRIMARY KEY (tenant, id), KEY bypa (tenant, pa, id), "
     "KEY bystatus (tenant, closed, del, id)) PARTITION BY KEY(tenant)",
+    # ... sharded by customer: an index that does not fix the shard key is
+    # paged on every shard and the pages merged (issue #86)
+    "CREATE TABLE ordc (cust INT NOT NULL, id INT NOT NULL, st VARCHAR(8) NOT NULL, pa DATETIME NOT NULL, "
+    "n INT, PRIMARY KEY (cust, id), KEY bst (st, pa, id), KEY bpa (pa)) PARTITION BY KEY(cust)",
     # unique keys without the shard key (issue #14): enforced across shards
     # through global indexes; a nullable column, as in soft-delete keys
     "CREATE TABLE gu (id INT PRIMARY KEY, t INT NOT NULL, h VARCHAR(10) NOT NULL, live TINYINT, n INT, "
@@ -94,6 +98,14 @@ def seed():
             st = "'paid'" if i % 3 else "'pending'"
             rows.append(f"({tenant}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
     s.append("INSERT INTO ord VALUES " + ", ".join(rows))
+    rows = []
+    for i in range(1, 601):
+        # 40 customers; placed_at repeats across customers (ties on every
+        # shard); 'held' only for one customer, so most shards have none
+        st = "'held'" if i % 40 == 7 else "'pending'" if i % 3 else "'paid'"
+        pa = f"'2025-03-{1 + i % 20:02d} 0{i % 4}:00:00'"
+        rows.append(f"({i % 40}, {i}, {st}, {pa}, {'NULL' if i % 11 == 0 else i % 9})")
+    s.append("INSERT INTO ordc VALUES " + ", ".join(rows))
     return s
 
 
@@ -915,6 +927,41 @@ CASES = [
     ("UPDATE ord SET closed = NULL WHERE tenant = 1 AND id = 2", "dml:ord"),
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa, id LIMIT 12", "q"),
     ("SELECT id FROM ord WHERE tenant = 1 AND closed IS NULL AND del = 0 ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("ROLLBACK", "q"),
+    # an ordered page over an index that does not fix the shard key (issue
+    # #86): every shard is paged and the pages merged; ties across shards,
+    # OFFSET, DESC, bounds, residual filters, shards without matches, the
+    # primary key without its shard key, a whole table, and the
+    # transaction's own writes
+    ("SELECT cust, id, pa FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 20", "q"),
+    ("SELECT cust, id, pa FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 20", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 15 OFFSET 200", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 200, 15", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY st, pa, id LIMIT 9", "q"),
+    ("SELECT pa FROM ordc WHERE st = 'paid' ORDER BY pa LIMIT 30", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND n = 4 ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND n IS NULL ORDER BY pa DESC, id DESC LIMIT 12", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND id % 97 = 0 ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND cust > 30 ORDER BY pa, id LIMIT 25", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND pa >= '2025-03-15' ORDER BY pa, id LIMIT 10", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' AND pa < '2025-03-03' ORDER BY pa DESC, id DESC LIMIT 10", "q"),
+    ("SELECT id FROM ordc WHERE st = 'held' ORDER BY pa, id LIMIT 4", "q"),
+    ("SELECT id FROM ordc WHERE st = 'held' ORDER BY pa DESC, id DESC LIMIT 100", "q"),
+    ("SELECT id FROM ordc WHERE st = 'none' ORDER BY pa, id LIMIT 5", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 1000", "q"),
+    ("SELECT id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 0", "q"),
+    ("SELECT cust, id FROM ordc ORDER BY cust, id LIMIT 30", "q"),
+    ("SELECT cust, id FROM ordc ORDER BY cust DESC, id DESC LIMIT 10 OFFSET 45", "q"),
+    ("SELECT cust, id FROM ordc WHERE cust BETWEEN 5 AND 9 ORDER BY cust, id LIMIT 8", "q"),
+    ("SELECT cust, id FROM ordc WHERE id < 100 ORDER BY cust DESC, id DESC LIMIT 7", "q"),
+    ("SELECT id, pa FROM ordc WHERE st = 'pending' ORDER BY pa, id DESC LIMIT 9", "q"),
+    ("SELECT id FROM ordc WHERE cust = 3 AND st = 'pending' ORDER BY pa, id LIMIT 5", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO ordc VALUES (2, 9001, 'pending', '2025-02-28 00:00:00', 1)", "dml:ordc"),
+    ("UPDATE ordc SET st = 'paid' WHERE cust = 1 AND id = 41", "dml:ordc"),
+    ("UPDATE ordc SET pa = '2025-04-01 00:00:00' WHERE cust = 2 AND id = 2", "dml:ordc"),
+    ("SELECT cust, id FROM ordc WHERE st = 'pending' ORDER BY pa, id LIMIT 12", "q"),
+    ("SELECT cust, id FROM ordc WHERE st = 'pending' ORDER BY pa DESC, id DESC LIMIT 12", "q"),
     ("ROLLBACK", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL ORDER BY id", "q"),
     ("SELECT id FROM t1 WHERE a IS NULL AND id > 20", "q"),

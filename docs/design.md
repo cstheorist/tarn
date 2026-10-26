@@ -168,6 +168,24 @@ the prefix's index makes paging read more than estimated. The counts
 are no reads of the transaction: WHERE filters either path, so they change
 how many rows are read, never which rows qualify.
 
+**Merged ordered pages.** An ordered `LIMIT` over an index whose equality
+prefix does not fix the shard key (`WHERE status = ? ORDER BY placed_at
+LIMIT n` on a table sharded by customer) pages the range on every shard
+at once (issue #86): each shard's first page is `n` + `OFFSET` rows in
+index order, and the SQL server merges the pages by index key, then
+primary key (the order of ties within each shard's index). It takes the
+next row only while every shard either has rows left in its page, has no
+more, or has already read past that row (WHERE rejected the rest of its
+page); otherwise it asks just those shards for their next page,
+concurrently. Each shard's pages are what a single-shard page is: in a
+serializable transaction, reads of its stream recorded up to the last row
+that shard returned (rows returned but not used stay recorded, which only
+widens a conflict); under READ COMMITTED, a shard whose page ran out reads
+its range again from the start with a larger limit, so every shard's rows
+are one committed state of its range. The planner prefers such an index
+only when no equality in `WHERE` fixes the shard key, so it never displaces
+a range on one shard; locking reads (`FOR UPDATE`) still read and sort.
+
 Conflicts surface as MySQL error 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE 40001),
 which clients already treat as "retry the transaction". Autocommit statements
 are retried transparently (up to 20 times with backoff). A shard leader

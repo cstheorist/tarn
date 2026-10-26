@@ -8,6 +8,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An ordered read with `LIMIT` over an index whose equality prefix does not
+  fix the shard key pages that index on every shard and merges the shards'
+  pages ([#86](https://github.com/cstheorist/tarn/issues/86)), instead of
+  reading every matching row of every shard and sorting them: each shard
+  reads `LIMIT` + `OFFSET` rows in index order (backwards for `DESC`), and
+  only a shard whose page the merge used up is asked for more. `OFFSET`,
+  residual filters, the transaction's own writes, READ COMMITTED's one
+  committed state per range and serializable range recording (per shard, up
+  to the last row it returned) work as on one shard. On a 4-shard cluster
+  with 200,000 orders sharded by customer, `WHERE status = 'pending' ORDER
+  BY placed_at DESC LIMIT 20` reads 80 rows instead of 40,000, in about
+  1 ms instead of 30-45 ms.
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one
   ([#88](https://github.com/cstheorist/tarn/issues/88)): the global index is
