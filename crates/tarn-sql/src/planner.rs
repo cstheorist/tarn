@@ -2985,6 +2985,7 @@ fn plan_create_table(
         db,
         name,
         space_id: 0,
+        counter_id: None,
         columns,
         indexes,
         shard_key,
@@ -3058,6 +3059,31 @@ mod tests {
         };
         def.space_id = 512;
         Catalog::new(1, vec!["sbtest".into()], vec![*def])
+    }
+
+    #[test]
+    fn legacy_counter_identity_survives_physical_replacements() {
+        use crate::catalog::Engine;
+        let cat = catalog();
+        let original = cat.get("sbtest", "sbtest1").unwrap();
+        let legacy = serde_json::to_value(original.as_ref()).unwrap();
+        assert!(legacy.get("counter_id").is_none());
+        let mut table = catalog::parse_def_json(&legacy.to_string()).unwrap();
+        assert_eq!(table.counter_id, None);
+        assert_eq!(table.counter_space_id(), 512);
+
+        for (space_id, engine) in [(1024, Engine::Vinyl), (2048, Engine::Memtx)] {
+            table.counter_id = Some(table.counter_space_id());
+            table.space_id = space_id;
+            table.engine = engine;
+            // The actual catalog wire JSON must retain the origin after
+            // each replacement and reload, not rebase it on the last ID.
+            table = catalog::parse_def_json(&table.lua_def().json).unwrap();
+            assert_eq!(table.space_id, space_id);
+            assert_eq!(table.engine, engine);
+            assert_eq!(table.counter_id, Some(512));
+            assert_eq!(table.counter_space_id(), 512);
+        }
     }
 
     #[test]
