@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Vinyl write admission ([#58](https://github.com/cstheorist/tarn/issues/58)):
+  storage shards share a pressure-sensitive admission budget across SQL
+  servers, refusing new writes before user data changes and preserving
+  decided APPLY and recovery. SQL servers briefly wait only after explicit
+  before-effect refusals; overload and rolled-back native quota waits
+  return 1205. `tarn_info()` and cached `SHOW TARN STATUS` expose regulator,
+  compaction, run and admission statistics. See
+  [the operational limits and measurements](docs/operations.md#vinyl-write-admission).
+
 - Lazy secondary indexes ([#82](https://github.com/cstheorist/tarn/issues/82)):
   `COMMENT 'tarn:lazy'` on a non-unique key creates an asynchronous global
   copy while retaining the strong local index. Eligible nonlocking

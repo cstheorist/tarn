@@ -54,7 +54,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (124 default configurations, including 84
+  and model-checked with TLC (132 default configurations, including 91
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions and
   the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
   and compiled into the server.

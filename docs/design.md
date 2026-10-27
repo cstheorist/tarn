@@ -1797,6 +1797,13 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
+| Bug_VinylAdmissionGateAfterEffect | violates NoEffectRefusal | 4 | 4 | 2 | 00s | 2 |
+| Bug_VinylAdmissionNegativeCredit | violates NonnegativeCredit | 4 | 4 | 2 | 00s | 2 |
+| Bug_VinylAdmissionPerGatewayBudget | violates SharedBudget | 50 | 64 | 4 | 00s | 4 |
+| Bug_VinylAdmissionReplayUnknown | violates NoBusinessReplay | 5536 | 12901 | 9 | 00s | 9 |
+| Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
+| Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
+| Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
@@ -1848,6 +1855,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
 | UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
 | Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |
+| VinylAdmission | no errors | 67072 | 224657 | 20 | 01s |  |
 
 ### 5.2 Benchmarks
 

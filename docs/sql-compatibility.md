@@ -121,6 +121,10 @@ history. See [the full contract and supported identities](lazy-indexes.md).
   CHARSET` and `COLLATE` set the table's default collation
   ([Collations](#collations)); other table options (`ROW_FORMAT`, ...) are
   accepted and ignored.
+  Vinyl writes use shared storage admission during dump/compaction
+  pressure; refusal, a fresh attempt deadline or a rolled-back native quota
+  wait returns 1205. Large batches may need splitting. See
+  [the limits and telemetry](operations.md#vinyl-write-admission).
 * `ALTER TABLE`, online (below), `RENAME TABLE`, `CREATE [UNIQUE] INDEX`,
   `DROP INDEX ... ON`, `DROP TABLE`, `TRUNCATE TABLE`.
 * A table without a `PRIMARY KEY` is keyed as InnoDB keys it: by its first

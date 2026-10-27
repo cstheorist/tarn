@@ -55,6 +55,7 @@ clients or on the storage machines.
 | `TARN_MEMORY_MB` | `1024` | memtx memory: memtx tables, the protocol's records and the system spaces |
 | `TARN_VINYL_MEMORY_MB` | `128` | vinyl's in-memory level: recent writes of vinyl tables, dumped to disk when full |
 | `TARN_VINYL_CACHE_MB` | `128` | vinyl's cache of recently read rows |
+| `TARN_VINYL_TIMEOUT` | `0.25` | seconds a native vinyl statement may wait for memory quota; Tarantool's standalone default is 60 seconds. This is not a whole-transaction, disk-I/O or replication deadline. |
 | `TARN_VINYL_READ_THREADS` | the CPUs divided among `TARN_HOST_INSTANCES`, 1 to 8 | threads reading vinyl pages from disk (`vinyl_read_threads`): see [Sizing](#sizing) |
 | `TARN_HOST_INSTANCES` | `1` | storage instances sharing this machine, for the default of `TARN_VINYL_READ_THREADS` (`scripts/cluster.sh` sets it) |
 | `TARN_VINYL_WRITE_THREADS`, `TARN_VINYL_PAGE_SIZE`, `TARN_VINYL_RANGE_SIZE`, `TARN_VINYL_BLOOM_FPR` | Tarantool's | the `vinyl_*` options of those names: threads for dumps and compaction, page and range size of new indexes, bloom filter false-positive rate |
@@ -203,11 +204,115 @@ settings, then checkpointed:
   space of about the size of the data, plus the WAL of two hours of writes.
 * **CPU.** A shard runs its transactions on one thread. Dumps and
   compaction, compression included, run on `TARN_VINYL_WRITE_THREADS` (4 by
-  default, Tarantool's; they run in the background, so no read or commit
-  waits on them the way a cache miss waits on a reader). Give each shard
+  default, Tarantool's). When they cannot keep up, the native memory
+  regulator can queue writes until a dump frees quota. Give each shard
   leader a core for its transactions and leave cores for these threads.
 * **Replicas** each hold a full copy of their shard: size every replica like
   its leader.
+
+### Vinyl write admission
+
+Each writable storage shard owns one admission meter, shared by all SQL
+servers. Healthy vinyl writes keep their existing request path. A positive
+native `rate_limit` alone does not mean overload: Tarantool 3.9 initially
+reports 10 MiB/s even when idle. The meter engages when native writers are
+blocked, level-zero memory reaches the lower of the native dump watermark
+and 75% of `vinyl_memory`, or queued compaction input reaches
+`vinyl_memory`. It disengages after writers unblock and both level-zero
+memory and queued compaction input fall to at most 50% of that limit.
+The guard shares one native snapshot for at most 20 ms to bound
+introspection allocations; leadership changes discard it. A request
+admitted during that sampling interval can still meet the native quota.
+
+During pressure, one nonyielding check debits shared estimated-byte credit
+before new user writes or a fresh PREPARE. Credit starts at zero when the
+controller engages or leadership changes, refills at the native effective
+rate, and has a burst capped by the lower of 50 ms of that rate, 1/16 of
+`vinyl_memory`, and 1 MiB. A request larger than the burst is refused with
+1205 while pressure persists. Estimation includes old tuples for updates,
+replacements and deletes and accounts for vinyl indexes. It is an encoded
+cost estimate, not a reservation of the native allocator or disk bandwidth.
+Those old-row lookups may themselves read from disk.
+
+Only an explicit before-effect autocommit refusal can be sent again: the
+SQL server waits for the suggested 1–50 ms between attempts, for at most
+250 ms of admission retry time and 32 retries. An explicit transaction
+returns 1205 and follows its normal rollback/abort path. A fresh PREPARE
+refusal can leave protocol tombstones and cause other prepared
+participants to abort; no business writes survive the aborted transaction.
+Duplicate durable YES votes and already-decided APPLY/recovery bypass new
+admission. Lost mutation replies remain outcome-unknown, 1180/40003.
+
+`TARN_VINYL_TIMEOUT` defaults to 0.25 seconds so that a statement admitted
+just before native quota becomes unavailable does not inherit Tarantool's
+60-second quota wait. Known rolled-back quota errors return SQL 1205.
+Fresh physical-write attempts also check a 250 ms deadline between
+statements; this never changes a decided APPLY. These limits do not add up
+to a universal 500 ms commit deadline: a native quota wait is per statement,
+and reads from disk, scheduling, WAL and replication have separate costs.
+Pre-existing decided work and direct KV writes are outside the new-write
+admission budget.
+
+`tarn_info().vinyl` reports current native statistics. SQL servers sample
+`tarn_vinyl_stats()` concurrently at one-second intervals while the catalog
+contains vinyl tables; `SHOW TARN STATUS` and
+`SHOW STATUS LIKE 'Tarn_vinyl_%'` read those cached samples without RPCs.
+Names start with `Tarn_vinyl_shard_<id>_`, using stable shard IDs:
+
+| Suffix | Meaning |
+|---|---|
+| `sample`, `sample_age_ms` | `current`, `stale` after five seconds, or `unavailable`; age since the last successful gateway sample |
+| `dump_bandwidth`, `write_rate`, `rate_limit` | native regulator estimates, bytes per second |
+| `blocked_writers` | writers currently queued for native quota |
+| `memory_level0`, `memory_tuple`, `memory_tx`, `memory_limit` | native level-zero, tuple and transaction bookkeeping bytes, and configured vinyl memory limit; level zero is not total quota usage |
+| `compaction_queue` | uncompressed input bytes queued for compaction, not jobs |
+| `run_count`, `range_count`, `runs_per_range` | totals across vinyl indexes, and total runs divided by total ranges; this weighted mean can hide a hot index |
+| `admitted`, `rejected`, `quota_timeouts` | storage admission attempts accepted/refused, and observed native quota timeouts; admissions are not a committed-transaction count |
+
+Unknown metrics are `NULL`. Failed polls retain the last successful sample
+and its increasing age; a stale sample never grants admission.
+The memory gauges do not add up to native quota usage. In a separate
+blocked-transaction probe, level zero was zero while transaction and tuple
+gauges were about 16.8 MB and 8.4 MB with an 8 MiB limit. A transaction
+timeout of 10 ms still waited for the configured 200 ms native quota
+timeout; a transaction timer does not shorten that engine wait.
+
+In a controlled local Tarantool 3.9 baseline with the stock 60-second
+quota timeout, eight SQL writers inserted incompressible 8 KiB values into
+an 8 MiB/cache-zero vinyl instance. Limiting native I/O to 0.5 MiB/s for
+ten seconds filled level zero and blocked all eight writers. Their
+individual stalled calls took about 15.49 seconds through release and
+drain; all 4,880 acknowledged inserts existed afterwards. The sampled
+compaction queue also reached about 41.7 MB. In a separate run with only
+the native timeout shortened to two seconds, the old server returned 16
+SQL 1105 errors wrapping native error 135, with maximum client latency
+2,007.5 ms; all 8,842 acknowledged rows existed. These controlled dump and
+compaction pressure witnesses are not a disk or end-to-end throughput
+benchmark. Slow-call counts and maximum latency matter here: eight long
+stalls were only 0.16% of the first run's completions, below its p99 cutoff.
+
+With the new controller and defaults, a fresh local run used two RF1 shards
+in one Linux ARM64 Docker container limited to two CPUs and 1 GiB, two
+two-thread debug SQL servers, WAL mode `write`, and eight writers directed
+to one shard. Each shard had 8 MiB of vinyl memory, no cache and two vinyl
+write threads. Native I/O was uncapped for three seconds, limited to
+0.5 MiB/s for ten, then released. The 8 KiB values were base64-encoded
+random bytes. All 6,153 attempts completed:
+
+| Outcome | Calls | p95 | Maximum |
+|---|---:|---:|---:|
+| Acknowledged | 5,727 | 21.16 ms | 226.35 ms |
+| Refused, SQL 1205 | 426 | 255.93 ms | 332.76 ms |
+
+All acknowledged IDs existed and all refused IDs were absent. Of the
+refusals, 326 exceeded the pressure burst and 100 were known rolled-back
+native quota waits. Native blocked writers peaked at eight, queued
+compaction input at 17,821,408 bytes, and level zero at 8,387,288 bytes;
+run amplification was also observed. These are measured single-row call
+latencies in this fixture, separate from replication durability evidence
+and from a matched throughput comparison. The endpoint-driven regression
+test is `tests/sql/vinylpressure.py --real-pressure`; it preserves native
+samples, individual attempts and key-set checks in its evidence directory.
 
 ## tarn-server
 
@@ -540,6 +645,7 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
 | 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, a bucket the transaction used moved, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
 | 1205 | HY000 | lock wait timeout (`innodb_lock_wait_timeout`); only the statement was rolled back | retry the statement or roll back |
 | 1205 | HY000 | lazy-index own-write catch-up exceeded `tarn_lazy_wait_timeout`; session obligations retained | retry the read after delivery recovers |
+| 1205 | HY000 | vinyl admission refused a new write, a fresh write attempt exceeded its deadline, or its native quota wait rolled back; COMMIT failure aborts the transaction | retry the transaction after pressure subsides; split a batch that exceeds the pressure burst or fresh attempt budget |
 | 3572 | HY000 | `NOWAIT` and the row is locked; only the statement was rolled back | |
 | 1305 | 42000 | no such savepoint | |
 | 1568 | 25001 | `SET TRANSACTION` inside a transaction | |
