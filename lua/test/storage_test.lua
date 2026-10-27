@@ -1404,23 +1404,26 @@ check("a late PREPARE's undo leaves the fence of the run that took the job over"
       r[1] == 'yes' and r2[1] == 'timeout' and r3[1] == 'ok' and rw[1] == 'error' and rw[2] == 1412
       and c[1]:eval('return box.space._tarn_meta:get{"fence:20020"}.value.gen') == 3, {r, r2, r3, rw})
 c[1]:call('tarn_alter_abort', {'test.ua', a4})
--- Run 4 is held after its checks and builds; run 5 prepares, and the
--- change is aborted; run 4 goes on: it creates nothing, and its undo
--- leaves the tombstone alone.
+-- Run 4 is held after its checks and builds. ABORT must wait for the
+-- whole native-DDL RPC before dropping its candidates and releasing the
+-- fence: an index build may not be visible while it is still in flight.
 local a5 = table.deepcopy(a4); a5.ver = 16; a5.def.ver = 16
 a5.builds = {{7, 'iv5', true, {{field = 2, type = 'string'}}}}
 hook('alter_prepare', 'hold')
 local f4 = async('tarn_alter_prepare', {'test.ua', a5, 4})
 hook('alter_prepare', 'reached')
-c[1]:call('tarn_alter_abort', {'test.ua', a5})
+local f5 = async('tarn_alter_abort', {'test.ua', a5})
+fiber.sleep(0.05)
+check('ABORT waits for an outstanding ALTER PREPARE before removing its native candidates', not f5:is_ready())
 hook('alter_prepare', 'release')
 local r4 = result(f4)
+local r5 = result(f5)
 c[1]:eval('tarn.stale_fences()')
 rw = uw(12, {'replace', 20020, {9, 'w', 1}})
-check('a PREPARE of a run that finishes after ABORT creates nothing and fences nothing',
-      r4[1] == 'error' and r4[2] == 1412 and rw[1] == 'ok'
+check('ABORT removes all candidates after the earlier PREPARE quiesces',
+      r4[1] == 'ok' and r5[1] == 'ok' and rw[1] == 'ok'
       and c[1]:eval('return box.space[20023] == nil and box.space["test.ua"].index[7] == nil')
-      and c[1]:eval('return box.space._tarn_meta:get{"fence:20020"}.value.aborted') == true, {r4, rw})
+      and c[1]:eval('return box.space._tarn_meta:get{"fence:20020"}.value.aborted') == true, {r4, r5, rw})
 end
 
 -- Issue #77: a read returns its rows a page at a time (at most

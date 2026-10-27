@@ -400,13 +400,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is length-encoded, as MySQL and MariaDB write it. MariaDB's client
   checked the length and failed every `PREPARE` with 2027 (malformed
   packet) ([#61](https://github.com/cstheorist/tarn/issues/61)).
-- New indexes on instant-added columns could miss old rows or accept
-  duplicate logical keys: short tuples omit the column's non-NULL fill,
-  which a native index reads as NULL
-  ([#70](https://github.com/cstheorist/tarn/issues/70)). Such builds now fail
-  with 1846 before publishing the index; empty tables, physically present
-  fields and NULL fills remain supported. Automatic backfill is not yet
-  implemented. Vinyl builds that need this check run behind the write fence.
+- Indexes on instant-added non-NULL fills now include existing rows
+  ([#70](https://github.com/cstheorist/tarn/issues/70)). PREPARE appends missing
+  suffixes behind a persistent write fence, preserving present values,
+  explicit NULLs and older frozen fills. Durable original-length undo
+  restores failed changes before releasing the fence, including duplicate
+  UNIQUE builds; a later ALTER cannot inherit an aborted default. Recovery
+  and generation checks protect retries and takeover, and serialized ALTER
+  RPCs prevent late native index builds from escaping cleanup. The existing
+  row-count limit and unweighted CI-column retrofit restriction remain.
 - A large scan no longer kills a storage node. A read returned its whole
   range in one reply, held in the node's Lua heap, so reads of millions of
   rows (an unindexed `WHERE` over a big table) took the heap to Tarantool's

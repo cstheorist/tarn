@@ -72,6 +72,8 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedTables` | one snapshot reads keys of two tables on one shard; the union of both read sets is checked for prepared writers |
 | `GroupedRead` | a separate, small refinement model of one snapshot across scans that yield between tables |
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
+| `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
+| `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -140,8 +142,8 @@ tla/check.sh GroupedTables Bug_GroupedTablesNoWLockCheck GroupedRead Bug_Grouped
 ```
 
 They are also included in the default `check.sh` list. `run_all.sh` selects
-`GroupedRead.tla` for the two snapshot configurations and `MC.tla` for all
-others; explicit configuration arguments still replace the default list.
+the corresponding local refinement module or `MC.tla` by configuration;
+explicit configuration arguments still replace the default list.
 The bounded results are:
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -201,6 +203,160 @@ All three are also in the default checks, routed to `GroupedDDL.tla`:
 | `Bug_GroupedDDLIgnoreGeneration` | 36 | 5 | violates `NoHeldSnapshot` |
 | `Bug_GroupedDDLIgnoreStale` | 37 | 5 | violates `NoHeldSnapshot` |
 
+### Instant-column materialization (issue #70)
+
+`InstantBackfill.tla` checks the required local storage contract for
+automatic backfill. It has two rows on one shard, one
+admitted old-layout writer, one crash/recovery and one takeover. One row
+ends before a published instant column whose frozen fill is 2; the other
+already stores value 5. A first ALTER appends a new column with fill 3. If
+it aborts, a second ALTER reuses that slot with fill 7. Old-layout writes
+can set the published column to 9, so cleanup must preserve acknowledged
+business updates as well as frozen fills.
+
+The modeled contract is:
+
+* Persist the per-shard version/generation fence before changing a row,
+  and drain old-layout local commits and prepared transactions before
+  materialization. Recovery reloads that fence before admitting writers.
+* Atomically save a row's **first** original length and append only its
+  missing suffix. The undo key uses job version and row, not takeover
+  generation. Repeating a chunk preserves the original length. Below the
+  old committed layout width, use the old definition's padding, even if
+  the new ALTER drops that column; only newly allocated slots use new
+  fills. Existing physical values, including NULLs, remain unchanged.
+* Each chunk validates the current job version, owner and phase at its
+  atomic commit. `BeginBatch`/`FinishBatch` allow a request to pause across
+  takeover or abort; the final guard rejects stale work. A delayed request
+  after a crash represents redelivery, not a native transaction surviving
+  that crash.
+* Publish only after all rows and indexes are ready. Once the durable job
+  chooses APPLY, it goes forward. ABORT keeps the fence while atomically
+  trimming rows and deleting their undo entries; it records completion and
+  releases the fence only when that version's journal is empty. Published
+  catalog versions prevent late ABORT from trimming published data. Undo
+  garbage collection after APPLY changes metadata only.
+
+The runtime refinement must read/check ownership metadata **inside the
+same native RW transaction** as journal and user-tuple changes, or provide
+an equivalent current-state, non-yielding final guard. A check made only
+before `box.begin()` cannot establish the modeled final eligibility.
+Tarantool documents its `read-committed` setting as commit/WAL visibility
+and retains serialization checks for transactions that both read and
+write; this is not an assumption that the API label has ANSI READ
+COMMITTED semantics. See the primary [transaction model](https://www.tarantool.io/en/doc/latest/platform/atomic/transaction_model/)
+and [MVCC description](https://www.tarantool.io/docs/tarantool/en/3_x/platform/atomic/txn_mode_mvcc).
+That documentation supports the premise but does not prove this code's
+metadata read is tracked. A focused native probe passed all 12 cases with
+memtx metadata/journal and either memtx or vinyl user rows. Generation or
+phase changed after the first metadata read, either before user writes or
+after tuple/journal writes; the stale transaction failed and left both
+unchanged. Controls with unchanged metadata committed. The probe repeats
+the metadata read before commit. This validates that primitive on the
+tested build; the actual materialization/undo procedures must preserve that
+transaction boundary and pass their own paused-chunk and crash tests.
+The native probe used Tarantool `3.9.0-0-g8b9a0f59a9` from image
+`sha256:1a64f298fd5494728c660d221c4c5331e994ac4c57082246ca7c87c6497b0873`.
+
+Invariants preserve the old projection before publication, require the
+published native index to contain the correct logical fill, forbid undo
+entries reappearing after abort completion, and prevent aborted fill 3
+from poisoning a later column with fill 7. The lost-undo control abstracts
+the durable outcome of separately committed row/journal writes interrupted
+between them. The stale-batch control removes the whole final
+version/owner/phase guard; it does not establish that every guard component
+is independently necessary for identical, idempotent work.
+
+This bounded model is not a proof of native MVCC, WAL/replication
+atomicity, Lua chunk construction, collation conversions, predicate/index
+implementation, full distributed DDL linearizability, or recovery liveness.
+Existing distributed job decisions and commit-protocol assumptions remain
+separate. New CI fields may use their known frozen weight; retrofitting
+an unweighted pre-existing CI column remains explicitly unsupported (1235).
+Native fault and differential tests must verify the implementation's
+refinement, including a crash after partial padding and after partial undo.
+
+```sh
+tla/check.sh Backfill Bug_BackfillNoPersistentFence Bug_BackfillSkipDrain Bug_BackfillLoseUndo \
+  Bug_BackfillOverwriteUndo Bug_BackfillPublishEarly Bug_BackfillReleaseEarly \
+  Bug_BackfillStaleBatch Bug_BackfillWrongOldPad Bug_BackfillAbortAfterApply
+```
+
+All ten configurations are generated by `gen_cfgs.sh`, included in the
+default checks, and routed to `InstantBackfill.tla`:
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `Backfill` | 3,757 | 21 | passes all five invariants |
+| `Bug_BackfillNoPersistentFence` | 1,004 | 10 | violates `OldProjectionPreserved` |
+| `Bug_BackfillSkipDrain` | 631 | 8 | violates `OldProjectionPreserved` |
+| `Bug_BackfillLoseUndo` | 2,584 | 12 | violates `PublishedIndexCorrect` |
+| `Bug_BackfillOverwriteUndo` | 6,251 | 15 | violates `PublishedIndexCorrect` |
+| `Bug_BackfillPublishEarly` | 22 | 4 | violates `PublishedIndexCorrect` |
+| `Bug_BackfillReleaseEarly` | 80 | 6 | violates `AbortedUndoClean` |
+| `Bug_BackfillStaleBatch` | 86 | 6 | violates `AbortedUndoClean` |
+| `Bug_BackfillWrongOldPad` | 11 | 4 | violates `OldProjectionPreserved` |
+| `Bug_BackfillAbortAfterApply` | 1,249 | 11 | violates `PublishedIndexCorrect` |
+
+### Yielding native index effects during backfill
+
+The row/journal transaction guard cannot undo a native index build that
+finishes after ABORT. Tarantool 3.9 serializes issued DDL operations, but
+builds an index on a replacement space before publishing that space. A
+Tarn cleanup that sees no candidate index and therefore issues no native
+drop does not join that serialization. See the native
+[ALTER preparation lock](https://github.com/tarantool/tarantool/blob/3.9.0/src/box/alter.cc#L1032),
+[index build](https://github.com/tarantool/tarantool/blob/3.9.0/src/box/alter.cc#L1508)
+and [space publication](https://github.com/tarantool/tarantool/blob/3.9.0/src/box/alter.cc#L1110).
+
+`BackfillDDL.tla` isolates this local boundary. One old PREPARE can pause
+inside an invisible build; two ABORT requests can pause before cleanup;
+a new job can reuse the same numeric index ID with a different definition.
+One DROP+CREATE can also replace an idle space under the same name, reset
+its catalog version, and receive an old request carrying the original ID.
+One per-space mutex covers each **entire** ALTER BUILD/PREPARE/APPLY/ABORT
+RPC, including native DDL, cleanup, fence release and return. Admission
+rechecks current durable version/phase and the request's intended space ID
+after acquiring it, before native schema effects. Comparing the current
+ID only to one captured from that name before locking is insufficient:
+both can identify the replacement rather than the request's original space.
+The model's requests carry that ID, as SQL-generated ALTER arguments do;
+legacy/manual RPC arguments that omit it are outside this identity claim.
+Thus a native build completes or rolls back before ABORT
+can inspect/drop its candidate, and a delayed finisher cannot survive into
+a newer job's index-ID reuse. A published old APPLY must only collect its
+own undo metadata; the mutex does not authorize stale schema mutations.
+
+Two controls remove separate consequences of this same mutex. Without
+build quiescence, ABORT skips a still-hidden candidate, the old build
+finishes, and ABORT releases its fence with that index still present.
+Without finisher serialization, one ABORT completes, a new job builds its
+candidate, and the other ABORT drops that candidate before publication.
+The identity control retains the mutex but omits intended-ID binding;
+the old request builds its candidate in the replacement's fresh namespace.
+The correct model admits one RPC at a time; same-fiber nested calls are
+part of that RPC, without an intervening unlock. Reentrant ownership,
+exception-safe `finally` release, bounded waiting, actual native index
+definitions and process-crash recovery remain runtime refinement
+obligations, not proved Lua or native-DDL properties. The row/undo model
+and distributed commit protocol are unchanged.
+
+```sh
+tla/check.sh BackfillDDL Bug_BackfillDDLNoQuiescence Bug_BackfillDDLNoFinisherSerialization \
+  Bug_BackfillDDLWrongSpace
+```
+
+These four generated configurations route to `BackfillDDL.tla`. Together
+with the preceding ten, they bring the default check list from 57 to 71;
+all previous configuration files are unchanged.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `BackfillDDL` | 33 | 11 | passes all four invariants |
+| `Bug_BackfillDDLNoQuiescence` | 33 | 6 | violates `NoLateAbortedIndex` |
+| `Bug_BackfillDDLNoFinisherSerialization` | 65 | 9 | violates `PublishedIndexMatches` |
+| `Bug_BackfillDDLWrongSpace` | 15 | 4 | violates `ReplacementIndexUnchanged` |
+
 ## Verus proofs
 
 `crates/tarn-verified` is ordinary Rust inside `verus!` blocks: `cargo`
@@ -250,7 +406,7 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
 | Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes: the same replies for the reads it serves, every other kind handed back (`native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures |
-| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 465 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
+| SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 953 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
 | READ COMMITTED | `python3 tests/sql/rctest.py --tarn HOST:PORT[,HOST:PORT...]` (every SQL server) | a Tarn cluster with two or more shards | isolation variables, lock waits, lock wait timeouts, local and cross-shard deadlocks (also across SQL servers), no deadlock-detector calls without lock waits, locks of failed lock requests released with their transaction, concurrent counters without lost updates, semi-consistent `UPDATE`/`DELETE`, `SKIP LOCKED` job queues, `NOWAIT`, `FOR SHARE`, duplicate inserts and concurrent upserts on unique keys, savepoints, statement rollback, locks released on disconnect |

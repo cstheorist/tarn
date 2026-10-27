@@ -133,8 +133,9 @@ servers write to it (`tests/sql/`).
 
 #### ALTER TABLE
 
-Schema changes do not rewrite rows and do not block reads; writes to the
-table wait while the change is prepared (the statement is retried
+Ordinary instant schema changes keep existing tuples and do not block reads.
+Indexing an omitted non-NULL fill appends the missing tuple suffix. Writes
+to the table wait while the change is prepared (the statement is retried
 internally, up to the lock wait timeout, like a wait for MySQL's metadata
 lock). Writes made with the old definition after that point are refused
 by the shards and retried with the new one, so no SQL server can write in
@@ -151,7 +152,7 @@ left half done is finished by the next schema change or server start.
 | `DROP [COLUMN]` | instant (the stored values stay, unused); not primary key or shard key columns, nor columns of a foreign key (1828 / 1553); indexes lose the column |
 | `MODIFY`, `CHANGE` | type changes within one family (integers, `CHAR`/`VARCHAR`/`TEXT`/`JSON`, `DECIMAL` with the same scale, `DATETIME`/`TIMESTAMP`, binary strings, floats), `NULL` / `NOT NULL`, defaults, position, name. Existing rows are checked against the narrower type (1264 / 1265, as MariaDB reports them); writes wait while they are checked, so a change that needs the check is refused (1846) when a shard holds more than a million rows of the table (`tarn.cfg.alter_check_rows`) |
 | `RENAME COLUMN`, `ALTER [COLUMN] SET DEFAULT / DROP DEFAULT` | instant |
-| `ADD [UNIQUE] INDEX / KEY` (with `COMMENT`), `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added column with a non-NULL fill is refused (1846) if existing tuples still omit its stored field; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
+| `ADD [UNIQUE] INDEX / KEY` (with `COMMENT`), `DROP INDEX`, `RENAME INDEX`, `ALTER INDEX ... VISIBLE / INVISIBLE` | indexes are built on every shard before the change takes effect; duplicates fail it with 1062. An index on an instant-added non-NULL fill materializes missing fields first; see below. Other vinyl builds run before writes are held, so they wait only for the switch at the end; meanwhile a new unique index already refuses rows that would break it (1062), as in TiDB |
 | `ADD [CONSTRAINT] FOREIGN KEY`, `DROP FOREIGN KEY`, `DROP CONSTRAINT` | recorded and shown, not enforced; an index on the columns is added as MySQL does |
 | `RENAME [TO]`, `AUTO_INCREMENT = n`, `COMMENT` | yes |
 | `ENGINE` | the table's own engine, or one MySQL names (`InnoDB`, ...): accepted and ignored; moving a table between memtx and vinyl rewrites every row: refused (1235) |
@@ -163,18 +164,21 @@ left half done is finished by the next schema change or server start.
 
 An instant-added column's **fill** is its value for rows written before the
 column existed. It stays fixed when `SET DEFAULT` changes the default for new
-rows. Tarantool indexes a missing field as NULL, so it cannot index those old
-rows by a non-NULL fill. Tarn refuses such an index with 1846 instead of
-publishing an index that misses rows or accepts duplicate logical keys. This
-also covers a column and its index added in the same statement, composite
-indexes, implicit foreign-key indexes, and collation weight fields.
+rows. Before indexing a non-NULL fill, Tarn appends missing fields in bounded
+transactions behind a persistent write fence. Existing physical values and
+explicit NULLs stay unchanged. This also supports a column and its index in
+one statement, composite indexes, implicit foreign-key indexes and known
+collation weight fields. The existing restriction on retrofitting a weight
+field to an older unweighted CI column remains 1235.
 
-The index is allowed on an empty table, when every tuple already contains the
-indexed field, or when the frozen fill is NULL. The presence check runs while
-writes are fenced and is subject to `tarn.cfg.alter_check_rows`; vinyl builds
-that need it also run behind the fence. Automatic backfill is not implemented.
-For new tables, define the column and index before loading rows. A no-op SQL
-update such as `UPDATE t SET c = c` does not materialize old fields.
+A duplicate logical key fails with 1062. Durable undo restores tentative
+suffixes before releasing the fence, so an aborted ALTER cannot poison a
+later column that uses the slot with another default. Recovery resumes the
+recorded commit or abort. Empty tables and NULL fills need no rewriting;
+checks and materialization retain the `tarn.cfg.alter_check_rows` limit
+(one million rows per shard, otherwise 1846). Vinyl builds that need
+materialization run behind the fence; ordinary vinyl index builds remain
+online. Older storage still rejects missing indexed fields with 1846.
 
 #### Table trees
 

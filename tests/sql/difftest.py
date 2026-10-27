@@ -557,8 +557,7 @@ CASES = [
     ("ALTER TABLE al ADD UNIQUE KEY ua (a, id), ADD INDEX ic (c)", "ddl:al"),
     ("ALTER TABLE al DROP INDEX ka, RENAME INDEX ic TO ic2", "ddl:al"),
     ("ALTER TABLE al ADD INDEX ic2 (n)", "err"),
-    # Indexing a non-NULL instant fill requires physically present fields
-    # (#70; refusal cases live in ddltest). Real changes materialize them;
+    # Ordinary DML across an instant-ADD layout also preserves its fills.
     # UPDATE n=n alone is deliberately a no-op.
     ("UPDATE al SET n = n + 1", "dml:al"),
     ("UPDATE al SET n = n - 1", "dml:al"),
@@ -566,6 +565,61 @@ CASES = [
     ("ALTER TABLE al DROP COLUMN n", "ddl:al"),
     ("DROP INDEX ia ON al", "ddl:al"),
     ("DROP INDEX ia ON al", "err"),
+    # Automatic index backfill of instant defaults (#70). Every successful
+    # index has positive row checks, so two matching errors cannot pass.
+    ("CREATE TABLE bf70 (id INT PRIMARY KEY, v INT)", "ddl:bf70"),
+    ("INSERT INTO bf70 VALUES (1, 10), (2, 20)", "dml:bf70"),
+    ("ALTER TABLE bf70 ADD COLUMN c INT DEFAULT 0, ADD INDEX ic (c)", "ddl:bf70"),
+    ("SELECT id, c FROM bf70 WHERE c = 0 ORDER BY id", "rows"),
+    ("SELECT id, c FROM bf70 WHERE c + 0 = 0 ORDER BY id", "rows"),
+    ("ALTER TABLE bf70 ALTER COLUMN c SET DEFAULT 9", "ddl:bf70"),
+    ("INSERT INTO bf70 (id, v) VALUES (3, 30)", "dml:bf70"),
+    ("UPDATE bf70 SET c = NULL WHERE id = 2", "dml:bf70"),
+    ("SELECT id, v, c FROM bf70 ORDER BY id", "rows"),
+    ("UPDATE bf70 SET c = 4 WHERE id = 3", "dml:bf70"),
+    ("SELECT id FROM bf70 WHERE c = 4 ORDER BY id", "rows"),
+    ("DELETE FROM bf70 WHERE id = 1", "dml:bf70"),
+    ("SELECT id, c FROM bf70 ORDER BY id", "rows"),
+    # A failed same-statement ADD must undo its appended field before a
+    # later ADD reuses that physical position with a different fill.
+    ("CREATE TABLE bf70u (tenant_id INT, id INT, v INT, PRIMARY KEY (tenant_id, id)) "
+     "PARTITION BY KEY(tenant_id)", "ddl:bf70u"),
+    ("INSERT INTO bf70u VALUES (7, 1, 10), (7, 2, 20)", "dml:bf70u"),
+    ("ALTER TABLE bf70u ADD COLUMN c INT DEFAULT 3, ADD UNIQUE KEY uc (c, tenant_id)", "err"),
+    ("SELECT tenant_id, id, v FROM bf70u ORDER BY tenant_id, id", "rows"),
+    ("ALTER TABLE bf70u ADD COLUMN d INT DEFAULT 9, ADD INDEX id_d (d, tenant_id, id)", "ddl:bf70u"),
+    ("SELECT id, d FROM bf70u WHERE d = 9 ORDER BY id", "rows"),
+    ("ALTER TABLE bf70u ADD COLUMN c INT DEFAULT 3", "ddl:bf70u"),
+    ("ALTER TABLE bf70u ALTER COLUMN c SET DEFAULT 8", "ddl:bf70u"),
+    ("INSERT INTO bf70u (tenant_id, id, v, c) VALUES (7, 3, 30, NULL), (7, 4, 40, 4)", "dml:bf70u"),
+    ("ALTER TABLE bf70u ADD UNIQUE KEY uc (c, tenant_id)", "err"),
+    ("SELECT id, c, d FROM bf70u ORDER BY id", "rows"),
+    ("UPDATE bf70u SET c = 5 WHERE tenant_id = 7 AND id = 2", "dml:bf70u"),
+    ("ALTER TABLE bf70u ADD UNIQUE KEY uc (c, tenant_id)", "ddl:bf70u"),
+    ("SELECT id FROM bf70u WHERE c = 3 ORDER BY id", "rows"),
+    ("SELECT id FROM bf70u WHERE c IS NULL ORDER BY id", "rows"),
+    # Frozen NULL holes, old dropped slots and a new CI weight all coexist
+    # with the bucket field and SQL column positions.
+    ("CREATE TABLE bf70n (id INT PRIMARY KEY, v INT)", "ddl:bf70n"),
+    ("INSERT INTO bf70n VALUES (1, 10), (2, 20)", "dml:bf70n"),
+    ("ALTER TABLE bf70n ADD COLUMN b INT DEFAULT 3 FIRST", "ddl:bf70n"),
+    ("ALTER TABLE bf70n ADD COLUMN c INT DEFAULT NULL, ADD INDEX ic (c)", "ddl:bf70n"),
+    ("ALTER TABLE bf70n ALTER COLUMN c SET DEFAULT 9", "ddl:bf70n"),
+    ("ALTER TABLE bf70n DROP COLUMN b, ADD COLUMN s VARCHAR(10) COLLATE utf8mb4_unicode_ci DEFAULT 'Á ' "
+     "AFTER id, ADD INDEX isc (s, c)", "ddl:bf70n"),
+    ("SELECT id, c, s FROM bf70n WHERE s = 'a' ORDER BY id", "rows"),
+    ("SELECT id FROM bf70n WHERE c IS NULL ORDER BY id", "rows"),
+    ("INSERT INTO bf70n (id, v) VALUES (3, 30)", "dml:bf70n"),
+    ("SELECT id, c FROM bf70n WHERE s = 'Á' ORDER BY id", "rows"),
+    # The same rollback guarantee applies to a unique key whose entries
+    # use a separate global index space.
+    ("CREATE TABLE bf70g (id INT PRIMARY KEY, v INT)", "ddl:bf70g"),
+    ("INSERT INTO bf70g VALUES (1, 10), (2, 20), (3, 30)", "dml:bf70g"),
+    ("ALTER TABLE bf70g ADD COLUMN c INT DEFAULT 3, ADD UNIQUE KEY uc (c)", "err"),
+    ("ALTER TABLE bf70g ADD COLUMN d INT DEFAULT 9, ADD INDEX id_d (d)", "ddl:bf70g"),
+    ("SELECT id, v, d FROM bf70g WHERE d = 9 ORDER BY id", "rows"),
+    ("ALTER TABLE bf70g ADD UNIQUE KEY udv (d, v)", "ddl:bf70g"),
+    ("SELECT id FROM bf70g WHERE d = 9 AND v = 20", "rows"),
     ("ALTER TABLE al2 ADD UNIQUE KEY tn (t, name)", "err"),
     ("UPDATE al2 SET name = 'y' WHERE t = 1 AND id = 2", "dml:al2"),
     ("ALTER TABLE al2 ADD UNIQUE KEY tn (t, name)", "ddl:al2"),

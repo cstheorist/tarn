@@ -1,0 +1,74 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 42 and seed 6057431981670294277 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 130] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/BackfillDDL.tla
+Parsing file /tmp/tlc-16750147789297969256/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-16750147789297969256/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-16750147789297969256/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-16750147789297969256/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-16750147789297969256/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-16750147789297969256/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-16750147789297969256/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BackfillDDL
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BackfillDDL
+Starting... (2026-10-27 04:05:09)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 04:05:09.
+Error: Invariant ReplacementIndexUnchanged is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ incarnation = 1
+/\ index = "none"
+/\ abort = [abortA |-> "idle", abortB |-> "idle"]
+/\ prepare = "idle"
+/\ next = "idle"
+/\ active = {}
+/\ phase = "preparing"
+/\ catalog = 0
+/\ job = 1
+
+State 2: <RecreateSpace line 112, col 5 to line 119, col 23 of module BackfillDDL>
+/\ incarnation = 2
+/\ index = "none"
+/\ abort = [abortA |-> "idle", abortB |-> "idle"]
+/\ prepare = "idle"
+/\ next = "idle"
+/\ active = {}
+/\ phase = "preparing"
+/\ catalog = 0
+/\ job = 1
+
+State 3: <BeginPrepare line 46, col 5 to line 50, col 73 of module BackfillDDL>
+/\ incarnation = 2
+/\ index = "none"
+/\ abort = [abortA |-> "idle", abortB |-> "idle"]
+/\ prepare = "building"
+/\ next = "idle"
+/\ active = {"prepare"}
+/\ phase = "preparing"
+/\ catalog = 0
+/\ job = 1
+
+State 4: <CompleteNativeBuild line 53, col 5 to line 56, col 74 of module BackfillDDL>
+/\ incarnation = 2
+/\ index = "old"
+/\ abort = [abortA |-> "idle", abortB |-> "idle"]
+/\ prepare = "returning"
+/\ next = "idle"
+/\ active = {"prepare"}
+/\ phase = "preparing"
+/\ catalog = 0
+/\ job = 1
+
+18 states generated, 15 distinct states found, 5 states left on queue.
+The depth of the complete state graph search is 4.
+Finished in 00s at (2026-10-27 04:05:09)
+Trace exploration spec path: ./BackfillDDL_TTrace_1793073909.tla

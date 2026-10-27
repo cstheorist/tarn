@@ -93,7 +93,7 @@ at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
 | `recovery_interval` | 0.5 s | recovery and garbage-collection period |
 | `lock_wait` | 1 s | how long an autocommit read or write waits for a conflicting prepared transaction before failing with 1213 |
 | `gc_batch` | 500 | protocol records deleted per garbage-collection transaction |
-| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check the existing rows of a table (a narrower type, `NOT NULL`) when a shard holds more of them than this: writes to the table wait for the whole scan |
+| `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan |
 
 Protocol records (participant and decision records of cross-shard
 transactions) are kept for about `max_txn_age + clock_skew` after their last
@@ -253,10 +253,20 @@ finds such deadlocks sooner, costs storage calls only while lock waits last.
 
 `ddl_job_stale` is how long, in seconds, a schema change (`CREATE TABLE`,
 `DROP TABLE`, `TRUNCATE`, `ALTER TABLE`) may go without its SQL server
-touching it before another server takes it over and finishes it: back if
-not every shard had prepared it, forward if every shard had (`docs/design.md`
-§2.10). Every server looks for such jobs at startup and every
-`ddl_job_stale / 2` seconds (at most 10).
+touching it before another server takes it over and finishes its recorded
+APPLY or ABORT decision. A job without a decision reruns preparation and any
+global index fill before deciding; a partially applied change only goes
+forward ([design §2.10](design.md#210-schema-changes)). Every server looks
+for such jobs at startup and every `ddl_job_stale / 2` seconds (at most 10).
+
+A materializing ALTER retains a memtx undo journal in `_tarn_alter_undo`
+until commit cleanup or abort completes: one primary key and original tuple
+length per changed row. Include it in the memory budget when raising
+`alter_check_rows`. Finish or abort active materializing jobs with this
+version before downgrading storage; older code cannot process their undo.
+Older nodes reject missing indexed fields with 1846, causing rollback when
+materialization would be required there instead of publishing an incomplete
+index. Empty or already-full older shards can still prepare safely.
 
 `bucket_count` is the number of buckets of a new cluster (default 30,000).
 The first SQL server to start on a new cluster makes the bucket map with it,

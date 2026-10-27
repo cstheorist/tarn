@@ -8,12 +8,13 @@
 //! cluster runs those steps on every shard (`Cluster::alter_table`, and the
 //! protocol in lua/tarn.lua "Schema changes").
 //!
-//! No row is rewritten: an added column gets a new field after the last one
-//! (older rows hold its fill value), a dropped one keeps its field, and a
-//! type change must keep the Tarantool field type (integer and unsigned may
-//! change into each other); existing values are checked against the new
-//! type. Changes that would need every row converted -- INT to VARCHAR, a
-//! different DECIMAL scale -- are refused.
+//! An added column gets a field after the last one (older rows hold its fill
+//! value), and a dropped one keeps its field. Indexing an omitted non-NULL
+//! fill materializes the missing tuple suffix under a durable fence, with
+//! undo until the change commits. A type change must keep the Tarantool
+//! field type (integer and unsigned may change into each other); existing
+//! values are checked against the new type. Changes that need every value
+//! converted -- INT to VARCHAR, a different DECIMAL scale -- are refused.
 
 use crate::catalog::{self, Catalog, ColumnDef, Fill, ForeignKeyDef, IndexDef, TableDef};
 use crate::mpw::Mp;
@@ -1005,6 +1006,15 @@ pub struct Change {
     pub renames: Vec<(u32, String)>,
     pub builds: Vec<Build>,
     pub checks: Vec<Check>,
+    /// An index needs physical fields that old tuples may omit. The
+    /// indexed-presence checks remain on the wire for older storage nodes.
+    pub materialize: bool,
+    /// Width of the committed layout, before this change allocates fields.
+    pub old_width: u32,
+    /// Complete suffix defaults: (number of fields always present, values
+    /// after those fields). Existing slots use the OLD definition's fills
+    /// so readers of it cannot observe a proposed DROP/MODIFY during PREPARE.
+    pub pad: Option<(usize, Vec<Value>)>,
     /// New space name.
     pub rename: Option<String>,
     /// AUTO_INCREMENT = n.
@@ -1808,6 +1818,24 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
             }
         }
     }
+    let materialize = checks.iter().any(|c| c.kind == CheckKind::IndexFieldPresent);
+    let pad = if materialize {
+        let (base, mut values) = nd
+            .update_pad()
+            .ok_or_else(|| SqlError::internal("indexed instant fill has no tuple suffix"))?;
+        if let Some((old_base, old_values)) = def.update_pad() {
+            if old_base != base || old_values.len() > values.len() {
+                return Err(SqlError::internal("ALTER changed the committed tuple prefix"));
+            }
+            // The old catalog stays public throughout PREPARE. In
+            // particular, a column this change drops still has its old
+            // fill, rather than the new layout's anonymous NULL slot.
+            values[..old_values.len()].clone_from_slice(&old_values);
+        }
+        Some((base, values))
+    } else {
+        None
+    };
     Ok(Change {
         def: nd,
         format,
@@ -1815,6 +1843,9 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         renames,
         builds,
         checks,
+        materialize,
+        old_width,
+        pad,
         rename,
         auto_increment,
         auto_inc_from,
@@ -1869,7 +1900,7 @@ fn check_globals(def: &TableDef, nd: &mut TableDef) -> SqlResult<Vec<u32>> {
 /// carries version `ver`).
 pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     let mut m = Mp::new();
-    m.map(11);
+    m.map(14);
     // Global indexes: the spaces of new ones (PREPARE creates them, the SQL
     // server fills them, `Cluster::fill_globals`) and the ids of dropped
     // ones (APPLY drops them).
@@ -1889,6 +1920,20 @@ pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     }
     m.str("ver").uint(ver);
     m.str("timeout").f64(timeout);
+    m.str("materialize").bool(ch.materialize);
+    m.str("old_width").uint(ch.old_width as u64);
+    m.str("pad");
+    match &ch.pad {
+        Some((base, values)) => {
+            m.arr(values.len() + 1).uint(*base as u64);
+            for v in values {
+                m.val(v);
+            }
+        }
+        None => {
+            m.nil();
+        }
+    }
     m.str("checks").arr(ch.checks.len());
     for c in &ch.checks {
         let n = match c.kind {
@@ -2094,18 +2139,26 @@ mod tests {
             assert_eq!(present.len(), 1, "one check even with several indexes: {spec}");
             assert_eq!(present[0].field, ch.def.layout.col_field[c] as u32 + 1);
             assert_eq!(present[0].fill, ch.def.layout.fills[c]);
+            assert!(ch.materialize);
+            assert_eq!(ch.old_width as usize, def.layout.width);
+            let (base, pad) = ch.pad.as_ref().unwrap();
+            assert_eq!(pad[ch.def.layout.col_field[c] - base], ch.def.layout.fills[c]);
         }
         // Missing NULL and physically stored NULL have the same native key.
         let ch = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT NULL, ADD INDEX ic (c)").unwrap();
         assert!(ch.checks.is_empty());
+        assert!(!ch.materialize && ch.pad.is_none());
         let ch = alter(&def, &cat, "ALTER TABLE t ADD INDEX iv (v)").unwrap();
         assert!(ch.checks.is_empty());
+        assert!(!ch.materialize && ch.pad.is_none());
 
         // A later DEFAULT change does not change what the old short rows hold.
         let added = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT 3").unwrap().def;
         let ch = alter(&added, &cat, "ALTER TABLE t ALTER c SET DEFAULT 9, ADD INDEX ic (c)").unwrap();
         assert_eq!(ch.checks.len(), 1);
         assert_eq!(ch.checks[0].fill, Value::Int(3));
+        let (base, pad) = ch.pad.as_ref().unwrap();
+        assert_eq!(pad[ch.def.layout.col_field[2] - base], Value::Int(3));
         let added_null = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT NULL").unwrap().def;
         let ch = alter(
             &added_null,
@@ -2117,6 +2170,7 @@ mod tests {
             ch.checks.is_empty(),
             "a current non-NULL default does not change the frozen NULL fill"
         );
+        assert!(!ch.materialize && ch.pad.is_none());
 
         // Collated indexes store a weight field, not the visible text field.
         let ch = alter(
@@ -2127,6 +2181,11 @@ mod tests {
         .unwrap();
         let c = ch.def.col_index("c").unwrap();
         assert_eq!(ch.checks[0].field, ch.def.layout.col_weight[c].unwrap() as u32 + 1);
+        let (base, pad) = ch.pad.as_ref().unwrap();
+        assert_eq!(
+            pad[ch.def.layout.col_weight[c].unwrap() - base],
+            ch.def.key_part(c, &Value::str("X"))
+        );
 
         // The storage check is carried to every DDL stage in the persisted job.
         let encoded = lua_args(&ch, 2, 5.0);
@@ -2149,6 +2208,98 @@ mod tests {
             }
         }
         assert!(found && rd.buf.is_empty());
+    }
+
+    #[test]
+    fn materialization_pad_preserves_old_dropped_values_and_weights() {
+        let (def, cat) = table("CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+        let old = alter(
+            &def,
+            &cat,
+            "ALTER TABLE t ADD b INT DEFAULT 3 FIRST, ADD n INT DEFAULT NULL, \
+             ADD s VARCHAR(10) COLLATE utf8mb4_unicode_ci DEFAULT 'Á ', ADD INDEX is_s (s, id)",
+        )
+        .unwrap()
+        .def;
+        let b = old.col_index("b").unwrap();
+        let s = old.col_index("s").unwrap();
+        let ch = alter(
+            &old,
+            &cat,
+            "ALTER TABLE t DROP b, DROP s, ADD c INT DEFAULT 5 FIRST, ADD INDEX ic (c, id)",
+        )
+        .unwrap();
+        let (base, pad) = ch.pad.as_ref().unwrap();
+        assert!(ch.materialize);
+        assert_eq!(ch.old_width as usize, old.layout.width);
+        assert_eq!(*base, old.bucket_field() + 1);
+        let (_, old_pad) = old.update_pad().unwrap();
+        assert_eq!(&pad[..old_pad.len()], old_pad.as_slice());
+        assert_eq!(pad[old.layout.col_field[b] - base], Value::Int(3));
+        assert_eq!(pad[old.layout.col_field[s] - base], Value::str("Á "));
+        assert_eq!(
+            pad[old.layout.col_weight[s].unwrap() - base],
+            old.key_part(s, &Value::str("Á "))
+        );
+        let c = ch.def.col_index("c").unwrap();
+        assert_eq!(
+            ch.def.layout.col_field[c], old.layout.width,
+            "new slots are appended after old ones"
+        );
+        assert_eq!(pad[ch.def.layout.col_field[c] - base], Value::Int(5));
+        // Blindly using the proposed layout would expose NULL through the
+        // still-public old b and s columns while PREPARE runs.
+        let (_, proposed) = ch.def.update_pad().unwrap();
+        assert_eq!(proposed[old.layout.col_field[b] - base], Value::Null);
+        assert_eq!(proposed[old.layout.col_weight[s].unwrap() - base], Value::Null);
+    }
+
+    #[test]
+    fn materialization_wire_keeps_old_storage_presence_checks() {
+        fn fields(ch: &Change) -> std::collections::HashMap<String, Vec<u8>> {
+            let encoded = lua_args(ch, 7, 5.0);
+            let mut rd = Rd::new(&encoded);
+            let count = rd.map().unwrap();
+            let mut out = std::collections::HashMap::new();
+            for _ in 0..count {
+                out.insert(rd.string().unwrap(), rd.raw_value().unwrap().to_vec());
+            }
+            assert!(rd.buf.is_empty());
+            out
+        }
+        let (def, cat) = table("CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT 3, ADD INDEX ic (c)").unwrap();
+        let f = fields(&ch);
+        assert_eq!(f["materialize"], [0xc3]);
+        assert_eq!(
+            Rd::new(&f["old_width"]).value().unwrap().as_i64(),
+            Some(def.layout.width as i64)
+        );
+        let mut pad = Rd::new(&f["pad"]);
+        assert_eq!(pad.array().unwrap(), 2);
+        assert_eq!(pad.value().unwrap().as_i64(), Some(def.bucket_field() as i64 + 1));
+        assert_eq!(pad.value().unwrap().as_i64(), Some(3));
+        assert!(pad.buf.is_empty());
+        let mut checks = Rd::new(&f["checks"]);
+        assert_eq!(checks.array().unwrap(), 1);
+        assert_eq!(checks.array().unwrap(), 6);
+        assert_eq!(checks.value().unwrap().as_i64(), Some(def.layout.width as i64 + 1));
+        assert_eq!(checks.string().unwrap(), "c");
+        assert_eq!(
+            checks.string().unwrap(),
+            "indexed",
+            "old storage must still reject missing fields"
+        );
+        for _ in 0..3 {
+            checks.skip().unwrap();
+        }
+        assert!(checks.buf.is_empty());
+
+        let ch = alter(&def, &cat, "ALTER TABLE t ADD c INT DEFAULT NULL, ADD INDEX ic (c)").unwrap();
+        let f = fields(&ch);
+        assert_eq!(f["materialize"], [0xc2]);
+        assert_eq!(f["pad"], [0xc0]);
+        assert_eq!(Rd::new(&f["checks"]).array().unwrap(), 0);
     }
 
     #[test]
