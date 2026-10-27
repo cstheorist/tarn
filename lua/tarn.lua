@@ -969,9 +969,10 @@ struct tarn_ns {
     void (*locks_index)(uint32_t, uint32_t, uint32_t *);
     void (*locks_sizes)(uint32_t *);
     void (*locks_range)(uint32_t, uint32_t, const char *, size_t, const char *, size_t, uint32_t *);
+    size_t (*fallbacks)(char *, size_t);
 };
 ]]
-BK.NS_LAYOUT = 10
+BK.NS_LAYOUT = 11
 M.NS_LAYOUT = BK.NS_LAYOUT   -- (tests: the layout this module declares)
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
@@ -1097,6 +1098,21 @@ function BK.ns_rows_held()
             end
         end
     end
+end
+
+-- Why the native procedures handed requests to the Lua ones, for
+-- tarn_info(): {read = {reason = count, ...}, write = ..., commit = ...,
+-- validate = ...}, the reasons with a count above zero (their names in
+-- crates/tarn-storage/src/fallback.rs).
+function BK.ns_fallbacks()
+    local ns = BK.ns
+    if ns == nil then return {} end
+    local buf = BK.ns_fb or ffi.new('char[4096]')
+    BK.ns_fb = buf
+    local n = tonumber(ns.fallbacks(buf, 4096))
+    if n == 0 then return {} end
+    local counts = msgpack.decode(ffi.string(buf, n))
+    return counts
 end
 
 -- Tests (cfg.check_locks): the copy holds what the index holds. After a
@@ -6759,7 +6775,8 @@ function tarn_info()
                                        commits = tonumber(BK.ns.c_served),
                                        commits_to_lua = tonumber(BK.ns.c_to_lua),
                                        validations = tonumber(BK.ns.v_served),
-                                       validations_to_lua = tonumber(BK.ns.v_to_lua)} or false}
+                                       validations_to_lua = tonumber(BK.ns.v_to_lua),
+                                       fallbacks = BK.ns_fallbacks()} or false}
 end
 
 -------------------------------------------------------------------------------

@@ -65,6 +65,12 @@ sys.exit(0 if ok else 1)
 PY
 rc=$?
 cat "$W/proxy.log"
+# (TARN_CHECK_LOCKS: the native module's copy of the lock index held what
+# the index held)
+if grep -h "lock copy differs" "$W"/s1.log | head -3 | grep .; then
+  echo "FAULTS TEST FAILED: the native module's copy of the lock index differed from it"
+  rc=1
+fi
 cleanup
 trap - EXIT
 [ $rc -eq 0 ] && rm -rf "$W" || echo "logs in $W"

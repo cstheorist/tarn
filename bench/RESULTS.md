@@ -374,6 +374,94 @@ that also has the lazy indexes
 ([#116](https://github.com/cstheorist/tarn/pull/116)), the comparison gave
 36%, 34% and 41% of the CPU, at 1.6, 1.7 and 1.5 times the throughput.
 
+### Next to locks
+
+The native procedures used to hand a request back whenever a prepared
+transaction held any lock on its table. Since part 6 of
+[#28](https://github.com/cstheorist/tarn/issues/28)
+([#144](https://github.com/cstheorist/tarn/pull/144),
+[#145](https://github.com/cstheorist/tarn/pull/145)) they check the keys
+and ranges they touch, as the Lua procedures do. Three regimes compare the
+two builds ([#131](https://github.com/cstheorist/tarn/issues/131)), each on
+two shards:
+- **No locks:** `oltp_update_non_index` alone, 16 threads, 4 tables of
+  20,000 rows. Its autocommit writes hold no lock.
+- **Unrelated locks:** the same with 8 threads, next to `oltp_write_only`
+  with 8. The cross-shard transactions of `oltp_write_only` hold W locks
+  while they prepare, mostly on other rows.
+- **Contention:** the same on 4 tables of 50 rows, so the locks are often
+  on the rows the autocommit writes write.
+
+Each build ran each regime 3 times, alternating; the figures are medians.
+The CPU is the transaction threads' of both shards, and the Lua heap both
+shards', each divided by all the statements of both workloads.
+
+| Regime | Build | `oltp_update_non_index` TPS (p50 / p95 / p99 ms) | `oltp_write_only` TPS (p50 / p95 / p99 ms) | Native procedures' calls they served | Autocommit writes to Lua | CPU per statement | Lua heap per statement |
+|---|---|---:|---:|---:|---:|---:|---:|
+| no locks | before | 23,472 (0.63 / 1.23 / 1.70) | | 100% | 0% | 18.9 µs | 1 B |
+| | after | 23,518 (0.62 / 1.21 / 1.73) | | 100% | 0% | 18.6 µs | 1 B |
+| unrelated locks | before | 2,903 (2.31 / 6.43 / 9.22) | 826 (9.22 / 16.11 / 21.50) | 61% | 55% | 119.0 µs | 5,802 B |
+| | after | 4,223 (1.64 / 4.03 / 5.99) | 923 (8.28 / 14.21 / 25.28) | 100% | 0% | 85.0 µs | 3,531 B |
+| contention | before | 3,158 (2.11 / 6.09 / 8.58) | 627 (10.27 / 29.19 / 44.17) | 65% | 48% | 109.1 µs | 5,074 B |
+| | after | 4,364 (1.58 / 4.10 / 6.21) | 670 (9.56 / 26.68 / 42.61) | 97% | 2.8% | 82.6 µs | 3,341 B |
+
+- **No locks:** both builds are the same.
+- **Unrelated locks:** the autocommit writes no longer go to Lua.
+  - They make 45% more transactions, at a lower p99 (9.2 → 6.0 ms).
+  - The cross-shard transactions make 12% more, with a higher p99
+    (21.5 → 25.3 ms): they share the shards with more work.
+  - The shards spend 29% less CPU and 39% less Lua heap per statement.
+- **Contention:** 2.8% of the autocommit writes meet a lock on their row
+  and go to Lua; the Lua procedure waits for it. The rest are native:
+  - 38% more autocommit transactions;
+  - 24% less CPU per statement;
+  - the cross-shard transactions' throughput and latency about the same.
+
+`tarn_info().native.fallbacks` of the build after gives the reasons. In one
+run under contention:
+- 2,473 autocommit writes went to Lua for a lock on their row;
+- 374 one-shard commits for a W lock on what they read;
+- 1,348 one-shard commits for a duplicate key, which the Lua procedure
+  reports. `oltp_write_only` deletes a row and inserts it again,
+  and another transaction may have inserted it first.
+
+### What still runs in Lua
+
+Two kinds of requests still run in the Lua procedures
+([#131](https://github.com/cstheorist/tarn/issues/131),
+[#141](https://github.com/cstheorist/tarn/issues/141)):
+- the commit of a transaction that wrote on more than one shard (PREPARE,
+  APPLY, ABORT);
+- the row locks of READ COMMITTED transactions (`tarn_lock`), which every
+  write of such a transaction takes. A transaction with row locks also
+  commits in Lua.
+
+`bench/profile.py` against the first shard, one run of each workload (16
+threads, 4 tables of 20,000 rows, 20 s; the server's default isolation set
+with `scripts/cluster.sh -I`):
+
+| Shards, isolation | Workload | Statements per second | First shard's CPU per statement | Calls served natively | Samples in Lua / GC |
+|---|---|---:|---:|---:|---:|
+| 1, SERIALIZABLE | `oltp_read_write` | 15,448 | 22.2 µs | 97% | 1% / 0% |
+| 1, SERIALIZABLE | `oltp_write_only` | 30,182 | 8.9 µs | 100% | 0% / 0% |
+| 1, READ COMMITTED | `oltp_read_write` | 14,323 | 24.2 µs | 74% | 18% / 8% |
+| 1, READ COMMITTED | `oltp_write_only` | 14,757 | 37.0 µs | 0% | 29% / 18% |
+| 2, SERIALIZABLE | `oltp_read_write` | 7,557 | 57.4 µs | 71% | 25% / 13% |
+| 2, SERIALIZABLE | `oltp_write_only` | 7,489 | 75.3 µs | 40% | 29% / 20% |
+| 2, READ COMMITTED | `oltp_read_write` | 9,438 | 38.7 µs | 71% | 26% / 16% |
+| 2, READ COMMITTED | `oltp_write_only` | 5,911 | 97.3 µs | 0% | 31% / 22% |
+
+On two shards the first shard's CPU is divided by all the statements,
+about half of which it serves.
+- **One shard, SERIALIZABLE:** transactions run without Lua.
+- **One shard, READ COMMITTED:** the same writes take row locks and commit
+  in Lua. A statement of `oltp_write_only` costs the shard 4.2 times as
+  much CPU, at half the throughput.
+- **Two shards:** most transactions of `oltp_read_write` and
+  `oltp_write_only` write on both shards and commit through PREPARE and
+  APPLY. The transaction thread then spends 38% to 53% of its samples in
+  Lua and its garbage collector.
+
 ## What would make Tarn faster
 
 * **Native procedures for the other hot paths**

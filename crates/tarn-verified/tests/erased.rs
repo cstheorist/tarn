@@ -229,6 +229,11 @@ fn msgpack_headers_at_their_boundaries() {
         assert_eq!(out.len(), len, "n={}", n);
         assert_eq!(mp::read_array(&out, 0), Some((n, len)), "n={}", n);
         assert_eq!(mp::read_map(&out, 0), None);
+        let mut out = Vec::new();
+        mp::write_map(&mut out, n);
+        assert_eq!(out.len(), len, "n={}", n);
+        assert_eq!(mp::read_map(&out, 0), Some((n, len)), "n={}", n);
+        assert_eq!(mp::read_array(&out, 0), None);
     }
     assert_eq!(mp::read_map(&[0x82], 0), Some((2, 1)));
     assert_eq!(mp::read_map(&[0xde, 0x01, 0x00], 0), Some((256, 3)));
