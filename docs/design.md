@@ -512,15 +512,13 @@ compare them. It hands the writes to `tarn_autocommit`, having written
 nothing (it rolls its transaction back), when anything could make the Lua
 procedure wait, refuse or do more:
 
-* a table that is vinyl, or on which prepared transactions hold locks; a
-  synchronous one (a replicated shard: its commit waits for a quorum),
-  after which the SQL server stops calling the procedure on that
-  connection (the reply `["lua", "all"]`);
-* any row lock held on the shard (READ COMMITTED), a definition fence above
-  the one the writes were made with (`tarn_autocommit` refuses them with
-  1412), a bucket of the writes, or of the rows they write, that does not
-  take writes here (being sent, moved away), or a window of the load counts
-  that ended;
+* a table that is vinyl, or on which prepared transactions hold locks, or
+  row locks are held (READ COMMITTED: `tarn_autocommit` waits for one on
+  what it writes);
+* a definition fence above the one the writes were made with
+  (`tarn_autocommit` refuses them with 1412), a bucket of the writes, or of
+  the rows they write, that does not take writes here (being sent, moved
+  away), or a window of the load counts that ended;
 * a write that fails (a duplicate key: `tarn_autocommit` retries writes
   that move a unique value, then refuses), an update of a row written
   before an `ALTER TABLE` added fields (`tarn_autocommit` fills them in),
@@ -531,15 +529,19 @@ procedure wait, refuse or do more:
 Its checks and writes are the model's CommitLocal step for a transaction
 that read nothing: nothing else runs between them, as the procedure does
 not yield until it commits. For the checks, the state also mirrors the
-number of row locks, the definition fences (the highest of each slot of
-space ids), which buckets take writes, and the test hooks held. While its
+row locks held (by slot of space ids, as the locks of prepared
+transactions), the definition fences (the highest of each slot of space
+ids), which buckets take writes, and the test hooks held. While its
 commit waits for the WAL, it is a commit in flight, and what waits for the
 commits in flight (`wait_commits`: a row lock's grant, a schema change, a
-bucket move) waits for it too. The commits are numbered as they start and
-the state holds the oldest one still in flight, so a wait ends once the
-commits that began before it have ended, however many begin after it. A
-commit that fails replies as `tarn_autocommit`'s would: 1213 for a
-conflict, and a read-only node's error as the call's error. Once its
+bucket move) waits for it too; on a replicated shard, whose tables are
+synchronous, the commit waits for its quorum too, as `tarn_autocommit`'s
+does. The commits are numbered as they start and the state holds the
+oldest one still in flight, so a wait ends once the commits that began
+before it have ended, however many begin after it. A commit that fails
+replies as `tarn_autocommit`'s would: 1213 for a conflict, also when the
+leader changed while the commit waited for its quorum and the new leader
+rolled it back, and a read-only node's error as the call's error. Once its
 commit began, the procedure never hands the writes back: should it fail
 there, it replies 1180 (outcome unknown).
 
@@ -559,7 +561,9 @@ native procedure serves the four range reads, two thirds of their storage
 calls; their point reads are IPROTO SELECTs, and their first read and
 their commit (with the writes of `oltp_read_write`) stay with the Lua
 procedures. The native procedure makes every autocommit write of the last
-three workloads, which were measured in a later run
+three workloads, which were measured in a later run; on a shard of three
+synchronous replicas, it halves the leader's CPU per write of each, or
+more
 ([bench/RESULTS.md](../bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## 2. Isolation and the commit protocol

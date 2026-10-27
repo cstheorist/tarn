@@ -7,7 +7,7 @@ local stage, pass = assert(arg[1]), 0
 assert(engine == 'memtx' or engine == 'vinyl')
 local expected_mode = assert(os.getenv('LAZY_RF3_EXPECT_MODE'))
 assert(expected_mode == 'native' or expected_mode == 'lua')
-local mode_label = expected_mode == 'native' and 'native ABI5' or 'Lua'
+local mode_label = expected_mode == 'native' and 'native ABI6' or 'Lua'
 local sid, gen, name, bucket = 64001, 64002, 'test.lazy_rf3', 1
 local txid = 'lazy-rf3-' .. engine
 local ids = {}
@@ -89,7 +89,7 @@ local function state(i)
 end
 local function mode_ok(s)
     if expected_mode == 'native' then
-        return s.configured_native and s.native and s.native.ready == 1 and s.layout == 5
+        return s.configured_native and s.native and s.native.ready == 1 and s.layout == 6
     end
     return s.configured_native == false and s.native == false and s.layout == nil
 end

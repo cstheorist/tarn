@@ -1116,8 +1116,9 @@ impl Cluster {
     /// reply, or None where it is not there -- an older version, a shard
     /// without the module, or one whose module did not load, which the
     /// connection notes with `mark` -- or after a leader change. A reply
-    /// ["lua", "all"] (the procedure hands back every call of this shard)
-    /// is noted with `mark` too.
+    /// ["lua", "all"] (the procedure hands back every call of this shard:
+    /// a shard of an earlier version, whose native writes left synchronous
+    /// tables to Lua) is noted with `mark` too.
     pub async fn call_native_once(&self, shard: usize, func: &str, args: &[u8], mark: u32) -> SqlResult<Option<Bytes>> {
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,

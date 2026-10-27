@@ -8,7 +8,7 @@
 //! both, and `LAYOUT` with them.
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 5;
+pub const LAYOUT: u32 = 6;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -60,7 +60,7 @@ pub struct State {
     /// Reads served here, and handed to the Lua procedure.
     pub served: u64,
     pub to_lua: u64,
-    /// PL_N: the row locks held (READ COMMITTED); a write needs none.
+    /// PL_N: the row locks held (READ COMMITTED).
     pub pl_n: u32,
     /// The test hooks held (tarn_test_hook): while any is, every request
     /// goes to Lua, whose steps the hooks hold.
@@ -80,6 +80,9 @@ pub struct State {
     /// Autocommit writes served here, and handed to the Lua procedure.
     pub w_served: u64,
     pub w_to_lua: u64,
+    /// [SPACES]: the row locks held on the spaces of each slot (a space in
+    /// slot id % SPACES): a write to a space without any needs none.
+    pub pl_spaces: *mut u32,
     /// The local lazy-capture registry is unknown or stale. Native writes
     /// cannot capture an outbox, so every one must go through Lua until
     /// the registry is rebuilt. Reads do not depend on this flag.
@@ -125,6 +128,7 @@ impl State {
             fences: std::ptr::null_mut(),
             w_served: 0,
             w_to_lua: 0,
+            pl_spaces: std::ptr::null_mut(),
             capture_stale: 1,
             write_excluded: std::ptr::null_mut(),
         }
@@ -197,6 +201,20 @@ impl State {
         unsafe { *self.space_locks.add((id % SPACES) as usize) != 0 }
     }
 
+    /// Whether row locks may be held on space `id` (unknown: whether any
+    /// is held).
+    pub fn space_plocked(&self, id: u32) -> bool {
+        if self.pl_n == 0 {
+            return false;
+        }
+        if self.pl_spaces.is_null() {
+            return true;
+        }
+        // SAFETY: the Lua module keeps `pl_spaces` an array of SPACES
+        // counters, alive while the pointer is set.
+        unsafe { *self.pl_spaces.add((id % SPACES) as usize) != 0 }
+    }
+
     /// Count a read routed by bucket b (BK.count_reads).
     pub fn count_read(&mut self, b: u64) {
         if self.reads.is_null() || b == 0 || b > self.count as u64 {
@@ -242,9 +260,10 @@ mod tests {
         assert_eq!(offset_of!(State, fences), 136);
         assert_eq!(offset_of!(State, w_served), 144);
         assert_eq!(offset_of!(State, w_to_lua), 152);
-        assert_eq!(offset_of!(State, capture_stale), 160);
-        assert_eq!(offset_of!(State, write_excluded), 168);
-        assert_eq!(std::mem::size_of::<State>(), 176);
+        assert_eq!(offset_of!(State, pl_spaces), 160);
+        assert_eq!(offset_of!(State, capture_stale), 168);
+        assert_eq!(offset_of!(State, write_excluded), 176);
+        assert_eq!(std::mem::size_of::<State>(), 184);
     }
 
     #[test]
@@ -296,5 +315,13 @@ mod tests {
         s.space_locks = locks.as_mut_ptr();
         locks[512] = 1;
         assert!(s.space_locked(512) && s.space_locked(512 + SPACES) && !s.space_locked(513));
+        // row locks by space
+        assert!(!s.space_plocked(512), "none held");
+        s.pl_n = 1;
+        assert!(s.space_plocked(512), "unknown: any held");
+        let mut pl = vec![0u32; SPACES as usize];
+        s.pl_spaces = pl.as_mut_ptr();
+        pl[512] = 1;
+        assert!(s.space_plocked(512) && s.space_plocked(512 + SPACES) && !s.space_plocked(513));
     }
 }

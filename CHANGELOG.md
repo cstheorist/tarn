@@ -26,15 +26,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing to wait for -- point reads, the rows equal to a key, and ranges
   from a key, to an end key or not, autocommit or inside a transaction --
   without running Lua, and hands every other read back to `tarn_select`.
-  Its `tarn_storage.ts_autocommit` makes the autocommit writes to the memtx
-  tables of shards without replicas (`INSERT`, `REPLACE`, and `UPDATE` and
-  `DELETE` by primary key) when nothing would make `tarn_autocommit` wait
-  or refuse them, and hands the others to `tarn_autocommit` unwritten.
+  Its `tarn_storage.ts_autocommit` makes the autocommit writes to memtx
+  tables (`INSERT`, `REPLACE`, and `UPDATE` and `DELETE` by primary key),
+  on shards with replicas or without, when nothing would make
+  `tarn_autocommit` wait or refuse them, and hands the others to
+  `tarn_autocommit` unwritten.
   On one shard, point selects reach a quarter to over a third more
   statements a second, the read transactions of `oltp_read_only` and
-  `oltp_read_write` over half more, and autocommit writes 71% to 76% more,
-  while the shard's CPU per statement falls to 29% to 44% of what the Lua
-  procedures take. `bench/profile.py` (run by `bench/profile.sh`) measures
+  `oltp_read_write` over half more, and autocommit writes 71% to 76% more
+  (on a shard of three replicas, about a third more), while the shard's
+  CPU per statement falls to 29% to 50% of what the Lua procedures take. `bench/profile.py` (run by `bench/profile.sh`) measures
   what the storage side of a workload costs a shard's transaction thread:
   CPU and Lua allocations per statement, and where the time goes.
 
