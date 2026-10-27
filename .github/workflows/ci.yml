@@ -89,6 +89,8 @@ jobs:
         run: cargo test --release --workspace
       - name: Storage protocol tests
         run: ci/annotate.sh storage lua/test/run.sh
+      - name: Storage protocol tests without the native procedures
+        run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
       - name: Start a 2-shard cluster (two SQL servers)
         run: scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
@@ -119,6 +121,7 @@ jobs:
       - name: Fault injection
         run: |
           ci/annotate.sh faults tests/faults.sh
+          TARN_NATIVE=0 ci/annotate.sh faults-lua tests/faults.sh
           ci/annotate.sh ddlfaults tests/ddlfaults.sh
           ci/annotate.sh movefaults tests/movefaults.sh
           ci/annotate.sh joinfaults tests/joinfaults.sh

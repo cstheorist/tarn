@@ -757,6 +757,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tarn-storage"
+version = "0.1.0"
+
+[[package]]
 name = "tarn-verified"
 version = "0.1.0"
 dependencies = [

@@ -71,6 +71,7 @@ of workload, fault budget and options. The names say what is checked:
 | `Join*` | the same move to a shard that joins the cluster, while a scan routed before it joined runs: on two shards (one read of the other shard) and on three (`Join3_*`: reads in streams, validated or prepared) |
 | `GroupedTables` | one snapshot reads keys of two tables on one shard; the union of both read sets is checked for prepared writers |
 | `GroupedRead` | a separate, small refinement model of one snapshot across scans that yield between tables |
+| `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -150,6 +151,56 @@ The bounded results are:
 | `GroupedRead` | 15 | 6 | passes `TypeOK` and `CoherentSnapshot` |
 | `Bug_GroupedReadSeparateSnapshots` | 18 | 6 | violates `CoherentSnapshot` |
 
+### DDL claims during a yielding read
+
+A vinyl grouped read exposed a further refinement gap: with its root
+already held by TRUNCATE, it captured the old root rows, yielded, and then
+returned those rows after APPLY emptied the table and released the hold.
+The final current-hold check saw no hold; the prepared-write history had
+no DDL event. The stream-only `DOOMED` mechanism did not cover this
+autocommit read. Refreshing the DDL cache on entrance fixes a cold cache,
+but cannot detect a claim released during the scan.
+
+`GroupedDDL.tla` isolates that boundary: one read attempt, one prepare/apply
+of TRUNCATE, and one cache invalidation/rebuild. `NoHeldSnapshot` requires
+an accepted snapshot to equal a state that existed during the read while
+its table was not held. A clean, unchanged read can succeed. A generation
+captured before scanning must still match at the atomic final check, and
+the DDL cache must be fresh. Taking/releasing a hold and rebuilding the
+cache advance the generation. A stale flag need not itself advance it:
+the flag prevents acceptance until a rebuild, whose increment preserves
+evidence even if another fiber clears the flag during the scan.
+
+The implementation contract checks both lock-index and DDL-cache staleness,
+then the DDL generation, before any no-lock shortcut or result-specific
+callback, including for empty or incomplete groups. A stale result
+refreshes both caches outside the read transaction; a changed generation
+discards the whole result. Both repeat under the original absolute
+`lock_wait` deadline, including repeated stale-cache retries. Native
+non-yielding memtx reads still use their published current state; their C
+state layout is unchanged.
+
+The model deliberately abstracts the native snapshot, published-cache
+mechanism and retry implementation. It proves this bounded claim/history
+premise, not full distributed DDL linearizability, liveness, deadline
+arithmetic, or the Lua implementation. Those require the storage witnesses
+and existing protocol/fault tests. In particular, the generation mutant
+captures a held table, applies TRUNCATE, then accepts its old snapshot; the
+stale-cache mutant captures a held table, invalidates its cache, then
+accepts using the now-unknown cached hold.
+
+```sh
+tla/check.sh GroupedDDL Bug_GroupedDDLIgnoreGeneration Bug_GroupedDDLIgnoreStale
+```
+
+All three are also in the default checks, routed to `GroupedDDL.tla`:
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `GroupedDDL` | 77 | 7 | passes `TypeOK` and `NoHeldSnapshot` |
+| `Bug_GroupedDDLIgnoreGeneration` | 36 | 5 | violates `NoHeldSnapshot` |
+| `Bug_GroupedDDLIgnoreStale` | 37 | 5 | violates `NoHeldSnapshot` |
+
 ## Verus proofs
 
 `crates/tarn-verified` is ordinary Rust inside `verus!` blocks: `cargo`
@@ -198,7 +249,7 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`) |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read: the same replies for the reads it serves, every other kind handed back (`native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 465 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
@@ -209,7 +260,7 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Failover | `tests/failover.sh` (`ENGINE=vinyl`: vinyl tables) | Tarantool | 2 shards × 3 replicas under the bank workload, READ COMMITTED transfers and `movetest.py`: a live leader change, then two leader kills; every check must hold |
 | Bucket count | `tests/bucketcount.sh` | Tarantool | the bucket count of a new map: the configured one, 3,000 on a cluster made before bucket moves (whose rows use it), 30,000 on a new cluster |
 | DDL faults | `tests/ddlfaults.sh` | Tarantool | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with a shard down, and with a shard killed while it applies: each takes effect on every shard or on none, checked on the shards directly |
-| Faults | `tests/faults.sh` (`ENGINE=vinyl`: a vinyl table) | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
+| Faults | `tests/faults.sh` (`ENGINE=vinyl`: a vinyl table; `TARN_NATIVE=0`: a shard without the native procedures, whose absence the SQL server must notice) | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
 
 `bench/baselines.sh start mariadb` starts a local MariaDB on port 3407 with
 a `sb` user for the differential tests (or point `--ref` at any MariaDB
@@ -220,9 +271,10 @@ a `sb` user for the differential tests (or point `--ref` at any MariaDB
 `.github/workflows/ci.yml` runs on every push and pull request:
 
 * **lint**: `cargo fmt --check` and `cargo clippy -D warnings`;
-* **test**: unit and integration tests, storage protocol tests, the SQL
-  suites against MariaDB 10.11 (on a cluster with two SQL servers), the
-  schema-change, bucket-move, fault-injection and failover tests;
+* **test**: unit and integration tests, storage protocol tests (with the
+  native procedures and without), the SQL suites against MariaDB 10.11 (on
+  a cluster with two SQL servers), the schema-change, bucket-move,
+  fault-injection and failover tests;
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.

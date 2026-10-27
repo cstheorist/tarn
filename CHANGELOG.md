@@ -8,6 +8,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Native storage procedures
+  ([#28](https://github.com/cstheorist/tarn/issues/28)): `crates/tarn-storage`
+  builds a Tarantool C module, `libtarn_storage.so`, that the storage nodes
+  load (`TARN_NATIVE`; by default the release build of the checkout). Its
+  `tarn_storage.ts_select` serves the autocommit reads of memtx tables that
+  have nothing to wait for -- point reads, the rows equal to a key, and
+  ranges from a key without an end -- without running Lua, and hands every
+  other read back to `tarn_select`. On one shard, point selects reach about
+  a quarter more statements a second, and the shard's CPU per statement
+  falls to about a third. `bench/profile.py` (run by `bench/profile.sh`)
+  measures what the storage side of a workload costs a shard's transaction
+  thread: CPU and Lua allocations per statement, and where the time goes.
+
 - Rebalancing ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN
   REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes]` moves
   buckets in the background, in rounds, from the heaviest active shard to
@@ -297,8 +310,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   prefixes derived from earlier primary-key rows; Rust retains the original
   INNER/LEFT joins, filters and projection. Autocommit and READ COMMITTED
   reads share one snapshot and prepared-write/DDL lock-history check across
-  all tables, including empty probes; serializable streams retain their MVCC
-  transaction and record every prefix. Buffered writes, locking reads,
+  all tables, including empty probes. Reads across yields also retry if DDL
+  holds change or their cache is rebuilt, so a released hold cannot hide a
+  TRUNCATE. Serializable streams retain their MVCC transaction and record
+  every prefix. Buffered writes, locking reads,
   unsupported accesses and exhausted shared reply budgets use the existing
   executor. Focused TLA+ workloads and broken-guard controls check the
   grouped-read assumptions; native memtx, vinyl and mixed-engine tests cover
@@ -374,6 +389,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An autocommit read on a shard's new leader now reads the tables held by a
+  `TRUNCATE` or `DROP TABLE` from storage first, as writes do. Until a write
+  read them, such a read could return rows of a table that a prepared
+  `TRUNCATE` or `DROP TABLE` held, instead of waiting for it
+  ([#28](https://github.com/cstheorist/tarn/issues/28)).
 - An OK packet's info string, such as `PREPARE`'s "Statement prepared",
   is length-encoded, as MySQL and MariaDB write it. MariaDB's client
   checked the length and failed every `PREPARE` with 2027 (malformed

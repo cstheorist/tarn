@@ -1,0 +1,95 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 86 and seed -88016652143381638 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 91] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/GroupedDDL.tla
+Parsing file /tmp/tlc-10616038482287955286/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-10616038482287955286/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-10616038482287955286/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-10616038482287955286/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-10616038482287955286/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-10616038482287955286/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-10616038482287955286/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module GroupedDDL
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module GroupedDDL
+Starting... (2026-10-27 02:39:33)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 02:39:33.
+Error: Invariant NoHeldSnapshot is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ cachedHeld = FALSE
+/\ generation = 0
+/\ held = FALSE
+/\ invalidated = FALSE
+/\ eligible = {}
+/\ phase = "idle"
+/\ stale = FALSE
+/\ data = 1
+/\ snapshot = 2
+/\ readGeneration = 0
+/\ ddl = "none"
+
+State 2: <PrepareDDL line 40, col 5 to line 44, col 88 of module GroupedDDL>
+/\ cachedHeld = TRUE
+/\ generation = 1
+/\ held = TRUE
+/\ invalidated = FALSE
+/\ eligible = {}
+/\ phase = "idle"
+/\ stale = FALSE
+/\ data = 1
+/\ snapshot = 2
+/\ readGeneration = 0
+/\ ddl = "prepared"
+
+State 3: <BeginRead line 32, col 5 to line 37, col 80 of module GroupedDDL>
+/\ cachedHeld = TRUE
+/\ generation = 1
+/\ held = TRUE
+/\ invalidated = FALSE
+/\ eligible = {}
+/\ phase = "scanning"
+/\ stale = FALSE
+/\ data = 1
+/\ snapshot = 1
+/\ readGeneration = 1
+/\ ddl = "prepared"
+
+State 4: <InvalidateCache line 55, col 5 to line 58, col 91 of module GroupedDDL>
+/\ cachedHeld = FALSE
+/\ generation = 1
+/\ held = TRUE
+/\ invalidated = TRUE
+/\ eligible = {}
+/\ phase = "scanning"
+/\ stale = TRUE
+/\ data = 1
+/\ snapshot = 1
+/\ readGeneration = 1
+/\ ddl = "prepared"
+
+State 5: <FinishRead line 67, col 5 to line 73, col 55 of module GroupedDDL>
+/\ cachedHeld = FALSE
+/\ generation = 1
+/\ held = TRUE
+/\ invalidated = TRUE
+/\ eligible = {}
+/\ phase = "accepted"
+/\ stale = TRUE
+/\ data = 1
+/\ snapshot = 1
+/\ readGeneration = 1
+/\ ddl = "prepared"
+
+47 states generated, 37 distinct states found, 17 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-27 02:39:33)
+Trace exploration spec path: ./GroupedDDL_TTrace_1793068773.tla

@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -249,6 +249,9 @@ struct Shared {
     /// leader. The connection still works, but callers that need the leader
     /// should stop using it (see [`Client::is_stale`]).
     stale: AtomicBool,
+    /// Marks the connection's user set: what it learned of the server, such
+    /// as a procedure it lacks (see [`Client::marked`]).
+    marks: AtomicU32,
     tasks: Mutex<Vec<AbortHandle>>,
     counters: Counters,
 }
@@ -706,6 +709,7 @@ impl Client {
             write_ready: Notify::new(),
             closed: AtomicBool::new(false),
             stale: AtomicBool::new(false),
+            marks: AtomicU32::new(0),
             tasks: Mutex::new(Vec::with_capacity(2)),
             counters: Counters::default(),
         });
@@ -761,6 +765,17 @@ impl Client {
 
     pub fn mark_stale(&self) {
         self.inner.shared.stale.store(true, Ordering::Release);
+    }
+
+    /// Whether mark `bit` (0 to 31) is set on this connection: what its user
+    /// learned of the server and noted with [`Client::mark`], such as a
+    /// procedure the server lacks. A new connection has none.
+    pub fn marked(&self, bit: u32) -> bool {
+        self.inner.shared.marks.load(Ordering::Relaxed) & (1 << bit) != 0
+    }
+
+    pub fn mark(&self, bit: u32) {
+        self.inner.shared.marks.fetch_or(1 << bit, Ordering::Relaxed);
     }
 
     /// Close the connection now. Pending and later requests fail with

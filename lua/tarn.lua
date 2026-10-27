@@ -63,6 +63,9 @@ local M = {
         -- The rebalancer's load of each bucket covers the requests of the
         -- last one or two windows of this many seconds (tarn_bucket_stats).
         load_window = 60,
+        -- The native procedures' module (lua/storage.lua: TARN_NATIVE), or
+        -- false (see "Native procedures").
+        native = false,
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
     },
@@ -285,11 +288,13 @@ local function lk_point(txid, sid, iid, kb, mode, bucket)
     local s = LK[sid]; if s == nil then s = {}; LK[sid] = s end
     local i = s[iid]; if i == nil then i = {}; s[iid] = i end
     local e = i[kb]; if e == nil then e = {}; i[kb] = e end
-    if e[txid] == nil then NLOCK = NLOCK + 1 end
+    local new = e[txid] == nil
+    if new then NLOCK = NLOCK + 1 end
     if e[txid] ~= 'W' then e[txid] = mode end
     if mode == 'W' and VY_SCANS > 0 then lk_log(sid, iid, kb) end
     local b = BYTX[txid]; if b == nil then b = {}; BYTX[txid] = b end
     b[#b + 1] = {sid, iid, kb, bucket}
+    if new then BK.ns_lock(sid, 1) end
     lk_tag(bucket, 1)
 end
 
@@ -301,6 +306,7 @@ local function lk_range(txid, sid, iid, lo, hi, lo_incl, hi_incl, bucket)
     NLOCK = NLOCK + 1
     local b = BYTX[txid]; if b == nil then b = {}; BYTX[txid] = b end
     b[#b + 1] = {sid, iid, nil, bucket}
+    BK.ns_lock(sid, 1)
     lk_tag(bucket, 1)
 end
 
@@ -317,12 +323,14 @@ local function lk_release(txid)
                 if e[txid] == 'W' and VY_SCANS > 0 then lk_log(x[1], x[2], x[3]) end
                 e[txid] = nil
                 NLOCK = NLOCK - 1
+                BK.ns_lock(x[1], -1)
                 if next(e) == nil then i[x[3]] = nil end
             end
         else
             local i = RL[x[1]] and RL[x[1]][x[2]]
             if i ~= nil and i[txid] ~= nil then
                 NLOCK = NLOCK - #i[txid]
+                BK.ns_lock(x[1], -#i[txid])
                 i[txid] = nil
             end
         end
@@ -355,6 +363,7 @@ local function lk_reload()
     local p1, r1 = lk_scan('read-confirmed')
     local p2, r2 = lk_scan('read-committed')
     LK, RL, BYTX, NLOCK = {}, {}, {}, 0
+    BK.ns_lock(nil)
     BK.nl = {}
     local seen = {}
     for _, set in ipairs({p1, p2}) do
@@ -376,6 +385,7 @@ local function lk_reload()
         end
     end
     LK_STALE = false
+    BK.ns_sync()
 end
 
 -- Make the index current; reads the spaces in a separate fiber so that a
@@ -405,6 +415,10 @@ local FENCE_STALE = true   -- rebuilt from _tarn_catalog before the next check
 -- messages). The holds are also stored ('hold:<space_id>' in _tarn_meta), so
 -- that they survive a restart or a leader change.
 local DDL_HELD, DDL_N = {}, 0
+-- A scan may span a hold and its release, or another fiber rebuilding the
+-- cache. A fresh identity retains that history even when no hold remains;
+-- unlike a numeric counter it cannot wrap while an older scan retains it.
+local DDL_GEN = {}
 -- A TRUNCATE or DROP applied here also fails the validation of the open
 -- stream transactions that read the table before it: memtx MVCC aborts the
 -- readers of a space that changes, vinyl only its writers.
@@ -439,13 +453,15 @@ local function fence_rebuild()
         if sid ~= nil and box.space[sid] ~= nil and type(v) == 'table' and not v.aborted
            and (f[sid] or 0) < v.ver then f[sid] = v.ver end
     end
+    DDL_GEN = {}
     FENCE, FENCE_STALE = f, false
     DDL_HELD, DDL_N = held, n
+    BK.ns_sync()
 end
 
 -- Rebuild the fences and the holds from storage before their next use (as
 -- after a restart or a leader change; tests).
-function M.stale_fences() FENCE_STALE = true end
+function M.stale_fences() FENCE_STALE = true; BK.ns_sync() end
 
 -- Like lk_fresh: in a separate fiber, so that a caller inside a transaction
 -- gets no read trackers on _tarn_catalog.
@@ -460,14 +476,18 @@ end
 local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
 
 local function ddl_hold(sid, label)
+    DDL_GEN = {}
     if DDL_HELD[sid] == nil then DDL_N = DDL_N + 1 end
     DDL_HELD[sid] = label
+    BK.ns_sync()
 end
 
 local function ddl_release(sid)
     if DDL_HELD[sid] == nil then return end
+    DDL_GEN = {}
     DDL_HELD[sid] = nil
     DDL_N = DDL_N - 1
+    BK.ns_sync()
     M.unlock_cond:broadcast()
 end
 
@@ -611,6 +631,8 @@ function BK.rebuild()
     BK.load_members()
     BK.stale = false
     BK.ver = BK.ver + 1
+    BK.ns_serves_all()
+    BK.ns_sync()
 end
 
 -- Membership (issue #25): the shards of the cluster, kept on every shard
@@ -628,6 +650,7 @@ function BK.load_members()
     local m = box.space._tarn_meta:get{'members'}
     BK.members = m ~= nil and m.value or {ver = 0, shards = {}}
     BK.mver = BK.members.ver or 0
+    BK.ns_sync()
 end
 
 -- The status refusing a request routed with membership version `mv`, or
@@ -678,6 +701,7 @@ end
 BK.gen = uuid.str()
 function BK.reset()   -- (an election or read-only change)
     BK.stale = true
+    BK.ns_sync()
     local st = tostring(box.info.election.term) .. '/' .. tostring(box.info.ro)
     if st == BK.lead then return end
     BK.lead = st
@@ -786,25 +810,39 @@ end
 -- seconds, the current one and the one before. A read of several buckets
 -- counts once for each. (Cheap: a read's own cost is about 2 us; the bytes
 -- it returns would cost half as much again to count, and fiber.clock(),
--- the event loop's, a tenth of clock.monotonic().)
-BK.load = {t0 = 0, cur = {}, prev = {}, prev_secs = 0}
+-- the event loop's, a tenth of clock.monotonic().) A window is three FFI
+-- arrays by bucket -- r: reads, w: rows written, b: their bytes -- where
+-- the native procedures count their reads too (see "Native procedures"),
+-- and which the GC does not traverse.
+BK.load = {t0 = 0, n = 0, prev_secs = 0, cur = nil, prev = nil}
 function BK.load_rotate()
-    local L, t, w = BK.load, fiber.clock(), M.cfg.load_window
-    if t - L.t0 < w then return end
-    if t - L.t0 < 2 * w then
-        L.prev, L.prev_secs = L.cur, t - L.t0
-    else
-        L.prev, L.prev_secs = {}, 0
+    local L, t, w, n = BK.load, fiber.clock(), M.cfg.load_window, BK.count
+    if L.n ~= n or t - L.t0 >= w then
+        if L.n ~= n then   -- (a map of another count: nothing counted for it)
+            L.prev, L.prev_secs = nil, 0
+        elseif t - L.t0 < 2 * w then
+            L.prev, L.prev_secs = L.cur, t - L.t0
+        else
+            L.prev, L.prev_secs = nil, 0
+        end
+        if n > 0 then
+            L.cur = {r = ffi.new('uint32_t[?]', n + 1), w = ffi.new('uint32_t[?]', n + 1),
+                     b = ffi.new('double[?]', n + 1)}
+        else
+            L.cur = nil
+        end
+        L.n, L.t0 = n, t
+        if BK.ns ~= nil then BK.ns.reads = L.cur ~= nil and L.cur.r or nil end
     end
-    L.cur, L.t0 = {}, t
+    -- (the native procedures count reads in the window until it ends, then
+    -- hand them to the Lua ones, whose count starts the next window)
+    if BK.ns ~= nil then BK.ns.load_until = L.t0 + w end
 end
 function BK.load_add(b, reads, writes, bytes)
-    local c = BK.load.cur[b]
-    if c == nil then
-        c = {0, 0, 0}
-        BK.load.cur[b] = c
+    local c = BK.load.cur
+    if c ~= nil and type(b) == 'number' and b >= 1 and b <= BK.load.n then
+        c.r[b], c.w[b], c.b[b] = c.r[b] + reads, c.w[b] + writes, c.b[b] + bytes
     end
-    c[1], c[2], c[3] = c[1] + reads, c[2] + writes, c[3] + bytes
 end
 function BK.count_reads(route)
     if type(route) == 'number' then
@@ -814,6 +852,130 @@ function BK.count_reads(route)
         BK.load_rotate()
         for _, b in ipairs(route) do BK.load_add(b, 1, 0, 0) end
     end
+end
+
+-- Native procedures (issue #28) -------------------------------------------
+-- A C module (crates/tarn-storage; cfg.native: its .so) serves the most
+-- frequent requests without running Lua, which costs a shard's
+-- transaction thread more than their storage work: tarn_storage.ts_select
+-- serves the autocommit reads of memtx tables that tarn_select serves with
+-- nothing to check or wait for (crates/tarn-storage/src/select.rs). It
+-- decides from the state below (struct tarn_ns, crates/tarn-storage/src/
+-- state.rs), which this module keeps current: BK.ns_sync() after every
+-- change of what it holds. A request it cannot decide as the Lua procedure
+-- would, it hands to it: its reply ["lua"] makes the SQL server call the
+-- Lua procedure. Both run in this thread, one at a time, and it does not
+-- yield: it reads one state, as a Lua step that does not yield does.
+ffi.cdef[[
+struct tarn_ns {
+    uint32_t layout;
+    uint8_t ready, bk_stale, lk_stale, fence_stale;
+    uint32_t count, ddl_n, page_rows;
+    uint64_t page_bytes, epoch, mver;
+    double load_until;
+    uint8_t *serves;
+    uint32_t *reads;
+    uint32_t *space_locks;
+    uint64_t served, to_lua;
+};
+]]
+BK.NS_LAYOUT = 1
+BK.NS_SPACES = 65536
+BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
+BK.ns_serves = nil  -- its `serves` array, kept alive here
+-- The locks of prepared transactions by space (BK.NS_SPACES slots, a space
+-- in slot id % BK.NS_SPACES: spaces that share a slot add up, so a count is
+-- never below its space's): a read of a space without any is not checked
+-- against them, as tarn_select would find none of them on what it read.
+BK.ns_space_locks = nil
+
+-- Count d more locks on space sid (nil: forget every count, as the lock
+-- index is made again).
+function BK.ns_lock(sid, d)
+    local a = BK.ns_space_locks
+    if a == nil then return end
+    if sid == nil then
+        ffi.fill(a, ffi.sizeof('uint32_t') * BK.NS_SPACES)
+        return
+    end
+    if type(sid) ~= 'number' then return end   -- (not a space: no lock of one)
+    local k = sid % BK.NS_SPACES
+    a[k] = a[k] + d
+end
+
+function BK.ns_sync()
+    local ns = BK.ns
+    if ns == nil then return end
+    ns.bk_stale = BK.stale and 1 or 0
+    ns.lk_stale = LK_STALE and 1 or 0
+    ns.fence_stale = FENCE_STALE and 1 or 0
+    ns.ddl_n = DDL_N
+    ns.epoch, ns.mver = BK.epoch, BK.mver
+    ns.page_rows, ns.page_bytes = M.cfg.scan_page_rows, M.cfg.scan_page_bytes
+    ns.load_until = BK.load.t0 + M.cfg.load_window
+    if ns.count ~= BK.count then BK.ns_serves_all() end
+end
+
+-- `serves` from the bucket states (BK.bad: reads are served for active,
+-- sending and fenced buckets).
+-- (tests: after changing cfg.scan_page_rows or scan_page_bytes)
+function M.ns_sync() BK.ns_sync() end
+
+function BK.ns_serves_all()
+    local ns = BK.ns
+    if ns == nil then return end
+    local n = BK.count
+    local a = n > 0 and ffi.new('uint8_t[?]', n + 1) or nil
+    for b = 1, n do
+        local st = BK.state[b]
+        if st == 'active' or st == 'sending' or st == 'fenced' then a[b] = 1 end
+    end
+    -- (the new array and its count change together: nothing runs between)
+    ns.serves, ns.count, BK.ns_serves = a, n, a
+    BK.load_rotate()
+end
+
+function BK.ns_serve(b)
+    local a = BK.ns_serves
+    if a ~= nil and b >= 1 and b <= BK.ns.count then
+        local st = BK.state[b]
+        a[b] = (st == 'active' or st == 'sending' or st == 'fenced') and 1 or 0
+    end
+    BK.ns_sync()
+end
+
+-- Load the module and give it the state: on the leader (on a replica,
+-- requests that need it are refused by the Lua procedures anyway). Its
+-- functions are made by setup_schema; without the module (cfg.native
+-- false, or its file missing) the SQL servers call the Lua procedures.
+function BK.ns_init()
+    if BK.ns ~= nil or not M.cfg.native then return end
+    local f = box.func['tarn_storage.ts_state']
+    if f == nil then return end
+    local ok, addr = pcall(f.call, f, {BK.NS_LAYOUT})
+    if not ok then
+        log.warn('tarn: native procedures not loaded (%s): the Lua ones serve every request', tostring(addr))
+        M.cfg.native = false
+        return
+    end
+    local ns = ffi.cast('struct tarn_ns *', addr)
+    if ns.layout ~= BK.NS_LAYOUT then
+        log.warn('tarn: native procedures of state layout %d, %d expected: not used', ns.layout, BK.NS_LAYOUT)
+        M.cfg.native = false
+        return
+    end
+    -- (the counts of the lock index as it is: it is made again before its
+    -- next use, as lk_stale says until then)
+    BK.ns_space_locks = ffi.new('uint32_t[?]', BK.NS_SPACES)
+    ns.space_locks = BK.ns_space_locks
+    LK_STALE = true
+    BK.ns = ns
+    BK.ns_serves_all()
+    BK.ns_sync()
+    BK.load_rotate()
+    ns.reads = BK.load.cur ~= nil and BK.load.cur.r or nil
+    ns.ready = 1
+    log.info('tarn: native procedures loaded')
 end
 
 -- The rows kept aside for held bucket b, by space: staged[sid] = {tuple, ...}
@@ -2378,13 +2540,15 @@ end
 -- `locked(rows, since)` covers every W lock taken or released meanwhile (a
 -- table) as well as those held now (the holder). When none covered what it
 -- read at any moment of the scan, the snapshot is a state in which
--- SnapshotRead could have read the same rows. Otherwise the read waits for
--- the lock and runs again (bounded by lock_wait).
+-- SnapshotRead could have read the same rows. DDL cache invalidation or a
+-- generation change also discards the snapshot: a hold may already have
+-- been released by its final check. Otherwise the read waits for the lock
+-- and runs again (bounded by lock_wait).
 local function checked_read(scan, locked)
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
         VY_SCANS = VY_SCANS + 1
-        local s0 = LOG_SEQ
+        local s0, d0 = LOG_SEQ, DDL_GEN
         local ok, rows, more = pcall(function()
             box.begin({txn_isolation = 'read-confirmed'})
             return scan()
@@ -2393,18 +2557,26 @@ local function checked_read(scan, locked)
         VY_SCANS = VY_SCANS - 1
         if not ok then error(rows) end
         local h = atomic('SnapshotRead', function()
-            if LK_STALE then return {'stale'} end
+            if LK_STALE or FENCE_STALE then return {'stale'} end
+            if DDL_GEN ~= d0 then return {'ddl'} end
             if NLOCK == 0 and LOG_SEQ == s0 and DDL_N == 0 then return nil end
             return locked(rows, s0, more)
         end)
         if h == nil then return {OK, rows, more} end
         if type(h) == 'table' and h[1] == 'stale' then
-            lk_fresh()   -- a leader change meanwhile (raises ER_READONLY if demoted)
-        elseif type(h) == 'table' then
-            -- A cross-shard transaction wrote what the scan covers while it
-            -- ran: read again (its locks, if still held, are waited out).
             if clock.monotonic() > deadline then
-                return conflict('rows changed by a cross-shard transaction during the read')
+                return conflict('lock or table definition cache changed during the read')
+            end
+            lk_fresh()   -- a leader change meanwhile (raises ER_READONLY if demoted)
+            fence_fresh()
+            if clock.monotonic() > deadline then
+                return conflict('lock or table definition cache changed during the read')
+            end
+        elseif type(h) == 'table' then
+            -- A cross-shard write or DDL hold changed while the scan ran:
+            -- read again (locks still held are waited out).
+            if clock.monotonic() > deadline then
+                return conflict('rows or DDL claims changed during the read')
             end
             M.stats.vy_rereads = M.stats.vy_rereads + 1
         else
@@ -2551,6 +2723,9 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     if lock_check == true then
         -- An autocommit read is only linearizable on the current leader.
         lk_fresh()
+        -- (and the tables held by a TRUNCATE or DROP TABLE, which the
+        -- check below consults, are current: also for ts_select)
+        fence_fresh()
     end
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
@@ -2763,7 +2938,12 @@ function tarn_select_join(reads, lock_check, begin, route)
     if type(lock_check) ~= 'boolean' or type(begin) ~= 'boolean' or (lock_check and begin) then
         return {'error', 1210, 'Incorrect arguments to tarn_select_join'}
     end
-    if lock_check then lk_fresh() end
+    if lock_check then
+        lk_fresh()
+        -- A restart or new leader may know no cached DDL holds yet.
+        -- Restore them before checked_read can use its no-lock fast path.
+        fence_fresh()
+    end
     local plan, bad = PG.join_plan(reads)
     if bad then return bad end
     if begin and not box.is_in_txn() then
@@ -4869,6 +5049,7 @@ function BK.applied(b, state, peer, move, epoch)
     end
     BK.state[b], BK.peer[b], BK.move[b] = state, peer, move
     if epoch ~= nil then BK.epoch = epoch end
+    BK.ns_serve(b)
     if state ~= 'sending' and state ~= 'fenced' and BK.track[b] ~= nil then
         BK.track[b] = nil
         BK.track_n = BK.track_n - 1
@@ -4915,6 +5096,7 @@ function BK.commit()
     if not ok then
         if box.is_in_txn() then box.rollback() end
         BK.stale = true
+        BK.ns_sync()
         error(err)
     end
 end
@@ -4933,12 +5115,14 @@ function BK.early(b, state, peer, move, epoch)
         BK.applied(b, state, peer, move, epoch)
     else
         BK.epoch, BK.ver = epoch, BK.ver + 1
+        BK.ns_sync()
     end
     box.on_rollback(function()
         if state ~= nil then
             BK.applied(b, old[1], old[2], old[3], old[4])
         else
             BK.epoch, BK.ver = old[4], BK.ver + 1
+            BK.ns_sync()
         end
     end)
 end
@@ -5025,7 +5209,7 @@ function tarn_bucket_init(count, ranges)
         if c == nil then error(res) end
         return {'exists', c}
     end
-    if res[1] == OK then BK.stale = true end
+    if res[1] == OK then BK.stale = true; BK.ns_sync() end
     return res
 end
 
@@ -5462,26 +5646,16 @@ function tarn_bucket_stats()
     writable()
     BK.fresh()
     BK.load_rotate()
-    local L = BK.load
-    local sum = {}
-    for _, w in ipairs({L.prev, L.cur}) do
-        for b, c in pairs(w) do
-            local x = sum[b]
-            if x == nil then
-                x = {0, 0, 0}
-                sum[b] = x
-            end
-            x[1], x[2], x[3] = x[1] + c[1], x[2] + c[2], x[3] + c[3]
-        end
-    end
-    local out = {}
-    for b, x in pairs(sum) do
+    local L, out = BK.load, {}
+    local c, p = L.cur, L.prev
+    for b = 1, L.n do
         local st = BK.state[b]
         if st == 'active' or st == 'sending' or st == 'fenced' then
-            out[#out + 1] = {b, x[1], x[2], x[3]}
+            local r, w, by = c.r[b], c.w[b], c.b[b]
+            if p ~= nil then r, w, by = r + p.r[b], w + p.w[b], by + p.b[b] end
+            if r > 0 or w > 0 then out[#out + 1] = {b, r, w, by} end
         end
     end
-    table.sort(out, function(a, b) return a[1] < b[1] end)
     return {OK, L.prev_secs + (fiber.clock() - L.t0), out}
 end
 
@@ -5651,7 +5825,9 @@ function tarn_info()
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats, buckets = nb, bucket_epoch = BK.epoch,
             locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
-            schema_version = box.info.schema_version or 0}
+            schema_version = box.info.schema_version or 0,
+            native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
+                                       to_lua = tonumber(BK.ns.to_lua)} or false}
 end
 
 -------------------------------------------------------------------------------
@@ -5676,6 +5852,11 @@ local function setup_schema()
     box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
     box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
     ensure_schema()
+    if M.cfg.native then
+        for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select'}) do
+            box.schema.func.create(f, {language = 'C', if_not_exists = true})
+        end
+    end
     if box.space._tarn_meta:get{'shard_id'} == nil then
         -- The new shard's first synchronous write. Made while the replicas
         -- are still joining, it cannot reach its quorum (they cannot
@@ -5691,6 +5872,7 @@ local function setup_schema()
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
     end
     migrate_legacy_job()
+    BK.ns_init()
 end
 
 -- Run setup_schema in the background whenever this node is writable, until

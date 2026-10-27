@@ -1196,6 +1196,20 @@ check('... and a repeated APPLY does nothing', r[1] == 'ok' and r[2] == 'applied
 check('... and nothing is held any more', c[1]:call('tarn_info').ddl_held == 0)
 r = c[1]:call('tarn_truncate_prepare', {'test.cr', targs(4)})
 check('TRUNCATE ABORT after PREPARE', r[1] == 'ok' and c[1]:call('tarn_info').ddl_held == 1, r)
+-- A node that becomes the leader has not seen the holds its predecessor
+-- took: an autocommit read with the lock check reads them first. (Here the
+-- node reads the holds without this one, which is then stored again.)
+do
+    local hk = 'hold:' .. crsid
+    local hv = c[1]:eval('return box.space._tarn_meta:get{...}.value', {hk})
+    c[1]:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hk})
+    r = c[1]:call('tarn_select', {crsid, 0, {1}, 'EQ', 1, box.NULL, box.NULL, true})
+    check('(a node that knows of no hold reads the table)', r[1] == 'ok' and c[1]:call('tarn_info').ddl_held == 0, r)
+    c[1]:eval('box.space._tarn_meta:replace{...} tarn.stale_fences()', {hk, hv})
+    r = c[1]:call('tarn_select', {crsid, 0, {1}, 'EQ', 1, box.NULL, box.NULL, true})
+    check('... once it is to read the holds again, an autocommit read reads them, then waits (1213)',
+          r[1] == 'conflict' and c[1]:call('tarn_info').ddl_held == 1, r)
+end
 r = c[1]:call('tarn_truncate_abort', {'test.cr', targs(4)})
 check('... releases the table and lowers the fence',
       r[1] == 'ok' and c[1]:call('tarn_info').ddl_held == 0 and cw(3, {'update', crsid, {1}, {{'+', 2, 1}}})[1] == 'ok', r)

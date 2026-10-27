@@ -80,6 +80,27 @@ for i = 1, 17 do many[i] = {ps, 0, {{0, 42}}} end
 r = read(many)
 check('more than sixteen slots is refused', r[1] == 'error' and r[2] == 1210, r)
 
+print('a first grouped read restores persisted DDL holds')
+do
+    -- A new leader may have DDL_N == 0 while a hold is durable. Storing
+    -- it with stale_fences models that cache state before the first read.
+    local hold = 'hold:' .. cs
+    local lock_wait = cfg('lock_wait', 0.05)
+    c:eval('local k = ... box.space._tarn_meta:replace{k, {ver = 1, label = "JOIN_PERSISTED_HOLD"}} '
+           .. 'tarn.stale_fences()', {hold})
+    r = read(rs)
+    check('a persisted child-table hold is restored before the grouped read can reply',
+          r[1] == 'conflict' and r[2] == 1213 and c:call('tarn_info').ddl_held == 1, r)
+    c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
+    -- The scalar API also refreshes the cache: cleanup stays valid when
+    -- running this regression against the unfixed grouped procedure.
+    c:call('tarn_select', {ps, 0, {42}, 'EQ', box.NULL, box.NULL, true, true})
+    r = read(rs)
+    check('removing the persisted hold restores normal grouped reads',
+          complete(r) and c:call('tarn_info').ddl_held == 0, r)
+    cfg('lock_wait', lock_wait)
+end
+
 print('one snapshot across memtx, vinyl and mixed-engine tables')
 for _, engines in ipairs({{'mm', 'memtx', 'memtx'}, {'vv', 'vinyl', 'vinyl'},
                           {'mv', 'memtx', 'vinyl'}, {'vm', 'vinyl', 'memtx'}}) do
@@ -120,6 +141,64 @@ check('a pending W claim on a miss prevents a reply', not f:is_ready())
 c:call('tarn_apply', {'JOIN_WAIT'})
 r = result(f)
 check('... and the reply includes the inserted child after APPLY', complete(r) and #r[2][2][2] == 3, r)
+
+print('a persisted DDL hold invalidated during a grouped snapshot is refreshed')
+do
+    local p, d = pair('ddl_stale', 'vinyl', 'vinyl')
+    local hold = 'hold:' .. d
+    local lock_wait = cfg('lock_wait', 0.05)
+    hook('hold')
+    local held = c:call('tarn_select_join', {reads(p, d), true, false, box.NULL}, {is_async = true})
+    local reached = hook('reached')
+    check('the grouped snapshot pauses before a child hold becomes durable',
+          reached[2] == 1 and not held:is_ready(), reached)
+    c:eval('local k = ... box.space._tarn_meta:replace{k, {ver = 1, label = "JOIN_STALE_HOLD"}} '
+           .. 'tarn.stale_fences()', {hold})
+    hook('release')
+    r = result(held)
+    check('a stale fence cache is refreshed before the group can accept its snapshot',
+          r[1] == 'conflict' and r[2] == 1213 and c:call('tarn_info').ddl_held == 1, r)
+    c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
+    c:call('tarn_select', {ps, 0, {42}, 'EQ', box.NULL, box.NULL, true, true})
+    check('cleaning the persisted child hold restores the fence cache',
+          c:call('tarn_info').ddl_held == 0)
+    cfg('lock_wait', lock_wait)
+end
+
+print('a DDL hold released during a grouped snapshot is still observed')
+for _, refresh in ipairs({false, true}) do
+    local label = refresh and 'ddl_rebuilt_history' or 'ddl_history'
+    local p, d = pair(label, 'vinyl', 'vinyl')
+    local name, def = c:eval('local s = box.space[...] return s.name, box.space._tarn_catalog:get{s.name}.def', {p})
+    def.id, def.ver, def.json = p, 2, '{}'
+    local a = {id = p, ver = 2, timeout = 5, def = def}
+    r = c:call('tarn_truncate_prepare', {name, a})
+    check('TRUNCATE holds the vinyl root before the grouped read begins',
+          r[1] == 'ok' and c:call('tarn_info').ddl_held == 1, r)
+    hook('hold')
+    local held = c:call('tarn_select_join', {reads(p, d), true, false, box.NULL}, {is_async = true})
+    local reached = hook('reached')
+    check('the grouped snapshot is paused after capturing the held root rows',
+          reached[2] == 1 and not held:is_ready(), reached)
+    r = c:call('tarn_truncate_apply', {name, a})
+    check('TRUNCATE APPLY empties the root and releases its hold before the read resumes',
+          r[1] == 'ok' and c:call('tarn_info').ddl_held == 0
+          and c:eval('return box.space[...]:len()', {p}) == 0, r)
+    if refresh then
+        c:eval('tarn.stale_fences()')
+        -- Refresh in another request on an unrelated table. It clears the
+        -- stale flag before the paused group performs its final check.
+        local scalar = c:call('tarn_select', {ps, 0, {42}, 'EQ', box.NULL, box.NULL, true, true})
+        check('an unrelated scalar read rebuilds the released-hold cache before the group resumes',
+              scalar[1] == 'ok' and c:call('tarn_info').ddl_held == 0, scalar)
+    end
+    hook('release')
+    r = result(held)
+    check((refresh and 'a rebuilt cache cannot erase DDL history needed by the paused group'
+           or 'a released DDL hold forces a whole-group reread or conflict, not the old held root rows'),
+          (r[1] == 'conflict' and r[2] == 1213)
+          or (complete(r) and #r[2][1][2] == 0 and #r[2][2][1] == 0 and #r[2][2][2] == 0), r)
+end
 
 print('stream view, read-set metadata and total response caps')
 local st = c:new_stream()

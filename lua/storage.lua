@@ -18,6 +18,9 @@
 --   TARN_WAL_MODE      write | fsync | none (default write)
 --   TARN_IPROTO_THREADS (default 1)
 --   TARN_LISTEN_UNIX   optional Unix socket path to listen on as well
+--   TARN_NATIVE        the native procedures' module, libtarn_storage.so
+--                      (crates/tarn-storage; default: the release build of
+--                      this checkout, when there is one; 0: none)
 --   TARN_LOAD_WINDOW   seconds of requests a bucket's load counts (the
 --                      rebalancer's TARN REBALANCE BY LOAD; default 60:
 --                      the last one or two minutes)
@@ -26,6 +29,7 @@
 --                      go to disk and reads of them yield
 local json = require('json')
 local fio = require('fio')
+local log = require('log')
 
 local function env(name, default)
     local v = os.getenv(name)
@@ -122,6 +126,22 @@ if env('TARN_DUMP_EVERY', '') ~= '' then
     end)
 end
 
+-- The native procedures (lua/tarn.lua, "Native procedures"): Tarantool
+-- finds the module 'tarn_storage' as lib?.so in its directory.
+local native = env('TARN_NATIVE', '')
+if native == '' then
+    native = here .. '../target/release/libtarn_storage.so'
+    if not fio.path.exists(native) then native = '0' end
+end
+if native ~= '0' then
+    if fio.path.exists(native) and fio.basename(native) == 'libtarn_storage.so' then
+        package.cpath = fio.dirname(native) .. '/lib?.so;' .. package.cpath
+    else
+        log.warn('tarn: TARN_NATIVE=%s is not a libtarn_storage.so: the Lua procedures serve every request', native)
+        native = '0'
+    end
+end
+
 require('tarn').init{
     shard_id = shard_id,
     peers = peers,
@@ -131,4 +151,5 @@ require('tarn').init{
     check_yields = env('TARN_CHECK_YIELDS', '') ~= '',
     test_hooks = env('TARN_TEST_HOOKS', '') ~= '',
     load_window = tonumber(env('TARN_LOAD_WINDOW', '60')),
+    native = native ~= '0' and native or false,
 }

@@ -5,10 +5,11 @@ cd "$(dirname "$0")"; mkdir -p out
 JAR=${TLA2TOOLS:-tla2tools.jar}
 [ -f "$JAR" ] || { echo "tla2tools.jar not found: set TLA2TOOLS or download it into tla/" >&2; exit 2; }
 for cfg in "$@"; do
-  # GroupedRead checks a small local-snapshot refinement premise; every
-  # other configuration continues to use the commit-protocol MC module.
+  # The grouped-read modules check local snapshot and DDL-claim premises;
+  # every other configuration uses the commit-protocol MC module.
   case "$cfg" in
     GroupedRead|Bug_GroupedReadSeparateSnapshots) module=GroupedRead.tla ;;
+    GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
     *) module=MC.tla ;;
   esac
   start=$(date +%s)

@@ -281,8 +281,53 @@ of the `bench/compare` branch's workflow (`bench/compare/run.sh`,
 configuration `push.env`); its raw results are on the branch
 `results/compare-40218092737`.
 
+## Where a shard's time goes
+
+A shard runs every storage procedure on one thread, Tarantool's
+transaction thread, so that thread's CPU per request bounds what one shard
+serves. `bench/profile.sh` measures it
+([#28](https://github.com/cstheorist/tarn/issues/28)): it starts one shard
+and one SQL server, loads the sysbench tables, and runs `bench/profile.py`,
+which runs each workload and reports per statement
+
+* the CPU time of the shard's transaction thread (from `/proc`),
+* the Lua heap it allocated (LuaJIT's `gc_allocated`) and the storage calls
+  it served, with the share the native procedures served
+  ([design §1.5](../docs/design.md#15-native-procedures)),
+* where LuaJIT's sampling profiler found the thread: running Lua code,
+  collecting garbage, compiling, or in C -- Tarantool's own work (requests,
+  the storage engine) and C procedures.
+
+With `AB=3` it runs each workload three times on the shard restarted with
+the native procedures and three times on the shard restarted without them,
+alternately, so that each run starts from a fresh shard. With 16 threads
+and 20 s per run, the means of three runs:
+
+| One shard, 16 threads | point_select, Lua | point_select, native | read_only, Lua | read_only, native |
+|---|---:|---:|---:|---:|
+| statements per second | 22,868 | 28,683 | 8,593 | 8,736 |
+| shard CPU per statement | 16.2 µs | 5.5 µs | 76.5 µs | 73.2 µs |
+| Lua heap allocated per statement | 2,451 B | 0 B | 4,894 B | 4,965 B |
+| storage calls served natively | – | 100% | – | 0% |
+| profiler samples in Lua / GC / C | 32% / 15% / 53% | 0% / 0% / 100% | 37% / 17% / 46% | 37% / 16% / 47% |
+
+Through the native procedure a point select costs the shard a third of the
+CPU it costs through `tarn_select`, and no Lua at all: what is left is
+Tarantool's own work for the request, the index lookup and the reply.
+Throughput rises by a quarter, less than the shard's CPU falls, as the SQL
+server and sysbench share the two vCPUs with it. `oltp_read_only` does not
+change: its reads run inside transactions, which stay with the Lua
+procedures. (The VM ran slower when these runs were made: a few hours
+earlier the same comparison gave 36,698 and 46,568 point selects a second,
+at 10.7 µs and 3.6 µs of the shard's CPU each.)
+
 ## What would make Tarn faster
 
+* **Native procedures for the other hot paths**
+  ([#28](https://github.com/cstheorist/tarn/issues/28)): reads inside
+  transactions, autocommit writes, commits and validation still run as Lua
+  procedures, whose calls cost a shard more than their storage work, as
+  they did for autocommit reads (see above).
 * **Fewer round trips per transaction**: batch the 10 point selects of a
   transaction when the client pipelines; push UPDATE/DELETE ... WHERE pk = ?
   inside transactions down as deferred operations instead of read-then-buffer.
