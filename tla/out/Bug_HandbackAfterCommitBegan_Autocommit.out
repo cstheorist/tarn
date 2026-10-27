@@ -1,0 +1,108 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=33957 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 78 and seed 7266395061020552209 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 4895] (Linux 6.18.44-fc-v165 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/NativeHandback.tla
+Parsing file /tmp/tlc-5727933679131095348/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5727933679131095348/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5727933679131095348/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5727933679131095348/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-5727933679131095348/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5727933679131095348/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5727933679131095348/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-hb/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module NativeHandback
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module NativeHandback
+Starting... (2026-10-27 10:05:37)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 10:05:37.
+Error: Invariant AtMostOnce is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ sq = "start"
+/\ applied = 0
+/\ conn = "up"
+/\ called = {}
+/\ reply = "none"
+/\ pend = 0
+/\ txn = "none"
+/\ nat = "idle"
+/\ lua = "idle"
+
+State 2: <CallNative line 63, col 5 to line 64, col 62 of module NativeHandback>
+/\ sq = "native"
+/\ applied = 0
+/\ conn = "up"
+/\ called = {"native"}
+/\ reply = "none"
+/\ pend = 0
+/\ txn = "none"
+/\ nat = "idle"
+/\ lua = "idle"
+
+State 3: <NativeStart(TRUE) line 105, col 5 to line 109, col 62 of module NativeHandback>
+/\ sq = "native"
+/\ applied = 0
+/\ conn = "up"
+/\ called = {"native"}
+/\ reply = "none"
+/\ pend = 0
+/\ txn = "none"
+/\ nat = "writing"
+/\ lua = "idle"
+
+State 4: <NativeWrite line 113, col 5 to line 115, col 63 of module NativeHandback>
+/\ sq = "native"
+/\ applied = 0
+/\ conn = "up"
+/\ called = {"native"}
+/\ reply = "none"
+/\ pend = 1
+/\ txn = "none"
+/\ nat = "wrote"
+/\ lua = "idle"
+
+State 5: <NativeCommit("maybe") line 131, col 5 to line 144, col 42 of module NativeHandback>
+/\ sq = "native"
+/\ applied = 1
+/\ conn = "up"
+/\ called = {"native"}
+/\ reply = "lua"
+/\ pend = 0
+/\ txn = "none"
+/\ nat = "done"
+/\ lua = "idle"
+
+State 6: <Receive line 68, col 5 to line 75, col 55 of module NativeHandback>
+/\ sq = "lua"
+/\ applied = 1
+/\ conn = "up"
+/\ called = {"lua", "native"}
+/\ reply = "none"
+/\ pend = 0
+/\ txn = "none"
+/\ nat = "done"
+/\ lua = "idle"
+
+State 7: <LuaStep line 149, col 5 to line 157, col 42 of module NativeHandback>
+/\ sq = "lua"
+/\ applied = 2
+/\ conn = "up"
+/\ called = {"lua", "native"}
+/\ reply = "ok"
+/\ pend = 0
+/\ txn = "none"
+/\ nat = "done"
+/\ lua = "done"
+
+42 states generated, 23 distinct states found, 3 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-10-27 10:05:37)
+Trace exploration spec path: ./NativeHandback_TTrace_1793109937.tla

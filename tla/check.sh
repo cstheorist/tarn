@@ -42,6 +42,8 @@ DEFAULT="$DEFAULT StreamMarks Bug_StreamMarksRoAfterTermChange Bug_StreamMarksWr
 Bug_StreamMarksNativeNoTermCheck Bug_StreamMarksNativeIgnoresLkStale Bug_StreamMarksLuaNoTermCheck
 Bug_StreamMarksLuaTermCheckEarly Bug_StreamMarksValidateNoFenceFresh Bug_StreamMarksCommitInNewTxn
 Bug_StreamMarksDoomBeforeClear Bug_StreamMarksDoomAfterCommit"
+DEFAULT="$DEFAULT Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAfterCommitBegan
+Bug_HandbackAfterCommitBegan_Autocommit Bug_HandbackResendAfterLoss Bug_HandbackResendAfterLoss_Autocommit"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do
