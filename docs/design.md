@@ -584,7 +584,10 @@ back, and also:
 * while a `TRUNCATE` or `DROP TABLE` holds a table, or when one was applied
   since its stream began (its validation fails if it read that table,
   §2.10);
-* reads without a stream transaction to commit them in.
+* when the node's election term changed since its stream began (§2.6:
+  `tarn_commit_local` refuses it);
+* reads without a stream transaction to commit them in (which
+  `tarn_commit_local` refuses: nothing could validate them).
 
 The SQL server does not call it for a transaction that wrote a vinyl
 table or a lazy-indexed table, which it would hand back, nor for one that sent row lock requests
@@ -875,12 +878,20 @@ window by the election timeout; this is the usual leader-lease assumption
 and is not part of the TLA+ model, which treats leader changes as atomic.
 A leader that knows it was demoted refuses every lock check, validation and
 commit with ER_READONLY (it may still serve plain reads of an open stream,
-whose commit then fails), and a validation in a stream that began under an
-earlier election term is refused (its transaction's number is below that of
-one begun once the node saw the current term, §1.5). That stream may have
+whose commit then fails). A step that commits the reads of a stream (a
+validation, a local commit, a PREPARE) is refused when the stream began
+under an earlier election term (its transaction's number is below that of
+one begun once the node saw the current term, §1.5), as when the node was
+demoted and elected again while the stream stayed open: the stream may have
 missed writes of the leader in between, which no check of its reads would
-find: the model's `lost`, which `BugValidateLostStream` ignores, and TLC
-finds the violation in 15 seconds.
+find. That is the model's `lost`; `BugValidateLostStream` ignores it for
+validations, and TLC finds the violation in 15 seconds. (Local commits and
+PREPAREs used to rely there on MVCC, and on Tarantool's elections, which
+elect no node that misses a confirmed write.) Reads whose stream's
+transaction no longer exists are refused too: nothing could validate them.
+`tla/StreamMarks.tla` checks how the transaction numbers realize `lost`,
+with the yields of the Lua procedures and the premises of the native ones
+([verification](verification.md#stream-watermarks-and-the-native-steps-issue-28)).
 
 ### 2.7 Ack-on-prepare
 
@@ -1847,6 +1858,16 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 19011 | 70050 | 12 | 06s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
+| Bug_StreamMarksCommitInNewTxn | violates CommittedReadsCurrent | 11392 | 22752 | 8 | 01s | 8 |
+| Bug_StreamMarksDoomAfterCommit | violates CommittedReadsCurrent | 20376 | 44345 | 9 | 01s | 8 |
+| Bug_StreamMarksDoomBeforeClear | violates CommittedReadsCurrent | 68565 | 172713 | 10 | 02s | 10 |
+| Bug_StreamMarksLuaNoTermCheck | violates CommittedReadsCurrent | 3558 | 6330 | 7 | 01s | 7 |
+| Bug_StreamMarksLuaTermCheckEarly | violates CommittedReadsCurrent | 5027 | 9291 | 7 | 00s | 7 |
+| Bug_StreamMarksNativeIgnoresLkStale | violates CommittedReadsCurrent | 6394 | 12338 | 7 | 01s | 7 |
+| Bug_StreamMarksNativeNoTermCheck | violates CommittedReadsCurrent | 13429 | 28055 | 8 | 01s | 8 |
+| Bug_StreamMarksRoAfterTermChange | violates CommittedReadsCurrent | 165 | 202 | 5 | 00s | 4 |
+| Bug_StreamMarksValidateNoFenceFresh | violates CommittedReadsCurrent | 70994 | 178466 | 11 | 02s | 9 |
+| Bug_StreamMarksWritableBeforeTrigger | violates CommittedReadsCurrent | 462 | 706 | 6 | 00s | 5 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
 | Bug_ValidateLostStream | violates StrictSerializable | 112326 | 442590 | 13 | 15s | 13 |
@@ -1896,6 +1917,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
 | Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
+| StreamMarks | no errors | 2134412 | 8112746 | 21 | 24s |  |
+| StreamMarks_TwoTables | no errors | 27772812 | 122862175 | 23 | 06min 23s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |

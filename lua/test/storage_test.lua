@@ -333,6 +333,33 @@ check('validate of a stream begun in an earlier term -> conflict', r[1] == 'conf
 st = stream_begin(2, {2})
 r = st:call('tarn_validate', {'V3', {{sid, 0, {2}}}, {}, true})
 check('validate of a stream begun in the current term passes', r[1] == 'ok', r)
+-- A local commit and a PREPARE commit the reads of their stream too
+-- (TarnCommit: s \notin lost[t] for CommitLocal and Prepare).
+local function new_term(i)
+    -- (demote first: a promotion of the node that owns the synchronous
+    -- queue keeps the term)
+    local t0 = c[i]:eval('return box.info.election.term')
+    c[i]:eval("box.ctl.demote() box.ctl.promote()")
+    wait_for(function() return not c[i]:eval('return box.info.ro') end, 5)
+    return c[i]:eval('return box.info.election.term') > t0
+end
+local row = {172, 1, 'u172@x', 2}
+st = stream_begin(2, {2})
+check('a new election term', new_term(2))
+r = st:call('tarn_commit_local', {'L2', {{'replace', sid, row}}, {{sid, 0, {2}}}, {}})
+check('local commit of a stream begun in an earlier term -> conflict', r[1] == 'conflict', r)
+st = stream_begin(2, {2})
+check('a new election term', new_term(2))
+r = st:call('tarn_prepare', {'P2', 1, {1, 2}, {{'replace', sid, row}}, {{sid, 0, {2}}}, {}, fiber.time()})
+check('PREPARE of a stream begun in an earlier term -> no', r[1] == 'no', r)
+check('... nothing written', c[2]:call('tarn_read', {sid, 0, {172}, 'EQ', 1})[2][1] == nil)
+r = c[2]:call('tarn_commit_local', {'L4', {{'replace', sid, row}}, {{sid, 0, {2}}}, {}})
+check('local commit of reads whose stream transaction is gone -> conflict', r[1] == 'conflict', r)
+r = c[2]:call('tarn_prepare', {'P4', 1, {1, 2}, {{'replace', sid, row}}, {{sid, 0, {2}}}, {}, fiber.time()})
+check('PREPARE of reads whose stream transaction is gone -> no', r[1] == 'no', r)
+st = stream_begin(2, {2})
+r = st:call('tarn_commit_local', {'L3', {{'replace', sid, row}}, {{sid, 0, {2}}}, {}})
+check('local commit of a stream begun in the current term commits', r[1] == 'ok', r)
 
 print('lock index rebuild with a PREPARE waiting for quorum')
 c[2]:eval([[box.space._tarn_locks:alter{is_sync = true}; box.space._tarn_part:alter{is_sync = true}

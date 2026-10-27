@@ -18,6 +18,7 @@ for cfg in "$@"; do
     BootstrapCount|Bug_CountsAuxMetadata) module=BootstrapCount.tla ;;
     GroupedRead|Bug_GroupedReadSeparateSnapshots) module=GroupedRead.tla ;;
     GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
+    StreamMarks*|Bug_StreamMarks*) module=StreamMarks.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;
     *) module=MC.tla ;;

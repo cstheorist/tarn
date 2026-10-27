@@ -72,6 +72,7 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedTables` | one snapshot reads keys of two tables on one shard; the union of both read sets is checked for prepared writers |
 | `GroupedRead` | a separate, small refinement model of one snapshot across scans that yield between tables |
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
+| `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
@@ -729,13 +730,84 @@ tla/check.sh BootstrapCount Bug_CountsAuxMetadata
 | `BootstrapCount` | 2,160 | 4 | passes |
 | `Bug_CountsAuxMetadata` | 1,741 | 4 | violates `NewClusterDefault` |
 
-The default list now contains 124 configurations, including 84 expected
-broken/trade-off outcomes. The lazy-index and bootstrap refinements
-account for 53 of those configurations: nine positive cases and 44
-controls. The 134 generated configurations reproduce from `gen_cfgs.sh`;
-two additional grouped-read configurations are maintained directly, for
-136 total. All 134 previous configuration files are unchanged. Explicit
-check arguments still override the default list.
+### Stream watermarks and the native steps (issue #28)
+
+`StreamMarks.tla` checks how a shard knows, when a step commits the reads
+of a stream's transaction, that the stream began in the node's current
+election term (TarnCommit: `s \notin lost[t]`, for `ValidateRO`,
+`CommitLocal` and `Prepare`) and after any `TRUNCATE` or `DROP TABLE` of a
+table it read (design §2.10). Tarantool numbers transactions as they
+begin, so the Lua module keeps the number of a transaction begun once the
+node saw its term (`TERM_TXN`) and once each `TRUNCATE` or `DROP` was
+applied (`DDL_TXN`): a stream's transaction below such a number began
+before (design §1.5).
+
+One node of a replicated shard loses and regains the leadership (two
+term changes); a `TRUNCATE` holds, clears and releases a table, on this
+node or, while it is read-only, on another leader, whose term this node
+cannot lead; two streams begin, read the table, may lose their
+transaction, and have their reads committed by a Lua step
+(`tarn_validate`, `tarn_commit_local`, `tarn_prepare`) or a native one
+(`ts_validate`, `ts_commit_local`), which hands back what it cannot
+decide. The Lua step may yield between its freshness steps (`lk_fresh`,
+`fence_fresh`) and its checks, which run with its commit. The native step
+reads neither the term nor the stored holds: it relies on a change of the
+term making the node read-only at once, and on the election triggers
+running before the node is writable in the new term. After a leader
+change the cache of holds is anything until read from storage again.
+`CommittedReadsCurrent` says the reads a step committed were made in the
+term it committed them in, of the table as it still was then, with no
+hold on it.
+
+Each protection has a switch, and TLC finds each `Bug_StreamMarks*`
+configuration violating `CommittedReadsCurrent` within seconds:
+
+| Switch | Removes |
+|---|---|
+| `BugRoAfterTermChange`, `BugWritableBeforeTrigger` | the two premises of the native step |
+| `BugNativeNoTermCheck` | the native step's `TERM_TXN` check |
+| `BugNativeIgnoresLkStale` | its wait for a fresh lock index, whose reload notes `TERM_TXN` when the election trigger could not |
+| `BugLuaNoTermCheck` | the Lua step's term check (`BK.stream_lost`), which local commits and PREPAREs did not make before |
+| `BugLuaTermCheckEarly` | ... made before the step's last yield, as `tarn_validate` did before part 4 of #28 |
+| `BugValidateNoFenceFresh` | reading the holds from storage again after a leader change |
+| `BugCommitInNewTxn` | refusing reads whose stream's transaction is gone: local commits and PREPAREs began a new one |
+| `BugDoomBeforeClear` | noting `DDL_TXN` only once the table is cleared |
+| `BugDoomAfterCommit` | noting it before the catalog's commit (after it, an APPLY run again after a failed commit noted none) |
+
+The model treats every table as vinyl, whose readers stay open: memtx
+MVCC, which aborts the readers of a truncated table, and the MVCC
+validation of the rows read (TarnCommit's business) only refuse more.
+
+```sh
+tla/check.sh StreamMarks Bug_StreamMarksNativeNoTermCheck Bug_StreamMarksLuaNoTermCheck
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `StreamMarks` | 2,134,412 | 21 | passes |
+| `Bug_StreamMarksRoAfterTermChange` | 165 | 5 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksWritableBeforeTrigger` | 462 | 6 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksNativeNoTermCheck` | 13,429 | 8 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksNativeIgnoresLkStale` | 6,394 | 7 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksLuaNoTermCheck` | 3,558 | 7 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksLuaTermCheckEarly` | 5,027 | 7 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksValidateNoFenceFresh` | 70,994 | 11 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksCommitInNewTxn` | 11,392 | 8 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksDoomBeforeClear` | 68,565 | 10 | violates `CommittedReadsCurrent` |
+| `Bug_StreamMarksDoomAfterCommit` | 20,376 | 9 | violates `CommittedReadsCurrent` |
+| `StreamMarks_TwoTables` | 27,772,812 | 23 | passes |
+
+`StreamMarks_TwoTables` (two tables, the native step checking the last
+`DDL_TXN` of either) takes six minutes, and is left out of the default
+list.
+
+### Configuration counts
+
+The default list contains 136 configurations, including 95 expected
+broken/trade-off outcomes. The 147 generated configurations reproduce from
+`gen_cfgs.sh`; two additional grouped-read configurations are maintained
+directly, for 149 total. Explicit check arguments override the default
+list.
 
 ## Verus proofs
 
@@ -756,6 +828,12 @@ result. Verus proves:
   fences only participants without a record while the record is STAGING,
   and fences a missing record only before expiry or while some participant
   is prepared.
+* **Global unique indexes** (`uix.rs`): applying the entry writes that
+  `index_delta` decides for a write (a row's old version replaced by a new
+  one, or none) to an index that holds the old version's entry leaves the
+  other rows' entries alone and holds the new version's instead; it writes
+  nothing when the entry does not change, deletes only an entry that
+  exists and inserts only one that should.
 * **MySQL wire codec** (`wire.rs`): length-encoded integers and strings
   encode to the byte-level specification and decode back without reading
   out of bounds; packet framing produces exactly MySQL's multi-packet

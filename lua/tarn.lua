@@ -2449,6 +2449,25 @@ local function still_fresh()
 end
 local FRESH_MSG = 'shard leadership changed during the commit'
 
+-- A step that commits the reads of a stream (TarnCommit!ValidateRO,
+-- CommitLocal, Prepare) runs on a node that has been the leader since the
+-- stream began (TarnCommit: s \notin lost[t]): a demoted leader whose
+-- connection to the SQL server survived, and that is the leader again, may
+-- have missed writes of the leader in between. The stream's transaction is
+-- numbered below TERM_TXN if it began before this node saw its term; the
+-- term itself is compared as well, for the moment before the election
+-- trigger notes it (tla/StreamMarks.tla). Inside the transaction, after the
+-- step's last yield.
+function BK.stream_lost()
+    return box.info.election.term ~= LAST_TERM or box.txn_id() < TERM_TXN
+end
+BK.LOST_MSG = 'shard leader changed during the transaction'
+-- Reads whose stream transaction no longer exists cannot be validated.
+BK.GONE_MSG = 'the stream transaction of these reads no longer exists'
+function BK.has_reads(rpoints, rranges)
+    return #(rpoints or {}) > 0 or #(rranges or {}) > 0
+end
+
 -- MySQL affected-rows convention for one write: REPLACE of a different row
 -- counts 2, an UPDATE or REPLACE that changes nothing counts 0 / 1. With
 -- `found_rows` (the client's CLIENT_FOUND_ROWS), an UPDATE counts the row it
@@ -2477,6 +2496,7 @@ end
 -- is prepared in.
 local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plans, wb, mver)
     if not still_fresh() then return conflict(FRESH_MSG) end
+    if BK.has_reads(rpoints, rranges) and BK.stream_lost() then return conflict(BK.LOST_MSG) end
     local mv = BK.commit_check(wb, rpoints, rranges, false, plans, mver)
     if mv then return mv end
     -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read under
@@ -2509,7 +2529,10 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
         if stale then return stale end
         -- Without reads on this shard the coordinator sends no stream: the
         -- commit is then its own local transaction.
-        if not box.is_in_txn() then box.begin(RW) end
+        if not box.is_in_txn() then
+            if BK.has_reads(rpoints, rranges) then return conflict(BK.GONE_MSG) end
+            box.begin(RW)
+        end
         local plans, n = write_steps(writes), 0
         M.lazy.capture(plans)
         for i = 1, #plans do
@@ -2560,13 +2583,11 @@ function tarn_validate(txid, rpoints, rranges, cross, lock_gen, mver)
     -- commit are one step, on a node that is the leader, and has been since
     -- the stream began (TERM_TXN).
     writable()
-    if box.is_in_txn() and (box.info.election.term ~= LAST_TERM or box.txn_id() < TERM_TXN) then
+    if box.is_in_txn() and BK.stream_lost() then
         box.rollback()
-        return conflict('shard leader changed during the transaction')
+        return conflict(BK.LOST_MSG)
     end
-    if not box.is_in_txn() and (#(rpoints or {}) > 0 or #(rranges or {}) > 0) then
-        return conflict('the stream transaction of these reads no longer exists')
-    end
+    if not box.is_in_txn() and BK.has_reads(rpoints, rranges) then return conflict(BK.GONE_MSG) end
     if box.is_in_txn() then
         -- "The reads are unchanged": memtx MVCC moves a read-only transaction
         -- whose reads were overwritten into a read view (it keeps seeing the
@@ -3586,6 +3607,7 @@ local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
 local P_KEYS = 7
 local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock_gen, fence, plans, wb, mver)
     if not still_fresh() then return {1213, FRESH_MSG} end
+    if BK.has_reads(rpoints, rranges) and BK.stream_lost() then return {1213, BK.LOST_MSG} end
     if not pl_intact(txid, lock_gen) then return {1213, BROKEN_MSG} end
     if stale_definition(fence) then return {1412, STALE_DEF_MSG} end
     local capture = M.lazy.guard(plans, fence, true)
@@ -3685,13 +3707,15 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
     end
     local ok, res = pcall(function()
         -- Write-only participants are prepared outside any stream.
-        if not box.is_in_txn() then box.begin(RW) end
+        local in_stream = box.is_in_txn()
+        if not in_stream then box.begin(RW) end
         local existing = box.space._tarn_part:get{txid}
         if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
             box.rollback()
             if existing.state == 'aborted' then return {'no', 1213, 'transaction was aborted'} end
             return {'yes'}
         end
+        if not in_stream and BK.has_reads(rpoints, rranges) then return vote_no(1213, BK.GONE_MSG) end
         if txn_ts ~= nil and now() - txn_ts > M.cfg.max_txn_age then
             box.rollback()
             M.stats.prepare_no = M.stats.prepare_no + 1
