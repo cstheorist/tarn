@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An opt-in native primary-key batch prototype
+  ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
+  lookup loop for complete memtx autocommit batches of up to 128 keys.
+  `native_batch_reads` in the gateway configuration enables it; older
+  modules and unsupported requests use the existing Lua path. The model
+  checks missing-key locks, snapshot consistency and complete results;
+  the executed budget checks are verified with Verus. See the
+  [native storage inventory](docs/native-storage.md).
+
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
   writes continue, then fences writes for catch-up and secondary-index
