@@ -415,6 +415,10 @@ local FENCE_STALE = true   -- rebuilt from _tarn_catalog before the next check
 -- messages). The holds are also stored ('hold:<space_id>' in _tarn_meta), so
 -- that they survive a restart or a leader change.
 local DDL_HELD, DDL_N = {}, 0
+-- A scan may span a hold and its release, or another fiber rebuilding the
+-- cache. A fresh identity retains that history even when no hold remains;
+-- unlike a numeric counter it cannot wrap while an older scan retains it.
+local DDL_GEN = {}
 -- A TRUNCATE or DROP applied here also fails the validation of the open
 -- stream transactions that read the table before it: memtx MVCC aborts the
 -- readers of a space that changes, vinyl only its writers.
@@ -449,6 +453,7 @@ local function fence_rebuild()
         if sid ~= nil and box.space[sid] ~= nil and type(v) == 'table' and not v.aborted
            and (f[sid] or 0) < v.ver then f[sid] = v.ver end
     end
+    DDL_GEN = {}
     FENCE, FENCE_STALE = f, false
     DDL_HELD, DDL_N = held, n
     BK.ns_sync()
@@ -471,6 +476,7 @@ end
 local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
 
 local function ddl_hold(sid, label)
+    DDL_GEN = {}
     if DDL_HELD[sid] == nil then DDL_N = DDL_N + 1 end
     DDL_HELD[sid] = label
     BK.ns_sync()
@@ -478,6 +484,7 @@ end
 
 local function ddl_release(sid)
     if DDL_HELD[sid] == nil then return end
+    DDL_GEN = {}
     DDL_HELD[sid] = nil
     DDL_N = DDL_N - 1
     BK.ns_sync()
@@ -2535,13 +2542,15 @@ end
 -- `locked(rows, since)` covers every W lock taken or released meanwhile (a
 -- table) as well as those held now (the holder). When none covered what it
 -- read at any moment of the scan, the snapshot is a state in which
--- SnapshotRead could have read the same rows. Otherwise the read waits for
--- the lock and runs again (bounded by lock_wait).
+-- SnapshotRead could have read the same rows. DDL cache invalidation or a
+-- generation change also discards the snapshot: a hold may already have
+-- been released by its final check. Otherwise the read waits for the lock
+-- and runs again (bounded by lock_wait).
 local function checked_read(scan, locked)
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
         VY_SCANS = VY_SCANS + 1
-        local s0 = LOG_SEQ
+        local s0, d0 = LOG_SEQ, DDL_GEN
         local ok, rows, more = pcall(function()
             box.begin({txn_isolation = 'read-confirmed'})
             return scan()
@@ -2550,18 +2559,26 @@ local function checked_read(scan, locked)
         VY_SCANS = VY_SCANS - 1
         if not ok then error(rows) end
         local h = atomic('SnapshotRead', function()
-            if LK_STALE then return {'stale'} end
+            if LK_STALE or FENCE_STALE then return {'stale'} end
+            if DDL_GEN ~= d0 then return {'ddl'} end
             if NLOCK == 0 and LOG_SEQ == s0 and DDL_N == 0 then return nil end
             return locked(rows, s0, more)
         end)
         if h == nil then return {OK, rows, more} end
         if type(h) == 'table' and h[1] == 'stale' then
-            lk_fresh()   -- a leader change meanwhile (raises ER_READONLY if demoted)
-        elseif type(h) == 'table' then
-            -- A cross-shard transaction wrote what the scan covers while it
-            -- ran: read again (its locks, if still held, are waited out).
             if clock.monotonic() > deadline then
-                return conflict('rows changed by a cross-shard transaction during the read')
+                return conflict('lock or table definition cache changed during the read')
+            end
+            lk_fresh()   -- a leader change meanwhile (raises ER_READONLY if demoted)
+            fence_fresh()
+            if clock.monotonic() > deadline then
+                return conflict('lock or table definition cache changed during the read')
+            end
+        elseif type(h) == 'table' then
+            -- A cross-shard write or DDL hold changed while the scan ran:
+            -- read again (locks still held are waited out).
+            if clock.monotonic() > deadline then
+                return conflict('rows or DDL claims changed during the read')
             end
             M.stats.vy_rereads = M.stats.vy_rereads + 1
         else
@@ -2829,6 +2846,132 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin, af
 end
 
 tarn_select_keys = PG.bounded(BK.recheck(tarn_select_keys, 8))
+
+-- A co-located join (issue #83), read as dependent primary-key prefixes.
+-- reads[i] = {space_id, parent, bindings}; parent is 0 (constants only),
+-- or an earlier 1-based slot. A binding is {0, native_value} or
+-- {1, native_field_of_parent}. Rust proves co-location, types/collations
+-- and SQL eligibility; storage never evaluates SQL or joins tuples.
+-- Reply slots[i] = {prefixes_actually_read, tuples}. All slots share the
+-- same snapshot, W-lock-history interval, and row/key/byte budget. A cap
+-- or an absent physical source field discards everything: {OK, {}, false}
+-- asks Rust to use its existing executor, never a partial SQL result.
+function PG.join_plan(reads)
+    local bad = {'error', 1210, 'Incorrect arguments to tarn_select_join'}
+    if type(reads) ~= 'table' or #reads == 0 or #reads > 16 then return nil, bad end
+    local plan = {}
+    for i, r in ipairs(reads) do
+        if type(r) ~= 'table' or #r ~= 3 or type(r[1]) ~= 'number' or r[1] % 1 ~= 0
+           or r[1] <= 0 or type(r[2]) ~= 'number' or r[2] % 1 ~= 0 or r[2] < 0 or r[2] >= i
+           or type(r[3]) ~= 'table' or #r[3] == 0 then return nil, bad end
+        local sp = box.space[r[1]]
+        if sp == nil then return nil, {'error', 1146, 'no such space ' .. tostring(r[1])} end
+        local idx = sp.index[0]
+        if idx == nil then return nil, {'error', 1412, STALE_DEF_MSG} end
+        if #r[3] > #idx.parts then return nil, bad end
+        for _, b in ipairs(r[3]) do
+            if type(b) ~= 'table' or #b ~= 2 then return nil, bad end
+            if b[1] == 1 then
+                if r[2] == 0 or type(b[2]) ~= 'number' or b[2] % 1 ~= 0 or b[2] < 1
+                   or b[2] > plan[r[2]].fields then return nil, bad end
+            elseif b[1] ~= 0 or b[2] == nil or type(b[2]) == 'table' then
+                return nil, bad
+            end
+        end
+        plan[i] = {space = sp, idx = idx, kd = index_key_def(sp.id, 0), parent = r[2], bindings = r[3],
+                   fields = #sp:format()}
+    end
+    return plan
+end
+
+function PG.join_scan(plan)
+    local slots, nrows, nkeys, bytes, work = {}, 0, 0, 0, 0
+    local in_txn = box.is_in_txn()
+    local function progress()
+        work = work + 1
+        if work % 256 == 0 and PG.heap_low() then error(PG.OOM) end
+        if in_txn and work % SCAN_CHUNK == 0 then fiber.yield() end
+    end
+    for i, p in ipairs(plan) do
+        local keys, rows, seen = {}, {}, {}
+        slots[i] = {keys, rows}
+        local parents = p.parent == 0 and {false} or slots[p.parent][2]
+        for _, parent in ipairs(parents) do
+            local key, null = {}, false
+            for j, b in ipairs(p.bindings) do
+                local v = b[2]
+                if b[1] == 1 then
+                    -- An instant-added field can be absent but hold a
+                    -- non-NULL SQL fill: only Rust knows that fill.
+                    if b[2] > #parent then return {}, false end
+                    v = parent[b[2]]
+                end
+                if v == nil or v == box.NULL then null = true; break end
+                key[j] = v
+            end
+            if not null then
+                local kb = msgpack.encode(key)
+                if not seen[kb] then
+                    if nkeys >= 4096 or bytes + #kb > M.cfg.scan_page_bytes then return {}, false end
+                    seen[kb] = true
+                    nkeys, bytes = nkeys + 1, bytes + #kb
+                    keys[#keys + 1] = key -- includes a probe that finds no row
+                    for _, t in p.idx:pairs(key, {iterator = 'EQ'}) do
+                        local size = t:bsize()
+                        if nrows >= M.cfg.scan_page_rows or bytes + size > M.cfg.scan_page_bytes then
+                            return {}, false
+                        end
+                        rows[#rows + 1] = t
+                        nrows, bytes = nrows + 1, bytes + size
+                        progress()
+                    end
+                end
+            end
+            progress() -- duplicate and NULL source keys must also yield fairly
+        end
+        yield_point('join_scan') -- tests: after one table, before the next
+    end
+    return slots, true
+end
+
+function tarn_select_join(reads, lock_check, begin, route)
+    local mv = BK.check_read(route)
+    if mv then return mv end
+    if type(lock_check) ~= 'boolean' or type(begin) ~= 'boolean' or (lock_check and begin) then
+        return {'error', 1210, 'Incorrect arguments to tarn_select_join'}
+    end
+    if lock_check then
+        lk_fresh()
+        -- A restart or new leader may know no cached DDL holds yet.
+        -- Restore them before checked_read can use its no-lock fast path.
+        fence_fresh()
+    end
+    local plan, bad = PG.join_plan(reads)
+    if bad then return bad end
+    if begin and not box.is_in_txn() then
+        box.begin(BEGIN_STREAM)
+        note_stream_term()
+    end
+    if not lock_check then
+        if not box.is_in_txn() then return {'error', 1210, 'tarn_select_join needs a stream transaction'} end
+        return {OK, PG.join_scan(plan)}
+    end
+    -- Every engine uses one read-confirmed transaction: memtx scans may
+    -- yield too, and mixing individually checked tables would fracture it.
+    if box.is_in_txn() then return {'error', 1210, 'tarn_select_join lock check needs no stream transaction'} end
+    return checked_read(function() return PG.join_scan(plan) end, function(slots, since, complete)
+        if not complete then return nil end -- discarded, no rows observed
+        for i, p in ipairs(plan) do
+            if #slots[i][1] > 0 then
+                local h = keys_locked(p.space.id, 0, p.idx, p.kd, slots[i][1], since)
+                if h ~= nil then return h end
+            end
+        end
+        return nil
+    end)
+end
+
+tarn_select_join = PG.bounded(BK.recheck(tarn_select_join, 4))
 
 -- tarn_count: the number of rows a tarn_select scan (`key`, `iterator`,
 -- `end_key`, `end_incl`) would return that satisfy every residual predicate

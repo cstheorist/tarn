@@ -37,6 +37,12 @@ servers write to it (`tests/sql/`).
   shard they touch, in parallel, instead of one call per outer row.
   DECIMAL lookup parts and global lookups whose primary key contains
   DECIMAL retain per-row native lookups for exact key matching.
+  Co-located primary-prefix INNER/LEFT joins with a fully bound common
+  shard key can read their dependent table prefixes in one bounded request.
+  This requires matching native key types/collations and no participating
+  buffered writes; unsupported/locking paths or shared-budget overflow use
+  the ordinary executor. Filters, projections and LEFT padding retain SQL
+  semantics.
 * Index access: equality (including `IS NULL` and `<=>`) and range
   predicates on an index prefix, and
   multi-key lookups for `col IN (...)`, `OR`s of equalities and row-value

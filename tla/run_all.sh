@@ -5,9 +5,16 @@ cd "$(dirname "$0")"; mkdir -p out
 JAR=${TLA2TOOLS:-tla2tools.jar}
 [ -f "$JAR" ] || { echo "tla2tools.jar not found: set TLA2TOOLS or download it into tla/" >&2; exit 2; }
 for cfg in "$@"; do
+  # The grouped-read modules check local snapshot and DDL-claim premises;
+  # every other configuration uses the commit-protocol MC module.
+  case "$cfg" in
+    GroupedRead|Bug_GroupedReadSeparateSnapshots) module=GroupedRead.tla ;;
+    GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
+    *) module=MC.tla ;;
+  esac
   start=$(date +%s)
   java -XX:+UseParallelGC -Xmx${TLC_HEAP:-3g} -cp "$JAR" tlc2.TLC -workers ${WORKERS:-1} -cleanup \
-       -metadir ${TLC_META:-/tmp/tlcmeta}/$cfg -config $cfg.cfg MC.tla > out/$cfg.out 2>&1
+       -metadir ${TLC_META:-/tmp/tlcmeta}/$cfg -config $cfg.cfg "$module" > out/$cfg.out 2>&1
   secs=$(( $(date +%s) - start ))
   res=$(grep -oE "Invariant [A-Za-z]+ is violated" out/$cfg.out | head -1)
   [ -z "$res" ] && res=$(grep -q "No error has been found" out/$cfg.out && echo "no errors" || echo "ERROR: $(grep -m1 -iE 'error|exception' out/$cfg.out)")

@@ -16,6 +16,8 @@ RC_Counter RC_CounterFailover RC_Counter_AckOnPrepare RC_Mixed RC_MixedFailover 
 Uniq UniqFailover Uniq_RC Bug_InsertNoExistCheck
 Bug_MoveNoDrain Bug_MoveNoHold Bug_MoveServeStale Move_Scan Move_RC Move_ScanFailover
 Bug_JoinNoCheck Bug_JoinNoCheck3 Bug_JoinNoCheck3Prepare Join_Scan Join_ScanFailover Join3_Scan Join3_ScanPrepare"
+DEFAULT="$DEFAULT GroupedTables Bug_GroupedTablesNoWLockCheck GroupedRead Bug_GroupedReadSeparateSnapshots"
+DEFAULT="$DEFAULT GroupedDDL Bug_GroupedDDLIgnoreGeneration Bug_GroupedDDLIgnoreStale"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

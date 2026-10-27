@@ -84,6 +84,19 @@ SCHEMA = [
      "PRIMARY KEY (p, id), UNIQUE KEY us (s)) PARTITION BY KEY(p)",
      "CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
      "PRIMARY KEY (p, id), UNIQUE KEY us (s))"),
+    # Dependent primary-prefix reads on one bucket (issue #83).
+    "CREATE TABLE j83p (tenant_id INT, id INT, v INT, PRIMARY KEY (tenant_id, id)) PARTITION BY KEY(tenant_id)",
+    "CREATE TABLE j83c (tenant_id INT, parent_id INT, id INT, v INT, "
+    "PRIMARY KEY (tenant_id, parent_id, id)) PARTITION BY KEY(tenant_id)",
+    "CREATE TABLE j83d (tenant_id INT, parent_id INT, child_id INT, id INT, v INT, "
+    "PRIMARY KEY (tenant_id, parent_id, child_id, id)) PARTITION BY KEY(tenant_id)",
+    "CREATE TABLE j83s (tenant_id INT, k VARCHAR(10) COLLATE utf8mb4_unicode_ci, id INT, v INT, "
+    "PRIMARY KEY (tenant_id, k, id)) PARTITION BY KEY(tenant_id)",
+    "CREATE TABLE j83t (tenant_id INT, k VARCHAR(10) COLLATE utf8mb4_unicode_ci, id INT, v INT, "
+    "PRIMARY KEY (tenant_id, k, id)) PARTITION BY KEY(tenant_id)",
+    "CREATE TABLE j83mp (a INT, b INT, id INT, PRIMARY KEY (a, b, id)) PARTITION BY KEY(a, b)",
+    "CREATE TABLE j83mc (a INT, b INT, parent_id INT, id INT, v INT, "
+    "PRIMARY KEY (a, b, parent_id, id)) PARTITION BY KEY(a, b)",
 ]
 
 
@@ -151,10 +164,20 @@ def seed():
                 v = "NULL" if i % 5 == 0 else i % 2
                 rows.append(f"({p}, {q}, {i}, {k}, {v}, {(p + q + i) % 5})")
     s.append("INSERT INTO page_keys VALUES " + ", ".join(rows))
+    s.append("INSERT INTO j83p VALUES (7, 1, 10), (7, 2, 20), (7, 3, 30), (7, 4, NULL), (8, 1, 80)")
+    s.append("INSERT INTO j83c VALUES (7, 1, 1, 100), (7, 1, 2, 200), (7, 3, 1, 300), "
+             "(7, 4, 1, NULL), (8, 1, 1, 800)")
+    # Parent 2 has no child but does have a row in d. A later join derived
+    # from the root must not depend on the preceding LEFT JOIN matching.
+    s.append("INSERT INTO j83d VALUES (7, 1, 1, 1, 1000), (7, 1, 2, 1, 2000), (7, 2, 99, 1, 9000)")
+    s.append("INSERT INTO j83s VALUES (7, 'Á', 1, 10), (7, 'pad ', 2, 20), (7, 'missing', 3, 30)")
+    s.append("INSERT INTO j83t VALUES (7, 'a', 1, 100), (7, 'PAD', 2, 200)")
+    s.append("INSERT INTO j83mp VALUES (1, 2, 1), (1, 2, 2), (1, 3, 1)")
+    s.append("INSERT INTO j83mc VALUES (1, 2, 1, 1, 10), (1, 2, 1, 2, 20), (1, 3, 1, 1, 99)")
     return s
 
 
-# (sql, kind) where kind is 'q' (query) or 'dml' (followed by table dumps) or 'err'
+# (sql, kind): 'q', 'rows' (requires a row result), 'dml' (then table dumps), or 'err'.
 CASES = [
     # point and range access
     ("SELECT * FROM t1 WHERE id = 7", "q"),
@@ -1155,6 +1178,83 @@ CASES = [
 ]
 
 
+# Issue #83: each dependent prefix uses native PK fields from one earlier
+# alias. Require actual row results here; matching errors are not witnesses.
+CASES += [
+    ("SELECT p.id, c.id, c.v FROM j83p p JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id, c.v FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id AND c.v > 150 "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id "
+     "WHERE p.tenant_id = 7 AND c.id IS NULL ORDER BY p.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 9 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 7 AND p.id = 2", "rows"),
+    # d derives its prefix from c; a missing c gives it no keys. The next
+    # query derives d from p instead, so parent 2 must still find d.v=9000.
+    ("SELECT p.id, c.id, d.v FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id LEFT JOIN j83d d "
+     "ON d.tenant_id = c.tenant_id AND d.parent_id = c.parent_id AND d.child_id = c.id "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.id, d.v", "rows"),
+    ("SELECT p.id, c.id, d.v FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id LEFT JOIN j83d d "
+     "ON d.tenant_id = p.tenant_id AND d.parent_id = p.id "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.id, d.v", "rows"),
+    ("SELECT p.id, c.id, d.v FROM j83p p JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id JOIN j83d d "
+     "ON d.tenant_id = c.tenant_id AND d.parent_id = c.parent_id AND d.child_id = c.id "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.id, d.v", "rows"),
+    ("SELECT s.id, t.v FROM j83s s LEFT JOIN j83t t ON t.tenant_id = s.tenant_id AND t.k = s.k "
+     "WHERE s.tenant_id = 7 ORDER BY s.id", "rows"),
+    ("SELECT p.id, c.id, c.v FROM j83mp p LEFT JOIN j83mc c "
+     "ON c.a = p.a AND c.b = p.b AND c.parent_id = p.id "
+     "WHERE p.a = 1 AND p.b = 2 ORDER BY p.id, c.id", "rows"),
+    ("PREPARE j83 FROM 'SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = ? ORDER BY p.id, c.id'", "q"),
+    ("SET @j83_tenant = 7", "q"),
+    ("EXECUTE j83 USING @j83_tenant", "rows"),
+    ("SET @j83_tenant = 8", "q"),
+    ("EXECUTE j83 USING @j83_tenant", "rows"),
+    ("DEALLOCATE PREPARE j83", "q"),
+    # Unsupported grouped shapes retain ordinary executor semantics.
+    ("SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id <=> p.id "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.v <=> p.v WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.v = p.v WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id IN (p.id, p.id + 1) "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.parent_id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id > p.id "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.parent_id, c.id", "rows"),
+    ("BEGIN", "q"),
+    ("INSERT INTO j83c VALUES (7, 2, 1, 210)", "dml:j83c"),
+    ("DELETE FROM j83c WHERE tenant_id = 7 AND parent_id = 1 AND id = 1", "dml:j83c"),
+    ("UPDATE j83c SET parent_id = 3 WHERE tenant_id = 7 AND parent_id = 1 AND id = 2", "dml:j83c"),
+    ("SELECT p.id, c.id, c.v FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO j83c VALUES (7, 2, 1, 210)", "dml:j83c"),
+    ("SELECT p.id, c.id, c.v FROM j83p p LEFT JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 7 ORDER BY p.id, c.id", "rows"),
+    ("SELECT p.id, c.id FROM j83p p JOIN j83c c "
+     "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id "
+     "WHERE p.tenant_id = 7 ORDER BY p.id, c.id FOR UPDATE", "rows"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+]
+
+
 # Run on connections with CLIENT_FOUND_ROWS (issue #39): UPDATE reports the
 # rows it matched, and an upsert that changes nothing reports 1.
 FOUND_ROWS_CASES = [
@@ -1273,6 +1373,8 @@ def main():
         if kind == "err":
             # both must fail, with the same MySQL error code
             ok = ra[0] == "err" and rb[0] == "err" and ra[1] == rb[1]
+        elif kind == "rows" and (ra[0] != "rows" or rb[0] != "rows"):
+            ok = False
         elif ra[0] != rb[0]:
             ok = False
         elif ra[0] == "rows":

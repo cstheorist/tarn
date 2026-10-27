@@ -15,6 +15,16 @@ MCRKeys  == [r \in MCReaders |-> {"x", "y"}]
 NoReaders == {}
 NoRKeys  == [r \in NoReaders |-> {}]
 
+\* A grouped read of two tables on A (issue #83). x and z stand for keys
+\* or bounded prefixes of different tables; y is on B. T1 applies y before
+\* z, T3 sees that y and commits x, then T2 reads x and z in one snapshot.
+\* Checking only the first table (x) would admit new x with old z while
+\* T1 still holds z's W lock: no serial order explains that result.
+MCKeysGrouped  == {"x", "y", "z"}
+MCOwnerGrouped == [k \in MCKeysGrouped |-> IF k = "y" THEN "B" ELSE "A"]
+RSetGrouped == [t \in MCTxns |-> CASE t = "T1" -> {} [] t = "T2" -> {"x", "z"} [] t = "T3" -> {"y"}]
+WSetGrouped == [t \in MCTxns |-> CASE t = "T1" -> {"y", "z"} [] t = "T2" -> {} [] t = "T3" -> {"x"}]
+
 \* WriteSkew: two cross-shard read-modify-writes that read each other's
 \* write target, plus a cross-shard read-only transaction.
 RSetSkew == [t \in MCTxns |-> CASE t = "T1" -> {"x"} [] t = "T2" -> {"y"} [] t = "T3" -> {"x", "y"}]

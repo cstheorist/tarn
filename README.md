@@ -23,6 +23,9 @@ read them as **key/value**.
   clients connect unchanged: text and binary protocol, prepared statements,
   multi-statement batches, sysbench-level SQL plus joins, aggregates,
   subqueries and `UNION`; `mysqldump` files load as they are.
+* **Co-located joins.** Primary-prefix joins over a bound shared shard key
+  use one bounded, lock-checked storage request. Other equality joins batch
+  their inner lookups by shard.
 * **Online schema changes.** `ALTER TABLE` adds, drops and changes columns
   and indexes without rewriting rows or stopping reads, while every SQL
   server keeps writing: writes made with a replaced table definition are

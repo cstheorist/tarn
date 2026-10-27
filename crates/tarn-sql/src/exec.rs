@@ -20,6 +20,8 @@ use std::sync::Arc;
 use tarn_common::{Column, SqlError, SqlResult, Value};
 use tarn_iproto::Iter;
 
+mod colocated;
+
 /// Error code used internally to say "this statement needs a transaction":
 /// an autocommit read touched more than one shard or needed more than one
 /// storage call, so it is re-run as an implicit read-only transaction.
@@ -1202,12 +1204,173 @@ fn overlay(mode: &ReadMode<'_>, t: &TableDef, rows: Vec<Row>) -> Vec<Row> {
     }
 }
 
+fn append_join(
+    out: &mut Vec<Row>,
+    left: Row,
+    right: Vec<Row>,
+    ta: &TableAccess,
+    kind: JoinKind,
+    on: Option<&Expr>,
+    cx: &EvalCtx<'_>,
+) -> SqlResult<()> {
+    let mut matched = false;
+    for r in right {
+        let mut row = left.clone();
+        row.resize(ta.offset, Value::Null);
+        row.extend(r);
+        if let Some(on) = on {
+            if !on.eval_bool(&row, cx)? {
+                continue;
+            }
+        }
+        matched = true;
+        out.push(row);
+    }
+    if !matched && kind == JoinKind::Left {
+        let mut row = left;
+        row.resize(ta.offset + ta.table.columns.len(), Value::Null);
+        out.push(row);
+    }
+    Ok(())
+}
+
+/// Fetch every candidate rowset of an eligible join in one shard RPC.
+/// Buffered parent writes need the ordinary executor: storage cannot derive
+/// their child prefixes from rows that exist only in the coordinator.
+async fn colocated_rows(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    steps: &[(&TableAccess, JoinKind, Option<&Expr>)],
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Option<Vec<Row>>> {
+    use crate::txn::{JoinPart, JoinRead, JoinedRead};
+
+    match &*mode {
+        ReadMode::Committed(_) => return Ok(None),
+        ReadMode::Txn(txn) | ReadMode::Statement(txn)
+            if txn
+                .writes
+                .keys()
+                .any(|(space, _)| steps.iter().any(|(t, _, _)| t.table.space_id == *space)) =>
+        {
+            return Ok(None);
+        }
+        _ => {}
+    }
+    let Some(plan) = colocated::plan(steps, cx)? else {
+        return Ok(None);
+    };
+    let map = cluster.bucket_map();
+    let bucket = crate::route::bucket_of(&plan.shard_key, map.count);
+    let shard = map.shard(bucket);
+    let route = Route::Buckets(vec![bucket]);
+    let reads: Vec<JoinRead<'_>> = plan
+        .reads
+        .iter()
+        .map(|r| JoinRead {
+            table: r.table,
+            parent: r.parent,
+            parts: r
+                .bindings
+                .iter()
+                .map(|b| match b {
+                    colocated::Binding::Const(v) => JoinPart::Const(v.clone()),
+                    colocated::Binding::Field(f) => JoinPart::Field(*f),
+                })
+                .collect(),
+        })
+        .collect();
+    if matches!(mode, ReadMode::Auto { calls } if *calls > 0) {
+        return Err(need_txn());
+    }
+    let result = match mode {
+        ReadMode::Txn(txn) => {
+            let st = txn.stream(cluster, shard).await?;
+            cluster.stats.storage_reads.fetch_add(1, AtomicOrdering::Relaxed);
+            crate::txn::select_join(&st.client, st.id, &reads, false, st.begin, &route).await
+        }
+        _ => {
+            let client = cluster.shards[shard].client(cluster).await?;
+            cluster.stats.storage_reads.fetch_add(1, AtomicOrdering::Relaxed);
+            crate::txn::select_join(&client, 0, &reads, true, false, &route).await
+        }
+    };
+    let result = match result {
+        Ok(JoinedRead::Unavailable) => return Ok(None),
+        Ok(result) => result,
+        Err(e) => {
+            if e.code == 1213 {
+                if let ReadMode::Txn(txn) = mode {
+                    txn.doomed = Some(e.clone());
+                }
+            }
+            return Err(e);
+        }
+    };
+    // A successful incomplete RPC may already have opened the stream.
+    // An unavailable procedure did nothing and must not mark it begun.
+    match mode {
+        ReadMode::Txn(txn) => txn.mark_begun(shard),
+        ReadMode::Auto { calls } => *calls += 1,
+        _ => {}
+    }
+    let JoinedRead::Complete(groups) = result else {
+        return Ok(None);
+    };
+    let count: usize = groups.iter().map(|g| g.rows.len()).sum();
+    cluster.stats.rows_read.fetch_add(count as u64, AtomicOrdering::Relaxed);
+    if let ReadMode::Txn(txn) = mode {
+        for (r, group) in reads.iter().zip(&groups) {
+            for key in &group.keys {
+                if key.len() == r.table.indexes[0].cols.len() {
+                    txn.note_point(shard, r.table.space_id, 0, key.clone(), Some(bucket));
+                } else {
+                    txn.note_range(
+                        shard,
+                        RangeRead {
+                            space: r.table.space_id,
+                            index: 0,
+                            lo: Some(key.clone()),
+                            hi: Some(key.clone()),
+                            lo_incl: true,
+                            hi_incl: true,
+                            bucket: Some(bucket),
+                        },
+                    );
+                }
+            }
+        }
+    }
+    let mut groups = groups.into_iter();
+    let mut rows = groups
+        .next()
+        .ok_or_else(|| SqlError::internal("empty co-located join"))?
+        .rows;
+    for ((ta, kind, on), group) in steps.iter().skip(1).zip(groups) {
+        let lk = Lookup::of(cluster.nlive(), false, ta)
+            .ok_or_else(|| SqlError::internal("co-located lookup no longer eligible"))?;
+        let idx = index_def(&ta.table, lk.index);
+        let wanted = rows
+            .iter()
+            .map(|left| lk.keys_of(&ta.table, idx, left, cx))
+            .collect::<SqlResult<Vec<_>>>()?;
+        let rights = distribute(&ta.table, idx, lk.len, wanted, group.rows, &[]);
+        let mut out = Vec::new();
+        for (left, right) in rows.into_iter().zip(rights) {
+            append_join(&mut out, left, right, ta, *kind, *on, cx)?;
+        }
+        rows = out;
+    }
+    Ok(Some(rows))
+}
+
 /// All rows produced by the FROM clause (joins applied, WHERE not yet).
 async fn source_rows(
     cluster: &Arc<Cluster>,
     mode: &mut ReadMode<'_>,
     src: &Source,
     cx: &EvalCtx<'_>,
+    allow_colocated: bool,
 ) -> SqlResult<Vec<Row>> {
     // Flatten the left-deep join tree.
     let mut steps: Vec<(&TableAccess, JoinKind, Option<&Expr>)> = Vec::new();
@@ -1226,31 +1389,15 @@ async fn source_rows(
         }
     }
     steps.reverse();
+    if allow_colocated {
+        if let Some(rows) = colocated_rows(cluster, mode, &steps, cx).await? {
+            return Ok(rows);
+        }
+    }
     let mut rows = fetch(cluster, mode, steps[0].0, &[], cx).await?;
     for (ta, kind, on) in steps.iter().skip(1) {
-        let width = ta.offset + ta.table.columns.len();
         let mut out = Vec::new();
-        let mut join = |left: Row, right: Vec<Row>| -> SqlResult<()> {
-            let mut matched = false;
-            for r in right {
-                let mut row = left.clone();
-                row.resize(ta.offset, Value::Null);
-                row.extend(r);
-                if let Some(on) = on {
-                    if !on.eval_bool(&row, cx)? {
-                        continue;
-                    }
-                }
-                matched = true;
-                out.push(row);
-            }
-            if !matched && *kind == JoinKind::Left {
-                let mut row = left;
-                row.resize(width, Value::Null);
-                out.push(row);
-            }
-            Ok(())
-        };
+        let mut join = |left: Row, right: Vec<Row>| append_join(&mut out, left, right, ta, *kind, *on, cx);
         match Lookup::of(cluster.nlive(), matches!(mode, ReadMode::Committed(_)), ta) {
             None => {
                 for left in rows {
@@ -2227,7 +2374,7 @@ async fn select_once(
             }
             rows
         }
-        src => filter(source_rows(cluster, mode, src, cx).await?)?,
+        src => filter(source_rows(cluster, mode, src, cx, true).await?)?,
     };
     finish_select(rows, p, cx)
 }
@@ -2915,10 +3062,10 @@ pub async fn run_locking_select(
         None => {
             let rows = if rc {
                 let mut mode = ReadMode::Committed(txn);
-                source_rows(cluster, &mut mode, &p.source, cx).await?
+                source_rows(cluster, &mut mode, &p.source, cx, false).await?
             } else {
                 let mut mode = ReadMode::Txn(txn);
-                source_rows(cluster, &mut mode, &p.source, cx).await?
+                source_rows(cluster, &mut mode, &p.source, cx, false).await?
             };
             let mut rows = filter(rows)?;
             if plain {

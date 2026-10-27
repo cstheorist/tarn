@@ -334,8 +334,28 @@ class Test:
         self.step("7. a rebalance limited to 150,000 bytes a second")
         rate = 150_000
         owners = self.owners()
-        heavy = self.active()[0]
-        ids = [i for i in range(100000, 200000) if owners[bucket_of(i, count)] == heavy][:600]
+        count = len(owners)
+        owned = collections.Counter(owners.values())
+        heavy = max(self.active(), key=lambda s: (owned[s], -s))
+        buckets = {b for b, s in owners.items() if s == heavy}
+        # Size balancing adds the global mean to every bucket's bytes:
+        # adding 600 rows to a shard need not move 2 * rate bytes. Give
+        # every candidate source bucket the same substantial new payload,
+        # rather than letting the retained map pick mostly light buckets.
+        per_bucket = 10
+        found = collections.Counter()
+        ids = []
+        for i in range(100000, 200000):  # disjoint from step 5's rows
+            b = bucket_of(i, count)
+            if b in buckets and found[b] < per_bucket:
+                ids.append(i)
+                found[b] += 1
+            if len(ids) == per_bucket * len(buckets):
+                break
+        if not self.check(bool(buckets) and all(found[b] == per_bucket for b in buckets),
+                          f"7: seeded IDs cover all {len(buckets)} buckets of shard {heavy} "
+                          f"with {per_bucket} rows each ({len(ids)} rows)"):
+            return self.failures
         for lo in range(0, len(ids), 100):
             self.sql(0, "INSERT INTO skew VALUES " + ",".join(f"({i}, '{'z' * 1500}')" for i in ids[lo:lo + 100]))
         t0 = time.time()
@@ -343,8 +363,10 @@ class Test:
         s = self.rebalance_ends("7")
         secs = time.time() - t0
         biggest = max((m[3] for m in self.sql(0, "SHOW TARN MOVES")), default=0)
-        self.check(s is not None and s[MAX_RATE] == rate and s[BYTES] > 2 * rate
-                   and s[BYTES] <= rate * secs + 8 * biggest,
+        self.check(s is not None and s[MAX_RATE] == rate and s[BYTES] > 2 * rate,
+                   f"7: moved more than two seconds of payload at the configured rate "
+                   f"({s[BYTES] if s else 0} bytes, rate {rate})", s)
+        self.check(s is not None and s[BYTES] <= rate * secs + 8 * biggest,
                    f"7: {s[BYTES] if s else 0} bytes in {secs:.1f} s: at most the rate (and the moves "
                    f"started at once)", s)
         return self.failures

@@ -210,6 +210,39 @@ use the original bucket ownership, and reads outside transaction streams
 keep that map's epoch and membership checks. A move or join therefore
 refuses an outdated read instead of mixing pages from different maps.
 
+**Co-located join reads.** A join whose tables have identical native shard
+key types and collations, primary keys beginning with those shard keys, and
+ordinary join equalities proving the same bound root key can use one
+`tarn_select_join` request. Each descriptor reads a constant primary prefix
+or derives primary prefixes from the native key fields of one earlier alias.
+The shard returns complete per-alias candidate rowsets and the prefixes it
+actually probed, including misses. Rust applies the original access keys,
+INNER/LEFT padding, residual predicates and final SQL processing. Native CI
+weight fields are copied directly; DECIMAL/float probes and representation
+coercions retain the existing executor.
+
+Autocommit and READ COMMITTED reads share one read-confirmed native
+transaction and one `checked_read` lock-history interval across all aliases.
+The final check covers the union of all probed table prefixes and DDL
+claims; a conflict or incomplete history restarts the whole group. A DDL
+generation check also discards scans that overlap a hold transition or
+fence-cache rebuild, even after the hold was released. Stale caches are
+refreshed before retrying within the same lock-wait deadline. Serializable
+streams retain their existing MVCC transaction and record each returned
+point/range with its root bucket for commit validation. The bucket is checked before and after the RPC. This refines
+`SnapshotRead` over the union of its abstract keys; the grouped-table and
+shared-snapshot witnesses are described in [verification](verification.md).
+
+The optimization requires at most 16 aliases, one earlier PK parent per
+prefix, and no buffered writes to the participating tables. Locking reads
+and unsupported paths use the ordinary executor. All slots share
+`scan_page_rows` and `scan_page_bytes` limits (4096 rows and 4 MiB by
+default), with at most 4096 generated prefixes and key metadata charged to
+the byte budget. An exhausted budget discards the entire grouped result
+and falls back; it never produces a truncated join. A small eligible
+autocommit read therefore needs one lock-checked RPC and no coordinator
+validation call. Transactional writes keep the established overlay path.
+
 Conflicts surface as MySQL error 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE 40001),
 which clients already treat as "retry the transaction". Autocommit statements
 are retried transparently (up to 20 times with backoff). A shard leader
@@ -1525,6 +1558,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
+| Bug_GroupedDDLIgnoreGeneration | violates NoHeldSnapshot | 36 | 46 | 5 | 00s | 5 |
+| Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
+| Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
+| Bug_GroupedTablesNoWLockCheck | violates StrictSerializable | 1194 | 5093 | 13 | 00s | 13 |
 | Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
 | Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
@@ -1549,6 +1586,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
 | Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 16s |  |
+| GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
+| GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
+| GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
 | Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
