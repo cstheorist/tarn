@@ -33,7 +33,7 @@ use crate::catalog::TableDef;
 use crate::cluster::Cluster;
 use crate::mpw::{ambiguous, from_iproto, from_iproto_read, lua_status, Mp, Rd};
 use bytes::Bytes;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tarn_common::{SqlError, SqlResult, Value};
@@ -1138,6 +1138,12 @@ impl Txn {
         let writers: BTreeSet<usize> = self.writes.values().map(|w| w.shard).collect();
         let dshard = {
             let members = cluster.members.read();
+            let inactive: HashSet<u32> = members
+                .shards
+                .iter()
+                .filter(|s| s.state != "active")
+                .map(|s| s.id)
+                .collect();
             let candidates = writers
                 .iter()
                 .map(|&position| {
@@ -1145,11 +1151,7 @@ impl Txn {
                     crate::placement::Writer {
                         id,
                         position,
-                        active: members
-                            .shards
-                            .iter()
-                            .find(|s| s.id == id)
-                            .is_none_or(|s| s.state == "active"),
+                        active: !inactive.contains(&id),
                     }
                 })
                 .collect();
