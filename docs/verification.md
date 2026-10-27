@@ -74,6 +74,7 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
+| `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
@@ -979,6 +980,196 @@ tla/check.sh Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAf
 The model is small on purpose: it is the contract every native procedure
 that writes must keep, whatever it checks before.
 
+### Online engine copying and publication (issue #57)
+
+`EngineCopy.tla` checks a local copy certificate, composed with
+`EngineCutover.tla` for its later publication on two shards. The engines
+are abstract images: these models do not implement or prove native DDL,
+replication, full distributed DDL linearizability, or migration latency.
+The source remains authoritative while its primary-only shadow is copied.
+Two writes can delete/reinsert a key or move a primary key. Each write has
+an unconfirmed interval and can roll back; its old and new keys are noted
+before it can commit. Extra dirty keys left by rollback are harmless:
+the final payload is a confirmed source reread, including absence for
+DELETE, after the persistent fence and all admitted writes have drained.
+
+A baseline source read and its owner-checked target write are separate
+steps. Capture and a drain of pre-capture/native inflight effects precede
+that baseline. Capture loss, overflow or a term change before PREPARED
+invalidates the entire copy; the model even permits an old pending write
+to resolve afterward, so the new prefix drain must cover it. A delayed
+old-generation page cannot overwrite the new image. Local secondary and
+UNIQUE indexes are built only after the frozen tail, avoiding transient
+unique-key cycles in an online baseline. PREPARED certifies that image and
+all those indexes; a restart/APPLY must preserve it, its persistent fence
+and its roll-forward state instead of rebuilding it.
+
+`EngineCutover` separates all-shard preparation/auxiliary readiness, a
+confirmed central decision, native rename, local catalog publication and
+old-space cleanup. A crash after rename resumes from explicit original
+and replacement IDs, not whichever space currently has the public name.
+A separate catalog observation retains its own committed definition ID and
+JSON version. It must resolve the physical SID by that catalog ID, even
+while native renames leave the public name absent or bound to the new
+space before catalog publication. Deriving SID from that name mixes old
+JSON with SID zero or the replacement. Neither APPLY-to-ABORT nor
+ABORT-to-APPLY is permitted. Publication retires
+old auxiliary generations and dooms old streams; their pending assignments
+remain until an explicit retirement/ACK proof permits removal. Allocation
+continues through one stable logical counter identity, including IDs that
+were allocated and then deleted, rather than restarting from row maxima.
+
+The old-stream guard covers the entire strong object group, not just the
+base. A missing global-unique-index key can leave a stream with only an
+old auxiliary-space read tracker: no base row was fetched. The model has
+a distinct auxiliary-only reader, and `BugAuxStreamOmitted` removes just
+its dooming guard. PREPARE holds and publication watermarks must cover
+all old strong auxiliary IDs as well as the old base ID.
+
+Implementation refinement obligations remain explicit:
+
+* Capture must cover every actual source mutation before its commit;
+  allocation/error paths must abort that write or invalidate the copy.
+  Native capture exclusion must precede mutations/savepoints. No copied
+  physical row generates a new logical lazy-index assignment.
+* The source, progress/owner and terminal-receipt views must be confirmed
+  where they certify completion. In particular, the central phase proof
+  validates exact old/new IDs, version and generation using read-confirmed
+  visibility; a missing nonterminal decision fails closed. The model's
+  decision is already durable. `LazyTargetConfirm`, `LazyApplyConfirm` and
+  `PrepareConfirm` explain the native confirmation boundary; runtime
+  overlap/fault tests must establish this new call site's refinement.
+* Existing whole-RPC DDL serialization (`BackfillDDL`), read holds and
+  final DDL/term watermarks (`GroupedDDL`, `StreamMarks`) supply the
+  native-yield and old-stream premises. The two stream-order premises
+  documented above still apply. No extra native correctness claim follows.
+  `WritePage` is a confirmed atomic native effect: a detached shadow commit
+  can outlive its RPC and mutex scope. Before resetting, clearing/dropping
+  a shadow or certifying PREPARED, a separate terminal-ticket and native
+  sync-queue cut must settle every old shadow effect. The ticket/drain,
+  queue and epoch premises compose with `LazyMeter`; this model does not
+  prove that returning from a copy RPC has established that cut.
+* Existing schema-job exclusion covers the entire operation versus bucket
+  moves and JOIN/removal. This is a composed job premise, not an additional
+  topology proof in these models. Preserve the actual source format and
+  explicit native index IDs/parts/collations, including gaps; only engine,
+  owned physical ID and native name change.
+* A running stream's raw IPROTO SELECT may meet a retired physical ID.
+  Only the typed server error `ER_NO_SUCH_SPACE` (36) falls through to the
+  existing Lua read on the same client and stream with the same arguments
+  and `begin=false`, skipping `ts_select`. No transport error or mutation
+  is replayed and no transaction is restarted. Lua maps a known retired
+  identity to 1412 and a genuinely unknown one to 1146. Existing read sets
+  and `ValidateRO`/local/PREPARE lost-stream checks remain the commit
+  premise; the models do not prove Rust dispatch/error-code matching.
+* Fresh global/lazy target identities must be complete and READY before
+  publication. Existing global-fill/lazy bootstrap proofs are reused,
+  not reimplemented here. Preserve source bucket counters, row-version and
+  reservation/outbox obligations or explicitly rotate/retire them without
+  losing a pending obligation. READY and retirement are durable facts,
+  not an inference from a missing old space. The logical auto/row-ID
+  counter binding must survive the physical ID change.
+
+The positive schedules permit source writes during baseline copying;
+TLC checks safety, not a throughput or progress guarantee. Actual writer
+progress, memtx/vinyl behavior, capacity refusal, rename/restart recovery,
+index gaps and auxiliary integrity require independent live tests. The
+final write fence includes secondary-index construction and may be long.
+
+The independent [protocol suite](../lua/test/engine_test.lua) exercises
+both directions with actual native ABI 8 loaded and with native disabled:
+75 and 74 checks respectively on the recorded revision. It verifies
+acknowledged writes during a paused copy, a unique-key cycle, DELETE/PK
+moves, rollback extras, sparse index IDs, unchanged physical tuple suffixes,
+capture recopy, stale workers, both decision-flip refusals, counter aliases
+across a second migration, owned-trigger cleanup and native eligibility.
+Owned caller cancellation interrupts native rename and post-publication
+cleanup; this is separate from actual process-loss tests.
+
+Two before-fix witnesses also refine the new controls. During a held
+rename, the old catalog procedure returned the replacement SID with the
+original definition JSON on both engines; the corrected resolver returns
+the original bound pair until publication. A stream that read only an old
+global-index miss could validate after publication while that unchanged
+index still existed; the corrected strong-group guard returns 1213 before
+its removal. These are runtime boundary checks, not a proof that every
+native execution refines the models. Terminal-ticket fault tests and the
+separate process-loss/replicated-promotion suites cover other premises.
+
+```sh
+tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrain \
+  Bug_EngineCopyCaptureOnlyNewKeys Bug_EngineCopyUnconfirmedSource \
+  Bug_EngineCopyTailIgnoresDeletes Bug_EngineCopySkipFinalDrain \
+  Bug_EngineCopyLostCaptureContinues Bug_EngineCopyStaleBatch \
+  Bug_EngineCopyRebuildPrepared Bug_EngineCopyPrepareWithoutIndexes \
+  Bug_EngineCopyLosePersistentFence EngineCutover \
+  Bug_EngineCutoverPublishBeforeDecision Bug_EngineCutoverPublishBeforeAuxReady \
+  Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
+  Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
+  Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity \
+  Bug_EngineCutoverRenameLosesOriginalIdentity Bug_EngineCutoverCatalogByName \
+  Bug_EngineCutoverAuxStreamOmitted
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `EngineCopy` | 5,316 | 19 | passes |
+| `Bug_EngineCopyBeforeCapture` | 6,274 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopyCaptureOnlyNewKeys` | 3,122 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyLosePersistentFence` | 2,534 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopyLostCaptureContinues` | 6,447 | 15 | violates `PreparedImage` |
+| `Bug_EngineCopyPrepareWithoutIndexes` | 1,354 | 9 | violates `PreparedImage` |
+| `Bug_EngineCopyRebuildPrepared` | 2,534 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopySkipFinalDrain` | 4,006 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopySkipPrefixDrain` | 4,048 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyStaleBatch` | 6,254 | 17 | violates `PreparedImage` |
+| `Bug_EngineCopyTailIgnoresDeletes` | 3,881 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyUnconfirmedSource` | 269 | 6 | violates `ConfirmedCopies` |
+| `EngineCutover` | 856 | 20 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 235 | 10 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverApplyAfterAbort` | 322 | 11 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverDropBeforePublish` | 3 | 2 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverForgetOldObligations` | 4 | 2 | violates `OldObligationsRetained` |
+| `Bug_EngineCutoverOldStreamValidates` | 214 | 10 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 198 | 7 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 241 | 9 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 318 | 12 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 216 | 10 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverCatalogByName` | 173 | 8 | violates `CatalogObservationBound` |
+| `Bug_EngineCutoverAuxStreamOmitted` | 214 | 10 | violates `OldStreamsRejected` |
+
+### Detached source transactions
+
+`EngineSourceDrain.tla` refines the final source drain independently of the
+copy model. A source transaction admitted while the synchronous fence is
+pending may sit after that fence in the native queue. Detaching its caller
+removes caller tracking without settling the transaction. The correct tail
+waits for native termination before its confirmed reread; a later queue cut
+alone cannot repair an old payload already copied into the replacement.
+The positive model explores 18 states to depth 8. The caller-only control
+explores 22 states to depth 9 and violates `PreparedImage`: after the stale
+tail, the detached source commits, the post-tail cut passes, and PREPARED
+certifies a missing row. Capture completeness, immutable ownership and the
+final exclusion of new writes remain premises of the composed models.
+
+The native mapping is explicit, rather than proved by TLC. Pinned
+Tarantool 3.9 confirms only the acknowledged prefix and stops at a newer
+synchronous entry ([queue confirmation](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn_limbo_queue.c#L649)).
+A failed/cancelled wait can detach its caller while the transaction remains
+pending ([transaction completion](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L1188)).
+The runtime must therefore establish its source native/queue cut before
+the first tail read, in addition to caller/claim draining. A test that
+injects a replica ACK prefix schedules this native boundary; it does not
+claim to test actual replication transport or prove full distributed DDL.
+No completed native prefix-ACK old/fixed runtime comparison is claimed:
+this particular ordering is established by the focused model and pinned
+source mapping. The ordinary engine runtime gates cover other schedules;
+the optional private ACK-input harness is not part of the default suite.
+
+```sh
+tla/check.sh EngineSourceDrain Bug_EngineSourceDrainCallerOnly
+```
+
 ### The copy of the lock index
 
 The native procedures check locks against a copy of the Lua module's lock
@@ -1023,12 +1214,44 @@ tla/check.sh LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCo
 `TARN_CHECK_LOCKS` checks the same at run time: the Lua module compares the
 copy with the index after each change.
 
+### Counter aliases
+
+`EngineAlias.tla` refines the central counter-alias ensure used by parallel
+engine APPLYs. Two callers request the same immutable new-SID/canonical-ID
+binding. A confirmed read can see absence while another caller waits for
+WAL; an overlapping write then conflicts even though its intended bytes
+are identical. Serialize the whole ensure by new SID, acquire before its
+read-confirmed transaction, and return an existing matching alias without
+another write. Both positive configurations check that all weakly fair
+executions finish both callers successfully, that an OK certifies the
+confirmed binding, and that an already-installed replay writes nothing.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `EngineAlias` | 12 | 7 | passes, including `Completion` |
+| `EngineAlias_Existing` | 8 | 5 | passes, including `Completion` |
+| `Bug_EngineAliasNoMutex` | 25 | 8 | violates `BothCallersOK` |
+
+The control preserves the correct canonical alias but returns a conflict
+to one caller; it does not demonstrate data corruption. The native MVCC
+conflict and healthy finite-WAL premises are runtime obligations. Before
+the fix, sixteen actual concurrent RPC pairs (eight absent and eight
+already-installed aliases) each returned one OK and one 1213 while the
+confirmed binding stayed canonical. The model does not prove native
+isolation, a global/stale-owner protocol, or success under cancellation,
+transport loss or an unhealthy WAL. The existing DDL interlock supplies
+the immutable old/new identity premise.
+
+```sh
+tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
+```
+
 ### Configuration counts
 
-The default list contains 158 configurations, including 112 expected
-broken/trade-off outcomes. The 169 generated configurations reproduce from
+The default list contains 187 configurations, including 136 expected
+broken/trade-off outcomes. The 198 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 171 total. Explicit check arguments override the default
+directly, for 200 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

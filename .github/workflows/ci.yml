@@ -88,7 +88,7 @@ jobs:
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
       - name: Storage protocol tests
-        run: ci/annotate.sh storage lua/test/run.sh
+        run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
       - name: Start a 2-shard cluster (two SQL servers)
@@ -102,7 +102,7 @@ jobs:
       - name: READ COMMITTED tests
         run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Schema changes and dumps
-        run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+        run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
       - name: Lazy-index semantics and own-commit recovery
         run: |
           ci/annotate.sh lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407
@@ -125,7 +125,7 @@ jobs:
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
-          ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+          ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
           ci/annotate.sh vinyl-lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407 --engine vinyl
           ci/annotate.sh vinyl-lazyfaults python3 tests/sql/lazyfaults.py --tarn 127.0.0.1:4000 --shards 127.0.0.1:3311,127.0.0.1:3321 --engine vinyl
           if grep -h "yielded inside" /tmp/tarn-cluster/*.log; then echo "::error title=vinyl::an atomic section yielded"; exit 1; fi

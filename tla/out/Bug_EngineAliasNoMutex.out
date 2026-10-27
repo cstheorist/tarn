@@ -1,0 +1,111 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 41 and seed 8436413511708162613 with 1 worker on 1 cores with 228MB heap and 64MB offheap memory [pid: 94] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/EngineAlias.tla
+Parsing file /tmp/tlc-1356593316608935258/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1356593316608935258/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1356593316608935258/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1356593316608935258/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1356593316608935258/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1356593316608935258/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1356593316608935258/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EngineAlias
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EngineAlias
+Starting... (2026-10-27 21:58:43)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 21:58:43.
+Error: Invariant BothCallersOK is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = "none"
+/\ revision = 0
+/\ result = [a |-> "none", b |-> "none"]
+/\ alias = 0
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "idle", b |-> "idle"]
+/\ writes = 0
+
+State 2: <Enter("a") line 25, col 13 to line 28, col 75 of module EngineAlias>
+/\ pending = "none"
+/\ revision = 0
+/\ result = [a |-> "none", b |-> "none"]
+/\ alias = 0
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "read", b |-> "idle"]
+/\ writes = 0
+
+State 3: <Read("a") line 31, col 5 to line 39, col 53 of module EngineAlias>
+/\ pending = "none"
+/\ revision = 0
+/\ result = [a |-> "none", b |-> "none"]
+/\ alias = 0
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "write", b |-> "idle"]
+/\ writes = 0
+
+State 4: <Write("a") line 42, col 5 to line 50, col 42 of module EngineAlias>
+/\ pending = "a"
+/\ revision = 0
+/\ result = [a |-> "none", b |-> "none"]
+/\ alias = 0
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "wal", b |-> "idle"]
+/\ writes = 1
+
+State 5: <Enter("b") line 25, col 13 to line 28, col 75 of module EngineAlias>
+/\ pending = "a"
+/\ revision = 0
+/\ result = [a |-> "none", b |-> "none"]
+/\ alias = 0
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "wal", b |-> "read"]
+/\ writes = 1
+
+State 6: <Read("b") line 31, col 5 to line 39, col 53 of module EngineAlias>
+/\ pending = "a"
+/\ revision = 0
+/\ result = [a |-> "none", b |-> "none"]
+/\ alias = 0
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "wal", b |-> "write"]
+/\ writes = 1
+
+State 7: <Confirm("a") line 52, col 15 to line 56, col 43 of module EngineAlias>
+/\ pending = "none"
+/\ revision = 1
+/\ result = [a |-> "ok", b |-> "none"]
+/\ alias = 1
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "done", b |-> "write"]
+/\ writes = 1
+
+State 8: <Write("b") line 42, col 5 to line 50, col 42 of module EngineAlias>
+/\ pending = "none"
+/\ revision = 1
+/\ result = [a |-> "ok", b |-> "conflict"]
+/\ alias = 1
+/\ view = [a |-> 0, b |-> 0]
+/\ owner = "none"
+/\ phase = [a |-> "done", b |-> "done"]
+/\ writes = 1
+
+46 states generated, 25 distinct states found, 3 states left on queue.
+The depth of the complete state graph search is 8.
+Finished in 00s at (2026-10-27 21:58:43)
+Trace exploration spec path: ./EngineAlias_TTrace_1793138322.tla

@@ -321,6 +321,11 @@ pub struct TableDef {
     pub db: String,
     pub name: String,
     pub space_id: u32,
+    /// Stable origin of AUTO_INCREMENT and hidden row-ID counters when a
+    /// physical engine replacement changes `space_id`. Legacy tables use
+    /// their original physical ID until their first replacement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_id: Option<u32>,
     pub columns: Vec<ColumnDef>,
     /// Index 0 is the primary key; the rest are secondary indexes.
     pub indexes: Vec<IndexDef>,
@@ -362,6 +367,10 @@ pub struct TableDef {
 }
 
 impl TableDef {
+    pub fn counter_space_id(&self) -> u32 {
+        self.counter_id.unwrap_or(self.space_id)
+    }
+
     pub fn has_lazy(&self) -> bool {
         self.indexes
             .iter()
@@ -521,6 +530,7 @@ impl TableDef {
             db: self.db.clone(),
             name: format!("{}{}_{}", GLOBAL_PREFIX, self.space_id, idx.id),
             space_id: idx.global.unwrap_or(0),
+            counter_id: None,
             columns,
             indexes: vec![IndexDef {
                 name: idx.name.clone(),
@@ -1086,6 +1096,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
         db: INFORMATION_SCHEMA.into(),
         name: if moves { "TARN_MOVES" } else { "TABLES" }.into(),
         space_id: INFORMATION_SCHEMA_SPACE,
+        counter_id: None,
         columns,
         indexes: vec![IndexDef {
             name: "PRIMARY".into(),
