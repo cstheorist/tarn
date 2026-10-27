@@ -117,6 +117,88 @@ pub fn parse(buf: &[u8]) -> Option<(Vec<Write<'_>>, Opts)> {
     Some((writes, opts))
 }
 
+/// A read of a commit, as far as its checks need: its table, and the bucket
+/// it was routed by (None: every shard's).
+#[derive(Debug, PartialEq)]
+pub struct Read {
+    pub space_id: u32,
+    pub bucket: Option<u64>,
+}
+
+/// tarn_commit_local's arguments (txid, writes, rpoints, rranges, lock_gen,
+/// fence, wb, mver), as far as its checks need.
+#[derive(Debug, Default, PartialEq)]
+pub struct Commit<'a> {
+    pub writes: Vec<Write<'a>>,
+    /// The points and ranges the transaction read here.
+    pub reads: Vec<Read>,
+    /// It holds row locks here (lock_gen): the Lua procedure checks them.
+    pub locks: bool,
+    pub fence: Vec<(u32, u64)>,
+    pub wb: Vec<u64>,
+    /// The membership version it was routed with, when it read every shard.
+    pub mver: Option<u64>,
+}
+
+/// tarn_commit_local's arguments: None for those it leaves to the Lua
+/// procedure, or does not read.
+pub fn parse_commit(buf: &[u8]) -> Option<Commit<'_>> {
+    let mut r = Rd::new(buf);
+    if r.array()? != 8 {
+        return None;
+    }
+    r.str()?;
+    let mut c = Commit::default();
+    let n = r.array()?;
+    c.writes.reserve((n as usize).min(buf.len()));
+    for _ in 0..n {
+        let w = write(&mut r)?;
+        // (a commit's writes are rows: inserts, replaces and deletes)
+        if w.op == Op::Update {
+            return None;
+        }
+        c.writes.push(w);
+    }
+    // points {space, index, key, bucket}, ranges {space, index, lo, hi,
+    // lo_incl, hi_incl, bucket}
+    for (len, skip) in [(4, 2), (7, 5)] {
+        for _ in 0..r.array()? {
+            if r.array()? != len {
+                return None;
+            }
+            let space_id = u32::try_from(r.uint()?).ok()?;
+            for _ in 0..skip {
+                r.skip()?;
+            }
+            let bucket = if r.nil() { None } else { Some(r.uint()?) };
+            c.reads.push(Read { space_id, bucket });
+        }
+    }
+    c.locks = !r.nil();
+    if c.locks {
+        r.skip()?;
+    }
+    if !r.nil() {
+        let k = r.array()?;
+        if k % 2 != 0 {
+            return None;
+        }
+        for _ in 0..k / 2 {
+            c.fence.push((u32::try_from(r.uint()?).ok()?, r.uint()?));
+        }
+    }
+    if !r.nil() {
+        for _ in 0..r.array()? {
+            c.wb.push(r.uint()?);
+        }
+    }
+    c.mver = if r.nil() { None } else { Some(r.uint()?) };
+    if r.peek().is_some() {
+        return None;
+    }
+    Some(c)
+}
+
 fn write<'a>(r: &mut Rd<'a>) -> Option<Write<'a>> {
     let len = r.array()?;
     let op = match r.str()? {
@@ -470,6 +552,67 @@ mod tests {
             assert!(parse(bad).is_none(), "{:x?}", bad);
         }
         assert!(parse(&[0x92, 0x90, 0x80]).is_some());
+    }
+
+    #[test]
+    fn parses_a_commit() {
+        // {txid, {insert, delete}, {point}, {range}, nil, {512, 3}, {7, 7}, nil}
+        let mut w = Wr::default();
+        w.array(8).str("T1");
+        w.array(2);
+        w.array(3).str("insert").uint(512).array(2).uint(1).double(5.0);
+        w.array(3).str("delete").uint(512).array(1).uint(2);
+        w.array(1).array(4).uint(512).uint(0).array(1).uint(9).uint(7);
+        w.array(1)
+            .array(7)
+            .uint(513)
+            .uint(1)
+            .raw(&[0xc0, 0x91, 0x05, 0xc3, 0xc2, 0xc0]);
+        w.raw(&[0xc0]);
+        w.array(2).uint(512).uint(3);
+        w.array(2).uint(7).uint(7);
+        w.raw(&[0xc0]);
+        let c = parse_commit(&w.0).unwrap();
+        assert_eq!(c.writes.len(), 2);
+        assert_eq!(
+            &c.writes[0].payload[..],
+            &[0x92, 0x01, 0x05][..],
+            "values as Lua stores them"
+        );
+        assert_eq!(
+            c.reads,
+            vec![
+                Read {
+                    space_id: 512,
+                    bucket: Some(7)
+                },
+                Read {
+                    space_id: 513,
+                    bucket: None
+                }
+            ]
+        );
+        assert!(!c.locks);
+        assert_eq!((c.fence, c.wb, c.mver), (vec![(512, 3)], vec![7, 7], None));
+        // row locks, a membership version
+        let mut w = Wr::default();
+        w.array(8)
+            .str("T2")
+            .array(0)
+            .array(0)
+            .array(0)
+            .str("g/1")
+            .array(0)
+            .array(0)
+            .uint(4);
+        let c = parse_commit(&w.0).unwrap();
+        assert!(c.locks && c.mver == Some(4));
+        // an update is not a commit's
+        let mut w = Wr::default();
+        w.array(8).str("T3").array(1);
+        w.array(4).str("update").uint(512).array(1).uint(1).array(0);
+        w.array(0).array(0).raw(&[0xc0, 0xc0, 0xc0, 0xc0]);
+        assert!(parse_commit(&w.0).is_none());
     }
 
     fn op(add: bool, field: u32, value: &[u8]) -> UpOp<'_> {
