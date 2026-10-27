@@ -1,0 +1,235 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 47 and seed 8887200185079429779 with 1 worker on 1 cores with 228MB heap and 64MB offheap memory [pid: 90] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/NativeKeyBatch.tla
+Parsing file /tmp/tlc-1378514405630691011/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1378514405630691011/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1378514405630691011/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1378514405630691011/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1378514405630691011/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1378514405630691011/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1378514405630691011/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module NativeKeyBatch
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module NativeKeyBatch
+line 23, col 11 to line 23, col 14 of module NativeKeyBatch
+
+The field name "work" in the record constructor is identical to the existing definition or declaration
+named work, located at line 34, col 33 to line 34, col 36 of module NativeKeyBatch.
+The field in the record will not take the value of the work definition or declaration.
+In TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.
+Therefore, DOMAIN [work |-> ...] = {"work"} holds true.
+
+
+
+line 23, col 35 to line 23, col 39 of module NativeKeyBatch
+
+The field name "bytes" in the record constructor is identical to the existing definition or declaration
+named bytes, located at line 34, col 39 to line 34, col 43 of module NativeKeyBatch.
+The field in the record will not take the value of the bytes definition or declaration.
+In TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.
+Therefore, DOMAIN [bytes |-> ...] = {"bytes"} holds true.
+
+
+
+line 24, col 11 to line 24, col 14 of module NativeKeyBatch
+
+The field name "work" in the record constructor is identical to the existing definition or declaration
+named work, located at line 34, col 33 to line 34, col 36 of module NativeKeyBatch.
+The field in the record will not take the value of the work definition or declaration.
+In TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.
+Therefore, DOMAIN [work |-> ...] = {"work"} holds true.
+
+
+
+line 24, col 35 to line 24, col 39 of module NativeKeyBatch
+
+The field name "bytes" in the record constructor is identical to the existing definition or declaration
+named bytes, located at line 34, col 39 to line 34, col 43 of module NativeKeyBatch.
+The field in the record will not take the value of the bytes definition or declaration.
+In TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.
+Therefore, DOMAIN [bytes |-> ...] = {"bytes"} holds true.
+
+
+
+line 25, col 11 to line 25, col 14 of module NativeKeyBatch
+
+The field name "work" in the record constructor is identical to the existing definition or declaration
+named work, located at line 34, col 33 to line 34, col 36 of module NativeKeyBatch.
+The field in the record will not take the value of the work definition or declaration.
+In TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.
+Therefore, DOMAIN [work |-> ...] = {"work"} holds true.
+
+
+
+line 25, col 35 to line 25, col 39 of module NativeKeyBatch
+
+The field name "bytes" in the record constructor is identical to the existing definition or declaration
+named bytes, located at line 34, col 39 to line 34, col 43 of module NativeKeyBatch.
+The field in the record will not take the value of the bytes definition or declaration.
+In TLA+, field names in records are strings, regardless of any similarly named declarations or definitions.
+Therefore, DOMAIN [bytes |-> ...] = {"bytes"} holds true.
+
+
+
+Starting... (2026-10-27 22:51:24)
+Computing initial states...
+Computed 2 initial states...
+Finished computing initial states: 3 distinct states generated at 2026-10-27 22:51:24.
+Error: Invariant OneSnapshot is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ out = <<>>
+/\ source = [a |-> 1, b |-> 0]
+/\ pos = 1
+/\ mustSee = FALSE
+/\ target = [a |-> 1, b |-> 0]
+/\ work = 0
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0]}
+/\ phase = "idle"
+/\ servedClaims = {}
+/\ writer = "idle"
+/\ bytes = 0
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {}
+
+State 2: <Start line 57, col 10 to line 63, col 73 of module NativeKeyBatch>
+/\ out = <<>>
+/\ source = [a |-> 1, b |-> 0]
+/\ pos = 1
+/\ mustSee = FALSE
+/\ target = [a |-> 1, b |-> 0]
+/\ work = 0
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "idle"
+/\ bytes = 0
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {}
+
+State 3: <PrepareWrite([a |-> 2, b |-> 2]) line 45, col 5 to line 47, col 67 of module NativeKeyBatch>
+/\ out = <<>>
+/\ source = [a |-> 1, b |-> 0]
+/\ pos = 1
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 0
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "prepared"
+/\ bytes = 0
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {"a", "b"}
+
+State 4: <AckWrite line 48, col 13 to line 49, col 67 of module NativeKeyBatch>
+/\ out = <<>>
+/\ source = [a |-> 1, b |-> 0]
+/\ pos = 1
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 0
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "acked"
+/\ bytes = 0
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {"a", "b"}
+
+State 5: <Get line 66, col 5 to line 78, col 50 of module NativeKeyBatch>
+/\ out = <<<<"a", 1>>>>
+/\ source = [a |-> 1, b |-> 0]
+/\ pos = 2
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 1
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "acked"
+/\ bytes = 2
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {"a", "b"}
+
+State 6: <ApplyWrite line 50, col 15 to line 52, col 80 of module NativeKeyBatch>
+/\ out = <<<<"a", 1>>>>
+/\ source = [a |-> 2, b |-> 2]
+/\ pos = 2
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 1
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0], [a |-> 2, b |-> 2]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "done"
+/\ bytes = 2
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {}
+
+State 7: <Get line 66, col 5 to line 78, col 50 of module NativeKeyBatch>
+/\ out = <<<<"a", 1>>, <<"b", 2>>>>
+/\ source = [a |-> 2, b |-> 2]
+/\ pos = 3
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 2
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0], [a |-> 2, b |-> 2]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "done"
+/\ bytes = 5
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {}
+
+State 8: <Get line 66, col 5 to line 78, col 50 of module NativeKeyBatch>
+/\ out = <<<<"a", 1>>, <<"b", 2>>, <<"a", 2>>>>
+/\ source = [a |-> 2, b |-> 2]
+/\ pos = 4
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 3
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0], [a |-> 2, b |-> 2]}
+/\ phase = "reading"
+/\ servedClaims = {}
+/\ writer = "done"
+/\ bytes = 7
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {}
+
+State 9: <Finish line 81, col 5 to line 85, col 73 of module NativeKeyBatch>
+/\ out = <<<<"a", 1>>, <<"b", 2>>, <<"a", 2>>>>
+/\ source = [a |-> 2, b |-> 2]
+/\ pos = 4
+/\ mustSee = FALSE
+/\ target = [a |-> 2, b |-> 2]
+/\ work = 3
+/\ cap = [work |-> 3, rows |-> 3, bytes |-> 7]
+/\ history = {[a |-> 1, b |-> 0], [a |-> 2, b |-> 2]}
+/\ phase = "done"
+/\ servedClaims = {}
+/\ writer = "done"
+/\ bytes = 7
+/\ required = [a |-> 1, b |-> 0]
+/\ claims = {}
+
+298 states generated, 174 distinct states found, 12 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-27 22:51:24)
+Trace exploration spec path: ./NativeKeyBatch_TTrace_1793141483.tla
