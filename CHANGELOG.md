@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
+  malformed frames, unsupported response types and unknown/duplicate SYNCs
+  retire the connection instead of certifying a result. Every length-prefix
+  width is bounded before payload allocation. Pushes retain the pending
+  request's identity, including after caller cancellation. A sent mutation
+  whose reply is invalid remains 1180/40003 and is never replayed.
+
 ### Added
 
 - Vinyl write admission ([#58](https://github.com/cstheorist/tarn/issues/58)):

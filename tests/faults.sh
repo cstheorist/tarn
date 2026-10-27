@@ -7,6 +7,8 @@
 # procedure's when the shard loaded it (the table is memtx), else
 # tarn_autocommit's. ENGINE=vinyl runs it on a vinyl table, TARN_NATIVE=0
 # without the native procedures.
+# TARN_FAULT_REPLY=invalid-type substitutes a forged retryable procedure error
+# under an invalid IPROTO response type after execution; it must not cause replay.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=${TARANTOOL:-tarantool}
@@ -49,6 +51,14 @@ c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="t", password=
 cur = c.cursor()
 for s in ["CREATE DATABASE f", "CREATE TABLE f.t (id INT PRIMARY KEY, v INT)", "INSERT INTO f.t VALUES (1, 0)"]:
     cur.execute(s)
+sqlstate = None
+raise_error = pymysql.err.raise_mysql_exception
+def capture_error(data):
+    global sqlstate
+    if len(data) >= 9 and data[3:4] == b'#':
+        sqlstate = data[4:9].decode('ascii')
+    raise_error(data)
+pymysql.err.raise_mysql_exception = capture_error
 try:
     cur.execute("UPDATE f.t SET v = v + 1 WHERE id = 1")
     print(f"UPDATE returned OK ({cur.rowcount} row)")
@@ -56,15 +66,21 @@ try:
 except pymysql.MySQLError as e:
     code = e.args[0]
     print(f"UPDATE failed: {e}")
+finally:
+    pymysql.err.raise_mysql_exception = raise_error
 cur.execute("SELECT v FROM f.t WHERE id = 1")
 v = cur.fetchone()[0]
 print(f"v = {v}")
-ok = code == 1180 and v == 1
-print("FAULTS TEST PASSED" if ok else "FAULTS TEST FAILED (want error 1180 and v = 1)")
+ok = code == 1180 and sqlstate == '40003' and v == 1
+print(f"SQLSTATE = {sqlstate}")
+print("FAULTS TEST PASSED" if ok else "FAULTS TEST FAILED (want 1180/40003 and v = 1)")
 sys.exit(0 if ok else 1)
 PY
 rc=$?
 cat "$W/proxy.log"
+if [ "${TARN_FAULT_REPLY:-drop}" = invalid-type ]; then
+  grep -q 'injected invalid response type after execution' "$W/proxy.log" || rc=1
+fi
 cleanup
 trap - EXIT
 [ $rc -eq 0 ] && rm -rf "$W" || echo "logs in $W"

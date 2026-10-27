@@ -113,11 +113,20 @@ reader task ◀── socket ◀── server ◀── writer task: swap wbuf o
   buffer. With a single request in flight there is nothing to wait for, so it
   flushes immediately and adds no latency at concurrency 1.
 * **Reader task:** it reads into a 128 KiB `BytesMut`, splits each complete
-  packet off as a frozen `Bytes` (no copy), parses only the header (type, sync,
-  schema version), and completes all waiters from one read under a single lock
-  acquisition. Error bodies are decoded later by the waiting caller.
-  `IPROTO_CHUNK` pushes are skipped, and replies for cancelled requests are
-  dropped.
+  packet off as a frozen `Bytes` (no copy), validates the header and the body
+  envelope, and completes all waiters from one read under a single lock
+  acquisition. Error messages are decoded later by the waiting caller.
+  Every frame-length encoding is checked against `BODY_LEN_MAX` before
+  reserving payload memory. Type and SYNC must be present exactly once;
+  only OK and the database-error family are terminal. A nonempty body is
+  one complete MessagePack map without trailing bytes.
+  `IPROTO_CHUNK` pushes are skipped only for an outstanding SYNC, including
+  a cancelled caller's retained entry; they never complete or fence a request.
+  The exact terminal reply drains that entry even when its receiver is gone.
+  Unknown/duplicate SYNCs, unsupported response types and malformed frames
+  retire the connection. No part of a batch with ambiguous correlation is
+  published as a database result. The handshake also requires unique owned
+  terminal replies.
 * **Connection death:** the reader or writer hits EOF or an error,
   `close()` is called explicitly, or the last `Client` clone is dropped. In
   each case the state is marked closed under the same lock used to register
@@ -125,6 +134,10 @@ reader task ◀── socket ◀── server ◀── writer task: swap wbuf o
   `Error::Closed`, both tasks are aborted and the socket closes; the server
   then rolls back open stream transactions. Later calls fail before encoding
   anything.
+  For a sent mutation, this failure is transport uncertainty, not a matched
+  retryable database error: the SQL layer reports 1180/40003 and never
+  replays it. These checks do not add admission limits or post-connect
+  deadlines; that separate work is tracked in [#127](https://github.com/cstheorist/tarn/issues/127).
 * **Ordering:** packets enter the buffer in call order. Tarantool runs the
   requests of one stream strictly in order, so `begin`, writes and `commit`
   may even be issued concurrently on the same stream.
@@ -139,8 +152,12 @@ of plain arrays.
 
 ## Tests
 
-`cargo test -p tarn-iproto` runs 12 unit tests and 18 integration tests,
-about 3 s in total. Each integration test starts its own Tarantool
+`cargo test -p tarn-iproto` includes codec tests, nine in-memory async
+transport tests and integration tests against Tarantool. The transport
+controls cover fragmented/coalesced and reordered replies, header and body
+corruption, oversized uint32/uint64 length prefixes before allocation,
+cancelled ownership, pushes, duplicate/unknown SYNCs and reusable database
+errors. Each integration test starts its own Tarantool
 (`$TARANTOOL`, default `tarantool`) in a temp dir
 with `tests/common/init.lua`: `listen = 127.0.0.1:0`,
 `memtx_use_mvcc_engine = true`, user `tarn`/`tarn` with super grants, and test
