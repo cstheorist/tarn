@@ -47,6 +47,7 @@ if not r.ro then
     if r.native and r.native.ready==1 then
         r.layout=tonumber(require('ffi').cast('struct tarn_ns *',box.func['tarn_storage.ts_state']:call()).layout)
         r.state_size=require('ffi').sizeof('struct tarn_ns')
+        r.fallback_offset=require('ffi').offsetof('struct tarn_ns','fallbacks')
     end
 end
 box.begin{txn_isolation='read-confirmed'}
@@ -70,7 +71,8 @@ local function state(i)
 end
 local function mode_ok(s)
     return s.check_locks == true and s.lock_copy_errors == 0 and
-        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 10 and s.state_size == 304
+        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 11 and s.state_size == 312
+            and s.fallback_offset == 304
         or mode == 'lua' and s.native == false)
 end
 local function leader()
