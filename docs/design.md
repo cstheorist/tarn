@@ -1797,6 +1797,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
+| Bug_UnconfirmedPrepare | violates CertifiedYesDurable | 6 | 6 | 4 | 00s | 4 |
 | Bug_VinylAdmissionGateAfterEffect | violates NoEffectRefusal | 4 | 4 | 2 | 00s | 2 |
 | Bug_VinylAdmissionNegativeCredit | violates NonnegativeCredit | 4 | 4 | 2 | 00s | 2 |
 | Bug_VinylAdmissionPerGatewayBudget | violates SharedBudget | 50 | 64 | 4 | 00s | 4 |
@@ -1833,6 +1834,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
+| PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
 | RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 04min 27s |  |

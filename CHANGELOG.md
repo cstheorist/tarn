@@ -421,6 +421,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A duplicate PREPARE on a participant without an open stream could vote
+  YES from an unconfirmed record, then lose that promise when the original
+  PREPARE rolled back. It now reads confirmed participant state while
+  retaining the read set of an existing stream. Quorum-overlap and stream
+  continuity controls cover both engines and both native modes.
+
 - A transaction whose row lock request a shard refused without granting
   anything (`NOWAIT`, a lock wait timeout) left row-lock state there when
   it then rolled back, or committed without that shard: the SQL server now
