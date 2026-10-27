@@ -5,6 +5,7 @@ local mp, vb, digest = require('msgpack'), require('varbinary'), require('digest
 local ffi = require('ffi')
 local M = {}
 local MAX_SEQ, BATCH, BYTES = 9007199254740991, 128, 1024 * 1024
+local RC = {txn_isolation = 'read-confirmed'}
 local MAX_U64 = ffi.new('uint64_t', MAX_SEQ)
 local MAX_I64 = ffi.cast('int64_t', MAX_U64)
 local function sequence(v)
@@ -685,7 +686,10 @@ function M.new(c)
         local flight
         local ok, result = pcall(function()
             flight = c.inflight_begin()
-            box.begin(c.rw)
+            -- A no-write ACK must rely only on confirmed marker, floor or
+            -- retirement state. RW visibility can expose a quorum-pending
+            -- version that later rolls back after this read-only call ACKs.
+            box.begin(RC)
             local ack, buckets, plans = {}, {}, {}
             for _, a in ipairs(assignments) do
                 if type(a) ~= 'table' or #a ~= 10 or type(a[9]) ~= 'boolean' or type(a[10]) ~= 'boolean'
@@ -1019,7 +1023,9 @@ function M.new(c)
             local flight
             local wrote, answer = pcall(function()
                 flight = c.inflight_begin()
-                box.begin(c.rw)
+                -- Never skip persisting a proven floor because a higher
+                -- but unconfirmed floor appears to cover these deletions.
+                box.begin(RC)
                 local d = box.space._tarn_lazy_defs:get{gen}
                 if d == nil or d.phase ~= 'ready' then bad(1412, 'Lazy generation changed during collection') end
                 local sp, plans, removed = box.space[gen], {}, 0
