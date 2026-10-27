@@ -760,6 +760,20 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 a `sb` user for the differential tests (or point `--ref` at any MariaDB
 10.11). `scripts/cluster.sh start -n 2 -r 1 -p 4000` starts a cluster.
 
+The heap-watchdog fixture retains the 40 MiB garbage/64 MiB margin setup,
+then stops pressure near 2 MiB free, keeping at least 1 MiB for native-core
+work. It requires a node-triggered collection, successful calls and a live
+lazy worker without a manual recovery collection. An isolated control
+that cancels only the heap-watchdog fiber fails the collection assertion
+under the same bounded pressure. Earlier unbounded pressure reproduced a
+native `cfg_get('read_only')` panic in both native and Lua modes; active
+and stopped lazy-worker controls did not establish worker causation.
+Tarantool's pinned [`cfg_get` implementation](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/cfg.c#L40)
+evaluates a Lua chunk and panics on a Lua error. The fixture verifies Tarn's
+near-limit garbage recovery with native-core headroom; it is not a proof
+that arbitrary privileged EVAL allocations can safely exhaust the hard
+Lua heap limit.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:
