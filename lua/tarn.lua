@@ -55,6 +55,8 @@ local M = {
         max_txn_age = 120.0,     -- PREPAREs of transactions older than this are refused
         clock_skew = 60.0,       -- assumed bound on clock differences between nodes
         gc_batch = 500,          -- records deleted per GC transaction
+        lazy_outbox_entries = 65536, -- committed plus PREPARE-promised assignments
+        lazy_outbox_bytes = 64 * 1024 * 1024,
         alter_check_rows = 1000000, -- ALTER TABLE refuses to check more existing rows than this per shard
         -- A read returns at most this many rows, or rows of this many bytes,
         -- per call; the SQL server continues it after the last one (issue #77).
@@ -170,6 +172,7 @@ local function ensure_schema()
     local scratch = box.schema.space.create('_tarn_scratch', {if_not_exists = true, type = 'data-temporary',
                                                               format = {{'k', 'unsigned'}}})
     scratch:create_index('pk', {parts = {'k'}, if_not_exists = true})
+    if M.lazy then M.lazy.schema() end
 end
 
 -------------------------------------------------------------------------------
@@ -189,7 +192,10 @@ local function index_key_def(space_id, index_id)
     return kd
 end
 
-local function invalidate_key_defs() kd_cache = {}; BK.fields = {} end
+local function invalidate_key_defs()
+    kd_cache = {}; BK.fields = {}
+    if M.lazy then M.lazy.invalidate() end
+end
 
 -- Canonical byte form of a key: the msgpack encoding of the key array.
 local function kbin(key) return msgpack.encode(key) end
@@ -474,16 +480,24 @@ end
 
 -- Rebuild the fences and the holds from storage before their next use (as
 -- after a restart or a leader change; tests).
-function M.stale_fences() FENCE_STALE = true; BK.ns_sync() end
+function M.stale_fences()
+    FENCE_STALE = true
+    if M.lazy then M.lazy.invalidate() end
+    BK.ns_sync()
+end
 
 -- Like lk_fresh: in a separate fiber, so that a caller inside a transaction
 -- gets no read trackers on _tarn_catalog.
 local function fence_fresh()
-    if not FENCE_STALE then return end
+    if not FENCE_STALE then
+        if M.lazy then M.lazy.fresh() end
+        return
+    end
     local f = fiber.new(fence_rebuild)
     f:set_joinable(true)
     local ok, err = f:join()
     if not ok then error(err) end
+    if M.lazy then M.lazy.fresh() end
 end
 
 local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
@@ -904,9 +918,11 @@ struct tarn_ns {
     double *wbytes;
     uint64_t *fences;
     uint64_t w_served, w_to_lua;
+    uint8_t capture_stale;
+    uint8_t *write_excluded;
 };
 ]]
-BK.NS_LAYOUT = 4
+BK.NS_LAYOUT = 5
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -978,6 +994,23 @@ end
 
 -- (tests: after changing cfg.scan_page_rows or scan_page_bytes)
 function M.ns_sync() BK.ns_sync() end
+-- ABI5: an unknown capture registry excludes every native write. Slots
+-- collide conservatively; a false positive only hands a write back to Lua.
+BK.lazy_stale, BK.lazy_excluded, BK.ns_write_excluded = true, {}, nil
+function BK.ns_lazy(excluded, stale)
+    if stale then
+        BK.lazy_stale = true
+        if BK.ns ~= nil then BK.ns.capture_stale = 1 end
+        return
+    end
+    local a = ffi.new('uint8_t[?]', BK.NS_SPACES)
+    for sid in pairs(excluded) do a[sid % BK.NS_SPACES] = 1 end
+    BK.lazy_stale, BK.lazy_excluded, BK.ns_write_excluded = false, excluded, a
+    if BK.ns ~= nil then
+        BK.ns.write_excluded = a
+        BK.ns.capture_stale = 0
+    end
+end
 -- (tests: a native commit in flight, or none)
 function M.ns_inflight(on)
     local ns = BK.ns
@@ -1022,6 +1055,7 @@ end
 -- false, or its file missing) the SQL servers call the Lua procedures.
 function BK.ns_init()
     if BK.ns ~= nil or not M.cfg.native then return end
+    if M.lazy then M.lazy.fresh() end
     local f = box.func['tarn_storage.ts_state']
     if f == nil then return end
     local ok, addr = pcall(f.call, f, {BK.NS_LAYOUT})
@@ -1045,6 +1079,7 @@ function BK.ns_init()
     BK.ns_fences = ffi.new('uint64_t[?]', BK.NS_SPACES)
     ns.fences = BK.ns_fences
     BK.ns = ns
+    BK.ns_lazy(BK.lazy_excluded, BK.lazy_stale)
     BK.ns_fence(nil)
     BK.ns_serves_all()
     BK.ns_sync()
@@ -2300,7 +2335,7 @@ end
 -- move a unique value from one row to another, and the row giving it up may
 -- come later. Returns the plans in the order of `writes`.
 function write_steps(writes)
-    local plans, todo = {}, {}
+    local plans, todo = {lazy_initial = M.lazy.initial(writes, write_target)}, {}
     for i = 1, #writes do todo[#todo + 1] = i end
     while true do
         local again, err = {}, nil
@@ -2390,7 +2425,7 @@ local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plan
     -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read under
     -- those locks, outside its stream: the locks must have survived.
     if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
-    local stale = stale_definition(fence)
+    local stale = stale_definition(fence) or M.lazy.guard(plans, fence, true)
     if stale then return stale end
     local h = reads_w_locked(txid, rpoints, rranges)
     if h then return conflict('read row locked by prepared transaction ' .. h) end
@@ -2419,6 +2454,7 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
         -- commit is then its own local transaction.
         if not box.is_in_txn() then box.begin(RW) end
         local plans, n = write_steps(writes), 0
+        M.lazy.capture(plans)
         for i = 1, #plans do
             if plans[i][P_RES] ~= nil then n = n + 1 end
         end
@@ -3308,7 +3344,8 @@ end
 -- the way (wait for it); 'locked': a prepared transaction's lock.
 local function autocommit_checks(fence, plans, wb)
     if not still_fresh() then return conflict(FRESH_MSG) end
-    local st = stale_definition(fence) or BK.commit_check(wb, nil, nil, false, plans)
+    local st = stale_definition(fence) or M.lazy.guard(plans, fence, true)
+               or BK.commit_check(wb, nil, nil, false, plans)
     if st then return st end
     if PL_N > 0 then
         for i = 1, #plans do
@@ -3348,6 +3385,7 @@ function tarn_autocommit(writes, opts)
             if stale then return stale end
             box.begin(RW)
             local plans, n, last = write_steps(writes), 0, nil
+            M.lazy.capture(plans)
             for i = 1, #writes do
                 local p = plans[i]
                 n = n + affected(writes[i][1], p[P_OLD], p[P_RES], found_rows)
@@ -3392,7 +3430,8 @@ end
 local function commit_rc_checks(txid, gen, fence, plans, wb)
     if not still_fresh() then return conflict(FRESH_MSG) end
     if not pl_intact(txid, gen) then return {'error', 1213, BROKEN_MSG} end
-    local st = stale_definition(fence) or BK.commit_check(wb, nil, nil, false, plans)
+    local st = stale_definition(fence) or M.lazy.guard(plans, fence, true)
+               or BK.commit_check(wb, nil, nil, false, plans)
     if st then return st end
     local h = writes_locked(txid, plans)
     if h then return {'locked', h} end
@@ -3427,6 +3466,7 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
             seq = inflight_begin()
             box.begin(RW)
             local plans, n = write_steps(writes), 0
+            M.lazy.capture(plans)
             for i = 1, #plans do
                 if plans[i][P_RES] ~= nil then n = n + 1 end
             end
@@ -3494,6 +3534,10 @@ local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock
     if not still_fresh() then return {1213, FRESH_MSG} end
     if not pl_intact(txid, lock_gen) then return {1213, BROKEN_MSG} end
     if stale_definition(fence) then return {1412, STALE_DEF_MSG} end
+    local capture = M.lazy.guard(plans, fence, true)
+    if capture then return {capture[2], capture[3]} end
+    capture = M.lazy.reserve(txid, plans)
+    if capture then return capture end
     -- The buckets: owned, not fenced by a move (it would wait for these
     -- locks), and no read of every shard missing a moving bucket's rows.
     local mv = BK.commit_check(wb, rpoints, rranges, true, plans, mver)
@@ -3796,6 +3840,7 @@ function tarn_apply(txid, retries)
             end
             later = again
         end
+        M.lazy.release(txid, true)
         release_locks(txid)
         box.space._tarn_part:replace{txid, 'applied', p.dshard, p.parts, now(), expiry()}
         box.commit()
@@ -3844,6 +3889,7 @@ function tarn_abort(txid, dshard, parts)
             end
             return {OK, p.state}
         end
+        M.lazy.release(txid, false)
         release_locks(txid)
         box.space._tarn_part:replace{txid, 'aborted', dshard or (p and p.dshard) or 0,
                                      parts or (p and p.parts) or {}, now(), expiry()}
@@ -4203,6 +4249,7 @@ function UIX.drop(sid)
 end
 
 function tarn_create_table(def)
+    if def.lazy ~= nil and #def.lazy > 0 then return {'error', 1412, 'Lazy indexes require the DDL job bootstrap'} end
     if box.space[def.name] ~= nil then
         return {'exists'}
     end
@@ -4213,6 +4260,8 @@ function tarn_create_table(def)
 end
 
 function tarn_drop_table(name)
+    local lazy = M.lazy.ddl_guard('legacy', name, {})
+    if lazy then return lazy end
     if box.space[name] ~= nil then
         UIX.drop(box.space[name].id)
         box.space[name]:drop()
@@ -4596,7 +4645,7 @@ function tarn_alter_prepare(name, a, gen)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
-    local fills = a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0
+    local fills = (a.uix ~= nil and a.uix ~= box.NULL and #a.uix > 0) or M.lazy.needs_bootstrap(a.def)
     if (a.checks ~= nil and a.checks ~= box.NULL and #a.checks > 0) or fills then
         -- Writes to the table wait while the rows are checked, or read to
         -- fill a new global index; vinyl's count is an estimate, which is
@@ -4667,7 +4716,7 @@ function tarn_alter_prepare(name, a, gen)
         -- (Creating them yields on the WAL: once more.)
         local r = UIX.record(sp.id)
         if r == nil or r.ver ~= a.ver or r.aborted or r.gen ~= gen then
-            for _, u in ipairs(a.uix) do
+            for _, u in ipairs(a.uix or {}) do
                 if box.space[u.id] ~= nil then box.space[u.id]:drop() end
             end
             return undo({'error', 1412, STALE_DEF_MSG})
@@ -4799,6 +4848,8 @@ function tarn_alter_apply(name, a, gen)
     -- Native RENAME may already have committed before a crash/retry. Its
     -- current name then is the target; the request still binds the old key.
     if name ~= sp.name then box.space._tarn_catalog:delete{name} end
+    M.lazy.retire(a.lazy_drop)
+    M.lazy.activate(a.def)
     box.space._tarn_catalog:replace{sp.name, a.def}
     box.space._tarn_meta:delete{'fence:' .. sp.id}
     box.commit()
@@ -4883,7 +4934,8 @@ UIX.alter_locks, UIX.alter_cond = {}, fiber.cond()
 function UIX.alter_admit(fn, op, name, a, gen, sid)
     writable()
     local current = alter_space(name, a)
-    if current == nil or current.id ~= sid or (type(a.def) == 'table' and a.def.id ~= nil
+    if current == nil or current.id ~= sid or (a.id ~= nil and a.id ~= box.NULL and a.id ~= current.id)
+       or (type(a.def) == 'table' and a.def.id ~= nil
        and a.def.id ~= box.NULL and a.def.id ~= current.id) then return {'error', 1412, STALE_DEF_MSG} end
     -- Admission is checked AFTER acquiring the lock. In particular, a
     -- delayed ordinary BUILD must not touch a newer job's reused IDs.
@@ -4897,7 +4949,12 @@ function UIX.alter_admit(fn, op, name, a, gen, sid)
             return {'error', 1412, STALE_DEF_MSG}
         end
     end
-    return fn(name, a, gen)
+    local lazy = M.lazy.ddl_guard(op, name, a)
+    if lazy then return lazy end
+    if op == 'prepare' then M.lazy.prepare(a.def, gen) end
+    local result = fn(name, a, gen)
+    if op == 'abort' and result[1] == OK and result[2] ~= 'applied' then M.lazy.abort(a.def) end
+    return result
 end
 function UIX.alter_serial(fn, op, name, a, gen)
     local sp = alter_space(name, a)
@@ -4957,18 +5014,21 @@ function tarn_alter_abort(name, a, gen) return UIX.alter_serial(UIX.alter_abort,
 -- not yet on another. Every step can be repeated.
 
 -- a = {def = the catalog entry, as tarn_create_table takes it}
-function tarn_create_prepare(name, a)
+function tarn_create_prepare(name, a, gen)
     writable()
     local sp = box.space[name]
     if sp ~= nil and sp.id ~= a.def.id then
         return {'error', 1050, "Table '" .. name .. "' already exists"}
     end
     create_space(a.def)   -- (again: whatever an earlier attempt left out)
+    M.lazy.prepare(a.def, gen)
     return {OK}
 end
 
 function tarn_create_apply(name, a)
     writable()
+    local lazy = M.lazy.ddl_guard('create_apply', name, a)
+    if lazy then return lazy end
     yield_point('ddl_apply')   -- tests: a shard that fails while it applies
     local sp = box.space[name]
     if sp ~= nil and sp.id ~= a.def.id then
@@ -4976,7 +5036,10 @@ function tarn_create_apply(name, a)
     end
     create_space(a.def)   -- (if anything is missing)
     if box.space._tarn_catalog:get{name} == nil then
+        box.begin(RW)
+        M.lazy.activate(a.def)
         box.space._tarn_catalog:replace{name, a.def}
+        box.commit()
         invalidate_key_defs()
         M.stats.creates = M.stats.creates + 1
     end
@@ -4985,9 +5048,12 @@ end
 
 function tarn_create_abort(name, a)
     writable()
+    local lazy = M.lazy.ddl_guard('abort', name, a)
+    if lazy then return lazy end
     local sp = box.space[name]
     if sp == nil or sp.id ~= a.def.id then return {OK} end
     if box.space._tarn_catalog:get{name} ~= nil then return {OK, 'applied'} end
+    M.lazy.abort(a.def)
     UIX.drop(sp.id)
     sp:drop()
     return {OK}
@@ -5005,8 +5071,11 @@ local function clear_target(op, name, a)
     return sp
 end
 
-local function clear_prepare(op, name, a)
+local function clear_prepare(op, name, a, gen)
     writable()
+    local lazy = M.lazy.ddl_guard(op == 'DROP' and 'drop' or 'truncate', name, a)
+    if lazy then return lazy end
+    if op == 'TRUNCATE' then M.lazy.prepare(a.def, gen) end
     local sp = clear_target(op, name, a)
     if sp == nil then
         if op == 'TRUNCATE' and box.space[name] == nil then return {'error', 1146, string.format(NO_TABLE, name)} end
@@ -5033,14 +5102,19 @@ end
 
 local function clear_apply(op, name, a)
     writable()
+    local lazy = M.lazy.ddl_guard(op == 'DROP' and 'drop' or 'truncate_apply', name, a)
+    if lazy then return lazy end
     yield_point('ddl_apply')   -- tests: a shard that fails while it applies
     local sp = box.space[name]
     if sp ~= nil and sp.id ~= a.id then sp = nil end
     if sp == nil then
+        M.lazy.retire(a.lazy_drop)
         if op == 'TRUNCATE' then return {'error', 1146, string.format(NO_TABLE, name)} end
         -- Dropped by an earlier APPLY: finish what it may have left.
         UIX.drop(a.id)
+        M.lazy.clear_versions(a.id)
         box.begin(RW)
+        box.space._tarn_lazy_capture:delete{a.id}
         local c = box.space._tarn_catalog:get{name}
         if c ~= nil and c.def.id == a.id then box.space._tarn_catalog:delete{name} end
         box.space._tarn_meta:delete{hold_key(a.id)}
@@ -5057,9 +5131,13 @@ local function clear_apply(op, name, a)
         if r[1] ~= OK or r[2] == 'applied' then return r end
     end
     if op == 'DROP' then
+        M.lazy.retire(a.lazy_drop)
         UIX.drop(sid)
         sp:drop()
+        yield_point('lazy_clear_schema')
+        M.lazy.clear_versions(sid)
         box.begin(RW)
+        box.space._tarn_lazy_capture:delete{sid}
         box.space._tarn_catalog:delete{name}
         box.space._tarn_meta:delete{hold_key(sid)}
         box.commit()
@@ -5073,7 +5151,11 @@ local function clear_apply(op, name, a)
     else
         for _, u in ipairs(UIX.spaces(sid)) do u:truncate() end
         sp:truncate()
+        yield_point('lazy_clear_schema')
+        M.lazy.clear_versions(sid)
         box.begin(RW)
+        M.lazy.retire(a.lazy_drop)
+        M.lazy.activate(a.def)
         box.space._tarn_catalog:replace{name, a.def}
         box.space._tarn_meta:delete{hold_key(sid)}
         box.commit()
@@ -5089,10 +5171,13 @@ end
 
 local function clear_abort(op, name, a)
     writable()
+    local lazy = M.lazy.ddl_guard(op == 'DROP' and 'drop' or 'abort', name, a)
+    if lazy then return lazy end
     local sp = box.space[name]
     if sp ~= nil and sp.id == a.id and op == 'TRUNCATE' and catalog_ver(name) >= a.ver then
         return {OK, 'applied'}
     end
+    if op == 'TRUNCATE' then M.lazy.abort(a.def) end
     box.space._tarn_meta:delete{hold_key(a.id)}
     if sp ~= nil and sp.id == a.id then
         fence_fresh()
@@ -5104,12 +5189,26 @@ local function clear_abort(op, name, a)
     return {OK}
 end
 
-function tarn_drop_prepare(name, a) return clear_prepare('DROP', name, a) end
-function tarn_drop_apply(name, a) return clear_apply('DROP', name, a) end
-function tarn_drop_abort(name, a) return clear_abort('DROP', name, a) end
-function tarn_truncate_prepare(name, a) return clear_prepare('TRUNCATE', name, a) end
-function tarn_truncate_apply(name, a) return clear_apply('TRUNCATE', name, a) end
-function tarn_truncate_abort(name, a) return clear_abort('TRUNCATE', name, a) end
+-- Clear uses native DDL too. Keep retries/finishers and source bootstrap
+-- under the same reentrant lock as ALTER until metadata publication/release.
+UIX.drop_prepare = function(name, a, gen) return clear_prepare('DROP', name, a, gen) end
+UIX.drop_apply = function(name, a) return clear_apply('DROP', name, a) end
+UIX.drop_abort = function(name, a) return clear_abort('DROP', name, a) end
+UIX.truncate_prepare = function(name, a, gen) return clear_prepare('TRUNCATE', name, a, gen) end
+UIX.truncate_apply = function(name, a) return clear_apply('TRUNCATE', name, a) end
+UIX.truncate_abort = function(name, a) return clear_abort('TRUNCATE', name, a) end
+function tarn_drop_prepare(name, a, gen) return UIX.alter_serial(UIX.drop_prepare, 'drop', name, a, gen) end
+function tarn_drop_apply(name, a, gen) return UIX.alter_serial(UIX.drop_apply, 'drop', name, a, gen) end
+function tarn_drop_abort(name, a, gen) return UIX.alter_serial(UIX.drop_abort, 'drop', name, a, gen) end
+function tarn_truncate_prepare(name, a, gen)
+    return UIX.alter_serial(UIX.truncate_prepare, 'truncate', name, a, gen)
+end
+function tarn_truncate_apply(name, a, gen)
+    return UIX.alter_serial(UIX.truncate_apply, 'truncate_apply', name, a, gen)
+end
+function tarn_truncate_abort(name, a, gen)
+    return UIX.alter_serial(UIX.truncate_abort, 'truncate', name, a, gen)
+end
 
 -------------------------------------------------------------------------------
 -- Jobs (on the first shard)
@@ -5337,6 +5436,8 @@ local function migrate_legacy_job()
 end
 
 function tarn_truncate(name)
+    local lazy = M.lazy.ddl_guard('legacy', name, {})
+    if lazy then return lazy end
     if box.space[name] ~= nil then
         for _, u in ipairs(UIX.spaces(box.space[name].id)) do u:truncate() end
         box.space[name]:truncate()
@@ -5436,6 +5537,7 @@ function BK.spaces()
             end
         end
     end
+    for _, id in ipairs(M.lazy.spaces()) do ids[#ids + 1] = id end
     table.sort(ids)
     return ids
 end
@@ -5692,6 +5794,11 @@ end
 function tarn_bucket_send_begin(b, to, move, timeout)
     writable()
     BK.fresh()
+    local lazy = M.lazy.move_ready(to)
+    if lazy then return lazy end
+    -- Capability discovery may yield or refresh a remote leader.
+    writable()
+    BK.fresh()
     local r = BK.locked(function()
         local s = BK.state[b]
         if not ((s == 'sending' or s == 'fenced') and BK.move[b] == move) then
@@ -5730,7 +5837,7 @@ function tarn_bucket_rows(b, after)
                 if sid == start and pos ~= nil and pos ~= box.NULL then opts.after = pos end
                 for _, t in idx:pairs({b}, opts) do
                     n = n + 1
-                    out[n] = {sid, t}
+                    out[n] = {M.lazy.wire_space(sid), t}
                     bytes = bytes + t:bsize()
                     if PG.full(n, bytes) then return {sid, idx:tuple_pos(t)} end
                 end
@@ -5757,7 +5864,7 @@ function tarn_bucket_recv_rows(b, move, rows)
         local changed = {}   -- {space id, key, tuple or nil}
         local ok, err = pcall(function()
             for _, r in ipairs(rows) do
-                local sid = r[1]
+                local sid = M.lazy.resolve_space(r[1])
                 if box.space[sid] ~= nil then
                     local tuple = r[2] ~= box.NULL and r[2] or nil
                     local key
@@ -5855,7 +5962,10 @@ function tarn_bucket_fence(b, move, timeout)
     end
     while true do
         lk_fresh()
-        if (BK.nl[b] or 0) == 0 then return {OK} end
+        if (BK.nl[b] or 0) == 0 then
+            if M.lazy.flush(b, deadline) then return {OK} end
+            return {'timeout', 1205, 'bucket lazy delivery has not drained'}
+        end
         if clock.monotonic() > deadline then
             M.stats.lock_timeouts = M.stats.lock_timeouts + 1
             return {'timeout', 1205, string.format(
@@ -5887,10 +5997,10 @@ function tarn_bucket_delta(b, move, gen, from)
             local t = sp ~= nil and sp:get(k[2]) or nil
             n = n + 1
             if t ~= nil then
-                out[n] = {k[1], t}
+                out[n] = {M.lazy.wire_space(k[1]), t}
                 bytes = bytes + t:bsize()
             else
-                out[n] = {k[1], box.NULL, k[2]}
+                out[n] = {M.lazy.wire_space(k[1]), box.NULL, k[2]}
             end
             i = i + 1
         end
@@ -5917,6 +6027,7 @@ function tarn_bucket_send(b, move)
             return r
         end
         if s ~= 'fenced' then return BK.unexpected(b, 'send') end
+        if M.lazy.bucket_obligations(b) ~= 0 then return {'timeout', 1205, 'bucket lazy obligations remain'} end
         local peer = BK.peer[b]
         local epoch
         box.begin(RW)
@@ -5959,7 +6070,7 @@ function tarn_bucket_recv(b, move)
         local ok, err = pcall(function()
             for _, t in box.space._tarn_recv:pairs({b}, {iterator = 'EQ'}) do
                 local sp = box.space[t.space_id]
-                if sp ~= nil then sp:replace(t.tuple) end
+                if sp ~= nil then M.lazy.import(sp, t.tuple) end
             end
             BK.clear_recv(b)
             epoch = BK.store(b, 'active', nil, move, true)
@@ -6050,6 +6161,7 @@ function tarn_shard_records(id)
         if p.dshard == id then n = n + 1 end
     end
     if id == M.cfg.shard_id then
+        n = n + M.lazy.obligations()
         n = n + box.space._tarn_txn.index.status:count({'staging'})
     end
     return {OK, n}
@@ -6172,14 +6284,28 @@ function tarn_schema_export()
         table.sort(idx, function(a, b) return a.id < b.id end)
         return {id = sp.id, name = sp.name, engine = sp.engine, format = sp:format(), indexes = idx}
     end
-    local out = {}
-    for _, t in box.space._tarn_catalog:pairs() do
-        local sp = box.space[t.name]
-        if sp ~= nil then
-            local uix = {}
-            for _, u in ipairs(UIX.spaces(sp.id)) do uix[#uix + 1] = space_of(u) end
-            out[#out + 1] = {name = t.name, def = t.def, space = space_of(sp), uix = uix}
+    BK.fresh()
+    local version, membership = box.info.schema_version, BK.mver
+    box.begin{txn_isolation = 'read-confirmed'}
+    local ok, out = pcall(function()
+        local tables = {}
+        for _, t in box.space._tarn_catalog:pairs() do
+            local sp = box.space[t.name]
+            if sp ~= nil then
+                local uix = {}
+                for _, u in ipairs(UIX.spaces(sp.id)) do uix[#uix + 1] = space_of(u) end
+                tables[#tables + 1] = {name = t.name, def = t.def, space = space_of(sp), uix = uix}
+            end
         end
+        local meta = M.lazy.export_meta(tables, version)
+        if meta ~= nil then table.insert(tables, 1, meta) end
+        return tables
+    end)
+    if box.is_in_txn() then box.rollback() end
+    if not ok then return failure(out) end
+    writable()
+    if version ~= box.info.schema_version or BK.stale or membership ~= BK.mver then
+        return {'error', 1412, 'Schema or membership changed during export'}
     end
     return {OK, out}
 end
@@ -6188,8 +6314,13 @@ end
 -- with the same space ids, formats and indexes: {'ok', n made}. Run again (a
 -- join that stopped is run again), it makes what is missing. Refused when
 -- this shard has other tables, or rows in these: it is no new shard.
-function tarn_schema_import(export)
+function tarn_schema_import(export, token)
     writable()
+    local valid, tables, lazy_meta = pcall(M.lazy.import_envelope, export, token)
+    if not valid then return failure(tables) end
+    export = tables
+    BK.fresh()
+    local membership = BK.mver
     yield_point('schema_import')   -- (tests: a join held before the shard has the tables)
     local want = {}
     for _, t in ipairs(export) do want[t.name] = true end
@@ -6227,8 +6358,10 @@ function tarn_schema_import(export)
     for _, t in ipairs(export) do
         make(t.space)
         for _, u in ipairs(t.uix or {}) do make(u) end
-        box.space._tarn_catalog:replace{t.name, t.def}
+        M.lazy.import_active(t.def)
     end
+    M.lazy.import_retired(lazy_meta)
+    if BK.stale or BK.mver ~= membership then return {'error', 1412, 'Membership changed during schema import'} end
     invalidate_key_defs()
     M.stale_fences()
     return {OK, n}
@@ -6315,6 +6448,7 @@ local function setup_when_writable()
 end
 
 function M.init(cfg)
+    M.lazy.quota_invalidate()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
     if not M.cfg.sync and not box.info.ro then
         setup_schema()          -- a single instance: before it serves requests
@@ -6324,17 +6458,62 @@ function M.init(cfg)
     box.space._space:on_replace(function() invalidate_key_defs() end)
     -- The lock index is maintained only while this instance is the leader;
     -- any election state change makes it stale (rebuilt before next use).
-    box.ctl.on_election(function() LK_STALE = true; FENCE_STALE = true; pl_fresh(); BK.reset() end)
+    box.ctl.on_election(function()
+        LK_STALE = true; FENCE_STALE = true
+        M.lazy.invalidate()
+        M.lazy.quota_invalidate()
+        pl_fresh(); BK.reset()
+    end)
     box.watch('box.status', function()   -- read-only changes
-        LK_STALE = true; FENCE_STALE = true; pl_fresh(); BK.reset()
+        LK_STALE = true; FENCE_STALE = true
+        M.lazy.invalidate()
+        M.lazy.quota_invalidate()
+        pl_fresh(); BK.reset()
         setup_when_writable()
     end)
     box.space._index:on_replace(function() invalidate_key_defs() end)
     box.session.on_disconnect(pl_on_disconnect)
     M.start_recovery()
+    M.lazy.start()
     PG.watch_heap()
     rawset(_G, 'tarn', M)
     return M
 end
+
+M.lazy = require('tarn_lazy').new{
+    cfg = M.cfg, bk = BK, rw = RW, failure = failure, writable = writable,
+    inflight_begin = inflight_begin, inflight_writes = inflight_writes, inflight_end = inflight_end,
+    atomic = atomic, hook = yield_point, exclude = BK.ns_lazy, call = on_shard,
+    quota_mark = function()
+        BK.quota_cut_valid = false
+        BK.quota_lua_cutoff = INFLIGHT_SEQ
+        BK.quota_native_cutoff = BK.ns ~= nil and BK.ns.commit_seq or nil
+        BK.quota_cut_valid = true
+    end,
+    quota_cut = function()
+        if not BK.quota_cut_valid then return false end
+        for seq in pairs(INFLIGHT) do if seq <= BK.quota_lua_cutoff then return false end end
+        local mark = BK.quota_native_cutoff
+        return mark == nil or BK.ns == nil or BK.ns.oldest_inflight > mark
+    end,
+}
+function tarn_lazy_bootstrap(name, a, gen)
+    a.ver = a.ver or a.def.ver or 0
+    return UIX.alter_serial(M.lazy.bootstrap, 'bootstrap', name, a, gen)
+end
+function tarn_lazy_bootstrap_status(name, a, gen) return M.lazy.bootstrap_status(name, a, gen) end
+function tarn_lazy_ready(name, a, gen)
+    a.ver = a.ver or a.def.ver or 0
+    return UIX.alter_serial(M.lazy.ready, 'ready', name, a, gen)
+end
+function tarn_lazy_capabilities() return M.lazy.capabilities() end
+function tarn_lazy_apply(assignments, route) return M.lazy.apply(assignments, route) end
+function tarn_lazy_frontiers(buckets, route) return M.lazy.frontiers(buckets, route) end
+function tarn_lazy_select(gen, key, iterator, limit, after, route)
+    return M.lazy.select(gen, key, iterator, limit, after, route)
+end
+function tarn_lazy_gc(gen, bucket, route) return M.lazy.gc(gen, bucket, route) end
+function tarn_lazy_stats() return M.lazy.stats() end
+function tarn_lazy_control(action, arg) return M.lazy.control(action, arg) end
 
 return M

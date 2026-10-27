@@ -1640,6 +1640,8 @@ do
     pcall(c[1].eval, c[1], 'collectgarbage() ' .. alloc .. '.setlimit(...)', {limit0})
     check('a heap of garbage at the limit is collected without a manual collect, and calls succeed',
           ok and info.stats.heap_collects > collects0, info and info.stats.heap_collects)
+    check('the lazy delivery worker survives recovered Lua heap pressure',
+          c[1]:eval('return tarn.lazy.worker ~= nil and tarn.lazy.worker:status() ~= "dead"'))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

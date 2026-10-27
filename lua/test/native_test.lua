@@ -445,6 +445,9 @@ local ssid = c:eval([[local s = box.schema.space.create('test_native_sync', {is_
     s:create_index('primary')
     s:create_index('bucket_id', {parts = {'bucket_id'}, unique = false})
     return s.id]])
+-- Schema creation stales capture independently of the sync predicate.
+-- Refresh it so this check reaches the sync-specific permanent fallback.
+c:eval('tarn.lazy.fresh()')
 n = c:call('tarn_storage.ts_autocommit', wargs(ssid, {{'insert', {1, b}}}))
 check('a write to a synchronous table: handed back, as every one will be', n[1] == 'lua' and n[2] == 'all', n)
 check('... having written nothing', c:eval('return box.space.test_native_sync:len()') == 0)
