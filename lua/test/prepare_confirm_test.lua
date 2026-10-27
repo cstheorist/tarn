@@ -117,11 +117,18 @@ for n, engine in ipairs({'memtx', 'vinyl'}) do
     s = c:new_stream()
     ok(s:call('tarn_select', {sid, 0, {1}, 'EQ', 1, box.NULL, false, false, box.NULL, true}))
     local stream_id = id .. '-good-stream'
-    yes = s:call('tarn_prepare', args(stream_id, ws, reads)); confirmed = state(sid, stream_id, 2)
+    local stream_args = args(stream_id, ws, reads)
+    yes = s:call('tarn_prepare', stream_args); confirmed = state(sid, stream_id, 2)
     check(engine .. ': an unchanged existing stream prepares its original transaction', yes[1] == 'yes'
           and confirmed.part == 'prepared' and confirmed.reservations == 1 and not confirmed.row, {yes, confirmed})
-    yes = tarn_prepare(unpack(args(stream_id, ws, reads)))
+    yes = tarn_prepare(unpack(stream_args))
     check(engine .. ': confirmed stream PREPARE can be revoted outside its stream', yes[1] == 'yes', yes)
+    local max_age = tarn.cfg.max_txn_age
+    tarn.cfg.max_txn_age = .01; fiber.sleep(.02)
+    yes = tarn_prepare(unpack(stream_args))
+    tarn.cfg.max_txn_age = max_age
+    check(engine .. ': known durable YES is revoted before expiry and missing-stream checks',
+          yes[1] == 'yes' and state(sid, stream_id, 2).part == 'prepared', yes)
     assert(tarn_txn_cas(stream_id, 'staging', 'committed', {1}) == 'committed'); ok(tarn_apply(stream_id))
     local events, route = ok(tarn_lazy_control('pending'))[2], {}
     for _, e in ipairs(events) do route[#route + 1] = e[5] end
@@ -130,6 +137,34 @@ for n, engine in ipairs({'memtx', 'vinyl'}) do
           box.space[sid]:get{1}[2] == 8 and box.space[sid]:get{2}[2] == 9
           and box.space._tarn_lazy_reservation:count() == 0 and #ok(tarn_lazy_control('pending'))[2] == 0)
     pcall(s.rollback, s)
+    -- An expired request without its original stream must not create an
+    -- ABORT fence. In particular, normal record GC can remove an already
+    -- committed transaction's history: the late frame must leave it gone.
+    tarn.cfg.max_txn_age = .01
+    local absent_id = id .. '-expired-absent'
+    local late_args = args(absent_id, {{'replace', sid, {2, 99, n}}}, reads)
+    late_args[7] = stream_args[7]
+    local expired = tarn_prepare(unpack(late_args))
+    local absent = state(sid, absent_id, 2)
+    check(engine .. ': expired missing-stream request creates no new history or business effects',
+          expired[1] == 'expired' and absent.part == 'none' and absent.decision == 'none'
+          and absent.locks == 0 and absent.reservations == 0 and absent.row[2] == 9
+          and #ok(tarn_lazy_control('pending'))[2] == 0, {expired, absent})
+    confirmed = state(sid, stream_id, 2)
+    assert(confirmed.part == 'applied' and confirmed.decision == 'committed'
+           and confirmed.locks == 0 and confirmed.reservations == 0 and confirmed.row[2] == 9,
+           'GC fixture must first complete its real read/write transaction')
+    box.begin{txn_isolation = 'read-confirmed'}
+    box.space._tarn_part:delete{stream_id}
+    box.space._tarn_txn:delete{stream_id}
+    box.commit()
+    expired = tarn_prepare(unpack(stream_args))
+    local collected = state(sid, stream_id, 2)
+    tarn.cfg.max_txn_age = max_age
+    check(engine .. ': expired committed history stays collected after late read-set PREPARE',
+          expired[1] == 'expired' and collected.part == 'none' and collected.decision == 'none'
+          and collected.locks == 0 and collected.reservations == 0 and collected.row[2] == 9
+          and #ok(tarn_lazy_control('pending'))[2] == 0, {expired, collected})
 end
 c:close()
 print(string.format('%d passed, %d failed', pass, fail))

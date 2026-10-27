@@ -42,6 +42,11 @@ DEFAULT="$DEFAULT VinylAdmission Bug_VinylAdmissionPerGatewayBudget Bug_VinylAdm
 Bug_VinylAdmissionNegativeCredit Bug_VinylAdmissionThrottleExistingYes Bug_VinylAdmissionThrottleDecidedApply
 Bug_VinylAdmissionReplayUnknown Bug_VinylAdmissionResetFullBurst"
 DEFAULT="$DEFAULT PrepareConfirm Bug_UnconfirmedPrepare"
+
+DEFAULT="$DEFAULT StreamMarks Bug_StreamMarksRoAfterTermChange Bug_StreamMarksWritableBeforeTrigger
+Bug_StreamMarksNativeNoTermCheck Bug_StreamMarksNativeIgnoresLkStale Bug_StreamMarksLuaNoTermCheck
+Bug_StreamMarksLuaTermCheckEarly Bug_StreamMarksValidateNoFenceFresh Bug_StreamMarksCommitInNewTxn
+Bug_StreamMarksDoomBeforeClear Bug_StreamMarksDoomAfterCommit"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

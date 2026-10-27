@@ -1,6 +1,6 @@
 target/
 *.log
 tla/states/
-tla/MC_TTrace_*
+tla/*_TTrace_*
 __pycache__/
 tla/tla2tools.jar

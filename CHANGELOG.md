@@ -17,6 +17,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compaction, run and admission statistics. See
   [the operational limits and measurements](docs/operations.md#vinyl-write-admission).
 
+- `tla/StreamMarks.tla` models how a shard knows that a stream began in
+  its current election term and after any `TRUNCATE` or `DROP TABLE` of a
+  table it read (the transaction numbers `TERM_TXN` and `DDL_TXN`), for the
+  Lua procedures that commit a stream's reads and for the native ones, with
+  the premises of Tarantool's elections that the native ones rely on. TLC
+  must fail each of its ten protection switches
+  ([#120](https://github.com/cstheorist/tarn/issues/120)).
+
 - Lazy secondary indexes ([#82](https://github.com/cstheorist/tarn/issues/82)):
   `COMMENT 'tarn:lazy'` on a non-unique key creates an asynchronous global
   copy while retaining the strong local index. Eligible nonlocking
@@ -429,6 +437,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retaining the read set of an existing stream. Quorum-overlap and stream
   continuity controls cover both engines and both native modes.
 
+
+- A local commit or PREPARE of the reads of a stream that began before the
+  shard's leader was demoted and elected again is refused, as a validation
+  is: the stream may have missed writes of the leader in between. They
+  relied on MVCC there, and on Tarantool electing no node that misses a
+  confirmed write. Both also refuse reads whose stream's transaction no
+  longer exists, which they committed in a new transaction
+  ([#120](https://github.com/cstheorist/tarn/issues/120)).
 - `tarn_validate` checks that the node has been the leader since the
   stream began right before its probe write. It checked before reading the
   lock index again, which may yield: a node demoted meanwhile could still

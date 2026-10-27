@@ -1222,9 +1222,12 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     // without one; tuples are copied before anything else runs.
     unsafe {
         let undo = if box_txn() {
-            // (a TRUNCATE or DROP TABLE applied since the stream began:
-            // reads_ddl_conflict, with the tables read)
-            if txn_number() < s.ddl_txn {
+            // (a new election term since the stream began, which the Lua
+            // procedure refuses: BK.stream_lost; a TRUNCATE or DROP TABLE
+            // applied since, which it checks against the tables read:
+            // reads_ddl_conflict)
+            let id = txn_number();
+            if id < s.term_txn || id < s.ddl_txn {
                 return None;
             }
             Undo::Savepoint(Savepoint::take()?)

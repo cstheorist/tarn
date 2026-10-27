@@ -1,0 +1,239 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=33957 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 43 and seed -2624506635400208764 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 10675] (Linux 6.18.44-fc-v165 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-spec/tla/StreamMarks.tla
+Parsing file /tmp/tlc-5569367745237724403/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5569367745237724403/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5569367745237724403/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5569367745237724403/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-5569367745237724403/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5569367745237724403/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5569367745237724403/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module StreamMarks
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module StreamMarks
+Starting... (2026-10-27 08:57:54)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 08:57:55.
+Error: Invariant CommittedReadsCurrent is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "none")
+/\ ddls = 0
+/\ sid = (s1 :> 0 @@ s2 :> 0)
+/\ began = (s1 :> 0 @@ s2 :> 0)
+/\ heldCache = (A :> FALSE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 0)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 1
+/\ st = (s1 :> "none" @@ s2 :> "none")
+/\ trig = FALSE
+/\ heldStore = (A :> FALSE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 1000))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 2: <Begin(s2) line 118, col 5 to line 121, col 94 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "none")
+/\ ddls = 0
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> FALSE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 0)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "open")
+/\ trig = FALSE
+/\ heldStore = (A :> FALSE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 1000))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 3: <Read(s2,A) line 126, col 5 to line 128, col 95 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "none")
+/\ ddls = 0
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> FALSE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 0)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "open")
+/\ trig = FALSE
+/\ heldStore = (A :> FALSE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 0))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 4: <Hold(A) line 243, col 5 to line 247, col 82 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "held")
+/\ ddls = 1
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> TRUE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 0)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "open")
+/\ trig = FALSE
+/\ heldStore = (A :> TRUE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 0))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 5: <Clear(A) line 267, col 5 to line 270, col 93 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "cleared")
+/\ ddls = 1
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> TRUE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 1)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "open")
+/\ trig = FALSE
+/\ heldStore = (A :> TRUE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 0))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 6: <CatalogCommit(A,FALSE) line 280, col 5 to line 282, col 98 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "failed")
+/\ ddls = 1
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> TRUE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 1)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "open")
+/\ trig = FALSE
+/\ heldStore = (A :> TRUE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 0))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 7: <Rerun(A) line 296, col 5 to line 299, col 49 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 0)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "none")
+/\ ddls = 1
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> FALSE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 1)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "open")
+/\ trig = FALSE
+/\ heldStore = (A :> FALSE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 0))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 0))
+/\ terms = 0
+
+State 8: <NativeStep(s2) line 148, col 5 to line 155, col 77 of module StreamMarks>
+/\ vterm = (s1 :> 0 @@ s2 :> 1)
+/\ vheld = (s1 :> (A :> FALSE) @@ s2 :> (A :> FALSE))
+/\ apply = (A :> "none")
+/\ ddls = 1
+/\ sid = (s1 :> 0 @@ s2 :> 1)
+/\ began = (s1 :> 0 @@ s2 :> 1)
+/\ heldCache = (A :> FALSE)
+/\ ddlLast = 0
+/\ ro = FALSE
+/\ lastTerm = 1
+/\ ver = (A :> 1)
+/\ lkStale = FALSE
+/\ other = FALSE
+/\ next = 2
+/\ st = (s1 :> "none" @@ s2 :> "done")
+/\ trig = FALSE
+/\ heldStore = (A :> FALSE)
+/\ fenceStale = FALSE
+/\ term = 1
+/\ ddlTxn = (A :> 0)
+/\ termTxn = 0
+/\ seen = (s1 :> (A :> 1000) @@ s2 :> (A :> 0))
+/\ vver = (s1 :> (A :> 0) @@ s2 :> (A :> 1))
+/\ terms = 0
+
+44345 states generated, 20376 distinct states found, 13097 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 01s at (2026-10-27 08:57:55)
+Trace exploration spec path: ./StreamMarks_TTrace_1793105874.tla

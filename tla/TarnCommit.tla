@@ -597,6 +597,8 @@ Prepare(t, s) ==
     \* record, and no vote either -- a (re-delivered) PREPARE may meet a
     \* participant whose records were already collected, so a NO here could
     \* contradict a commit.  The coordinator treats the reply as unknown.
+    \* Every fresh implementation NO/tombstone guard, including a missing
+    \* stream, follows this expiry check; old committed records may be GCed.
     /\ t \notin expired
     /\ IF readsOK /\ writesOK /\ recOK /\ ownOK /\ InsertsFree(IKeysOn(t, s))
        THEN /\ locks' = [locks EXCEPT ![s] = @ \cup newLocks]
