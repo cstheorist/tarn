@@ -37,6 +37,7 @@ Bug_LazyMeterRefundUncertain Bug_LazyMeterMutateUnknown Bug_LazyMeterNoDrain
 Bug_LazyMeterNoQueueCut Bug_LazyMeterStaleInstall Bug_LazyMeterStaleCallback Bug_LazyMeterApplyCap"
 DEFAULT="$DEFAULT LazyTargetConfirm Bug_UnconfirmedAck"
 DEFAULT="$DEFAULT LazyApplyConfirm Bug_UnconfirmedApply"
+DEFAULT="$DEFAULT BootstrapCount Bug_CountsAuxMetadata"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

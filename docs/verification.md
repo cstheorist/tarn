@@ -687,13 +687,53 @@ tla/check.sh LazyApplyConfirm Bug_UnconfirmedApply
 | `LazyApplyConfirm` | 14 | 7 | passes |
 | `Bug_UnconfirmedApply` | 10 | 5 | violates `OwnReadSafe` |
 
-The default list now contains 122 configurations, including 83 expected
-broken/trade-off outcomes. The lazy-index refinements account for 51 of
-those configurations: eight positive cases and 43 controls. The 132
-generated configurations reproduce from `gen_cfgs.sh`; two additional
-grouped-read configurations are maintained directly, for 134 total.
-All 132 previous configuration files are unchanged. Explicit check
-arguments still override the default list.
+### Bootstrap count reports and auxiliary metadata
+
+`BootstrapCount.tla` checks the boundary between a storage shard's no-map
+report and the coordinator's later initialization decision. Internal lazy
+counter/version/floor spaces participate in bucket transport, but their
+presence does not mean a legacy user table exists. Counting those spaces
+as user tables makes an otherwise new cluster choose the legacy 3,000
+bucket default instead of 30,000.
+
+Two shards report independently, in either order; a separate coordinator
+action consumes the complete reports. The bounded fixture varies user
+table presence, auxiliary metadata, legacy rows, coherent existing maps,
+and explicit configuration. It checks existing-map precedence, configured
+count precedence when no map exists, the legacy count for real user
+tables, and the fresh default when only auxiliary metadata exists. A
+stored legacy row's abstract routing hash also retains its bucket when
+the legacy count is inferred. `Bug_CountsAuxMetadata` changes the storage
+report, leaving the coordinator unchanged; the trace reports a false user
+table on one auxiliary-only shard and then chooses 3,000.
+
+The model assumes stable committed table presence during these reports
+and mutually consistent existing map counts. It does not prove concurrent
+DDL/bootstrap serialization, conflicting-map reconciliation, the CRC
+implementation, or migration between configured counts. The existing
+`tests/bucketcount.sh` integration test is the runtime gate: configured,
+legacy with persisted rows, fresh empty, and fresh configured clusters,
+including row lookup/write routing and complete ownership ranges. Source
+refinement must exclude auxiliary metadata only from the no-map table
+presence report; ordinary bucket copy/send enumeration must retain it.
+The commit and previous refinement models/configurations are unchanged.
+
+```sh
+tla/check.sh BootstrapCount Bug_CountsAuxMetadata
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `BootstrapCount` | 2,160 | 4 | passes |
+| `Bug_CountsAuxMetadata` | 1,741 | 4 | violates `NewClusterDefault` |
+
+The default list now contains 124 configurations, including 84 expected
+broken/trade-off outcomes. The lazy-index and bootstrap refinements
+account for 53 of those configurations: nine positive cases and 44
+controls. The 134 generated configurations reproduce from `gen_cfgs.sh`;
+two additional grouped-read configurations are maintained directly, for
+136 total. All 134 previous configuration files are unchanged. Explicit
+check arguments still override the default list.
 
 ## Verus proofs
 
