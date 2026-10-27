@@ -1714,6 +1714,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 |---|---|---:|---:|---:|---|---:|
 | Backfill | no errors | 3757 | 7686 | 21 | 00s |  |
 | BackfillDDL | no errors | 33 | 42 | 11 | 00s |  |
+| BootstrapCount | no errors | 2160 | 2592 | 4 | 00s |  |
 | Bug_BackfillAbortAfterApply | violates PublishedIndexCorrect | 1249 | 2126 | 11 | 00s | 11 |
 | Bug_BackfillDDLNoFinisherSerialization | violates PublishedIndexMatches | 65 | 90 | 9 | 00s | 9 |
 | Bug_BackfillDDLNoQuiescence | violates NoLateAbortedIndex | 33 | 42 | 6 | 00s | 6 |
@@ -1726,6 +1727,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
+| Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
