@@ -1,6 +1,6 @@
 [package]
 name = "tarn-verified"
-description = "Verus-verified parts of Tarn: shard routing, commit decisions, MySQL wire codec, MessagePack codec"
+description = "Verus-verified parts of Tarn: shard routing, commit decisions, MySQL wire codec, MessagePack codec, native lock checks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
