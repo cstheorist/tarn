@@ -226,6 +226,11 @@ pub struct Txn {
     pub lock_timeout: f64,
     /// Shards where this transaction holds row locks.
     pub plocks: BTreeMap<usize, ShardLocks>,
+    /// Shards its row lock requests went to, whatever came of them: there
+    /// the shard may keep row-lock state of the transaction even when it
+    /// granted nothing (a refused request, a lost reply), which ends with
+    /// the transaction (`tarn_unlock`, or the Lua procedures' commits).
+    pub lock_shards: BTreeSet<usize>,
     /// SAVEPOINTs: name and the write buffer when it was set.
     pub savepoints: Vec<(String, BTreeMap<(u32, Bytes), BufWrite>)>,
     pub streams: BTreeMap<usize, Stream>,
@@ -291,6 +296,7 @@ impl Txn {
             mode,
             lock_timeout,
             plocks: BTreeMap::new(),
+            lock_shards: BTreeSet::new(),
             savepoints: Vec::new(),
             streams: BTreeMap::new(),
             writes: BTreeMap::new(),
@@ -351,6 +357,7 @@ impl Txn {
         self.encode_lock_opts(&mut m, cluster, o, &held);
         // NOWAIT and SKIP LOCKED requests never queue.
         let _waiting = (!o.nowait && !o.skip).then(|| cluster.lock_request(&self.id, shard, held));
+        self.lock_shards.insert(shard);
         // Lock requests change nothing that a resend could duplicate: a lost
         // reply just fails the statement (the locks are released with the
         // transaction).
@@ -468,6 +475,7 @@ impl Txn {
             for req in reqs {
                 let client = self.conn(cluster, req.0).await?;
                 let (m, held) = encode(self, req);
+                self.lock_shards.insert(req.0);
                 let r = {
                     let _waiting = cluster.lock_request(&self.id, req.0, held);
                     client.call(0, "tarn_lock_range", &m.0).await
@@ -491,6 +499,7 @@ impl Txn {
             };
             calls.push((client, encode(self, req).0));
         }
+        self.lock_shards.extend(reqs.iter().map(|r| r.0));
         let replies =
             futures::future::join_all(calls.iter().map(|(client, m)| client.call(0, "tarn_lock_range", &m.0))).await;
         let mut first_err = None;
@@ -555,9 +564,27 @@ impl Txn {
         let _ = cluster.call(shard, "tarn_unlock", &m.0).await;
     }
 
+    /// The shards where this transaction may hold row locks, or row-lock
+    /// state (see `lock_shards`), forgotten here: the caller releases them.
+    fn take_lock_shards(&mut self) -> Vec<usize> {
+        let mut s = std::mem::take(&mut self.lock_shards);
+        s.extend(std::mem::take(&mut self.plocks).into_keys());
+        s.into_iter().collect()
+    }
+
+    /// Only request-only nonparticipants need an explicit unlock after a
+    /// successful commit. Participants either released their locks already
+    /// or still need them until recovery finishes the known-committed APPLY.
+    fn take_extra_lock_shards(&mut self, parts: &BTreeSet<usize>) -> Vec<usize> {
+        self.take_lock_shards()
+            .into_iter()
+            .filter(|p| !parts.contains(p))
+            .collect()
+    }
+
     /// Release every row lock of this transaction (best effort).
     async fn release_plocks(&mut self, cluster: &Arc<Cluster>) {
-        let shards: Vec<usize> = std::mem::take(&mut self.plocks).into_keys().collect();
+        let shards = self.take_lock_shards();
         let mut m = Mp::new();
         m.arr(1).str(&self.id);
         let futs = shards.iter().map(|&s| cluster.call(s, "tarn_unlock", &m.0));
@@ -817,23 +844,30 @@ impl Txn {
 
     /// Roll back every open stream and release the row locks (best effort,
     /// nothing to wait for).
-    pub fn rollback(self, cluster: &Arc<Cluster>) {
-        for (_, s) in self.streams {
+    pub fn rollback(mut self, cluster: &Arc<Cluster>) {
+        for (_, s) in std::mem::take(&mut self.streams) {
             tokio::spawn(async move {
                 let _ = s.client.rollback(s.id).await;
             });
         }
-        if !self.plocks.is_empty() {
-            let c = cluster.clone();
-            let id = self.id.clone();
-            let shards: Vec<usize> = self.plocks.into_keys().collect();
-            tokio::spawn(async move {
-                let mut m = Mp::new();
-                m.arr(1).str(&id);
-                let futs = shards.iter().map(|&s| c.call(s, "tarn_unlock", &m.0));
-                let _ = futures::future::join_all(futs).await;
-            });
+        let shards = self.take_lock_shards();
+        self.unlock_later(cluster, shards);
+    }
+
+    /// Release this transaction's row locks on `shards` in the background
+    /// (best effort, nothing to wait for).
+    fn unlock_later(&self, cluster: &Arc<Cluster>, shards: Vec<usize>) {
+        if shards.is_empty() {
+            return;
         }
+        let c = cluster.clone();
+        let id = self.id.clone();
+        tokio::spawn(async move {
+            let mut m = Mp::new();
+            m.arr(1).str(&id);
+            let futs = shards.iter().map(|&s| c.call(s, "tarn_unlock", &m.0));
+            let _ = futures::future::join_all(futs).await;
+        });
     }
 
     pub async fn commit(mut self, cluster: &Arc<Cluster>) -> SqlResult<CommitOutcome> {
@@ -843,6 +877,9 @@ impl Txn {
         }
         let parts = self.participants();
         if parts.is_empty() {
+            // (lock requests that granted nothing, if any)
+            let shards = self.take_lock_shards();
+            self.unlock_later(cluster, shards);
             return Ok(CommitOutcome::default());
         }
         let lazy_buckets = self
@@ -869,10 +906,11 @@ impl Txn {
             self.commit_2pc(cluster, &parts).await
         };
         if res.is_ok() {
-            // Ownership of remaining prepared locks belongs to durable
-            // recovery. Session disconnection must not abort that decision.
-            self.plocks.clear();
-        } else if !self.plocks.is_empty() {
+            // Durable recovery owns any participant locks whose APPLY is
+            // pending; only extra lock requests may be unlocked here.
+            let rest = self.take_extra_lock_shards(&parts);
+            self.unlock_later(cluster, rest);
+        } else if !self.plocks.is_empty() || !self.lock_shards.is_empty() {
             self.release_plocks(cluster).await;
         }
         if let Err(e) = &res {
@@ -948,7 +986,11 @@ impl Txn {
         encode_buckets(&mut m, &wb);
         self.encode_mver(&mut m);
         let shard_id = cluster.shards[shard].id;
-        let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
+        let r = match self.call_native_commit(&client, id, shard, &m.0).await {
+            Some(r) => r,
+            None => client.call(id, "tarn_commit_local", &m.0).await,
+        };
+        let r = r.map_err(|e| match e {
             // The commit may have happened: report the outcome as unknown.
             e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => ambiguous(shard_id, &e),
             e => from_iproto(e),
@@ -962,6 +1004,53 @@ impl Txn {
                 Err(e)
             }
         }
+    }
+
+    /// The shard's native procedure makes the one-shard commits it can
+    /// without Lua (crates/tarn-storage/src/procs.rs `commit_local`), also in
+    /// the transaction's stream, and hands the others back ("lua") having
+    /// written nothing, its stream transaction and reads as they were: its
+    /// reply, or None for a commit handed back, or not sent to it -- one that
+    /// writes a vinyl table or needs lazy outbox capture; one that sent row
+    /// lock requests to the shard, whose row-lock state there only the Lua
+    /// procedure releases (it hands back those that hold locks); or to a
+    /// shard without it, which the connection notes. Its errors are
+    /// tarn_commit_local's.
+    async fn call_native_commit(
+        &self,
+        client: &Client,
+        stream: u64,
+        shard: usize,
+        args: &[u8],
+    ) -> Option<Result<tarn_iproto::Response, tarn_iproto::Error>> {
+        use tarn_iproto::errcode::{
+            ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
+        };
+        if client.marked(MARK_NO_NATIVE_COMMIT) || !self.native_commit_eligible(shard) {
+            return None;
+        }
+        match client.call(stream, "tarn_storage.ts_commit_local", args).await {
+            Ok(r) => match r.data() {
+                Some(d) if crate::mpw::status_is(&d, "lua") => None,
+                _ => Some(Ok(r)),
+            },
+            Err(tarn_iproto::Error::Server {
+                code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                message,
+            }) => {
+                tracing::debug!("native commits unavailable on this shard: {}", message);
+                client.mark(MARK_NO_NATIVE_COMMIT);
+                None
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+
+    fn native_commit_eligible(&self, shard: usize) -> bool {
+        !self.lock_shards.contains(&shard)
+            && !self.writes.values().any(|w| {
+                w.shard == shard && (!matches!(w.table.engine, crate::catalog::Engine::Memtx) || w.table.has_lazy())
+            })
     }
 
     /// READ COMMITTED, one shard: `tarn_commit_rc` checks that the row locks
@@ -1705,9 +1794,96 @@ pub async fn select_rows(
 /// read procedure.
 const MARK_NO_NATIVE_SELECT: u32 = 0;
 
+/// The mark of a connection to a shard without the native commit procedure
+/// (session.rs has 1, for the native autocommit procedure).
+const MARK_NO_NATIVE_COMMIT: u32 = 2;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_txn() -> Txn {
+        Txn {
+            id: "test/1".into(),
+            ts: 0.0,
+            explicit: true,
+            mode: Mode::Serializable,
+            lock_timeout: 0.0,
+            plocks: BTreeMap::new(),
+            lock_shards: BTreeSet::new(),
+            savepoints: Vec::new(),
+            streams: BTreeMap::new(),
+            writes: BTreeMap::new(),
+            rpoints: BTreeMap::new(),
+            rranges: BTreeMap::new(),
+            defs: BTreeMap::new(),
+            doomed: None,
+            mver: 0,
+        }
+    }
+
+    #[test]
+    fn successful_commit_unlocks_only_extra_lock_requests() {
+        let mut txn = empty_txn();
+        // Participants 1 and 3 may still hold prepared locks awaiting APPLY.
+        // A refused request on shard 2 must still release its row-lock state.
+        txn.lock_shards.extend([1, 2, 3]);
+        let parts = BTreeSet::from([1, 3]);
+        assert_eq!(txn.take_extra_lock_shards(&parts), vec![2]);
+        assert!(txn.lock_shards.is_empty());
+        assert!(txn.take_lock_shards().is_empty());
+
+        txn.lock_shards.insert(2);
+        assert_eq!(txn.take_extra_lock_shards(&BTreeSet::new()), vec![2]);
+    }
+
+    #[test]
+    fn native_commit_excludes_lazy_writes_and_lock_requests() {
+        let mut txn = empty_txn();
+        let table = Arc::new(join_table());
+        let key = (table.space_id, key_bytes(&[Value::str("tenant"), Value::Int(4)]));
+        let write = BufWrite {
+            shard: 1,
+            table: table.clone(),
+            op: WOp::Insert,
+            row: Some(vec![Value::str("tenant"), Value::Int(4), Value::str("label")]),
+            pk: vec![Value::str("tenant"), Value::Int(4)],
+        };
+        txn.writes.insert(key.clone(), write);
+        assert!(txn.native_commit_eligible(1));
+        txn.lock_shards.insert(2);
+        assert!(txn.native_commit_eligible(1));
+        txn.lock_shards.insert(1);
+        assert!(!txn.native_commit_eligible(1));
+        txn.lock_shards.clear();
+
+        let mut lazy_table = (*table).clone();
+        let mut index = lazy_table.indexes[0].clone();
+        index.name = "by_label".into();
+        index.id = 1;
+        index.cols = vec![2];
+        index.unique = false;
+        index.lazy = Some(crate::catalog::LazyDef {
+            space_id: 0,
+            route_parts: 1,
+            ready: false,
+        });
+        lazy_table.indexes.push(index);
+        txn.writes.get_mut(&key).unwrap().table = Arc::new(lazy_table.clone());
+        assert!(txn.native_commit_eligible(1), "unactivated metadata needs no capture");
+        lazy_table.indexes[1].lazy.as_mut().unwrap().space_id = 513;
+        txn.writes.get_mut(&key).unwrap().table = Arc::new(lazy_table);
+        for op in [WOp::Insert, WOp::Replace, WOp::Delete] {
+            txn.writes.get_mut(&key).unwrap().op = op;
+            assert!(!txn.native_commit_eligible(1), "every lazy write needs Lua capture");
+        }
+        assert!(txn.native_commit_eligible(2), "another shard's writes are not local");
+
+        let mut vinyl_table = (*table).clone();
+        vinyl_table.engine = crate::catalog::Engine::Vinyl;
+        txn.writes.get_mut(&key).unwrap().table = Arc::new(vinyl_table);
+        assert!(!txn.native_commit_eligible(1));
+    }
 
     #[test]
     fn apply_acknowledgement_must_certify_physical_completion() {

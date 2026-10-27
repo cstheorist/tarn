@@ -131,7 +131,13 @@ is nothing to wait for or refuse, and otherwise hands them, unwritten, to
 * *Commit, single shard:* `tarn_commit_local` in the stream validates the
   read set against W locks of prepared cross-shard transactions, applies the
   buffered writes (with lock checks) and commits; MVCC aborts the transaction
-  if anything it read was overwritten.
+  if anything it read was overwritten. When it wrote only memtx tables
+  without lazy capture, the
+  SQL server calls the shard's native procedure
+  `tarn_storage.ts_commit_local` first, in the stream, which commits it
+  itself when there is nothing to wait for or refuse, and otherwise hands
+  it back to `tarn_commit_local`, its stream's transaction as it was
+  (§1.5).
 * *Commit, read-only (one or several shards):* each participant validates in
   its stream that no read was overwritten and nothing read is W-locked
   (`tarn_validate`; see §2.4 for how "not overwritten" is enforced).
@@ -545,6 +551,59 @@ rolled it back, and a read-only node's error as the call's error. Once its
 commit began, the procedure never hands the writes back: should it fail
 there, it replies 1180 (outcome unknown).
 
+**One-shard commits.** The third procedure, `tarn_storage.ts_commit_local`,
+takes `tarn_commit_local`'s arguments and commits a transaction that wrote
+on this shard only: its writes are rows (inserts, replaces and deletes; the
+SQL server buffered them), made as `ts_autocommit` makes them, in the
+transaction of the stream when the transaction read on this shard -- the
+commit then commits those reads too, and MVCC validates them, as for
+`tarn_commit_local` -- or in a transaction of its own when it read nothing
+here. In a stream it writes under a savepoint, so that it hands a commit
+back with the stream's transaction open: its reads, and none of the
+writes. Its attempt reads the rows its writes replace, in that transaction,
+as the Lua procedure's writes do; a commit handed back has read them a
+round trip earlier. Rolling back to the savepoint runs the transaction's
+`on_rollback` triggers, and the state names the transaction meanwhile, so
+that the Lua module's trigger, which forgets a stream transaction when it
+ends (and with it the `TRUNCATE`s it must fail), knows it goes on. It
+hands back what `ts_autocommit` hands back, and also:
+
+* a transaction with row locks on this shard (`FOR UPDATE`, `FOR SHARE`):
+  `tarn_commit_local` checks that they survived, and releases them;
+* reads of a table on which prepared transactions hold locks
+  (`tarn_commit_local` checks the rows read against them), or routed by a
+  bucket not served here (`moved`); reads of every shard with an older
+  membership (`moved`); and any commit while a bucket is held here
+  (`tarn_commit_local` checks the reads of every shard against its rows,
+  §2.12);
+* while a `TRUNCATE` or `DROP TABLE` holds a table, or a stream transaction
+  open when one was applied is still open (its validation fails if it read
+  that table, §2.10);
+* reads without a stream transaction to commit them in.
+
+The SQL server does not call it for a transaction that wrote a vinyl
+table or a lazy-indexed table, which it would hand back, nor for one that sent row lock requests
+to the shard: those may leave row-lock state of the transaction there even
+when they granted nothing, which the Lua procedure's commit releases. (The
+SQL server releases it on the other shards its lock requests went to, and
+on all of them when the transaction rolls back.) The native procedures
+also check every actual write space against the local capture registry
+before schema reads or a transaction/savepoint, so a stale gateway cannot
+bypass the outbox. Unknown capture state fails closed for writes.
+
+Its checks are those of the model's CommitLocal step, made on the state of
+one moment before its writes, each of them as strict as the Lua
+procedure's or stricter (a table where the Lua procedure checks rows, any
+table where it checks those read), so the model does not change. Its
+commit is a commit in flight as `ts_autocommit`'s is, and fails as
+`tarn_commit_local`'s does: 1213 when MVCC finds a read overwritten or the
+new leader of a replicated shard rolled the commit back, a read-only
+node's error as the call's error, 1180 should it fail once its commit
+began. `lua/test/native_test.lua` commits twin transactions through both
+procedures, in streams and without, and compares the replies and the
+tables; among them a commit handed back after its first write, which the
+Lua procedure then commits in the same stream.
+
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
 | `oltp_point_select`, Lua → native | 26,796 → 36,943 | 16.4 → 4.7 µs | 2,756 → 0 bytes |
@@ -559,12 +618,19 @@ with the shard, throughput rises less than the shard's CPU per statement
 falls. In the transactions of `oltp_read_only` and `oltp_read_write` the
 native procedure serves the four range reads, two thirds of their storage
 calls; their point reads are IPROTO SELECTs, and their first read and
-their commit (with the writes of `oltp_read_write`) stay with the Lua
-procedures. The native procedure makes every autocommit write of the last
-three workloads, which were measured in a later run; on a shard of three
-synchronous replicas, it halves the leader's CPU per write of each, or
-more
+their commit stayed with the Lua procedures in this run. The native
+procedure makes every autocommit write of the last three workloads, which
+were measured in a later run; on a shard of three synchronous replicas, it
+halves the leader's CPU per write of each, or more
 ([bench/RESULTS.md](../bench/RESULTS.md#where-a-shards-time-goes)).
+
+With native one-shard commits (measured later still, Lua → native in the
+same run), the shard's CPU per statement of `oltp_read_write` falls from
+84.5 to 31.7 µs, 38% of the Lua procedures' (48% with native reads
+alone), and that of `oltp_write_only`, whose transactions read the rows
+they update and commit, from 30.6 to 15.7 µs, 51% (95% with native reads
+alone). The first read of each transaction, which begins its stream,
+still runs in Lua.
 
 ## 2. Isolation and the commit protocol
 

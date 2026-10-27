@@ -440,8 +440,9 @@ local DDL_GEN = {}
 -- A TRUNCATE or DROP applied here also fails the validation of the open
 -- stream transactions that read the table before it: memtx MVCC aborts the
 -- readers of a space that changes, vinyl only its writers.
--- DOOMED[txn id] = {space_id = true}, set when one is applied.
-local DOOMED = {}
+-- DOOMED[txn id] = {space_id = true}, set when one is applied; DOOMED_N of
+-- them (for the native procedures, which leave those transactions to Lua).
+local DOOMED, DOOMED_N = {}, 0
 -- Election term at the start of each open stream transaction (by txn id),
 -- recorded by the request that begins it (tarn_select with begin).
 local STREAM_TERM = {}
@@ -523,9 +524,10 @@ end
 local function doom_readers(sid)
     for id in pairs(STREAM_TERM) do
         local d = DOOMED[id]
-        if d == nil then d = {}; DOOMED[id] = d end
+        if d == nil then d = {}; DOOMED[id] = d; DOOMED_N = DOOMED_N + 1 end
         d[sid] = true
     end
+    BK.ns_sync()
 end
 
 -- Why reads {points, ranges} of the current stream transaction fail
@@ -919,11 +921,14 @@ struct tarn_ns {
     uint64_t *fences;
     uint64_t w_served, w_to_lua;
     uint32_t *pl_spaces;
+    uint32_t held, doomed;
+    uint64_t c_served, c_to_lua;
+    uint64_t svp_txn;
     uint8_t capture_stale;
     uint8_t *write_excluded;
 };
 ]]
-BK.NS_LAYOUT = 6
+BK.NS_LAYOUT = 7
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -1001,12 +1006,14 @@ function BK.ns_sync()
     ns.scan_chunk = BK.scan_chunk
     ns.load_until = BK.load.t0 + M.cfg.load_window
     ns.pl_n = PL_N
+    ns.held = BK.held
+    ns.doomed = DOOMED_N
     if ns.count ~= BK.count then BK.ns_serves_all() end
 end
 
 -- (tests: after changing cfg.scan_page_rows or scan_page_bytes)
 function M.ns_sync() BK.ns_sync() end
--- ABI6: an unknown capture registry excludes every native write. Slots
+-- ABI7: an unknown capture registry excludes every native write. Slots
 -- collide conservatively; a false positive only hands a write back to Lua.
 BK.lazy_stale, BK.lazy_excluded, BK.ns_write_excluded = true, {}, nil
 function BK.ns_lazy(excluded, stale)
@@ -2028,8 +2035,8 @@ local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline, bucket)
             M.unlock_cond:wait(0.01)
         end
     end
-    if box.space[sid] == nil then   -- dropped while it waited
-        return {'error', 1146, 'no such space ' .. tostring(sid)}
+    if box.space[sid] == nil then   -- dropped while it waited (the lock is held)
+        return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)})
     end
     if not opts.read then return true end
     local t = box.space[sid].index[iid]:get(key)
@@ -2506,7 +2513,16 @@ local function note_stream_term()
     local id = box.txn_id()
     if id == nil then return end
     STREAM_TERM[id] = box.info.election.term
-    local function forget() STREAM_TERM[id] = nil; DOOMED[id] = nil end
+    local function forget()
+        -- (a native procedure that takes its writes back to a savepoint
+        -- runs the on_rollback triggers too: the transaction goes on)
+        if BK.ns ~= nil and tonumber(BK.ns.svp_txn) == id then return end
+        STREAM_TERM[id] = nil
+        if DOOMED[id] ~= nil then
+            DOOMED[id], DOOMED_N = nil, DOOMED_N - 1
+            BK.ns_sync()
+        end
+    end
     box.on_commit(forget)
     box.on_rollback(forget)
 end
@@ -6396,17 +6412,22 @@ end
 
 function tarn_info()
     BK.fresh()
+    local ptx = 0   -- (transactions with row-lock state here)
+    for _ in pairs(PTX) do ptx = ptx + 1 end
     local nb = 0
     for _, st in pairs(BK.state) do
         if st == 'active' or st == 'sending' or st == 'fenced' then nb = nb + 1 end
     end
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats, buckets = nb, bucket_epoch = BK.epoch,
-            locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
+            locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, plock_txns = ptx,
+            ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0,
             native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
                                        to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
-                                       writes_to_lua = tonumber(BK.ns.w_to_lua)} or false}
+                                       writes_to_lua = tonumber(BK.ns.w_to_lua),
+                                       commits = tonumber(BK.ns.c_served),
+                                       commits_to_lua = tonumber(BK.ns.c_to_lua)} or false}
 end
 
 -------------------------------------------------------------------------------
@@ -6432,7 +6453,8 @@ local function setup_schema()
     box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
     ensure_schema()
     if M.cfg.native then
-        for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit'}) do
+        for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit',
+                            'tarn_storage.ts_commit_local'}) do
             box.schema.func.create(f, {language = 'C', if_not_exists = true})
         end
     end

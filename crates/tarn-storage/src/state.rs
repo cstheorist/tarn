@@ -1,14 +1,14 @@
 //! What the native procedures know of the shard's state: a struct the Lua
 //! module (lua/tarn.lua, "Native procedures") keeps current through LuaJIT's
-//! FFI. Both run in the transaction thread, one at a time, and a native
-//! procedure does not yield, so it sees the state as of one moment, as a Lua
-//! procedure's step that does not yield does.
+//! FFI. Both run in the transaction thread, one at a time. Native checks
+//! see one moment while they do not yield; a commit can yield for WAL or
+//! quorum and must reacquire the state afterward.
 //!
 //! The layout is declared again in lua/tarn.lua (`struct tarn_ns`): change
 //! both, and `LAYOUT` with them.
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 6;
+pub const LAYOUT: u32 = 7;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -83,6 +83,20 @@ pub struct State {
     /// [SPACES]: the row locks held on the spaces of each slot (a space in
     /// slot id % SPACES): a write to a space without any needs none.
     pub pl_spaces: *mut u32,
+    /// BK.held: the buckets held here (moving to this shard, their rows
+    /// staged): a commit that read every shard may have to see them.
+    pub held: u32,
+    /// The open stream transactions a TRUNCATE or DROP TABLE doomed
+    /// (DOOMED): their commits fail if they read its table.
+    pub doomed: u32,
+    /// Commits of one shard (tarn_commit_local) served here, and handed to
+    /// the Lua procedure.
+    pub c_served: u64,
+    pub c_to_lua: u64,
+    /// The transaction (its id) whose writes a procedure takes back to a
+    /// savepoint, while it does (else 0): its on_rollback triggers run
+    /// then, and must not take that for its end (note_stream_term).
+    pub svp_txn: u64,
     /// The local lazy-capture registry is unknown or stale. Native writes
     /// cannot capture an outbox, so every one must go through Lua until
     /// the registry is rebuilt. Reads do not depend on this flag.
@@ -129,6 +143,11 @@ impl State {
             w_served: 0,
             w_to_lua: 0,
             pl_spaces: std::ptr::null_mut(),
+            held: 0,
+            doomed: 0,
+            c_served: 0,
+            c_to_lua: 0,
+            svp_txn: 0,
             capture_stale: 1,
             write_excluded: std::ptr::null_mut(),
         }
@@ -261,9 +280,14 @@ mod tests {
         assert_eq!(offset_of!(State, w_served), 144);
         assert_eq!(offset_of!(State, w_to_lua), 152);
         assert_eq!(offset_of!(State, pl_spaces), 160);
-        assert_eq!(offset_of!(State, capture_stale), 168);
-        assert_eq!(offset_of!(State, write_excluded), 176);
-        assert_eq!(std::mem::size_of::<State>(), 184);
+        assert_eq!(offset_of!(State, held), 168);
+        assert_eq!(offset_of!(State, doomed), 172);
+        assert_eq!(offset_of!(State, c_served), 176);
+        assert_eq!(offset_of!(State, c_to_lua), 184);
+        assert_eq!(offset_of!(State, svp_txn), 192);
+        assert_eq!(offset_of!(State, capture_stale), 200);
+        assert_eq!(offset_of!(State, write_excluded), 208);
+        assert_eq!(std::mem::size_of::<State>(), 216);
     }
 
     #[test]

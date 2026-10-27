@@ -499,7 +499,8 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
 * `tarn_info()` on a storage node (from the Tarantool console or
   `net.box`): durable lock records and lock-index entries, prepared
   participants, participant and decision records held for garbage
-  collection, row locks held (`row_locks`), tables held by a `TRUNCATE` or
+  collection, row locks held (`row_locks`) and the transactions with
+  row-lock state (`plock_txns`), tables held by a `TRUNCATE` or
   `DROP TABLE` in progress (`ddl_held`), and counters (`prepare_yes`,
   `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `recovered`,
   `gc_part`, `gc_txn`, `validate_changed`; for row locks `plock_waits`,
@@ -509,7 +510,9 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
   and `native`: false without the native procedures, else whether they are
   in use (`ready`), the reads they served (`served`) and those they handed
   to the Lua procedure (`to_lua`), and the same of autocommit writes
-  (`writes`, `writes_to_lua`).
+  (`writes`, `writes_to_lua`) and of one-shard commits (`commits`,
+  `commits_to_lua`). The counters in `stats` count what the Lua procedures
+  do (`commit_local`, `conflicts`); `native` counts the rest.
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted

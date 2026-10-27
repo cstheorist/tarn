@@ -8,7 +8,7 @@ use crate::state::{State, LAYOUT};
 use crate::write::{self, Op};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::os::raw::{c_char, c_int, c_uint};
+use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -82,6 +82,9 @@ extern "C" {
     fn box_txn_begin() -> c_int;
     fn box_txn_commit() -> c_int;
     fn box_txn_rollback() -> c_int;
+    fn box_txn_savepoint() -> *mut c_void;
+    fn box_txn_rollback_to_savepoint(savepoint: *mut c_void) -> c_int;
+    fn box_txn_id() -> i64;
     fn box_txn_set_isolation(level: u32) -> c_int;
     fn box_insert(space_id: u32, tuple: *const c_char, tuple_end: *const c_char, result: *mut *mut BoxTuple) -> c_int;
     fn box_replace(space_id: u32, tuple: *const c_char, tuple_end: *const c_char, result: *mut *mut BoxTuple) -> c_int;
@@ -828,13 +831,257 @@ struct Done {
     bytes: u64,
 }
 
-/// What became of an autocommit write served here.
+/// The writes of a commit step, made under a savepoint of the stream's
+/// transaction: undone unless the step commits, also when a panic unwinds
+/// through it, and the transaction (with its reads) stays.
+struct Savepoint {
+    sp: *mut c_void,
+    open: bool,
+}
+
+thread_local! {
+    /// The request's transaction could not be kept: a rollback to its
+    /// savepoint failed, and the whole transaction was rolled back. Its
+    /// writes must not go to the Lua procedure then, nor may the SQL server
+    /// think its stream's reads are still there: the step replies 1213.
+    static TXN_LOST: Cell<bool> = const { Cell::new(false) };
+}
+
+impl Savepoint {
+    unsafe fn take() -> Option<Savepoint> {
+        let sp = box_txn_savepoint();
+        if sp.is_null() {
+            box_error_clear();
+            return None;
+        }
+        Some(Savepoint { sp, open: true })
+    }
+}
+
+impl Drop for Savepoint {
+    fn drop(&mut self) {
+        if !self.open {
+            return;
+        }
+        // SAFETY: a savepoint of the transaction of this request, in its
+        // thread.
+        unsafe {
+            // The rollback runs the transaction's on_rollback triggers, and
+            // Lua's (note_stream_term's) must not take it for the end of the
+            // transaction: the state names the transaction meanwhile.
+            let id = box_txn_id();
+            if let Some(s) = state() {
+                s.svp_txn = u64::try_from(id).unwrap_or(0);
+            }
+            let rc = box_txn_rollback_to_savepoint(self.sp);
+            if let Some(s) = state() {
+                s.svp_txn = 0;
+            }
+            box_error_clear();
+            if rc != 0 {
+                // (not known to happen) the writes must not stay in a
+                // transaction handed back
+                box_txn_rollback();
+                box_error_clear();
+                TXN_LOST.with(|l| l.set(true));
+            }
+        }
+    }
+}
+
+/// What undoes a commit step's writes until it commits: its own
+/// transaction, or a savepoint of the stream's.
+enum Undo {
+    Txn(Txn),
+    Savepoint(Savepoint),
+}
+
+impl Undo {
+    /// From now on the writes are the step's to report (it commits).
+    fn keep(&mut self) {
+        match self {
+            Undo::Txn(t) => t.open = false,
+            Undo::Savepoint(p) => p.open = false,
+        }
+    }
+}
+
+/// What became of a write step served here.
 enum Served {
     /// The reply.
     Reply(Vec<u8>),
     /// Its commit failed with ER_READONLY, left as the error of the call:
     /// the SQL server follows the leader change (reraise_readonly).
     Raise,
+}
+
+/// What the writes need of the schema, read before their transaction, which
+/// must not read the system spaces: each table memtx, without a lock of a
+/// prepared transaction or a row lock (READ COMMITTED: the Lua procedures
+/// wait for one on what they write), and the primary key of the tables a
+/// replace writes. None: the writes are left to Lua. A synchronous table's
+/// commit waits for its quorum, as the Lua procedures' do, and is in flight
+/// until then.
+fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<(SpaceInfo, Option<IndexInfo>)>> {
+    // Both autocommit and stream commits must defer capture to Lua. Check
+    // every actual source before schema reads or a transaction/savepoint,
+    // independently of the gateway's possibly stale definition fences.
+    if writes.iter().any(|w| s.lazy_write_excluded(w.space_id)) {
+        return None;
+    }
+    let mut infos = Vec::with_capacity(writes.len());
+    for w in writes {
+        let sp = space_info(w.space_id)?;
+        if !sp.memtx || s.space_locked(w.space_id) || s.space_plocked(w.space_id) {
+            return None;
+        }
+        let pk = match w.op {
+            Op::Replace => Some(index_info(w.space_id, 0)?),
+            _ => None,
+        };
+        infos.push((sp, pk));
+    }
+    Some(infos)
+}
+
+/// Make the writes (write_step), in the transaction of the request: what
+/// each did, and their affected rows (`affected`). None, having stopped at
+/// the first that failed or that the Lua procedures would make otherwise:
+/// the caller's Undo takes back what was written. Then the rows' buckets
+/// take writes here (BK.rows_refused), and the writes count for them
+/// (BK.count_writes).
+///
+/// # Safety
+/// In the transaction thread, with the request's transaction open.
+unsafe fn apply_writes(
+    s: &mut State,
+    writes: &[write::Write],
+    infos: &[(SpaceInfo, Option<IndexInfo>)],
+    found_rows: bool,
+) -> Option<(Vec<Done>, u64)> {
+    let mut done: Vec<Done> = Vec::with_capacity(writes.len());
+    let mut n = 0u64;
+    for (w, (sp, pk)) in writes.iter().zip(infos) {
+        let p = w.payload.as_ptr().cast::<c_char>();
+        let p_end = p.add(w.payload.len());
+        let mut t: *mut BoxTuple = std::ptr::null_mut();
+        let (old, new, res) = match w.op {
+            Op::Insert => {
+                if box_insert(w.space_id, p, p_end, &mut t) != 0 {
+                    return None;
+                }
+                let r = data_of(t);
+                (None, r.clone(), r)
+            }
+            Op::Replace => {
+                let old = get_row(w.space_id, &key_of(&w.payload, pk.as_ref()?)?).ok()?;
+                if box_replace(w.space_id, p, p_end, &mut t) != 0 {
+                    return None;
+                }
+                let r = data_of(t);
+                (old, r.clone(), r)
+            }
+            Op::Delete => {
+                let old = get_row(w.space_id, &w.payload).ok()?;
+                if box_delete(w.space_id, 0, p, p_end, &mut t) != 0 {
+                    return None;
+                }
+                (old, None, data_of(t))
+            }
+            Op::Update => match get_row(w.space_id, &w.payload).ok()? {
+                // (a row that is not there: nothing written)
+                None => (None, None, None),
+                Some(old) => {
+                    // (a row from before an ALTER TABLE that added fields:
+                    // the Lua procedure fills them in)
+                    if let Some(width) = w.width {
+                        if (Rd::new(&old).array()? as u64) < width {
+                            return None;
+                        }
+                    }
+                    let v = |f: u32| write::val(f.checked_sub(1).and_then(|f| field_of(&old, f)));
+                    if !write::arith_ok(&w.ops, &w.ranges, v) {
+                        return None;
+                    }
+                    let ops = write::update_ops(&w.ops, v);
+                    let o = ops.as_ptr().cast::<c_char>();
+                    if box_update(w.space_id, 0, p, p_end, o, o.add(ops.len()), 1, &mut t) != 0 {
+                        return None;
+                    }
+                    let r = data_of(t);
+                    (Some(old), r.clone(), r)
+                }
+            },
+        };
+        n += write::affected(w.op, old.as_deref(), new.as_deref(), found_rows);
+        let row = new.as_deref().or(old.as_deref());
+        let bucket = match (sp.bucket_field, row) {
+            (Some(f), Some(row)) => Some(field_of(row, f).and_then(|b| Rd::new(b).uint())?),
+            _ => None,
+        };
+        let bytes = res.as_ref().or(new.as_ref()).map_or(0, |t| t.len() as u64);
+        done.push(Done { res, bucket, bytes });
+    }
+    if s.count != 0 {
+        if done.iter().any(|d| d.bucket.is_some_and(|b| !s.writable(b))) {
+            return None;
+        }
+        for d in &done {
+            if let Some(b) = d.bucket {
+                s.count_write(b, d.bytes);
+            }
+        }
+    }
+    Some((done, n))
+}
+
+/// Commit the request's transaction, whose writes `undo` takes back until
+/// then: a commit in flight until it ends. Err: the reply of a commit that
+/// failed, as commit_failure has it.
+///
+/// Other requests run while it waits for the WAL, and change the state: it
+/// takes the state before and after the commit, and holds no reference to
+/// it across (nor may its caller). Tarantool frees the call's arguments
+/// then too: nothing borrowed from them may be used after it.
+///
+/// # Safety
+/// In the transaction thread, with the request's transaction open.
+unsafe fn commit_txn(mut undo: Undo, committed: &Cell<bool>) -> Result<(), Served> {
+    let seq = state().map(commit_begins);
+    // From here on the writes are the step's to report.
+    undo.keep();
+    committed.set(true);
+    let rc = box_txn_commit();
+    if let (Some(seq), Some(s)) = (seq, state()) {
+        commit_ends(s, seq);
+    }
+    if rc == 0 {
+        return Ok(());
+    }
+    let e = box_error_last();
+    let (code, msg) = if e.is_null() {
+        (0, String::new())
+    } else {
+        let m = std::ffi::CStr::from_ptr(box_error_message(e))
+            .to_string_lossy()
+            .into_owned();
+        (box_error_code(e), m)
+    };
+    if code == ER_READONLY {
+        return Err(Served::Raise);
+    }
+    box_error_clear();
+    let mut out = Wr::with_capacity(64);
+    // (commit_failure)
+    match code {
+        ER_SYNC_ROLLBACK => out.array(3).str("conflict").uint(1213).str(&format!(
+            "shard leader changed during the commit, retry the transaction ({})",
+            msg
+        )),
+        ER_TRANSACTION_CONFLICT => out.array(3).str("conflict").uint(1213).str(&msg),
+        _ => out.array(3).str("error").uint(code as u64).str(&msg),
+    };
+    Err(Served::Reply(out.0))
 }
 
 /// What became of an autocommit write served here, or None for one left
@@ -873,146 +1120,110 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if s.count != 0 && opts.wb.iter().any(|&b| !s.writable(b)) {
         return None;
     }
-    // Each table: memtx, no lock of a prepared transaction on it, and no row
-    // lock (READ COMMITTED: tarn_autocommit would wait for one on what it
-    // writes). (What the writes need of the schema is read before the
-    // transaction, which must not read the system spaces.) A synchronous
-    // table's commit waits for its quorum, as tarn_autocommit's does, and is
-    // in flight until then.
-    let mut infos = Vec::with_capacity(writes.len());
-    for w in &writes {
-        let sp = space_info(w.space_id)?;
-        if !sp.memtx || s.space_locked(w.space_id) || s.space_plocked(w.space_id) {
-            return None;
-        }
-        let pk = match w.op {
-            Op::Replace => Some(index_info(w.space_id, 0)?),
-            _ => None,
-        };
-        infos.push((sp, pk));
-    }
+    let infos = write_infos(s, &writes)?;
     // SAFETY: the transaction is this call's; tuples are copied before
     // anything else runs.
     unsafe {
-        let mut txn = Txn::begin()?;
-        let mut done: Vec<Done> = Vec::with_capacity(writes.len());
-        let mut n = 0u64;
-        for (w, (sp, pk)) in writes.iter().zip(&infos) {
-            let p = w.payload.as_ptr().cast::<c_char>();
-            let p_end = p.add(w.payload.len());
-            let mut t: *mut BoxTuple = std::ptr::null_mut();
-            let (old, new, res) = match w.op {
-                Op::Insert => {
-                    if box_insert(w.space_id, p, p_end, &mut t) != 0 {
-                        return None;
-                    }
-                    let r = data_of(t);
-                    (None, r.clone(), r)
-                }
-                Op::Replace => {
-                    let old = get_row(w.space_id, &key_of(&w.payload, pk.as_ref()?)?).ok()?;
-                    if box_replace(w.space_id, p, p_end, &mut t) != 0 {
-                        return None;
-                    }
-                    let r = data_of(t);
-                    (old, r.clone(), r)
-                }
-                Op::Delete => {
-                    let old = get_row(w.space_id, &w.payload).ok()?;
-                    if box_delete(w.space_id, 0, p, p_end, &mut t) != 0 {
-                        return None;
-                    }
-                    (old, None, data_of(t))
-                }
-                Op::Update => match get_row(w.space_id, &w.payload).ok()? {
-                    // (a row that is not there: nothing written)
-                    None => (None, None, None),
-                    Some(old) => {
-                        // (a row from before an ALTER TABLE that added
-                        // fields: the Lua procedure fills them in)
-                        if let Some(width) = w.width {
-                            if (Rd::new(&old).array()? as u64) < width {
-                                return None;
-                            }
-                        }
-                        let v = |f: u32| write::val(f.checked_sub(1).and_then(|f| field_of(&old, f)));
-                        if !write::arith_ok(&w.ops, &w.ranges, v) {
-                            return None;
-                        }
-                        let ops = write::update_ops(&w.ops, v);
-                        let o = ops.as_ptr().cast::<c_char>();
-                        if box_update(w.space_id, 0, p, p_end, o, o.add(ops.len()), 1, &mut t) != 0 {
-                            return None;
-                        }
-                        let r = data_of(t);
-                        (Some(old), r.clone(), r)
-                    }
-                },
-            };
-            n += write::affected(w.op, old.as_deref(), new.as_deref(), opts.found_rows);
-            let row = new.as_deref().or(old.as_deref());
-            let bucket = match (sp.bucket_field, row) {
-                (Some(f), Some(row)) => Some(field_of(row, f).and_then(|b| Rd::new(b).uint())?),
-                _ => None,
-            };
-            let bytes = res.as_ref().or(new.as_ref()).map_or(0, |t| t.len() as u64);
-            done.push(Done { res, bucket, bytes });
-        }
-        // The rows' buckets take writes here (BK.rows_refused); then the
-        // writes count for them (BK.count_writes).
-        if s.count != 0 {
-            if done.iter().any(|d| d.bucket.is_some_and(|b| !s.writable(b))) {
-                return None;
-            }
-            for d in &done {
-                if let Some(b) = d.bucket {
-                    s.count_write(b, d.bytes);
-                }
-            }
-        }
-        // Commit: from here on the writes are this call's to report. Other
-        // requests run while it waits for the WAL, and change the state:
-        // after it, the state is taken again.
-        let seq = commit_begins(s);
-        txn.open = false;
-        committed.set(true);
-        let rc = box_txn_commit();
-        if let Some(s) = state() {
-            commit_ends(s, seq);
-        }
-        let mut out = Wr::with_capacity(64);
-        if rc != 0 {
-            let e = box_error_last();
-            let (code, msg) = if e.is_null() {
-                (0, String::new())
-            } else {
-                let m = std::ffi::CStr::from_ptr(box_error_message(e))
-                    .to_string_lossy()
-                    .into_owned();
-                (box_error_code(e), m)
-            };
-            if code == ER_READONLY {
-                return Some(Served::Raise);
-            }
-            box_error_clear();
-            // (commit_failure)
-            match code {
-                ER_SYNC_ROLLBACK => out.array(3).str("conflict").uint(1213).str(&format!(
-                    "shard leader changed during the commit, retry the transaction ({})",
-                    msg
-                )),
-                ER_TRANSACTION_CONFLICT => out.array(3).str("conflict").uint(1213).str(&msg),
-                _ => out.array(3).str("error").uint(code as u64).str(&msg),
-            };
-            return Some(Served::Reply(out.0));
+        let undo = Undo::Txn(Txn::begin()?);
+        let (done, n) = apply_writes(s, &writes, &infos, opts.found_rows)?;
+        if let Err(failed) = commit_txn(undo, committed) {
+            return Some(failed);
         }
         // {OK, n, last}: the last write's result, if any
+        let mut out = Wr::with_capacity(64);
         match done.iter().rev().find_map(|d| d.res.as_ref()) {
             Some(last) => out.array(3).str("ok").uint(n).raw(last),
             None => out.array(2).str("ok").uint(n),
         };
         Some(Served::Reply(out.0))
     }
+}
+
+/// What became of a commit of one shard served here (TarnCommit!CommitLocal),
+/// or None for one left to tarn_commit_local, with nothing written: in a
+/// stream, its transaction and reads are as they were. `committed`: as for
+/// `autocommit`.
+fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
+    let c = write::parse_commit(buf)?;
+    // (row locks: the Lua procedure checks that they survived, and releases
+    // them with the commit)
+    if c.locks {
+        return None;
+    }
+    let s = state()?;
+    if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
+        return None;
+    }
+    // (a TRUNCATE or DROP TABLE holds a table, or doomed the streams that
+    // read one: reads_ddl_conflict)
+    if s.ddl_n != 0 || s.doomed != 0 {
+        return None;
+    }
+    // SAFETY: plain calls of the module API in the transaction thread.
+    unsafe {
+        if box_is_ro() {
+            return None;
+        }
+        if s.count != 0 && fiber_clock() >= s.load_until {
+            return None;
+        }
+    }
+    // BK.commit_check: the transaction read every shard with the current
+    // membership (BK.member_refused); its writes' definitions are current;
+    // the buckets it writes take writes here, and those it read are served
+    // here, none of them held (BK.held_conflict)
+    if c.mver.is_some_and(|v| v < s.mver) {
+        return None;
+    }
+    if c.fence.iter().any(|&(sid, ver)| s.fence(sid) > ver) {
+        return None;
+    }
+    if s.count != 0
+        && (s.held != 0
+            || c.wb.iter().any(|&b| !s.writable(b))
+            || c.reads.iter().any(|r| r.bucket.is_some_and(|b| !s.serves(b))))
+    {
+        return None;
+    }
+    // reads_w_locked: no lock of a prepared transaction on a table it read
+    if c.reads.iter().any(|r| s.space_locked(r.space_id)) {
+        return None;
+    }
+    let infos = write_infos(s, &c.writes)?;
+    // SAFETY: the transaction is the request's: the stream's, or this call's
+    // without one; tuples are copied before anything else runs.
+    unsafe {
+        let undo = if box_txn() {
+            Undo::Savepoint(Savepoint::take()?)
+        } else if c.reads.is_empty() {
+            // (a transaction that read nothing here: the coordinator sends
+            // no stream)
+            Undo::Txn(Txn::begin()?)
+        } else {
+            // (reads, and no transaction of their stream to commit them in)
+            return None;
+        };
+        let (done, _) = apply_writes(s, &c.writes, &infos, false)?;
+        if let Err(failed) = commit_txn(undo, committed) {
+            return Some(failed);
+        }
+        // {OK, n}: the writes that wrote a row
+        let n = done.iter().filter(|d| d.res.is_some()).count();
+        let mut out = Wr::with_capacity(16);
+        out.array(2).str("ok").uint(n as u64);
+        Some(Served::Reply(out.0))
+    }
+}
+
+/// The reply when a commit step could not take back its writes in a stream
+/// (TXN_LOST): it rolled the stream's transaction back, nothing committed.
+fn txn_lost() -> Vec<u8> {
+    let mut out = Wr::with_capacity(96);
+    out.array(3)
+        .str("conflict")
+        .uint(1213)
+        .str("the shard could not take back the writes of a commit it left to Lua: retry the transaction");
+    out.0
 }
 
 /// The reply when the procedure failed after its commit began: whether
@@ -1026,16 +1237,18 @@ fn outcome_unknown() -> Vec<u8> {
     out.0
 }
 
-/// `ts_autocommit(writes, opts)`: tarn_autocommit's arguments; its reply,
-/// or ["lua"], having written nothing (see write.rs).
+/// Run a write step (`step`) for a request and reply: its reply, its
+/// error (ER_READONLY), or ["lua"], counted in the state's counters
+/// (`count`: served or not).
 ///
 /// # Safety
 /// Called by Tarantool with a valid context and argument buffer.
-#[no_mangle]
-pub unsafe extern "C" fn ts_autocommit(
+unsafe fn write_step(
     ctx: *mut BoxFunctionCtx,
     args: *const c_char,
     args_end: *const c_char,
+    step: fn(&[u8], &Cell<bool>) -> Option<Served>,
+    count: fn(&mut State, bool),
 ) -> c_int {
     if OTHER_LAYOUT.load(Ordering::Relaxed) {
         return box_error_set(
@@ -1048,35 +1261,65 @@ pub unsafe extern "C" fn ts_autocommit(
     let len = (args_end as usize).saturating_sub(args as usize);
     let buf = std::slice::from_raw_parts(args as *const u8, len);
     let committed = Cell::new(false);
-    let out = match std::panic::catch_unwind(AssertUnwindSafe(|| autocommit(buf, &committed))) {
+    TXN_LOST.with(|l| l.set(false));
+    let out = match std::panic::catch_unwind(AssertUnwindSafe(|| step(buf, &committed))) {
         Ok(out) => out,
         // (once the commit began, the writes must not go to Lua as well)
         Err(_) if committed.get() => Some(Served::Reply(outcome_unknown())),
         Err(_) => None,
     };
-    let to_lua = match out {
-        Some(Served::Reply(mp)) => Ok(mp),
-        // (the diagnostics area holds the error)
-        Some(Served::Raise) => {
-            if let Some(s) = state() {
-                s.w_served += 1;
-            }
-            return -1;
-        }
-        None => Err(TO_LUA),
+    let out = match out {
+        None if TXN_LOST.with(|l| l.get()) => Some(Served::Reply(txn_lost())),
+        out => out,
     };
-    match to_lua {
-        Ok(mp) => {
-            if let Some(s) = state() {
-                s.w_served += 1;
-            }
-            reply(ctx, &mp)
-        }
-        Err(back) => {
-            if let Some(s) = state() {
-                s.w_to_lua += 1;
-            }
-            reply(ctx, back)
-        }
+    if let Some(s) = state() {
+        count(s, out.is_some());
     }
+    match out {
+        Some(Served::Reply(mp)) => reply(ctx, &mp),
+        // (the diagnostics area holds the error)
+        Some(Served::Raise) => -1,
+        None => reply(ctx, TO_LUA),
+    }
+}
+
+/// `ts_autocommit(writes, opts)`: tarn_autocommit's arguments; its reply,
+/// or ["lua"], having written nothing (see write.rs).
+///
+/// # Safety
+/// Called by Tarantool with a valid context and argument buffer.
+#[no_mangle]
+pub unsafe extern "C" fn ts_autocommit(
+    ctx: *mut BoxFunctionCtx,
+    args: *const c_char,
+    args_end: *const c_char,
+) -> c_int {
+    write_step(ctx, args, args_end, autocommit, |s, served| {
+        if served {
+            s.w_served += 1;
+        } else {
+            s.w_to_lua += 1;
+        }
+    })
+}
+
+/// `ts_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb,
+/// mver)`: tarn_commit_local's arguments; its reply, or ["lua"], having
+/// written nothing (see `commit_local`).
+///
+/// # Safety
+/// Called by Tarantool with a valid context and argument buffer.
+#[no_mangle]
+pub unsafe extern "C" fn ts_commit_local(
+    ctx: *mut BoxFunctionCtx,
+    args: *const c_char,
+    args_end: *const c_char,
+) -> c_int {
+    write_step(ctx, args, args_end, commit_local, |s, served| {
+        if served {
+            s.c_served += 1;
+        } else {
+            s.c_to_lua += 1;
+        }
+    })
 }

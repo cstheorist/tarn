@@ -30,12 +30,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tables (`INSERT`, `REPLACE`, and `UPDATE` and `DELETE` by primary key),
   on shards with replicas or without, when nothing would make
   `tarn_autocommit` wait or refuse them, and hands the others to
-  `tarn_autocommit` unwritten.
+  `tarn_autocommit` unwritten. Its `tarn_storage.ts_commit_local` commits
+  the transactions that wrote memtx tables on one shard, in the
+  transaction's stream (whose reads it commits, as `tarn_commit_local`
+  does), and hands the others back with the stream's transaction as it
+  was.
   On one shard, point selects reach a quarter to over a third more
   statements a second, the read transactions of `oltp_read_only` and
-  `oltp_read_write` over half more, and autocommit writes 71% to 76% more
-  (on a shard of three replicas, about a third more), while the shard's
-  CPU per statement falls to 29% to 50% of what the Lua procedures take. `bench/profile.py` (run by `bench/profile.sh`) measures
+  `oltp_read_write` over half more, `oltp_write_only`'s transactions 41%
+  more, and autocommit writes 71% to 76% more (on a shard of three
+  replicas, about a third more), while the shard's CPU per statement falls
+  to 29% to 51% of what the Lua procedures take. `bench/profile.py` (run by `bench/profile.sh`) measures
   what the storage side of a workload costs a shard's transaction thread:
   CPU and Lua allocations per statement, and where the time goes.
 
@@ -407,6 +412,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A transaction whose row lock request a shard refused without granting
+  anything (`NOWAIT`, a lock wait timeout) left row-lock state there when
+  it then rolled back, or committed without that shard: the SQL server now
+  releases the row locks of every shard its lock requests went to
+  ([#28](https://github.com/cstheorist/tarn/issues/28)).
 - An `UPDATE` in a transaction that set a `FLOAT` or `DOUBLE` column to the
   value it held counted the row as changed when that value was an integer.
   The shards store such values as integers, which the SQL server now reads

@@ -48,6 +48,16 @@ def expect_conflict(fn):
     return False
 
 
+def kv_eval(node, lua):
+    """Run a Lua chunk on one storage node; its result, as JSON."""
+    code = ("local c = require('net.box').connect('tarn:tarn@%s', {wait_connected = 2}) "
+            "print(require('json').encode(c:eval([==[%s]==]))) os.exit(0)") % (node, lua)
+    p = subprocess.run([TARANTOOL, "-e", code], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        raise RuntimeError(p.stderr)
+    return json.loads(p.stdout.strip().splitlines()[-1])
+
+
 def kv_get(nodes, space, key):
     """Read one row straight from Tarantool on every given node; return the
     row from whichever node holds it (rows live on exactly one shard)."""
@@ -869,6 +879,77 @@ class T:
         th.join(30)
         v = q(b, "SELECT v FROM sfu WHERE id = 1")[0][0]
         self.check(not aborted and res.get("n") == 1 and v == 11, f"... and applies after the commit (aborted={aborted} v={v})")
+
+    def test_refused_lock_request_released(self):
+        # A locking read refused on a shard (NOWAIT: another transaction
+        # holds the row) leaves row-lock state of the transaction there,
+        # though it granted nothing: the transaction's end must release it,
+        # whether it commits on that shard (also when the shard's native
+        # procedure could make that commit), commits on another shard
+        # only (READ COMMITTED: its locking read opened no stream there),
+        # or rolls back.
+        if len(self.args.kv) < 2:
+            return
+        n = 60
+        c = self.fresh("flr", "CREATE TABLE flr (id INT PRIMARY KEY, v INT)", [f"({i}, 0)" for i in range(1, n + 1)])
+        q(c, "DROP TABLE IF EXISTS flw")
+        q(c, "CREATE TABLE flw (id INT PRIMARY KEY, v INT)")
+        q(c, "INSERT INTO flw VALUES " + ", ".join(f"({i}, 0)" for i in range(1, n + 1)))
+        node = self.args.kv[0]
+
+        def ids_here(t):
+            return kv_eval(node, f"local o = {{}} for _, t in box.space['{DB}.{t}']:pairs() do o[#o + 1] = t[1] end "
+                                 "return o")
+
+        held = ids_here("flr")[0]
+        here = ids_here("flw")
+        there = [i for i in range(1, n + 1) if i not in here]
+        if not self.check(here and there, f"rows of flw on both shards: {here}"):
+            return
+
+        def txns():
+            return kv_eval(node, "return tarn_info().plock_txns")
+
+        def settled():
+            a = txns()
+            while True:
+                time.sleep(0.2)
+                b = txns()
+                if a == b:
+                    return b
+                a = b
+
+        holder = connect(self.args.tarn)
+        q(holder, "BEGIN")
+        q(holder, f"SELECT v FROM flr WHERE id = {held} FOR UPDATE")
+        b = connect(self.args.tarn)
+        for what, isolation, row in (("commits on that shard", "REPEATABLE-READ", here[0]),
+                                     ("commits on another shard", "READ-COMMITTED", there[0]),
+                                     ("rolls back", "REPEATABLE-READ", None)):
+            base = settled()
+            q(b, f"SET SESSION transaction_isolation = '{isolation}'")
+            q(b, "BEGIN")
+            try:
+                q(b, f"SELECT v FROM flr WHERE id = {held} FOR UPDATE NOWAIT")
+                code = 0
+            except pymysql.MySQLError as e:
+                code = e.args[0]
+            self.check(code == 3572, f"NOWAIT on a held row ({what}): 3572, got {code}")
+            if row is None:
+                q(b, "ROLLBACK")
+            else:
+                q(b, f"UPDATE flw SET v = v + 1 WHERE id = {row}")
+                q(b, "COMMIT")
+            deadline = time.time() + 5
+            while txns() > base and time.time() < deadline:
+                time.sleep(0.1)
+            left = txns()
+            self.check(left <= base, f"a transaction whose lock request was refused, then {what}, "
+                                     f"leaves no row-lock state there: {left} transactions, {base} before")
+        q(b, "SET SESSION transaction_isolation = 'REPEATABLE-READ'")
+        q(holder, "ROLLBACK")
+        self.check(q(b, f"SELECT v FROM flw WHERE id IN ({here[0]}, {there[0]})") == ((1,), (1,)),
+                   "the commits wrote their rows")
 
     # ------------------------------------------------------------------
     def test_bank(self):
