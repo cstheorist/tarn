@@ -1003,6 +1003,8 @@ Equality after the final key can complete, but a clipped batch hands
 back the whole request rather than certifying a partial result. The
 model includes both complete and clipped budgets. Streams, Vinyl,
 prefixes and continuations retain the existing Lua path.
+Capability negotiation only selects a dispatch path; its constant reply
+does not certify data, readiness, leadership, or any read guard.
 
 The one-image argument assumes the native memtx get/check interval does
 not yield, as in `TarnCommit`'s `SnapshotRead`/`DirectReadAtomic` premise.
@@ -1303,6 +1305,13 @@ list.
 builds it with the specifications and proofs erased, and the server uses the
 result. Verus proves:
 
+* **Native batch budgets** (`batch.rs`): `can_step` permits the next lookup
+  exactly while work, rows and bytes each have room. `step` either rejects
+  the whole native attempt or charges one work unit, one row for a present
+  tuple and exactly its stored size, without overflow or exceeding any
+  cap. Missing keys still charge work; a final tuple may exactly exhaust
+  a cap, while another key must hand back. This proves budget arithmetic,
+  not native tuple lookup, MessagePack framing or snapshot isolation.
 * **Routing** (`route.rs`): the CRC-32C used for bucket hashing equals a
   bitwise specification for every input; bucket and shard numbers are in
   range; the bucket-to-shard map of a new cluster is monotone and onto; the
@@ -1361,7 +1370,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 134 verified, 0 errors
+# verification results:: 137 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with

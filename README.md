@@ -166,7 +166,7 @@ shard's CPU per statement
   moves between shards. TLC found a real design flaw early on: single-shard
   reads could break strict serializability. It later caught a flaw in a fix
   too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 134 verified
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 137 verified
   functions and lemmas for routing, coordinator decisions, global index
   maintenance, the MySQL wire codec, and the native procedures' MessagePack
   and lock checks.
