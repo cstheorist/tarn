@@ -40,11 +40,13 @@ for _,key in ipairs{'_tarn_meta','_tarn_buckets','_tarn_catalog','_tarn_part','_
 end
 local r={pid=box.info.pid,uuid=tostring(box.info.uuid),id=box.info.id,term=box.info.election.term,
     ro=box.info.ro,workdir=require('fio').cwd(),wal=box.cfg.wal_mode,sync=tarn.cfg.sync,
-    queue=box.info.synchro.queue,version=box.info.version}
+    queue=box.info.synchro.queue,version=box.info.version,check_locks=tarn.cfg.check_locks,
+    lock_copy_errors=tarn.stats.lock_copy_errors}
 if not r.ro then
     r.native=tarn_info().native; r.quota_ready=tarn.lazy.quota.ready()
     if r.native and r.native.ready==1 then
         r.layout=tonumber(require('ffi').cast('struct tarn_ns *',box.func['tarn_storage.ts_state']:call()).layout)
+        r.state_size=require('ffi').sizeof('struct tarn_ns')
     end
 end
 box.begin{txn_isolation='read-confirmed'}
@@ -67,8 +69,9 @@ local function state(i)
     return ev(i, probe, {old_id, new_id, name})
 end
 local function mode_ok(s)
-    return mode == 'native' and s.native and s.native.ready == 1 and s.layout == 8
-        or mode == 'lua' and s.native == false
+    return s.check_locks == true and s.lock_copy_errors == 0 and
+        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 10 and s.state_size == 304
+        or mode == 'lua' and s.native == false)
 end
 local function leader()
     return await('confirmed writable leader', function()

@@ -15,7 +15,7 @@ box.cfg{work_dir = work, memtx_use_mvcc_engine = true, memtx_memory = 128 * 1048
 box.ctl.promote()
 local tarn = require('tarn')
 tarn.lazy.paused = true
-tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields = true,
+tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields = true, check_locks = true,
     recovery_after = 1000000, native = native and native ~= '0' and native or false}
 local function ok(r) assert(type(r) == 'table' and r[1] == 'ok', json.encode(r)); return r end
 local function wait(label, fn)
@@ -34,7 +34,7 @@ wait('schema/native', function()
 end)
 if native and native ~= '0' then
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-    assert(ns.layout == 8 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 240)
+    assert(ns.layout == 10 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 304)
 else assert(tarn.cfg.native == false and tarn_info().native == false) end
 print('IDENTITY ' .. json.encode{version = box.info.version, native = tarn_info().native,
     sync = tarn.cfg.sync, wal = box.cfg.wal_mode, source_engine = source_engine, scenario = scenario, stage = stage})
@@ -44,6 +44,7 @@ local owner = 'engine-restart-' .. scenario .. '-' .. source_engine
 local function receipt() return assert(box.space._tarn_meta:get{'engine:' .. old_id}).value end
 local function persisted() return assert(box.space._tarn_meta:get{'test:engine_restart'}).value end
 local function killed()
+    assert(tarn_info().stats.lock_copy_errors == 0, 'native lock copy differed before process loss')
     io.stdout:flush()
     pcall(ffi.cdef, 'int getpid(void);')
     pcall(ffi.cdef, 'int kill(int pid, int sig);')
@@ -86,6 +87,7 @@ local function audit(extra)
     assert(box.space._tarn_meta:get{'hold:' .. new_id} == nil)
     local stale = tarn_select(old_id, 0, {1}, 'EQ', 1)
     assert(stale[1] == 'error' and stale[2] == 1412, json.encode(stale))
+    assert(tarn_info().stats.lock_copy_errors == 0, 'native lock copy differed during restart recovery')
 end
 local a
 if stage == 'crash' then
