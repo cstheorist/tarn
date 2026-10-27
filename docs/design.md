@@ -140,7 +140,10 @@ is nothing to wait for or refuse, and otherwise hands them, unwritten, to
   (§1.5).
 * *Commit, read-only (one or several shards):* each participant validates in
   its stream that no read was overwritten and nothing read is W-locked
-  (`tarn_validate`; see §2.4 for how "not overwritten" is enforced).
+  (`tarn_validate`; see §2.4 for how "not overwritten" is enforced). The SQL
+  server calls the shard's native procedure `tarn_storage.ts_validate`
+  first, which validates when nothing would make `tarn_validate` refuse or
+  do more, and otherwise hands the stream back to it unchanged (§1.5).
 * *Commit, read-write across shards:* a "parallel commit" two-phase commit.
   PREPARE runs on every participant in parallel and, in one local
   transaction, validates the reads, takes durable R/W locks (W locks carry the
@@ -490,9 +493,11 @@ would refuse for lack of Lua memory (1041, see "Pages" in §1.2) the native
 procedure serves, as it takes none.
 
 The SQL server calls `ts_select` for the reads it serves, and `tarn_select`
-for the others and after a `["lua"]`: those of vinyl tables, the first read
-of a stream, which begins its transaction (`tarn_select` notes its election
-term), and the pages after a page. (Inside a transaction, a read without an
+for the others and after a `["lua"]`: those of vinyl tables, and the pages
+after a page. The first read of a stream begins its transaction, as
+`tarn_select`'s does (read-confirmed, rolled back after 60 s); a read the
+native procedure hands back takes that transaction back, so that
+`tarn_select` begins it. (Inside a transaction, a read without an
 end key needs neither: it is an IPROTO SELECT, which runs no Lua.) A shard without the module (an older
 version, or `TARN_NATIVE=0`) answers that the procedure does not exist, one
 whose module did not load or is of another build than its `lua/tarn.lua`
@@ -563,10 +568,10 @@ back with the stream's transaction open: its reads, and none of the
 writes. Its attempt reads the rows its writes replace, in that transaction,
 as the Lua procedure's writes do; a commit handed back has read them a
 round trip earlier. Rolling back to the savepoint runs the transaction's
-`on_rollback` triggers, and the state names the transaction meanwhile, so
-that the Lua module's trigger, which forgets a stream transaction when it
-ends (and with it the `TRUNCATE`s it must fail), knows it goes on. It
-hands back what `ts_autocommit` hands back, and also:
+`on_rollback` triggers, of which a stream's transaction has none before
+its commit: what the Lua module knows of when a stream began is a number
+(`TERM_TXN`, `DDL_TXN`, below). It hands back what `ts_autocommit` hands
+back, and also:
 
 * a transaction with row locks on this shard (`FOR UPDATE`, `FOR SHARE`):
   `tarn_commit_local` checks that they survived, and releases them;
@@ -576,9 +581,9 @@ hands back what `ts_autocommit` hands back, and also:
   membership (`moved`); and any commit while a bucket is held here
   (`tarn_commit_local` checks the reads of every shard against its rows,
   §2.12);
-* while a `TRUNCATE` or `DROP TABLE` holds a table, or a stream transaction
-  open when one was applied is still open (its validation fails if it read
-  that table, §2.10);
+* while a `TRUNCATE` or `DROP TABLE` holds a table, or when one was applied
+  since its stream began (its validation fails if it read that table,
+  §2.10);
 * reads without a stream transaction to commit them in.
 
 The SQL server does not call it for a transaction that wrote a vinyl
@@ -603,6 +608,48 @@ began. `lua/test/native_test.lua` commits twin transactions through both
 procedures, in streams and without, and compares the replies and the
 tables; among them a commit handed back after its first write, which the
 Lua procedure then commits in the same stream.
+
+**Read-only transactions.** The fourth procedure, `tarn_storage.ts_validate`,
+takes `tarn_validate`'s arguments and validates a stream's transaction that
+read on this shard and wrote nothing (TarnCommit!ValidateRO, or the commit
+of a read-only transaction of one shard). It makes the same probe write
+(§2.4), which a transaction whose reads were overwritten refuses (it
+replies 1213, as `tarn_validate` does, having rolled the transaction
+back), and commits the transaction; the probe's space is data-temporary,
+so nothing yields from its checks to its commit. It hands the stream back,
+unchanged, when the transaction holds row locks here, when a prepared
+transaction holds locks on a table it read, when a bucket it read is not
+served here or one is held here, when it read every shard with an older
+membership, when a `TRUNCATE` or `DROP TABLE` holds a table, and when the
+node is read-only or its state stale. `lua/test/native_test.lua` validates
+twin streams through both procedures: those it serves get the Lua
+procedure's reply, among them one whose read was overwritten (1213), and
+the Lua procedure validates or refuses those it hands back, in the same
+stream, as it does their twins.
+
+Two checks of `tarn_validate` concern when the stream began: the node must
+have been the leader since then (TarnCommit: `lost`), and a `TRUNCATE` or
+`DROP TABLE` applied since must fail it if it read that table (§2.10).
+Tarantool numbers transactions as they begin, so the Lua module records
+the number of a transaction begun once the node saw its election term
+(`TERM_TXN`), and of one begun once each `TRUNCATE` or `DROP TABLE` was
+applied (`DDL_TXN`): a stream transaction below such a number began
+before. The state mirrors the first, and the last of the second; the
+native procedure hands back the streams below either, which the Lua
+procedure refuses (below the first) or checks against the tables they
+read (below the second).
+
+The native procedure does not read the election term. On a replicated
+shard (election mode `candidate`), a change of the term makes the node
+read-only at once, and Tarantool runs the election triggers before the node
+is writable in the new term. The Lua module's trigger notes the term's
+number and marks the lock index stale, so a native procedure, which needs
+a writable node and a fresh lock index, sees that number. (The Lua
+procedure, which may run before that trigger, compares the term itself.)
+This relies on that trigger running, as it does on a storage node, which
+runs no other code. A single instance (election mode `off`) changes its
+term only when an operator promotes it, and there no other node can have
+written anything its streams' MVCC tracking missed.
 
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
@@ -829,7 +876,11 @@ and is not part of the TLA+ model, which treats leader changes as atomic.
 A leader that knows it was demoted refuses every lock check, validation and
 commit with ER_READONLY (it may still serve plain reads of an open stream,
 whose commit then fails), and a validation in a stream that began under an
-earlier election term is refused.
+earlier election term is refused (its transaction's number is below that of
+one begun once the node saw the current term, §1.5). That stream may have
+missed writes of the leader in between, which no check of its reads would
+find: the model's `lost`, which `BugValidateLostStream` ignores, and TLC
+finds the violation in 15 seconds.
 
 ### 2.7 Ack-on-prepare
 
@@ -1239,15 +1290,16 @@ and not yet on another, a transaction prepared before it is applied before
 it (its rows go with the `TRUNCATE`), and a transaction that read the
 table before it cannot commit after it. memtx MVCC aborts the transactions
 that read a space when DDL changes it; vinyl aborts only those that wrote
-it, so APPLY also marks the stream transactions open on the shard as
-having read a table that changed, and their validation fails if their
-reads include it.
+it, so APPLY also notes the number of a transaction begun right after it
+(`DDL_TXN`; Tarantool numbers transactions as they begin): the stream
+transactions below it began before, and their validation fails if their
+reads include the table.
 
 The commit protocol model is unchanged here too: a `TRUNCATE` is the
 model's cross-shard transaction that deletes every row of the table, with
 the hold as the W locks its PREPARE takes after the table's own drain, and
 APPLY as its writes; the model's validation of reads (the probe write of
-§2.4) is what the doomed streams restore for vinyl. A `DROP` is a
+§2.4) is what that number restores for vinyl. A `DROP` is a
 `TRUNCATE` after which the table is gone; a `CREATE` writes nothing a
 transaction could have read.
 
@@ -1793,15 +1845,16 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
 | Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
-| Bug_ROValidateNoReadCheck | violates StrictSerializable | 18873 | 69552 | 12 | 05s | 12 |
+| Bug_ROValidateNoReadCheck | violates StrictSerializable | 19011 | 70050 | 12 | 06s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
+| Bug_ValidateLostStream | violates StrictSerializable | 112326 | 442590 | 13 | 15s | 13 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
-| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
+| FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
 | Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
-| Frac_ROValidate | no errors | 95786 | 555473 | 19 | 16s |  |
+| Frac_ROValidate | no errors | 95786 | 555473 | 19 | 17s |  |
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
@@ -1819,9 +1872,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LazyTargetConfirm | no errors | 19 | 24 | 5 | 00s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
-| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 56s |  |
+| LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 52s |  |
 | Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
-| Local_ROValidate | no errors | 66348 | 377760 | 19 | 12s |  |
+| Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
 | Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
@@ -1838,7 +1891,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Recov_GC | no errors | 1136892 | 8123071 | 23 | 02min 26s |  |
 | Skew | no errors | 12526098 | 130350710 | 30 | 25min 47s |  |
 | SkewFailover | no errors | 15518506 | 158998997 | 32 | 30min 08s |  |
-| SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 10min 18s |  |
+| SkewFailover_ROValidate | no errors | 4325065 | 34755383 | 28 | 11min 32s |  |
 | SkewTimeout_GC_ROValidate | no errors | 4509135 | 40415963 | 34 | 14min 39s |  |
 | Skew_AckOnPrepare | no errors | 26198655 | 277233192 | 30 | 01h 03min |  |
 | Skew_GC_ROValidate | stopped at the time limit, no violation so far | 47804036 | 411580777 | ≥23 | - |  |

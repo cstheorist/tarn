@@ -96,6 +96,7 @@ CONSTANTS
     ROValidateOnly,             \* option: cross-shard read-only txns validate, no PREPARE
     BugLocalReadsIgnoreWLocks,  \* single-shard reads don't check W locks
     BugROValidateNoReadCheck,   \* ValidateRO skips "reads unchanged" (memtx read views)
+    BugValidateLostStream,      \* ValidateRO accepts a shard whose leader failed over (lost)
     ApplyMarksCommitted,        \* option: D's APPLY records COMMITTED (implementation)
     GC,                         \* option: expiry and garbage collection of records
     BugGCIgnoresDecision,       \* GC deletes applied participant records regardless of rec
@@ -462,10 +463,17 @@ ConfirmLocal(t) ==
 \* could still commit.  "Reads unchanged" is therefore enforced with a probe
 \* write (refused from a read view); BugROValidateNoReadCheck models the
 \* implementation without the probe.
+\* A shard whose leader failed over while t's stream was open (lost) lost
+\* the MVCC tracking of its reads, and may miss its successor's writes: no
+\* check there finds them changed. The implementation refuses it by the
+\* election term the stream began in (TERM_TXN); BugValidateLostStream
+\* models the implementation without that check.
 ValidateRO(t, s) ==
     LET rk    == RKeysOn(t, s)
-        valid == /\ s \notin lost[t]
-                 /\ BugROValidateNoReadCheck \/ \A k \in rk : ValAt(k, s) = obs[t][k]
+        valid == /\ s \notin lost[t] \/ BugValidateLostStream
+                 /\ \/ s \in lost[t]
+                    \/ BugROValidateNoReadCheck
+                    \/ \A k \in rk : ValAt(k, s) = obs[t][k]
                  /\ BugLocalReadsIgnoreWLocks \/ NoWLocksAt(t, rk, s)
                  /\ ScanValid(t, s, BugROValidateNoReadCheck, BugLocalReadsIgnoreWLocks)
                  /\ HoldOK(t, s)

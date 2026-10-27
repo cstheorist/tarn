@@ -34,13 +34,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the transactions that wrote memtx tables on one shard, in the
   transaction's stream (whose reads it commits, as `tarn_commit_local`
   does), and hands the others back with the stream's transaction as it
-  was.
+  was. Its `tarn_storage.ts_validate` validates and commits read-only
+  transactions in their streams, and `ts_select` also serves the first read
+  of a stream, which begins its transaction.
   On one shard, point selects reach a quarter to over a third more
-  statements a second, the read transactions of `oltp_read_only` and
-  `oltp_read_write` over half more, `oltp_write_only`'s transactions 41%
-  more, and autocommit writes 71% to 76% more (on a shard of three
-  replicas, about a third more), while the shard's CPU per statement falls
-  to 29% to 51% of what the Lua procedures take. `bench/profile.py` (run by `bench/profile.sh`) measures
+  statements a second, the transactions of `oltp_read_only`,
+  `oltp_read_write` and `oltp_write_only` half again as many or more, and
+  autocommit writes 71% to 76% more (on a shard of three replicas, about a
+  third more), while the shard's CPU per statement falls to 29% to 50% of
+  what the Lua procedures take, and those transactions run no Lua. `bench/profile.py` (run by `bench/profile.sh`) measures
   what the storage side of a workload costs a shard's transaction thread:
   CPU and Lua allocations per statement, and where the time goes.
 
@@ -412,6 +414,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `tarn_validate` checks that the node has been the leader since the
+  stream began right before its probe write. It checked before reading the
+  lock index again, which may yield: a node demoted meanwhile could still
+  validate ([#28](https://github.com/cstheorist/tarn/issues/28)).
 - A transaction whose row lock request a shard refused without granting
   anything (`NOWAIT`, a lock wait timeout) left row-lock state there when
   it then rolled back, or committed without that shard: the SQL server now
@@ -421,10 +427,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value it held counted the row as changed when that value was an integer.
   The shards store such values as integers, which the SQL server now reads
   as doubles ([#28](https://github.com/cstheorist/tarn/issues/28)).
-- An autocommit read on a shard's new leader now reads the tables held by a
-  `TRUNCATE` or `DROP TABLE` from storage first, as writes do. Until a write
+- An autocommit read on a shard's new leader (of a range, of several keys,
+  or a count) now reads the tables held by a `TRUNCATE` or `DROP TABLE`
+  from storage first, as writes do, and so does a validation. Until a write
   read them, such a read could return rows of a table that a prepared
-  `TRUNCATE` or `DROP TABLE` held, instead of waiting for it
+  `TRUNCATE` or `DROP TABLE` held, instead of waiting for it, and a
+  validation could accept reads of that table
+  ([#28](https://github.com/cstheorist/tarn/issues/28)).
+- A `DROP TABLE` whose APPLY failed on a shard after dropping the table, and
+  ran again, did not fail the open transactions that had read the table
+  there (vinyl, which keeps them open): now it does
   ([#28](https://github.com/cstheorist/tarn/issues/28)).
 - An OK packet's info string, such as `PREPARE`'s "Statement prepared",
   is length-encoded, as MySQL and MariaDB write it. MariaDB's client

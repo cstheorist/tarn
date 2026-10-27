@@ -207,8 +207,8 @@ same('rows to an end key', {key = {10}, iter = 5, end_key = {20}, lock_check = f
 same('rows with no limit', {index = 2, key = {3}, lock_check = false}, true, st)
 st.space['test.nat']:replace(row(60))
 same('a row the transaction wrote', {key = {60}, limit = 1, lock_check = false}, true, st)
-n = st:call('tarn_storage.ts_select', args({key = {7}, limit = 1, begin = true}))
-check('a read that begins the transaction: handed to the Lua procedure', n[1] == 'lua', n)
+same('a read with begin, the transaction begun already', {key = {7}, limit = 1, begin = true, lock_check = false},
+     true, st)
 c:eval('tarn.cfg.scan_page_rows = 3; tarn.ns_sync()')
 same('a read with no limit: a scan, whose rows end the page', {index = 2, key = {3}, lock_check = false}, false, st)
 same('... a limit within the scan chunk: a select', {index = 2, key = {3}, limit = 3, lock_check = false}, true, st)
@@ -286,6 +286,41 @@ same('... but not one without', {key = {7}, limit = 1, lock_check = false}, true
 c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
 c:call('tarn_select', args({key = {7}, limit = 1}))
 same('once it ends, a read with the lock check', {key = {7}, limit = 1}, true)
+
+print('reads that begin a stream\'s transaction')
+local function in_txn(s) return s:eval('return box.is_in_txn()') end
+do
+st = c:new_stream()
+local sl = c:new_stream()
+local s0 = stats()
+n = st:call('tarn_storage.ts_select', args({key = {7}, limit = 1, begin = true, lock_check = false}))
+local s1 = stats()
+l = sl:call('tarn_select', args({key = {7}, limit = 1, begin = true, lock_check = false}))
+check('the first read of a stream: served, as the Lua procedure serves it, beginning its transaction',
+      s1 == s0 + 1 and canon(n) == canon(l) and in_txn(st) and in_txn(sl), {native = n, lua = l})
+local iso = 'return box.internal.txn_isolation()'
+check('... with the isolation of the Lua procedure\'s (read-confirmed)', st:eval(iso) == sl:eval(iso),
+      {native = st:eval(iso), lua = sl:eval(iso)})
+same('... the reads after it, in it', {key = {8}, limit = 1, lock_check = false}, true, st)
+-- (a transaction MVCC tracks: once a row it read is replaced, it cannot
+-- validate)
+c.space['test.nat']:replace{7, 100, 'changed', b}
+n = st:call('tarn_validate', {'NAT-B', {{sid, 0, {7}, b}}, {}, false, box.NULL, box.NULL})
+check('... whose reads MVCC tracks', n[1] == 'conflict', n)
+c.space['test.nat']:replace(row(7))
+pcall(st.rollback, st)
+pcall(sl.rollback, sl)
+-- a first read handed back takes its transaction back: tarn_select begins it
+c:eval('tarn.cfg.scan_page_rows = 3; tarn.ns_sync()')
+st = c:new_stream()
+n = st:call('tarn_storage.ts_select', args({index = 2, key = {3}, begin = true, lock_check = false}))
+check('a first read handed to the Lua procedure (its rows end the page) has begun no transaction',
+      n[1] == 'lua' and not in_txn(st), n)
+l = st:call('tarn_select', args({index = 2, key = {3}, begin = true, lock_check = false}))
+check('... which tarn_select begins then', l[1] == 'ok' and in_txn(st), l)
+pcall(st.rollback, st)
+c:eval('tarn.cfg.scan_page_rows = 4096; tarn.ns_sync()')
+end
 
 print('the load of a bucket')
 local function reads_of(x)
@@ -649,9 +684,8 @@ check('... (which the Lua procedure commits there: the native one took back its 
 unique_rows()
 n, l = csame('... whose read is overwritten once it was handed back', moves, {{9}}, {after = overwrite(9)}, false)
 check('... (its stream\'s transaction, with its read, as it was: a conflict)', l[1] == 'conflict', l)
--- ... or whose vinyl table read is emptied by a TRUNCATE then: the rollback
--- to its savepoint ran its on_rollback triggers, which must not have taken
--- it for its end (note_stream_term), so that the TRUNCATE dooms it
+-- ... or whose vinyl table read is emptied by a TRUNCATE then: the TRUNCATE
+-- dooms it (DDL_TXN), the rollback to its savepoint notwithstanding
 local vdef = c:eval('return box.space._tarn_catalog:get{...}.def', {'test.natv'})
 vdef.id, vdef.ver, vdef.json = vsid, (vdef.ver or 1) + 1, '{}'
 local vtrunc = {id = vsid, ver = vdef.ver, timeout = 5, def = vdef}
@@ -750,6 +784,137 @@ check('the rows a commit wrote count for their bucket', writes_of(b) - w0 == 2, 
 c:call('tarn_drop_table', {'test.wa'})
 c:call('tarn_drop_table', {'test.wb'})
 
+print('validations of read-only streams')
+do
+local function vstats() local i = c:call('tarn_info').native return i.validations, i.validations_to_lua end
+-- tarn_validate's arguments, after point reads of the keys `rkeys` of
+-- test.nat (o.rsid; routed by o.rb, else b); o: lock_gen, mver
+local function vargs(rkeys, o)
+    local pts = {}
+    for i, k in ipairs(rkeys) do pts[i] = {o.rsid or sid, 0, k, o.rb or b} end
+    return {'NAT-V-' .. require('uuid').str(), pts, {}, false, o.lock_gen or box.NULL, o.mver or box.NULL}
+end
+-- A read-only transaction on each of two streams: its reads (rkeys; the
+-- first begins its transaction, natively with o.native_begin; o.no_stream:
+-- none), then o.between(). The native procedure validates the first: its
+-- reply must be the Lua procedure's for the second (served); or it hands it
+-- back, having changed nothing, and the Lua procedure validates it, as it
+-- did the second.
+local function vsame(name, rkeys, o, want_served)
+    o = o or {}
+    local function txn()
+        if o.no_stream then return c end
+        local st = c:new_stream()
+        for i, k in ipairs(rkeys) do
+            local r = st:call(o.native_begin and 'tarn_storage.ts_select' or 'tarn_select',
+                              args({sid = o.rsid or sid, key = k, limit = 1, lock_check = false, begin = i == 1}))
+            assert(r[1] == 'ok', json.encode(r))
+        end
+        return st
+    end
+    local sa, sb = txn(), txn()
+    if o.between then o.between() end
+    local s0, l0 = vstats()
+    local n = sa:call('tarn_storage.ts_validate', vargs(rkeys, o))
+    local s1, l1 = vstats()
+    local l = sb:call('tarn_validate', vargs(rkeys, o))
+    if want_served then
+        check(name .. ': served, as the Lua procedure serves it', s1 == s0 + 1 and canon(n) == canon(l),
+              {native = n, lua = l})
+    else
+        local l2 = sa:call('tarn_validate', vargs(rkeys, o))
+        check(name .. ': handed to the Lua procedure', l1 == l0 + 1 and n[1] == 'lua' and l2[1] == l[1] and l2[2] == l[2],
+              {native = n, lua = l, lua_after = l2})
+        l = l2
+    end
+    for _, st in ipairs({sa, sb}) do if st ~= c then pcall(st.rollback, st) end end
+    return n, l
+end
+local function overwrite7() c.space['test.nat']:replace{7, 100, 'changed', b} end
+vsame('a read-only stream', {{7}, {8}}, nil, true)
+vsame('... whose transaction a native read began', {{7}, {8}}, {native_begin = true}, true)
+local n, l = vsame('one whose read was overwritten since', {{7}}, {between = overwrite7}, true)
+check('... (a conflict, its probe write refused)', l[1] == 'conflict' and l[2] == 1213, l)
+c.space['test.nat']:replace(row(7))
+n, l = vsame('one with row locks here', {{7}}, {lock_gen = 'x/1'}, false)
+check('... (which the Lua procedure refuses: they were lost)', l[1] == 'error' and l[2] == 1213, l)
+n, l = vsame('one that read every shard with an older membership', {{7}}, {mver = -1}, false)
+check('... (refused)', l[1] == 'moved', l)
+if other ~= nil then
+    vsame('one whose read was routed by a bucket this shard does not own', {{7}}, {rb = other}, false)
+end
+n, l = vsame('reads without a stream', {{7}}, {no_stream = true}, false)
+check('... (which the Lua procedure refuses)', l[1] == 'conflict', l)
+local vps = c:new_stream()
+vps:begin()
+local vtx = 'NAT-' .. require('uuid').str()
+local r = vps:call('tarn_prepare', {vtx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(), box.NULL,
+                                    box.NULL, {b}})
+check('a prepared transaction holds a lock on test.nat', r[1] == 'yes', r)
+vsame('then one that read another row of it', {{7}}, nil, false)
+c:call('tarn_abort', {vtx, 1, {1}})
+vsame('once it ended', {{7}}, nil, true)
+-- a TRUNCATE applied while the streams were open: they fail if they read
+-- its table (the Lua procedure checks)
+c:call('tarn_create_table', {def('test.ntr2', 'memtx', 28006)})
+local tdef = c:eval('return box.space._tarn_catalog:get{...}.def', {'test.ntr2'})
+local tid = c:eval('return box.space[...].id', {'test.ntr2'})
+tdef.id, tdef.ver, tdef.json = tid, 2, '{}'
+local function truncate()
+    local t = {id = tid, ver = 2, timeout = 5, def = tdef}
+    local r1, r2 = c:call('tarn_truncate_prepare', {'test.ntr2', t}), c:call('tarn_truncate_apply', {'test.ntr2', t})
+    check('a TRUNCATE of another table, applied', r1[1] == 'ok' and r2[1] == 'ok', {r1, r2})
+end
+n, l = vsame('one open when a TRUNCATE was applied', {{7}}, {between = truncate}, false)
+check('... (which the Lua procedure validates: it did not read that table)', l[1] == 'ok', l)
+vsame('one begun after it', {{7}}, nil, true)
+c:call('tarn_drop_table', {'test.ntr2'})
+-- a new election term: a stream begun before it may have missed writes of
+-- another leader (TarnCommit: lost)
+local function promote()
+    -- (this node owns the queue of synchronous transactions already: a
+    -- promotion alone keeps the term)
+    local t0 = c:eval('return box.info.election.term')
+    c:eval("box.ctl.demote() box.ctl.promote() require('fiber').sleep(0.1)")
+    check('a new election term', c:eval('return box.info.election.term') > t0)
+    local deadline = fiber.clock() + 5
+    while c:eval('return box.info.ro') and fiber.clock() < deadline do fiber.sleep(0.05) end
+    -- (a Lua read with the lock check reads the lock index again: the state
+    -- is fresh)
+    c:call('tarn_select', args({key = {7}, limit = 1}))
+end
+n, l = vsame('one begun before a new election term', {{7}}, {between = promote}, false)
+check('... (which the Lua procedure refuses)', l[1] == 'conflict', l)
+vsame('one begun in the new term', {{7}}, nil, true)
+-- a table held by a TRUNCATE or DROP TABLE (its hold, as their PREPARE
+-- stores it), and the held tables to be read again (a restart, a new
+-- leader): tarn_validate reads them, and then the native procedure serves
+c:eval('box.space._tarn_meta:replace{..., {op = "TRUNCATE", ver = 0, label = "NAT-HOLD"}} tarn.stale_fences()', {hold})
+vsame('one while the held tables are to be read again', {{7}}, nil, false)
+vsame('... while a TRUNCATE or DROP TABLE holds a table', {{7}}, nil, false)
+c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
+vsame('... once it ends, the held tables to be read again', {{7}}, nil, false)
+vsame('... which the Lua procedure read: then', {{7}}, nil, true)
+local ro = c:new_stream()
+ro:call('tarn_select', args({key = {7}, limit = 1, lock_check = false, begin = true}))
+c:eval('box.cfg{read_only = true}')
+n = ro:call('tarn_storage.ts_validate', vargs({{7}}, {}))
+check('a validation on a read-only node: handed to the Lua procedure', n[1] == 'lua', n)
+local ok_ro, err_ro = pcall(ro.call, ro, 'tarn_validate', vargs({{7}}, {}))
+check('... which refuses it (ER_READONLY)', not ok_ro and err_ro.code == box.error.READONLY, tostring(err_ro))
+pcall(ro.rollback, ro)
+c:eval("box.cfg{read_only = false} require('fiber').sleep(0.1)")
+local deadline = fiber.clock() + 5
+repeat
+    c:call('tarn_select', args({key = {7}, limit = 1}))
+    local st = c:new_stream()
+    st:call('tarn_select', args({key = {7}, limit = 1, lock_check = false, begin = true}))
+    n = st:call('tarn_storage.ts_validate', vargs({{7}}, {}))
+    pcall(st.rollback, st)
+until n[1] ~= 'lua' or fiber.clock() > deadline
+vsame('once the node is writable again, a validation', {{7}}, nil, true)
+end
+
 print('a module of another build')
 -- (its state's layout is not the Lua module's: it fails as a module that
 -- does not load, ER_LOAD_FUNCTION, and the SQL servers stop calling it)
@@ -759,6 +924,8 @@ local ok, err = pcall(c.call, c, 'tarn_storage.ts_select', args({key = {7}, limi
 check('its reads fail (99)', not ok and err.code == 99, tostring(err))
 ok, err = pcall(c.call, c, 'tarn_storage.ts_commit_local', {'NAT-X', {}, {}, {}, box.NULL, box.NULL, {}, box.NULL})
 check('... and its commits', not ok and err.code == 99, tostring(err))
+ok, err = pcall(c.call, c, 'tarn_storage.ts_validate', {'NAT-X', {}, {}, false, box.NULL, box.NULL})
+check('... and its validations', not ok and err.code == 99, tostring(err))
 c:eval("box.func['tarn_storage.ts_state']:call({...})", {layout})
 same('the same layout again: served', {key = {7}, limit = 1}, true)
 

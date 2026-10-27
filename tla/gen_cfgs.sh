@@ -2,7 +2,7 @@ mk ()
 { 
     local name=$1 rs=$2 ws=$3 fo=$4 cr=$5 lo=$6;
     shift 6;
-    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked UniqueHolds";
+    local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE VLS=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked UniqueHolds";
     local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE IK=NoIKeys INE=FALSE;
     local SS=NoSSet MK=NoMKeys MND=FALSE MNH=FALSE MSS=FALSE;
     local SH=MCShards KY=MCKeys OW=MCOwner JN=FALSE OLD=NoOld BJN=FALSE;
@@ -38,6 +38,9 @@ mk ()
             ;;
             NRC)
                 NRC=TRUE
+            ;;
+            VLS)
+                VLS=TRUE
             ;;
             ROV)
                 ROV=TRUE
@@ -146,6 +149,7 @@ CONSTANTS
   ROValidateOnly = $ROV
   BugLocalReadsIgnoreWLocks = $LRW
   BugROValidateNoReadCheck = $NRC
+  BugValidateLostStream = $VLS
   ApplyMarksCommitted = $AMC
   GC = $GC
   BugGCIgnoresDecision = $BGD
@@ -214,6 +218,7 @@ mk Bug_ROValidateNoWLockCheck RSetFrac  WSetFrac  0 0 0 ROV LRW
 mk Bug_NoTombstone            RSetRecov WSetRecov 0 1 1 NTS
 mk Bug_LocalReadsIgnoreWLocks RSetRecov WSetRecov 0 0 0 LRW
 mk Bug_ROValidateNoReadCheck  RSetFrac  WSetFrac  0 0 0 ROV NRC
+mk Bug_ValidateLostStream     RSetFrac  WSetFrac  1 0 0 ROV AMC VLS
 mk Bug_GCIgnoresDecision      RSetRecov WSetRecov 0 1 1 NORD GC BGD
 mk Bug_GCNoExpiry             RSetRecov WSetRecov 0 1 1 NORD GC BNE
 mk Bug_FenceAfterExpiry       RSetRecov WSetRecov 0 1 1 NORD GC BFE

@@ -8,7 +8,8 @@ shard's transaction thread (the thread that runs the storage procedures):
   * bytes allocated by Lua per statement (LuaJIT's gc_allocated), and per
     storage call;
   * the share of storage calls the native procedures served: reads,
-    autocommit writes and commits (lua/tarn.lua, "Native procedures");
+    autocommit writes, commits and validations (lua/tarn.lua, "Native
+    procedures");
   * where the thread's time goes, from LuaJIT's sampling profiler (sysprof,
     default mode): Lua code (interpreted and JIT-compiled), the garbage
     collector, the JIT compiler, and C code called from Lua -- the
@@ -51,7 +52,7 @@ local n = tarn_info().native
 return {calls = box.stat().CALL.total, eval = box.stat().EVAL.total, alloc = m.gc_allocated,
         freed = m.gc_freed, steps = m.gc_steps_propagate + m.gc_steps_atomic + m.gc_steps_sweepstring
         + m.gc_steps_sweep + m.gc_steps_finalize, traces = m.jit_trace_num, aborts = m.jit_trace_abort,
-        served = n and n.served + (n.writes or 0) + (n.commits or 0) or box.NULL}
+        served = n and n.served + (n.writes or 0) + (n.commits or 0) + (n.validations or 0) or box.NULL}
 """
 
 
