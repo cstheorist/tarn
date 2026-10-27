@@ -148,6 +148,13 @@ storage node and follows local capture activation and invalidation. A
 gateway-side eligibility check alone cannot protect against a stale
 gateway or an older client.
 
+DROP durably retires its lazy incarnations before hidden-space cleanup.
+TRUNCATE rotates them to freshly allocated incarnations and publishes the
+empty ready indexes with the cleared base table. It keeps the source
+bucket counters and clears the table's live-row version ledger. It does
+not backfill the rows being truncated. Late assignments for the old
+incarnations cannot populate the new ones.
+
 ## Bucket moves and shard removal
 
 Lazy target writes participate in the existing commit-in-flight and bucket
@@ -173,7 +180,8 @@ SET SESSION tarn_lazy_wait_timeout = 5;
 ```
 
 They are session-only. The timeout uses integer seconds, zero through sixty,
-with five seconds the default. Zero requests a nonblocking check.
+with five seconds the default. Zero requests a nonblocking check and an
+error if catch-up cannot complete immediately.
 
 A session retains cumulative own committed-but-not-yet-applied participant
 obligations and touched stable bucket identifiers, even while the flag is
@@ -190,10 +198,13 @@ commit on another bucket must not replace an unresolved earlier obligation.
 
 History is bounded. Overflow or an expired/ambiguous receipt requires
 backpressure, a sticky strong fallback or an error; it cannot silently
-forget an unresolved obligation and return a stale lazy result. Timeout
-uses a safe strong fallback where available or returns an explicit error.
-The barrier establishes causal index catch-up before the read, not a
-globally serializable query snapshot.
+forget an unresolved obligation and return a stale lazy result. An attempted
+catch-up that cannot finish within its budget returns error 1205 and keeps
+the outstanding history for a later read. It does not begin a second,
+potentially longer lock wait as a fallback. Queries already using the
+strong path retain their ordinary lock-wait behavior. The barrier
+establishes causal index catch-up before the read, not a globally
+serializable query snapshot.
 
 ## Observability and verification
 

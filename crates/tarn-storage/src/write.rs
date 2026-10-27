@@ -8,6 +8,9 @@
 //! tarn_autocommit, with nothing written: the reply ["lua"] tells the SQL
 //! server to call it. This file reads the arguments and does the arithmetic
 //! of a write; procs.rs runs it.
+//! Sources that need lazy-index capture also go to Lua: a native write
+//! cannot bypass the source row's atomic outbox transaction. The shard's
+//! mirrored registry excludes them even when gateway metadata is stale.
 //!
 //! The values a write stores are the ones tarn_autocommit would store. The
 //! Lua procedure decodes its arguments and Tarantool encodes them again, in

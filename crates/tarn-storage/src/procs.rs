@@ -873,6 +873,12 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if s.ready == 0 || s.hooks != 0 || s.pl_n != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
         return None;
     }
+    // Gateway metadata can lag behind local DDL activation. Check every
+    // actual source before schema reads or Txn::begin, not just opts.fence;
+    // otherwise a stale/partial fence could bypass commit-atomic capture.
+    if writes.iter().any(|w| s.lazy_write_excluded(w.space_id)) {
+        return None;
+    }
     // SAFETY: plain calls of the module API in the transaction thread.
     unsafe {
         // (a replica: tarn_autocommit raises ER_READONLY; a transaction in
