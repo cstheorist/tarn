@@ -241,10 +241,12 @@ SHOW STATUS reports per-shard outbox depth and oldest-entry age from
 asynchronously collected samples. Missing or stale samples are exposed as
 such. A cached depth of zero is not a read-your-writes barrier.
 
-The bounded TLA+ refinements cover delivery and replay, capacity promises,
-bootstrap/capture admission, tombstone floors, handoff and cumulative
-session barriers. Each protection has a broken-control configuration that
-must violate its intended invariant. They refine the existing commit
+The bounded TLA+ refinements cover delivery and replay, capture admission,
+capacity promises, confirmed target acknowledgements, tombstone floors,
+handoff and cumulative session barriers, with broken-control configurations
+that violate the corresponding invariants. Complete bootstrap enumeration,
+consistent baseline row/version reads and late-enqueue rejection are
+runtime refinement premises exercised by native tests. The models refine the existing commit
 protocol under explicit storage atomicity and durable-confirmation
 premises; they do not prove every SQL expression or the entire native
 implementation. [verification.md](verification.md) records the checked

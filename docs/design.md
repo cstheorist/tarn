@@ -1668,6 +1668,47 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
 | Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
 | Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_LazyBarrierForgetUnresolved | violates OwnWritesCovered | 126 | 274 | 8 | 00s | 8 |
+| Bug_LazyBarrierLastOnly | violates OwnWritesCovered | 72 | 145 | 9 | 00s | 9 |
+| Bug_LazyBarrierMaxAck | violates OwnWritesCovered | 81 | 171 | 12 | 00s | 12 |
+| Bug_LazyBarrierSkipApplyWait | violates OwnWritesCovered | 57 | 97 | 7 | 00s | 7 |
+| Bug_LazyBarrierSplitFrontierView | violates PrefixCovered | 197 | 400 | 13 | 00s | 13 |
+| Bug_LazyBarrierTrackOnlyWhenEnabled | violates OwnWritesCovered | 57 | 96 | 7 | 00s | 7 |
+| Bug_LazyBarrierWaitAfterSnapshot | violates OwnWritesCovered | 106 | 185 | 11 | 00s | 11 |
+| Bug_LazyCapacityAbortLeaks | violates AbortedReleased | 8 | 9 | 3 | 00s | 3 |
+| Bug_LazyCapacityNoByteReserve | violates BytePromisesFit | 7 | 7 | 3 | 00s | 3 |
+| Bug_LazyCapacityNoEntryReserve | violates EntryPromisesFit | 6 | 6 | 3 | 00s | 3 |
+| Bug_LazyCapacityNoSeqReserve | violates SequencePromisesFit | 6 | 6 | 3 | 00s | 3 |
+| Bug_LazyHandoffDropFloors | violates DrainedProjection | 56 | 119 | 7 | 00s | 7 |
+| Bug_LazyHandoffDropLiveVersion | violates LiveVersionSurvives | 9 | 12 | 4 | 00s | 4 |
+| Bug_LazyHandoffDropMarkers | violates DrainedProjection | 18 | 30 | 5 | 00s | 5 |
+| Bug_LazyHandoffNoTargetDrain | violates DrainedProjection | 136 | 365 | 11 | 00s | 11 |
+| Bug_LazyHandoffNoTargetFence | violates DrainedProjection | 136 | 339 | 11 | 00s | 11 |
+| Bug_LazyHandoffNoTargetNote | violates DrainedProjection | 127 | 329 | 11 | 00s | 11 |
+| Bug_LazyHandoffRemovePending | violates SourceObligationsSurvive | 4 | 4 | 2 | 00s | 2 |
+| Bug_LazyHandoffResetCounter | violates CounterContinues | 10 | 13 | 4 | 00s | 4 |
+| Bug_LazyHandoffSourceNoFlush | violates SourceObligationsSurvive | 8 | 10 | 3 | 00s | 3 |
+| Bug_LazyIndexAckMissingTarget | violates DrainedConverges | 537216 | 5991884 | 21 | 09s | 21 |
+| Bug_LazyIndexCaptureFailOpen | violates DrainedConverges | 171 | 540 | 10 | 00s | 10 |
+| Bug_LazyIndexFloorFromMaxAck | violates DrainedConverges | 775423 | 7956003 | 22 | 12s | 22 |
+| Bug_LazyIndexForgetBeforeAck | violates DrainedConverges | 58065 | 416748 | 17 | 01s | 17 |
+| Bug_LazyIndexForwardBeforeCapture | violates DrainedConverges | 54 | 118 | 8 | 00s | 8 |
+| Bug_LazyIndexGcBeforeFloor | violates DrainedConverges | 552060 | 6607034 | 24 | 10s | 24 |
+| Bug_LazyIndexIgnoreGeneration | violates DrainedConverges | 473050 | 6488145 | 29 | 09s | 29 |
+| Bug_LazyIndexNoBaseRecheck | violates BaseReadSafe | 50 | 130 | 9 | 00s | 9 |
+| Bug_LazyIndexNoKeyRecheck | violates CandidateKeySafe | 31 | 69 | 8 | 00s | 8 |
+| Bug_LazyIndexShipBeforeCommit | violates CommittedOnly | 560 | 2174 | 12 | 00s | 12 |
+| Bug_LazyIndexSplitOutbox | violates DrainedConverges | 44 | 119 | 9 | 00s | 9 |
+| Bug_LazyIndexStaleOverwrite | violates DrainedConverges | 249637 | 2464303 | 21 | 04s | 21 |
+| Bug_LazyMeterApplyCap | violates NoCapacityRefusal | 90 | 127 | 7 | 00s | 7 |
+| Bug_LazyMeterEarlyRelease | violates ReadyConservative | 91 | 144 | 7 | 00s | 7 |
+| Bug_LazyMeterMutateUnknown | violates ReadyConservative | 559 | 1501 | 6 | 00s | 6 |
+| Bug_LazyMeterNoDrain | violates ReadyConservative | 200 | 414 | 8 | 00s | 8 |
+| Bug_LazyMeterNoPrecharge | violates ReadyConservative | 26 | 35 | 5 | 00s | 5 |
+| Bug_LazyMeterNoQueueCut | violates ReadyConservative | 27 | 40 | 4 | 00s | 4 |
+| Bug_LazyMeterRefundUncertain | violates ReadyConservative | 45 | 76 | 6 | 00s | 6 |
+| Bug_LazyMeterStaleCallback | violates ReadyConservative | 1035 | 2281 | 10 | 00s | 10 |
+| Bug_LazyMeterStaleInstall | violates ReadyEpochCurrent | 25 | 38 | 5 | 00s | 5 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
 | Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
@@ -1682,6 +1723,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 18873 | 69552 | 12 | 05s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
+| Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
@@ -1694,6 +1736,13 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
 | Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
+| LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
+| LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
+| LazyHandoff | no errors | 156 | 432 | 13 | 00s |  |
+| LazyHandoffLive | no errors | 76 | 196 | 12 | 00s |  |
+| LazyIndex | no errors | 475615 | 6599566 | 38 | 09s |  |
+| LazyMeter | no errors | 1918745 | 7064587 | 30 | 20s |  |
+| LazyTargetConfirm | no errors | 19 | 24 | 5 | 00s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
 | LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 56s |  |

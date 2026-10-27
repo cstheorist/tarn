@@ -544,7 +544,7 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
 | 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |
-| 1041 | HY000 | lazy-index encoded outbox or PREPARE capacity exhausted, or exact sequence space exhausted | restore delivery or capacity before retrying; sequence exhaustion needs a new design limit |
+| 1041 | HY000 | lazy-index encoded outbox or PREPARE capacity exhausted, or exact sequence space exhausted | restore delivery or capacity before retrying; draining does not clear sequence exhaustion |
 | 1264 | 22003 | value out of range for the column | |
 | 1235 | 42000 | not supported | |
 | 1105 | HY000 | under `tarn_tree_checks = 'ERROR'`: a declared [table tree](sql-compatibility.md#table-trees) does not line up (otherwise a warning) | fix the keys or `PARTITION BY KEY` |
