@@ -1,6 +1,6 @@
 # Tarn
 
-**A distributed, strictly serializable, MySQL-compatible SQL database on [Tarantool](https://www.tarantool.io), with a TLA+-checked commit protocol and a Verus-verified core.**
+**A distributed MySQL-compatible SQL database on [Tarantool](https://www.tarantool.io), strictly serializable by default, with a TLA+-checked commit protocol and a Verus-verified core.**
 
 [![CI](https://github.com/cstheorist/tarn/actions/workflows/ci.yml/badge.svg)](https://github.com/cstheorist/tarn/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -8,7 +8,7 @@
 
 Tarn speaks the MySQL protocol, stores every SQL table as an ordinary
 sharded Tarantool space -- in RAM (memtx) or on disk (vinyl) -- and commits
-transactions that span shards with **strict serializability**. Because rows
+transactions that span shards with **strict serializability** by default. Because rows
 are plain Tarantool tuples, applications can also skip SQL entirely and
 read them as **key/value**.
 
@@ -26,10 +26,15 @@ read them as **key/value**.
 * **Co-located joins.** Primary-prefix joins over a bound shared shard key
   use one bounded, lock-checked storage request. Other equality joins batch
   their inner lookups by shard.
-* **Online schema changes.** `ALTER TABLE` adds, drops and changes columns
-  and indexes without rewriting rows or stopping reads, while every SQL
-  server keeps writing: writes made with a replaced table definition are
-  refused by the shards and redone.
+* **Optional lazy secondary indexes.** Non-unique keys with
+  `COMMENT 'tarn:lazy'` maintain an asynchronous global copy. Eligible
+  autocommit lookups read one index shard, fetch current base rows and
+  recheck their predicates; they may miss recent matches. A session can
+  wait for its own writes. Transactions retain the strong local index.
+  See [the consistency and operational contract](docs/lazy-indexes.md).
+* **Schema changes.** `ALTER TABLE` retains existing tuple layouts.
+  Native index builds run online; indexed instant defaults and lazy-index
+  bootstrap use bounded write fences while reads remain available.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
   sharded with vshard's bucket function and live in RAM (memtx) or, with
@@ -49,8 +54,8 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (62 configurations, including 22 deliberately
-  broken variants that TLC must catch). Shard routing, commit decisions and
+  and model-checked with TLC (120 default configurations, including 82
+  broken or tradeoff cases that TLC must expose). Shard routing, commit decisions and
   the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
   and compiled into the server.
 * **Tested against reality.** Exact differential tests against MariaDB,

@@ -1,7 +1,6 @@
 # Lazy secondary indexes
 
 This is the implementation contract for issue [#82](https://github.com/cstheorist/tarn/issues/82).
-The implementation and its validation are in progress on this branch.
 
 A lazy index is an additional, asynchronously maintained global copy of a
 non-unique secondary index. The ordinary local Tarantool index remains in
@@ -56,6 +55,9 @@ primary-key values for base lookup. Encoded identity bytes are not SQL
 ordering keys: pagination uses typed index and primary-key values.
 Unsupported routing types must be rejected when declaring the lazy index,
 rather than allowed to route SQL-equal values differently.
+The initial implementation accepts integer, text, binary and normalized
+temporal values in index and primary-key identities. FLOAT, DOUBLE, DECIMAL
+and JSON columns in either identity are rejected.
 
 ## Commit and delivery
 
@@ -96,6 +98,9 @@ the target durably applied it, already holds a superseding version, or has
 an authoritative durable retirement for that incarnation. An unavailable,
 missing or not-yet-ready target does not acknowledge it. A leader resumes
 delivery from durable state after restart or failover.
+Duplicate deliveries read confirmed target state: a marker, floor or
+retirement still awaiting WAL or quorum confirmation cannot justify an
+acknowledgement. A conflict leaves the source assignment available for retry.
 
 The target keeps the newest membership marker for each tuple of index
 incarnation, canonical index key and canonical base primary key. Old-key
@@ -186,9 +191,17 @@ assignments are not migrated in the initial design. Destination outage can
 therefore delay a move. Shard removal must also wait for pending,
 reserved and in-flight lazy obligations before decommissioning a source.
 
+Deploy lazy-aware gateways and storage modules on every replica before
+creating a lazy index. Schema export carries a versioned lazy envelope,
+including retired incarnations, and JOIN requires explicit support from
+the gateway and every candidate replica. Bucket transfer identifies the
+internal lazy counters, versions and floors by stable names, since their
+local native space numbers can differ between nodes. Capability checks
+refuse incompatible receivers before a transfer begins.
+
 ## Reading a session's own writes
 
-The proposed session controls are:
+The session controls are:
 
 ```sql
 SET SESSION tarn_lazy_read_your_writes = ON;

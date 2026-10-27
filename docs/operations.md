@@ -94,6 +94,8 @@ at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
 | `lock_wait` | 1 s | how long an autocommit read or write waits for a conflicting prepared transaction before failing with 1213 |
 | `gc_batch` | 500 | protocol records deleted per garbage-collection transaction |
 | `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan |
+| `lazy_outbox_entries` | 65,536 | per-shard committed lazy-index assignments plus PREPARE promises; fresh admissions exceeding this cap fail with 1041 |
+| `lazy_outbox_bytes` | 64 MiB | corresponding encoded assignment and promise bytes; this is not a reservation of native allocator memory |
 
 Protocol records (participant and decision records of cross-shard
 transactions) are kept for about `max_txn_age + clock_skew` after their last
@@ -104,6 +106,32 @@ The storage user is `tarn` with password `tarn`, created by the module with
 full privileges. Change it (`tarn.init{user=..., password=...}` in
 `storage.lua`, and `user`/`password` in `cluster.json`) for anything but
 local experiments.
+
+### Lazy secondary indexes
+
+`COMMENT 'tarn:lazy'` on a non-unique key enables an asynchronous global
+index for eligible autocommit reads. Recent matching rows may be absent;
+returned candidates are fetched and checked against their current base
+rows. Transactions and locking reads retain the strong paths. See the
+[full contract](lazy-indexes.md) for supported keys, bootstrap and topology.
+
+```sql
+SET SESSION tarn_lazy_read_your_writes = ON;  -- default OFF
+SET SESSION tarn_lazy_wait_timeout = 5;      -- integer seconds, 0..60
+```
+
+The session retains its own outstanding commit obligations even while the
+flag is OFF. With it ON, an eligible read first waits for those writes to
+reach the index. A catch-up timeout returns 1205, keeps the obligations and
+does not re-send the write. Zero requests a nonblocking check. This does
+not establish a distributed serializable read snapshot.
+
+An index destination outage retains source assignments and can cause 1041
+backpressure or delay bucket moves. Lowering a cap does not revoke an
+existing PREPARE promise; its decided APPLY is still admitted. Admission
+can briefly fail with 1213 while a new leader rebuilds its capacity meter.
+Deploy compatible gateways and storage on every replica before enabling
+lazy indexes; JOIN and moves check the required transfer capabilities.
 
 ### Sizing
 
@@ -444,6 +472,14 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 
 ## Monitoring
 
+For lazy indexes, `SHOW STATUS LIKE 'Tarn_lazy%'` includes completed lazy
+reads, strong fallbacks and this session's pending APPLY count, touched
+bucket count and sticky strong-fallback state. Per-shard `depth`, `bytes`,
+`reserved_entries`, `reserved_bytes`, `oldest_age` and `inflight` values are
+cached samples. Their `sample` field is `current`, `stale` (older than five
+seconds) or `unavailable`; unavailable values are `NULL`. SHOW adds no
+storage RPC. A cached depth of zero is not a read-your-writes barrier.
+
 * `SHOW TARN STATUS` (or `SHOW STATUS LIKE 'Tarn%'`) on any SQL connection:
   statements, local / read-only / two-phase commits, conflicts, internal
   retries, plan-cache hits and misses, deadlocks across shards broken by
@@ -500,6 +536,7 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 |---|---|---|---|
 | 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, a bucket the transaction used moved, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
 | 1205 | HY000 | lock wait timeout (`innodb_lock_wait_timeout`); only the statement was rolled back | retry the statement or roll back |
+| 1205 | HY000 | lazy-index own-write catch-up exceeded `tarn_lazy_wait_timeout`; session obligations retained | retry the read after delivery recovers |
 | 3572 | HY000 | `NOWAIT` and the row is locked; only the statement was rolled back | |
 | 1305 | 42000 | no such savepoint | |
 | 1568 | 25001 | `SET TRANSACTION` inside a transaction | |
@@ -507,6 +544,7 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 | 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |
+| 1041 | HY000 | lazy-index encoded outbox or PREPARE capacity exhausted, or exact sequence space exhausted | restore delivery or capacity before retrying; sequence exhaustion needs a new design limit |
 | 1264 | 22003 | value out of range for the column | |
 | 1235 | 42000 | not supported | |
 | 1105 | HY000 | under `tarn_tree_checks = 'ERROR'`: a declared [table tree](sql-compatibility.md#table-trees) does not line up (otherwise a warning) | fix the keys or `PARTITION BY KEY` |

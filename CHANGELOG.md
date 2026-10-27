@@ -8,6 +8,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Lazy secondary indexes ([#82](https://github.com/cstheorist/tarn/issues/82)):
+  `COMMENT 'tarn:lazy'` on a non-unique key creates an asynchronous global
+  copy while retaining the strong local index. Eligible nonlocking
+  autocommit SELECTs fetch and recheck current base rows, refill pages
+  after stale candidates and can opt into bounded session catch-up.
+  Durable commit-atomic outboxes, reserved PREPARE capacity, versioned
+  delivery and collection floors survive retry, restart and bucket moves.
+  Bootstrap uses a bounded write fence; TRUNCATE rotates index generations.
+  See [the consistency and operational limits](docs/lazy-indexes.md).
+
 - Native storage procedures
   ([#28](https://github.com/cstheorist/tarn/issues/28)): `crates/tarn-storage`
   builds a Tarantool C module, `libtarn_storage.so`, that the storage nodes

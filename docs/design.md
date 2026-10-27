@@ -4,13 +4,19 @@ Tarn is a MySQL-protocol SQL server whose storage is a set of Tarantool
 shards. Every SQL table is an ordinary Tarantool space, so the same rows that
 SQL clients read and write can be read directly as Key/Value by any Tarantool
 client (`box.space['db.t'].index.primary:get{...}`). SQL transactions are
-**strictly serializable** across shards; the commit protocol is specified in
+**strictly serializable** across shards by default; the commit protocol is specified in
 TLA+ and model-checked with TLC, and the routing, coordinator-decision and
 MySQL wire-codec code is verified in Verus.
 
 This document describes the architecture, the protocol and its verification,
 the test suites, the benchmarks on this machine and the known limitations.
 The [README](../README.md) and [getting started](getting-started.md) cover building and running.
+
+An explicit `COMMENT 'tarn:lazy'` on a non-unique index opts eligible
+nonlocking autocommit lookups into eventual index propagation. They fetch
+and recheck current base rows, but may miss recent matches. Explicit
+transactions keep the strong path. [Lazy secondary indexes](lazy-indexes.md)
+specifies capture, delivery, session catch-up, bootstrap and topology rules.
 
 ## 1. Architecture
 

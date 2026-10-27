@@ -11,6 +11,16 @@ locking behaviour of READ COMMITTED by concurrent tests, and online schema
 changes by a test that alters a table hundreds of times while two SQL
 servers write to it (`tests/sql/`).
 
+Non-unique indexes explicitly declared with `COMMENT 'tarn:lazy'` also
+provide an eventual global copy for eligible nonlocking autocommit SELECTs.
+Current base rows and the complete predicate are rechecked; recently
+matching rows may be missing. Explicit transactions, locking reads, DML
+and unsupported shapes retain strong execution. Session-only
+`tarn_lazy_read_your_writes` (OFF by default) and
+`tarn_lazy_wait_timeout` (integer seconds 0..60, default 5) control causal
+catch-up; an incomplete attempted catch-up returns 1205 and retains its
+history. See [the full contract and supported identities](lazy-indexes.md).
+
 ## Protocol
 
 | Feature | Support |

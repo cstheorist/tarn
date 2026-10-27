@@ -1,6 +1,7 @@
 -- Standalone real-MVCC regression for LazyMeter's admission cache. No peers
 -- or user data: each invocation owns a private temporary database.
 local fiber, fio = require('fiber'), require('fio')
+io.stdout:setvbuf('no')
 local here = fio.dirname(arg[0])
 package.path = here .. '/../?.lua;' .. package.path
 local work = os.getenv('TARN_METER_DIR') or fio.tempdir()
@@ -162,6 +163,37 @@ check('rebuild refuses an unresolved synchronous queue', not q.rebuild())
 box.cfg{replication_synchro_quorum = 1}
 check('synchronous writer joins after confirmation', waiting:join())
 check('confirmed queue and terminal ticket permit exact rebuild', q.rebuild() and snapshot(2, 20, 0, 0) and q.outstanding == 0)
+
+cfg.lazy_outbox_entries = 3
+local wake, notified, notify_yielded, notify_error = fiber.cond(), 0, false, nil
+local q3 = require('tarn_lazy_meter').new{cfg = cfg, cut = function() return true end, notify = function()
+    notified = notified + 1
+    local worked, why = pcall(function()
+        -- Commit callbacks may execute on a native WAL fiber, for which
+        -- fiber.self() and the current fiber.info entry can be absent.
+        local id = fiber.id()
+        local info = fiber.info()
+        local before = info and id and info[id] and info[id].csw
+        wake:signal()
+        info = fiber.info()
+        local after = info and id and info[id] and info[id].csw
+        notify_yielded = notify_yielded or (before ~= nil and after ~= nil and after ~= before)
+        if notified == 2 then error('injected delivery wake failure') end
+    end)
+    if not worked then notify_error = tostring(why); error(why) end
+end}
+check('wake fixture rebuilds from confirmed state', q3.rebuild())
+local woke = false
+local sleeper = fiber.create(function() woke = wake:wait(1) end)
+sleeper:set_joinable(true)
+txn(function() q3.change(1, 10, 0, 0); out:insert{7, 10} end)
+print('wake witness: notified=' .. notified .. ' yielded=' .. tostring(notify_yielded) .. ' error=' .. tostring(notify_error))
+check('positive committed outbox wakes delivery from native callback', sleeper:join() and woke and notified == 1 and not notify_yielded)
+txn(function() q3.change(-1, -10, 0, 0); out:delete{7} end)
+check('ACK-only commit does not wake delivery', notified == 1)
+txn(function() q3.change(1, 10, 0, 0); out:insert{8, 10} end)
+check('wake failure cannot corrupt quota or commit outcome', notified == 2 and q3.outstanding == 0
+      and q3.ready() and q3.snapshot().entries == 3 and out:get{8} ~= nil)
 
 print(passed .. ' lazy meter checks passed; private database ' .. work)
 os.exit(0)

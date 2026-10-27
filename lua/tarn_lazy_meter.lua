@@ -58,6 +58,10 @@ function M.new(c)
         end
         q.tickets[t.id] = nil
         q.outstanding = q.outstanding - 1
+        -- Accounting is already complete. A preallocated nonyielding wake
+        -- hook reduces idle delivery lag; its failure must not change the
+        -- durable outcome or undo any meter updates. Polling remains backup.
+        if committed and t.positive[1] > 0 and c.notify ~= nil then pcall(c.notify) end
     end
 
     -- de/db: outbox entries/encoded bytes; dre/drb: reserved entries/bytes.
