@@ -1075,10 +1075,10 @@ it does not establish an RF3 performance or operational advantage.
 
 ### Configuration counts
 
-The default list contains 158 configurations, including 112 expected
-broken/trade-off outcomes. The 169 generated configurations reproduce from
-`gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 171 total. Explicit check arguments override the default
+The default list contains 167 configurations, including 117 expected
+broken/trade-off outcomes. The 174 generated configurations reproduce from
+`gen_cfgs.sh`; six additional grouped-read and decision-placement
+configurations are maintained directly, for 180 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

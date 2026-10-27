@@ -212,7 +212,8 @@ def coordinator_crash(f, other_endpoint, cluster_dir):
         if worker:
             worker.join(12)
             assert not worker.is_alive(), 'SQL worker stayed blocked after gateway crash'
-    assert errors, 'the killed gateway acknowledged the held COMMIT'
+    assert (len(errors) == 1 and isinstance(errors[0], pymysql.MySQLError)
+            and errors[0].args[0] in (2006, 2013)), errors
 
     def resolved():
         state = snapshots(f.nodes)
