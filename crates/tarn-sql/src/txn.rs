@@ -1427,12 +1427,12 @@ pub async fn select_rows(
     };
     route.encode(&mut m);
     // The shard's native procedure serves the reads it can decide without
-    // Lua (crates/tarn-storage/src/select.rs) and hands the others back
-    // ("lua"); a shard without it is noted on the connection. (Reads it
-    // always hands back are not sent to it.)
-    if stream == 0
-        && matches!(t.engine, crate::catalog::Engine::Memtx)
-        && end.is_none()
+    // Lua (crates/tarn-storage/src/select.rs), also in a stream's
+    // transaction, and hands the others back ("lua"); a shard without it is
+    // noted on the connection. (Reads it always hands back are not sent to
+    // it: vinyl tables, a stream's first read, which begins its
+    // transaction, and the pages after the first.)
+    if matches!(t.engine, crate::catalog::Engine::Memtx)
         && !begin
         && after.is_none()
         && limit != Some(0)
@@ -1441,7 +1441,7 @@ pub async fn select_rows(
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
-        match client.call(0, "tarn_storage.ts_select", &m.0).await {
+        match client.call(stream, "tarn_storage.ts_select", &m.0).await {
             Ok(r) => {
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
                 if !crate::mpw::status_is(&d, "lua") {

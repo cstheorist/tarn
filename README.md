@@ -137,9 +137,10 @@ every write transaction is a two-phase commit. Rankings shift with hardware:
 on another host Tarn was behind MySQL on point selects. Full tables,
 latencies, abort rates and a per-vCPU comparison with published TiDB and
 YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md). These runs
-predate the shards' native procedures, which serve autocommit reads without
-running Lua: on one shard they raise point selects by about a quarter, at a
-third of the shard's CPU per statement
+predate the shards' native procedures, which serve reads without running
+Lua: on one shard they raise point selects by a quarter to a third, and the
+read transactions of `oltp_read_only` and `oltp_read_write` by over half,
+at well under half of the shard's CPU per statement
 ([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## Correctness

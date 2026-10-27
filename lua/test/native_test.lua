@@ -39,16 +39,23 @@ if not info.native then
     os.exit(0)
 end
 
--- test.nat(id, v, pad, bucket_id), memtx, with a non-unique index on v;
--- test.natv the same on vinyl
+-- test.nat(id, v, pad, bucket_id, w), memtx: indexes 2 on v, 3 on (v, id),
+-- 4 on w (nullable), 5 on pad (case-insensitive); test.natv the same on
+-- vinyl
 local function def(name, engine, id)
     return {
         name = name, engine = engine, id = id,
         format = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
-                  {name = 'pad', type = 'string'}, {name = 'bucket_id', type = 'unsigned'}},
+                  {name = 'pad', type = 'string'}, {name = 'bucket_id', type = 'unsigned'},
+                  {name = 'w', type = 'integer', is_nullable = true}},
         indexes = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
                    {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}},
-                   {name = 'v', unique = false, parts = {{field = 'v', type = 'integer'}}}},
+                   {name = 'v', unique = false, parts = {{field = 'v', type = 'integer'}}},
+                   {name = 'vid', unique = true, parts = {{field = 'v', type = 'integer'},
+                                                          {field = 'id', type = 'unsigned'}}},
+                   {name = 'w', unique = false, parts = {{field = 'w', type = 'integer', is_nullable = true}}},
+                   {name = 'padci', unique = false,
+                    parts = {{field = 'pad', type = 'string', collation = 'unicode_ci'}}}},
     }
 end
 c:call('tarn_create_table', {def('test.nat', 'memtx', 28001)})
@@ -68,9 +75,13 @@ for x = 1, map[2] do
     if not owned then other = x break end
 end
 local epoch = map[3]
+-- (w: NULL for every third row; pad: 'p's, then 'P's)
+local function row(id)
+    return {id, id % 7, string.rep(id % 2 == 0 and 'p' or 'P', id), b, id % 3 == 0 and box.NULL or id}
+end
 for id = 1, 50 do
-    c.space['test.nat']:replace{id, id % 7, string.rep('p', id), b}
-    c.space['test.natv']:replace{id, id % 7, string.rep('p', id), b}
+    c.space['test.nat']:replace(row(id))
+    c.space['test.natv']:replace(row(id))
 end
 
 local function stats() local i = c:call('tarn_info').native return i.served, i.to_lua end
@@ -81,13 +92,15 @@ local function args(o)
     return {o.sid or sid, o.index or 0, o.key, o.iter or 0, o.limit, o.end_key, o.end_incl ~= false,
             o.lock_check ~= false, o.offset, o.begin or false, o.after, route}
 end
--- The native reply must be the Lua one (served), or ["lua"] (handed back).
-local function same(name, o, want_served)
+-- The native reply must be the Lua one (served), or ["lua"] (handed back);
+-- `via`: a stream to call both in (default: no stream).
+local function same(name, o, want_served, via)
+    via = via or c
     local a = args(o)
     local s0, l0 = stats()
-    local n = c:call('tarn_storage.ts_select', a)
+    local n = via:call('tarn_storage.ts_select', a)
     local s1, l1 = stats()
-    local l = c:call('tarn_select', a)
+    local l = via:call('tarn_select', a)
     if want_served then
         check(name .. ": served, as the Lua procedure serves it",
               s1 == s0 + 1 and canon(n) == canon(l), {native = n, lua = l, served = {s0, s1}})
@@ -120,8 +133,32 @@ same('a read routed by buckets this shard owns', {key = {13}, limit = 1, route =
 same('a read of every shard with the current epoch', {key = {14}, limit = 1, route = {e = epoch}}, true)
 same('... and the current membership', {key = {14}, limit = 1, route = {e = epoch, m = map[6] or 0}}, true)
 
+print('reads to an end key')
+same('rows from a key to an end key (GE, included)', {key = {10}, iter = 5, end_key = {15}, limit = 100}, true)
+same('... the end key excluded', {key = {10}, iter = 5, end_key = {15}, end_incl = false, limit = 100}, true)
+same('... no limit', {key = {10}, iter = 5, end_key = {15}}, true)
+same('... a limit before the end key', {key = {10}, iter = 5, end_key = {40}, limit = 3}, true)
+same('rows after a key, to an end key (GT)', {key = {10}, iter = 6, end_key = {12}}, true)
+same('going down (LE), to an end key', {key = {20}, iter = 4, end_key = {16}}, true)
+same('... excluded (LT)', {key = {20}, iter = 3, end_key = {16}, end_incl = false}, true)
+same('an end key past every row', {key = {45}, iter = 5, end_key = {1000}}, true)
+same('an end key before the start key', {key = {30}, iter = 5, end_key = {20}}, true)
+same('every row (ALL), to an end key', {key = {}, iter = 2, end_key = {5}}, true)
+same('the equal rows of an index (EQ), to an end key', {index = 2, key = {3}, end_key = {3}}, true)
+same('... going down (REQ)', {index = 2, key = {3}, iter = 1, end_key = {3}, limit = 4}, true)
+same('a prefix of a two-part index, to another prefix', {index = 3, key = {2}, iter = 5, end_key = {4}}, true)
+same('... to a whole key, excluded', {index = 3, key = {2}, iter = 5, end_key = {4, 18}, end_incl = false}, true)
+same('a nullable index, from NULL', {index = 4, key = {box.NULL}, iter = 5, end_key = {10}}, true)
+same('... going down to NULL', {index = 4, key = {10}, iter = 4, end_key = {box.NULL}}, true)
+same('an index with a collation', {index = 5, key = {'ppp'}, iter = 5, end_key = {'PPPPPPP'}}, true)
+same('... going down', {index = 5, key = {'PPPPPPP'}, iter = 4, end_key = {'ppp'}, end_incl = false}, true)
+n = c:call('tarn_storage.ts_select', args({key = {10}, iter = 5, end_key = {'x'}}))
+check('an end key the index cannot take: handed to the Lua procedure', n[1] == 'lua', n)
+n = c:call('tarn_storage.ts_select', args({key = {10}, iter = 5, end_key = {11, 12}}))
+check('... nor one longer than its key', n[1] == 'lua', n)
+
 print('reads it hands to the Lua procedure')
-same('a read that ends at a key', {key = {10}, iter = 5, limit = 5, end_key = {12}}, false)
+-- (a read to an end key: see above)
 same('a read with an offset', {key = {10}, iter = 5, limit = 5, offset = 2}, false)
 same('a limit of 0', {key = {10}, iter = 5, limit = 0}, false)
 same('a vinyl table', {sid = vsid, key = {7}, limit = 1}, false)
@@ -145,14 +182,57 @@ c:eval('tarn.cfg.scan_page_rows = 4096; tarn.cfg.scan_page_bytes = 100; tarn.ns_
 same('a read past the page\'s bytes', {key = {40}, iter = 5, limit = 5}, false)
 same('... unless the last row reaches them', {key = {49}, iter = 5, limit = 5}, true)
 c:eval('tarn.cfg.scan_page_bytes = 4 * 1024 * 1024; tarn.ns_sync()')
--- a stream transaction
+-- a read to an end key scans: it ends the page once its rows reach the
+-- page's, short of its limit, or its bytes do, the last row's included
+c:eval('tarn.cfg.scan_page_rows = 3; tarn.ns_sync()')
+n, l = same('a read to an end key whose rows reach the page\'s', {key = {10}, iter = 5, end_key = {12}}, false)
+check('... (the Lua procedure ends the page there, though the end key is reached)', l[3] ~= nil, l)
+same('... one that stops at its limit first', {key = {10}, iter = 5, end_key = {12}, limit = 3}, true)
+same('... or at the end key', {key = {10}, iter = 5, end_key = {11}}, true)
+c:eval('tarn.cfg.scan_page_rows = 4096; tarn.cfg.scan_page_bytes = 100; tarn.ns_sync()')
+same('a read to an end key whose last row reaches the page\'s bytes', {key = {49}, iter = 5, end_key = {50}}, false)
+c:eval('tarn.cfg.scan_page_bytes = 4 * 1024 * 1024; tarn.ns_sync()')
+
+print('reads in a stream\'s transaction')
 local st = c:new_stream()
 st:begin()
-n = st:call('tarn_storage.ts_select', args({key = {7}, limit = 1}))
-check('a read in a stream transaction: handed to the Lua procedure', n[1] == 'lua', n)
+same('a point read', {key = {7}, limit = 1, lock_check = false}, true, st)
+same('rows to an end key', {key = {10}, iter = 5, end_key = {20}, lock_check = false}, true, st)
+same('rows with no limit', {index = 2, key = {3}, lock_check = false}, true, st)
+st.space['test.nat']:replace(row(60))
+same('a row the transaction wrote', {key = {60}, limit = 1, lock_check = false}, true, st)
 n = st:call('tarn_storage.ts_select', args({key = {7}, limit = 1, begin = true}))
-check('... and one that begins it', n[1] == 'lua', n)
+check('a read that begins the transaction: handed to the Lua procedure', n[1] == 'lua', n)
+c:eval('tarn.cfg.scan_page_rows = 3; tarn.ns_sync()')
+same('a read with no limit: a scan, whose rows end the page', {index = 2, key = {3}, lock_check = false}, false, st)
+same('... a limit within the scan chunk: a select', {index = 2, key = {3}, limit = 3, lock_check = false}, true, st)
+c:eval('tarn.cfg.scan_page_rows = 4096; tarn.ns_sync()')
 st:rollback()
+-- MVCC tracks the native reads of a transaction: one that read a row that
+-- was replaced since cannot commit a write
+st = c:new_stream()
+st:begin()
+n = st:call('tarn_storage.ts_select', args({key = {7}, limit = 1, lock_check = false}))
+c.space['test.nat']:replace{7, 100, 'changed', b}
+local ok = pcall(function()
+    st.space['test.nat']:replace(row(61))
+    st:commit()
+end)
+check('a transaction whose native read of a row was overwritten cannot commit', n[1] == 'ok' and not ok, n)
+pcall(st.rollback, st)
+c.space['test.nat']:replace(row(7))
+st = c:new_stream()
+st:begin()
+n = st:call('tarn_storage.ts_select', args({key = {8}, limit = 1, lock_check = false}))
+c.space['test.nat']:replace{7, 100, 'changed', b}
+ok = pcall(function()
+    st.space['test.nat']:replace(row(61))
+    st:commit()
+end)
+check('... one that read another row commits', n[1] == 'ok' and ok, n)
+c.space['test.nat']:replace(row(7))
+c.space['test.nat']:delete{61}
+c.space['test.nat']:delete{60}
 -- a prepared transaction's lock
 local ps = c:new_stream()
 ps:begin()

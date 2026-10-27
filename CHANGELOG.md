@@ -12,12 +12,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ([#28](https://github.com/cstheorist/tarn/issues/28)): `crates/tarn-storage`
   builds a Tarantool C module, `libtarn_storage.so`, that the storage nodes
   load (`TARN_NATIVE`; by default the release build of the checkout). Its
-  `tarn_storage.ts_select` serves the autocommit reads of memtx tables that
-  have nothing to wait for -- point reads, the rows equal to a key, and
-  ranges from a key without an end -- without running Lua, and hands every
-  other read back to `tarn_select`. On one shard, point selects reach about
-  a quarter more statements a second, and the shard's CPU per statement
-  falls to about a third. `bench/profile.py` (run by `bench/profile.sh`)
+  `tarn_storage.ts_select` serves the reads of memtx tables that have
+  nothing to wait for -- point reads, the rows equal to a key, and ranges
+  from a key, to an end key or not, autocommit or inside a transaction --
+  without running Lua, and hands every other read back to `tarn_select`.
+  On one shard, point selects reach a quarter to a third more statements a
+  second and the read transactions of `oltp_read_only` and
+  `oltp_read_write` over half more, while the shard's CPU per statement
+  falls to under half (for point selects, under a third). `bench/profile.py` (run by `bench/profile.sh`)
   measures what the storage side of a workload costs a shard's transaction
   thread: CPU and Lua allocations per statement, and where the time goes.
 

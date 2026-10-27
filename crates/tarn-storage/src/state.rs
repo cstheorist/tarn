@@ -8,7 +8,7 @@
 //! both, and `LAYOUT` with them.
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 1;
+pub const LAYOUT: u32 = 2;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -32,6 +32,10 @@ pub struct State {
     pub ddl_n: u32,
     /// cfg.scan_page_rows: the most rows one read returns.
     pub page_rows: u32,
+    /// SCAN_CHUNK: a read inside a transaction with no limit, or a limit
+    /// above this, is a scan that may yield (PG.scan), whose pages end as a
+    /// scan's do.
+    pub scan_chunk: u32,
     /// cfg.scan_page_bytes: and their most bytes.
     pub page_bytes: u64,
     /// BK.epoch.
@@ -73,6 +77,7 @@ impl State {
             count: 0,
             ddl_n: 0,
             page_rows: 0,
+            scan_chunk: 0,
             page_bytes: 0,
             epoch: 0,
             mver: 0,
@@ -132,6 +137,7 @@ mod tests {
         assert_eq!(offset_of!(State, count), 8);
         assert_eq!(offset_of!(State, ddl_n), 12);
         assert_eq!(offset_of!(State, page_rows), 16);
+        assert_eq!(offset_of!(State, scan_chunk), 20);
         assert_eq!(offset_of!(State, page_bytes), 24);
         assert_eq!(offset_of!(State, epoch), 32);
         assert_eq!(offset_of!(State, mver), 40);

@@ -863,7 +863,7 @@ ffi.cdef[[
 struct tarn_ns {
     uint32_t layout;
     uint8_t ready, bk_stale, lk_stale, fence_stale;
-    uint32_t count, ddl_n, page_rows;
+    uint32_t count, ddl_n, page_rows, scan_chunk;
     uint64_t page_bytes, epoch, mver;
     double load_until;
     uint8_t *serves;
@@ -872,7 +872,7 @@ struct tarn_ns {
     uint64_t served, to_lua;
 };
 ]]
-BK.NS_LAYOUT = 1
+BK.NS_LAYOUT = 2
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -905,6 +905,7 @@ function BK.ns_sync()
     ns.ddl_n = DDL_N
     ns.epoch, ns.mver = BK.epoch, BK.mver
     ns.page_rows, ns.page_bytes = M.cfg.scan_page_rows, M.cfg.scan_page_bytes
+    ns.scan_chunk = BK.scan_chunk
     ns.load_until = BK.load.t0 + M.cfg.load_window
     if ns.count ~= BK.count then BK.ns_serves_all() end
 end
@@ -2427,6 +2428,7 @@ local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] 
 local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
 -- Scans longer than this many tuples yield inside stream transactions.
 local SCAN_CHUNK = 1000
+BK.scan_chunk = SCAN_CHUNK   -- (for the native procedures: BK.ns_sync)
 -- Fiber slice of a long autocommit scan, which may not yield (seconds).
 local LONG_SCAN_SLICE = {warn = 1.0, err = 30.0}
 
