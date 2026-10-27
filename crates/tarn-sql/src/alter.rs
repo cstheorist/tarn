@@ -2510,6 +2510,25 @@ mod tests {
     }
 
     #[test]
+    fn floats_stored_as_integers_read_as_doubles() {
+        // (the storage procedures store a FLOAT or DOUBLE that holds an
+        // integer as that integer)
+        let (def, cat) = table("CREATE TABLE f (id INT PRIMARY KEY, d DOUBLE, g FLOAT, n INT)");
+        let mut m = Mp::new();
+        m.arr(5).int(1).uint(8).int(-3).int(4).uint(7);
+        let row = Rd::new(&m.0).row_of(&def).unwrap();
+        assert_eq!(row[1..3], [Value::Float(8.0), Value::Float(-3.0)]);
+        assert_eq!(row[3], Rd::new(&[0x04]).value().unwrap());
+        // ... also after an ALTER TABLE, and in the fill of a row from
+        // before it
+        let ch = alter(&def, &cat, "ALTER TABLE f ADD COLUMN e DOUBLE DEFAULT 2 AFTER id").unwrap();
+        let mut m = Mp::new();
+        m.arr(5).int(1).uint(8).nil().int(4).uint(7);
+        let row = Rd::new(&m.0).row_of(&ch.def).unwrap();
+        assert_eq!(row[1..4], [Value::Float(2.0), Value::Float(8.0), Value::Null]);
+    }
+
+    #[test]
     fn added_columns_live_after_bucket_id() {
         let (def, cat) = table(T);
         assert!(def.layout.identity);

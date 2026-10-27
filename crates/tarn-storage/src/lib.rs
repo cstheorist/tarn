@@ -12,6 +12,7 @@
 pub mod mp;
 pub mod select;
 pub mod state;
+pub mod write;
 
 // (Tarantool's module API is only there inside tarantool: the unit tests
 // leave the procedures out.)

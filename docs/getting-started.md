@@ -27,8 +27,9 @@ cargo build --release
 
 The SQL server is `target/release/tarn-server`. The build also makes
 `target/release/libtarn_storage.so`, the storage nodes' native procedures,
-which they load from there: they serve the most frequent reads without
-running Lua ([design §1.5](design.md#15-native-procedures)).
+which they load from there: they serve the most frequent reads, and
+autocommit writes, without running Lua
+([design §1.5](design.md#15-native-procedures)).
 
 ## Start a local cluster
 

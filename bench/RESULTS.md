@@ -308,6 +308,9 @@ and 20 s per run, the means of three runs:
 | `oltp_point_select` | 26,796 → 36,943 | 16.4 → 4.7 µs | 2,756 → 0 B | 100% | 33% / 18% → 0% / 0% |
 | `oltp_read_only` | 9,603 → 15,349 | 66.4 → 25.1 µs | 5,702 → 410 B | 67% | 38% / 15% → 6% / 3% |
 | `oltp_read_write` | 9,773 → 15,063 | 64.7 → 27.4 µs | 3,925 → 562 B | 67% | 35% / 17% → 10% / 6% |
+| `oltp_update_index` | 13,345 → 22,878 | 45.7 → 20.0 µs | 3,446 → 0 B | 100% | 25% / 16% → 0% / 0% |
+| `oltp_update_non_index` | 13,760 → 24,210 | 42.6 → 17.1 µs | 3,459 → 1 B | 100% | 25% / 17% → 0% / 0% |
+| `oltp_insert` | 12,946 → 22,557 | 41.6 → 14.7 µs | 3,161 → 2 B | 100% | 20% / 17% → 0% / 0% |
 
 Through the native procedure a point select costs the shard under a third
 of the CPU it costs through `tarn_select`, and no Lua at all: what is left
@@ -324,13 +327,22 @@ transactions. (The VM's speed varies over the day: an earlier comparison of
 point selects alone gave +25% when it ran slower, and +27% when it ran
 faster, at 36,698 and 46,568 a second.)
 
+The last three workloads are autocommit writes, measured in a later run:
+`UPDATE`s by primary key of an indexed and of an unindexed column, and
+`INSERT`s. The native procedure makes all of them, without Lua: a write
+costs the shard 35% to 44% of the CPU it costs through `tarn_autocommit`,
+and throughput rises by 71% to 76%. (`oltp_delete` is not among them: run
+with the others, it empties the tables they update, and most of its own
+deletes find no row.)
+
 ## What would make Tarn faster
 
 * **Native procedures for the other hot paths**
-  ([#28](https://github.com/cstheorist/tarn/issues/28)): autocommit writes,
-  commits and validation, and the first read of a transaction still run as
-  Lua procedures, whose calls cost a shard more than their storage work, as
-  they did for reads (see above).
+  ([#28](https://github.com/cstheorist/tarn/issues/28)): commits and
+  validation, the first read of a transaction, and the autocommit writes of
+  replicated shards (whose tables are synchronous) still run as Lua
+  procedures, whose calls cost a shard more than their storage work, as
+  they did for reads and autocommit writes (see above).
 * **Fewer round trips per transaction**: batch the 10 point selects of a
   transaction when the client pipelines; push UPDATE/DELETE ... WHERE pk = ?
   inside transactions down as deferred operations instead of read-then-buffer.

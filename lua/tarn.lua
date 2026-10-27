@@ -468,6 +468,7 @@ local function fence_rebuild()
     DDL_GEN = {}
     FENCE, FENCE_STALE = f, false
     DDL_HELD, DDL_N = held, n
+    BK.ns_fence(nil)
     BK.ns_sync()
 end
 
@@ -844,11 +845,19 @@ function BK.load_rotate()
             L.cur = nil
         end
         L.n, L.t0 = n, t
-        if BK.ns ~= nil then BK.ns.reads = L.cur ~= nil and L.cur.r or nil end
+        BK.ns_window()
     end
     -- (the native procedures count reads in the window until it ends, then
     -- hand them to the Lua ones, whose count starts the next window)
     if BK.ns ~= nil then BK.ns.load_until = L.t0 + w end
+end
+-- The current window's arrays, where the native procedures count.
+function BK.ns_window()
+    local ns, c = BK.ns, BK.load.cur
+    if ns == nil then return end
+    ns.reads = c ~= nil and c.r or nil
+    ns.writes = c ~= nil and c.w or nil
+    ns.wbytes = c ~= nil and c.b or nil
 end
 function BK.load_add(b, reads, writes, bytes)
     local c = BK.load.cur
@@ -889,9 +898,15 @@ struct tarn_ns {
     uint32_t *reads;
     uint32_t *space_locks;
     uint64_t served, to_lua;
+    uint32_t pl_n, hooks;
+    uint64_t commit_seq, oldest_inflight;
+    uint32_t *writes;
+    double *wbytes;
+    uint64_t *fences;
+    uint64_t w_served, w_to_lua;
 };
 ]]
-BK.NS_LAYOUT = 2
+BK.NS_LAYOUT = 4
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -915,6 +930,37 @@ function BK.ns_lock(sid, d)
     a[k] = a[k] + d
 end
 
+-- The definition fences by slot (BK.NS_SPACES slots, a space in slot id %
+-- BK.NS_SPACES): the highest FENCE of the spaces of each slot, as of space
+-- sid's change (nil: of every change, as FENCE is read again). A write with
+-- an older definition than its slot's goes to the Lua procedure, which
+-- refuses it (1412) unless the fence is another space's.
+BK.ns_fences = nil
+function BK.ns_fence(sid)
+    local a = BK.ns_fences
+    if a == nil then return end
+    local spaces = BK.NS_SPACES
+    if sid == nil then
+        ffi.fill(a, ffi.sizeof('uint64_t') * spaces)
+        for s, v in pairs(FENCE) do
+            local k = s % spaces
+            if v > a[k] then a[k] = v end
+        end
+        return
+    end
+    local k, m = sid % spaces, 0
+    for s, v in pairs(FENCE) do
+        if s % spaces == k and v > m then m = v end
+    end
+    a[k] = m
+end
+
+-- PL_N, after each change.
+function BK.ns_pl()
+    local ns = BK.ns
+    if ns ~= nil then ns.pl_n = PL_N end
+end
+
 function BK.ns_sync()
     local ns = BK.ns
     if ns == nil then return end
@@ -926,23 +972,39 @@ function BK.ns_sync()
     ns.page_rows, ns.page_bytes = M.cfg.scan_page_rows, M.cfg.scan_page_bytes
     ns.scan_chunk = BK.scan_chunk
     ns.load_until = BK.load.t0 + M.cfg.load_window
+    ns.pl_n = PL_N
     if ns.count ~= BK.count then BK.ns_serves_all() end
 end
 
--- `serves` from the bucket states (BK.bad: reads are served for active,
--- sending and fenced buckets).
 -- (tests: after changing cfg.scan_page_rows or scan_page_bytes)
 function M.ns_sync() BK.ns_sync() end
+-- (tests: a native commit in flight, or none)
+function M.ns_inflight(on)
+    local ns = BK.ns
+    if ns == nil then return end
+    if on then
+        ns.commit_seq = ns.commit_seq + 1
+        ns.oldest_inflight = ns.commit_seq
+    else
+        ns.oldest_inflight = ffi.cast('uint64_t', -1)
+    end
+end
+
+-- `serves` from the bucket states (BK.bad): 2 for an active bucket, whose
+-- reads and writes the native procedures serve, 1 for one being sent or
+-- fenced, whose reads they serve (a write to a bucket being sent is noted
+-- for its move: BK.note), 0 for the others.
+function BK.ns_serving(st)
+    if st == 'active' then return 2 end
+    return (st == 'sending' or st == 'fenced') and 1 or 0
+end
 
 function BK.ns_serves_all()
     local ns = BK.ns
     if ns == nil then return end
     local n = BK.count
     local a = n > 0 and ffi.new('uint8_t[?]', n + 1) or nil
-    for b = 1, n do
-        local st = BK.state[b]
-        if st == 'active' or st == 'sending' or st == 'fenced' then a[b] = 1 end
-    end
+    for b = 1, n do a[b] = BK.ns_serving(BK.state[b]) end
     -- (the new array and its count change together: nothing runs between)
     ns.serves, ns.count, BK.ns_serves = a, n, a
     BK.load_rotate()
@@ -950,10 +1012,7 @@ end
 
 function BK.ns_serve(b)
     local a = BK.ns_serves
-    if a ~= nil and b >= 1 and b <= BK.ns.count then
-        local st = BK.state[b]
-        a[b] = (st == 'active' or st == 'sending' or st == 'fenced') and 1 or 0
-    end
+    if a ~= nil and b >= 1 and b <= BK.ns.count then a[b] = BK.ns_serving(BK.state[b]) end
     BK.ns_sync()
 end
 
@@ -982,11 +1041,16 @@ function BK.ns_init()
     BK.ns_space_locks = ffi.new('uint32_t[?]', BK.NS_SPACES)
     ns.space_locks = BK.ns_space_locks
     LK_STALE = true
+    -- (the fences as FENCE has them, which fence_stale says when stale)
+    BK.ns_fences = ffi.new('uint64_t[?]', BK.NS_SPACES)
+    ns.fences = BK.ns_fences
     BK.ns = ns
+    BK.ns_fence(nil)
     BK.ns_serves_all()
     BK.ns_sync()
     BK.load_rotate()
-    ns.reads = BK.load.cur ~= nil and BK.load.cur.r or nil
+    BK.ns_window()
+    BK.ns_hooks()
     ns.ready = 1
     log.info('tarn: native procedures loaded')
 end
@@ -1469,7 +1533,17 @@ function tarn_test_hook(name, action)
         while h ~= nil and (h.reached or 0) == 0 and clock.monotonic() < deadline do h.cond:wait(0.05) end
         return {'ok', h ~= nil and h.reached or 0}
     end
+    BK.ns_hooks()
     return {'ok'}
+end
+
+-- While a hook is held, the native procedures hand every request to the Lua
+-- ones, whose steps it holds.
+function BK.ns_hooks()
+    if BK.ns == nil then return end
+    local n = 0
+    for _ in pairs(YIELD_HOOKS) do n = n + 1 end
+    BK.ns.hooks = n
 end
 
 -- Does the in-flight commit `e` (INFLIGHT entry) write a row whose key in
@@ -1497,8 +1571,12 @@ end
 
 -- Wait until every local commit in flight now has ended -- with sid, every
 -- one of them that writes `key` of index iid of that space (false: deadline).
+-- The native procedures' commits in flight now count as writing anything:
+-- they end without a broadcast, so they are polled.
 local function wait_commits(deadline, sid, iid, key)
     local upto = INFLIGHT_SEQ
+    local ns = BK.ns
+    local upto_native = ns ~= nil and ns.commit_seq or nil
     while true do
         local busy = false
         for seq, e in pairs(INFLIGHT) do
@@ -1507,11 +1585,12 @@ local function wait_commits(deadline, sid, iid, key)
                 break
             end
         end
-        if not busy then return true end
+        local native = upto_native ~= nil and ns.oldest_inflight <= upto_native
+        if not busy and not native then return true end
         local left = deadline - clock.monotonic()
         if left <= 0 then return false end
         M.stats.commit_waits = M.stats.commit_waits + 1
-        INFLIGHT_COND:wait(math.min(left, 0.05))
+        INFLIGHT_COND:wait(math.min(left, busy and 0.05 or 0.001))
     end
 end
 
@@ -1586,6 +1665,7 @@ local function pl_hold(txid, sid, iid, kb, e, mode)
     local cur = e.holders[txid]
     if cur == nil then
         PL_N = PL_N + 1
+        BK.ns_pl()
         pl_txn(txid).keys[sid .. '\0' .. iid .. '\0' .. kb] = {sid, iid, kb}
     end
     if cur ~= 'X' then e.holders[txid] = mode end
@@ -1626,6 +1706,7 @@ local function pl_release_key(txid, sid, iid, kb)
     if e == nil or e.holders[txid] == nil then return end
     e.holders[txid] = nil
     PL_N = PL_N - 1
+    BK.ns_pl()
     pl_grant_waiters(sid, iid, kb, e)
     pl_drop_if_free(sid, iid, kb, e)
     M.pl_cond:broadcast()
@@ -1651,6 +1732,7 @@ local function pl_release_all(txid)
         if e ~= nil and e.holders[txid] ~= nil then
             e.holders[txid] = nil
             PL_N = PL_N - 1
+            BK.ns_pl()
             pl_grant_waiters(k[1], k[2], k[3], e)
             pl_drop_if_free(k[1], k[2], k[3], e)
         end
@@ -1672,6 +1754,7 @@ local function pl_fresh()
         end
     end
     PL, PTX, PL_SESS, PL_BROKEN, PL_LIVE, PL_N = {}, {}, {}, {}, {}, 0
+    BK.ns_pl()
     PL_GEN = uuid.str()
     PL_STATE = st
     M.pl_cond:broadcast()
@@ -4363,7 +4446,10 @@ function UIX.mat_phase(sp, a, gen, phase)
             {ver = a.ver, gen = gen, phase = phase, materialize = true}}
         return nil
     end)
-    if r[1] == OK and r[2] == nil and (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    if r[1] == OK and r[2] == nil and (FENCE[sp.id] or 0) < a.ver then
+        FENCE[sp.id] = a.ver
+        BK.ns_fence(sp.id)
+    end
     return r
 end
 
@@ -4544,7 +4630,7 @@ function tarn_alter_prepare(name, a, gen)
             box.space._tarn_meta:replace{'fence:' .. sp.id, {ver = a.ver, gen = gen}}
         end
     end
-    if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver; BK.ns_fence(sp.id) end
     local function undo(res)
         drop_built(sp, a.builds)
         -- Only while the fence is still this run's: a later run of the job
@@ -4555,7 +4641,7 @@ function tarn_alter_prepare(name, a, gen)
             mine = r ~= nil and r.ver == a.ver and r.gen == gen and not r.aborted
             if mine then box.space._tarn_meta:delete{'fence:' .. sp.id} end
         end
-        if mine then FENCE[sp.id] = cur > 0 and cur or nil end
+        if mine then FENCE[sp.id] = cur > 0 and cur or nil; BK.ns_fence(sp.id) end
         return res
     end
     local deadline = clock.monotonic() + (a.timeout or 50)
@@ -4717,6 +4803,7 @@ function tarn_alter_apply(name, a, gen)
     box.space._tarn_meta:delete{'fence:' .. sp.id}
     box.commit()
     if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    BK.ns_fence(sp.id)
     invalidate_key_defs()
     M.stats.alters = M.stats.alters + 1
     if a.materialize == true then
@@ -4782,6 +4869,7 @@ function tarn_alter_abort(name, a, gen)
     else
         FENCE[sp.id] = cur > 0 and cur or nil
     end
+    BK.ns_fence(sp.id)
     return {OK}
 end
 
@@ -4929,12 +5017,13 @@ local function clear_prepare(op, name, a)
     -- leader change (fence_rebuild).
     box.space._tarn_meta:replace{hold_key(sid), {op = op, ver = a.ver, label = label}}
     fence_fresh()
-    if (FENCE[sid] or 0) < a.ver then FENCE[sid] = a.ver end
+    if (FENCE[sid] or 0) < a.ver then FENCE[sid] = a.ver; BK.ns_fence(sid) end
     ddl_hold(sid, label)
     if not drain(sid, clock.monotonic() + (a.timeout or 50)) then
         box.space._tarn_meta:delete{hold_key(sid)}
         local cur = catalog_ver(name)
         FENCE[sid] = cur > 0 and cur or nil
+        BK.ns_fence(sid)
         ddl_release(sid)
         M.stats.lock_timeouts = M.stats.lock_timeouts + 1
         return {'timeout', 1205, LOCK_TIMEOUT_MSG}
@@ -4979,6 +5068,7 @@ local function clear_apply(op, name, a)
         -- streams that began before are doomed.
         doom_readers(sid)
         FENCE[sid] = nil
+        BK.ns_fence(sid)
         M.stats.drops = M.stats.drops + 1
     else
         for _, u in ipairs(UIX.spaces(sid)) do u:truncate() end
@@ -4989,6 +5079,7 @@ local function clear_apply(op, name, a)
         box.commit()
         doom_readers(sid)
         FENCE[sid] = a.ver
+        BK.ns_fence(sid)
         M.stats.truncates = M.stats.truncates + 1
     end
     invalidate_key_defs()
@@ -5007,6 +5098,7 @@ local function clear_abort(op, name, a)
         fence_fresh()
         local cur = catalog_ver(name)
         FENCE[sp.id] = cur > 0 and cur or nil
+        BK.ns_fence(sp.id)
     end
     ddl_release(a.id)
     return {OK}
@@ -6153,7 +6245,8 @@ function tarn_info()
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0,
             native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
-                                       to_lua = tonumber(BK.ns.to_lua)} or false}
+                                       to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
+                                       writes_to_lua = tonumber(BK.ns.w_to_lua)} or false}
 end
 
 -------------------------------------------------------------------------------
@@ -6179,7 +6272,7 @@ local function setup_schema()
     box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
     ensure_schema()
     if M.cfg.native then
-        for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select'}) do
+        for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit'}) do
             box.schema.func.create(f, {language = 'C', if_not_exists = true})
         end
     end

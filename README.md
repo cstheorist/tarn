@@ -140,10 +140,11 @@ every write transaction is a two-phase commit. Rankings shift with hardware:
 on another host Tarn was behind MySQL on point selects. Full tables,
 latencies, abort rates and a per-vCPU comparison with published TiDB and
 YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md). These runs
-predate the shards' native procedures, which serve reads without running
-Lua: on one shard they raise point selects by a quarter to a third, and the
-read transactions of `oltp_read_only` and `oltp_read_write` by over half,
-at well under half of the shard's CPU per statement
+predate the shards' native procedures, which serve reads and autocommit
+writes without running Lua: on one shard they raise point selects by a
+quarter to over a third, the read transactions of `oltp_read_only` and
+`oltp_read_write` by over half, and autocommit writes by 71% to 76%, at
+29% to 44% of the shard's CPU per statement
 ([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## Correctness
@@ -158,7 +159,7 @@ at well under half of the shard's CPU per statement
 * **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 66 verified
   functions and lemmas for routing, coordinator decisions and the MySQL wire
   codec.
-* **Tests**: 74 storage-protocol tests, 99 SQL statements compared exactly
+* **Tests**: 757 storage-protocol checks, 887 SQL cases compared exactly
   with MariaDB plus 2,000 random queries, transaction-anomaly tests, failover
   and fault-injection tests. An independent code review found five bugs
   that the tests had missed, one of them critical. All are fixed, each with
@@ -188,7 +189,7 @@ crates/tarn-sql        SQL parsing, planning and execution; transactions and the
 crates/tarn-iproto     async, pipelined Tarantool IPROTO client
 crates/tarn-verified   Verus-verified routing, coordinator decisions, wire codec
 crates/tarn-common     shared value, column and error types
-crates/tarn-storage    native storage procedures: a Tarantool C module for the most frequent reads
+crates/tarn-storage    native storage procedures: a Tarantool C module for the most frequent reads and writes
 lua/                   storage-node module (tarn.lua), bootstrap (storage.lua), protocol tests
 tla/                   TLA+ specification, model configurations, TLC results
 tests/                 SQL differential and transaction tests, failover and fault-injection tests
