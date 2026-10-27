@@ -545,6 +545,208 @@ local r3 = fut:wait_result(1)
 check('... but not one that began after it', r3 ~= nil and r3[1][1] == 'ok', r3)
 c:eval('tarn.ns_inflight(false)')
 c:call('tarn_unlock', {'NAT-RC3'})
+
+print('commits of one shard')
+-- (the twins the same again: the native procedure alone wrote some rows)
+c:eval('local a, b = ... box.space[b]:truncate() for _, t in box.space[a]:pairs() do box.space[b]:replace(t) end',
+       {wa, wb})
+local function cstats() local i = c:call('tarn_info').native return i.commits, i.commits_to_lua end
+-- tarn_commit_local's arguments for the writes `ws` ({op, payload}) to
+-- space sid, after point reads of the keys `rkeys` (of space o.rsid, else
+-- sid; routed by o.rb, else b); o: lock_gen, fence (the definition the
+-- writes were made with), wb (b for each write unless given), mver
+local function cargs(sid, ws, rkeys, o)
+    o = o or {}
+    local out, pts, wbs = {}, {}, {}
+    for i, w in ipairs(ws) do out[i], wbs[i] = {w[1], sid, w[2]}, b end
+    for i, k in ipairs(rkeys or {}) do pts[i] = {o.rsid or sid, 0, k, o.rb or b} end
+    return {'NAT-C-' .. require('uuid').str(), out, pts, {}, o.lock_gen or box.NULL,
+            o.fence and {sid, o.fence} or box.NULL, o.wb or wbs, o.mver or box.NULL}
+end
+-- A transaction on each twin: one that reads (rkeys) in a stream, whose
+-- first read begins its transaction, as the SQL servers' do (o.no_stream:
+-- without one); then o.between(). The native procedure commits test.wa's:
+-- it must reply as the Lua procedure, which commits test.wb's, the tables
+-- then the same (served); or hand the commit back, having written nothing,
+-- its stream's transaction as it was -- then o.after(), and the Lua
+-- procedure commits it there, as it did test.wb's.
+local function csame(name, ws, rkeys, o, want_served)
+    o = o or {}
+    local function txn(t)
+        if rkeys == nil or o.no_stream then return c end
+        local st = c:new_stream()
+        for i, k in ipairs(rkeys) do
+            local r = st:call('tarn_select', args({sid = o.rsid or t, key = k, limit = 1, lock_check = false,
+                                                   begin = i == 1}))
+            assert(r[1] == 'ok', json.encode(r))
+        end
+        return st
+    end
+    local sa, sb = txn(wa), txn(wb)
+    if o.between then o.between() end
+    local before = rows(wa)
+    local s0, l0 = cstats()
+    local n = sa:call('tarn_storage.ts_commit_local', cargs(wa, ws, rkeys, o))
+    local s1, l1 = cstats()
+    local untouched = rows(wa) == before
+    if o.after then o.after() end
+    local l = sb:call('tarn_commit_local', cargs(wb, ws, rkeys, o))
+    if want_served then
+        check(name .. ': served, as the Lua procedure serves it',
+              s1 == s0 + 1 and canon(n) == canon(l) and rows(wa) == rows(wb), {native = n, lua = l})
+    else
+        local l2 = sa:call('tarn_commit_local', cargs(wa, ws, rkeys, o))
+        -- (an error names its table)
+        local alike = l2[1] == l[1] and l2[2] == l[2]
+        check(name .. ': handed to the Lua procedure, nothing written',
+              l1 == l0 + 1 and n[1] == 'lua' and untouched and alike and rows(wa) == rows(wb),
+              {native = n, lua = l, lua_after = l2, untouched = untouched})
+    end
+    for _, st in ipairs({sa, sb}) do if st ~= c then pcall(st.rollback, st) end end
+    return n, l
+end
+-- (writes that read nothing here: no stream, the commit its own transaction)
+n, l = csame('a commit of rows', {{'insert', trow(70)}, {'replace', trow(71)}}, nil, nil, true)
+check('... (its writes counted)', l[1] == 'ok' and l[2] == 2, l)
+n, l = csame('... replaces of rows that are there, a delete, a delete of a row that is not there',
+             {{'replace', trow(70, 3)}, {'replace', trow(71)}, {'delete', {70}}, {'delete', {700}}}, nil, nil, true)
+check('... (the delete of a row that is not there does not count)', l[2] == 3, l)
+csame('a commit in a stream, after its reads', {{'insert', trow(72)}, {'delete', {71}}}, {{1}, {72}}, nil, true)
+n, l = csame('an insert of a row that is there', {{'insert', trow(1)}}, nil, nil, false)
+check('... (the Lua procedure refuses it: 1062)', l[1] == 'duplicate' and l[2] == 1062, l)
+csame('... after another write, in a stream', {{'insert', trow(73)}, {'insert', trow(1)}}, {{1}}, nil, false)
+local function overwrite(id)
+    return function()
+        for _, t in ipairs({wa, wb}) do c:eval('local t, r = ... box.space[t]:replace(r)', {t, trow(id, 6)}) end
+    end
+end
+n, l = csame('a commit whose read was overwritten since', {{'insert', trow(74)}}, {{1}}, {between = overwrite(1)},
+             false)
+check('... (the Lua procedure finds the conflict)', l[1] == 'conflict' and l[2] == 1213, l)
+-- a unique value moved from a row to another: the Lua procedure writes the
+-- row that takes it once the one that gives it up is written
+local function unique_twin(name)
+    return c:eval([[local name, like = ...
+        local s = box.schema.space.create(name, {format = box.space[like]:format()})
+        s:create_index('primary', {parts = {'id'}})
+        s:create_index('bucket_id', {parts = {'bucket_id'}, unique = false})
+        s:create_index('w', {parts = {{'w', is_nullable = true}}, unique = true})
+        return s.id]], {name, 'test.wa'})
+end
+wa0, wb0 = wa, wb
+wa, wb = unique_twin('test_native_u_a'), unique_twin('test_native_u_b')
+local function unique_rows()
+    for _, t in ipairs({wa, wb}) do
+        c:eval('local t, b = ... local s = box.space[t] s:truncate() s:replace{2, 1, "r2", b, 5} s:replace{9, 1, "r9", b, 9}',
+               {t, b})
+    end
+end
+unique_rows()
+local moves = {{'insert', {3, 1, 'r3', b, 30}}, {'insert', {1, 1, 'r1', b, 5}}, {'replace', {2, 1, 'r2', b, 6}}}
+n, l = csame('a commit that moves a unique value to another row, in a stream', moves, {{9}}, nil, false)
+check('... (which the Lua procedure commits there: the native one took back its first write)',
+      l[1] == 'ok' and l[2] == 3, l)
+unique_rows()
+n, l = csame('... whose read is overwritten once it was handed back', moves, {{9}}, {after = overwrite(9)}, false)
+check('... (its stream\'s transaction, with its read, as it was: a conflict)', l[1] == 'conflict', l)
+-- ... or whose vinyl table read is emptied by a TRUNCATE then: the rollback
+-- to its savepoint ran its on_rollback triggers, which must not have taken
+-- it for its end (note_stream_term), so that the TRUNCATE dooms it
+local vdef = c:eval('return box.space._tarn_catalog:get{...}.def', {'test.natv'})
+vdef.id, vdef.ver, vdef.json = vsid, (vdef.ver or 1) + 1, '{}'
+local vtrunc = {id = vsid, ver = vdef.ver, timeout = 5, def = vdef}
+local function truncate_natv()
+    local r1 = c:call('tarn_truncate_prepare', {'test.natv', vtrunc})
+    local r2 = c:call('tarn_truncate_apply', {'test.natv', vtrunc})
+    check('a TRUNCATE of the vinyl table it read, applied', r1[1] == 'ok' and r2[1] == 'ok', {r1, r2})
+end
+unique_rows()
+n, l = csame('... one that read a vinyl table', moves, {{7}}, {rsid = vsid, after = truncate_natv}, false)
+check('... (which the TRUNCATE doomed, as the Lua procedure\'s twin: a conflict)', l[1] == 'conflict', l)
+wa, wb = wa0, wb0
+c:eval('box.space.test_native_u_a:drop() box.space.test_native_u_b:drop()')
+-- what its checks leave to the Lua procedure
+n, l = csame('a commit of a transaction with row locks here', {{'insert', trow(75)}}, nil, {lock_gen = 'x/1'}, false)
+check('... (which the Lua procedure refuses: they were lost)', l[1] == 'error' and l[2] == 1213, l)
+csame('a commit of a transaction that read every shard with the current membership', {{'insert', trow(75)}}, nil,
+      {mver = map[6] or 0}, true)
+n, l = csame('... with an older one', {{'insert', trow(76)}}, nil, {mver = -1}, false)
+check('... (refused)', l[1] == 'moved', l)
+if other ~= nil then
+    csame('a commit that writes a bucket this shard does not own', {{'insert', trow(76)}}, nil, {wb = {other}}, false)
+    csame('... whose read was routed by one', {{'insert', trow(76)}}, {{1}}, {rb = other}, false)
+end
+csame('... that writes a row of one', {{'insert', {77, 0, 'x', other or 1000000}}}, nil, nil, false)
+if b2 ~= nil then   -- (a bucket being sent: the Lua procedure notes its writes for the move)
+    r = c:call('tarn_bucket_send_begin', {b2, 2, 'NAT-M2', 5})
+    check('a bucket is being sent', r[1] == 'ok', r)
+    csame('a commit that writes a row of it', {{'insert', {91, 1, 'x', b2}}}, nil, {wb = {b2}}, false)
+    c:call('tarn_bucket_send_abort', {b2, 'NAT-M2'})
+    csame('... once its move was given up', {{'insert', {92, 1, 'x', b2}}}, nil, {wb = {b2}}, true)
+end
+local cps = c:new_stream()
+cps:begin()
+local ctx = 'NAT-' .. require('uuid').str()
+r = cps:call('tarn_prepare', {ctx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(), box.NULL,
+                              box.NULL, {b}})
+check('a prepared transaction holds a lock on test.nat', r[1] == 'yes', r)
+csame('then a commit that read another row of it', {{'insert', trow(78)}}, {{7}}, {rsid = sid}, false)
+c:call('tarn_abort', {ctx, 1, {1}})
+csame('once it ended', {{'insert', trow(79)}}, {{7}}, {rsid = sid}, true)
+r = c:call('tarn_lock', {'NAT-RC4', {{wa, 0, {9}}}, 'X', {timeout = 1}})
+check('a row lock is held on the table', r[1] == 'ok', r)
+n = c:call('tarn_storage.ts_commit_local', cargs(wa, {{'insert', trow(80)}}))
+check('then a commit that writes it: handed to the Lua procedure', n[1] == 'lua', n)
+c:call('tarn_unlock', {'NAT-RC4'})
+c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wa})
+c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wb})
+n, l = csame('a commit with an older definition than the fence', {{'insert', trow(81)}}, nil, {fence = 6}, false)
+check('... (refused: 1412)', l[2] == 1412, l)
+csame('... again, with the fences read', {{'insert', trow(81)}}, nil, {fence = 6}, false)
+csame('... and one with the current definition', {{'insert', trow(81)}}, nil, {fence = 7}, true)
+c:eval("box.space._tarn_meta:delete{'fence:' .. ...} tarn.stale_fences()", {wa})
+c:eval("box.space._tarn_meta:delete{'fence:' .. ...} tarn.stale_fences()", {wb})
+c:call('tarn_commit_local', cargs(wb, {{'delete', {81}}}))   -- (the fences: read again)
+c:call('tarn_commit_local', cargs(wa, {{'delete', {81}}}))
+c:eval('box.space._tarn_meta:replace{..., {op = "TRUNCATE", ver = 0, label = "NAT-HOLD"}} tarn.stale_fences()', {hold})
+c:call('tarn_select', args({key = {7}, limit = 1}))
+csame('a commit while a TRUNCATE or DROP TABLE holds a table', {{'insert', trow(82)}}, nil, nil, false)
+c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
+c:call('tarn_select', args({key = {7}, limit = 1}))
+csame('... once it ends', {{'insert', trow(83)}}, nil, nil, true)
+-- a TRUNCATE applied while transactions are open: they fail if they read
+-- its table (the Lua procedure checks)
+c:call('tarn_create_table', {def('test.ntr', 'memtx', 28005)})
+local tdef = c:eval('return box.space._tarn_catalog:get{...}.def', {'test.ntr'})
+local tid = c:eval('return box.space[...].id', {'test.ntr'})
+tdef.id, tdef.ver, tdef.json = tid, 2, '{}'
+local ta = {id = tid, ver = 2, timeout = 5, def = tdef}
+local function truncate()
+    local r1 = c:call('tarn_truncate_prepare', {'test.ntr', ta})
+    local r2 = c:call('tarn_truncate_apply', {'test.ntr', ta})
+    check('a TRUNCATE of another table, applied', r1[1] == 'ok' and r2[1] == 'ok', {r1, r2})
+end
+n, l = csame('a commit of a transaction that was open then', {{'insert', trow(84)}}, {{1}}, {between = truncate},
+             false)
+check('... (which the Lua procedure commits: it did not read that table)', l[1] == 'ok', l)
+csame('... once those transactions ended', {{'insert', trow(85)}}, {{1}}, nil, true)
+c:call('tarn_drop_table', {'test.ntr'})
+csame('a commit that read rows here, without a stream', {{'insert', trow(86)}}, {{1}}, {no_stream = true}, false)
+n = c:call('tarn_storage.ts_commit_local', cargs(vsid, {{'insert', trow(87)}}))
+check('a commit that writes a vinyl table: handed to the Lua procedure', n[1] == 'lua', n)
+c:eval('box.cfg{read_only = true}')
+n = c:call('tarn_storage.ts_commit_local', cargs(wa, {{'insert', trow(87)}}))
+check('a commit on a read-only node: handed to the Lua procedure', n[1] == 'lua', n)
+c:eval("box.cfg{read_only = false} require('fiber').sleep(0.1)")
+deadline = fiber.clock() + 5
+repeat
+    c:call('tarn_commit_local', cargs(wb, {{'delete', {999}}}))
+    n = c:call('tarn_storage.ts_commit_local', cargs(wa, {{'delete', {999}}}))
+until n[1] ~= 'lua' or fiber.clock() > deadline
+csame('once the node is writable again, a commit', {{'insert', trow(87)}}, nil, nil, true)
+w0 = writes_of(b)
+c:call('tarn_storage.ts_commit_local', cargs(wa, {{'insert', trow(88)}, {'insert', trow(89)}}))
+check('the rows a commit wrote count for their bucket', writes_of(b) - w0 == 2, {w0, writes_of(b)})
 c:call('tarn_drop_table', {'test.wa'})
 c:call('tarn_drop_table', {'test.wb'})
 
@@ -555,6 +757,8 @@ local layout = c:eval("return require('ffi').cast('struct tarn_ns *', box.func['
 c:eval("box.func['tarn_storage.ts_state']:call({...})", {layout + 1})
 local ok, err = pcall(c.call, c, 'tarn_storage.ts_select', args({key = {7}, limit = 1}))
 check('its reads fail (99)', not ok and err.code == 99, tostring(err))
+ok, err = pcall(c.call, c, 'tarn_storage.ts_commit_local', {'NAT-X', {}, {}, {}, box.NULL, box.NULL, {}, box.NULL})
+check('... and its commits', not ok and err.code == 99, tostring(err))
 c:eval("box.func['tarn_storage.ts_state']:call({...})", {layout})
 same('the same layout again: served', {key = {7}, limit = 1}, true)
 

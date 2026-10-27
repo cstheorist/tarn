@@ -196,6 +196,11 @@ pub struct Txn {
     pub lock_timeout: f64,
     /// Shards where this transaction holds row locks.
     pub plocks: BTreeMap<usize, ShardLocks>,
+    /// Shards its row lock requests went to, whatever came of them: there
+    /// the shard may keep row-lock state of the transaction even when it
+    /// granted nothing (a refused request, a lost reply), which ends with
+    /// the transaction (`tarn_unlock`, or the Lua procedures' commits).
+    pub lock_shards: BTreeSet<usize>,
     /// SAVEPOINTs: name and the write buffer when it was set.
     pub savepoints: Vec<(String, BTreeMap<(u32, Bytes), BufWrite>)>,
     pub streams: BTreeMap<usize, Stream>,
@@ -261,6 +266,7 @@ impl Txn {
             mode,
             lock_timeout,
             plocks: BTreeMap::new(),
+            lock_shards: BTreeSet::new(),
             savepoints: Vec::new(),
             streams: BTreeMap::new(),
             writes: BTreeMap::new(),
@@ -321,6 +327,7 @@ impl Txn {
         self.encode_lock_opts(&mut m, cluster, o, &held);
         // NOWAIT and SKIP LOCKED requests never queue.
         let _waiting = (!o.nowait && !o.skip).then(|| cluster.lock_request(&self.id, shard, held));
+        self.lock_shards.insert(shard);
         // Lock requests change nothing that a resend could duplicate: a lost
         // reply just fails the statement (the locks are released with the
         // transaction).
@@ -438,6 +445,7 @@ impl Txn {
             for req in reqs {
                 let client = self.conn(cluster, req.0).await?;
                 let (m, held) = encode(self, req);
+                self.lock_shards.insert(req.0);
                 let r = {
                     let _waiting = cluster.lock_request(&self.id, req.0, held);
                     client.call(0, "tarn_lock_range", &m.0).await
@@ -461,6 +469,7 @@ impl Txn {
             };
             calls.push((client, encode(self, req).0));
         }
+        self.lock_shards.extend(reqs.iter().map(|r| r.0));
         let replies =
             futures::future::join_all(calls.iter().map(|(client, m)| client.call(0, "tarn_lock_range", &m.0))).await;
         let mut first_err = None;
@@ -525,9 +534,17 @@ impl Txn {
         let _ = cluster.call(shard, "tarn_unlock", &m.0).await;
     }
 
+    /// The shards where this transaction may hold row locks, or row-lock
+    /// state (see `lock_shards`), forgotten here: the caller releases them.
+    fn take_lock_shards(&mut self) -> Vec<usize> {
+        let mut s = std::mem::take(&mut self.lock_shards);
+        s.extend(std::mem::take(&mut self.plocks).into_keys());
+        s.into_iter().collect()
+    }
+
     /// Release every row lock of this transaction (best effort).
     async fn release_plocks(&mut self, cluster: &Arc<Cluster>) {
-        let shards: Vec<usize> = std::mem::take(&mut self.plocks).into_keys().collect();
+        let shards = self.take_lock_shards();
         let mut m = Mp::new();
         m.arr(1).str(&self.id);
         let futs = shards.iter().map(|&s| cluster.call(s, "tarn_unlock", &m.0));
@@ -787,23 +804,30 @@ impl Txn {
 
     /// Roll back every open stream and release the row locks (best effort,
     /// nothing to wait for).
-    pub fn rollback(self, cluster: &Arc<Cluster>) {
-        for (_, s) in self.streams {
+    pub fn rollback(mut self, cluster: &Arc<Cluster>) {
+        for (_, s) in std::mem::take(&mut self.streams) {
             tokio::spawn(async move {
                 let _ = s.client.rollback(s.id).await;
             });
         }
-        if !self.plocks.is_empty() {
-            let c = cluster.clone();
-            let id = self.id.clone();
-            let shards: Vec<usize> = self.plocks.into_keys().collect();
-            tokio::spawn(async move {
-                let mut m = Mp::new();
-                m.arr(1).str(&id);
-                let futs = shards.iter().map(|&s| c.call(s, "tarn_unlock", &m.0));
-                let _ = futures::future::join_all(futs).await;
-            });
+        let shards = self.take_lock_shards();
+        self.unlock_later(cluster, shards);
+    }
+
+    /// Release this transaction's row locks on `shards` in the background
+    /// (best effort, nothing to wait for).
+    fn unlock_later(&self, cluster: &Arc<Cluster>, shards: Vec<usize>) {
+        if shards.is_empty() {
+            return;
         }
+        let c = cluster.clone();
+        let id = self.id.clone();
+        tokio::spawn(async move {
+            let mut m = Mp::new();
+            m.arr(1).str(&id);
+            let futs = shards.iter().map(|&s| c.call(s, "tarn_unlock", &m.0));
+            let _ = futures::future::join_all(futs).await;
+        });
     }
 
     pub async fn commit(mut self, cluster: &Arc<Cluster>) -> SqlResult<()> {
@@ -813,6 +837,9 @@ impl Txn {
         }
         let parts = self.participants();
         if parts.is_empty() {
+            // (lock requests that granted nothing, if any)
+            let shards = self.take_lock_shards();
+            self.unlock_later(cluster, shards);
             return Ok(());
         }
         let res = if self.mode == Mode::ReadCommitted && self.writes.is_empty() {
@@ -829,10 +856,17 @@ impl Txn {
             self.commit_2pc(cluster, &parts).await
         };
         if res.is_ok() {
-            // Every commit path releases the row locks on the shards
-            // (tarn_commit_local/_rc, tarn_validate, APPLY).
+            // Every commit path releases the row locks on the shards it
+            // commits on (tarn_commit_local/_rc, tarn_validate, APPLY): not
+            // on a shard whose lock requests granted nothing, which is no
+            // participant.
             self.plocks.clear();
-        } else if !self.plocks.is_empty() {
+            let rest: Vec<usize> = std::mem::take(&mut self.lock_shards)
+                .difference(&parts)
+                .copied()
+                .collect();
+            self.unlock_later(cluster, rest);
+        } else if !self.plocks.is_empty() || !self.lock_shards.is_empty() {
             self.release_plocks(cluster).await;
         }
         if let Err(e) = &res {
@@ -902,7 +936,11 @@ impl Txn {
         encode_buckets(&mut m, &wb);
         self.encode_mver(&mut m);
         let shard_id = cluster.shards[shard].id;
-        let r = client.call(id, "tarn_commit_local", &m.0).await.map_err(|e| match e {
+        let r = match self.call_native_commit(&client, id, shard, &m.0).await {
+            Some(r) => r,
+            None => client.call(id, "tarn_commit_local", &m.0).await,
+        };
+        let r = r.map_err(|e| match e {
             // The commit may have happened: report the outcome as unknown.
             e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_)) => ambiguous(shard_id, &e),
             e => from_iproto(e),
@@ -915,6 +953,52 @@ impl Txn {
                 let _ = client.rollback(id).await;
                 Err(e)
             }
+        }
+    }
+
+    /// The shard's native procedure makes the one-shard commits it can
+    /// without Lua (crates/tarn-storage/src/procs.rs `commit_local`), also in
+    /// the transaction's stream, and hands the others back ("lua") having
+    /// written nothing, its stream transaction and reads as they were: its
+    /// reply, or None for a commit handed back, or not sent to it -- one that
+    /// writes a vinyl table, which it always hands back; one that sent row
+    /// lock requests to the shard, whose row-lock state there only the Lua
+    /// procedure releases (it hands back those that hold locks); or to a
+    /// shard without it, which the connection notes. Its errors are
+    /// tarn_commit_local's.
+    async fn call_native_commit(
+        &self,
+        client: &Client,
+        stream: u64,
+        shard: usize,
+        args: &[u8],
+    ) -> Option<Result<tarn_iproto::Response, tarn_iproto::Error>> {
+        use tarn_iproto::errcode::{
+            ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
+        };
+        if client.marked(MARK_NO_NATIVE_COMMIT)
+            || self.lock_shards.contains(&shard)
+            || self
+                .writes
+                .values()
+                .any(|w| w.shard == shard && !matches!(w.table.engine, crate::catalog::Engine::Memtx))
+        {
+            return None;
+        }
+        match client.call(stream, "tarn_storage.ts_commit_local", args).await {
+            Ok(r) => match r.data() {
+                Some(d) if crate::mpw::status_is(&d, "lua") => None,
+                _ => Some(Ok(r)),
+            },
+            Err(tarn_iproto::Error::Server {
+                code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                message,
+            }) => {
+                tracing::debug!("native commits unavailable on this shard: {}", message);
+                client.mark(MARK_NO_NATIVE_COMMIT);
+                None
+            }
+            Err(e) => Some(Err(e)),
         }
     }
 
@@ -1602,6 +1686,10 @@ pub async fn select_rows(
 /// The mark (`Client::mark`) of a connection to a shard without the native
 /// read procedure.
 const MARK_NO_NATIVE_SELECT: u32 = 0;
+
+/// The mark of a connection to a shard without the native commit procedure
+/// (session.rs has 1, for the native autocommit procedure).
+const MARK_NO_NATIVE_COMMIT: u32 = 2;
 
 #[cfg(test)]
 mod tests {

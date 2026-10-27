@@ -8,7 +8,7 @@
 //! both, and `LAYOUT` with them.
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 5;
+pub const LAYOUT: u32 = 6;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -83,6 +83,20 @@ pub struct State {
     /// [SPACES]: the row locks held on the spaces of each slot (a space in
     /// slot id % SPACES): a write to a space without any needs none.
     pub pl_spaces: *mut u32,
+    /// BK.held: the buckets held here (moving to this shard, their rows
+    /// staged): a commit that read every shard may have to see them.
+    pub held: u32,
+    /// The open stream transactions a TRUNCATE or DROP TABLE doomed
+    /// (DOOMED): their commits fail if they read its table.
+    pub doomed: u32,
+    /// Commits of one shard (tarn_commit_local) served here, and handed to
+    /// the Lua procedure.
+    pub c_served: u64,
+    pub c_to_lua: u64,
+    /// The transaction (its id) whose writes a procedure takes back to a
+    /// savepoint, while it does (else 0): its on_rollback triggers run
+    /// then, and must not take that for its end (note_stream_term).
+    pub svp_txn: u64,
 }
 
 impl Default for State {
@@ -122,6 +136,11 @@ impl State {
             w_served: 0,
             w_to_lua: 0,
             pl_spaces: std::ptr::null_mut(),
+            held: 0,
+            doomed: 0,
+            c_served: 0,
+            c_to_lua: 0,
+            svp_txn: 0,
         }
     }
 
@@ -239,7 +258,12 @@ mod tests {
         assert_eq!(offset_of!(State, w_served), 144);
         assert_eq!(offset_of!(State, w_to_lua), 152);
         assert_eq!(offset_of!(State, pl_spaces), 160);
-        assert_eq!(std::mem::size_of::<State>(), 168);
+        assert_eq!(offset_of!(State, held), 168);
+        assert_eq!(offset_of!(State, doomed), 172);
+        assert_eq!(offset_of!(State, c_served), 176);
+        assert_eq!(offset_of!(State, c_to_lua), 184);
+        assert_eq!(offset_of!(State, svp_txn), 192);
+        assert_eq!(std::mem::size_of::<State>(), 200);
     }
 
     #[test]
