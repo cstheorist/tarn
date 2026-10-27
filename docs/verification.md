@@ -1161,6 +1161,10 @@ The runtime must therefore establish its source native/queue cut before
 the first tail read, in addition to caller/claim draining. A test that
 injects a replica ACK prefix schedules this native boundary; it does not
 claim to test actual replication transport or prove full distributed DDL.
+No completed native prefix-ACK old/fixed runtime comparison is claimed:
+this particular ordering is established by the focused model and pinned
+source mapping. The ordinary engine runtime gates cover other schedules;
+the optional private ACK-input harness is not part of the default suite.
 
 ```sh
 tla/check.sh EngineSourceDrain Bug_EngineSourceDrainCallerOnly

@@ -1998,6 +1998,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 241 | 726 | 9 | 00s | 9 |
 | Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 318 | 965 | 12 | 00s | 12 |
 | Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 216 | 707 | 10 | 00s | 10 |
+| Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
@@ -2093,6 +2094,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
+| EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
