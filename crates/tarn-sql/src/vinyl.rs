@@ -131,6 +131,14 @@ pub(crate) fn start_stats(cluster: &Arc<Cluster>) {
         loop {
             interval.tick().await;
             let Some(c) = weak.upgrade() else { break };
+            if !c
+                .catalog()
+                .all()
+                .any(|table| matches!(table.engine, crate::catalog::Engine::Vinyl))
+            {
+                c.vinyl_samples.lock().clear();
+                continue;
+            }
             let polls = c.live_shards().map(|shard| {
                 let c = &c;
                 async move {
