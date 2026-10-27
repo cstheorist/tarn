@@ -557,6 +557,23 @@ publication. Callback tickets must be allocated and registered before
 charging, and their terminal arithmetic must not yield, fail, or query
 spaces ([callback restrictions](https://www.tarantool.io/en/doc/latest/reference/reference_lua/box_txn_management/on_commit/)).
 
+The terminal-callback premise applies to quota-bearing Lua transactions,
+not every invocation of a native rollback callback. The pinned engine also
+runs transaction `on_rollback` callbacks when rolling back to a savepoint,
+without ending the transaction or removing its callback list
+([savepoint rollback](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L395)).
+The native one-shard commit may use that operation before handing a request
+back to Lua. Supported accepted native streams must therefore have no
+pre-existing lazy quota ticket: SQL buffers user writes until commit, and
+the shared native write-admission guard checks every actual source against
+the capture registry **before** creating a transaction or savepoint. Lazy
+writes defer to Lua before native mutation. The stream-lifetime callback
+separately recognizes native savepoint rollback, preserving the existing
+read set and DDL/election tracking. These are implementation refinement
+obligations; the model does not prove arbitrary savepoint use safe for an
+armed meter ticket. The ordinary terminal-callback runtime evidence still
+applies to the guarded quota-bearing Lua paths.
+
 The bounded fixture contains one reservation that can APPLY or ABORT, a
 disjoint local enqueue/ACK, two invalidations, and one old queued native
 effect. Its queue-cut action is an explicit runtime premise, not a proof
