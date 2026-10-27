@@ -20,6 +20,7 @@ import argparse
 import base64
 import collections
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -27,6 +28,7 @@ from pathlib import Path
 import threading
 import time
 import traceback
+import sys
 import uuid
 
 import pymysql
@@ -200,6 +202,9 @@ class Test:
         (self.evidence / "manifest.json").write_text(json.dumps({
             "database": self.db, "arguments": vars(args),
             "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "client": {"distribution_version": importlib.metadata.version("PyMySQL"),
+                       "module_version": pymysql.__version__, "module_path": pymysql.__file__,
+                       "python_version": sys.version},
             "scope": "Dedicated functional checks; forced classification and real native pressure are distinct.",
         }, indent=2) + "\n")
 
@@ -452,7 +457,9 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                         attempts[0] += 1
                     sequence += 1
                     key = (index + 1) * 1000000 + sequence
-                    payload = base64.b64encode(os.urandom(6144))
+                    # ASCII text preserves the same 8192 payload bytes while
+                    # avoiding driver-specific bytes-to-hex SQL formatting.
+                    payload = base64.b64encode(os.urandom(6144)).decode("ascii")
                     entry = {"worker": index, "id": key, "started_phase": phase[0], "started_realtime": time.time()}
                     started = time.monotonic()
                     try:
