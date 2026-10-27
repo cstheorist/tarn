@@ -601,17 +601,27 @@ function M.new(c)
         end
         fail(1412, 'Engine counter alias chain is too long')
     end
-    function E.counter_alias(old_id, new_id)
+    local function counter_alias_body(old_id, new_id)
         c.writable()
         box.begin(RC)
-        local ok, result = pcall(function()
-            local canonical = tonumber(E.counter_name('ai:' .. old_id):match(':(%d+)$'))
-            local old = box.space._tarn_meta:get{'counter_alias:' .. new_id}
-            if old and old.value ~= canonical then fail(1412, 'Engine counter alias identity changed') end
-            box.space._tarn_meta:replace{'counter_alias:' .. new_id, canonical}
-            box.commit()
+        local canonical = tonumber(E.counter_name('ai:' .. old_id):match(':(%d+)$'))
+        local old = box.space._tarn_meta:get{'counter_alias:' .. new_id}
+        if old then
+            if old.value ~= canonical then fail(1412, 'Engine counter alias identity changed') end
+            -- This immutable binding is already confirmed. Replays need no
+            -- WAL write and cannot contend on an identical replacement.
+            box.rollback()
             return {'ok'}
-        end)
+        end
+        box.space._tarn_meta:replace{'counter_alias:' .. new_id, canonical}
+        box.commit()
+        return {'ok'}
+    end
+    function E.counter_alias(old_id, new_id)
+        -- Every participant ensures the same central binding. Begin its
+        -- confirmed view only after admission, and retain the mutex through
+        -- WAL completion. A detached/uncertain outcome still needs RC proof.
+        local ok, result = pcall(c.serial, new_id, 50, counter_alias_body, old_id, new_id)
         if box.is_in_txn() then box.rollback() end
         return ok and result or c.failure(result)
     end
