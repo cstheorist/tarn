@@ -41,13 +41,15 @@ end
 
 -- test.nat(id, v, pad, bucket_id, w), memtx: indexes 2 on v, 3 on (v, id),
 -- 4 on w (nullable), 5 on pad (case-insensitive); test.natv the same on
--- vinyl
-local function def(name, engine, id)
+-- vinyl; `dbl`: a field d after w, a double (nullable)
+local function def(name, engine, id, dbl)
+    local format = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
+                    {name = 'pad', type = 'string'}, {name = 'bucket_id', type = 'unsigned'},
+                    {name = 'w', type = 'integer', is_nullable = true}}
+    if dbl then format[6] = {name = 'd', type = 'double', is_nullable = true} end
     return {
         name = name, engine = engine, id = id,
-        format = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'integer'},
-                  {name = 'pad', type = 'string'}, {name = 'bucket_id', type = 'unsigned'},
-                  {name = 'w', type = 'integer', is_nullable = true}},
+        format = format,
         indexes = {{name = 'primary', unique = true, parts = {{field = 'id', type = 'unsigned'}}},
                    {name = 'bucket_id', unique = false, parts = {{field = 'bucket_id', type = 'unsigned'}}},
                    {name = 'v', unique = false, parts = {{field = 'v', type = 'integer'}}},
@@ -60,6 +62,10 @@ local function def(name, engine, id)
 end
 c:call('tarn_create_table', {def('test.nat', 'memtx', 28001)})
 c:call('tarn_create_table', {def('test.natv', 'vinyl', 28002)})
+-- twins for the writes: test.wa written by the native procedure, test.wb by
+-- the Lua one
+c:call('tarn_create_table', {def('test.wa', 'memtx', 28003, true)})
+c:call('tarn_create_table', {def('test.wb', 'memtx', 28004, true)})
 c:reload_schema()
 local sid, vsid = c.space['test.nat'].id, c.space['test.natv'].id
 local map = c:call('tarn_buckets')
@@ -299,6 +305,209 @@ same('... but one routed by a bucket', {key = {7}, limit = 1}, false)
 same('... which the Lua procedure counted, starting the next window: then served', {key = {7}, limit = 1}, true)
 check('... and they count', reads_of(b) >= 3, reads_of(b))
 c:eval('tarn.cfg.load_window = 60; tarn.ns_sync()')
+
+print('autocommit writes')
+local wa, wb = c.space['test.wa'].id, c.space['test.wb'].id
+local function wstats() local i = c:call('tarn_info').native return i.writes, i.writes_to_lua end
+-- tarn_autocommit's arguments for the writes `ws` ({op, payload[, ops,
+-- ranges, pad]}) to space sid; opts: as tarn_autocommit takes them (wb: b
+-- unless given)
+local function wargs(sid, ws, opts)
+    local out = {}
+    for i, w in ipairs(ws) do
+        local x = {w[1], sid, w[2]}
+        for j = 3, #w do x[j + 1] = w[j] end
+        out[i] = x
+    end
+    local o = {lock_timeout = 1, found_rows = opts and opts.found_rows or false,
+               wb = opts and opts.wb or {b}}
+    if opts and opts.fence then o.fence = {sid, opts.fence} end
+    return {out, o}
+end
+-- the rows of a table, as their bytes (which a later write compares)
+local function rows(sid)
+    return c:eval([[local m, out = require('msgpack'), {}
+        for _, t in box.space[...]:pairs() do
+            out[#out + 1] = (m.encode(t):gsub('.', function(x) return string.format('%02x', x:byte()) end))
+        end
+        return table.concat(out, ' ')]], {sid})
+end
+-- The writes go to both twins: the native procedure's reply must be the Lua
+-- one's, and the tables the same (served); or it hands them back, having
+-- written nothing, and the Lua procedure writes them to both.
+local function wsame(name, ws, opts, want_served)
+    local before = rows(wa)
+    local s0, l0 = wstats()
+    local n = c:call('tarn_storage.ts_autocommit', wargs(wa, ws, opts))
+    local s1, l1 = wstats()
+    local l = c:call('tarn_autocommit', wargs(wb, ws, opts))
+    if want_served then
+        check(name .. ': served, as the Lua procedure serves it',
+              s1 == s0 + 1 and canon(n) == canon(l) and rows(wa) == rows(wb), {native = n, lua = l})
+    else
+        local untouched = rows(wa) == before
+        local l2 = c:call('tarn_autocommit', wargs(wa, ws, opts))
+        -- (an error names its table)
+        local alike = l2[1] == l[1] and l2[2] == l[2]
+        check(name .. ': handed to the Lua procedure, nothing written',
+              l1 == l0 + 1 and n[1] == 'lua' and untouched and alike and rows(wa) == rows(wb),
+              {native = n, lua = l, untouched = untouched})
+    end
+    return n, l
+end
+local function trow(id, v, w) return {id, v or id % 7, 'r' .. id, b, w} end
+wsame('an insert', {{'insert', trow(1)}}, nil, true)
+wsame('... of rows: they count, the last one is returned', {{'insert', trow(2)}, {'insert', trow(3, 5, 9)}}, nil, true)
+local n, l = wsame('an insert of a row that is there', {{'insert', trow(1)}}, nil, false)
+check('... (the Lua procedure refuses it: 1062)', l[1] == 'duplicate' and l[2] == 1062, l)
+wsame('rows of which one is there', {{'insert', trow(4)}, {'insert', trow(2)}}, nil, false)
+wsame('a replace of a new row', {{'replace', trow(5)}}, nil, true)
+wsame('... of a row that is there, changed (2 affected)', {{'replace', trow(5, 1)}}, nil, true)
+wsame('... unchanged (1 affected)', {{'replace', trow(5, 1)}}, nil, true)
+wsame('a delete', {{'delete', {5}}}, nil, true)
+wsame('a delete of a row that is not there', {{'delete', {5}}}, nil, true)
+wsame('an update', {{'update', {1}, {{'=', 3, 'x'}}, {}, box.NULL}}, nil, true)
+wsame('... that changes nothing', {{'update', {1}, {{'=', 3, 'x'}}, {}, box.NULL}}, nil, true)
+wsame('... with found rows', {{'update', {1}, {{'=', 3, 'x'}}, {}, box.NULL}}, {found_rows = true}, true)
+wsame('... of a row that is not there', {{'update', {99}, {{'=', 3, 'x'}}, {}, box.NULL}}, nil, true)
+wsame('an addition in range', {{'update', {3}, {{'+', 5, 2}}, {{5, -2147483648, 2147483647, 'w'}}, box.NULL}},
+      nil, true)
+wsame('an addition to NULL (stays NULL)', {{'update', {1}, {{'+', 5, 2}}, {{5, 0, 255, 'w'}}, box.NULL}}, nil, true)
+n, l = wsame('an addition out of range', {{'update', {3}, {{'+', 5, 1000}}, {{5, 0, 255, 'w'}}, box.NULL}}, nil,
+             false)
+check('... (the Lua procedure refuses it: 1264)', l[1] == 'error' and l[2] == 1264, l)
+-- (a pad {4, 0}: the rows have 5 fields, which rows written before an
+-- ALTER TABLE added the fifth lack)
+wsame('an update with a pad, of a row that has every field', {{'update', {3}, {{'=', 3, 'y'}}, {}, {4, 0}}}, nil,
+      true)
+wsame('a row without its last fields', {{'insert', {8, 1, 'r8', b}}}, nil, true)
+wsame('... updated with a pad (the Lua procedure fills them in)', {{'update', {8}, {{'=', 3, 'y'}}, {}, {4, 0}}},
+      nil, false)
+wsame('an update of an indexed column', {{'update', {2}, {{'=', 2, 6}}, {}, box.NULL}}, nil, true)
+wsame('a write to a bucket this shard does not own', {{'insert', trow(6)}}, {wb = {other or 1000000}}, false)
+wsame('... of a row of such a bucket', {{'insert', {7, 0, 'x', other or 1000000}}}, nil, false)
+-- a prepared transaction's lock on the table
+local wps = c:new_stream()
+wps:begin()
+local wtx = 'NAT-' .. require('uuid').str()
+r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', wa, trow(40)}}, {}, {}, fiber.time(), box.NULL, box.NULL,
+                               {b}})
+check('a prepared transaction holds a lock on the table', r[1] == 'yes', r)
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
+check('then a write to it: handed to the Lua procedure', n[1] == 'lua', n)
+c:call('tarn_abort', {wtx, 1, {1}})
+-- a row lock (READ COMMITTED), anywhere
+r = c:call('tarn_lock', {'NAT-RC', {{sid, 0, {9}}}, 'X', {timeout = 1}})
+check('a row lock is held', r[1] == 'ok', r)
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
+check('then a write: handed to the Lua procedure', n[1] == 'lua', n)
+c:call('tarn_unlock', {'NAT-RC'})
+wsame('once it is released, a write', {{'insert', trow(41)}}, nil, true)
+-- a definition fence raised (ALTER TABLE): writes with the old one refused
+c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wa})
+c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wb})
+n, l = wsame('a write with an older definition than the fence', {{'insert', trow(42)}}, {fence = 6}, false)
+check('... (refused: 1412)', l[2] == 1412, l)
+-- (the Lua procedure read the fences again: now the native one compares
+-- the write's definition with them)
+n, l = wsame('... again, with the fences read', {{'insert', trow(42)}}, {fence = 6}, false)
+check('... (refused: 1412)', l[2] == 1412, l)
+wsame('... and one with the current definition', {{'insert', trow(42)}}, {fence = 7}, true)
+c:eval("box.space._tarn_meta:delete{'fence:' .. ...} tarn.stale_fences()", {wa})
+c:eval("box.space._tarn_meta:delete{'fence:' .. ...} tarn.stale_fences()", {wb})
+-- (the stale fences: read again)
+c:call('tarn_autocommit', wargs(wa, {{'delete', {42}}}))
+c:call('tarn_autocommit', wargs(wb, {{'delete', {42}}}))
+wsame('a write with the fences read again', {{'delete', {41}}}, nil, true)
+-- values as the Lua procedure stores them: a double that holds an integer
+-- is stored as that integer (the SQL server sends DOUBLE values as doubles)
+local ffi = require('ffi')
+local function D(x) return ffi.cast('double', x) end
+local function drow(id, d) return {id, 1, 'd' .. id, b, box.NULL, d} end
+wsame('inserts of doubles and floats that hold integers',
+      {{'insert', drow(60, D(5))}, {'insert', drow(61, D(-0.0))}, {'insert', drow(62, D(2^63))},
+       {'insert', drow(63, D(-2^63))}, {'insert', drow(64, ffi.cast('float', 2))}}, nil, true)
+wsame('... and of other ones',
+      {{'insert', drow(65, D(1.5))}, {'insert', drow(66, D(1e300))}, {'insert', drow(67, ffi.cast('float', 0.5))},
+       {'insert', drow(68, D(-1e19))}}, nil, true)
+n, l = wsame('an update that sets a double to the integer the row holds', {{'update', {60}, {{'=', 6, D(5)}}, {}, box.NULL}},
+             nil, true)
+check('... (0 affected)', l[2] == 0, l)
+wsame('... that adds a double to it', {{'update', {60}, {{'+', 6, D(1)}}, {}, box.NULL}}, nil, true)
+n, l = wsame('a replace by the same row, with doubles', {{'replace', drow(61, D(0))}}, nil, true)
+check('... (1 affected)', l[2] == 1, l)
+wsame('a delete by a key given as a double', {{'delete', {D(68)}}}, nil, true)
+wsame('a value that is not a number', {{'insert', drow(69, D(0 / 0))}}, nil, false)
+-- a synchronous table (a shard with replicas): handed back, as every write
+-- of the shard will be
+local ssid = c:eval([[local s = box.schema.space.create('test_native_sync', {is_sync = true,
+        format = {{name = 'id', type = 'unsigned'}, {name = 'bucket_id', type = 'unsigned'}}})
+    s:create_index('primary')
+    s:create_index('bucket_id', {parts = {'bucket_id'}, unique = false})
+    return s.id]])
+n = c:call('tarn_storage.ts_autocommit', wargs(ssid, {{'insert', {1, b}}}))
+check('a write to a synchronous table: handed back, as every one will be', n[1] == 'lua' and n[2] == 'all', n)
+check('... having written nothing', c:eval('return box.space.test_native_sync:len()') == 0)
+c:eval('box.space.test_native_sync:drop()')
+-- a bucket being sent: the Lua procedure notes its writes for the move
+local b2   -- another bucket this shard owns
+for _, rg in ipairs(map[4]) do for x = rg[1], rg[2] do if x ~= b and b2 == nil then b2 = x end end end
+if b2 ~= nil then
+    r = c:call('tarn_bucket_send_begin', {b2, 2, 'NAT-M', 5})
+    check('a bucket is being sent', r[1] == 'ok', r)
+    wsame('a write to it', {{'insert', {48, 1, 'x', b2}}}, {wb = {b2}}, false)
+    c:call('tarn_bucket_send_abort', {b2, 'NAT-M'})
+    wsame('... once its move was given up', {{'insert', {49, 1, 'x', b2}}}, {wb = {b2}}, true)
+end
+-- a read-only node
+c:eval('box.cfg{read_only = true}')
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(47)}}))
+check('a write on a read-only node: handed to the Lua procedure', n[1] == 'lua', n)
+local ok_ro, err_ro = pcall(c.call, c, 'tarn_autocommit', wargs(wa, {{'insert', trow(47)}}))
+check('... which refuses it (ER_READONLY)', not ok_ro and err_ro.code == box.error.READONLY, tostring(err_ro))
+-- (the node notices the change in the background; then the Lua procedures
+-- read the state again)
+c:eval("box.cfg{read_only = false} require('fiber').sleep(0.1)")
+local deadline = fiber.clock() + 5
+repeat
+    c:call('tarn_autocommit', wargs(wb, {{'delete', {999}}}))
+    n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'delete', {999}}}))
+until n[1] ~= 'lua' or fiber.clock() > deadline
+wsame('once the node is writable again, a write', {{'insert', trow(47)}}, nil, true)
+-- a vinyl table
+n = c:call('tarn_storage.ts_autocommit', wargs(vsid, {{'insert', trow(43)}}))
+check('a write to a vinyl table: handed to the Lua procedure', n[1] == 'lua', n)
+-- a test hook held
+c:call('tarn_test_hook', {'scan', 'hold'})
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(44)}}))
+check('while a test hook is held: handed to the Lua procedure', n[1] == 'lua', n)
+c:call('tarn_test_hook', {'scan', 'release'})
+-- the writes count for their bucket's load
+local function writes_of(x)
+    for _, e in ipairs(c:call('tarn_bucket_stats')[3]) do if e[1] == x then return e[3] or 0 end end
+    return 0
+end
+local w0 = writes_of(b)
+c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(45)}, {'insert', trow(46)}}))
+check('the rows written count for their bucket', writes_of(b) - w0 == 2, {w0, writes_of(b)})
+-- what waits for the commits in flight waits for the native ones
+c:eval('tarn.ns_inflight(true)')
+local t0 = fiber.clock()
+r = c:call('tarn_lock', {'NAT-RC2', {{wa, 0, {1}}}, 'X', {timeout = 0.3, read = true}})
+check('a row lock waits for a native commit in flight', fiber.clock() - t0 >= 0.25, {r, fiber.clock() - t0})
+c:eval('tarn.ns_inflight(false)')
+c:call('tarn_unlock', {'NAT-RC2'})
+c:eval('tarn.ns_inflight(true)')
+local fut = c:call('tarn_lock', {'NAT-RC3', {{wa, 0, {2}}}, 'X', {timeout = 2}}, {is_async = true})
+fiber.sleep(0.2)
+check('... a commit that began before it', not fut:is_ready())
+c:eval('tarn.ns_inflight(true)')   -- (it ended, and another one began)
+local r3 = fut:wait_result(1)
+check('... but not one that began after it', r3 ~= nil and r3[1][1] == 'ok', r3)
+c:eval('tarn.ns_inflight(false)')
+c:call('tarn_unlock', {'NAT-RC3'})
+c:call('tarn_drop_table', {'test.wa'})
+c:call('tarn_drop_table', {'test.wb'})
 
 print('a module of another build')
 -- (its state's layout is not the Lua module's: it fails as a module that

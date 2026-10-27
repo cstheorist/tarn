@@ -124,6 +124,10 @@ fn client_collation_name(id: u8) -> Option<&'static str> {
 
 pub(crate) const MAX_RETRIES: usize = 20;
 
+/// The mark (`Client::mark`) of a connection to a shard without the native
+/// autocommit procedure.
+const MARK_NO_NATIVE_WRITE: u32 = 1;
+
 /// Statements that met a stale catalog: a table definition an ALTER TABLE
 /// replaced (1412; the shards refuse writes made with it while the ALTER
 /// runs and afterwards), or a table, column or database another server
@@ -1335,8 +1339,21 @@ impl Session {
         }
         let mut attempt = 0;
         loop {
-            // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
-            let d = self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await?;
+            // Not idempotent (e.g. SET v = v + 1): never re-sent blindly. The
+            // shard's native procedure does the writes it can without Lua
+            // (crates/tarn-storage/src/write.rs), and hands the others back
+            // ("lua") having written nothing.
+            let native = if matches!(table.engine, crate::catalog::Engine::Memtx) {
+                self.cluster
+                    .call_native_once(shard, "tarn_storage.ts_autocommit", &writes.0, MARK_NO_NATIVE_WRITE)
+                    .await?
+            } else {
+                None
+            };
+            let d = match native {
+                Some(d) if !crate::mpw::status_is(&d, "lua") => d,
+                _ => self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await?,
+            };
             match lua_status(&d) {
                 Ok((_, mut rd)) => {
                     let n = rd.value()?.as_i64().unwrap_or(0) as u64;

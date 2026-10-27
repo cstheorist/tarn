@@ -145,16 +145,27 @@ impl<'a> Rd<'a> {
     /// ALTER TABLE added the column).
     pub fn row_of(&mut self, t: &crate::catalog::TableDef) -> SqlResult<Vec<Value>> {
         let l = &t.layout;
-        if l.identity {
-            return self.row(t.columns.len());
-        }
-        let n = self.array()?;
-        let mut row = l.fills.clone();
-        for f in 0..n {
-            match l.field_col.get(f).copied().flatten() {
-                Some(c) => row[c] = self.value()?,
-                None => self.skip()?,
+        let mut row = if l.identity {
+            self.row(t.columns.len())?
+        } else {
+            let n = self.array()?;
+            let mut row = l.fills.clone();
+            for f in 0..n {
+                match l.field_col.get(f).copied().flatten() {
+                    Some(c) => row[c] = self.value()?,
+                    None => self.skip()?,
+                }
             }
+            row
+        };
+        // (a FLOAT or DOUBLE that holds an integer, stored as that integer)
+        for &c in &l.floats {
+            let f = match row[c] {
+                Value::Int(i) => i as f64,
+                Value::UInt(u) => u as f64,
+                _ => continue,
+            };
+            row[c] = Value::Float(f);
         }
         Ok(row)
     }
@@ -255,6 +266,25 @@ pub fn status_is(data: &[u8], status: &str) -> bool {
         && rd.string().is_ok_and(|s| s == status)
 }
 
+/// Whether field `i` (from 0) of the `{status, ...}` table a procedure
+/// returned is the string `want`.
+pub fn status_arg_is(data: &[u8], i: u32, want: &str) -> bool {
+    let mut rd = Rd::new(data);
+    if !matches!(rd.array(), Ok(n) if n > 0) {
+        return false;
+    }
+    match rd.array() {
+        Ok(m) if m > i as usize => {}
+        _ => return false,
+    }
+    for _ in 0..i {
+        if rd.skip().is_err() {
+            return false;
+        }
+    }
+    rd.string().is_ok_and(|s| s == want)
+}
+
 /// The number of fields of the `{status, ...}` table a Tarn Lua procedure
 /// returned (0 if there is none).
 pub fn status_len(data: &[u8]) -> usize {
@@ -313,5 +343,21 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
             })
         }
         other => Err(proto(format!("unexpected procedure status '{}'", other))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_and_its_fields() {
+        // [["lua", "all"]], [["lua"]], [["ok", 1]], []
+        let all = [0x91, 0x92, 0xa3, b'l', b'u', b'a', 0xa3, b'a', b'l', b'l'];
+        let lua = [0x91, 0x91, 0xa3, b'l', b'u', b'a'];
+        assert!(status_is(&all, "lua") && status_arg_is(&all, 1, "all"));
+        assert!(status_is(&lua, "lua") && !status_arg_is(&lua, 1, "all"));
+        assert!(!status_arg_is(&[0x91, 0x92, 0xa2, b'o', b'k', 0x01], 1, "all"));
+        assert!(!status_arg_is(&[0x90], 1, "all"));
     }
 }

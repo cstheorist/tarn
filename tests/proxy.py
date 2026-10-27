@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fault-injecting TCP proxy for tests/faults.sh: forwards IPROTO between a
-tarn-server and one storage node. The first request that contains MATCH
-(default: an autocommit UPDATE) is delivered to the storage node, which
+tarn-server and one storage node. The first request that contains every
+MATCH (default: an UPDATE through tarn_autocommit; tests/faults.sh names the
+procedure that makes it) is delivered to the storage node, which
 executes and commits it; the proxy then swallows the reply and closes the
 connection, so the SQL server cannot know whether the statement ran.
 

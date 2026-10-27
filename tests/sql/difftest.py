@@ -35,6 +35,8 @@ SCHEMA = [
     "CREATE TABLE al (id INT PRIMARY KEY, a INT, b VARCHAR(10), c DECIMAL(6,2), KEY ka (a))",
     "CREATE TABLE al2 (t INT, id INT, name VARCHAR(10), PRIMARY KEY (t, id)) PARTITION BY KEY(t)",
     "CREATE TABLE fkc (id INT PRIMARY KEY, p INT)",
+    # floating-point columns set to values that are integers (#28)
+    "CREATE TABLE dbl (id INT PRIMARY KEY, d DOUBLE, f FLOAT)",
     # collations (issue #13): general_ci, unicode_ci and bin columns, indexed
     # and not; a case-insensitive primary (and shard) key; a case-insensitive
     # unique key next to the shard key
@@ -1229,6 +1231,23 @@ CASES = [
     ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.g = 3 ORDER BY jo.id FOR UPDATE", "q"),
     ("COMMIT", "dml:jc"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # A DOUBLE set to the value it holds changes nothing, whichever storage
+    # procedure wrote the row: a transaction's commit, then autocommit
+    # statements (#28)
+    ("BEGIN", "q"),
+    ("INSERT INTO dbl VALUES (1, 0, 2), (2, 5, -3), (3, 1.5, 0.5)", "dml:dbl"),
+    ("COMMIT", "q"),
+    ("UPDATE dbl SET d = 0 WHERE id = 1", "dml:dbl"),
+    ("UPDATE dbl SET d = 5, f = -3 WHERE id = 2", "dml:dbl"),
+    ("UPDATE dbl SET d = 1.5, f = 0.5 WHERE id = 3", "dml:dbl"),
+    ("REPLACE INTO dbl VALUES (1, 0, 2)", "dml:dbl"),
+    ("INSERT INTO dbl VALUES (4, 7, 7)", "dml:dbl"),
+    ("UPDATE dbl SET d = 7 WHERE id = 4", "dml:dbl"),
+    ("UPDATE dbl SET d = d + 1 WHERE id = 4", "dml:dbl"),
+    ("UPDATE dbl SET d = 8 WHERE id = 4", "dml:dbl"),
+    ("BEGIN", "q"),
+    ("UPDATE dbl SET d = 8 WHERE id = 4", "dml:dbl"),
+    ("COMMIT", "q"),
 ]
 
 

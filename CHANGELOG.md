@@ -16,12 +16,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing to wait for -- point reads, the rows equal to a key, and ranges
   from a key, to an end key or not, autocommit or inside a transaction --
   without running Lua, and hands every other read back to `tarn_select`.
-  On one shard, point selects reach a quarter to a third more statements a
-  second and the read transactions of `oltp_read_only` and
-  `oltp_read_write` over half more, while the shard's CPU per statement
-  falls to under half (for point selects, under a third). `bench/profile.py` (run by `bench/profile.sh`)
-  measures what the storage side of a workload costs a shard's transaction
-  thread: CPU and Lua allocations per statement, and where the time goes.
+  Its `tarn_storage.ts_autocommit` makes the autocommit writes to the memtx
+  tables of shards without replicas (`INSERT`, `REPLACE`, and `UPDATE` and
+  `DELETE` by primary key) when nothing would make `tarn_autocommit` wait
+  or refuse them, and hands the others to `tarn_autocommit` unwritten.
+  On one shard, point selects reach a quarter to over a third more
+  statements a second, the read transactions of `oltp_read_only` and
+  `oltp_read_write` over half more, and autocommit writes 71% to 76% more,
+  while the shard's CPU per statement falls to 29% to 44% of what the Lua
+  procedures take. `bench/profile.py` (run by `bench/profile.sh`) measures
+  what the storage side of a workload costs a shard's transaction thread:
+  CPU and Lua allocations per statement, and where the time goes.
 
 - Rebalancing ([#25](https://github.com/cstheorist/tarn/issues/25)): `TARN
   REBALANCE [BY SIZE | BY LOAD] [MAX MOVES n] [MAX RATE bytes]` moves
@@ -391,6 +396,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An `UPDATE` in a transaction that set a `FLOAT` or `DOUBLE` column to the
+  value it held counted the row as changed when that value was an integer.
+  The shards store such values as integers, which the SQL server now reads
+  as doubles ([#28](https://github.com/cstheorist/tarn/issues/28)).
 - An autocommit read on a shard's new leader now reads the tables held by a
   `TRUNCATE` or `DROP TABLE` from storage first, as writes do. Until a write
   read them, such a read could return rows of a table that a prepared

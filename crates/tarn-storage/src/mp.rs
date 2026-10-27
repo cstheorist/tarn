@@ -91,10 +91,53 @@ impl<'a> Rd<'a> {
         }
     }
 
+    /// An integer of any encoding.
+    pub fn int(&mut self) -> Option<i128> {
+        match self.peek()? {
+            0xe0..=0xff => Some(self.byte()? as i8 as i128),
+            0xd0 => {
+                self.byte()?;
+                Some(self.be(1)? as u8 as i8 as i128)
+            }
+            0xd1 => {
+                self.byte()?;
+                Some(self.be(2)? as u16 as i16 as i128)
+            }
+            0xd2 => {
+                self.byte()?;
+                Some(self.be(4)? as u32 as i32 as i128)
+            }
+            0xd3 => {
+                self.byte()?;
+                Some(self.be(8)? as i64 as i128)
+            }
+            _ => self.uint().map(|v| v as i128),
+        }
+    }
+
     pub fn bool(&mut self) -> Option<bool> {
         match self.byte()? {
             0xc2 => Some(false),
             0xc3 => Some(true),
+            _ => None,
+        }
+    }
+
+    pub fn bin(&mut self) -> Option<&'a [u8]> {
+        let n = match self.byte()? {
+            0xc4 => self.be(1)? as usize,
+            0xc5 => self.be(2)? as usize,
+            0xc6 => self.be(4)? as usize,
+            _ => return None,
+        };
+        self.take(n)
+    }
+
+    /// A float or a double, as a double.
+    pub fn float(&mut self) -> Option<f64> {
+        match self.byte()? {
+            0xca => Some(f32::from_bits(self.be(4)? as u32) as f64),
+            0xcb => Some(f64::from_bits(self.be(8)?)),
             _ => None,
         }
     }
@@ -224,6 +267,61 @@ impl Wr {
         self
     }
 
+    /// An integer in its shortest encoding (unsigned when not negative), as
+    /// Tarantool encodes it. `v` must fit in an int64 or a uint64.
+    pub fn int(&mut self, v: i128) -> &mut Wr {
+        if v >= 0 {
+            return self.uint(v as u64);
+        }
+        match v {
+            -32..=-1 => self.0.push(v as i8 as u8),
+            -128..=-33 => {
+                self.0.push(0xd0);
+                self.0.push(v as i8 as u8);
+            }
+            -32768..=-129 => {
+                self.0.push(0xd1);
+                self.0.extend_from_slice(&(v as i16).to_be_bytes());
+            }
+            -2147483648..=-32769 => {
+                self.0.push(0xd2);
+                self.0.extend_from_slice(&(v as i32).to_be_bytes());
+            }
+            _ => {
+                self.0.push(0xd3);
+                self.0.extend_from_slice(&(v as i64).to_be_bytes());
+            }
+        }
+        self
+    }
+
+    pub fn double(&mut self, v: f64) -> &mut Wr {
+        self.0.push(0xcb);
+        self.0.extend_from_slice(&v.to_bits().to_be_bytes());
+        self
+    }
+
+    /// The shortest header of a string (`bin`: false) or a binary of `n`
+    /// bytes.
+    pub fn bytes_header(&mut self, bin: bool, n: usize) -> &mut Wr {
+        match (bin, n) {
+            (false, 0..=31) => self.0.push(0xa0 | n as u8),
+            (_, 0..=0xff) => {
+                self.0.push(if bin { 0xc4 } else { 0xd9 });
+                self.0.push(n as u8);
+            }
+            (_, 0x100..=0xffff) => {
+                self.0.push(if bin { 0xc5 } else { 0xda });
+                self.0.extend_from_slice(&(n as u16).to_be_bytes());
+            }
+            _ => {
+                self.0.push(if bin { 0xc6 } else { 0xdb });
+                self.0.extend_from_slice(&(n as u32).to_be_bytes());
+            }
+        }
+        self
+    }
+
     /// An array header whose length is filled in later (`patch_array`): 5
     /// bytes, the longest form.
     pub fn array_slot(&mut self) -> usize {
@@ -282,6 +380,27 @@ mod tests {
         assert_eq!(r.uint(), None); // -1
                                     // a truncated buffer
         assert_eq!(Rd::new(&buf[..10]).skip(), None);
+    }
+
+    #[test]
+    fn integers_of_any_sign() {
+        let mut w = Wr::default();
+        w.uint(u64::MAX).uint(7);
+        let mut r = Rd::new(&w.0);
+        assert_eq!((r.int(), r.int()), (Some(u64::MAX as i128), Some(7)));
+        for (buf, v) in [
+            (&[0xff][..], -1i128),
+            (&[0xe0], -32),
+            (&[0xd0, 0x80], -128),
+            (&[0xd1, 0xff, 0x00], -256),
+            (&[0xd2, 0x80, 0, 0, 0], i32::MIN as i128),
+            (&[0xd3, 0x80, 0, 0, 0, 0, 0, 0, 0], i64::MIN as i128),
+            (&[0xd0, 0x05], 5),
+        ] {
+            assert_eq!(Rd::new(buf).int(), Some(v), "{:x?}", buf);
+        }
+        assert_eq!(Rd::new(&[0xc0]).int(), None);
+        assert_eq!(Rd::new(&[0xcb, 0, 0, 0, 0, 0, 0, 0, 0]).int(), None);
     }
 
     #[test]
