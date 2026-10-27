@@ -24,12 +24,16 @@ local function wait(label, fn)
     error(label .. ' timed out')
 end
 wait('schema/native', function()
-    -- Replicated setup runs asynchronously. The meta space is created
-    -- before the bucket/read-lock schema that tarn_info itself reads.
-    for _, name in ipairs({'_tarn_meta', '_tarn_buckets', '_tarn_catalog', '_tarn_locks', '_tarn_part', '_tarn_txn'}) do
+    -- Replicated setup runs asynchronously. In Lua mode, waiting only
+    -- for _tarn_part can let the later auto-ID scratch space take the
+    -- explicitly reserved shadow ID after this fixture creates its source.
+    for _, name in ipairs({'_tarn_meta', '_tarn_buckets', '_tarn_catalog', '_tarn_locks',
+                          '_tarn_part', '_tarn_txn', '_tarn_scratch', '_tarn_lazy_floor', '_tarn_lazy_usage'}) do
         if box.space[name] == nil or box.space[name].index[0] == nil then return false end
     end
-    return box.space._tarn_part.index.state ~= nil and
+    return box.space._tarn_part.index.state ~= nil and box.space._tarn_txn.index.exp ~= nil and
+        box.space._tarn_lazy_floor.index.bucket_id ~= nil and box.space._tarn_lazy_usage:get{0} ~= nil and
+        box.space._tarn_meta:get{'shard_id'} ~= nil and tarn.lazy.quota.ready() and
         (not native or native == '0' or (tarn_info().native or {}).ready == 1)
 end)
 if native and native ~= '0' then
