@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 6 and seed 7712441122050269065 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 247] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 31 and seed -6053319607491596147 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 247] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /work/EngineCutover.tla
-Parsing file /tmp/tlc-9903504161318109850/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-9903504161318109850/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-9903504161318109850/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-9903504161318109850/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-9903504161318109850/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-9903504161318109850/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-9903504161318109850/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-6692005385614508553/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-6692005385614508553/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-6692005385614508553/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-6692005385614508553/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-6692005385614508553/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-6692005385614508553/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-6692005385614508553/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,9 +19,9 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-10-27 17:40:45)
+Starting... (2026-10-27 17:55:20)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-27 17:40:45.
+Finished computing initial states: 1 distinct state generated at 2026-10-27 17:55:20.
 Error: Invariant OldStreamsRejected is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -33,6 +33,8 @@ State 1: <Initial predicate>
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {}
 /\ crashed = FALSE
@@ -46,7 +48,7 @@ State 1: <Initial predicate>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <Prepared("A") line 50, col 5 to line 52, col 74 of module EngineCutover>
+State 2: <Prepared("A") line 52, col 5 to line 54, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -55,6 +57,8 @@ State 2: <Prepared("A") line 50, col 5 to line 52, col 74 of module EngineCutove
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {}
 /\ crashed = FALSE
@@ -68,7 +72,7 @@ State 2: <Prepared("A") line 50, col 5 to line 52, col 74 of module EngineCutove
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 3: <ReadyAux("A") line 54, col 5 to line 56, col 74 of module EngineCutover>
+State 3: <ReadyAux("A") line 56, col 5 to line 58, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -77,6 +81,8 @@ State 3: <ReadyAux("A") line 54, col 5 to line 56, col 74 of module EngineCutove
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A"}
 /\ crashed = FALSE
@@ -90,7 +96,7 @@ State 3: <ReadyAux("A") line 54, col 5 to line 56, col 74 of module EngineCutove
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 4: <Prepared("B") line 50, col 5 to line 52, col 74 of module EngineCutover>
+State 4: <Prepared("B") line 52, col 5 to line 54, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -99,6 +105,8 @@ State 4: <Prepared("B") line 50, col 5 to line 52, col 74 of module EngineCutove
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A"}
 /\ crashed = FALSE
@@ -112,7 +120,7 @@ State 4: <Prepared("B") line 50, col 5 to line 52, col 74 of module EngineCutove
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 5: <ReadyAux("B") line 54, col 5 to line 56, col 74 of module EngineCutover>
+State 5: <ReadyAux("B") line 56, col 5 to line 58, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -121,6 +129,8 @@ State 5: <ReadyAux("B") line 54, col 5 to line 56, col 74 of module EngineCutove
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
@@ -134,7 +144,7 @@ State 5: <ReadyAux("B") line 54, col 5 to line 56, col 74 of module EngineCutove
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 6: <DecideApply line 59, col 5 to line 63, col 74 of module EngineCutover>
+State 6: <DecideApply line 61, col 5 to line 65, col 74 of module EngineCutover>
 /\ decision = "apply"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -143,6 +153,8 @@ State 6: <DecideApply line 59, col 5 to line 63, col 74 of module EngineCutover>
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
@@ -156,7 +168,7 @@ State 6: <DecideApply line 59, col 5 to line 63, col 74 of module EngineCutover>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 7: <Unname("A") line 70, col 5 to line 74, col 88 of module EngineCutover>
+State 7: <Unname("A") line 72, col 5 to line 76, col 88 of module EngineCutover>
 /\ decision = "apply"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -165,6 +177,8 @@ State 7: <Unname("A") line 70, col 5 to line 74, col 88 of module EngineCutover>
 /\ doomed = {}
 /\ renamed = {}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
@@ -178,7 +192,7 @@ State 7: <Unname("A") line 70, col 5 to line 74, col 88 of module EngineCutover>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 8: <Rename("A") line 76, col 5 to line 80, col 89 of module EngineCutover>
+State 8: <Rename("A") line 78, col 5 to line 82, col 89 of module EngineCutover>
 /\ decision = "apply"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -187,6 +201,8 @@ State 8: <Rename("A") line 76, col 5 to line 80, col 89 of module EngineCutover>
 /\ doomed = {}
 /\ renamed = {"A"}
 /\ streamCommitted = {}
+/\ auxDoomed = {}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
@@ -200,7 +216,7 @@ State 8: <Rename("A") line 76, col 5 to line 80, col 89 of module EngineCutover>
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 9: <Publish("A") line 82, col 5 to line 88, col 56 of module EngineCutover>
+State 9: <Publish("A") line 84, col 5 to line 91, col 76 of module EngineCutover>
 /\ decision = "apply"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 2, B |-> 1]
@@ -209,6 +225,8 @@ State 9: <Publish("A") line 82, col 5 to line 88, col 56 of module EngineCutover
 /\ doomed = {}
 /\ renamed = {"A"}
 /\ streamCommitted = {}
+/\ auxDoomed = {"A"}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
@@ -222,7 +240,7 @@ State 9: <Publish("A") line 82, col 5 to line 88, col 56 of module EngineCutover
 /\ pendingOld = {"A", "B"}
 /\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 10: <ValidateOldStream("A") line 122, col 5 to line 125, col 75 of module EngineCutover>
+State 10: <ValidateOldStream("A") line 125, col 5 to line 128, col 106 of module EngineCutover>
 /\ decision = "apply"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 2, B |-> 1]
@@ -231,6 +249,8 @@ State 10: <ValidateOldStream("A") line 122, col 5 to line 125, col 75 of module 
 /\ doomed = {}
 /\ renamed = {"A"}
 /\ streamCommitted = {"A"}
+/\ auxDoomed = {"A"}
+/\ auxStreamCommitted = {}
 /\ ackedOld = {}
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
@@ -246,5 +266,5 @@ State 10: <ValidateOldStream("A") line 122, col 5 to line 125, col 75 of module 
 
 703 states generated, 214 distinct states found, 19 states left on queue.
 The depth of the complete state graph search is 10.
-Finished in 00s at (2026-10-27 17:40:46)
-Trace exploration spec path: ./EngineCutover_TTrace_1793122845.tla
+Finished in 00s at (2026-10-27 17:55:20)
+Trace exploration spec path: ./EngineCutover_TTrace_1793123720.tla

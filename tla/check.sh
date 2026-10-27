@@ -57,6 +57,7 @@ EngineCutover Bug_EngineCutoverPublishBeforeDecision Bug_EngineCutoverPublishBef
 Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates
 Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity Bug_EngineCutoverRenameLosesOriginalIdentity"
 DEFAULT="$DEFAULT Bug_EngineCutoverCatalogByName"
+DEFAULT="$DEFAULT Bug_EngineCutoverAuxStreamOmitted"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

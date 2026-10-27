@@ -523,7 +523,7 @@ mk_handback Bug_HandbackResendAfterLoss_Autocommit FALSE BugResendAfterLoss
 engine_flags () {
     case "$1" in
       EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence' ;;
-      EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName' ;;
+      EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName BugAuxStreamOmitted' ;;
     esac
 }
 mk_engine () {

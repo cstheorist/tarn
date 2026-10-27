@@ -1019,6 +1019,13 @@ remain until an explicit retirement/ACK proof permits removal. Allocation
 continues through one stable logical counter identity, including IDs that
 were allocated and then deleted, rather than restarting from row maxima.
 
+The old-stream guard covers the entire strong object group, not just the
+base. A missing global-unique-index key can leave a stream with only an
+old auxiliary-space read tracker: no base row was fetched. The model has
+a distinct auxiliary-only reader, and `BugAuxStreamOmitted` removes just
+its dooming guard. PREPARE holds and publication watermarks must cover
+all old strong auxiliary IDs as well as the old base ID.
+
 Implementation refinement obligations remain explicit:
 
 * Capture must cover every actual source mutation before its commit;
@@ -1072,7 +1079,8 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
   Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
   Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity \
-  Bug_EngineCutoverRenameLosesOriginalIdentity Bug_EngineCutoverCatalogByName
+  Bug_EngineCutoverRenameLosesOriginalIdentity Bug_EngineCutoverCatalogByName \
+  Bug_EngineCutoverAuxStreamOmitted
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -1100,13 +1108,14 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCutoverRenameLosesOriginalIdentity` | 318 | 12 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverResetCounterIdentity` | 216 | 10 | violates `CounterNeverReuses` |
 | `Bug_EngineCutoverCatalogByName` | 173 | 8 | violates `CatalogObservationBound` |
+| `Bug_EngineCutoverAuxStreamOmitted` | 214 | 10 | violates `OldStreamsRejected` |
 
 ### Configuration counts
 
-The default list contains 176 configurations, including 129 expected
-broken/trade-off outcomes. The 187 generated configurations reproduce from
+The default list contains 177 configurations, including 130 expected
+broken/trade-off outcomes. The 188 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 189 total. Explicit check arguments override the default
+directly, for 190 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

@@ -17,7 +17,8 @@
 EXTENDS Naturals, FiniteSets
 CONSTANTS BugPublishBeforeDecision, BugPublishBeforeAuxReady, BugDropBeforePublish,
           BugAbortAfterDecision, BugApplyAfterAbort, BugOldStreamValidates, BugForgetOldObligations,
-          BugResetCounterIdentity, BugRenameLosesOriginalIdentity, BugCatalogByName
+          BugResetCounterIdentity, BugRenameLosesOriginalIdentity, BugCatalogByName,
+          BugAuxStreamOmitted
 
 Shards == {"A", "B"}
 Old == 1
@@ -25,12 +26,12 @@ New == 2
 Ids == {Old, New}
 VARIABLES prepared, auxReady, decision, catalog, spaces, renamed, oldRef, nameGone,
           awake, crashed, retired, pendingOld, ackedOld, doomed, streamCommitted,
-          allocated, counter, allocatedNew, reused, observation
+          allocated, counter, allocatedNew, reused, observation, auxDoomed, auxStreamCommitted
 jvars == <<prepared, auxReady, decision>>
 pvars == <<catalog, spaces, renamed, oldRef, nameGone>>
 fvars == <<awake, crashed>>
 avars == <<retired, pendingOld, ackedOld>>
-rvars == <<doomed, streamCommitted, observation>>
+rvars == <<doomed, streamCommitted, observation, auxDoomed, auxStreamCommitted>>
 cvars == <<allocated, counter, allocatedNew, reused>>
 vars == <<jvars, pvars, fvars, avars, rvars, cvars>>
 
@@ -41,6 +42,7 @@ Init ==
     /\ awake = Shards /\ crashed = FALSE
     /\ retired = {} /\ pendingOld = Shards /\ ackedOld = {}
     /\ doomed = {} /\ streamCommitted = {}
+    /\ auxDoomed = {} /\ auxStreamCommitted = {}
     /\ observation = [sid |-> Old, def_id |-> Old, json_version |-> 0]
     \* IDs 1 and 2 were allocated already; 2 may have been deleted. A
     \* max(current rows) floor cannot replace stable ai:/rid: identity.
@@ -84,8 +86,9 @@ Publish(s) ==
     /\ catalog' = [catalog EXCEPT ![s] = New]
     /\ retired' = retired \cup {s}
     /\ doomed' = IF BugOldStreamValidates THEN doomed ELSE doomed \cup {s}
+    /\ auxDoomed' = IF BugAuxStreamOmitted THEN auxDoomed ELSE auxDoomed \cup {s}
     /\ UNCHANGED <<jvars, spaces, renamed, oldRef, nameGone, fvars, pendingOld, ackedOld,
-                   streamCommitted, observation, cvars>>
+                   streamCommitted, observation, auxStreamCommitted, cvars>>
 DropOriginal(s) ==
     /\ s \in awake /\ oldRef[s] \in spaces[s]
     /\ (decision = "apply" /\ catalog[s] = New) \/ BugDropBeforePublish
@@ -122,7 +125,14 @@ ValidateOldStream(s) ==
     /\ s \in awake \ streamCommitted /\ s \notin doomed
     /\ catalog[s] = New
     /\ streamCommitted' = streamCommitted \cup {s}
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, observation, cvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, observation, auxDoomed, auxStreamCommitted, cvars>>
+(* A missing strong-global-index key reads only the old auxiliary space:
+   there is no base fetch/read tracker to make the base watermark suffice. *)
+ValidateOldAuxStream(s) ==
+    /\ s \in awake \ auxStreamCommitted /\ s \notin auxDoomed
+    /\ catalog[s] = New
+    /\ auxStreamCommitted' = auxStreamCommitted \cup {s}
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, observation, auxDoomed, cvars>>
 (* Definition bytes/version and SID belong to the SAME confirmed catalog
    observation. A native rename changes names before that metadata changes;
    resolving the public name can return 0 or New paired with Old's JSON.
@@ -133,7 +143,7 @@ ObserveCatalog(s) ==
            named == IF s \in renamed THEN New ELSE IF s \in nameGone THEN 0 ELSE Old
        IN observation' = [sid |-> IF BugCatalogByName THEN named ELSE committed,
                           def_id |-> committed, json_version |-> IF committed = Old THEN 0 ELSE 1]
-    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, cvars>>
+    /\ UNCHANGED <<jvars, pvars, fvars, avars, doomed, streamCommitted, auxDoomed, auxStreamCommitted, cvars>>
 AllocateNew ==
     /\ ~allocatedNew /\ \E s \in Shards : catalog[s] = New
     /\ LET n == IF BugResetCounterIdentity THEN 2 ELSE counter + 1
@@ -144,7 +154,8 @@ AllocateNew ==
 
 Next == (\E s \in Shards : Prepared(s) \/ ReadyAux(s) \/ Unname(s) \/ Rename(s) \/ Publish(s)
                  \/ DropOriginal(s) \/ AbortShadow(s) \/ Crash(s) \/ Resume(s)
-                 \/ AckOld(s) \/ ForgetOld(s) \/ ValidateOldStream(s) \/ ObserveCatalog(s))
+                 \/ AckOld(s) \/ ForgetOld(s) \/ ValidateOldStream(s) \/ ValidateOldAuxStream(s)
+                 \/ ObserveCatalog(s))
         \/ DecideApply \/ DecideAbort \/ AllocateNew
 Spec == Init /\ [][Next]_vars
 
@@ -155,6 +166,7 @@ TypeOK == /\ prepared \subseteq Shards /\ auxReady \subseteq Shards
           /\ awake \subseteq Shards /\ crashed \in BOOLEAN
           /\ retired \subseteq Shards /\ pendingOld \subseteq Shards /\ ackedOld \subseteq Shards
           /\ doomed \subseteq Shards /\ streamCommitted \subseteq Shards
+          /\ auxDoomed \subseteq Shards /\ auxStreamCommitted \subseteq Shards
           /\ allocated \subseteq 1..3 /\ counter \in 2..3
           /\ allocatedNew \in BOOLEAN /\ reused \in BOOLEAN
           /\ observation \in [sid : 0..2, def_id : Ids, json_version : 0..1]
@@ -164,7 +176,8 @@ NoAbortPublished == decision = "abort" => \A s \in Shards : catalog[s] = Old
 OldObligationsRetained == pendingOld \cup ackedOld = Shards
 (* This stream is still open at publication. A validation before that is
    harmless, so only an actual post-publication validation is recorded. *)
-OldStreamsRejected == \A s \in streamCommitted : catalog[s] # New
+OldStreamsRejected == /\ \A s \in streamCommitted : catalog[s] # New
+                      /\ \A s \in auxStreamCommitted : catalog[s] # New
 CounterNeverReuses == ~reused
 CatalogObservationBound == /\ observation.sid = observation.def_id
                            /\ observation.json_version = IF observation.def_id = Old THEN 0 ELSE 1
