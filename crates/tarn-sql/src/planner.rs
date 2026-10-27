@@ -2694,6 +2694,7 @@ pub(crate) fn add_foreign_key(def: &mut TableDef, name: Option<String>, mut fk: 
             unique: false,
             invisible: false,
             global: None,
+            lazy: None,
             comment: String::new(),
         });
     }
@@ -2902,6 +2903,7 @@ fn plan_create_table(
         unique: true,
         invisible: false,
         global: None,
+        lazy: None,
         comment: pk_comment,
     }];
     for (n, cols, unique, comment) in secondary.into_iter() {
@@ -2924,6 +2926,7 @@ fn plan_create_table(
             unique,
             invisible,
             global: None,
+            lazy: None,
             comment,
         });
     }
@@ -3024,6 +3027,7 @@ fn plan_create_table(
     // Case-insensitive columns in an index get their weight fields, after
     // bucket_id.
     def.assign_weight_fields(&|_| true)?;
+    def.declare_lazy(None)?;
     catalog::validate(&def)?;
     Ok(Stmt::CreateTable {
         def: Box::new(def),

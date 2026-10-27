@@ -578,6 +578,9 @@ impl Cluster {
     /// table and a bucket map with no buckets: the shard, to add to
     /// `shards` once it joins.
     async fn prepare_new_shard(&self, id: u32, replicas: &[String]) -> SqlResult<Shard> {
+        if self.catalog().all().any(|t| t.has_lazy()) {
+            self.lazy_capabilities_on(replicas).await?;
+        }
         let new = Shard::new(id, replicas.to_vec());
         let client = new.client(self).await?;
         let call = |func: &'static str, args: Vec<u8>| {

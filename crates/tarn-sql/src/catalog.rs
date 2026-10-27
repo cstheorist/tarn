@@ -186,9 +186,45 @@ pub struct IndexDef {
     /// (see the module comment); 0 until CREATE TABLE allocates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global: Option<u32>,
+    /// An explicitly activated asynchronous copy. A comment alone in an old
+    /// catalog never enables a lazy read or changes write capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lazy: Option<LazyDef>,
     /// The index's COMMENT.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub comment: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LazyDef {
+    /// Globally allocated, never reused; also the V1 incarnation identifier.
+    pub space_id: u32,
+    pub route_parts: u32,
+    pub ready: bool,
+}
+
+fn lazy_annotation(comment: &str) -> SqlResult<bool> {
+    let mut found = false;
+    for token in comment.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';')) {
+        if token.eq_ignore_ascii_case("tarn:lazy") {
+            found = true;
+        } else if token.to_ascii_lowercase().starts_with("tarn:lazy=") {
+            return Err(SqlError::unsupported(
+                "tarn:lazy does not take a routing or uniqueness option",
+            ));
+        }
+    }
+    Ok(found)
+}
+
+impl LazyDef {
+    pub fn requested() -> Self {
+        Self {
+            space_id: 0,
+            route_parts: 1,
+            ready: false,
+        }
+    }
 }
 
 /// The global index of a unique key (`IndexDef::global`).
@@ -322,6 +358,50 @@ pub struct TableDef {
 }
 
 impl TableDef {
+    pub fn has_lazy(&self) -> bool {
+        self.indexes
+            .iter()
+            .any(|i| i.lazy.as_ref().is_some_and(|l| l.space_id != 0))
+    }
+
+    /// Only NEW SQL declarations call this. Loading old JSON must not
+    /// activate an index whose existing comment happened to contain the tag.
+    pub fn declare_lazy(&mut self, old: Option<&TableDef>) -> SqlResult<()> {
+        for ix in &mut self.indexes {
+            let is_new = old.is_none_or(|t| !t.indexes.iter().any(|o| o.id == ix.id));
+            if is_new && lazy_annotation(&ix.comment)? {
+                ix.lazy = Some(LazyDef::requested());
+            }
+        }
+        self.validate_lazy()
+    }
+
+    pub fn validate_lazy(&self) -> SqlResult<()> {
+        for ix in self.indexes.iter().filter(|i| i.lazy.is_some()) {
+            let lazy = ix.lazy.as_ref().unwrap();
+            if ix.id == 0 || ix.unique || ix.global.is_some() || ix.cols.is_empty() {
+                return Err(SqlError::unsupported("tarn:lazy requires a non-unique secondary index"));
+            }
+            if lazy.route_parts != 1 || (lazy.ready && lazy.space_id == 0) {
+                return Err(SqlError::unsupported(
+                    "unsupported lazy index routing or activation metadata",
+                ));
+            }
+            // MessagePack numeric identity is not canonical for these SQL
+            // types (scale, signed zero and f32/f64 representations).
+            for &c in ix.cols.iter().chain(&self.pk().cols) {
+                let ty = self.columns[c].ty();
+                if !(ty.is_integer() || matches!(ty.tarantool_type(), "string" | "varbinary")) {
+                    return Err(SqlError::unsupported(format!(
+                        "lazy index identity column '{}' must have an integer or string type",
+                        self.columns[c].name
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn space_name(&self) -> String {
         space_name(&self.db, &self.name)
     }
@@ -440,6 +520,7 @@ impl TableDef {
                 unique: true,
                 invisible: false,
                 global: None,
+                lazy: None,
                 comment: String::new(),
             }],
             shard_key: (0..k).collect(),
@@ -792,6 +873,32 @@ impl TableDef {
             indexes,
             json: serde_json::to_string(self).expect("table def serializes"),
             uix: self.globals.iter().map(|g| g.table.lua_def()).collect(),
+            lazy: self
+                .indexes
+                .iter()
+                .filter_map(|i| {
+                    let l = i.lazy.as_ref().filter(|l| l.space_id != 0)?;
+                    let key = self.index_part_fields(i);
+                    let pk = self.index_part_fields(self.pk());
+                    Some(LazySpec {
+                        gen: l.space_id,
+                        base_space_id: self.space_id,
+                        local_index_id: i.id,
+                        route_parts: l.route_parts,
+                        key_fields: key.iter().map(|x| x.0).collect(),
+                        key_types: key.iter().map(|x| x.1.clone()).collect(),
+                        pk_fields: self
+                            .pk()
+                            .cols
+                            .iter()
+                            .map(|&c| self.layout.col_field[c] as u32 + 1)
+                            .collect(),
+                        pk_native_fields: pk.iter().map(|x| x.0).collect(),
+                        pk_types: pk.iter().map(|x| x.1.clone()).collect(),
+                        bucket_field: self.layout.bucket as u32 + 1,
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -808,6 +915,21 @@ pub struct LuaDef {
     pub json: String,
     /// The hidden spaces of the global indexes (their `json` is unused).
     pub uix: Vec<LuaDef>,
+    pub lazy: Vec<LazySpec>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LazySpec {
+    pub gen: u32,
+    pub base_space_id: u32,
+    pub local_index_id: u32,
+    pub route_parts: u32,
+    pub key_fields: Vec<u32>,
+    pub key_types: Vec<String>,
+    pub pk_fields: Vec<u32>,
+    pub pk_native_fields: Vec<u32>,
+    pub pk_types: Vec<String>,
+    pub bucket_field: u32,
 }
 
 pub fn space_name(db: &str, table: &str) -> String {
@@ -958,6 +1080,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
             unique: true,
             invisible: false,
             global: None,
+            lazy: None,
             comment: String::new(),
         }],
         shard_key: key,
@@ -1021,6 +1144,7 @@ pub fn parse_def_json(json: &str) -> SqlResult<TableDef> {
 /// shard key is part of the primary key. (A unique key without the shard key
 /// gets a global index: see the module comment.)
 pub fn validate(def: &TableDef) -> SqlResult<()> {
+    def.validate_lazy()?;
     if def.indexes.is_empty() || def.indexes[0].id != 0 || def.indexes[0].cols.is_empty() {
         return Err(SqlError::new(1173, "42000", "This table type requires a primary key"));
     }

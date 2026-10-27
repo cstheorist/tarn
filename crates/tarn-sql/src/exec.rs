@@ -448,7 +448,7 @@ fn eval_keys(
 /// #10): each key goes to the shard it determines, or to every shard when
 /// it does not contain the shard key (secondary indexes are per shard).
 #[allow(clippy::too_many_arguments)]
-async fn fetch_keys(
+pub(crate) async fn fetch_keys(
     cluster: &Arc<Cluster>,
     mode: &mut ReadMode<'_>,
     t: &TableDef,
@@ -2678,7 +2678,7 @@ async fn estimate(
 
 /// The rest of a SELECT over its filtered FROM rows: aggregation, HAVING,
 /// ORDER BY, projection, DISTINCT, OFFSET/LIMIT.
-fn finish_select(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Vec<Row>> {
+pub(crate) fn finish_select(mut rows: Vec<Row>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Vec<Row>> {
     if let Some(ap) = &p.agg {
         rows = aggregate(rows, ap, cx)?;
     }

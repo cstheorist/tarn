@@ -91,6 +91,9 @@ pub struct Session {
     client_collation: String,
     /// Warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
+    lazy_history: crate::lazy::History,
+    lazy_read_your_writes: bool,
+    lazy_wait_timeout: u64,
 }
 
 /// A warning or note of a statement, as SHOW WARNINGS lists it.
@@ -368,6 +371,9 @@ impl Session {
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
+            lazy_history: crate::lazy::History::default(),
+            lazy_read_your_writes: false,
+            lazy_wait_timeout: 5,
             cluster,
         }
     }
@@ -540,6 +546,27 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
+            "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        format!(
+                            "Variable '{}' is a SESSION variable and can't be used with SET GLOBAL",
+                            name
+                        ),
+                    ));
+                }
+                let v = if name == "tarn_lazy_read_your_writes" {
+                    self.lazy_read_your_writes = crate::lazy::flag(value.as_ref())?;
+                    Value::Int(self.lazy_read_your_writes as i64)
+                } else {
+                    self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
+                    Value::Int(self.lazy_wait_timeout as i64)
+                };
+                self.sys_vars.insert(name.to_string(), v);
+                return Ok(());
+            }
             n if n.starts_with("character_set_") && n != "character_set_system" => {
                 if value.is_some() && !matches!(value, Some(Value::Null)) && !utf8_compatible_charset(&text) {
                     return Err(SqlError::unsupported(format!(
@@ -954,9 +981,27 @@ impl Session {
 
     async fn implicit_commit(&mut self) -> SqlResult<()> {
         if let Some(t) = self.txn.take() {
-            t.commit(&self.cluster).await?;
+            self.commit_tracked(t).await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn commit_tracked(&mut self, t: Txn) -> SqlResult<()> {
+        let lazy = t.writes.values().any(|w| w.table.has_lazy());
+        match t.commit(&self.cluster).await {
+            Ok(outcome) => {
+                self.lazy_history.record(outcome);
+                Ok(())
+            }
+            Err(e) => {
+                // A malformed post-write acknowledgement can be uncertain
+                // even when it was not classified as a transport error.
+                if lazy && !matches!(e.code, 1213 | 1412 | 1205) {
+                    self.lazy_history.uncertain();
+                }
+                Err(e)
+            }
+        }
     }
 
     pub(crate) fn txn_needed(&self) -> bool {
@@ -994,6 +1039,20 @@ impl Session {
                 }
             };
             return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+        }
+        if crate::lazy::eligible(p)
+            && !self.lazy_history.strong
+            && (!self.lazy_read_your_writes || self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await)
+        {
+            let cx = self.cx(params, &now);
+            if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
+                self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
+                self.found_rows = rows.len() as u64;
+                return Ok(Output::Rows { columns, rows });
+            }
+        }
+        if crate::lazy::eligible(p) {
+            self.cluster.stats.lazy_fallbacks.fetch_add(1, Ordering::Relaxed);
         }
         if self.isolation.mode() == TxnMode::ReadCommitted {
             // READ COMMITTED autocommit: every storage read sees the latest
@@ -1084,7 +1143,7 @@ impl Session {
         };
         match res {
             Ok(rows) => {
-                txn.commit(&self.cluster).await?;
+                self.commit_tracked(txn).await?;
                 self.found_rows = rows.len() as u64;
                 Ok(Output::Rows { columns, rows })
             }
@@ -1157,7 +1216,7 @@ impl Session {
         loop {
             let mut txn = self.new_txn(false);
             let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
-                Ok(r) => txn.commit(&self.cluster).await.map(|_| r),
+                Ok(r) => self.commit_tracked(txn).await.map(|_| r),
                 Err(e) => {
                     txn.rollback(&self.cluster);
                     Err(e)
@@ -1330,16 +1389,39 @@ impl Session {
         writes.str("found_rows").bool(self.found_rows_flag);
         writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
         writes.str("wb").arr(wb.len());
-        for b in wb {
+        for &b in &wb {
             writes.uint(b as u64);
         }
         let mut attempt = 0;
         loop {
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
-            let d = self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await?;
+            let d = match self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await {
+                Ok(d) => d,
+                Err(e) => {
+                    if table.has_lazy() {
+                        self.lazy_history.uncertain();
+                    }
+                    return Err(e);
+                }
+            };
             match lua_status(&d) {
                 Ok((_, mut rd)) => {
-                    let n = rd.value()?.as_i64().unwrap_or(0) as u64;
+                    let n = match rd.value().and_then(|v| {
+                        v.as_i64()
+                            .filter(|n| *n >= 0)
+                            .ok_or_else(|| crate::mpw::proto("invalid write count"))
+                    }) {
+                        Ok(n) => n as u64,
+                        Err(e) => {
+                            if table.has_lazy() {
+                                self.lazy_history.uncertain();
+                            }
+                            return Err(e);
+                        }
+                    };
+                    if table.has_lazy() {
+                        self.lazy_history.touch(wb.iter().copied());
+                    }
                     return Ok(Some(self.dml_output(n, insert_id)));
                 }
                 // (A bucket refused: nothing was written; the statement
@@ -1349,7 +1431,12 @@ impl Session {
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    if table.has_lazy() && !matches!(e.code, 1213 | 1412 | 1205) {
+                        self.lazy_history.uncertain();
+                    }
+                    return Err(e);
+                }
             }
         }
     }
@@ -2488,7 +2575,7 @@ impl Session {
             }
             Admin::Commit => {
                 if let Some(t) = self.txn.take() {
-                    t.commit(&self.cluster).await?;
+                    self.commit_tracked(t).await?;
                 }
                 Ok(Output::ok(0))
             }
@@ -3165,12 +3252,29 @@ impl Session {
             ("Tarn_bucket_map_reads", self.cluster.bucket_loads()),
             ("Tarn_buckets", self.cluster.bucket_map().count as u64),
             ("Tarn_shards", self.cluster.nlive() as u64),
+            ("Tarn_lazy_reads", s.lazy_reads.load(Ordering::Relaxed)),
+            ("Tarn_lazy_fallbacks", s.lazy_fallbacks.load(Ordering::Relaxed)),
+            (
+                "Tarn_lazy_session_pending_apply",
+                self.lazy_history.pending_count() as u64,
+            ),
+            (
+                "Tarn_lazy_session_touched_buckets",
+                self.lazy_history.bucket_count() as u64,
+            ),
+            ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));
-        let rows = stats
+        let mut rows: Vec<Row> = stats
             .into_iter()
             .map(|(n, v)| vec![Value::str(n), Value::str(&v.to_string())])
             .collect();
+        rows.extend(
+            crate::lazy::stats(&self.cluster)
+                .into_iter()
+                .filter(|(n, _)| like_ci(n, like))
+                .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
+        );
         Output::Rows {
             columns: cols(&[
                 ("Variable_name", ColumnType::VarString),

@@ -1028,6 +1028,8 @@ pub struct Change {
     pub uix_drop: Vec<u32>,
     /// Space ids of global indexes it adds (allocated by `Cluster::alter_table`).
     pub uix_new: Vec<u32>,
+    pub lazy_drop: Vec<u32>,
+    pub lazy_new: Vec<u32>,
 }
 
 fn not_found_col(c: &str) -> SqlError {
@@ -1299,6 +1301,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         unique: true,
                         invisible: false,
                         global: None,
+                        lazy: None,
                         comment: String::new(),
                     });
                 }
@@ -1496,6 +1499,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                         unique: true,
                         invisible: false,
                         global: None,
+                        lazy: None,
                         comment: String::new(),
                     });
                 }
@@ -1582,6 +1586,7 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                     unique: *unique,
                     invisible: *invisible,
                     global: None,
+                    lazy: None,
                     comment: comment.clone(),
                 });
                 changed = true;
@@ -1765,8 +1770,10 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
     // need every row rewritten (1235).
     let old_width = def.layout.width as u32;
     nd.assign_weight_fields(&|c| c.field.is_some_and(|f| f >= old_width))?;
+    nd.declare_lazy(Some(def))?;
     catalog::validate(&nd)?;
     let uix_drop = check_globals(def, &mut nd)?;
+    let lazy_drop = check_lazy(def, &nd)?;
     // Storage: format and indexes, by difference.
     let old_format = def.lua_format();
     let new_format = nd.lua_format();
@@ -1852,7 +1859,44 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
         changed,
         uix_drop,
         uix_new: Vec::new(),
+        lazy_drop,
+        lazy_new: Vec::new(),
     })
+}
+
+fn check_lazy(def: &TableDef, nd: &TableDef) -> SqlResult<Vec<u32>> {
+    let mut dropped = Vec::new();
+    let shape = |t: &TableDef, ix: &IndexDef| {
+        ix.cols
+            .iter()
+            .chain(&t.pk().cols)
+            .map(|&c| {
+                (
+                    t.layout.col_field[c],
+                    t.layout.col_weight[c],
+                    t.columns[c].ty.clone(),
+                    t.layout.colls[c],
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    for old in def.indexes.iter().filter(|i| i.lazy.is_some()) {
+        let l = old.lazy.as_ref().unwrap();
+        match nd
+            .indexes
+            .iter()
+            .find(|i| i.lazy.as_ref().is_some_and(|n| n.space_id == l.space_id))
+        {
+            None => dropped.push(l.space_id),
+            Some(new) if old.cols.len() != new.cols.len() || shape(def, old) != shape(nd, new) => {
+                return Err(SqlError::unsupported(
+                    "changing a lazy index's identity columns; drop and recreate it",
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(dropped)
 }
 
 /// Global indexes (unique keys without the shard key, see `catalog`): a new
@@ -1900,7 +1944,13 @@ fn check_globals(def: &TableDef, nd: &mut TableDef) -> SqlResult<Vec<u32>> {
 /// carries version `ver`).
 pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     let mut m = Mp::new();
-    m.map(14);
+    m.map(14 + !ch.lazy_drop.is_empty() as usize);
+    if !ch.lazy_drop.is_empty() {
+        m.str("lazy_drop").arr(ch.lazy_drop.len());
+        for &id in &ch.lazy_drop {
+            m.uint(id as u64);
+        }
+    }
     // Global indexes: the spaces of new ones (PREPARE creates them, the SQL
     // server fills them, `Cluster::fill_globals`) and the ids of dropped
     // ones (APPLY drops them).
@@ -2019,7 +2069,7 @@ pub fn catalog_entry(m: &mut Mp, def: &TableDef, ver: u64) {
 /// `ld` as the storage takes it: name, id, engine, format, indexes, the
 /// global index spaces (`uix`, when there are any), json and `ver`.
 pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) {
-    m.map(6 + ver.is_some() as usize + !ld.uix.is_empty() as usize);
+    m.map(6 + ver.is_some() as usize + !ld.uix.is_empty() as usize + !ld.lazy.is_empty() as usize);
     m.str("name").str(&ld.name);
     m.str("id").uint(ld.id as u64);
     m.str("engine").str(ld.engine);
@@ -2034,6 +2084,38 @@ pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) 
         m.str("uix").arr(ld.uix.len());
         for u in &ld.uix {
             lua_def_entry(m, u, None);
+        }
+    }
+    if !ld.lazy.is_empty() {
+        m.str("lazy").arr(ld.lazy.len());
+        for l in &ld.lazy {
+            m.map(10)
+                .str("gen")
+                .uint(l.gen as u64)
+                .str("base_space_id")
+                .uint(l.base_space_id as u64)
+                .str("local_index_id")
+                .uint(l.local_index_id as u64)
+                .str("route_parts")
+                .uint(l.route_parts as u64)
+                .str("bucket_field")
+                .uint(l.bucket_field as u64);
+            for (name, fs) in [
+                ("key_fields", &l.key_fields),
+                ("pk_fields", &l.pk_fields),
+                ("pk_native_fields", &l.pk_native_fields),
+            ] {
+                m.str(name).arr(fs.len());
+                for &f in fs {
+                    m.uint(f as u64);
+                }
+            }
+            for (name, ts) in [("key_types", &l.key_types), ("pk_types", &l.pk_types)] {
+                m.str(name).arr(ts.len());
+                for t in ts {
+                    m.str(t);
+                }
+            }
         }
     }
     m.str("json").str(&ld.json);

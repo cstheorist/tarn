@@ -191,6 +191,19 @@ pub(crate) struct Job {
     pub(crate) gen: u64,
 }
 
+fn allocated_space_start(start: u64, n: u64) -> SqlResult<u32> {
+    let first = start
+        .checked_add(10_000)
+        .filter(|_| n > 0)
+        .ok_or_else(|| SqlError::internal("space identifier allocation exhausted"))?;
+    let last = first
+        .checked_add(n - 1)
+        .filter(|&last| last <= u32::MAX as u64)
+        .ok_or_else(|| SqlError::internal("space identifier allocation exhausted"))?;
+    let _ = last;
+    Ok(first as u32)
+}
+
 /// From the arguments of an ALTER TABLE job: the space ids of its new
 /// global indexes (`uix`), its new definition (`def.json`), the table's
 /// space id (`def.id`) and the change's version (`ver`).
@@ -348,6 +361,9 @@ impl<'a> IntoIterator for &'a ShardList {
 }
 
 impl Shard {
+    pub(crate) fn replicas(&self) -> &[String] {
+        &self.replicas
+    }
     pub(crate) fn new(id: u32, replicas: Vec<String>) -> Shard {
         Shard {
             id,
@@ -476,6 +492,8 @@ pub struct Stats {
     pub path_estimates: AtomicU64,
     /// Buckets this server moved (issue #24).
     pub bucket_moves: AtomicU64,
+    pub lazy_reads: AtomicU64,
+    pub lazy_fallbacks: AtomicU64,
 }
 
 pub struct CachedPlan {
@@ -514,6 +532,7 @@ pub struct Cluster {
     pub(crate) members: RwLock<crate::members::Members>,
     members_ver: AtomicU64,
     pub(crate) members_mu: tokio::sync::Mutex<()>,
+    pub(crate) lazy_samples: Mutex<std::collections::BTreeMap<u32, Option<crate::lazy::StatsSample>>>,
 }
 
 /// A row-lock request in flight (`Txn::lock`).
@@ -863,6 +882,7 @@ impl Cluster {
             members: RwLock::new(crate::members::Members::default()),
             members_ver: AtomicU64::new(0),
             members_mu: tokio::sync::Mutex::new(()),
+            lazy_samples: Mutex::new(Default::default()),
         });
         // The first shard (jobs, catalog) must answer, and every shard in
         // the cluster; one of the configuration that left the cluster need
@@ -888,6 +908,7 @@ impl Cluster {
             tracing::warn!("finishing abandoned schema changes: {}", e);
         }
         c.reload_catalog().await?;
+        crate::lazy::start_stats(&c);
         {
             // Schema changes whose server stopped are finished by whichever
             // server finds them first.
@@ -1331,10 +1352,23 @@ impl Cluster {
         let globals: Vec<usize> = (0..def.indexes.len())
             .filter(|&i| def.needs_global(&def.indexes[i]))
             .collect();
-        let first = self.alloc_space_ids(1 + globals.len() as u64).await?;
+        let lazies: Vec<usize> = (0..def.indexes.len())
+            .filter(|&i| def.indexes[i].lazy.is_some())
+            .collect();
+        if !lazies.is_empty() {
+            self.require_lazy_capabilities().await?;
+        }
+        let first = self
+            .alloc_space_ids(1 + globals.len() as u64 + lazies.len() as u64)
+            .await?;
         def.space_id = first;
         for (k, &i) in globals.iter().enumerate() {
             def.indexes[i].global = Some(first + 1 + k as u32);
+        }
+        for (k, &i) in lazies.iter().enumerate() {
+            let l = def.indexes[i].lazy.as_mut().unwrap();
+            l.space_id = first + 1 + globals.len() as u32 + k as u32;
+            l.ready = true; // published only AFTER bootstrap's all-source barrier
         }
         def.resolve_types()?;
         let ld = def.lua_def();
@@ -1441,8 +1475,18 @@ impl Cluster {
         a.arr(2).str("space_id").uint(n);
         let d = self.call(0, "tarn_counter_alloc", &a.0).await?;
         let mut rd = Rd::new(&d);
-        rd.array()?;
-        Ok(10_000 + rd.value()?.as_i64().unwrap_or(0) as u32)
+        if rd.array()? != 1 {
+            return Err(crate::mpw::proto("invalid space allocation envelope"));
+        }
+        let start = match rd.value()? {
+            Value::UInt(n) => n,
+            Value::Int(n) if n >= 0 => n as u64,
+            _ => return Err(crate::mpw::proto("invalid space allocation counter")),
+        };
+        if !rd.buf.is_empty() {
+            return Err(crate::mpw::proto("trailing space allocation data"));
+        }
+        allocated_space_start(start, n)
     }
 
     /// The current catalog version, plus one: the version of a schema change.
@@ -1478,6 +1522,9 @@ impl Cluster {
             }
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
+            if def.has_lazy() || ch.def.indexes.iter().any(|i| i.lazy.is_some()) {
+                self.require_lazy_capabilities().await?;
+            }
             // New unique keys without the shard key: space ids for their
             // global indexes, which the job fills from the existing rows.
             let need: Vec<usize> = (0..ch.def.indexes.len())
@@ -1488,6 +1535,18 @@ impl Cluster {
                 for (k, &i) in need.iter().enumerate() {
                     ch.def.indexes[i].global = Some(first + k as u32);
                     ch.uix_new.push(first + k as u32);
+                }
+            }
+            let lazy_need: Vec<usize> = (0..ch.def.indexes.len())
+                .filter(|&i| ch.def.indexes[i].lazy.as_ref().is_some_and(|l| l.space_id == 0))
+                .collect();
+            if !lazy_need.is_empty() {
+                let first = self.alloc_space_ids(lazy_need.len() as u64).await?;
+                for (k, &i) in lazy_need.iter().enumerate() {
+                    let l = ch.def.indexes[i].lazy.as_mut().unwrap();
+                    l.space_id = first + k as u32;
+                    l.ready = true;
+                    ch.lazy_new.push(l.space_id);
                 }
             }
             ch.def.resolve_globals()?;
@@ -1865,6 +1924,11 @@ impl Cluster {
             // the table's writes are fenced everywhere, so the rows stay put.
             if failed.is_none() && !applied && job.kind == JobKind::Alter {
                 if let Err(e) = self.fill_globals(&job.args, job.gen).await {
+                    failed = Some(e);
+                }
+            }
+            if failed.is_none() && !applied && matches!(job.kind, JobKind::Alter | JobKind::Create) {
+                if let Err(e) = self.bootstrap_lazy(job, &call.0, &live).await {
                     failed = Some(e);
                 }
             }
