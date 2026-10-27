@@ -388,17 +388,30 @@ build of it (`cargo build --release`); `TARN_NATIVE=0` runs without it. Its
 first procedure, `tarn_storage.ts_select`, takes `tarn_select`'s arguments
 and serves the reads that SQL statements make most:
 
-* reads of memtx tables, outside a stream's transaction;
+* reads of memtx tables, autocommit or inside a stream's transaction (whose
+  MVCC tracks them as it tracks `tarn_select`'s: they read through the same
+  calls of Tarantool's API);
 * a point read by the whole key of a unique index, the rows equal to a key
   of any index, or the rows from a key on, in either direction (`EQ`,
-  `REQ`, `GE`, `GT`, `LE`, `LT`, `ALL`), with or without a limit, but
-  without an end key, an offset or a position to continue after;
+  `REQ`, `GE`, `GT`, `LE`, `LT`, `ALL`), to an end key or not, with or
+  without a limit, but without an offset or a position to continue after;
 * with or without the lock check, routed by one bucket, by several, by
   none, or to every shard;
 * whose rows fit one page.
 
+It compares rows with an end key as `tarn_select` does, with a key
+definition of the index's parts (built from `_index`, and `_collation` for
+their collations). It ends a page where `tarn_select`'s scan would: a read
+that may be long (an end key; no limit, or one above 1,000 rows, inside a
+transaction) is a scan that ends its page once its rows reach the page's
+rows or bytes, the last row's included; any other is a select of its rows,
+whose page ends early only at a row before its last.
+
 It hands every other read back to the Lua procedure: its reply `["lua"]`
-makes the SQL server call `tarn_select`, one round trip more. It hands a read
+makes the SQL server call `tarn_select`, one round trip more; so it does a
+read whose end key the index cannot take (`tarn_select` fails), and a read
+to an end key of an index whose parts it does not build (a JSON path, a
+descending or null-excluding part, a functional index). It hands a read
 back too whenever `tarn_select` would do more than read and return its rows,
 or might: when the bucket map, the lock index or the definition fences are to
 be read again first; when a bucket of the read is not served here, or a read
@@ -428,7 +441,10 @@ would refuse for lack of Lua memory (1041, see "Pages" in §1.2) the native
 procedure serves, as it takes none.
 
 The SQL server calls `ts_select` for the reads it serves, and `tarn_select`
-for the others and after a `["lua"]`. A shard without the module (an older
+for the others and after a `["lua"]`: those of vinyl tables, the first read
+of a stream, which begins its transaction (`tarn_select` notes its election
+term), and the pages after a page. (Inside a transaction, a read without an
+end key needs neither: it is an IPROTO SELECT, which runs no Lua.) A shard without the module (an older
 version, or `TARN_NATIVE=0`) answers that the procedure does not exist, one
 whose module did not load or is of another build than its `lua/tarn.lua`
 (the layout of the state differs) that it failed to load, and the SQL
@@ -439,16 +455,18 @@ MessagePack arrays, which is what the native procedure copies. `lua/test/native_
 through both procedures and compares their replies, and checks that the
 native one hands back each kind of read it must.
 
-| One shard, 16 threads (`AB=3 bench/profile.sh`) | `tarn_select` | `ts_select` |
-|---|---:|---:|
-| `oltp_point_select`: statements per second | 22,900 | 28,700 |
-| ... CPU of the shard's transaction thread per statement | 16.2 µs | 5.5 µs |
-| ... Lua heap allocated per statement | 2,450 bytes | 0 |
+| One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
+|---|---:|---:|---:|
+| `oltp_point_select`, Lua → native | 26,796 → 36,943 | 16.4 → 4.7 µs | 2,756 → 0 bytes |
+| `oltp_read_only` | 9,603 → 15,349 | 66.4 → 25.1 µs | 5,702 → 410 bytes |
+| `oltp_read_write` | 9,773 → 15,063 | 64.7 → 27.4 µs | 3,925 → 562 bytes |
 
 On this 2-vCPU machine, where the SQL server and sysbench share the CPUs
-with the shard, throughput rises by a quarter while the shard's CPU per
-statement falls by two thirds. `oltp_read_only` does not change: its reads
-run inside transactions, which stay with the Lua procedures
+with the shard, throughput rises less than the shard's CPU per statement
+falls. In the transactions of `oltp_read_only` and `oltp_read_write` the
+native procedure serves the four range reads, two thirds of their storage
+calls; their point reads are IPROTO SELECTs, and their first read and
+their commit stay with the Lua procedures
 ([bench/RESULTS.md](../bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## 2. Isolation and the commit protocol
