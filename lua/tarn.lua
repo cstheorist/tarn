@@ -3789,7 +3789,10 @@ function tarn_apply(txid, retries)
     -- that starts noting the writes to a bucket waits for it (see "Buckets").
     local seq = inflight_begin()
     local ok, res = pcall(function()
-        box.begin(RW)
+        -- A duplicate must not acknowledge another APPLY's unconfirmed
+        -- 'applied' record: its synchronous commit can still roll back.
+        -- Keep terminal proofs and the decided write in one confirmed view.
+        box.begin({txn_isolation = 'read-confirmed'})
         local p = box.space._tarn_part:get{txid}
         if p == nil then
             box.rollback()
