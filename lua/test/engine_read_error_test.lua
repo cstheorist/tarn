@@ -16,7 +16,10 @@ fiber.sleep(.03)
 if native and native ~= '0' then
     local ffi = require('ffi')
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-    assert(ns.layout == 8 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 240)
+    assert(ns.layout == 10 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 304)
+    assert(ffi.offsetof('struct tarn_ns', 'capture_stale') == 200
+        and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208
+        and ffi.offsetof('struct tarn_ns', 'locks_range') == 296)
 else assert(tarn.cfg.native == false and tarn_info().native == false) end
 local function ok(r) assert(r[1] == 'ok', json.encode(r)); return r end
 ok(tarn_bucket_init(16, {{1, 16}}))
