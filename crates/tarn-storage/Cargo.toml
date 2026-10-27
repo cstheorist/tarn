@@ -16,3 +16,7 @@ crate-type = ["cdylib"]
 # (The procedures call Tarantool's module API, which only the tarantool
 # process defines: the unit tests cover the parts that do not.)
 doctest = false
+
+[dependencies]
+# (its MessagePack codec, verified with Verus)
+tarn-verified.workspace = true

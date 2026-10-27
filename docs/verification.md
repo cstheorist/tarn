@@ -893,6 +893,14 @@ result. Verus proves:
   out of bounds; packet framing produces exactly MySQL's multi-packet
   format (including the empty terminator after a payload that is a multiple
   of 16 MiB) and deframing inverts it. No function can panic.
+* **MessagePack of the native procedures** (`mp.rs`): the writers emit
+  Tarantool's encodings: an integer unsigned when it is not negative, and
+  every integer and header in its fewest bytes (no encoding of the same
+  integer, and no header of an array, a string or a binary of the same
+  length, is shorter). The readers read back what the writers emit.
+  `skip` ends where a value ends, however nested, and refuses a value cut
+  short or a byte no value starts with. No function can panic or read past
+  its buffer, whatever bytes it is given.
 
 The proofs are about single functions given their inputs. Protocol-level
 facts they rely on, such as "a missing participant record under a STAGING
@@ -906,11 +914,13 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 66 verified, 0 errors
+# verification results:: 115 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with
-concrete inputs (codec boundaries, CRC check value, decision cases).
+concrete inputs (codec boundaries, MessagePack encodings at their
+boundaries and values skipped however nested, CRC check value, decision
+cases).
 
 ## Test suites
 

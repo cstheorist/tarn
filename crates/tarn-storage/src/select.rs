@@ -126,7 +126,12 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
                 match r.str() {
                     Some(b"e") => e = Some(r.uint()?),
                     Some(b"m") => m = Some(r.uint()?),
-                    _ => r.skip()?,
+                    Some(_) => r.skip()?,
+                    // a key of another kind, and its value
+                    None => {
+                        r.skip()?;
+                        r.skip()?
+                    }
                 }
             }
             Route::Map { e, m }
@@ -377,6 +382,16 @@ mod tests {
                 .unwrap()
                 .route,
             Route::Map { e: Some(9), m: Some(2) }
+        );
+        // other keys, of any kind, and their values
+        assert_eq!(
+            parse(&point(Some((
+                11,
+                &[0x83, 0xcd, 1, 0, 0x91, 4, 0xa1, b'e', 9, 0xa1, b'x', 0xcd, 1, 0]
+            ))))
+            .unwrap()
+            .route,
+            Route::Map { e: Some(9), m: None }
         );
         assert_eq!(parse(&point(Some((11, &[0xc0])))).unwrap().route, Route::None);
         // an offset of 0 and begin = false are no offset and no begin
