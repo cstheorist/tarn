@@ -88,7 +88,7 @@ jobs:
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
       - name: Storage protocol tests
-        run: ci/annotate.sh storage lua/test/run.sh
+        run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
       - name: Start a 2-shard cluster (two SQL servers)
