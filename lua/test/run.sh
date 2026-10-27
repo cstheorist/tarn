@@ -8,7 +8,7 @@ WORK=$(mktemp -d /tmp/tarn-lua-test.XXXX)
 P1=${P1:-3511}; P2=${P2:-3512}; P3=${P3:-3513}
 PEERS="{\"1\":[\"tarn:tarn@127.0.0.1:$P1\"],\"2\":[\"tarn:tarn@127.0.0.1:$P2\"]}"
 for i in 1 2 3; do
-  port=$(case $i in 1) echo $P1;; 2) echo $P2;; 3) echo $P3;; esac)
+  case $i in 1) port=$P1;; 2) port=$P2;; 3) port=$P3;; esac
   # Shard 1 sets vinyl_read_threads; shards 2 and 3 take the default for
   # two instances on this machine.
   TARN_VINYL_READ_THREADS=$([ $i = 1 ] && echo 3) TARN_HOST_INSTANCES=2 \
@@ -30,7 +30,7 @@ for p in $P1 $P2 $P3; do
 done
 # The files run in turn on the same shards (each uses its own tables).
 rc=0
-for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/bucket_test.lua $DIR/test/member_test.lua $DIR/test/rebalance_test.lua}; do
+for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/join_test.lua $DIR/test/bucket_test.lua $DIR/test/member_test.lua $DIR/test/rebalance_test.lua}; do
   S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 S3=127.0.0.1:$P3 timeout 120 $T "$f" < /dev/null 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

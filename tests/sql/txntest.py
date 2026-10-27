@@ -552,6 +552,176 @@ class T:
             q(c, "ROLLBACK")
             c.close()
 
+    def grouped_join_fixture(self):
+        c = self.fresh("g83p", "CREATE TABLE g83p (tenant_id INT, id INT, v INT, "
+                             "PRIMARY KEY (tenant_id, id)) PARTITION BY KEY(tenant_id)",
+                       ["(7, 1, 10)", "(7, 2, 20)", "(7, 3, 30)"])
+        child = self.fresh("g83c", "CREATE TABLE g83c (tenant_id INT, parent_id INT, id INT, v INT, "
+                                 "PRIMARY KEY (tenant_id, parent_id, id)) PARTITION BY KEY(tenant_id)",
+                           ["(7, 1, 1, 100)", "(7, 1, 2, 200)", "(7, 3, 1, 300)"])
+        child.close()
+        third = self.fresh("g83d", "CREATE TABLE g83d (tenant_id INT, parent_id INT, child_id INT, id INT, v INT, "
+                                 "PRIMARY KEY (tenant_id, parent_id, child_id, id)) PARTITION BY KEY(tenant_id)",
+                           ["(7, 1, 1, 1, 1000)", "(7, 1, 2, 1, 2000)", "(7, 2, 99, 1, 9000)"])
+        third.close()
+        return c
+
+    def test_grouped_join_reads(self):
+        # issue #83: one data RPC, with no implicit read-only validation,
+        # reads dependent PK prefixes of every table on the root's bucket.
+        c = self.grouped_join_fixture()
+        for name, ddl, rows in (
+            ("g83s", "CREATE TABLE g83s (tenant_id INT, k VARCHAR(10) COLLATE utf8mb4_unicode_ci, id INT, "
+             "PRIMARY KEY (tenant_id, k, id)) PARTITION BY KEY(tenant_id)",
+             ["(7, 'Á', 1)", "(7, 'pad ', 2)", "(7, 'missing', 3)"]),
+            ("g83t", "CREATE TABLE g83t (tenant_id INT, k VARCHAR(10) COLLATE utf8mb4_unicode_ci, id INT, "
+             "PRIMARY KEY (tenant_id, k, id)) PARTITION BY KEY(tenant_id)", ["(7, 'a', 1)", "(7, 'PAD', 2)"]),
+            ("g83mp", "CREATE TABLE g83mp (a INT, b INT, id INT, PRIMARY KEY (a, b, id)) PARTITION BY KEY(a, b)",
+             ["(1, 2, 1)", "(1, 2, 2)", "(1, 3, 1)"]),
+            ("g83mc", "CREATE TABLE g83mc (a INT, b INT, parent_id INT, id INT, "
+             "PRIMARY KEY (a, b, parent_id, id)) PARTITION BY KEY(a, b)",
+             ["(1, 2, 1, 1)", "(1, 2, 1, 2)", "(1, 3, 1, 99)"]),
+        ):
+            self.fresh(name, ddl, rows).close()
+        pair = ("FROM g83p p LEFT JOIN g83c c ON c.tenant_id = p.tenant_id AND c.parent_id = p.id ")
+        chain = (pair + "LEFT JOIN g83d d ON d.tenant_id = c.tenant_id AND d.parent_id = c.parent_id "
+                 "AND d.child_id = c.id ")
+        root = pair + "LEFT JOIN g83d d ON d.tenant_id = p.tenant_id AND d.parent_id = p.id "
+        cases = (
+            ("SELECT p.id, c.id, c.v " + pair + "WHERE p.tenant_id = 7 ORDER BY p.id, c.id",
+             [(1, 1, 100), (1, 2, 200), (2, None, None), (3, 1, 300)]),
+            ("SELECT p.id, c.id FROM g83p p JOIN g83c c "
+             "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id WHERE p.tenant_id = 7 ORDER BY p.id, c.id",
+             [(1, 1), (1, 2), (3, 1)]),
+            ("SELECT p.id, c.id FROM g83p p LEFT JOIN g83c c "
+             "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id AND c.v > 150 "
+             "WHERE p.tenant_id = 7 ORDER BY p.id, c.id", [(1, 2), (2, None), (3, 1)]),
+            ("SELECT p.id, c.id, d.v " + chain + "WHERE p.tenant_id = 7 ORDER BY p.id, c.id, d.v",
+             [(1, 1, 1000), (1, 2, 2000), (2, None, None), (3, 1, None)]),
+            ("SELECT p.id, c.id, d.v " + root + "WHERE p.tenant_id = 7 ORDER BY p.id, c.id, d.v",
+             [(1, 1, 1000), (1, 1, 2000), (1, 2, 1000), (1, 2, 2000), (2, None, 9000), (3, 1, None)]),
+            ("SELECT p.id, c.id " + pair + "WHERE p.tenant_id = 9 ORDER BY p.id, c.id", []),
+            ("SELECT s.id, t.id FROM g83s s LEFT JOIN g83t t "
+             "ON t.tenant_id = s.tenant_id AND t.k = s.k WHERE s.tenant_id = 7 ORDER BY s.id",
+             [(1, 1), (2, 2), (3, None)]),
+            ("SELECT p.id, c.id FROM g83mp p LEFT JOIN g83mc c "
+             "ON c.a = p.a AND c.b = p.b AND c.parent_id = p.id "
+             "WHERE p.a = 1 AND p.b = 2 ORDER BY p.id, c.id", [(1, 1), (1, 2), (2, None)]),
+        )
+
+        def counters():
+            s = dict(q(c, "SHOW STATUS"))
+            return int(s["Tarn_storage_reads"]), int(s["Tarn_commits_read_only"])
+
+        try:
+            for iso in ("SERIALIZABLE", "READ COMMITTED"):
+                q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+                for txn in (False, True):
+                    for sql, want in cases:
+                        if txn:
+                            q(c, "BEGIN")
+                        before, ro = counters()
+                        got = list(q(c, sql))
+                        after, end_ro = counters()
+                        what = f"{iso}, {'transaction' if txn else 'autocommit'}: {sql}"
+                        self.check(got == want, f"{what}: rows {got[:6]}")
+                        self.check(after - before == 1, f"{what}: {after - before} storage reads, expected 1")
+                        self.check(end_ro == ro, f"{what}: unexpected implicit read-only validation")
+                        if txn:
+                            q(c, "COMMIT")
+        finally:
+            q(c, "ROLLBACK")
+            c.close()
+
+    def test_grouped_join_readsets(self):
+        # A child prefix with no rows still belongs to the serializable
+        # read set; a different prefix must not cause a false conflict.
+        a = self.grouped_join_fixture()
+        b = connect(self.args.tarn)
+        sql = ("SELECT p.id, c.id FROM g83p p LEFT JOIN g83c c "
+               "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id "
+               "WHERE p.tenant_id = 7 AND p.id = 2")
+        try:
+            q(a, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            for parent, conflict in ((2, True), (99, False)):
+                try:
+                    q(a, "BEGIN")
+                    self.check(q(a, sql) == ((2, None),), "empty dependent child prefix returns LEFT padding")
+                    q(b, f"INSERT INTO g83c VALUES (7, {parent}, 7, 700)")
+                    self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                               f"grouped child prefix {parent}: expected conflict={conflict}")
+                finally:
+                    q(a, "ROLLBACK")
+                    q(b, f"DELETE FROM g83c WHERE tenant_id = 7 AND parent_id = {parent} AND id = 7")
+        finally:
+            a.close()
+            b.close()
+
+    def test_grouped_join_own_writes(self):
+        # Buffered writes to either participant force the existing executor.
+        # Its overlays must include inserted parents/children, suppress
+        # deleted stored versions, and move a child's PK exactly once.
+        c = self.grouped_join_fixture()
+        sql = ("SELECT p.id, c.id, c.v FROM g83p p LEFT JOIN g83c c "
+               "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id "
+               "WHERE p.tenant_id = 7 ORDER BY p.id, c.id")
+        reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
+
+        def check_rows(want, what):
+            before = reads()
+            got = list(q(c, sql))
+            n = reads() - before
+            self.check(got == want, f"{what}: own grouped rows {got}")
+            self.check(n > 1, f"{what}: {n} storage reads, expected buffered-write fallback")
+
+        try:
+            for iso in ("SERIALIZABLE", "READ COMMITTED"):
+                q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+                q(c, "BEGIN")
+                q(c, "INSERT INTO g83c VALUES (7, 2, 1, 210), (7, 4, 1, 410)")
+                q(c, "DELETE FROM g83c WHERE tenant_id = 7 AND parent_id = 1 AND id = 1")
+                q(c, "UPDATE g83c SET parent_id = 2 WHERE tenant_id = 7 AND parent_id = 1 AND id = 2")
+                check_rows([(1, None, None), (2, 1, 210), (2, 2, 200), (3, 1, 300)], f"{iso}, child writes")
+                q(c, "INSERT INTO g83p VALUES (7, 4, 40)")
+                q(c, "DELETE FROM g83p WHERE tenant_id = 7 AND id = 3")
+                check_rows([(1, None, None), (2, 1, 210), (2, 2, 200), (4, 1, 410)], f"{iso}, both tables")
+                q(c, "ROLLBACK")
+                q(c, "BEGIN")
+                q(c, "INSERT INTO g83p VALUES (7, 4, 40)")
+                q(c, "DELETE FROM g83p WHERE tenant_id = 7 AND id = 3")
+                check_rows([(1, 1, 100), (1, 2, 200), (2, None, None), (4, None, None)], f"{iso}, root writes")
+                q(c, "ROLLBACK")
+        finally:
+            q(c, "ROLLBACK")
+            c.close()
+
+    def test_grouped_join_cap(self):
+        # 256 root rows + 5120 child rows exceed the shared 4096-row cap,
+        # though every individual child prefix fits. No partial grouped
+        # result may leak into, or be repeated by, the fallback executor.
+        c = self.fresh("g83bp", "CREATE TABLE g83bp (tenant_id INT, id INT, PRIMARY KEY (tenant_id, id)) "
+                              "PARTITION BY KEY(tenant_id)", [f"(7, {r})" for r in range(256)])
+        child = self.fresh("g83bc", "CREATE TABLE g83bc (tenant_id INT, parent_id INT, id INT, "
+                                  "PRIMARY KEY (tenant_id, parent_id, id)) PARTITION BY KEY(tenant_id)", [])
+        child.close()
+        want = [(r, n) for r in range(256) for n in range(20)]
+        for lo in range(0, len(want), 1000):
+            q(c, "INSERT INTO g83bc VALUES " + ", ".join(f"(7, {r}, {n})" for r, n in want[lo:lo + 1000]))
+        sql = ("SELECT p.id, c.id FROM g83bp p LEFT JOIN g83bc c "
+               "ON c.tenant_id = p.tenant_id AND c.parent_id = p.id "
+               "WHERE p.tenant_id = 7 ORDER BY p.id, c.id")
+        reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
+        try:
+            for iso in ("SERIALIZABLE", "READ COMMITTED"):
+                q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+                before = reads()
+                got = list(q(c, sql))
+                n = reads() - before
+                self.check(got == want, f"{iso}: cap fallback returned {len(got)} rows, expected {len(want)}")
+                self.check(n > 1, f"{iso}: {n} storage reads, expected cap fallback")
+        finally:
+            c.close()
+
     def test_ordered_limit_merged(self):
         # issue #86: an ordered page over an index that does not fix the
         # shard key reads a page per shard and merges them; a serializable

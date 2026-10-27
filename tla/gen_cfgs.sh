@@ -5,10 +5,13 @@ mk ()
     local RD=MCReaders AOP=FALSE ROV=FALSE RK=MCRKeys LRW=FALSE NRL=FALSE NWC=FALSE NTS=FALSE LIR=FALSE NRC=FALSE AMC=FALSE GC=FALSE BGD=FALSE BNE=FALSE BFE=FALSE INV="TypeOK AppliedOnlyIfCommitted NoAbortAfterCommit PlainOnlyCommitted DirectReadsClean DirectReadYourWrites StrictSerializable NoLostUpdate RCReadsSeeAcked UniqueHolds";
     local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE IK=NoIKeys INE=FALSE;
     local SS=NoSSet MK=NoMKeys MND=FALSE MNH=FALSE MSS=FALSE;
-    local SH=MCShards OW=MCOwner JN=FALSE OLD=NoOld BJN=FALSE;
+    local SH=MCShards KY=MCKeys OW=MCOwner JN=FALSE OLD=NoOld BJN=FALSE;
     for b in "$@";
     do
         case $b in 
+            GROUPED)
+                KY=MCKeysGrouped; OW=MCOwnerGrouped
+            ;;
             NRL)
                 NRL=TRUE
             ;;
@@ -124,7 +127,7 @@ mk ()
 SPECIFICATION Spec
 CONSTANTS
   Shards <- $SH
-  Keys <- MCKeys
+  Keys <- $KY
   Owner <- $OW
   Txns <- MCTxns
   Readers <- $RD
@@ -257,6 +260,11 @@ mk Join3_Scan         RSetMove   WSetMove   0 1 1 NORD MOVE SCAN ROV AMC JOIN3
 mk Join3_ScanPrepare  RSetMove   WSetMove   0 0 0 NORD MOVE SCAN AMC JOIN3
 mk Bug_JoinNoCheck3   RSetMove   WSetMove   0 0 0 NORD MOVE SCAN ROV AMC JOIN3 BJN
 mk Bug_JoinNoCheck3Prepare RSetMove WSetMove   0 0 0 NORD MOVE SCAN AMC JOIN3 BJN
+# A single snapshot spanning two co-located tables, checked against the
+# UNION of their read keys. The existing LRW switch drops that guard; the
+# three-key workload above makes its cross-table consequence observable.
+TO=0 mk GroupedTables RSetGrouped WSetGrouped 0 0 0 NORD ROV AMC GROUPED
+TO=0 mk Bug_GroupedTablesNoWLockCheck RSetGrouped WSetGrouped 0 0 0 NORD ROV AMC GROUPED LRW
 # Documented trade-offs (expected to be violated):
 mk Tradeoff_DirectReadAtomic   RSetFrac  WSetFrac  0 0 0 ATOMIC
 mk Tradeoff_AckOnPrepare_DirectRYW RSetRecov WSetRecov 0 0 0 AOP RYW

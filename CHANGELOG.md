@@ -291,6 +291,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/sql/ddltest.py`: dumps, batches, and `ALTER TABLE` while two SQL
   servers write the table.
 
+- Co-located primary-prefix joins ([#83](https://github.com/cstheorist/tarn/issues/83))
+  use one bounded storage call when their full shard key is bound and their
+  join equalities prove identical native hash inputs. The shard reads child
+  prefixes derived from earlier primary-key rows; Rust retains the original
+  INNER/LEFT joins, filters and projection. Every table shares one snapshot
+  and prepared-write/DDL lock-history check, including empty probes, and
+  serializable streams record every prefix. Buffered writes, locking reads,
+  unsupported accesses and exhausted shared reply budgets use the existing
+  executor. Focused TLA+ workloads and broken-guard controls check the
+  grouped-read assumptions; native memtx, vinyl and mixed-engine tests cover
+  snapshot consistency, locks, paging bounds and routing.
+
 ### Changed
 
 - A READ COMMITTED `SELECT ... WHERE <primary key prefix> [ORDER BY

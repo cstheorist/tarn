@@ -49,12 +49,13 @@ predecessors, and the invariant searches for a witness order.
 
 ### Configurations
 
-`tla/MC.tla` defines eleven workloads on two shards (`Skew`, `Local`,
+`tla/MC.tla` defines twelve workloads on two shards (`Skew`, `Local`,
 `Frac`, `Recov` with serializable transactions; `Counter`, `Mixed`, `Local`
 with READ COMMITTED ones; `Uniq`, inserts of one global unique index
 entry; `MoveScan` and `MoveRC`, a row moved to the other shard while
 transactions run; `JoinScan`, the same to a shard that joins, also on
-three shards), and `tla/gen_cfgs.sh` generates one `.cfg` per combination
+three shards; `GroupedTables`, a read of two co-located tables while
+cross-shard writers run), and `tla/gen_cfgs.sh` generates one `.cfg` per combination
 of workload, fault budget and options. The names say what is checked:
 
 | Name | Meaning |
@@ -68,6 +69,8 @@ of workload, fault budget and options. The names say what is checked:
 | `Uniq*` | two rows with one value of a unique key without the shard key insert one global index entry, across shards and locally (`Uniq_RC`: the local one at READ COMMITTED), with faults or a failover |
 | `Move_*` | a bucket move while a scan of every shard, writers of the moving row and READ COMMITTED read-modify-writes run (`Move_ScanPrepare`: the scan commits through PREPARE), with faults or a failover |
 | `Join*` | the same move to a shard that joins the cluster, while a scan routed before it joined runs: on two shards (one read of the other shard) and on three (`Join3_*`: reads in streams, validated or prepared) |
+| `GroupedTables` | one snapshot reads keys of two tables on one shard; the union of both read sets is checked for prepared writers |
+| `GroupedRead` | a separate, small refinement model of one snapshot across scans that yield between tables |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
 | `Tradeoff_*` | a documented weaker guarantee; TLC **must find a violation** |
 
@@ -97,6 +100,55 @@ explored without a violation).
 To add a protection switch: add a `Bug*` constant to `TarnCommit.tla`, guard
 the protection with it, add a flag to `gen_cfgs.sh`, and add a `Bug_*`
 configuration that TLC must fail.
+
+### Grouped local reads (issue #83)
+
+The commit model's keys are global identifiers: `x` and `z` can name keys
+of different tables on shard A, with `y` on B. `GroupedTables` has T1 write
+`z` and `y`, T2 read `x` and `z` in one `SnapshotRead`, and T3 read `y` and
+write `x`. The read must check `NoWLocksAt` for the union `{x, z}`. Otherwise,
+partly applied cross-shard writes can produce a read with no serial order.
+`Bug_GroupedTablesNoWLockCheck` reuses `BugLocalReadsIgnoreWLocks` to remove
+that union guard; it removes the whole guard, rather than modeling a
+particular table omitted by a parser. No commit-protocol action changes.
+
+`GroupedRead.tla` checks a separate refinement premise: one local read-only
+transaction supplies one snapshot for every constituent scan, including
+across yields. A local writer atomically changes both tables. The
+`CoherentSnapshot` invariant requires the completed result to equal a whole
+database state that existed during the RPC. With `BugSeparateSnapshots`,
+TLC reads outer value 0, runs the writer, then reads inner value 1: a result
+that never existed. This model applies to a grouped READ COMMITTED
+statement too; the main model's per-key `RCRead` and `RCReadsSeeAcked` do
+not express statement-wide snapshot coherence, and `StrictSerializable`
+intentionally excludes plain RC reads.
+
+The focused checks use no faults and disable timeout recovery in the
+three-key workload. The two models establish the protocol guard and the
+snapshot premise, respectively. They do not prove Tarantool's MVCC
+implementation, the Lua lock-history ring or its overflow handling,
+per-table definition and bucket fences, completeness/page limits, gateway
+read-set construction, buffered-write overlays, or SQL join semantics.
+Those remain implementation and storage/SQL test obligations. The raw
+native `DirectReadAtomic` trade-off is unchanged.
+
+Run just these checks with the same outcome checking used by CI:
+
+```sh
+tla/check.sh GroupedTables Bug_GroupedTablesNoWLockCheck GroupedRead Bug_GroupedReadSeparateSnapshots
+```
+
+They are also included in the default `check.sh` list. `run_all.sh` selects
+`GroupedRead.tla` for the two snapshot configurations and `MC.tla` for all
+others; explicit configuration arguments still replace the default list.
+The bounded results are:
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `GroupedTables` | 1,909 | 17 | passes all commit-model invariants |
+| `Bug_GroupedTablesNoWLockCheck` | 1,194 | 13 | violates `StrictSerializable` |
+| `GroupedRead` | 15 | 6 | passes `TypeOK` and `CoherentSnapshot` |
+| `Bug_GroupedReadSeparateSnapshots` | 18 | 6 | violates `CoherentSnapshot` |
 
 ## Verus proofs
 

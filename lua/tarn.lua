@@ -2670,6 +2670,127 @@ end
 
 tarn_select_keys = PG.bounded(BK.recheck(tarn_select_keys, 8))
 
+-- A co-located join (issue #83), read as dependent primary-key prefixes.
+-- reads[i] = {space_id, parent, bindings}; parent is 0 (constants only),
+-- or an earlier 1-based slot. A binding is {0, native_value} or
+-- {1, native_field_of_parent}. Rust proves co-location, types/collations
+-- and SQL eligibility; storage never evaluates SQL or joins tuples.
+-- Reply slots[i] = {prefixes_actually_read, tuples}. All slots share the
+-- same snapshot, W-lock-history interval, and row/key/byte budget. A cap
+-- or an absent physical source field discards everything: {OK, {}, false}
+-- asks Rust to use its existing executor, never a partial SQL result.
+function PG.join_plan(reads)
+    local bad = {'error', 1210, 'Incorrect arguments to tarn_select_join'}
+    if type(reads) ~= 'table' or #reads == 0 or #reads > 16 then return nil, bad end
+    local plan = {}
+    for i, r in ipairs(reads) do
+        if type(r) ~= 'table' or #r ~= 3 or type(r[1]) ~= 'number' or r[1] % 1 ~= 0
+           or r[1] <= 0 or type(r[2]) ~= 'number' or r[2] % 1 ~= 0 or r[2] < 0 or r[2] >= i
+           or type(r[3]) ~= 'table' or #r[3] == 0 then return nil, bad end
+        local sp = box.space[r[1]]
+        if sp == nil then return nil, {'error', 1146, 'no such space ' .. tostring(r[1])} end
+        local idx = sp.index[0]
+        if idx == nil then return nil, {'error', 1412, STALE_DEF_MSG} end
+        if #r[3] > #idx.parts then return nil, bad end
+        for _, b in ipairs(r[3]) do
+            if type(b) ~= 'table' or #b ~= 2 then return nil, bad end
+            if b[1] == 1 then
+                if r[2] == 0 or type(b[2]) ~= 'number' or b[2] % 1 ~= 0 or b[2] < 1
+                   or b[2] > plan[r[2]].fields then return nil, bad end
+            elseif b[1] ~= 0 or b[2] == nil or type(b[2]) == 'table' then
+                return nil, bad
+            end
+        end
+        plan[i] = {space = sp, idx = idx, kd = index_key_def(sp.id, 0), parent = r[2], bindings = r[3],
+                   fields = #sp:format()}
+    end
+    return plan
+end
+
+function PG.join_scan(plan)
+    local slots, nrows, nkeys, bytes, work = {}, 0, 0, 0, 0
+    local in_txn = box.is_in_txn()
+    local function progress()
+        work = work + 1
+        if work % 256 == 0 and PG.heap_low() then error(PG.OOM) end
+        if in_txn and work % SCAN_CHUNK == 0 then fiber.yield() end
+    end
+    for i, p in ipairs(plan) do
+        local keys, rows, seen = {}, {}, {}
+        slots[i] = {keys, rows}
+        local parents = p.parent == 0 and {false} or slots[p.parent][2]
+        for _, parent in ipairs(parents) do
+            local key, null = {}, false
+            for j, b in ipairs(p.bindings) do
+                local v = b[2]
+                if b[1] == 1 then
+                    -- An instant-added field can be absent but hold a
+                    -- non-NULL SQL fill: only Rust knows that fill.
+                    if b[2] > #parent then return {}, false end
+                    v = parent[b[2]]
+                end
+                if v == nil or v == box.NULL then null = true; break end
+                key[j] = v
+            end
+            if not null then
+                local kb = msgpack.encode(key)
+                if not seen[kb] then
+                    if nkeys >= 4096 or bytes + #kb > M.cfg.scan_page_bytes then return {}, false end
+                    seen[kb] = true
+                    nkeys, bytes = nkeys + 1, bytes + #kb
+                    keys[#keys + 1] = key -- includes a probe that finds no row
+                    for _, t in p.idx:pairs(key, {iterator = 'EQ'}) do
+                        local size = t:bsize()
+                        if nrows >= M.cfg.scan_page_rows or bytes + size > M.cfg.scan_page_bytes then
+                            return {}, false
+                        end
+                        rows[#rows + 1] = t
+                        nrows, bytes = nrows + 1, bytes + size
+                        progress()
+                    end
+                end
+            end
+            progress() -- duplicate and NULL source keys must also yield fairly
+        end
+        yield_point('join_scan') -- tests: after one table, before the next
+    end
+    return slots, true
+end
+
+function tarn_select_join(reads, lock_check, begin, route)
+    local mv = BK.check_read(route)
+    if mv then return mv end
+    if type(lock_check) ~= 'boolean' or type(begin) ~= 'boolean' or (lock_check and begin) then
+        return {'error', 1210, 'Incorrect arguments to tarn_select_join'}
+    end
+    if lock_check then lk_fresh() end
+    local plan, bad = PG.join_plan(reads)
+    if bad then return bad end
+    if begin and not box.is_in_txn() then
+        box.begin(BEGIN_STREAM)
+        note_stream_term()
+    end
+    if not lock_check then
+        if not box.is_in_txn() then return {'error', 1210, 'tarn_select_join needs a stream transaction'} end
+        return {OK, PG.join_scan(plan)}
+    end
+    -- Every engine uses one read-confirmed transaction: memtx scans may
+    -- yield too, and mixing individually checked tables would fracture it.
+    if box.is_in_txn() then return {'error', 1210, 'tarn_select_join lock check needs no stream transaction'} end
+    return checked_read(function() return PG.join_scan(plan) end, function(slots, since, complete)
+        if not complete then return nil end -- discarded, no rows observed
+        for i, p in ipairs(plan) do
+            if #slots[i][1] > 0 then
+                local h = keys_locked(p.space.id, 0, p.idx, p.kd, slots[i][1], since)
+                if h ~= nil then return h end
+            end
+        end
+        return nil
+    end)
+end
+
+tarn_select_join = PG.bounded(BK.recheck(tarn_select_join, 4))
+
 -- tarn_count: the number of rows a tarn_select scan (`key`, `iterator`,
 -- `end_key`, `end_incl`) would return that satisfy every residual predicate
 -- of `preds` and whose primary key is not in `exclude` (rows the calling

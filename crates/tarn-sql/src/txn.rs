@@ -1227,6 +1227,139 @@ pub const PAGE_ROWS: u32 = 4096;
 /// the next page starts (an opaque MessagePack value, passed back as is).
 pub type Page = (Vec<Row>, Option<Vec<u8>>);
 
+/// One native primary-index key part of a co-located read. A field is a
+/// one-based physical field of a tuple from the earlier parent slot.
+#[derive(Clone, Debug)]
+pub enum JoinPart {
+    Const(Value),
+    Field(u32),
+}
+
+#[derive(Debug)]
+pub struct JoinRead<'a> {
+    pub table: &'a TableDef,
+    /// Zero-based earlier slot; None for a constant prefix.
+    pub parent: Option<usize>,
+    pub parts: Vec<JoinPart>,
+}
+
+#[derive(Debug)]
+pub struct JoinRows {
+    /// Every native prefix actually probed, including those with no rows.
+    pub keys: Vec<Vec<Value>>,
+    pub rows: Vec<Row>,
+}
+
+#[derive(Debug)]
+pub enum JoinedRead {
+    /// An older storage node has not installed the optional read procedure.
+    Unavailable,
+    /// The shared reply budget was exhausted; no partial result is usable.
+    Incomplete,
+    Complete(Vec<JoinRows>),
+}
+
+/// Read dependent primary prefixes in one shard call. The planner proves
+/// their co-location; storage supplies one snapshot and checks the union
+/// of their prepared-write/DDL claims (TarnCommit!SnapshotRead).
+pub async fn select_join(
+    client: &Client,
+    stream: u64,
+    reads: &[JoinRead<'_>],
+    lock_check: bool,
+    begin: bool,
+    route: &Route,
+) -> SqlResult<JoinedRead> {
+    let mut m = Mp::new();
+    m.arr(4).arr(reads.len());
+    for r in reads {
+        m.arr(3)
+            .uint(r.table.space_id as u64)
+            .uint(r.parent.map_or(0, |p| p as u64 + 1))
+            .arr(r.parts.len());
+        for part in &r.parts {
+            m.arr(2);
+            match part {
+                JoinPart::Const(v) => {
+                    m.uint(0).val(v);
+                }
+                JoinPart::Field(f) => {
+                    m.uint(1).uint(*f as u64);
+                }
+            }
+        }
+    }
+    m.bool(lock_check).bool(begin);
+    route.encode(&mut m);
+    let r = match client.call(stream, "tarn_select_join", &m.0).await {
+        Ok(r) => r,
+        Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::errcode::ER_NO_SUCH_PROC => {
+            return Ok(JoinedRead::Unavailable);
+        }
+        Err(e) => return Err(from_iproto_read(e)),
+    };
+    let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+    join_rows_of(&d, reads)
+}
+
+fn join_rows_of(d: &Bytes, reads: &[JoinRead<'_>]) -> SqlResult<JoinedRead> {
+    let (status, rd) = lua_status(d)?;
+    if status != "ok" {
+        return Err(crate::mpw::proto("unexpected co-located read status"));
+    }
+    let mut header = Rd::new(d);
+    if header.array()? != 1 || header.array()? != 3 {
+        return Err(crate::mpw::proto("invalid co-located read envelope"));
+    }
+    let mut rd = Rd::shared_at(d, rd);
+    let n = rd.array()?;
+    if n != 0 && n != reads.len() {
+        return Err(crate::mpw::proto("co-located read slot count changed"));
+    }
+    let mut out = Vec::with_capacity(n);
+    for r in reads.iter().take(n) {
+        if rd.array()? != 2 {
+            return Err(crate::mpw::proto("invalid co-located read slot"));
+        }
+        let nkeys = rd.array()?;
+        let mut keys = Vec::with_capacity(nkeys);
+        for _ in 0..nkeys {
+            // Read-set keys outlive these result rows. Copy their strings
+            // instead of retaining the whole reply buffer through slices.
+            let mut key_rd = Rd::new(rd.raw_value()?);
+            let parts = key_rd.array()?;
+            if parts != r.parts.len() || parts == 0 {
+                return Err(crate::mpw::proto("co-located read prefix width changed"));
+            }
+            let mut key = Vec::with_capacity(parts);
+            for _ in 0..parts {
+                key.push(key_rd.value()?);
+            }
+            keys.push(key);
+        }
+        let nrows = rd.array()?;
+        let mut rows = Vec::with_capacity(nrows);
+        for _ in 0..nrows {
+            rows.push(rd.row_of(r.table)?);
+        }
+        out.push(JoinRows { keys, rows });
+    }
+    let complete = match rd.buf.first() {
+        Some(0xc3) => true,
+        Some(0xc2) => false,
+        _ => return Err(crate::mpw::proto("missing co-located read completion marker")),
+    };
+    rd.skip()?;
+    if !rd.buf.is_empty() || (complete && n != reads.len()) || (!complete && n != 0) {
+        return Err(crate::mpw::proto("partial or malformed co-located read reply"));
+    }
+    Ok(if complete {
+        JoinedRead::Complete(out)
+    } else {
+        JoinedRead::Incomplete
+    })
+}
+
 /// The rows of a `{'ok', rows[, next]}` reply.
 fn page_of(d: &Bytes, t: &TableDef) -> SqlResult<Page> {
     let (_, rd) = lua_status(d)?;
@@ -1437,6 +1570,102 @@ pub async fn select_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn join_table() -> TableDef {
+        use crate::catalog::Catalog;
+        use crate::plan::Stmt;
+        use crate::planner::{plan, PlanCtx};
+
+        let catalog = Catalog::default();
+        let cx = PlanCtx {
+            catalog: &catalog,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(
+            "CREATE TABLE t (tenant VARCHAR(20) NOT NULL, id INT NOT NULL, label VARCHAR(20), \
+             PRIMARY KEY (tenant, id)) PARTITION BY KEY(tenant)",
+            &cx,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        def.space_id = 512;
+        *def
+    }
+
+    fn join_reply(slot: bool, complete: bool) -> Bytes {
+        let mut m = Mp::new();
+        m.arr(1).arr(3).str("ok").arr(usize::from(slot));
+        if slot {
+            m.arr(2).arr(1).vals(&[Value::str("tenant")]).arr(1);
+            // A short, physically reordered tuple: id then tenant, with
+            // the label absent (the decoder must use its SQL fill).
+            m.vals(&[Value::Int(4), Value::str("tenant")]);
+        }
+        m.bool(complete);
+        m.bytes()
+    }
+
+    #[test]
+    fn grouped_reply_decodes_physical_rows_and_detaches_read_keys() {
+        let mut t = join_table();
+        t.layout.identity = false;
+        t.layout.col_field.swap(0, 1);
+        t.layout.field_col[0] = Some(1);
+        t.layout.field_col[1] = Some(0);
+        t.layout.fills[2] = Value::str("filled");
+        let reads = [JoinRead {
+            table: &t,
+            parent: None,
+            parts: vec![JoinPart::Const(Value::str("tenant"))],
+        }];
+        let data = join_reply(true, true);
+        let JoinedRead::Complete(groups) = join_rows_of(&data, &reads).unwrap() else {
+            panic!()
+        };
+        assert_eq!(groups[0].keys, vec![vec![Value::str("tenant")]]);
+        assert_eq!(
+            groups[0].rows,
+            vec![vec![Value::str("tenant"), Value::Int(4), Value::str("filled")]]
+        );
+        let Value::Str(key) = &groups[0].keys[0][0] else {
+            panic!()
+        };
+        let buffer = data.as_ptr() as usize..data.as_ptr() as usize + data.len();
+        assert!(
+            !buffer.contains(&(key.as_ptr() as usize)),
+            "read sets must not retain the whole result buffer"
+        );
+    }
+
+    #[test]
+    fn grouped_reply_rejects_partial_or_wrong_envelopes() {
+        let t = join_table();
+        let reads = [JoinRead {
+            table: &t,
+            parent: None,
+            parts: vec![JoinPart::Const(Value::str("tenant"))],
+        }];
+        assert!(matches!(
+            join_rows_of(&join_reply(false, false), &reads).unwrap(),
+            JoinedRead::Incomplete
+        ));
+        assert!(join_rows_of(&join_reply(true, false), &reads).is_err());
+        assert!(join_rows_of(&join_reply(false, true), &reads).is_err());
+        let mut wrong = join_reply(true, true).to_vec();
+        wrong[0] = 0x92; // claims two CALL return values, but has only one
+        assert!(join_rows_of(&Bytes::from(wrong), &reads).is_err());
+        // Complete is outside the status table: valid MessagePack, wrong API.
+        let mut wrong = Mp::new();
+        wrong.arr(2).arr(2).str("ok").arr(0).bool(true);
+        assert!(join_rows_of(&wrong.bytes(), &reads).is_err());
+        let mut truncated = join_reply(true, true).to_vec();
+        truncated.pop();
+        assert!(join_rows_of(&Bytes::from(truncated), &reads).is_err());
+    }
 
     #[test]
     fn failed_lock_gen_reads_the_fourth_field() {
