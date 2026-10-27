@@ -1216,10 +1216,40 @@ copy with the index after each change.
 
 ### Configuration counts
 
-The default list contains 184 configurations, including 135 expected
-broken/trade-off outcomes. The 195 generated configurations reproduce from
+`EngineAlias.tla` refines the central counter-alias ensure used by parallel
+engine APPLYs. Two callers request the same immutable new-SID/canonical-ID
+binding. A confirmed read can see absence while another caller waits for
+WAL; an overlapping write then conflicts even though its intended bytes
+are identical. Serialize the whole ensure by new SID, acquire before its
+read-confirmed transaction, and return an existing matching alias without
+another write. Both positive configurations check that all weakly fair
+executions finish both callers successfully, that an OK certifies the
+confirmed binding, and that an already-installed replay writes nothing.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `EngineAlias` | 12 | 7 | passes, including `Completion` |
+| `EngineAlias_Existing` | 8 | 5 | passes, including `Completion` |
+| `Bug_EngineAliasNoMutex` | 25 | 8 | violates `BothCallersOK` |
+
+The control preserves the correct canonical alias but returns a conflict
+to one caller; it does not demonstrate data corruption. The native MVCC
+conflict and healthy finite-WAL premises are runtime obligations. Before
+the fix, sixteen actual concurrent RPC pairs (eight absent and eight
+already-installed aliases) each returned one OK and one 1213 while the
+confirmed binding stayed canonical. The model does not prove native
+isolation, a global/stale-owner protocol, or success under cancellation,
+transport loss or an unhealthy WAL. The existing DDL interlock supplies
+the immutable old/new identity premise.
+
+```sh
+tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
+```
+
+The default list contains 187 configurations, including 136 expected
+broken/trade-off outcomes. The 198 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 197 total. Explicit check arguments override the default
+directly, for 200 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs
