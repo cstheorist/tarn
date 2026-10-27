@@ -24,6 +24,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the premises of Tarantool's elections that the native ones rely on. TLC
   must fail each of its ten protection switches
   ([#120](https://github.com/cstheorist/tarn/issues/120)).
+- `tla/NativeHandback.tla` models the contract between the SQL server and
+  the native procedures that commit writes: a step served as the Lua
+  procedure would make it, or handed back unchanged and never once its
+  commit began, and no call sent again after a lost connection. TLC must
+  fail each of its three protection switches
+  ([#120](https://github.com/cstheorist/tarn/issues/120)).
+- The native storage procedures read and write MessagePack with a codec
+  verified with Verus (`crates/tarn-verified/src/mp.rs`). Its writers emit
+  Tarantool's shortest encodings, its readers read them back, and its
+  `skip` follows any nesting. No function can panic or read past its
+  buffer, whatever bytes it is given
+  ([#120](https://github.com/cstheorist/tarn/issues/120)).
 
 - Lazy secondary indexes ([#82](https://github.com/cstheorist/tarn/issues/82)):
   `COMMENT 'tarn:lazy'` on a non-unique key creates an asynchronous global

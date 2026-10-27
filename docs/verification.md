@@ -73,6 +73,7 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedRead` | a separate, small refinement model of one snapshot across scans that yield between tables |
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
+| `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
@@ -925,12 +926,66 @@ tla/check.sh StreamMarks Bug_StreamMarksNativeNoTermCheck Bug_StreamMarksLuaNoTe
 `DDL_TXN` of either) takes six minutes, and is left out of the default
 list.
 
+### The hand-back contract of the native procedures
+
+`NativeHandback.tla` checks the contract between the SQL server and a
+shard's native procedure that commits writes (`ts_autocommit`,
+`ts_commit_local`):
+- the procedure makes the step as the Lua procedure would, or hands it
+  back (`["lua"]`) having changed nothing, and never once its commit
+  began;
+- the SQL server calls the Lua procedure after a hand-back, in the same
+  stream;
+- it never sends a call again whose outcome it does not know: it reports
+  "outcome unknown" (1180, `Cluster::call_once`).
+
+One transaction's writes are committed on one shard: in its stream, whose
+transaction holds its reads, or as an autocommit write (`*_Autocommit`).
+The native procedure takes a savepoint (or begins a transaction of its
+own), makes the writes, and commits. Or it gives up, takes them back to
+the savepoint and hands the step back; should that rollback fail, it
+rolls the whole transaction back and replies 1213 (`txn_lost`). Its
+commit succeeds, or fails having made nothing, or ends so that the writes
+may or may not be made (`outcome_unknown`). The connection may drop at
+any moment: its replies are lost, the requests already sent may still
+run, and a stream's transaction still open when its session ends is
+rolled back.
+
+Writes are counted, not valued. `AtMostOnce`: they were committed at most
+once. `ReplyHolds`: the client's OK means once, its error never; only an
+unknown outcome leaves both open.
+
+| Switch | Removes |
+|---|---|
+| `BugKeepWritesOnHandback` | the rollback to the savepoint before a hand-back (in a stream: the Lua procedure makes the writes again in the same transaction) |
+| `BugHandbackAfterCommitBegan` | the rule that a procedure whose commit began never hands back (`committed` in `write_step`) |
+| `BugResendAfterLoss` | the rule that a call whose outcome is unknown is not sent again |
+
+```sh
+tla/check.sh Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAfterCommitBegan \
+  Bug_HandbackAfterCommitBegan_Autocommit Bug_HandbackResendAfterLoss Bug_HandbackResendAfterLoss_Autocommit
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `Handback` | 28 | 7 | passes |
+| `Handback_Autocommit` | 23 | 6 | passes |
+| `Bug_HandbackKeepsWrites` | 32 | 7 | violates `AtMostOnce` |
+| `Bug_HandbackAfterCommitBegan` | 34 | 8 | violates `ReplyHolds` |
+| `Bug_HandbackAfterCommitBegan_Autocommit` | 23 | 7 | violates `AtMostOnce` |
+| `Bug_HandbackResendAfterLoss` | 35 | 7 | violates `ReplyHolds` |
+| `Bug_HandbackResendAfterLoss_Autocommit` | 29 | 7 | violates `AtMostOnce` |
+
+The model is small on purpose: it is the contract every native procedure
+that writes must keep, whatever it checks before.
+
 ### Configuration counts
 
-The default list contains 146 configurations, including 103 expected
-broken/trade-off outcomes. The 157 generated configurations reproduce from
+The default list contains 153 configurations, including 108 expected
+broken/trade-off outcomes. The 164 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 159 total. Explicit check arguments override the default list.
+directly, for 166 total. Explicit check arguments override the default
+list.
 
 ## Verus proofs
 
@@ -962,6 +1017,14 @@ result. Verus proves:
   out of bounds; packet framing produces exactly MySQL's multi-packet
   format (including the empty terminator after a payload that is a multiple
   of 16 MiB) and deframing inverts it. No function can panic.
+* **MessagePack of the native procedures** (`mp.rs`): the writers emit
+  Tarantool's encodings: an integer unsigned when it is not negative, and
+  every integer and header in its fewest bytes (no encoding of the same
+  integer, and no header of an array, a string or a binary of the same
+  length, is shorter). The readers read back what the writers emit.
+  `skip` ends where a value ends, however nested, and refuses a value cut
+  short or a byte no value starts with. No function can panic or read past
+  its buffer, whatever bytes it is given.
 
 The proofs are about single functions given their inputs. Protocol-level
 facts they rely on, such as "a missing participant record under a STAGING
@@ -975,11 +1038,13 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 66 verified, 0 errors
+# verification results:: 115 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with
-concrete inputs (codec boundaries, CRC check value, decision cases).
+concrete inputs (codec boundaries, MessagePack encodings at their
+boundaries and values skipped however nested, CRC check value, decision
+cases).
 
 ## Test suites
 
