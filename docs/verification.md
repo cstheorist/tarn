@@ -74,6 +74,7 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
+| `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
 | `Bug_*` | one protection switched off; TLC **must find a violation** |
@@ -979,12 +980,127 @@ tla/check.sh Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAf
 The model is small on purpose: it is the contract every native procedure
 that writes must keep, whatever it checks before.
 
+### Online engine copying and publication (issue #57)
+
+`EngineCopy.tla` checks a local copy certificate, composed with
+`EngineCutover.tla` for its later publication on two shards. The engines
+are abstract images: these models do not implement or prove native DDL,
+replication, full distributed DDL linearizability, or migration latency.
+The source remains authoritative while its primary-only shadow is copied.
+Two writes can delete/reinsert a key or move a primary key. Each write has
+an unconfirmed interval and can roll back; its old and new keys are noted
+before it can commit. Extra dirty keys left by rollback are harmless:
+the final payload is a confirmed source reread, including absence for
+DELETE, after the persistent fence and all admitted writes have drained.
+
+A baseline source read and its owner-checked target write are separate
+steps. Capture and a drain of pre-capture/native inflight effects precede
+that baseline. Capture loss, overflow or a term change before PREPARED
+invalidates the entire copy; the model even permits an old pending write
+to resolve afterward, so the new prefix drain must cover it. A delayed
+old-generation page cannot overwrite the new image. Local secondary and
+UNIQUE indexes are built only after the frozen tail, avoiding transient
+unique-key cycles in an online baseline. PREPARED certifies that image and
+all those indexes; a restart/APPLY must preserve it, its persistent fence
+and its roll-forward state instead of rebuilding it.
+
+`EngineCutover` separates all-shard preparation/auxiliary readiness, a
+confirmed central decision, native rename, local catalog publication and
+old-space cleanup. A crash after rename resumes from explicit original
+and replacement IDs, not whichever space currently has the public name.
+Neither APPLY-to-ABORT nor ABORT-to-APPLY is permitted. Publication retires
+old auxiliary generations and dooms old streams; their pending assignments
+remain until an explicit retirement/ACK proof permits removal. Allocation
+continues through one stable logical counter identity, including IDs that
+were allocated and then deleted, rather than restarting from row maxima.
+
+Implementation refinement obligations remain explicit:
+
+* Capture must cover every actual source mutation before its commit;
+  allocation/error paths must abort that write or invalidate the copy.
+  Native capture exclusion must precede mutations/savepoints. No copied
+  physical row generates a new logical lazy-index assignment.
+* The source, progress/owner and terminal-receipt views must be confirmed
+  where they certify completion. In particular, the central phase proof
+  validates exact old/new IDs, version and generation using read-confirmed
+  visibility; a missing nonterminal decision fails closed. The model's
+  decision is already durable. `LazyTargetConfirm`, `LazyApplyConfirm` and
+  `PrepareConfirm` explain the native confirmation boundary; runtime
+  overlap/fault tests must establish this new call site's refinement.
+* Existing whole-RPC DDL serialization (`BackfillDDL`), read holds and
+  final DDL/term watermarks (`GroupedDDL`, `StreamMarks`) supply the
+  native-yield and old-stream premises. The two stream-order premises
+  documented above still apply. No extra native correctness claim follows.
+  `WritePage` is a confirmed atomic native effect: a detached shadow commit
+  can outlive its RPC and mutex scope. Before resetting, clearing/dropping
+  a shadow or certifying PREPARED, a separate terminal-ticket and native
+  sync-queue cut must settle every old shadow effect. The ticket/drain,
+  queue and epoch premises compose with `LazyMeter`; this model does not
+  prove that returning from a copy RPC has established that cut.
+* Existing schema-job exclusion covers the entire operation versus bucket
+  moves and JOIN/removal. This is a composed job premise, not an additional
+  topology proof in these models. Preserve the actual source format and
+  explicit native index IDs/parts/collations, including gaps; only engine,
+  owned physical ID and native name change.
+* Fresh global/lazy target identities must be complete and READY before
+  publication. Existing global-fill/lazy bootstrap proofs are reused,
+  not reimplemented here. Preserve source bucket counters, row-version and
+  reservation/outbox obligations or explicitly rotate/retire them without
+  losing a pending obligation. READY and retirement are durable facts,
+  not an inference from a missing old space. The logical auto/row-ID
+  counter binding must survive the physical ID change.
+
+The positive schedules permit source writes during baseline copying;
+TLC checks safety, not a throughput or progress guarantee. Actual writer
+progress, memtx/vinyl behavior, capacity refusal, rename/restart recovery,
+index gaps and auxiliary integrity require independent live tests. The
+final write fence includes secondary-index construction and may be long.
+
+```sh
+tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrain \
+  Bug_EngineCopyCaptureOnlyNewKeys Bug_EngineCopyUnconfirmedSource \
+  Bug_EngineCopyTailIgnoresDeletes Bug_EngineCopySkipFinalDrain \
+  Bug_EngineCopyLostCaptureContinues Bug_EngineCopyStaleBatch \
+  Bug_EngineCopyRebuildPrepared Bug_EngineCopyPrepareWithoutIndexes \
+  Bug_EngineCopyLosePersistentFence EngineCutover \
+  Bug_EngineCutoverPublishBeforeDecision Bug_EngineCutoverPublishBeforeAuxReady \
+  Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
+  Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
+  Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity \
+  Bug_EngineCutoverRenameLosesOriginalIdentity
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `EngineCopy` | 5,316 | 19 | passes |
+| `Bug_EngineCopyBeforeCapture` | 6,274 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopyCaptureOnlyNewKeys` | 3,122 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyLosePersistentFence` | 2,534 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopyLostCaptureContinues` | 6,447 | 15 | violates `PreparedImage` |
+| `Bug_EngineCopyPrepareWithoutIndexes` | 1,354 | 9 | violates `PreparedImage` |
+| `Bug_EngineCopyRebuildPrepared` | 2,534 | 11 | violates `PreparedImage` |
+| `Bug_EngineCopySkipFinalDrain` | 4,006 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopySkipPrefixDrain` | 4,048 | 12 | violates `PreparedImage` |
+| `Bug_EngineCopyStaleBatch` | 6,254 | 17 | violates `PreparedImage` |
+| `Bug_EngineCopyTailIgnoresDeletes` | 3,881 | 13 | violates `PreparedImage` |
+| `Bug_EngineCopyUnconfirmedSource` | 269 | 6 | violates `ConfirmedCopies` |
+| `EngineCutover` | 452 | 17 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 202 | 9 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverApplyAfterAbort` | 262 | 10 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverDropBeforePublish` | 3 | 2 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverForgetOldObligations` | 4 | 2 | violates `OldObligationsRetained` |
+| `Bug_EngineCutoverOldStreamValidates` | 197 | 9 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 129 | 6 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 189 | 8 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 271 | 11 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 198 | 9 | violates `CounterNeverReuses` |
+
 ### Configuration counts
 
-The default list contains 153 configurations, including 108 expected
-broken/trade-off outcomes. The 164 generated configurations reproduce from
+The default list contains 175 configurations, including 128 expected
+broken/trade-off outcomes. The 186 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 166 total. Explicit check arguments override the default
+directly, for 188 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

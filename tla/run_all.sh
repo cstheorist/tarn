@@ -22,6 +22,8 @@ for cfg in "$@"; do
     GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
     StreamMarks*|Bug_StreamMarks*) module=StreamMarks.tla ;;
     Handback*|Bug_Handback*) module=NativeHandback.tla ;;
+    EngineCopy|Bug_EngineCopy*) module=EngineCopy.tla ;;
+    EngineCutover|Bug_EngineCutover*) module=EngineCutover.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;
     *) module=MC.tla ;;

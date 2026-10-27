@@ -1,0 +1,250 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 119 and seed 732999166694452577 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 833] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/EngineCutover.tla
+Parsing file /tmp/tlc-5828375294088985789/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5828375294088985789/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5828375294088985789/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5828375294088985789/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5828375294088985789/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5828375294088985789/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-5828375294088985789/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EngineCutover
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EngineCutover
+Starting... (2026-10-27 16:46:22)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 16:46:23.
+Error: Invariant CatalogHasSpace is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ decision = "none"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 2: <Prepared("A") line 49, col 5 to line 51, col 74 of module EngineCutover>
+/\ decision = "none"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 3: <ReadyAux("A") line 53, col 5 to line 55, col 74 of module EngineCutover>
+/\ decision = "none"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 4: <Prepared("B") line 49, col 5 to line 51, col 74 of module EngineCutover>
+/\ decision = "none"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 5: <ReadyAux("B") line 53, col 5 to line 55, col 74 of module EngineCutover>
+/\ decision = "none"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 6: <DecideApply line 58, col 5 to line 62, col 74 of module EngineCutover>
+/\ decision = "apply"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 7: <Rename("A") line 69, col 5 to line 73, col 79 of module EngineCutover>
+/\ decision = "apply"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {"A"}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+
+State 8: <Publish("A") line 75, col 5 to line 81, col 43 of module EngineCutover>
+/\ decision = "apply"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 2, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {"A"}
+/\ renamed = {"A"}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {"A"}
+/\ pendingOld = {"A", "B"}
+
+State 9: <Crash("A") line 93, col 5 to line 95, col 54 of module EngineCutover>
+/\ decision = "apply"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 2, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {"A"}
+/\ renamed = {"A"}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = TRUE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"B"}
+/\ prepared = {"A", "B"}
+/\ retired = {"A"}
+/\ pendingOld = {"A", "B"}
+
+State 10: <Resume("A") line 97, col 5 to line 101, col 82 of module EngineCutover>
+/\ decision = "apply"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 2, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 2, B |-> 1]
+/\ doomed = {"A"}
+/\ renamed = {"A"}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = TRUE
+/\ reused = FALSE
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {"A"}
+/\ pendingOld = {"A", "B"}
+
+State 11: <DropOriginal("A") line 83, col 5 to line 86, col 80 of module EngineCutover>
+/\ decision = "apply"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 2, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 2, B |-> 1]
+/\ doomed = {"A"}
+/\ renamed = {"A"}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = TRUE
+/\ reused = FALSE
+/\ spaces = [A |-> {1}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {"A"}
+/\ pendingOld = {"A", "B"}
+
+523 states generated, 271 distinct states found, 45 states left on queue.
+The depth of the complete state graph search is 11.
+Finished in 00s at (2026-10-27 16:46:23)
+Trace exploration spec path: ./EngineCutover_TTrace_1793119582.tla
