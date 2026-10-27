@@ -86,6 +86,7 @@ extern "C" {
     fn box_txn_rollback_to_savepoint(savepoint: *mut c_void) -> c_int;
     fn box_txn_id() -> i64;
     fn box_txn_set_isolation(level: u32) -> c_int;
+    fn box_txn_set_timeout(timeout: f64) -> c_int;
     fn box_insert(space_id: u32, tuple: *const c_char, tuple_end: *const c_char, result: *mut *mut BoxTuple) -> c_int;
     fn box_replace(space_id: u32, tuple: *const c_char, tuple_end: *const c_char, result: *mut *mut BoxTuple) -> c_int;
     fn box_delete(
@@ -650,6 +651,14 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
         None => None,
     };
     let reverse = select::reverse(a.iterator);
+    // The first read of a stream begins its transaction, as tarn_select
+    // does; a read handed back takes it back.
+    let mut begun = match a.begin && !in_txn {
+        // SAFETY: a plain call of the module API in the transaction thread.
+        true => Some(unsafe { Txn::begin_stream()? }),
+        false => None,
+    };
+    let in_txn = in_txn || begun.is_some();
     let mut page = Page::new(&a, in_txn, s.page_rows, s.page_bytes, s.scan_chunk);
     let mut out = Wr::with_capacity(256);
     out.array(2).str("ok");
@@ -708,6 +717,10 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     out.patch_array(at, n);
+    // (the stream's transaction from now on)
+    if let Some(t) = begun.as_mut() {
+        t.open = false;
+    }
     select::count_reads(s, &a.route);
     Some(out.0)
 }
@@ -779,6 +792,27 @@ impl Txn {
         }
         Some(txn)
     }
+
+    /// A stream's transaction, as tarn_select begins it (BEGIN_STREAM in
+    /// lua/tarn.lua: read-confirmed, rolled back after STREAM_TIMEOUT).
+    unsafe fn begin_stream() -> Option<Txn> {
+        if box_txn_begin() != 0 {
+            box_error_clear();
+            return None;
+        }
+        let txn = Txn { open: true };
+        if box_txn_set_isolation(TXN_ISOLATION_READ_CONFIRMED) != 0 || box_txn_set_timeout(STREAM_TIMEOUT) != 0 {
+            box_error_clear();
+            return None;
+        }
+        Some(txn)
+    }
+}
+
+/// The number of the request's transaction (box_txn_id: Tarantool numbers
+/// transactions as they begin), or 0 without one.
+unsafe fn txn_number() -> u64 {
+    u64::try_from(box_txn_id()).unwrap_or(0)
 }
 
 impl Drop for Txn {
@@ -816,8 +850,12 @@ fn commit_ends(s: &mut State, seq: u64) {
     });
 }
 
-/// enum txn_isolation_level: TXN_ISOLATION_READ_COMMITTED.
+/// enum txn_isolation_level: TXN_ISOLATION_READ_COMMITTED,
+/// TXN_ISOLATION_READ_CONFIRMED.
 const TXN_ISOLATION_READ_COMMITTED: u32 = 1;
+const TXN_ISOLATION_READ_CONFIRMED: u32 = 2;
+/// BEGIN_STREAM's timeout (lua/tarn.lua), seconds.
+const STREAM_TIMEOUT: f64 = 60.0;
 const ER_READONLY: u32 = 7;
 const ER_TRANSACTION_CONFLICT: u32 = 97;
 const ER_SYNC_ROLLBACK: u32 = 217;
@@ -864,19 +902,10 @@ impl Drop for Savepoint {
             return;
         }
         // SAFETY: a savepoint of the transaction of this request, in its
-        // thread.
+        // thread. (The rollback runs the transaction's on_rollback
+        // triggers: the Lua module sets none on stream transactions.)
         unsafe {
-            // The rollback runs the transaction's on_rollback triggers, and
-            // Lua's (note_stream_term's) must not take it for the end of the
-            // transaction: the state names the transaction meanwhile.
-            let id = box_txn_id();
-            if let Some(s) = state() {
-                s.svp_txn = u64::try_from(id).unwrap_or(0);
-            }
             let rc = box_txn_rollback_to_savepoint(self.sp);
-            if let Some(s) = state() {
-                s.svp_txn = 0;
-            }
             box_error_clear();
             if rc != 0 {
                 // (not known to happen) the writes must not stay in a
@@ -1154,9 +1183,8 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
         return None;
     }
-    // (a TRUNCATE or DROP TABLE holds a table, or doomed the streams that
-    // read one: reads_ddl_conflict)
-    if s.ddl_n != 0 || s.doomed != 0 {
+    // (a TRUNCATE or DROP TABLE holds a table: reads_ddl_conflict)
+    if s.ddl_n != 0 {
         return None;
     }
     // SAFETY: plain calls of the module API in the transaction thread.
@@ -1194,6 +1222,11 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     // without one; tuples are copied before anything else runs.
     unsafe {
         let undo = if box_txn() {
+            // (a TRUNCATE or DROP TABLE applied since the stream began:
+            // reads_ddl_conflict, with the tables read)
+            if txn_number() < s.ddl_txn {
+                return None;
+            }
             Undo::Savepoint(Savepoint::take()?)
         } else if c.reads.is_empty() {
             // (a transaction that read nothing here: the coordinator sends
@@ -1213,6 +1246,90 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
         out.array(2).str("ok").uint(n as u64);
         Some(Served::Reply(out.0))
     }
+}
+
+/// What became of a validation served here (TarnCommit!ValidateRO, or the
+/// commit of a read-only stream of one shard), or None for one left to
+/// tarn_validate, with nothing changed. `committed`: as for `autocommit`.
+fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
+    let v = write::parse_validate(buf)?;
+    // (row locks: the Lua procedure checks that they survived, and releases
+    // them)
+    if v.locks {
+        return None;
+    }
+    let s = state()?;
+    if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
+        return None;
+    }
+    // (a TRUNCATE or DROP TABLE holds a table: reads_ddl_conflict)
+    if s.ddl_n != 0 || s.scratch == 0 {
+        return None;
+    }
+    // SAFETY: plain calls of the module API in the transaction thread.
+    unsafe {
+        // (a demoted node: tarn_validate raises ER_READONLY; no stream
+        // transaction: it fails the reads, or only ends row locks)
+        if box_is_ro() || !box_txn() {
+            return None;
+        }
+        // The node has been the leader since the stream began (TERM_TXN),
+        // and no TRUNCATE or DROP TABLE was applied since (DDL_TXN: the Lua
+        // procedure checks the tables read). (A change of the election term
+        // makes the node read-only at once, and stale before it is writable
+        // again: term_txn is the term's here.)
+        let id = txn_number();
+        if id < s.term_txn || id < s.ddl_txn {
+            return None;
+        }
+    }
+    // BK.commit_check: the membership a read of every shard was routed
+    // with; the buckets read are served here, none of them held
+    if v.mver.is_some_and(|m| m < s.mver) {
+        return None;
+    }
+    if s.count != 0 && (s.held != 0 || v.reads.iter().any(|r| r.bucket.is_some_and(|b| !s.serves(b)))) {
+        return None;
+    }
+    // reads_w_locked: no lock of a prepared transaction on a table it read
+    if v.reads.iter().any(|r| s.space_locked(r.space_id)) {
+        return None;
+    }
+    // SAFETY: the stream's transaction; nothing yields until it commits
+    // (the probe's space is data-temporary: no WAL write).
+    unsafe {
+        // The reads are unchanged: a transaction whose reads were
+        // overwritten is in a read view, which refuses the probe write
+        // (tarn_validate).
+        let probe = [0x91u8, 0x01];
+        let p = probe.as_ptr().cast::<c_char>();
+        if box_replace(s.scratch, p, p.add(probe.len()), std::ptr::null_mut()) != 0 {
+            let e = box_error_last();
+            let msg = if e.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(box_error_message(e))
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            box_txn_rollback();
+            box_error_clear();
+            let mut out = Wr::with_capacity(96);
+            out.array(3)
+                .str("conflict")
+                .uint(1213)
+                .str(&format!("read set changed before commit: {}", msg));
+            return Some(Served::Reply(out.0));
+        }
+        committed.set(true);
+        // (tarn_validate's box.commit() raises its error)
+        if box_txn_commit() != 0 {
+            return Some(Served::Raise);
+        }
+    }
+    let mut out = Wr::with_capacity(8);
+    out.array(1).str("ok");
+    Some(Served::Reply(out.0))
 }
 
 /// The reply when a commit step could not take back its writes in a stream
@@ -1320,6 +1437,23 @@ pub unsafe extern "C" fn ts_commit_local(
             s.c_served += 1;
         } else {
             s.c_to_lua += 1;
+        }
+    })
+}
+
+/// `ts_validate(txid, rpoints, rranges, cross, lock_gen, mver)`:
+/// tarn_validate's arguments; its reply, or ["lua"], having changed nothing
+/// (see `validate`).
+///
+/// # Safety
+/// Called by Tarantool with a valid context and argument buffer.
+#[no_mangle]
+pub unsafe extern "C" fn ts_validate(ctx: *mut BoxFunctionCtx, args: *const c_char, args_end: *const c_char) -> c_int {
+    write_step(ctx, args, args_end, validate, |s, served| {
+        if served {
+            s.v_served += 1;
+        } else {
+            s.v_to_lua += 1;
         }
     })
 }

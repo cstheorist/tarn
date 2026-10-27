@@ -162,21 +162,7 @@ pub fn parse_commit(buf: &[u8]) -> Option<Commit<'_>> {
         }
         c.writes.push(w);
     }
-    // points {space, index, key, bucket}, ranges {space, index, lo, hi,
-    // lo_incl, hi_incl, bucket}
-    for (len, skip) in [(4, 2), (7, 5)] {
-        for _ in 0..r.array()? {
-            if r.array()? != len {
-                return None;
-            }
-            let space_id = u32::try_from(r.uint()?).ok()?;
-            for _ in 0..skip {
-                r.skip()?;
-            }
-            let bucket = if r.nil() { None } else { Some(r.uint()?) };
-            c.reads.push(Read { space_id, bucket });
-        }
-    }
+    read_set(&mut r, &mut c.reads)?;
     c.locks = !r.nil();
     if c.locks {
         r.skip()?;
@@ -200,6 +186,59 @@ pub fn parse_commit(buf: &[u8]) -> Option<Commit<'_>> {
         return None;
     }
     Some(c)
+}
+
+/// A read set: points {space, index, key, bucket}, ranges {space, index,
+/// lo, hi, lo_incl, hi_incl, bucket}.
+fn read_set(r: &mut Rd, reads: &mut Vec<Read>) -> Option<()> {
+    for (len, skip) in [(4, 2), (7, 5)] {
+        for _ in 0..r.array()? {
+            if r.array()? != len {
+                return None;
+            }
+            let space_id = u32::try_from(r.uint()?).ok()?;
+            for _ in 0..skip {
+                r.skip()?;
+            }
+            let bucket = if r.nil() { None } else { Some(r.uint()?) };
+            reads.push(Read { space_id, bucket });
+        }
+    }
+    Some(())
+}
+
+/// tarn_validate's arguments (txid, rpoints, rranges, cross, lock_gen,
+/// mver), as far as its checks need.
+#[derive(Debug, Default, PartialEq)]
+pub struct Validate {
+    /// The points and ranges the transaction read here.
+    pub reads: Vec<Read>,
+    /// It holds row locks here (lock_gen): the Lua procedure checks them.
+    pub locks: bool,
+    /// The membership version it was routed with, when it read every shard.
+    pub mver: Option<u64>,
+}
+
+/// tarn_validate's arguments: None for those it leaves to the Lua
+/// procedure, or does not read.
+pub fn parse_validate(buf: &[u8]) -> Option<Validate> {
+    let mut r = Rd::new(buf);
+    if r.array()? != 6 {
+        return None;
+    }
+    r.str()?;
+    let mut v = Validate::default();
+    read_set(&mut r, &mut v.reads)?;
+    r.skip()?; // (cross: the same checks)
+    v.locks = !r.nil();
+    if v.locks {
+        r.skip()?;
+    }
+    v.mver = if r.nil() { None } else { Some(r.uint()?) };
+    if r.peek().is_some() {
+        return None;
+    }
+    Some(v)
 }
 
 fn write<'a>(r: &mut Rd<'a>) -> Option<Write<'a>> {
@@ -616,6 +655,44 @@ mod tests {
         w.array(4).str("update").uint(512).array(1).uint(1).array(0);
         w.array(0).array(0).raw(&[0xc0, 0xc0, 0xc0, 0xc0]);
         assert!(parse_commit(&w.0).is_none());
+    }
+
+    #[test]
+    fn parses_a_validation() {
+        // {txid, {point}, {range}, cross, nil, nil}
+        let mut w = Wr::default();
+        w.array(6).str("T1");
+        w.array(1).array(4).uint(512).uint(0).array(1).uint(9).uint(7);
+        w.array(1)
+            .array(7)
+            .uint(513)
+            .uint(1)
+            .raw(&[0xc0, 0x91, 0x05, 0xc3, 0xc2, 0xc0]);
+        w.raw(&[0xc3, 0xc0, 0xc0]);
+        let v = parse_validate(&w.0).unwrap();
+        assert_eq!(
+            v.reads,
+            vec![
+                Read {
+                    space_id: 512,
+                    bucket: Some(7)
+                },
+                Read {
+                    space_id: 513,
+                    bucket: None
+                }
+            ]
+        );
+        assert!(!v.locks && v.mver.is_none());
+        // row locks, a membership version
+        let mut w = Wr::default();
+        w.array(6).str("T2").array(0).array(0).raw(&[0xc2]).str("g/1").uint(4);
+        let v = parse_validate(&w.0).unwrap();
+        assert!(v.locks && v.mver == Some(4));
+        // arguments of another kind
+        let mut w = Wr::default();
+        w.array(5).str("T3").array(0).array(0).raw(&[0xc2, 0xc0]);
+        assert!(parse_validate(&w.0).is_none());
     }
 
     fn op(add: bool, field: u32, value: &[u8]) -> UpOp<'_> {

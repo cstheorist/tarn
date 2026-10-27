@@ -6,7 +6,7 @@
 set -u
 cd "$(dirname "$0")"
 DEFAULT="Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
-Bug_LocalReadsIgnoreWLocks Bug_ROValidateNoWLockCheck Bug_ROValidateNoReadCheck
+Bug_LocalReadsIgnoreWLocks Bug_ROValidateNoWLockCheck Bug_ROValidateNoReadCheck Bug_ValidateLostStream
 Bug_GCIgnoresDecision Bug_GCNoExpiry Bug_FenceAfterExpiry
 Tradeoff_DirectReadAtomic Tradeoff_AckOnPrepare_DirectRYW
 Recov RecovReaders Recov_AckOnPrepare Local_ROValidate Frac_ROValidate
