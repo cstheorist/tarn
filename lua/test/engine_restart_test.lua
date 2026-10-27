@@ -8,15 +8,36 @@ local work, source_engine, scenario, stage = assert(arg[1]), assert(arg[2]), ass
 local native = os.getenv('TARN_NATIVE')
 if native and native ~= '0' then package.cpath = fio.dirname(native) .. '/lib?.so;' .. package.cpath end
 fio.mktree(work)
+local boot_phase = 'box.cfg'
+-- If recovery stalls before IDENTITY, retain the blocked phase and fiber
+-- state before the outer timeout stops this private process.
+fiber.create(function()
+    fiber.name('engine_restart_watchdog')
+    while true do
+        fiber.sleep(10)
+        local yes, dump = pcall(function()
+            local state = {phase = boot_phase, stage = stage, engine = source_engine,
+                scenario = scenario, fibers = fiber.info()}
+            pcall(function() state.status = box.info.status; state.synchro = box.info.synchro end)
+            return json.encode(state)
+        end)
+        print('RECOVERY_WAIT ' .. tostring(dump))
+        if not yes then print('RECOVERY_WAIT diagnostics unavailable') end
+    end
+end)
 box.cfg{work_dir = work, memtx_use_mvcc_engine = true, memtx_memory = 128 * 1048576,
     vinyl_memory = 32 * 1048576, vinyl_cache = 0, wal_mode = 'fsync', checkpoint_interval = 0,
     txn_isolation = 'read-confirmed', election_mode = 'off', replication_synchro_quorum = 1,
     replication_synchro_timeout = 5, log_level = 3}
+boot_phase = 'promote'
 box.ctl.promote()
+boot_phase = 'require'
 local tarn = require('tarn')
 tarn.lazy.paused = true
+boot_phase = 'init'
 tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields = true, check_locks = true,
     recovery_after = 1000000, native = native and native ~= '0' and native or false}
+boot_phase = 'schema'
 local function ok(r) assert(type(r) == 'table' and r[1] == 'ok', json.encode(r)); return r end
 local function wait(label, fn)
     local deadline = fiber.clock() + 8
@@ -42,6 +63,7 @@ if native and native ~= '0' then
 else assert(tarn.cfg.native == false and tarn_info().native == false) end
 print('IDENTITY ' .. json.encode{version = box.info.version, native = tarn_info().native,
     sync = tarn.cfg.sync, wal = box.cfg.wal_mode, source_engine = source_engine, scenario = scenario, stage = stage})
+boot_phase = 'scenario'
 local name, old_id, new_id, count = 'test.engine_restart', 90400, 90401, 300
 local target_engine = source_engine == 'memtx' and 'vinyl' or 'memtx'
 local owner = 'engine-restart-' .. scenario .. '-' .. source_engine
