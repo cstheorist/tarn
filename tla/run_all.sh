@@ -13,6 +13,7 @@ for cfg in "$@"; do
     LazyBarrier|Bug_LazyBarrier*) module=LazyBarrier.tla ;;
     LazyHandoff|LazyHandoffLive|Bug_LazyHandoff*) module=LazyHandoff.tla ;;
     LazyMeter|Bug_LazyMeter*) module=LazyMeter.tla ;;
+    LazyTargetConfirm|Bug_UnconfirmedAck) module=LazyTargetConfirm.tla ;;
     GroupedRead|Bug_GroupedReadSeparateSnapshots) module=GroupedRead.tla ;;
     GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;

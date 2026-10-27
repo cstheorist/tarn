@@ -564,8 +564,9 @@ that a particular `box.info` field establishes that cut. It proves no
 delivery or recovery liveness. In particular, unknown admission, unresolved
 old effects, an unresolved queue, stale snapshot installation and late
 callbacks have independent reachable controls. The default list now has
-118 configurations (108 plus these 10); explicit arguments still override
-it. To run only this refinement:
+118 configurations before the target-confirmation refinement below (108
+plus these 10); explicit arguments still override it. To run only this
+refinement:
 
 ```sh
 tla/check.sh LazyMeter Bug_LazyMeter{NoPrecharge,EarlyRelease,RefundUncertain,MutateUnknown,NoDrain,NoQueueCut,StaleInstall,StaleCallback,ApplyCap}
@@ -583,6 +584,52 @@ tla/check.sh LazyMeter Bug_LazyMeter{NoPrecharge,EarlyRelease,RefundUncertain,Mu
 | `Bug_LazyMeterStaleInstall` | 25 | 5 | violates `ReadyEpochCurrent` |
 | `Bug_LazyMeterStaleCallback` | 1,035 | 10 | violates `ReadyConservative` |
 | `Bug_LazyMeterApplyCap` | 90 | 7 | violates `NoCapacityRefusal` |
+
+### Confirmed target acknowledgement
+
+`LazyTargetConfirm.tla` refines the existing durable-target acknowledgement
+premise. One committed source assignment is retained after the first
+target CALL loses its receipt. That native target transaction may still be
+waiting for its synchronous quorum when the source retries the **same**
+assignment. Observing the first transaction's unconfirmed marker and doing
+no writes does not justify acknowledging the duplicate: the first
+transaction can still roll back. The source could otherwise delete its
+only assignment and leave no durable target effect.
+
+An exact Tarantool 3.9.0 primitive witness, with MVCC and fsync WAL, reached
+this failure on both memtx and vinyl: the duplicate read-committed
+transaction observed the pending sequence, performed no writes and
+acknowledged while the sync queue still contained the first transaction.
+That transaction later timed out with error 216 and rolled back. The
+read-confirmed control returned conflict 97 while the first was pending,
+so the source retained its assignment for a later idempotent retry.
+The implementation must use confirmed target proofs, including no-op
+duplicate, floor and retirement paths; a write-mode transaction alone is
+not evidence that every read it uses for an ACK is confirmed
+([native visibility levels](https://www.tarantool.io/en/doc/latest/platform/atomic/transaction_model/)).
+
+The bounded model separates the first pending native effect, duplicate
+reply, source deletion and first commit/rollback. Its proof tokens abstract
+a committed marker or retirement; the primitive witness exercises the
+marker case. The broken control reaches pending marker, duplicate ACK,
+source deletion, then native rollback and violates
+`DrainedObligationSafe`. Existing `LazyIndex` retains the broader
+version/floor/delivery contract; this refinement does not prove native
+batch parsing, replication, or all transaction scheduling. The core and
+previous refinement modules/configurations are unchanged.
+
+```sh
+tla/check.sh LazyTargetConfirm Bug_UnconfirmedAck
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyTargetConfirm` | 19 | 5 | passes |
+| `Bug_UnconfirmedAck` | 17 | 5 | violates `DrainedObligationSafe` |
+
+The default list now contains 120 configurations, including 82 expected
+broken/trade-off outcomes. All 132 generated configurations reproduce from
+`gen_cfgs.sh`; explicit check arguments still override the default list.
 
 ## Verus proofs
 

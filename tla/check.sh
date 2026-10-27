@@ -35,6 +35,7 @@ Bug_LazyIndexStaleOverwrite"
 DEFAULT="$DEFAULT LazyMeter Bug_LazyMeterNoPrecharge Bug_LazyMeterEarlyRelease
 Bug_LazyMeterRefundUncertain Bug_LazyMeterMutateUnknown Bug_LazyMeterNoDrain
 Bug_LazyMeterNoQueueCut Bug_LazyMeterStaleInstall Bug_LazyMeterStaleCallback Bug_LazyMeterApplyCap"
+DEFAULT="$DEFAULT LazyTargetConfirm Bug_UnconfirmedAck"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do
