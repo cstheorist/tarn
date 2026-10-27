@@ -20,8 +20,13 @@ local function wait(label, fn)
     error(label .. ' timed out')
 end
 wait('schema/native', function()
-    return box.space._tarn_meta ~= nil and
-        (not native or native == '0' or (tarn_info().native or {}).ready == 1)
+    -- With sync=true init finishes its schema asynchronously. Do not call
+    -- tarn_info while only the first metadata space has been created.
+    for _, name in ipairs({'_tarn_meta', '_tarn_buckets', '_tarn_catalog', '_tarn_locks', '_tarn_part', '_tarn_txn'}) do
+        if box.space[name] == nil or box.space[name].index[0] == nil then return false end
+    end
+    if box.space._tarn_part.index.state == nil or box.space._tarn_meta:get{'shard_id'} == nil then return false end
+    return not native or native == '0' or (tarn_info().native or {}).ready == 1
 end)
 if native and native ~= '0' then
     local ffi = require('ffi')
