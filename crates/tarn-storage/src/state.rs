@@ -10,7 +10,7 @@
 use crate::locks;
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 9;
+pub const LAYOUT: u32 = 10;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -117,13 +117,14 @@ pub struct State {
     /// The functions that keep this module's copy of the lock index
     /// (locks.rs), which the Lua module calls with each change of it.
     pub lk_point: unsafe extern "C" fn(u32, u32, *const u8, usize, u8, u8),
-    pub lk_range: extern "C" fn(u32, i32),
+    pub lk_range: unsafe extern "C" fn(u32, u32, *const u8, usize, *const u8, usize, i32),
     pub pl_key: unsafe extern "C" fn(u32, u32, *const u8, usize, i32),
     pub locks_clear: extern "C" fn(u8),
     /// (and those of its check of the copy: cfg.check_locks)
     pub locks_key: unsafe extern "C" fn(u32, u32, *const u8, usize, *mut u32),
     pub locks_index: unsafe extern "C" fn(u32, u32, *mut u32),
     pub locks_sizes: unsafe extern "C" fn(*mut u32),
+    pub locks_range: unsafe extern "C" fn(u32, u32, *const u8, usize, *const u8, usize, *mut u32),
 }
 
 impl Default for State {
@@ -180,6 +181,7 @@ impl State {
             locks_key: locks::locks_key,
             locks_index: locks::locks_index,
             locks_sizes: locks::locks_sizes,
+            locks_range: locks::locks_range,
         }
     }
 
@@ -327,7 +329,8 @@ mod tests {
         assert_eq!(offset_of!(State, locks_key), 272);
         assert_eq!(offset_of!(State, locks_index), 280);
         assert_eq!(offset_of!(State, locks_sizes), 288);
-        assert_eq!(std::mem::size_of::<State>(), 296);
+        assert_eq!(offset_of!(State, locks_range), 296);
+        assert_eq!(std::mem::size_of::<State>(), 304);
     }
 
     #[test]

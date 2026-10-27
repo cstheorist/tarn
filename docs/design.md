@@ -536,7 +536,7 @@ when anything could make the Lua procedure wait, refuse or do more:
 
 * a table that is vinyl; a write that meets a lock of a prepared
   transaction or a row lock (READ COMMITTED: `tarn_autocommit` waits for
-  one on what it writes), or a table with a range lock (below);
+  one on what it writes; below);
 * a definition fence above the one the writes were made with
   (`tarn_autocommit` refuses them with 1412), a bucket of the writes, or of
   the rows they write, that does not take writes here (being sent, moved
@@ -678,37 +678,48 @@ when a transaction's point lock on a key goes from one mode to another
 released, when a row lock is taken or released, and when the index is made
 again. The copy counts, for each key, the transactions that hold a lock on
 it in each mode and those with a row lock on it; for each index, the W
-locks on its keys; for each table, the range locks on it. It does not
-record which transactions: the native procedures serve only transactions
-that hold no lock on the shard (a one-shard transaction never prepared
-there, and one with row locks goes to Lua), so every lock they meet is
-another transaction's. They hand back:
+locks on its keys and the keys they are on, and its range locks by their
+bounds. It does not record which transactions: the native procedures
+serve only transactions that hold no lock on the shard (a one-shard
+transaction never prepared there, and one with row locks goes to Lua), so
+every lock they meet is another transaction's. They hand back:
 
 * a read with the lock check, when a W lock is on its key (a point read by
-  the whole key of a unique index), or on any key of its index (any other
-  read);
+  the whole key of a unique index), or on a key of its index in the range
+  it covers (any other read): from its key to its end key, or to its last
+  row when its limit ended it sooner;
 * a commit or a validation, when a W lock is on a key of its read set, or
-  on any key of an index it read a range of;
+  on a key of its index in a range it read;
 * a write, when there is a lock of any mode on the primary key of its row,
   an R lock on a key the row had or takes in another index, a lock of any
   mode on a key the new row takes in a unique index (one without a NULL
-  part: a NULL takes no key), a row lock on its primary key or on a key the
-  new row takes in a unique index, or a range lock on its table.
+  part: a NULL takes no key), a range lock whose range holds the primary
+  key or one of those keys, or a row lock on its primary key or on a key
+  the new row takes in a unique index.
 
 These are the checks of `select_locked`, `reads_w_locked`,
 `write_conflict` and `write_plocked`, on the same keys, so the model does
-not change; where they are coarser (no key is compared with a range yet)
-they hand back more. A key is looked up by the bytes the Lua module gives
-it, the MessagePack of `msgpack.encode`: the native module encodes the keys
-it reads, and those of the rows it writes, as the Lua serializer would (a
-key with a decimal goes to Lua). The counts change, and the checks read
-them, through `tarn_verified::locks`, which proves both (§3): the counts
-stay the census of the locks through every change, and a key that a check
-passes has no lock that the Lua check would find. That the Lua module
-copies every change is tested instead: with `TARN_CHECK_LOCKS` it compares
-the copy with the index after each change (the key's counts) and after a
-transaction's locks are released (all of it), and logs a difference; the
-storage tests and the SQL suites in CI run with it, and fail on one.
+not change; where they are coarser they hand back more: they take every
+bound of a range as included, and a key they cannot compare with a range
+(a key or a bound that is not one of the index, or the start of one) as in
+it. A key is looked up by the bytes the Lua module gives it, the
+MessagePack of `msgpack.encode`: the native module encodes the keys it
+reads, and those of the rows it writes, as the Lua serializer would (a key
+with a decimal goes to Lua). A key is compared with a bound as `in_range`
+compares them (`key_def:compare_keys`, on the parts the bound has), by
+Tarantool's comparator of the index's parts, collations included: the
+module API compares tuples with keys, so the key becomes a tuple of its
+parts, which a key definition of the index's parts at fields 1, 2 and so
+on compares with the bound. The counts change, and the checks read them, through
+`tarn_verified::locks`, which proves (§3) that the counts stay the census
+of the locks through every change, that a key a check passes has no lock
+that the Lua check would find, and that a key the comparisons put outside a
+range is outside it for `in_range`, whichever bounds that includes. That
+the Lua module copies every change is tested instead: with
+`TARN_CHECK_LOCKS` it compares the copy with the index after each change
+(the key's counts, the index's ranges) and after a transaction's locks are
+released (all of it), and logs a difference; the storage tests and the SQL
+suites in CI run with it, and fail on one.
 
 On two shards under `oltp_write_only` (16 threads, three runs of each
 build, `bench/sysbench.sh`), the native procedure handed 93% of the
@@ -718,6 +729,25 @@ held locks on the same tables; with the checks by key, 0.14% (26 of
 (medians). The transactions of `oltp_read_write` span both shards: they
 prepare in Lua whatever the native checks, and their throughput did not
 change.
+
+Ranges were compared with keys in a second step. Before, a one-shard write
+went to Lua whenever a prepared transaction held a range lock on its
+table, and a validation whenever one held a W lock on an index it read a
+range of. On two shards, two sysbench workloads ran at once on the same 4
+tables of 20,000 rows (8 threads each; three runs of each build, medians).
+The first workload's transactions span both shards and hold those locks
+while they prepare:
+
+| Workloads at once | handed to Lua, before → after | transactions per second, before → after |
+|---|---|---|
+| `oltp_read_write` + `oltp_update_non_index` | autocommit writes: 36.9% → 0.4% | 195 → 194; 3,371 → 4,317 |
+| `oltp_write_only` + `oltp_read_only` | validations: 80.9% → 1.7% | 672 → 671; 222 → 236 |
+| `oltp_write_only` + `oltp_read_only --skip_trx` | validations: 53.2% → 0.4% | 733 → 693; 216 → 232 |
+
+With `--skip_trx` each read of `oltp_read_only` is its own transaction,
+and one that reads a range on both shards is validated on each. There the
+writers lost what the readers gained: the queries per second of both
+together did not change (7,425 and 7,429).
 
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
@@ -1737,7 +1767,7 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **130 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **131 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
@@ -1801,9 +1831,13 @@ native module as plain Rust. What is proven:
   that `secondary_free` passes no R lock (nor any lock when the new row
   claims it), an index that `index_free` passes no W lock on any key, and a
   key that `row_free` passes no row lock: so none that the Lua module's
-  checks find, whoever reads or writes. That the Lua module tells the copy
-  of every change, and that a key is looked up by the bytes its `kbin`
-  gives, are tested, not proven.
+  checks find, whoever reads or writes. `within` decides from the
+  comparisons of a key with the bounds of a range whether the key may lie
+  in it, taking the bounds as included: it is proven to find the key there
+  wherever the Lua module's `in_range` does, whichever bounds that includes.
+  That the Lua module tells the copy of every change, that a key is looked
+  up by the bytes its `kbin` gives, and that Tarantool's comparator gives
+  the comparisons `compare_keys` gives, are tested, not proven.
 * **Global index maintenance** (`uix.rs`, §1.4). `index_delta` decides
   which entry writes a row write makes. It is proven that applying them to
   an index that holds the row's old entry leaves the other rows' entries

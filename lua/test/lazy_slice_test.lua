@@ -189,7 +189,7 @@ if native ~= nil and native ~= '0' then
           and box.space[sid]:len() == before and #pending() == 0, nr)
     local ffi = require('ffi')
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT}))
-    check('the native ABI has the integrated layout and offsets', ffi.sizeof('struct tarn_ns') == 296
+    check('the native ABI has the integrated layout and offsets', ffi.sizeof('struct tarn_ns') == 304
           and ffi.offsetof('struct tarn_ns', 'pl_spaces') == 160
           and ffi.offsetof('struct tarn_ns', 'held') == 168
           and ffi.offsetof('struct tarn_ns', 'scratch') == 172
@@ -199,7 +199,8 @@ if native ~= nil and native ~= '0' then
           and ffi.offsetof('struct tarn_ns', 'capture_stale') == 200
           and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208
           and ffi.offsetof('struct tarn_ns', 'lk_point') == 240
-          and ffi.offsetof('struct tarn_ns', 'locks_sizes') == 288)
+          and ffi.offsetof('struct tarn_ns', 'locks_sizes') == 288
+          and ffi.offsetof('struct tarn_ns', 'locks_range') == 296)
     local saved = ns.write_excluded
     ns.write_excluded = nil
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', sid, {9, 'null-array', 1}}}, {wb = {1}}})

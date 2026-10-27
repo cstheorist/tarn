@@ -37,6 +37,20 @@ pub use tarn_verified::locks::{NONE, R, W};
 
 const ZERO: Counts = Counts { r: 0, w: 0 };
 
+/// A range lock of an index: its bounds as the Lua module encodes them
+/// (`msgpack.encode` of a key; None: no bound), and how many transactions
+/// hold one with these bounds. (Whether a bound is included is not kept:
+/// the checks take every bound as included, which finds a lock wherever
+/// the Lua checks do.)
+struct RangeLock {
+    lo: Option<Box<[u8]>>,
+    hi: Option<Box<[u8]>>,
+    n: u64,
+}
+
+/// Keys of an index (`kbin`), each with a count.
+type Keys = HashMap<Box<[u8]>, u64>;
+
 #[derive(Default)]
 struct Copy {
     /// LK: for each key, the transactions with an R lock on it, and with a
@@ -44,8 +58,12 @@ struct Copy {
     points: HashMap<Box<[u8]>, Counts>,
     /// The W point locks on each index, by (space, index).
     w_index: HashMap<(u32, u32), u64>,
+    /// The keys of each index with W point locks on them, and how many.
+    w_keys: HashMap<(u32, u32), Keys>,
     /// RL: the range locks on each space (on any of its indexes).
     ranges: HashMap<u32, u64>,
+    /// RL: the range locks of each index.
+    rlocks: HashMap<(u32, u32), Vec<RangeLock>>,
     /// PL: for each key, the transactions that hold a row lock on it.
     rows: HashMap<Box<[u8]>, u64>,
     /// (the key being looked up)
@@ -94,6 +112,45 @@ impl Copy {
         set_key(&mut self.points, &self.buf, c, c == ZERO);
         let n = self.w_index.get(&(sid, iid)).copied().unwrap_or(0);
         set(&mut self.w_index, (sid, iid), v::step_w(n, from, to));
+        if from == W || to == W {
+            let keys = self.w_keys.entry((sid, iid)).or_default();
+            set_key(keys, kb, c.w, c.w == 0);
+            if keys.is_empty() {
+                self.w_keys.remove(&(sid, iid));
+            }
+        }
+    }
+
+    fn range(&mut self, sid: u32, iid: u32, lo: Option<&[u8]>, hi: Option<&[u8]>, d: i32) {
+        let n = self
+            .ranges
+            .get(&sid)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add_signed(d as i64);
+        set(&mut self.ranges, sid, n);
+        let locks = self.rlocks.entry((sid, iid)).or_default();
+        match locks
+            .iter()
+            .position(|r| r.lo.as_deref() == lo && r.hi.as_deref() == hi)
+        {
+            Some(i) => {
+                let r = &mut locks[i];
+                r.n = r.n.saturating_add_signed(d as i64);
+                if r.n == 0 {
+                    locks.swap_remove(i);
+                }
+            }
+            None if d > 0 => locks.push(RangeLock {
+                lo: lo.map(Into::into),
+                hi: hi.map(Into::into),
+                n: d as u64,
+            }),
+            None => {}
+        }
+        if locks.is_empty() {
+            self.rlocks.remove(&(sid, iid));
+        }
     }
 
     fn row(&mut self, sid: u32, iid: u32, kb: &[u8], d: i32) {
@@ -124,13 +181,27 @@ pub unsafe extern "C" fn lk_point(sid: u32, iid: u32, kb: *const u8, len: usize,
     COPY.with(|c| c.borrow_mut().point(sid, iid, kb, from, to));
 }
 
-/// `d` more range locks on space `sid` (lk_range, lk_release).
-pub extern "C" fn lk_range(sid: u32, d: i32) {
-    COPY.with(|c| {
-        let mut c = c.borrow_mut();
-        let n = c.ranges.get(&sid).copied().unwrap_or(0).saturating_add_signed(d as i64);
-        set(&mut c.ranges, sid, n);
-    });
+/// A bound passed by the Lua module: `len` bytes at `b`, or none (null).
+unsafe fn bound<'a>(b: *const u8, len: usize) -> Option<&'a [u8]> {
+    (!b.is_null()).then(|| std::slice::from_raw_parts(b, len))
+}
+
+/// `d` more range locks on index `iid` of space `sid`, with these bounds
+/// (lk_range, lk_release).
+///
+/// # Safety
+/// `lo` (null: none) points to `lo_len` bytes, `hi` to `hi_len`.
+pub unsafe extern "C" fn lk_range(
+    sid: u32,
+    iid: u32,
+    lo: *const u8,
+    lo_len: usize,
+    hi: *const u8,
+    hi_len: usize,
+    d: i32,
+) {
+    let (lo, hi) = (bound(lo, lo_len), bound(hi, hi_len));
+    COPY.with(|c| c.borrow_mut().range(sid, iid, lo, hi, d));
 }
 
 /// `d` more transactions hold a row lock on key `kb` of index `iid` of space
@@ -151,7 +222,9 @@ pub extern "C" fn locks_clear(which: u8) {
         if which & 1 != 0 {
             c.points.clear();
             c.w_index.clear();
+            c.w_keys.clear();
             c.ranges.clear();
+            c.rlocks.clear();
         }
         if which & 2 != 0 {
             c.rows.clear();
@@ -178,28 +251,60 @@ fn count(n: u64) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// (The same.) The W point locks on index `iid` of space `sid`, and the range
-/// locks on the space: `out[0..2]`.
-///
-/// # Safety
-/// `out` points to 2 counts.
-pub unsafe extern "C" fn locks_index(sid: u32, iid: u32, out: *mut u32) {
-    let (w, r) = COPY.with(|c| {
-        let c = c.borrow();
-        (
-            c.w_index.get(&(sid, iid)).copied().unwrap_or(0),
-            c.ranges.get(&sid).copied().unwrap_or(0),
-        )
-    });
-    *out = count(w);
-    *out.add(1) = count(r);
-}
-
-/// (The same.) How many keys have point locks, keys have row locks, indexes
-/// have W point locks and spaces have range locks: `out[0..4]`.
+/// (The same.) The W point locks on index `iid` of space `sid`, the range
+/// locks on the space, the keys of the index with W locks, and the bounds of
+/// the index's range locks: `out[0..4]`.
 ///
 /// # Safety
 /// `out` points to 4 counts.
+pub unsafe extern "C" fn locks_index(sid: u32, iid: u32, out: *mut u32) {
+    let n = COPY.with(|c| {
+        let c = c.borrow();
+        [
+            c.w_index.get(&(sid, iid)).copied().unwrap_or(0),
+            c.ranges.get(&sid).copied().unwrap_or(0),
+            c.w_keys.get(&(sid, iid)).map_or(0, |k| k.len() as u64),
+            c.rlocks.get(&(sid, iid)).map_or(0, |r| r.len() as u64),
+        ]
+    });
+    for (i, n) in n.into_iter().enumerate() {
+        *out.add(i) = count(n);
+    }
+}
+
+/// (The same.) The range locks on index `iid` of space `sid` with these
+/// bounds, and how many bounds the index's range locks have: `out[0..2]`.
+///
+/// # Safety
+/// As for `lk_range`; `out` points to 2 counts.
+pub unsafe extern "C" fn locks_range(
+    sid: u32,
+    iid: u32,
+    lo: *const u8,
+    lo_len: usize,
+    hi: *const u8,
+    hi_len: usize,
+    out: *mut u32,
+) {
+    let (lo, hi) = (bound(lo, lo_len), bound(hi, hi_len));
+    let (n, bounds) = COPY.with(|c| {
+        let c = c.borrow();
+        let locks = c.rlocks.get(&(sid, iid));
+        let n = locks
+            .and_then(|l| l.iter().find(|r| r.lo.as_deref() == lo && r.hi.as_deref() == hi))
+            .map_or(0, |r| r.n);
+        (n, locks.map_or(0, |l| l.len() as u64))
+    });
+    *out = count(n);
+    *out.add(1) = count(bounds);
+}
+
+/// (The same.) How many keys have point locks, keys have row locks, indexes
+/// have W point locks, spaces have range locks, indexes have W-locked keys
+/// and indexes have range locks: `out[0..6]`.
+///
+/// # Safety
+/// `out` points to 6 counts.
 pub unsafe extern "C" fn locks_sizes(out: *mut u32) {
     COPY.with(|c| {
         let c = c.borrow();
@@ -207,6 +312,8 @@ pub unsafe extern "C" fn locks_sizes(out: *mut u32) {
         *out.add(1) = count(c.rows.len() as u64);
         *out.add(2) = count(c.w_index.len() as u64);
         *out.add(3) = count(c.ranges.len() as u64);
+        *out.add(4) = count(c.w_keys.len() as u64);
+        *out.add(5) = count(c.rlocks.len() as u64);
     });
 }
 
@@ -227,6 +334,33 @@ pub fn w_on_index(sid: u32, iid: u32) -> bool {
 /// Whether a transaction holds a range lock on space `sid`.
 pub fn ranges_on(sid: u32) -> bool {
     COPY.with(|c| c.borrow().ranges.contains_key(&sid))
+}
+
+/// Whether some key of index `iid` of space `sid` with a W lock on it is one
+/// that `hit` finds (it says whether a key lies in the range read).
+pub fn w_key_hit(sid: u32, iid: u32, mut hit: impl FnMut(&[u8]) -> bool) -> bool {
+    COPY.with(|c| {
+        let c = c.borrow();
+        c.w_keys
+            .get(&(sid, iid))
+            .is_some_and(|keys| keys.keys().any(|k| hit(k)))
+    })
+}
+
+/// Whether some range lock of index `iid` of space `sid` is one that `hit`
+/// finds (it says whether a key written lies between the bounds).
+pub fn range_hit(sid: u32, iid: u32, mut hit: impl FnMut(Option<&[u8]>, Option<&[u8]>) -> bool) -> bool {
+    COPY.with(|c| {
+        let c = c.borrow();
+        c.rlocks
+            .get(&(sid, iid))
+            .is_some_and(|locks| locks.iter().any(|r| hit(r.lo.as_deref(), r.hi.as_deref())))
+    })
+}
+
+/// Whether index `iid` of space `sid` has range locks.
+pub fn ranges_on_index(sid: u32, iid: u32) -> bool {
+    COPY.with(|c| c.borrow().rlocks.contains_key(&(sid, iid)))
 }
 
 /// Whether a transaction holds a row lock on key `kb` of index `iid` of
@@ -312,26 +446,30 @@ pub struct KeyIndex {
     pub parts: Vec<(u32, bool)>,
 }
 
-/// Whether a read with the lock check (tarn_select's, TarnCommit!
-/// SnapshotRead) covers no W lock of a prepared transaction, as
-/// select_locked finds: a point read (`point`: a full key of a unique index,
-/// by EQ or REQ) none on its key, another read none on the index (their keys
-/// are not compared with the range here).
-pub fn read_free(sid: u32, iid: u32, key: &[u8], point: bool) -> bool {
-    if point {
-        lock_key(key).is_some_and(|k| v::read_free(self::point(sid, iid, &k)))
-    } else {
-        !w_on_index(sid, iid)
-    }
+/// Whether a point read (of a whole key of a unique index, by a read with
+/// the lock check; or a point of a read set) meets no W lock of a prepared
+/// transaction on its key (point_w_locked; TarnCommit!SnapshotRead,
+/// readsOK).
+pub fn point_read_free(sid: u32, iid: u32, key: &[u8]) -> bool {
+    lock_key(key).is_some_and(|k| v::read_free(self::point(sid, iid, &k)))
 }
 
-/// Whether the read of a read set (`key`: a point's; None: a range) has no
-/// W lock of a prepared transaction on it, as reads_w_locked finds.
-pub fn read_set_free(sid: u32, iid: u32, key: Option<&[u8]>) -> bool {
-    match key {
-        Some(k) => read_free(sid, iid, k, true),
-        None => !w_on_index(sid, iid),
-    }
+/// Whether a read of a range of index `iid` of space `sid` meets no W lock
+/// of a prepared transaction on a key in it (range_w_locked): none on the
+/// index, or none on a key `in_range` places in the range (it says whether
+/// a key may lie in it).
+pub fn range_free(sid: u32, iid: u32, in_range: &mut dyn FnMut(&[u8]) -> bool) -> bool {
+    !w_on_index(sid, iid) || !w_key_hit(sid, iid, |k| in_range(k))
+}
+
+/// How a key that a write gives an index compares with the bounds of the
+/// index's range locks: `key` readies key `k` of index `iid` (false: it is
+/// not compared, and may lie in any range), then `within` says whether it
+/// may lie between two bounds (None: no bound; false only when it is known
+/// to lie outside them).
+pub trait Bounds {
+    fn key(&mut self, iid: u32, k: &[u8]) -> bool;
+    fn within(&mut self, lo: Option<&[u8]>, hi: Option<&[u8]>) -> bool;
 }
 
 /// Whether a write meets no lock, as write_conflict finds (TarnCommit:
@@ -343,11 +481,12 @@ pub fn read_set_free(sid: u32, iid: u32, key: Option<&[u8]>) -> bool {
 /// transaction:
 /// - no row lock on the primary key, nor on a key a unique index takes from
 ///   the new row (write_plocked);
-/// - no range lock on the table (their ranges are not compared here);
-/// - no point lock on the primary key;
+/// - no point lock on the primary key, nor a range lock whose range holds it
+///   (`bounds` compares);
 /// - no R lock on the keys the row had or takes in the other indexes, nor any
 ///   lock on a key of a unique index that the new row claims (none of its
-///   parts NULL).
+///   parts NULL), nor a range lock whose range holds one of those keys.
+#[allow(clippy::too_many_arguments)]
 pub fn write_free(
     sid: u32,
     pk: &[u8],
@@ -356,6 +495,7 @@ pub fn write_free(
     indexes: &[KeyIndex],
     locked: bool,
     plocked: bool,
+    bounds: &mut dyn Bounds,
 ) -> bool {
     let secondary = || indexes.iter().filter(|ix| ix.iid != 0);
     if plocked {
@@ -374,7 +514,11 @@ pub fn write_free(
     if !locked {
         return true;
     }
-    if ranges_on(sid) || !v::primary_free(self::point(sid, 0, pk)) {
+    // (range_locked: a range lock of the index whose range holds the key)
+    let mut ranged = |iid: u32, k: &[u8]| {
+        ranges_on_index(sid, iid) && (!bounds.key(iid, k) || range_hit(sid, iid, |lo, hi| bounds.within(lo, hi)))
+    };
+    if !v::primary_free(self::point(sid, 0, pk)) || ranged(0, pk) {
         return false;
     }
     for (t, new) in [(old, false), (new, true)] {
@@ -384,7 +528,7 @@ pub fn write_free(
                 return false;
             };
             let claims = new && ix.unique && !has_null(&k);
-            if !v::secondary_free(self::point(sid, ix.iid, &k), claims) {
+            if !v::secondary_free(self::point(sid, ix.iid, &k), claims) || ranged(ix.iid, &k) {
                 return false;
             }
         }
@@ -396,10 +540,47 @@ pub fn write_free(
 mod tests {
     use super::*;
 
-    fn sizes() -> [u32; 4] {
-        let mut out = [9u32; 4];
+    fn sizes() -> [u32; 6] {
+        let mut out = [9u32; 6];
         unsafe { locks_sizes(out.as_mut_ptr()) };
         out
+    }
+
+    fn range(iid: u32, lo: Option<&[u8]>, hi: Option<&[u8]>, d: i32) {
+        let (l, ll) = lo.map_or((std::ptr::null(), 0), |b| (b.as_ptr(), b.len()));
+        let (h, hl) = hi.map_or((std::ptr::null(), 0), |b| (b.as_ptr(), b.len()));
+        unsafe { lk_range(512, iid, l, ll, h, hl, d) };
+    }
+
+    /// (keys of one-byte integers, compared as their bytes)
+    fn byte_order(k: &[u8], lo: Option<&[u8]>, hi: Option<&[u8]>) -> bool {
+        lo.is_none_or(|b| k >= b) && hi.is_none_or(|b| k <= b)
+    }
+
+    /// Bounds that compare keys as `byte_order` does.
+    #[derive(Default)]
+    struct ByteOrder(Vec<u8>);
+
+    impl Bounds for ByteOrder {
+        fn key(&mut self, _: u32, k: &[u8]) -> bool {
+            self.0 = k.to_vec();
+            true
+        }
+        fn within(&mut self, lo: Option<&[u8]>, hi: Option<&[u8]>) -> bool {
+            byte_order(&self.0, lo, hi)
+        }
+    }
+
+    /// Bounds that cannot tell: every key may lie in every range.
+    struct Unknown;
+
+    impl Bounds for Unknown {
+        fn key(&mut self, _: u32, _: &[u8]) -> bool {
+            false
+        }
+        fn within(&mut self, _: Option<&[u8]>, _: Option<&[u8]>) -> bool {
+            unreachable!("not readied")
+        }
     }
 
     #[test]
@@ -422,32 +603,54 @@ mod tests {
         p(W, NONE);
         assert_eq!(point(512, 1, k), Counts { r: 1, w: 0 });
         assert!(!w_on_index(512, 1));
-        assert_eq!(sizes(), [1, 0, 0, 0]);
+        assert_eq!(sizes(), [1, 0, 0, 0, 0, 0]);
         p(R, NONE);
         assert_eq!(point(512, 1, k), Counts { r: 0, w: 0 });
         assert_eq!(point(512, 1, b"\x91\x02"), Counts { r: 0, w: 0 });
-        assert_eq!(sizes(), [0, 0, 0, 0]);
+        assert_eq!(sizes(), [0, 0, 0, 0, 0, 0]);
         // the same key of another index, or space
         p(NONE, W);
         assert_eq!(point(512, 2, k), Counts { r: 0, w: 0 });
         assert_eq!(point(513, 1, k), Counts { r: 0, w: 0 });
         locks_clear(1);
         assert_eq!(point(512, 1, k), Counts { r: 0, w: 0 });
-        assert_eq!(sizes(), [0, 0, 0, 0]);
+        assert_eq!(sizes(), [0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
     fn counts_ranges_and_row_locks() {
         locks_clear(3);
-        lk_range(512, 2);
-        assert!(ranges_on(512) && !ranges_on(513));
-        lk_range(512, -1);
-        assert!(ranges_on(512));
+        let (a, b) = (&[0x91, 0x01][..], &[0x91, 0x05][..]);
+        range(1, Some(a), Some(b), 2);
+        range(1, None, Some(b), 1);
+        assert!(ranges_on(512) && !ranges_on(513) && ranges_on_index(512, 1) && !ranges_on_index(512, 0));
+        let mut out = [9u32; 4];
+        unsafe { locks_index(512, 1, out.as_mut_ptr()) };
+        assert_eq!(
+            out,
+            [0, 3, 0, 2],
+            "3 range locks on the table, of 2 bounds on its index"
+        );
         let mut out = [9u32; 2];
-        unsafe { locks_index(512, 0, out.as_mut_ptr()) };
-        assert_eq!(out, [0, 1]);
-        lk_range(512, -1);
-        assert!(!ranges_on(512));
+        unsafe { locks_range(512, 1, a.as_ptr(), a.len(), b.as_ptr(), b.len(), out.as_mut_ptr()) };
+        assert_eq!(out, [2, 2]);
+        assert_eq!(sizes(), [0, 0, 0, 1, 0, 1]);
+        // the bounds of each, to compare a key with
+        let mut seen = Vec::new();
+        assert!(!range_hit(512, 1, |lo, hi| {
+            seen.push((lo.map(|x| x.to_vec()), hi.map(|x| x.to_vec())));
+            false
+        }));
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![(None, Some(b.to_vec())), (Some(a.to_vec()), Some(b.to_vec()))]
+        );
+        assert!(range_hit(512, 1, |lo, hi| byte_order(&[0x91, 0x03], lo, hi)));
+        assert!(!range_hit(512, 1, |lo, hi| byte_order(&[0x91, 0x07], lo, hi)));
+        range(1, Some(a), Some(b), -2);
+        range(1, None, Some(b), -1);
+        assert!(!ranges_on(512) && !ranges_on_index(512, 1));
         let k = b"\x91\xa1x";
         let row = |d| unsafe { pl_key(512, 0, k.as_ptr(), k.len(), d) };
         row(1);
@@ -458,15 +661,17 @@ mod tests {
         assert_eq!(out, [0, 0, 2]);
         row(-1);
         assert!(row_locked(512, 0, k));
-        assert_eq!(sizes(), [0, 1, 0, 0]);
+        assert_eq!(sizes(), [0, 1, 0, 0, 0, 0]);
         row(-1);
         assert!(!row_locked(512, 0, k));
         row(1);
+        range(0, None, None, 1);
         locks_clear(1);
-        assert!(row_locked(512, 0, k), "the point locks alone");
+        assert!(!ranges_on(512) && !ranges_on_index(512, 0));
+        assert!(row_locked(512, 0, k), "the point and range locks alone");
         locks_clear(2);
         assert!(!row_locked(512, 0, k));
-        assert_eq!(sizes(), [0, 0, 0, 0]);
+        assert_eq!(sizes(), [0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -514,7 +719,18 @@ mod tests {
         let (old, new) = ([0x93, 0x01, 0x05, 0x07], [0x93, 0x01, 0x06, 0x08]);
         let (old, new) = (fields_of(&old).unwrap(), fields_of(&new).unwrap());
         let pk = [0x91, 0x01];
-        let write = || write_free(512, &pk, Some(&old), Some(&new), &indexes, true, true);
+        let write = || {
+            write_free(
+                512,
+                &pk,
+                Some(&old),
+                Some(&new),
+                &indexes,
+                true,
+                true,
+                &mut ByteOrder::default(),
+            )
+        };
         let p = |iid, k: &[u8], from, to| unsafe { lk_point(512, iid, k.as_ptr(), k.len(), from, to) };
         assert!(write(), "no lock");
         // the primary key, locked in either mode
@@ -541,27 +757,70 @@ mod tests {
         let new_null = fields_of(&[0x93, 0x01, 0x06, 0xc0]).unwrap();
         p(2, &[0x91, 0xc0], NONE, W);
         assert!(
-            write_free(512, &pk, Some(&old), Some(&new_null), &indexes, true, true),
+            write_free(
+                512,
+                &pk,
+                Some(&old),
+                Some(&new_null),
+                &indexes,
+                true,
+                true,
+                &mut Unknown
+            ),
             "a NULL claims nothing"
         );
         p(2, &[0x91, 0xc0], W, R);
-        assert!(!write_free(512, &pk, Some(&old), Some(&new_null), &indexes, true, true));
+        assert!(!write_free(
+            512,
+            &pk,
+            Some(&old),
+            Some(&new_null),
+            &indexes,
+            true,
+            true,
+            &mut Unknown
+        ));
         locks_clear(1);
         assert!(write());
-        // a range lock on the table
-        lk_range(512, 1);
-        assert!(!write());
+        // range locks: whose range holds the primary key, or a key the row had
+        // or takes in another index
+        let (k1, k5, k6, k9) = ([0x91, 0x01], [0x91, 0x05], [0x91, 0x06], [0x91, 0x09]);
+        for (iid, lo, hi) in [(0, &k1, &k1), (1, &k5, &k5), (1, &k6, &k9), (2, &k6, &k9)] {
+            range(iid, Some(lo), Some(hi), 1);
+            assert!(!write(), "{iid} {lo:x?} {hi:x?}");
+            assert!(
+                write_free(512, &pk, Some(&old), Some(&new), &indexes, false, false, &mut Unknown),
+                "(unless there is none)"
+            );
+            range(iid, Some(lo), Some(hi), -1);
+        }
+        for (iid, lo, hi) in [(0, &k5, &k9), (1, &k9, &k9), (2, &k1, &k5)] {
+            range(iid, Some(lo), Some(hi), 1);
+            assert!(write(), "{iid} {lo:x?} {hi:x?}: another range");
+            range(iid, Some(lo), Some(hi), -1);
+        }
+        range(1, None, Some(&k1), 1);
+        assert!(write(), "a range below the keys");
         assert!(
-            write_free(512, &pk, Some(&old), Some(&new), &indexes, false, false),
-            "(unless there is none)"
+            !write_free(512, &pk, Some(&old), Some(&new), &indexes, true, true, &mut Unknown),
+            "(which a comparison that cannot tell takes to hold them)"
         );
-        lk_range(512, -1);
+        range(1, None, Some(&k1), -1);
         // row locks: on the primary key, or a key a unique index takes
         let row = |iid, k: &[u8], d| unsafe { pl_key(512, iid, k.as_ptr(), k.len(), d) };
         for (iid, k) in [(0, [0x91, 0x01]), (2, [0x91, 0x08])] {
             row(iid, &k, 1);
             assert!(!write());
-            assert!(write_free(512, &pk, Some(&old), Some(&new), &indexes, true, false));
+            assert!(write_free(
+                512,
+                &pk,
+                Some(&old),
+                Some(&new),
+                &indexes,
+                true,
+                false,
+                &mut Unknown
+            ));
             row(iid, &k, -1);
         }
         for (iid, k) in [(1, [0x91, 0x06]), (2, [0x91, 0x07])] {
@@ -571,8 +830,9 @@ mod tests {
         }
         // a delete of a row that is not there: its primary key
         p(0, &pk, NONE, R);
-        assert!(!write_free(512, &pk, None, None, &indexes, true, false));
-        assert!(write_free(512, &[0x91, 0x03], None, None, &indexes, true, false));
+        let any = &mut Unknown;
+        assert!(!write_free(512, &pk, None, None, &indexes, true, false, any));
+        assert!(write_free(512, &[0x91, 0x03], None, None, &indexes, true, false, any));
         // a row without the field of an index: NULL there if it is nullable
         let short = fields_of(&[0x92, 0x03, 0x05]).unwrap();
         assert!(write_free(
@@ -582,7 +842,8 @@ mod tests {
             Some(&short),
             &indexes,
             true,
-            false
+            false,
+            any
         ));
         p(2, &[0x91, 0xc0], NONE, R);
         assert!(!write_free(
@@ -592,11 +853,12 @@ mod tests {
             Some(&short),
             &indexes,
             true,
-            false
+            false,
+            any
         ));
         let shorter = fields_of(&[0x91, 0x03]).unwrap();
         assert!(
-            !write_free(512, &[0x91, 0x03], None, Some(&shorter), &indexes, true, false),
+            !write_free(512, &[0x91, 0x03], None, Some(&shorter), &indexes, true, false, any),
             "else to Lua"
         );
         locks_clear(3);
@@ -607,25 +869,31 @@ mod tests {
         locks_clear(3);
         let k = [0x91, 0x07];
         let p = |iid, from, to| unsafe { lk_point(512, iid, k.as_ptr(), k.len(), from, to) };
-        assert!(read_free(512, 0, &k, true) && read_free(512, 0, &[0x90], false));
+        let in_range = |lo: &'static [u8], hi: &'static [u8]| move |key: &[u8]| byte_order(key, Some(lo), Some(hi));
+        assert!(point_read_free(512, 0, &k) && range_free(512, 0, &mut |_| true));
         p(0, NONE, R);
         assert!(
-            read_free(512, 0, &k, true) && read_free(512, 0, &[0x90], false),
+            point_read_free(512, 0, &k) && range_free(512, 0, &mut |_| true),
             "an R lock"
         );
         p(0, R, W);
-        assert!(!read_free(512, 0, &k, true) && !read_free(512, 0, &[0x91, 0x01], false));
-        assert!(read_free(512, 0, &[0x91, 0x08], true), "another key");
+        assert!(!point_read_free(512, 0, &k) && !range_free(512, 0, &mut in_range(b"\x91\x01", b"\x91\x09")));
+        assert!(point_read_free(512, 0, &[0x91, 0x08]), "another key");
         assert!(
-            read_free(512, 1, &k, true) && read_free(512, 1, &[0x90], false),
+            range_free(512, 0, &mut in_range(b"\x91\x08", b"\x91\x09")),
+            "another range"
+        );
+        assert!(!range_free(512, 0, &mut |_| true), "(a comparison that cannot tell)");
+        assert!(
+            point_read_free(512, 1, &k) && range_free(512, 1, &mut |_| true),
             "another index"
         );
-        assert!(!read_set_free(512, 0, Some(&k)) && !read_set_free(512, 0, None));
-        assert!(read_set_free(512, 0, Some(&[0x91, 0x08])) && read_set_free(512, 1, None));
         // (a key in a longer form than needed)
-        assert!(!read_free(512, 0, &[0x91, 0xcc, 0x07], true));
+        assert!(!point_read_free(512, 0, &[0x91, 0xcc, 0x07]));
         // a key that is not looked up here: to Lua
-        assert!(!read_free(513, 0, &[0x07], true));
+        assert!(!point_read_free(513, 0, &[0x07]));
+        p(0, W, NONE);
+        assert_eq!(sizes(), [0, 0, 0, 0, 0, 0], "no W-locked key left");
         locks_clear(3);
     }
 }

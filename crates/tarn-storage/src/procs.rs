@@ -7,6 +7,7 @@ use crate::mp::{Rd, Wr};
 use crate::select::{self, Page, ITER_EQ, ITER_REQ};
 use crate::state::{State, LAYOUT};
 use crate::write::{self, Op};
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
@@ -75,7 +76,12 @@ extern "C" {
     fn box_key_def_new_v2(parts: *mut KeyPartDef, part_count: u32) -> *mut BoxKeyDef;
     fn box_key_def_delete(key_def: *mut BoxKeyDef);
     fn box_key_def_validate_key(key_def: *const BoxKeyDef, key: *const c_char, key_size: *mut u32) -> c_int;
+    fn box_key_def_validate_full_key(key_def: *const BoxKeyDef, key: *const c_char, key_size: *mut u32) -> c_int;
     fn box_tuple_compare_with_key(tuple: *mut BoxTuple, key: *const c_char, key_def: *mut BoxKeyDef) -> c_int;
+    fn box_tuple_format_default() -> *mut c_void;
+    fn box_tuple_new(format: *mut c_void, data: *const c_char, end: *const c_char) -> *mut BoxTuple;
+    fn box_tuple_ref(tuple: *mut BoxTuple) -> c_int;
+    fn box_tuple_unref(tuple: *mut BoxTuple);
     fn box_error_set(file: *const c_char, line: c_uint, code: u32, format: *const c_char, ...) -> c_int;
     fn box_error_last() -> *mut BoxError;
     fn box_error_code(error: *const BoxError) -> u32;
@@ -156,6 +162,9 @@ struct IndexInfo {
     unique: bool,
     parts: u32,
     key_def: *mut BoxKeyDef,
+    /// The same parts at fields 0, 1, ...: a key of the index as a tuple,
+    /// to compare keys with keys (`KeyTuple`; null as `key_def` is).
+    key_def_pos: *mut BoxKeyDef,
     /// The fields of its parts (from 0), when there are at most 8 and none
     /// has a path: what a key of the index is made of (else nfields = 0).
     fields: [u32; 8],
@@ -185,9 +194,11 @@ impl IndexCache {
     /// Forget every entry (another schema version).
     fn reset(&mut self, ver: u64) {
         for i in self.map.values().flatten() {
-            if !i.key_def.is_null() {
-                // SAFETY: built by box_key_def_new_v2, held only here.
-                unsafe { box_key_def_delete(i.key_def) };
+            for kd in [i.key_def, i.key_def_pos] {
+                if !kd.is_null() {
+                    // SAFETY: built by box_key_def_new_v2, held only here.
+                    unsafe { box_key_def_delete(kd) };
+                }
             }
         }
         self.map.clear();
@@ -334,8 +345,9 @@ fn read_parts(parts: &mut Rd) -> Option<Vec<Part>> {
     Some(read)
 }
 
-/// The key definition of an index's parts, or null.
-unsafe fn key_def_of(read: &[Part]) -> *mut BoxKeyDef {
+/// The key definition of an index's parts (`positional`: the same parts at
+/// fields 0, 1, ...), or null.
+unsafe fn key_def_of(read: &[Part], positional: bool) -> *mut BoxKeyDef {
     // (NUL-terminated names, alive until the key definition is built)
     let mut names: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::with_capacity(read.len());
     for p in read {
@@ -354,10 +366,10 @@ unsafe fn key_def_of(read: &[Part]) -> *mut BoxKeyDef {
         names.push((ty, coll));
     }
     let mut defs: Vec<KeyPartDef> = Vec::with_capacity(read.len());
-    for (p, (ty, coll)) in read.iter().zip(&names) {
+    for (i, (p, (ty, coll))) in read.iter().zip(&names).enumerate() {
         let mut d: KeyPartDef = std::mem::zeroed();
         box_key_part_def_create(&mut d);
-        d.fieldno = p.field;
+        d.fieldno = if positional { i as u32 } else { p.field };
         d.field_type = ty.as_ptr().cast();
         if p.nullable {
             d.flags |= KEY_PART_IS_NULLABLE;
@@ -432,9 +444,9 @@ unsafe fn read_index_info(space_id: u32, index_id: u32) -> Option<IndexInfo> {
     } else {
         read_parts(&mut field(t, 5)?)
     };
-    let key_def = match &read {
-        Some(r) => key_def_of(r),
-        None => std::ptr::null_mut(),
+    let (key_def, key_def_pos) = match &read {
+        Some(r) => (key_def_of(r, false), key_def_of(r, true)),
+        None => (std::ptr::null_mut(), std::ptr::null_mut()),
     };
     let mut fields = [0u32; 8];
     let mut nfields = 0u8;
@@ -449,6 +461,7 @@ unsafe fn read_index_info(space_id: u32, index_id: u32) -> Option<IndexInfo> {
         unique,
         parts,
         key_def,
+        key_def_pos,
         fields,
         nfields,
     })
@@ -659,9 +672,13 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     let key_parts = Rd::new(a.key).array()?;
     // (vinyl reads may yield; a held table, or a prepared transaction's W
     // lock on what the read covers: the lock check may have to wait)
-    if !info.memtx || (a.lock_check && (s.ddl_n != 0 || s.fence_stale != 0 || !lock_free(s, &a, &info, key_parts))) {
+    if !info.memtx || (a.lock_check && (s.ddl_n != 0 || s.fence_stale != 0)) {
         return None;
     }
+    let range_check = match a.lock_check {
+        true => lock_check(s, &a, &info, key_parts)?,
+        false => false,
+    };
     // The end key, compared as tarn_select's key_def of the index compares
     // it, once it is a valid key of the index (else tarn_select fails).
     let end = match a.end_key {
@@ -697,6 +714,8 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     out.array(2).str("ok");
     let at = out.array_slot();
     let mut n = 0u32;
+    // (where the last row is in `out`)
+    let mut last = 0..0;
     // SAFETY: as above; the key is a MessagePack array; tuples are read
     // before anything else runs.
     unsafe {
@@ -739,6 +758,7 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
                 let mut size = 0usize;
                 let data = box_tuple_data(t, &mut size);
                 page.row(size as u64);
+                last = out.0.len()..out.0.len() + size;
                 out.raw(std::slice::from_raw_parts(data as *const u8, size));
                 n += 1;
             }
@@ -747,6 +767,34 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     }
     if !page.whole() {
         return None;
+    }
+    // The range the read covers, from its key to its end key, or to its last
+    // row when its limit cut the scan short (select_locked), against the
+    // W-locked keys of its index.
+    if range_check {
+        let first = (key_parts > 0).then_some(a.key);
+        let cut = n > 0 && a.limit.is_some_and(|l| n as u64 >= l);
+        let last = match cut {
+            true => {
+                let parts: Vec<(u32, bool)> = info.fields[..info.nfields as usize]
+                    .iter()
+                    .map(|&f| (f, true))
+                    .collect();
+                let row = locks::fields_of(&out.0[last])?;
+                Some(Cow::Owned(locks::key_of(&row, &parts).filter(|_| !parts.is_empty())?))
+            }
+            false => a.end_key.map(Cow::Borrowed),
+        };
+        let (lo, hi) = if matches!(a.iterator, ITER_EQ | ITER_REQ) {
+            (first, first)
+        } else if reverse {
+            (last.as_deref(), first)
+        } else {
+            (first, last.as_deref())
+        };
+        if !range_read_free(a.space_id, a.index_id, lo, hi) {
+            return None;
+        }
     }
     out.patch_array(at, n);
     // (the stream's transaction from now on)
@@ -757,16 +805,152 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     Some(out.0)
 }
 
-/// Whether no prepared transaction holds a W lock on what a read with the
-/// lock check covers (tarn_select's select_locked; the Lua procedure waits
-/// for one): none on a table without locks, or as locks::read_free finds.
-/// (A nil key fails that check in the Lua procedure, on a table with locks.)
-fn lock_free(s: &State, a: &select::Args, info: &IndexInfo, key_parts: u32) -> bool {
+/// The lock check of a read (tarn_select's select_locked; the Lua procedure
+/// waits for a W lock of a prepared transaction on what the read covers):
+/// Some(false) when it is done -- no lock on the table, or none on the key
+/// of a point read -- Some(true) when the range the read covers is to be
+/// compared with the W-locked keys of its index once its rows are read, and
+/// None for the Lua procedure. (A nil key fails that check in the Lua
+/// procedure, on a table with locks.)
+fn lock_check(s: &State, a: &select::Args, info: &IndexInfo, key_parts: u32) -> Option<bool> {
     if !s.space_locked(a.space_id) {
+        return Some(false);
+    }
+    if a.key_nil {
+        return None;
+    }
+    if matches!(a.iterator, ITER_EQ | ITER_REQ) && info.unique && key_parts == info.parts {
+        return locks::point_read_free(a.space_id, a.index_id, a.key).then_some(false);
+    }
+    Some(locks::w_on_index(a.space_id, a.index_id))
+}
+
+/// A key of an index as a tuple of its parts, to compare it with keys (the
+/// module API compares tuples with keys, not keys with keys).
+struct KeyTuple(*mut BoxTuple);
+
+impl KeyTuple {
+    /// `key`, when it is a whole key of `kd` (an index's positional key
+    /// definition: IndexInfo::key_def_pos).
+    ///
+    /// # Safety
+    /// In the transaction thread; `kd` is alive.
+    unsafe fn new(key: &[u8], kd: *mut BoxKeyDef) -> Option<KeyTuple> {
+        if kd.is_null() || !valid_key(kd, key, true) {
+            return None;
+        }
+        let k = key.as_ptr().cast::<c_char>();
+        let t = box_tuple_new(box_tuple_format_default(), k, k.add(key.len()));
+        if t.is_null() {
+            box_error_clear();
+            return None;
+        }
+        box_tuple_ref(t);
+        Some(KeyTuple(t))
+    }
+
+    /// Whether the key lies between `lo` and `hi` (None: no bound), both
+    /// included, as in_range compares them (compare_keys: on the parts the
+    /// bound has); None when a bound is not a key of `kd`, or a prefix of
+    /// one.
+    ///
+    /// # Safety
+    /// As for `new`.
+    unsafe fn within(&self, lo: Option<&[u8]>, hi: Option<&[u8]>, kd: *mut BoxKeyDef) -> Option<bool> {
+        let mut c = [None, None];
+        for (i, b) in [lo, hi].into_iter().enumerate() {
+            if let Some(b) = b {
+                if !valid_key(kd, b, false) {
+                    return None;
+                }
+                c[i] = Some(box_tuple_compare_with_key(self.0, b.as_ptr().cast(), kd));
+            }
+        }
+        Some(tarn_verified::locks::within(c[0], c[1]))
+    }
+}
+
+impl Drop for KeyTuple {
+    fn drop(&mut self) {
+        // SAFETY: the reference `new` took.
+        unsafe { box_tuple_unref(self.0) };
+    }
+}
+
+/// Whether `key` is a key of `kd` (`whole`: of all its parts; else of the
+/// first ones), every byte of it.
+///
+/// # Safety
+/// In the transaction thread; `kd` is alive.
+unsafe fn valid_key(kd: *mut BoxKeyDef, key: &[u8], whole: bool) -> bool {
+    // (the module API reads the array's header unchecked)
+    if Rd::new(key).array().is_none() {
+        return false;
+    }
+    let mut size = 0u32;
+    let k = key.as_ptr().cast();
+    let rc = match whole {
+        true => box_key_def_validate_full_key(kd, k, &mut size),
+        false => box_key_def_validate_key(kd, k, &mut size),
+    };
+    if rc != 0 {
+        box_error_clear();
+        return false;
+    }
+    size as usize == key.len()
+}
+
+/// Whether no prepared transaction holds a W lock on a key of index `iid` of
+/// space `sid` between `lo` and `hi` (range_w_locked; None: no bound).
+fn range_read_free(sid: u32, iid: u32, lo: Option<&[u8]>, hi: Option<&[u8]>) -> bool {
+    if !locks::w_on_index(sid, iid) {
         return true;
     }
-    let point = matches!(a.iterator, ITER_EQ | ITER_REQ) && info.unique && key_parts == info.parts;
-    !a.key_nil && locks::read_free(a.space_id, a.index_id, a.key, point)
+    let Some(info) = index_info(sid, iid) else {
+        return false;
+    };
+    let kd = info.key_def_pos;
+    // SAFETY: in the transaction thread; the cache keeps `kd` for this
+    // schema version, and nothing here changes the schema. A key that is
+    // not compared may lie in the range.
+    unsafe {
+        if kd.is_null() || [lo, hi].into_iter().flatten().any(|b| !valid_key(kd, b, false)) {
+            return false;
+        }
+        locks::range_free(sid, iid, &mut |k| {
+            KeyTuple::new(k, kd).and_then(|t| t.within(lo, hi, kd)).unwrap_or(true)
+        })
+    }
+}
+
+/// The keys a write gives the indexes with range locks, compared with the
+/// bounds of those locks (locks::Bounds).
+struct WriteBounds<'a> {
+    /// The indexes with range locks, and their positional key definitions.
+    ranged: &'a [(u32, *mut BoxKeyDef)],
+    /// The key readied, and its index's key definition.
+    key: Option<(KeyTuple, *mut BoxKeyDef)>,
+}
+
+impl locks::Bounds for WriteBounds<'_> {
+    fn key(&mut self, iid: u32, k: &[u8]) -> bool {
+        self.key = None;
+        let Some(&(_, kd)) = self.ranged.iter().find(|r| r.0 == iid) else {
+            return false;
+        };
+        // SAFETY: in the transaction thread; the cache keeps `kd` for this
+        // schema version, and nothing here changes the schema.
+        self.key = unsafe { KeyTuple::new(k, kd) }.map(|t| (t, kd));
+        self.key.is_some()
+    }
+
+    fn within(&mut self, lo: Option<&[u8]>, hi: Option<&[u8]>) -> bool {
+        match &self.key {
+            // SAFETY: as for `key`.
+            Some((t, kd)) => unsafe { t.within(lo, hi, *kd) }.unwrap_or(true),
+            None => true,
+        }
+    }
 }
 
 /// A tuple's data, copied (the tuple may go once the transaction moves on).
@@ -997,15 +1181,19 @@ struct WriteInfo {
     /// The table may have locks of prepared transactions; row locks.
     locked: bool,
     plocked: bool,
+    /// The indexes of the table with range locks, and their positional key
+    /// definitions (to compare the keys written with the ranges).
+    ranged: Vec<(u32, *mut BoxKeyDef)>,
 }
 
 /// What the writes need: each table memtx, with the primary key of the
 /// tables a replace writes; and, where the table has locks of prepared
 /// transactions or row locks (READ COMMITTED: the Lua procedures wait for
-/// one on what they write), what their checks need (`write_allowed`), and
-/// no range lock (their ranges are not compared here). None: the writes are
-/// left to Lua. A synchronous table's commit waits for its quorum, as the
-/// Lua procedures' do, and is in flight until then.
+/// one on what they write), what their checks need (`write_allowed`): the
+/// indexes, and how to compare keys with the ranges of those with range
+/// locks. None: the writes are left to Lua. A synchronous table's commit
+/// waits for its quorum, as the Lua procedures' do, and is in flight until
+/// then.
 fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<WriteInfo>> {
     // Both autocommit and stream commits must defer capture to Lua. Check
     // every actual source before schema reads or a transaction/savepoint,
@@ -1023,8 +1211,17 @@ fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<WriteInfo>> {
         if (locked || plocked) && sp.indexes.is_none() {
             return None;
         }
+        let mut ranged = Vec::new();
         if locked && locks::ranges_on(w.space_id) {
-            return None;
+            for ix in sp.indexes.as_deref().unwrap_or(&[]) {
+                if locks::ranges_on_index(w.space_id, ix.iid) {
+                    let kd = index_info(w.space_id, ix.iid)?.key_def_pos;
+                    if kd.is_null() {
+                        return None;
+                    }
+                    ranged.push((ix.iid, kd));
+                }
+            }
         }
         let pk = match w.op {
             Op::Replace => Some(index_info(w.space_id, 0)?),
@@ -1035,6 +1232,7 @@ fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<WriteInfo>> {
             pk,
             locked,
             plocked,
+            ranged,
         });
     }
     Some(infos)
@@ -1076,6 +1274,10 @@ fn write_allowed(w: &write::Write, info: &WriteInfo, old: Option<&[u8]>, new: Op
     let (Ok(old), Ok(new)) = (version_fields(old), version_fields(new)) else {
         return false;
     };
+    let mut bounds = WriteBounds {
+        ranged: &info.ranged,
+        key: None,
+    };
     locks::write_free(
         w.space_id,
         &pk,
@@ -1084,6 +1286,7 @@ fn write_allowed(w: &write::Write, info: &WriteInfo, old: Option<&[u8]>, new: Op
         indexes,
         info.locked,
         info.plocked,
+        &mut bounds,
     )
 }
 
@@ -1292,10 +1495,16 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
 }
 
 /// Whether no prepared transaction holds a W lock on a read of a read set
-/// (reads_w_locked): none on a table without locks, or as
-/// locks::read_set_free finds.
+/// (reads_w_locked): none on a table without locks; for a point, none on
+/// its key; for a range, none on a key of the index between its bounds.
 fn read_set_free(s: &State, r: &write::Read) -> bool {
-    !s.space_locked(r.space_id) || locks::read_set_free(r.space_id, r.index_id, r.key)
+    if !s.space_locked(r.space_id) {
+        return true;
+    }
+    match r.key {
+        Some(k) => locks::point_read_free(r.space_id, r.index_id, k),
+        None => range_read_free(r.space_id, r.index_id, r.lo, r.hi),
+    }
 }
 
 /// What became of a commit of one shard served here (TarnCommit!CommitLocal),

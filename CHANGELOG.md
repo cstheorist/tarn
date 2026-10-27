@@ -378,17 +378,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The native storage procedures check locks key by key
   ([#28](https://github.com/cstheorist/tarn/issues/28)): a read with the
   lock check, a commit or a validation goes to Lua only when a prepared
-  transaction holds a W lock on what it read, and a write only when a lock
-  is on a key it writes or a range lock on its table -- no longer whenever
-  its table has any lock. The native module keeps a copy of the lock
-  index, which the Lua module changes in the same step as the index; its
-  counts and the checks on them are verified with Verus
-  (`crates/tarn-verified/src/locks.rs`). `TARN_CHECK_LOCKS` makes the Lua
-  module compare the copy with the index after each change; the storage
-  tests, the SQL suites and the failover tests in CI run with it. On two
-  shards under `oltp_write_only` (16 threads), the native procedures now
-  commit 99.9% of the one-shard transactions, where they handed 93% to Lua,
-  and the transactions per second rise 10%.
+  transaction holds a W lock on what it read (a key it read, or a key in a
+  range it read), and a write only when a lock is on a key it writes or a
+  range lock's range holds one -- no longer whenever its table has any
+  lock. The native module keeps a copy of the lock index, which the Lua
+  module changes in the same step as the index; its counts, the checks on
+  them and the decision whether a key lies in a range are verified with
+  Verus (`crates/tarn-verified/src/locks.rs`). `TARN_CHECK_LOCKS` makes
+  the Lua module compare the copy with the index after each change; the
+  storage tests, the SQL suites and the failover tests in CI run with it.
+  On two shards under `oltp_write_only` (16 threads), the native procedures
+  now commit 99.9% of the one-shard transactions, where they handed 93% to
+  Lua, and the transactions per second rise 10%. Next to cross-shard
+  transactions that read ranges, one-shard autocommit writes go to Lua
+  0.4% of the time, where 37% did (`oltp_update_non_index` next to
+  `oltp_read_write`: 28% more transactions per second), and the validations
+  of read-only transactions next to writers 0.4-1.7% of the time, where
+  53-81% did.
 - A READ COMMITTED `SELECT ... WHERE <primary key prefix> [ORDER BY
   <primary key>] LIMIT n FOR UPDATE | FOR SHARE [NOWAIT | SKIP LOCKED]`
   makes one storage call: the shard scans the range and takes the locks
