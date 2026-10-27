@@ -554,7 +554,11 @@ replies as `tarn_autocommit`'s would: 1213 for a conflict, also when the
 leader changed while the commit waited for its quorum and the new leader
 rolled it back, and a read-only node's error as the call's error. Once its
 commit began, the procedure never hands the writes back: should it fail
-there, it replies 1180 (outcome unknown).
+there, it replies 1180 (outcome unknown). `tla/NativeHandback.tla` checks
+that contract, with the SQL server's part of it: the Lua procedure called
+after a hand-back, in the same stream, and no call sent again whose
+outcome is unknown
+([verification](verification.md#the-hand-back-contract-of-the-native-procedures)).
 
 **One-shard commits.** The third procedure, `tarn_storage.ts_commit_local`,
 takes `tarn_commit_local`'s arguments and commits a transaction that wrote
@@ -1798,6 +1802,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
 | Bug_GroupedTablesNoWLockCheck | violates StrictSerializable | 1194 | 5093 | 13 | 00s | 13 |
+| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 34 | 56 | 8 | 00s | 8 |
+| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 23 | 42 | 7 | 00s | 7 |
+| Bug_HandbackKeepsWrites | violates AtMostOnce | 32 | 52 | 7 | 00s | 7 |
+| Bug_HandbackResendAfterLoss | violates ReplyHolds | 35 | 66 | 7 | 00s | 7 |
+| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 29 | 55 | 7 | 00s | 7 |
 | Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
 | Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
@@ -1879,6 +1888,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
+| Handback | no errors | 28 | 48 | 7 | 00s |  |
+| Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
 | Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
