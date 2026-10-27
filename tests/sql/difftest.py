@@ -1376,6 +1376,35 @@ CASES += [
 ]
 
 
+# Database DDL affected rows and complete LIKE filtering (issue #149).
+# The ASCII pattern prefix also matches a UTF-8 database name. Double the
+# backslash in SQL to leave one escape for LIKE's literal underscore.
+CASES += [
+    ("SHOW DATABASES LIKE 'information_schema'", "rows"),
+    ("SHOW SCHEMAS LIKE 'information%'", "rows"),
+    ("SHOW DATABASES LIKE 'no_such_database149'", "rows"),
+    ("CREATE DATABASE db149_ascii", "q"),
+    ("CREATE DATABASE IF NOT EXISTS db149_ascii", "q"),
+    ("CREATE DATABASE db149_ascii", "err"),
+    ("CREATE DATABASE IF NOT EXISTS `db149_雪`", "q"),
+    ("CREATE DATABASE IF NOT EXISTS `db149_雪`", "q"),
+    ("CREATE DATABASE `db149_雪`", "err"),
+    ("CREATE SCHEMA db149xother", "q"),
+    ("CREATE SCHEMA IF NOT EXISTS db149xother", "q"),
+    ("SHOW DATABASES LIKE 'db149%'", "rows"),
+    (r"SHOW DATABASES LIKE 'db149\\_%'", "rows"),
+    ("SHOW SCHEMAS LIKE 'db149_ascii'", "rows"),
+    ("SHOW DATABASES LIKE 'db149_missing'", "rows"),
+    ("DROP DATABASE db149_ascii", "q"),
+    ("CREATE DATABASE IF NOT EXISTS db149_ascii", "q"),
+    ("DROP DATABASE db149_ascii", "q"),
+    ("DROP DATABASE IF EXISTS db149_ascii", "q"),
+    ("DROP DATABASE `db149_雪`", "q"),
+    ("DROP SCHEMA db149xother", "q"),
+    ("SHOW DATABASES LIKE 'db149%'", "rows"),
+]
+
+
 # Run on connections with CLIENT_FOUND_ROWS (issue #39): UPDATE reports the
 # rows it matched, and an upsert that changes nothing reports 1.
 FOUND_ROWS_CASES = [

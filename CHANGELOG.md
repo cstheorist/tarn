@@ -471,6 +471,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Database administration matches MariaDB affected-row counts and result
+  metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
+  CREATE DATABASE reports one row for a new database and zero for an
+  existing IF NOT EXISTS target. SHOW DATABASES LIKE filters
+  `information_schema` too, and includes the pattern in its column name.
+
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original
   PREPARE rolled back. It now reads confirmed participant state while
