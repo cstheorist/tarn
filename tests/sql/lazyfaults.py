@@ -158,6 +158,31 @@ return {txid = s.txid, prepared = s.prepared, dshard = s.dshard or 0,
         source_bucket=bucket, counter=counter and counter.seq or 0, outbox=pending}
 """
 
+OVERLAP_STATE = r"""
+local owner, key, tag = ...
+local s = assert(rawget(_G, '__tarn_lazyfaults')); assert(s.owner == owner)
+local sp = assert(box.space[s.sid])
+local function view(isolation)
+    box.begin{txn_isolation = isolation}
+    local yes, result = pcall(function()
+        local part = box.space._tarn_part:get{s.txid}
+        local row = sp:get{key}
+        return {state = part and part.state or 'none', row = row and row:totable() or box.NULL}
+    end)
+    if box.is_in_txn() then box.rollback() end
+    if not yes then error(result) end
+    return result
+end
+local dirty, confirmed = view('read-committed'), view('read-confirmed')
+local queue = box.info.synchro.queue
+local row = dirty.row
+return {queue = queue, dirty = dirty, confirmed = confirmed,
+    pending = sp.is_sync and queue.owner == box.info.id and queue.len >= 1
+        and dirty.state == 'applied' and row ~= box.NULL
+        and row[1] == key and row[2] == tag and row[3] == 42
+        and confirmed.state == 'prepared' and confirmed.row == box.NULL}
+"""
+
 
 def connect(endpoint, db=None):
     host, port = endpoint.rsplit(":", 1)
@@ -557,14 +582,26 @@ local s=assert(rawget(_G,'__tarn_lazyfaults')); assert(s.owner==... and s.sync~=
 assert(box.info.synchro.queue.len==0); box.cfg{replication_synchro_quorum=2}; return true
 """, [lease.owner])
             lease.mode("pass")
-            queue = wait_for(lambda: (value if (value := ev(self.nodes[1],
-                             "return box.info.synchro.queue"))["len"] == 1 else None),
-                             5, "canceled APPLY's real native quorum wait")
-            self.record("overlap_quorum_pending", queue=queue)
+            last = None
+
+            def pending():
+                nonlocal last
+                last = ev(self.nodes[1], OVERLAP_STATE, [lease.owner, key, tag])
+                return last if last["pending"] else None
+
+            try:
+                held = wait_for(pending, 5, "canceled APPLY's real native quorum wait")
+            except AssertionError:
+                self.record("overlap_quorum_missing", last=last)
+                raise
+            # Background asynchronous writes can join the queue behind this
+            # synchronous APPLY. Bind the witness to its unconfirmed row and
+            # participant instead of assuming it is the queue's sole entry.
+            self.record("overlap_quorum_pending", queue=held["queue"], owned=held)
             timeout(read(), "overlapping RYW read")
-            queue = ev(self.nodes[1], "return box.info.synchro.queue")
-            assert queue["len"] >= 1, f"native commit was not still held: {queue}"
-            self.record("overlap_timeout_retained", queue=queue, participant=lease.snapshot())
+            held = ev(self.nodes[1], OVERLAP_STATE, [lease.owner, key, tag])
+            assert held["pending"], f"owned native APPLY was not still held: {held}"
+            self.record("overlap_timeout_retained", queue=held["queue"], owned=held, participant=lease.snapshot())
             ev(self.nodes[1], """
 local s=assert(rawget(_G,'__tarn_lazyfaults')); assert(s.owner==... and s.sync~=nil)
 box.cfg{replication_synchro_quorum=1}; return true
