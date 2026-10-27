@@ -71,6 +71,7 @@ local M = {
         native = false,
         check_yields = false,    -- tests: an atomic section that yields is an error
         test_hooks = false,      -- tests: tarn_test_hook may hold yield points
+        check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
     },
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
              abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
@@ -78,7 +79,7 @@ local M = {
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
              stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0,
              creates = 0, drops = 0, truncates = 0, ddl_doomed = 0, read_oom = 0, heap_collects = 0,
-             moved = 0, move_broken_locks = 0, bucket_sends = 0, bucket_recvs = 0},
+             moved = 0, move_broken_locks = 0, bucket_sends = 0, bucket_recvs = 0, lock_copy_errors = 0},
 }
 
 local RW = {txn_isolation = 'read-committed'}
@@ -307,14 +308,16 @@ local function lk_point(txid, sid, iid, kb, mode, bucket)
     local s = LK[sid]; if s == nil then s = {}; LK[sid] = s end
     local i = s[iid]; if i == nil then i = {}; s[iid] = i end
     local e = i[kb]; if e == nil then e = {}; i[kb] = e end
-    local new = e[txid] == nil
-    if new then NLOCK = NLOCK + 1 end
-    if e[txid] ~= 'W' then e[txid] = mode end
+    local was = e[txid]
+    if was == nil then NLOCK = NLOCK + 1 end
+    if was ~= 'W' then e[txid] = mode end
     if mode == 'W' and VY_SCANS > 0 then lk_log(sid, iid, kb) end
     local b = BYTX[txid]; if b == nil then b = {}; BYTX[txid] = b end
     b[#b + 1] = {sid, iid, kb, bucket}
-    if new then BK.ns_lock(sid, 1) end
+    if was == nil then BK.ns_lock(sid, 1) end
+    BK.ns_point(sid, iid, kb, was, e[txid])
     lk_tag(bucket, 1)
+    BK.ns_check_key('lk_point', sid, iid, kb)
 end
 
 local function lk_range(txid, sid, iid, lo, hi, lo_incl, hi_incl, bucket)
@@ -326,7 +329,9 @@ local function lk_range(txid, sid, iid, lo, hi, lo_incl, hi_incl, bucket)
     local b = BYTX[txid]; if b == nil then b = {}; BYTX[txid] = b end
     b[#b + 1] = {sid, iid, nil, bucket}
     BK.ns_lock(sid, 1)
+    BK.ns_range(sid, 1)
     lk_tag(bucket, 1)
+    BK.ns_check_ranges('lk_range', sid)
 end
 
 local function lk_release(txid)
@@ -340,6 +345,7 @@ local function lk_release(txid)
             local e = i and i[x[3]]
             if e ~= nil and e[txid] ~= nil then
                 if e[txid] == 'W' and VY_SCANS > 0 then lk_log(x[1], x[2], x[3]) end
+                BK.ns_point(x[1], x[2], x[3], e[txid], nil)
                 e[txid] = nil
                 NLOCK = NLOCK - 1
                 BK.ns_lock(x[1], -1)
@@ -350,10 +356,12 @@ local function lk_release(txid)
             if i ~= nil and i[txid] ~= nil then
                 NLOCK = NLOCK - #i[txid]
                 BK.ns_lock(x[1], -#i[txid])
+                BK.ns_range(x[1], -#i[txid])
                 i[txid] = nil
             end
         end
     end
+    BK.ns_check_locks('lk_release')
 end
 
 -- Raise ER_READONLY unless this instance is writable. Every lock check and
@@ -384,6 +392,7 @@ local function lk_reload()
     local p2, r2 = lk_scan('read-committed')
     LK, RL, BYTX, NLOCK = {}, {}, {}, 0
     BK.ns_lock(nil)
+    BK.ns_clear(1)
     BK.nl = {}
     local seen = {}
     for _, set in ipairs({p1, p2}) do
@@ -405,6 +414,7 @@ local function lk_reload()
         end
     end
     LK_STALE = false
+    BK.ns_check_locks('lk_reload')
     BK.ns_sync()
 end
 
@@ -951,9 +961,17 @@ struct tarn_ns {
     uint8_t *write_excluded;
     uint64_t ddl_txn;
     uint64_t v_served, v_to_lua;
+    void (*lk_point)(uint32_t, uint32_t, const char *, size_t, uint8_t, uint8_t);
+    void (*lk_range)(uint32_t, int32_t);
+    void (*pl_key)(uint32_t, uint32_t, const char *, size_t, int32_t);
+    void (*locks_clear)(uint8_t);
+    void (*locks_key)(uint32_t, uint32_t, const char *, size_t, uint32_t *);
+    void (*locks_index)(uint32_t, uint32_t, uint32_t *);
+    void (*locks_sizes)(uint32_t *);
 };
 ]]
-BK.NS_LAYOUT = 8
+BK.NS_LAYOUT = 9
+M.NS_LAYOUT = BK.NS_LAYOUT   -- (tests: the layout this module declares)
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -1017,6 +1035,179 @@ function BK.ns_pl(sid, d)
         local k = sid % BK.NS_SPACES
         a[k] = a[k] + d
     end
+end
+
+-- The native module's copy of the lock index (crates/tarn-storage/src/
+-- locks.rs), which its procedures check the keys they read and write
+-- against: each change of LK, RL and PL is made to it in the same step (no
+-- yield between them), through the functions of the state -- the point
+-- locks on each key by mode (BK.NS_MODE), the range locks on each space,
+-- the transactions with a row lock on each key. A lock of what is not a
+-- space or an index (not a number of 32 bits), or of a key that is not a
+-- string, is not copied: no native check is of one.
+BK.NS_MODE = {R = 1, W = 2}
+function BK.ns_ids(sid, iid)
+    return type(sid) == 'number' and type(iid) == 'number' and sid >= 0 and iid >= 0
+        and sid < 4294967296 and iid < 4294967296 and sid % 1 == 0 and iid % 1 == 0
+end
+-- A transaction's point lock on (sid, iid, kb) went from mode `from` to
+-- mode `to` (nil: none).
+function BK.ns_point(sid, iid, kb, from, to)
+    local ns = BK.ns
+    if ns == nil or from == to or type(kb) ~= 'string' or not BK.ns_ids(sid, iid) then return end
+    ns.lk_point(sid, iid, kb, #kb, BK.NS_MODE[from] or 0, BK.NS_MODE[to] or 0)
+end
+-- d more range locks on space sid.
+function BK.ns_range(sid, d)
+    local ns = BK.ns
+    if ns == nil or not BK.ns_ids(sid, 0) then return end
+    ns.lk_range(sid, d)
+end
+-- d more transactions hold a row lock on (sid, iid, kb).
+function BK.ns_row(sid, iid, kb, d)
+    local ns = BK.ns
+    if ns == nil or type(kb) ~= 'string' or not BK.ns_ids(sid, iid) then return end
+    ns.pl_key(sid, iid, kb, #kb, d)
+end
+-- None of the point and range locks (which & 1: the index is made again) or
+-- of the row locks (& 2).
+function BK.ns_clear(which)
+    local ns = BK.ns
+    if ns ~= nil then ns.locks_clear(which) end
+end
+-- The row locks held now, into the copy (as the module is loaded: the point
+-- and range locks are copied as the index is made again, lk_reload).
+function BK.ns_rows_held()
+    BK.ns_clear(2)
+    for sid, s in pairs(PL) do
+        for iid, i in pairs(s) do
+            for kb, e in pairs(i) do
+                for _ in pairs(e.holders) do BK.ns_row(sid, iid, kb, 1) end
+            end
+        end
+    end
+end
+
+-- Tests (cfg.check_locks): the copy holds what the index holds. After a
+-- change of one key's locks, that key's counts (BK.ns_check_key; of the
+-- range locks of one space, BK.ns_check_ranges); after a change of a
+-- transaction's locks (lk_release, pl_release_all) or of all of them
+-- (lk_reload), all of it (BK.ns_check_locks: what each key, index and space
+-- has, and how many of them the copy has). A difference is counted
+-- (stats.lock_copy_errors) and logged ("lock copy differs"), without failing
+-- the step that made it.
+function BK.ns_check_differs(what, bad)
+    if #bad == 0 then return end
+    M.stats.lock_copy_errors = M.stats.lock_copy_errors + 1
+    log.error('tarn: lock copy differs from the lock index after %s: %s', what, table.concat(bad, '; '))
+end
+function BK.ns_hex(b) return (b:gsub('.', function(c) return string.format('%02x', c:byte()) end)) end
+-- (the R and W locks on (sid, iid, kb), and its row locks, by the index)
+function BK.ns_key_counts(sid, iid, kb)
+    local r, w, n = 0, 0, 0
+    local e = LK[sid] and LK[sid][iid] and LK[sid][iid][kb]
+    for _, m in pairs(e or {}) do
+        if m == 'W' then w = w + 1 else r = r + 1 end
+    end
+    local p = PL[sid] and PL[sid][iid] and PL[sid][iid][kb]
+    for _ in pairs(p and p.holders or {}) do n = n + 1 end
+    return r, w, n
+end
+function BK.ns_check_key(what, sid, iid, kb)
+    local ns = BK.ns
+    if ns == nil or not M.cfg.check_locks or type(kb) ~= 'string' or not BK.ns_ids(sid, iid) then return end
+    local q = BK.ns_q or ffi.new('uint32_t[4]')
+    BK.ns_q = q
+    local r, w, n = BK.ns_key_counts(sid, iid, kb)
+    ns.locks_key(sid, iid, kb, #kb, q)
+    if q[0] ~= r or q[1] ~= w or q[2] ~= n then
+        BK.ns_check_differs(what, {string.format('%d/%d/%s: R %d W %d rows %d, copied R %d W %d rows %d', sid, iid,
+                                                 BK.ns_hex(kb), r, w, n, q[0], q[1], q[2])})
+    end
+end
+-- (the range locks on space sid, by the index)
+function BK.ns_space_ranges(sid)
+    local n = 0
+    for _, i in pairs(RL[sid] or {}) do
+        for _, ranges in pairs(i) do n = n + #ranges end
+    end
+    return n
+end
+function BK.ns_check_ranges(what, sid)
+    local ns = BK.ns
+    if ns == nil or not M.cfg.check_locks or not BK.ns_ids(sid, 0) then return end
+    local q = BK.ns_q or ffi.new('uint32_t[4]')
+    BK.ns_q = q
+    local n = BK.ns_space_ranges(sid)
+    ns.locks_index(sid, 0, q)
+    if q[1] ~= n then BK.ns_check_differs(what, {string.format('%d: ranges %d, copied %d', sid, n, q[1])}) end
+end
+function BK.ns_check_locks(what)
+    local ns = BK.ns
+    if ns == nil or not M.cfg.check_locks then return end
+    local q = BK.ns_q or ffi.new('uint32_t[4]')
+    BK.ns_q = q
+    local bad = {}
+    local function differs(fmt, ...)
+        if #bad < 5 then bad[#bad + 1] = string.format(fmt, ...) end
+    end
+    local keys, rows, windexes, rspaces = 0, 0, 0, 0
+    -- (each key with point or row locks, once)
+    local function key(sid, iid, kb, seen)
+        local id = sid .. '\0' .. iid .. '\0' .. kb
+        if seen[id] then return end
+        seen[id] = true
+        local r, w, n = BK.ns_key_counts(sid, iid, kb)
+        if r + w > 0 then keys = keys + 1 end
+        if n > 0 then rows = rows + 1 end
+        ns.locks_key(sid, iid, kb, #kb, q)
+        if q[0] ~= r or q[1] ~= w or q[2] ~= n then
+            differs('%d/%d/%s: R %d W %d rows %d, copied R %d W %d rows %d', sid, iid, BK.ns_hex(kb), r, w, n,
+                    q[0], q[1], q[2])
+        end
+    end
+    local seen = {}
+    for sid, s in pairs(LK) do
+        for iid, i in pairs(s) do
+            if BK.ns_ids(sid, iid) then
+                local wn = 0
+                for kb, e in pairs(i) do
+                    if type(kb) == 'string' then
+                        key(sid, iid, kb, seen)
+                        for _, m in pairs(e) do
+                            if m == 'W' then wn = wn + 1 end
+                        end
+                    end
+                end
+                if wn > 0 then windexes = windexes + 1 end
+                ns.locks_index(sid, iid, q)
+                if q[0] ~= wn then differs('%d/%d: W %d, copied %d', sid, iid, wn, q[0]) end
+            end
+        end
+    end
+    for sid, s in pairs(PL) do
+        for iid, i in pairs(s) do
+            if BK.ns_ids(sid, iid) then
+                for kb in pairs(i) do
+                    if type(kb) == 'string' then key(sid, iid, kb, seen) end
+                end
+            end
+        end
+    end
+    for sid in pairs(RL) do
+        if BK.ns_ids(sid, 0) then
+            local n = BK.ns_space_ranges(sid)
+            if n > 0 then rspaces = rspaces + 1 end
+            ns.locks_index(sid, 0, q)
+            if q[1] ~= n then differs('%d: ranges %d, copied %d', sid, n, q[1]) end
+        end
+    end
+    ns.locks_sizes(q)
+    if q[0] ~= keys or q[1] ~= rows or q[2] ~= windexes or q[3] ~= rspaces then
+        differs('keys %d, row-locked keys %d, W-locked indexes %d, range-locked spaces %d; copied %d, %d, %d, %d',
+                keys, rows, windexes, rspaces, q[0], q[1], q[2], q[3])
+    end
+    BK.ns_check_differs(what, bad)
 end
 
 function BK.ns_sync()
@@ -1128,6 +1319,7 @@ function BK.ns_init()
     ns.pl_spaces = BK.ns_pl_spaces
     BK.ns = ns
     BK.ns_pl_held()
+    BK.ns_rows_held()
     BK.ns_lazy(BK.lazy_excluded, BK.lazy_stale)
     BK.ns_fence(nil)
     BK.ns_serves_all()
@@ -1754,9 +1946,11 @@ local function pl_hold(txid, sid, iid, kb, e, mode)
     if cur == nil then
         PL_N = PL_N + 1
         BK.ns_pl(sid, 1)
+        BK.ns_row(sid, iid, kb, 1)
         pl_txn(txid).keys[sid .. '\0' .. iid .. '\0' .. kb] = {sid, iid, kb}
     end
     if cur ~= 'X' then e.holders[txid] = mode end
+    BK.ns_check_key('pl_hold', sid, iid, kb)
 end
 
 local function pl_grant_waiters(sid, iid, kb, e)
@@ -1795,8 +1989,10 @@ local function pl_release_key(txid, sid, iid, kb)
     e.holders[txid] = nil
     PL_N = PL_N - 1
     BK.ns_pl(sid, -1)
+    BK.ns_row(sid, iid, kb, -1)
     pl_grant_waiters(sid, iid, kb, e)
     pl_drop_if_free(sid, iid, kb, e)
+    BK.ns_check_key('pl_release_key', sid, iid, kb)
     M.pl_cond:broadcast()
 end
 
@@ -1821,10 +2017,12 @@ local function pl_release_all(txid)
             e.holders[txid] = nil
             PL_N = PL_N - 1
             BK.ns_pl(k[1], -1)
+            BK.ns_row(k[1], k[2], k[3], -1)
             pl_grant_waiters(k[1], k[2], k[3], e)
             pl_drop_if_free(k[1], k[2], k[3], e)
         end
     end
+    BK.ns_check_locks('pl_release_all')
     M.pl_cond:broadcast()
 end
 M.pl_release_all = pl_release_all
@@ -1843,6 +2041,7 @@ local function pl_fresh()
     end
     PL, PTX, PL_SESS, PL_BROKEN, PL_LIVE, PL_N = {}, {}, {}, {}, {}, 0
     BK.ns_pl()
+    BK.ns_clear(2)
     PL_GEN = uuid.str()
     PL_STATE = st
     M.pl_cond:broadcast()

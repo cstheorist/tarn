@@ -2,14 +2,16 @@
 //! {language = 'C'})`), and the part of Tarantool's module API they use
 //! (module.h).
 
+use crate::locks::{self, KeyIndex};
 use crate::mp::{Rd, Wr};
-use crate::select::{self, Page, ITER_EQ};
+use crate::select::{self, Page, ITER_EQ, ITER_REQ};
 use crate::state::{State, LAYOUT};
 use crate::write::{self, Op};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::panic::AssertUnwindSafe;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[repr(C)]
@@ -160,12 +162,15 @@ struct IndexInfo {
     nfields: u8,
 }
 
-/// What a space is, as far as writes need: memtx, and the field (from 0)
-/// of its rows' bucket (BK.field: the first part of its index bucket_id).
-#[derive(Clone, Copy)]
+/// What a space is, as far as writes need: memtx, the field (from 0) of its
+/// rows' bucket (BK.field: the first part of its index bucket_id), and its
+/// indexes, for the lock checks (None: one of a kind they do not read, a
+/// path, a function's).
+#[derive(Clone)]
 struct SpaceInfo {
     memtx: bool,
     bucket_field: Option<u32>,
+    indexes: Option<Rc<[KeyIndex]>>,
 }
 
 /// IndexInfo by (space, index) and SpaceInfo by space, of one schema
@@ -456,7 +461,7 @@ fn space_info(space_id: u32) -> Option<SpaceInfo> {
     if let Some(i) = INDEXES.with(|c| {
         let c = c.borrow();
         if c.ver == ver {
-            c.spaces.get(&space_id).copied()
+            c.spaces.get(&space_id).cloned()
         } else {
             None
         }
@@ -470,7 +475,7 @@ fn space_info(space_id: u32) -> Option<SpaceInfo> {
         if c.ver != ver {
             c.reset(ver);
         }
-        c.spaces.insert(space_id, info);
+        c.spaces.insert(space_id, info.clone());
     });
     info
 }
@@ -496,15 +501,16 @@ unsafe fn read_space_info(space_id: u32) -> Result<Option<SpaceInfo>, ()> {
     let Some(memtx) = field(t, 3).and_then(|mut f| f.str()).map(|e| e == b"memtx") else {
         return Ok(None);
     };
-    // _index: [space_id, index_id, name, type, opts, parts]: the index
-    // bucket_id, among the space's: the first part of it is the field of
-    // the rows' bucket (BK.field; a space without it has none)
+    // _index: [space_id, index_id, name, type, opts, parts]: the space's
+    // indexes; the first part of the index bucket_id is the field of the
+    // rows' bucket (BK.field; a space without it has none)
     let it = box_index_iterator(SPACE_INDEX, 0, ITER_EQ as c_int, k, k_end);
     if it.is_null() {
         box_error_clear();
         return Err(());
     }
     let mut bucket_field = Ok(None);
+    let mut indexes = Some(Vec::new());
     loop {
         let mut x: *mut BoxTuple = std::ptr::null_mut();
         if box_iterator_next(it, &mut x) != 0 {
@@ -515,20 +521,46 @@ unsafe fn read_space_info(space_id: u32) -> Result<Option<SpaceInfo>, ()> {
         if x.is_null() {
             break;
         }
+        let parts = field(x, 5).and_then(|mut f| read_parts(&mut f));
         if field(x, 2).and_then(|mut f| f.str().map(|n| n == b"bucket_id")) == Some(true) {
             // (parts it does not read: the space is left to Lua)
-            bucket_field = field(x, 5)
-                .and_then(|mut f| read_parts(&mut f))
-                .and_then(|p| p.first().map(|p| Some(p.field)))
-                .ok_or(());
-            break;
+            bucket_field = parts.as_ref().and_then(|p| p.first().map(|p| Some(p.field))).ok_or(());
         }
+        indexes = indexes.and_then(|mut v| {
+            v.push(key_index(x, parts?)?);
+            Some(v)
+        });
     }
     box_iterator_free(it);
     let Ok(bucket_field) = bucket_field else {
         return Ok(None);
     };
-    Ok(Some(SpaceInfo { memtx, bucket_field }))
+    Ok(Some(SpaceInfo {
+        memtx,
+        bucket_field,
+        indexes: indexes.map(Rc::from),
+    }))
+}
+
+/// An index (its _index tuple, and its parts) as the lock checks of a
+/// write read it: None for one whose keys are not its parts' fields (a
+/// function's).
+unsafe fn key_index(x: *mut BoxTuple, parts: Vec<Part>) -> Option<KeyIndex> {
+    let iid = u32::try_from(field(x, 1)?.uint()?).ok()?;
+    let mut unique = true;
+    let mut opts = field(x, 4)?;
+    for _ in 0..opts.map()? {
+        match opts.str() {
+            Some(b"unique") => unique = opts.bool()?,
+            Some(b"func") => return None,
+            _ => opts.skip()?,
+        }
+    }
+    Some(KeyIndex {
+        iid,
+        unique,
+        parts: parts.iter().map(|p| (p.field, p.nullable)).collect(),
+    })
 }
 
 /// Reply with one MessagePack value.
@@ -624,9 +656,10 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
         box_txn()
     };
     let info = index_info(a.space_id, a.index_id)?;
-    // (vinyl reads may yield; prepared transactions' locks, or a held
-    // table: the lock check may have to wait)
-    if !info.memtx || (a.lock_check && (s.ddl_n != 0 || s.fence_stale != 0 || s.space_locked(a.space_id))) {
+    let key_parts = Rd::new(a.key).array()?;
+    // (vinyl reads may yield; a held table, or a prepared transaction's W
+    // lock on what the read covers: the lock check may have to wait)
+    if !info.memtx || (a.lock_check && (s.ddl_n != 0 || s.fence_stale != 0 || !lock_free(s, &a, &info, key_parts))) {
         return None;
     }
     // The end key, compared as tarn_select's key_def of the index compares
@@ -664,7 +697,6 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     out.array(2).str("ok");
     let at = out.array_slot();
     let mut n = 0u32;
-    let key_parts = Rd::new(a.key).array()?;
     // SAFETY: as above; the key is a MessagePack array; tuples are read
     // before anything else runs.
     unsafe {
@@ -723,6 +755,18 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     }
     select::count_reads(s, &a.route);
     Some(out.0)
+}
+
+/// Whether no prepared transaction holds a W lock on what a read with the
+/// lock check covers (tarn_select's select_locked; the Lua procedure waits
+/// for one): none on a table without locks, or as locks::read_free finds.
+/// (A nil key fails that check in the Lua procedure, on a table with locks.)
+fn lock_free(s: &State, a: &select::Args, info: &IndexInfo, key_parts: u32) -> bool {
+    if !s.space_locked(a.space_id) {
+        return true;
+    }
+    let point = matches!(a.iterator, ITER_EQ | ITER_REQ) && info.unique && key_parts == info.parts;
+    !a.key_nil && locks::read_free(a.space_id, a.index_id, a.key, point)
 }
 
 /// A tuple's data, copied (the tuple may go once the transaction moves on).
@@ -944,14 +988,25 @@ enum Served {
     Raise,
 }
 
-/// What the writes need of the schema, read before their transaction, which
-/// must not read the system spaces: each table memtx, without a lock of a
-/// prepared transaction or a row lock (READ COMMITTED: the Lua procedures
-/// wait for one on what they write), and the primary key of the tables a
-/// replace writes. None: the writes are left to Lua. A synchronous table's
-/// commit waits for its quorum, as the Lua procedures' do, and is in flight
-/// until then.
-fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<(SpaceInfo, Option<IndexInfo>)>> {
+/// What a write needs of the schema and of the locks on its table, read
+/// before its transaction, which must not read the system spaces.
+struct WriteInfo {
+    sp: SpaceInfo,
+    /// The primary key, for a replace (the row it replaces).
+    pk: Option<IndexInfo>,
+    /// The table may have locks of prepared transactions; row locks.
+    locked: bool,
+    plocked: bool,
+}
+
+/// What the writes need: each table memtx, with the primary key of the
+/// tables a replace writes; and, where the table has locks of prepared
+/// transactions or row locks (READ COMMITTED: the Lua procedures wait for
+/// one on what they write), what their checks need (`write_allowed`), and
+/// no range lock (their ranges are not compared here). None: the writes are
+/// left to Lua. A synchronous table's commit waits for its quorum, as the
+/// Lua procedures' do, and is in flight until then.
+fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<WriteInfo>> {
     // Both autocommit and stream commits must defer capture to Lua. Check
     // every actual source before schema reads or a transaction/savepoint,
     // independently of the gateway's possibly stale definition fences.
@@ -961,36 +1016,98 @@ fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<(SpaceInfo, Opt
     let mut infos = Vec::with_capacity(writes.len());
     for w in writes {
         let sp = space_info(w.space_id)?;
-        if !sp.memtx || s.space_locked(w.space_id) || s.space_plocked(w.space_id) {
+        if !sp.memtx {
+            return None;
+        }
+        let (locked, plocked) = (s.space_locked(w.space_id), s.space_plocked(w.space_id));
+        if (locked || plocked) && sp.indexes.is_none() {
+            return None;
+        }
+        if locked && locks::ranges_on(w.space_id) {
             return None;
         }
         let pk = match w.op {
             Op::Replace => Some(index_info(w.space_id, 0)?),
             _ => None,
         };
-        infos.push((sp, pk));
+        infos.push(WriteInfo {
+            sp,
+            pk,
+            locked,
+            plocked,
+        });
     }
     Some(infos)
 }
 
+/// The fields of a version of a row, if there is one (Err: not a tuple).
+fn version_fields(t: Option<&[u8]>) -> Result<Option<Vec<&[u8]>>, ()> {
+    match t {
+        None => Ok(None),
+        Some(t) => locks::fields_of(t).map(Some).ok_or(()),
+    }
+}
+
+/// Whether a write that wrote `old` -> `new` (the row's versions, if any)
+/// meets no lock of a prepared transaction, nor a row lock, as the Lua
+/// procedures' writes_locked finds (locks::write_free). Its primary key:
+/// for an insert or a replace the row's, for an update or a delete the key
+/// it names (write_target).
+fn write_allowed(w: &write::Write, info: &WriteInfo, old: Option<&[u8]>, new: Option<&[u8]>) -> bool {
+    if !info.locked && !info.plocked {
+        return true;
+    }
+    let Some(indexes) = info.sp.indexes.as_deref() else {
+        return false;
+    };
+    let pk = match w.op {
+        Op::Insert | Op::Replace => {
+            let parts = indexes.iter().find(|ix| ix.iid == 0).map(|ix| &ix.parts[..]);
+            match (parts, locks::fields_of(&w.payload)) {
+                (Some(p), Some(t)) if !p.is_empty() => locks::key_of(&t, p),
+                _ => None,
+            }
+        }
+        Op::Delete | Op::Update => locks::lock_key(&w.payload).map(|k| k.into_owned()),
+    };
+    let Some(pk) = pk else {
+        return false;
+    };
+    let (Ok(old), Ok(new)) = (version_fields(old), version_fields(new)) else {
+        return false;
+    };
+    locks::write_free(
+        w.space_id,
+        &pk,
+        old.as_deref(),
+        new.as_deref(),
+        indexes,
+        info.locked,
+        info.plocked,
+    )
+}
+
 /// Make the writes (write_step), in the transaction of the request: what
 /// each did, and their affected rows (`affected`). None, having stopped at
-/// the first that failed or that the Lua procedures would make otherwise:
-/// the caller's Undo takes back what was written. Then the rows' buckets
-/// take writes here (BK.rows_refused), and the writes count for them
-/// (BK.count_writes).
+/// the first that failed, that the Lua procedures would make otherwise, or
+/// that meets a lock (`write_allowed`: the Lua procedures wait for it, or
+/// refuse the step): the caller's Undo takes back what was written. Then
+/// the rows' buckets take writes here (BK.rows_refused), and the writes
+/// count for them (BK.count_writes). (Nothing yields from the checks to the
+/// commit: they see the state the commit is prepared in.)
 ///
 /// # Safety
 /// In the transaction thread, with the request's transaction open.
 unsafe fn apply_writes(
     s: &mut State,
     writes: &[write::Write],
-    infos: &[(SpaceInfo, Option<IndexInfo>)],
+    infos: &[WriteInfo],
     found_rows: bool,
 ) -> Option<(Vec<Done>, u64)> {
     let mut done: Vec<Done> = Vec::with_capacity(writes.len());
     let mut n = 0u64;
-    for (w, (sp, pk)) in writes.iter().zip(infos) {
+    for (w, info) in writes.iter().zip(infos) {
+        let (sp, pk) = (&info.sp, &info.pk);
         let p = w.payload.as_ptr().cast::<c_char>();
         let p_end = p.add(w.payload.len());
         let mut t: *mut BoxTuple = std::ptr::null_mut();
@@ -1042,6 +1159,12 @@ unsafe fn apply_writes(
                 }
             },
         };
+        // (an update of a row that is not there writes nothing: the Lua
+        // procedures check nothing of it)
+        let skipped = w.op == Op::Update && old.is_none();
+        if !skipped && !write_allowed(w, info, old.as_deref(), new.as_deref()) {
+            return None;
+        }
         n += write::affected(w.op, old.as_deref(), new.as_deref(), found_rows);
         let row = new.as_deref().or(old.as_deref());
         let bucket = match (sp.bucket_field, row) {
@@ -1168,6 +1291,13 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     }
 }
 
+/// Whether no prepared transaction holds a W lock on a read of a read set
+/// (reads_w_locked): none on a table without locks, or as
+/// locks::read_set_free finds.
+fn read_set_free(s: &State, r: &write::Read) -> bool {
+    !s.space_locked(r.space_id) || locks::read_set_free(r.space_id, r.index_id, r.key)
+}
+
 /// What became of a commit of one shard served here (TarnCommit!CommitLocal),
 /// or None for one left to tarn_commit_local, with nothing written: in a
 /// stream, its transaction and reads are as they were. `committed`: as for
@@ -1213,8 +1343,8 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     {
         return None;
     }
-    // reads_w_locked: no lock of a prepared transaction on a table it read
-    if c.reads.iter().any(|r| s.space_locked(r.space_id)) {
+    // reads_w_locked: no W lock of a prepared transaction on what it read
+    if !c.reads.iter().all(|r| read_set_free(s, r)) {
         return None;
     }
     let infos = write_infos(s, &c.writes)?;
@@ -1294,8 +1424,8 @@ fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if s.count != 0 && (s.held != 0 || v.reads.iter().any(|r| r.bucket.is_some_and(|b| !s.serves(b)))) {
         return None;
     }
-    // reads_w_locked: no lock of a prepared transaction on a table it read
-    if v.reads.iter().any(|r| s.space_locked(r.space_id)) {
+    // reads_w_locked: no W lock of a prepared transaction on what it read
+    if !v.reads.iter().all(|r| read_set_free(s, r)) {
         return None;
     }
     // SAFETY: the stream's transaction; nothing yields until it commits

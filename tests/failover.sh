@@ -13,7 +13,8 @@
 #   3. kill -9's the leader of shard 2.
 # Passes if every check of the workload holds, the final total is exact via
 # SQL and via direct Key/Value reads on the new leaders, and transfers kept
-# committing after each event.
+# committing after each event (and, with TARN_CHECK_LOCKS, the native
+# module's copy of the lock index held what the index held).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=${TARANTOOL:-tarantool}
@@ -149,18 +150,22 @@ for s in 1 2; do
     os.exit(0)" < /dev/null 2> /dev/null
 done
 grep -h -E "tarn recovery|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
-if [ $rc -eq 0 ] && [ $rcrc -eq 0 ] && [ $mvrc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
+# (TARN_CHECK_LOCKS: the native module's copy of the lock index held what the
+# index held, through the leader changes)
+copy=0
+if grep -h "lock copy differs" "$DIR"/s*.log | head -3 | grep .; then copy=1; fi
+if [ $rc -eq 0 ] && [ $rcrc -eq 0 ] && [ $mvrc -eq 0 ] && [ $kv -eq 0 ] && [ $copy -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
   "$ROOT/scripts/cluster.sh" stop -d "$DIR"
   echo "FAILOVER TEST PASSED"
 else
   crashed=$(stopped_on_their_own)
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$DIR"
-  echo "FAILOVER TEST FAILED (bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
+  echo "FAILOVER TEST FAILED (bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv lock copy=$copy move_failed=${MOVE_FAILED:-0}); logs kept in $DIR"
   [ -n "$crashed" ] && echo "$crashed"
   # On GitHub Actions, put the evidence in an annotation (job logs are not
   # always at hand; annotations are).
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    msg=$({ echo "bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv move_failed=${MOVE_FAILED:-0}"
+    msg=$({ echo "bank rc=$rc rc-bank rc=$rcrc moves rc=$mvrc kv=$kv lock copy=$copy move_failed=${MOVE_FAILED:-0}"
             [ -n "$crashed" ] && echo "$crashed"
             grep -E "^[0-9]{2}:" "$DIR/events.out" | tail -12
             echo "--- workload"; tail -25 "$DIR/bank.out"; tail -8 "$DIR/rcbank.out"; tail -14 "$DIR/moves.out"
