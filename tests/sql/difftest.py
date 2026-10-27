@@ -67,6 +67,23 @@ SCHEMA = [
     "UNIQUE KEY th (t, h, live), UNIQUE KEY code (n))",
     # ... with a case-insensitive column (issue #13): the collation decides
     "CREATE TABLE gci (id INT PRIMARY KEY, email VARCHAR(40) COLLATE utf8mb4_general_ci, UNIQUE KEY ue (email))",
+    # joins over many outer rows, whose inner lookups are read in batches
+    # (issue #84): repeated, NULL and missing keys, children by key prefix
+    "CREATE TABLE jo (id INT PRIMARY KEY, r INT, g INT, h VARCHAR(10) COLLATE utf8mb4_general_ci, KEY kg (g))",
+    "CREATE TABLE jc (r INT NOT NULL, n INT NOT NULL, v INT, PRIMARY KEY (r, n)) PARTITION BY KEY(r)",
+    "CREATE TABLE jn (id INT PRIMARY KEY, a INT, b INT, s VARCHAR(10) COLLATE utf8mb4_unicode_ci, "
+    "KEY ab (a, b), KEY ks (s))",
+    # Adjacent DECIMALs above 2^53 must remain separate both as lookup keys
+    # and as base PKs reached through a text global unique index.
+    "CREATE TABLE jdo (id INT PRIMARY KEY, k DECIMAL(20,0), s VARCHAR(8))",
+    "CREATE TABLE jdi (id INT PRIMARY KEY, k DECIMAL(20,0), KEY jk (k))",
+    # Same logical schema; Tarn shards by integer p because DECIMAL shard
+    # keys are unsupported. MariaDB cannot partition by p when UNIQUE(s)
+    # omits p, so its reference table uses ordinary local storage.
+    ("CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
+     "PRIMARY KEY (p, id), UNIQUE KEY us (s)) PARTITION BY KEY(p)",
+     "CREATE TABLE jdg (p INT NOT NULL, id DECIMAL(20,0) NOT NULL, s VARCHAR(8) NOT NULL, "
+     "PRIMARY KEY (p, id), UNIQUE KEY us (s))"),
 ]
 
 
@@ -103,6 +120,20 @@ def seed():
             st = "'paid'" if i % 3 else "'pending'"
             rows.append(f"({tenant}, {i}, {pa}, {int(i % 5 == 0)}, {st}, {closed})")
     s.append("INSERT INTO ord VALUES " + ", ".join(rows))
+    rows = [f"({i}, {'NULL' if i % 13 == 0 else i % 450}, {i % 4}, {'NULL' if i % 17 == 0 else repr(('Name' if i % 2 else 'name') + str(i % 9))})"
+            for i in range(1, 601)]
+    s.append("INSERT INTO jo VALUES " + ", ".join(rows))
+    # Positive Unicode, case and PAD SPACE matches for the indexed join.
+    s.append("UPDATE jo SET h = CASE id WHEN 1 THEN 'Á' WHEN 2 THEN 'a' WHEN 3 THEN 'ß' "
+             "WHEN 4 THEN 'SS' WHEN 5 THEN 'pad ' WHEN 6 THEN 'pAd' END WHERE id <= 6")
+    rows = [f"({r}, {n}, {r * 10 + n})" for r in range(0, 450, 2) for n in range(r % 3 + 1)]
+    s.append("INSERT INTO jc VALUES " + ", ".join(rows))
+    s.append("INSERT INTO jn VALUES (1, NULL, NULL, 'a'), (2, NULL, 1, 'ss'), (3, 2, NULL, 'pad'), "
+             "(4, 2, 2, 'a'), (5, 3, 3, 'ss'), (6, 3, NULL, 'pad'), (7, 4, 0, NULL), "
+             "(8, 99, 1, 'none'), (9, NULL, NULL, 'a')")
+    s.append("INSERT INTO jdo VALUES (1, 9007199254740992, 'a'), (2, 9007199254740993, 'b')")
+    s.append("INSERT INTO jdi VALUES (1, 9007199254740992), (2, 9007199254740993)")
+    s.append("INSERT INTO jdg VALUES (1, 9007199254740992, 'a'), (1, 9007199254740993, 'b')")
     rows = []
     for i in range(1, 601):
         # 40 customers; placed_at repeats across customers (ties on every
@@ -1058,6 +1089,69 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # joins whose inner lookups are read in batches (issue #84): 600 outer
+    # rows, keys repeated, NULL or without rows
+    ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.n = jo.g ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 1 WHERE jo.g = 2", "q"),
+    ("SELECT jo.id, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r AND jc.v > 2000 WHERE jo.id > 100 ORDER BY jo.id, jc.v", "q"),
+    ("SELECT jo.id, jc.n FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jc.r IS NULL ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n LIMIT 7 OFFSET 300", "q"),
+    ("SELECT jo.g, COUNT(*), SUM(jc.v), COUNT(jc.v) FROM jo LEFT JOIN jc ON jc.r = jo.r GROUP BY jo.g", "q"),
+    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.id = a.r + 1 WHERE a.g IN (1, 3) ORDER BY a.id", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) WHERE jo.id < 40 ORDER BY jo.id, jc.r, jc.n", "q"),
+    # Two keys per outer row: 299 rows cross three 128-row lookup batches.
+    ("SELECT jo.id, jc.r, jc.n FROM jo JOIN jc ON jc.r IN (jo.r, jo.r + 1) "
+     "WHERE jo.id < 300 ORDER BY jo.id, jc.r, jc.n", "q"),
+    ("SELECT jo.id, jc.n FROM jo JOIN jc ON (jc.r, jc.n) IN ((jo.r, 0), (jo.r, 2)) ORDER BY jo.id, jc.n", "q"),
+    ("SELECT a.id, b.id FROM jo a JOIN jo b ON b.g = a.g AND b.r = a.r WHERE a.id < 300 ORDER BY a.id, b.id", "q"),
+    ("SELECT jo.id, c1.n, c2.n FROM jo JOIN jc c1 ON c1.r = jo.r LEFT JOIN jc c2 ON c2.r = c1.v - c1.r * 10 "
+     "ORDER BY jo.id, c1.n, c2.n", "q"),
+    ("SELECT jo.id, cih.n FROM jo LEFT JOIN cih ON cih.handle = jo.h WHERE jo.id < 60 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, ci.id FROM jo JOIN ci ON ci.handle = jo.h ORDER BY jo.id, ci.id", "q"),
+    # A real indexed collation match, including Á=a, ß=ss and trailing
+    # spaces. The explicit collation matches the inner index's weights.
+    ("SELECT jo.id, jn.id FROM jo JOIN jn ON jn.s = jo.h COLLATE utf8mb4_unicode_ci "
+     "WHERE jo.id <= 6 ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, COUNT(jn.id) FROM jo LEFT JOIN jn ON jn.s = jo.h COLLATE utf8mb4_unicode_ci "
+     "WHERE jo.id <= 7 GROUP BY jo.id ORDER BY jo.id", "q"),
+    # Composite nullable keys must keep NULL-safe parts on the fallback;
+    # ordinary equality drops NULL keys. Duplicate (NULL,NULL) rows and an
+    # ON residual distinguish multiple matches from LEFT JOIN padding.
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a <=> jo.r AND jn.b <=> NULLIF(jo.g, 0) "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a = jo.r AND jn.b = NULLIF(jo.g, 0) "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a = jo.r AND jn.b <=> NULLIF(jo.g, 0) "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    ("SELECT jo.id, jn.id FROM jo LEFT JOIN jn ON jn.a <=> jo.r AND jn.id > 4 "
+     "WHERE jo.id IN (2, 3, 4, 13, 52, 452) ORDER BY jo.id, jn.id", "q"),
+    # Each outer row has exactly one distinct native-index match. Rounded
+    # batch distribution would give four pairs; rounded global PK dedup
+    # would lose one of the two text-key matches.
+    ("SELECT o.id, i.id FROM jdo o JOIN jdi i ON i.k = o.k ORDER BY o.id, i.id", "q"),
+    ("SELECT o.id, i.id FROM jdo o JOIN jdg i ON i.s = o.s ORDER BY o.id, i.id", "q"),
+    ("SELECT jo.id, gu.id FROM jo JOIN gu ON gu.n = jo.r * 10 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, gu.id FROM jo LEFT JOIN gu ON gu.t = jo.g AND gu.h = 'a' AND gu.live = 1 ORDER BY jo.id", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.id IN (2, 4, 450) "
+     "ORDER BY jo.id FOR UPDATE", "q"),
+    # ... in a transaction, which sees its own writes
+    ("BEGIN", "q"),
+    ("INSERT INTO jc VALUES (1, 0, -1), (3, 0, -3)", "dml:jc"),
+    ("DELETE FROM jc WHERE r = 2", "dml:jc"),
+    ("UPDATE jc SET v = -v WHERE r = 4 AND n = 1", "dml:jc"),
+    ("UPDATE jc SET r = 5 WHERE r = 6 AND n = 0", "dml:jc"),
+    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r WHERE jo.id < 20 ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 ORDER BY jo.id", "q"),
+    ("ROLLBACK", "q"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", "q"),
+    ("BEGIN", "q"),
+    ("INSERT INTO jc VALUES (7, 0, -7)", "dml:jc"),
+    ("SELECT jo.id, jc.n, jc.v FROM jo LEFT JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
+    ("SELECT jo.id, jc.v FROM jo JOIN jc ON jc.r = jo.r AND jc.n = 0 WHERE jo.g = 3 ORDER BY jo.id FOR UPDATE", "q"),
+    ("COMMIT", "dml:jc"),
+    ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 
 
@@ -1145,13 +1239,15 @@ def run(conn, sql):
         cur.close()
 
 
-def setup(conn, db):
+def setup(conn, db, reference=False):
     run(conn, f"DROP DATABASE IF EXISTS {db}")
     r = run(conn, f"CREATE DATABASE {db}")
     if r[0] == "err":
         raise SystemExit(f"cannot create database: {r}")
     conn.select_db(db)
     for s in SCHEMA + seed():
+        if isinstance(s, tuple):
+            s = s[1 if reference else 0]
         r = run(conn, s)
         if r[0] == "err":
             raise SystemExit(f"setup failed: {s}: {r}")
@@ -1166,7 +1262,7 @@ def main():
     args = ap.parse_args()
     a, b = connect(args.tarn), connect(args.ref)
     setup(a, args.db)
-    setup(b, args.db)
+    setup(b, args.db, reference=True)
     fails = warns = 0
     fa, fb = (connect(hp, args.db, CLIENT.FOUND_ROWS) for hp in (args.tarn, args.ref))
     for (a, b), (sql, kind) in [((a, b), c) for c in CASES] + [((fa, fb), c) for c in FOUND_ROWS_CASES]:

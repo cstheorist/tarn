@@ -100,6 +100,7 @@ async fn scan_pages(
     lock_check: bool,
     pages: Pages,
     keep: Keep<'_, '_>,
+    reads: &std::sync::atomic::AtomicU64,
     route: &Route,
 ) -> SqlResult<Scanned> {
     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
@@ -111,6 +112,7 @@ async fn scan_pages(
     let mut after: Option<Vec<u8>> = None;
     let mut left = c.limit;
     loop {
+        reads.fetch_add(1, AtomicOrdering::Relaxed);
         let (rows, next) = select_rows(
             client,
             stream,
@@ -156,11 +158,13 @@ async fn keys_pages(
     limit: Option<u32>,
     lock_check: bool,
     pages: Pages,
+    reads: &std::sync::atomic::AtomicU64,
     route: &Route,
 ) -> SqlResult<Vec<Row>> {
     let mut out = Vec::new();
     let mut after: Option<Vec<u8>> = None;
     loop {
+        reads.fetch_add(1, AtomicOrdering::Relaxed);
         let (rows, next) = select_keys(
             client,
             stream,
@@ -451,17 +455,22 @@ async fn fetch_keys(
     unique: bool,
     limit: Option<u32>,
 ) -> SqlResult<Vec<Row>> {
+    // Capture routing before grouping any key. A later epoch/membership
+    // must not validate a scatter group that omitted a newly joined shard.
+    let map = cluster.bucket_map();
+    let mut live: Option<Vec<usize>> = None;
     // By shard: the keys, and the bucket each was routed by.
     let mut per_shard: BTreeMap<usize, (Vec<Vec<Value>>, Vec<Option<u32>>)> = BTreeMap::new();
     for k in keys {
-        match route_bucket(cluster, t, idx, &k) {
+        match route_bucket_in(&map, t, idx, &k) {
             Some((s, b)) => {
                 let e = per_shard.entry(s).or_default();
                 e.0.push(k);
                 e.1.push(Some(b));
             }
             None => {
-                for s in cluster.live_shards() {
+                let shards = live.get_or_insert_with(|| cluster.live_shards().collect());
+                for &s in shards.iter() {
                     let e = per_shard.entry(s).or_default();
                     e.0.push(k.clone());
                     e.1.push(None);
@@ -471,8 +480,8 @@ async fn fetch_keys(
     }
     let mut rows = Vec::new();
     let pages = mode.pages();
+    let reads = &cluster.stats.storage_reads;
     let in_stream = matches!(mode, ReadMode::Txn(_));
-    let map = cluster.bucket_map();
     let mut routes = BTreeMap::new();
     for (s, (_, bs)) in &per_shard {
         routes.insert(*s, read_route(&map, in_stream, *s, bs)?);
@@ -485,7 +494,7 @@ async fn fetch_keys(
             }
             for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, &routes[s]).await?);
+                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, reads, &routes[s]).await?);
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
@@ -493,7 +502,9 @@ async fn fetch_keys(
             for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
                 let route = &routes[s];
-                futs.push(async move { keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, route).await });
+                futs.push(async move {
+                    keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, reads, route).await
+                });
             }
             for r in futures::future::join_all(futs).await {
                 rows.extend(r?);
@@ -505,7 +516,10 @@ async fn fetch_keys(
                 let st = txn.stream(cluster, *s).await?;
                 let route = &routes[s];
                 futs.push(async move {
-                    keys_pages(&st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages, route).await
+                    keys_pages(
+                        &st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages, reads, route,
+                    )
+                    .await
                 });
             }
             for r in futures::future::join_all(futs).await {
@@ -837,6 +851,7 @@ async fn read_calls(
     let mut out = Vec::with_capacity(calls.len());
     let mut read = 0;
     let pages = mode.pages();
+    let reads = &cluster.stats.storage_reads;
     let in_stream = matches!(mode, ReadMode::Txn(_));
     let routes = calls
         .iter()
@@ -850,7 +865,7 @@ async fn read_calls(
             }
             for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await?;
+                let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await?;
                 read += s.read;
                 out.push(s);
             }
@@ -859,7 +874,9 @@ async fn read_calls(
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
                 let client = cluster.shards[c.shard].client(cluster).await?;
-                futs.push(async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, route).await });
+                futs.push(
+                    async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await },
+                );
             }
             for r in futures::future::join_all(futs).await {
                 let s = r?;
@@ -872,7 +889,10 @@ async fn read_calls(
             for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
                 futs.push(async move {
-                    scan_pages(&st.client, st.id, st.begin, t, index, c, false, pages, keep, route).await
+                    scan_pages(
+                        &st.client, st.id, st.begin, t, index, c, false, pages, keep, reads, route,
+                    )
+                    .await
                 });
             }
             let results = futures::future::join_all(futs).await;
@@ -1210,8 +1230,7 @@ async fn source_rows(
     for (ta, kind, on) in steps.iter().skip(1) {
         let width = ta.offset + ta.table.columns.len();
         let mut out = Vec::new();
-        for left in rows {
-            let right = fetch(cluster, mode, ta, &left, cx).await?;
+        let mut join = |left: Row, right: Vec<Row>| -> SqlResult<()> {
             let mut matched = false;
             for r in right {
                 let mut row = left.clone();
@@ -1230,10 +1249,231 @@ async fn source_rows(
                 row.resize(width, Value::Null);
                 out.push(row);
             }
+            Ok(())
+        };
+        match Lookup::of(cluster.nlive(), matches!(mode, ReadMode::Committed(_)), ta) {
+            None => {
+                for left in rows {
+                    let right = fetch(cluster, mode, ta, &left, cx).await?;
+                    join(left, right)?;
+                }
+            }
+            Some(lk) => {
+                // (fewer outer rows when each looks up several keys)
+                let n = (JOIN_BATCH / lk.keys_per_row()).max(1);
+                let mut rest = rows.into_iter().peekable();
+                while rest.peek().is_some() {
+                    let batch: Vec<Row> = rest.by_ref().take(n).collect();
+                    let rights = match lookup_batch(cluster, mode, ta, &lk, &batch, cx).await {
+                        // A batch longer than one storage page at READ
+                        // COMMITTED: each outer row's lookup on its own,
+                        // as before, rather than the statement in a snapshot.
+                        Err(e) if e.code == NEED_SNAPSHOT && matches!(mode, ReadMode::Statement(_)) => {
+                            let mut v = Vec::with_capacity(batch.len());
+                            for left in &batch {
+                                v.push(fetch(cluster, mode, ta, left, cx).await?);
+                            }
+                            v
+                        }
+                        r => r?,
+                    };
+                    for (left, right) in batch.into_iter().zip(rights) {
+                        join(left, right)?;
+                    }
+                }
+            }
         }
         rows = out;
     }
     Ok(rows)
+}
+
+/// Outer rows whose inner rows one batched lookup reads (issue #84).
+const JOIN_BATCH: usize = 256;
+
+/// How the inner table of a join is reached by equality on an index key or
+/// key prefix (the usual join): the lookups of a batch of outer rows can then
+/// be read together, with one call per shard.
+struct Lookup<'a> {
+    index: u32,
+    /// Number of index parts each key fixes.
+    len: usize,
+    unique: bool,
+    /// Through the unique key's global index (`global_lookup`).
+    global: bool,
+    keys: LookupKeys<'a>,
+}
+
+enum LookupKeys<'a> {
+    /// Several full or prefix keys (`Point`, `Prefixes`).
+    Keys(&'a [Vec<Expr>]),
+    /// One equality prefix (a `Range` without bounds or NULL-matching parts).
+    Prefix(&'a [Expr]),
+}
+
+impl<'a> Lookup<'a> {
+    /// None when the inner table is read otherwise (a range, a scan, a
+    /// limit), each outer row then on its own. `committed`: for READ
+    /// COMMITTED UPDATE / DELETE candidates, which skip global indexes.
+    fn of(nlive: usize, committed: bool, ta: &'a TableAccess) -> Option<Lookup<'a>> {
+        let t = &ta.table;
+        if t.is_virtual() || ta.limit.is_some() {
+            return None;
+        }
+        let lookup = match &ta.path {
+            AccessPath::Point { index, keys } if !keys.is_empty() => Some(Lookup {
+                index: *index,
+                len: keys[0].len(),
+                unique: true,
+                // (as `fetch_stored_from` chooses)
+                global: nlive > 1 && !committed && global_index(t, *index).is_some(),
+                keys: LookupKeys::Keys(keys),
+            }),
+            AccessPath::Prefixes { index, keys } if !keys.is_empty() => Some(Lookup {
+                index: *index,
+                len: keys[0].len(),
+                unique: false,
+                global: false,
+                keys: LookupKeys::Keys(keys),
+            }),
+            AccessPath::Range {
+                index,
+                eq,
+                null_eq,
+                lo: None,
+                hi: None,
+                ..
+            } if !eq.is_empty() && !null_eq.contains(&true) => Some(Lookup {
+                index: *index,
+                len: eq.len(),
+                unique: false,
+                global: false,
+                keys: LookupKeys::Prefix(eq),
+            }),
+            _ => None,
+        }?;
+        // Matching batches must distinguish the exact native index keys.
+        // The SQL comparator uses f64 for DECIMAL, so adjacent large values
+        // can compare equal and would be sent to the wrong outer row. Global
+        // lookups also deduplicate base PKs with that comparator. Preserve
+        // the per-row native lookup until exact association supports these.
+        let decimal = |cols: &[usize]| cols.iter().any(|&c| t.columns[c].ty().base == BaseType::Decimal);
+        let idx = index_def(t, lookup.index);
+        if decimal(&idx.cols[..lookup.len]) || (lookup.global && decimal(&t.indexes[0].cols)) {
+            return None;
+        }
+        Some(lookup)
+    }
+
+    fn keys_per_row(&self) -> usize {
+        match self.keys {
+            LookupKeys::Keys(keys) => keys.len(),
+            LookupKeys::Prefix(_) => 1,
+        }
+    }
+
+    /// The keys (as the index holds them) one outer row looks up, sorted.
+    fn keys_of(&self, t: &TableDef, idx: &IndexDef, outer: &[Value], cx: &EvalCtx<'_>) -> SqlResult<Vec<Vec<Value>>> {
+        match self.keys {
+            LookupKeys::Keys(keys) => eval_keys(t, idx, keys, outer, cx),
+            LookupKeys::Prefix(eq) => Ok(range_prefix(t, idx, eq, &vec![false; eq.len()], outer, cx)?
+                .into_iter()
+                .collect()),
+        }
+    }
+}
+
+/// The inner rows of a join for each outer row of `batch`, as `fetch` reads
+/// them one outer row at a time, with one storage read for the whole batch
+/// (issue #84): the distinct keys of every outer row, each sent to the shard
+/// it determines (to every shard when it does not contain the shard key), in
+/// one call per shard, in parallel. The reads are those of the separate
+/// lookups, recorded in the transaction's read set alike; each outer row
+/// gets its keys' rows in index order, then the transaction's own rows of
+/// the table, which ON and WHERE filter as before. An outer row whose key
+/// is NULL looks nothing up.
+async fn lookup_batch(
+    cluster: &Arc<Cluster>,
+    mode: &mut ReadMode<'_>,
+    ta: &TableAccess,
+    lk: &Lookup<'_>,
+    batch: &[Row],
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Vec<Vec<Row>>> {
+    let t = &ta.table;
+    let idx = index_def(t, lk.index);
+    let wanted: Vec<Vec<Vec<Value>>> = batch
+        .iter()
+        .map(|o| lk.keys_of(t, idx, o, cx))
+        .collect::<SqlResult<_>>()?;
+    // (Distinct by their bytes: values that only compare equal here, such
+    // as DECIMALs equal as doubles, are each looked up; a row that two of
+    // them find is kept once.)
+    let mut seen: HashSet<Bytes> = HashSet::new();
+    let mut keys: Vec<Vec<Value>> = Vec::new();
+    for k in wanted.iter().flatten() {
+        if seen.insert(crate::txn::key_bytes(k)) {
+            keys.push(k.clone());
+        }
+    }
+    keys.sort_by(|a, b| key_cmp(a, b));
+    let stored = if keys.is_empty() {
+        Vec::new()
+    } else if lk.global {
+        let g = global_index(t, lk.index).expect("a global lookup has a global index");
+        global_lookup(cluster, mode, t, g, keys).await?
+    } else {
+        let mut pks: HashSet<Bytes> = HashSet::new();
+        let rows = fetch_keys(cluster, mode, t, idx, keys, lk.unique, lk.unique.then_some(1)).await?;
+        rows.into_iter()
+            .filter(|r| pks.insert(crate::txn::key_bytes(&t.pk_key(r))))
+            .collect()
+    };
+    let (stored, own): (Vec<Row>, Vec<Row>) = match &*mode {
+        ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) => {
+            (txn.unwritten(t, stored), txn.own_rows(t.space_id).cloned().collect())
+        }
+        ReadMode::Auto { .. } => (stored, Vec::new()),
+    };
+    Ok(distribute(t, idx, lk.len, wanted, stored, &own))
+}
+
+/// Each outer row's inner rows, from the rows a batched lookup read
+/// (`stored`) and the keys each outer row looks up (`wanted`): the rows whose
+/// first `len` index parts compare equal to one of its keys, in index order,
+/// then `own`. Values that compare equal without being the same (DECIMALs
+/// equal as doubles) may give a row more than its lookup would have: ON and
+/// WHERE, which hold the equalities the lookup came from, filter them.
+fn distribute(
+    t: &TableDef,
+    idx: &IndexDef,
+    len: usize,
+    wanted: Vec<Vec<Vec<Value>>>,
+    stored: Vec<Row>,
+    own: &[Row],
+) -> Vec<Vec<Row>> {
+    let mut stored: Vec<(Vec<Value>, Row)> = stored
+        .into_iter()
+        .map(|r| {
+            let mut k = t.index_key(idx, &r);
+            k.truncate(len);
+            (k, r)
+        })
+        .collect();
+    stored.sort_by(|a, b| key_cmp(&a.0, &b.0)); // (stable: index order within a key)
+    wanted
+        .into_iter()
+        .map(|ks| {
+            let mut v: Vec<Row> = Vec::new();
+            for k in ks {
+                let lo = stored.partition_point(|(x, _)| key_cmp(x, &k) == std::cmp::Ordering::Less);
+                let hi = stored.partition_point(|(x, _)| key_cmp(x, &k) != std::cmp::Ordering::Greater);
+                v.extend(stored[lo..hi].iter().map(|(_, r)| r.clone()));
+            }
+            v.extend(own.iter().cloned());
+            v
+        })
+        .collect()
 }
 
 enum AggState {
@@ -3460,6 +3700,107 @@ mod tests {
         assert!(!only_prefix(&Some(twice), &[0], &[]));
     }
 
+    /// The inner table access of the join in `sql` over `o` and `l`.
+    fn inner_access(sql: &str) -> TableAccess {
+        let c0 = Catalog::default();
+        let mut defs = Vec::new();
+        for (i, ct) in [
+            "CREATE TABLE o (id INT PRIMARY KEY, r INT, g INT)",
+            "CREATE TABLE l (r INT NOT NULL, n INT NOT NULL, v INT, PRIMARY KEY (r, n), KEY kv (v))",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let ctx = PlanCtx {
+                catalog: &c0,
+                db: Some("d"),
+                params: &[],
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            let Ok(Stmt::CreateTable { mut def, .. }) = plan(ct, &ctx) else {
+                panic!()
+            };
+            def.space_id = 512 + i as u32;
+            defs.push(*def);
+        }
+        let cat = Catalog::new(1, vec!["d".into()], defs);
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Ok(Stmt::Select(p)) = plan(sql, &ctx) else {
+            panic!("{sql}")
+        };
+        match &p.source {
+            Source::Join { right, .. } => right.clone(),
+            _ => panic!("{sql}: not a join"),
+        }
+    }
+
+    #[test]
+    fn batched_join_lookups() {
+        // issue #84: equality on a key or a key prefix of the inner table
+        let batched = |sql: &str| {
+            let ta = inner_access(sql);
+            Lookup::of(2, false, &ta).map(|lk| (lk.index, lk.len, lk.unique))
+        };
+        let pk = "SELECT * FROM o JOIN l ON l.r = o.r AND l.n = o.g";
+        assert_eq!(batched(pk), Some((0, 2, true)));
+        let prefix = "SELECT * FROM o LEFT JOIN l ON l.r = o.r";
+        assert_eq!(batched(prefix), Some((0, 1, false)));
+        assert_eq!(batched("SELECT * FROM o JOIN l ON l.v = o.g").map(|b| b.1), Some(1));
+        assert_eq!(
+            batched("SELECT * FROM o JOIN l ON l.r = o.r AND l.n IN (1, 2)"),
+            Some((0, 2, true))
+        );
+        // a range, a scan or NULL-matching equality: each outer row on its own
+        assert_eq!(batched("SELECT * FROM o JOIN l ON l.r = o.r AND l.n > o.g"), None);
+        assert_eq!(batched("SELECT * FROM o JOIN l ON l.n = o.g"), None);
+        assert_eq!(batched("SELECT * FROM o JOIN l ON l.v <=> o.g"), None);
+    }
+
+    #[test]
+    fn batched_lookup_rows_go_to_their_outer_rows() {
+        let ta = inner_access("SELECT * FROM o LEFT JOIN l ON l.r = o.r");
+        let t = &ta.table;
+        let idx = &t.indexes[0];
+        let row = |r: i64, n: i64| vec![Value::Int(r), Value::Int(n), Value::Null];
+        let k = |r: i64| vec![Value::Int(r)];
+        // outer rows: r = 2, r = 1, r = NULL (no key), r = 2 again, r = 3
+        // (no rows); stored rows arrive in any order (several shards)
+        let wanted = vec![vec![k(2)], vec![k(1)], vec![], vec![k(2)], vec![k(3)]];
+        let stored = vec![row(2, 1), row(1, 5), row(2, 0), row(1, 4)];
+        let own = vec![row(9, 9)];
+        let got = distribute(t, idx, 1, wanted, stored, &own);
+        assert_eq!(
+            got,
+            vec![
+                vec![row(2, 1), row(2, 0), row(9, 9)], // (stable: as read within a key)
+                vec![row(1, 5), row(1, 4), row(9, 9)],
+                vec![row(9, 9)],
+                vec![row(2, 1), row(2, 0), row(9, 9)],
+                vec![row(9, 9)],
+            ]
+        );
+        // several keys of one outer row: each key's rows, in key order
+        let got = distribute(
+            t,
+            idx,
+            2,
+            vec![vec![
+                vec![Value::Int(1), Value::Int(4)],
+                vec![Value::Int(2), Value::Int(1)],
+            ]],
+            vec![row(2, 1), row(1, 4), row(1, 5)],
+            &[],
+        );
+        assert_eq!(got, vec![vec![row(1, 4), row(2, 1)]]);
+    }
+
     #[test]
     fn paging_the_ordered_index_or_reading_the_prefix() {
         // issue #81: 112,726 open rows of 300,000, a page of 51: paging
@@ -3712,6 +4053,132 @@ mod tests {
         assert_eq!(
             read_route(&map, false, calls[1].shard, &[None]).unwrap(),
             Route::Epoch(3, 0)
+        );
+    }
+
+    /// A resolved table access, including the metadata allocated for its
+    /// global indexes at CREATE, without opening any storage connections.
+    fn decimal_join_access(create: &str, index: &str, len: usize, point: bool) -> TableAccess {
+        let cat = Catalog::default();
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("d"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = plan(create, &ctx).unwrap() else {
+            panic!("{create}")
+        };
+        def.space_id = 512;
+        for i in 0..def.indexes.len() {
+            if def.needs_global(&def.indexes[i]) {
+                def.indexes[i].global = Some(513 + i as u32);
+            }
+        }
+        def.resolve_types().unwrap();
+        let index = def.index_by_name(index).unwrap().id;
+        let eq: Vec<Expr> = (0..len).map(Expr::Col).collect();
+        let path = if point {
+            AccessPath::Point { index, keys: vec![eq] }
+        } else {
+            AccessPath::Range {
+                index,
+                eq,
+                null_eq: vec![false; len],
+                lo: None,
+                hi: None,
+                reverse: false,
+            }
+        };
+        TableAccess {
+            table: Arc::from(def),
+            alias: "l".into(),
+            path,
+            offset: 0,
+            limit: None,
+        }
+    }
+
+    #[test]
+    fn batched_join_decimal_probes_keep_the_native_lookup() {
+        let create = "CREATE TABLE l (d DECIMAL(20,0) PRIMARY KEY, v INT)";
+        for point in [false, true] {
+            let ta = decimal_join_access(create, "PRIMARY", 1, point);
+            let t = &ta.table;
+            // These adjacent integers need distinct native probes; neither
+            // coercion nor key serialization may round them into one key.
+            let keys: Vec<Vec<Value>> = ["9007199254740992", "9007199254740993"]
+                .iter()
+                .map(|d| {
+                    let v = Value::Decimal((*d).into());
+                    let native = t.lookup_part(0, &v).unwrap();
+                    assert_eq!(native, v);
+                    vec![native]
+                })
+                .collect();
+            assert_ne!(crate::txn::key_bytes(&keys[0]), crate::txn::key_bytes(&keys[1]));
+            for (nlive, committed) in [(1, false), (2, false), (2, true)] {
+                assert!(
+                    Lookup::of(nlive, committed, &ta).is_none(),
+                    "each outer row must retain its exact native DECIMAL probe"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn batched_join_can_leave_a_decimal_suffix_unprobed() {
+        let create = "CREATE TABLE l (r INT, d DECIMAL(20,0), PRIMARY KEY (r, d)) PARTITION BY KEY(r)";
+        let prefix = decimal_join_access(create, "PRIMARY", 1, false);
+        let lookup = Lookup::of(2, false, &prefix).expect("the probed INT prefix is exact");
+        assert_eq!(
+            (lookup.index, lookup.len, lookup.unique, lookup.global),
+            (0, 1, false, false)
+        );
+        // The same DECIMAL suffix becomes unsafe once the lookup fixes it,
+        // whether the access is represented as a prefix or as a full point.
+        for point in [false, true] {
+            let full = decimal_join_access(create, "PRIMARY", 2, point);
+            assert!(Lookup::of(2, false, &full).is_none());
+        }
+    }
+
+    #[test]
+    fn batched_join_decimal_pk_guard_applies_only_to_global_lookups() {
+        let ta = decimal_join_access(
+            "CREATE TABLE l (id DECIMAL(20,0) PRIMARY KEY, h VARCHAR(10), UNIQUE KEY uh (h))",
+            "uh",
+            1,
+            true,
+        );
+        let AccessPath::Point { index, .. } = &ta.path else {
+            panic!()
+        };
+        assert!(
+            global_index(&ta.table, *index).is_some(),
+            "exercise a real global-index definition"
+        );
+        assert!(
+            Lookup::of(2, false, &ta).is_none(),
+            "global PK deduplication cannot collapse DECIMAL holders"
+        );
+        // A singleton cluster and RC write candidates read the physical
+        // text index instead, where the base PKs are deduplicated by bytes.
+        for (nlive, committed) in [(1, false), (1, true), (2, true)] {
+            let lookup = Lookup::of(nlive, committed, &ta).expect("the local text-key lookup stays batchable");
+            assert!(!lookup.global);
+            assert_eq!((lookup.len, lookup.unique), (1, true));
+        }
+        let exact_pk = decimal_join_access(
+            "CREATE TABLE l (id BIGINT PRIMARY KEY, h VARCHAR(10), UNIQUE KEY uh (h))",
+            "uh",
+            1,
+            true,
+        );
+        assert!(
+            Lookup::of(2, false, &exact_pk).unwrap().global,
+            "ordinary global lookups remain batched"
         );
     }
 }

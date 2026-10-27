@@ -3159,6 +3159,7 @@ impl Session {
             ("Tarn_deadlock_detector_calls", s.deadlock_calls.load(Ordering::Relaxed)),
             ("Tarn_storage_counts", s.storage_counts.load(Ordering::Relaxed)),
             ("Tarn_rows_read", s.rows_read.load(Ordering::Relaxed)),
+            ("Tarn_storage_reads", s.storage_reads.load(Ordering::Relaxed)),
             ("Tarn_path_estimates", s.path_estimates.load(Ordering::Relaxed)),
             ("Tarn_bucket_moves", s.bucket_moves.load(Ordering::Relaxed)),
             ("Tarn_bucket_map_reads", self.cluster.bucket_loads()),

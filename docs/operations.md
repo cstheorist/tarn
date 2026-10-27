@@ -437,7 +437,9 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   this server, storage calls its deadlock detector made
   (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), `COUNT`s
   the shards computed without returning rows (`Tarn_storage_counts`), rows
-  read from storage (`Tarn_rows_read`), row counts taken to choose between
+  read from storage (`Tarn_rows_read`), attempted storage reads (`Tarn_storage_reads`,
+  one per index-scan or multi-key page, including failed or discarded
+  attempts), row counts taken to choose between
   an ordered page and a longer index prefix (`Tarn_path_estimates`), buckets
   this server moved (`Tarn_bucket_moves`) and how many times it read the
   bucket map (`Tarn_bucket_map_reads`), the number of buckets

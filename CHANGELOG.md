@@ -98,6 +98,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   committed state per range and serializable range recording (per shard, up
   to the last row it returned) work as on one shard. The pager retains one
   routing snapshot across refill rounds, so a bucket move or membership change cannot mix pages from different maps.
+- A join reads its inner table for a batch of outer rows at once
+  ([#84](https://github.com/cstheorist/tarn/issues/84)): when the inner side
+  is reached by equality on an index key or key prefix (`Point`, `Prefixes`
+  or an unbounded equality prefix), the distinct keys of up to 256 outer
+  rows go to their shards in one `tarn_select_keys` call per shard, in
+  parallel (to every shard for a key without the shard key; through the
+  global index for a unique key without it), and the rows are matched back
+  to their outer rows in memory. Join order, `LEFT JOIN` padding, NULL keys,
+  duplicates and residual `ON` / `WHERE` predicates are as before; in a
+  transaction each key enters the read set as its separate lookup did, and
+  the transaction's own rows are merged into every outer row's lookup. A
+  READ COMMITTED batch longer than one storage page reads its outer rows'
+  lookups one by one, as before. DECIMAL lookup parts, and global lookups
+  whose base primary key contains DECIMAL, keep per-row reads to preserve
+  exact native key matching. All keys in a batch use one routing snapshot.
+  `SHOW STATUS` reports `Tarn_storage_reads`, attempted index-scan and
+  multi-key page reads, including failed or discarded attempts.
 
 - `ALTER TABLE ... ADD UNIQUE` and `CREATE UNIQUE INDEX` of a unique key
   without the shard key on a table with rows, and dropping one

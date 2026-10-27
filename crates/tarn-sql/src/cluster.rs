@@ -468,6 +468,9 @@ pub struct Stats {
     pub storage_counts: AtomicU64,
     /// Rows read from storage by SELECT, UPDATE and DELETE.
     pub rows_read: AtomicU64,
+    /// Storage reads (pages) of index scans and multi-key lookups that
+    /// returned those rows.
+    pub storage_reads: AtomicU64,
     /// Row counts taken to choose the access path of an ordered read with
     /// LIMIT (issue #81).
     pub path_estimates: AtomicU64,

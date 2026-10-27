@@ -470,6 +470,88 @@ class T:
                     self.check(n <= most and e >= 1, f"{what}: {n} rows read, {e} estimates")
         q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 
+    def test_batched_join_lookups(self):
+        # issue #84: a join reads its inner table for a batch of outer rows
+        # with one storage read per shard, not one per outer row; the keys
+        # it read are validated as separate lookups would be
+        c = self.fresh("bjo", "CREATE TABLE bjo (id INT PRIMARY KEY, r INT, g INT, KEY kg (g))",
+                       [f"({i}, {'NULL' if i % 50 == 49 else i % 300}, {i % 2})" for i in range(1000)])
+        self.fresh("bjc", "CREATE TABLE bjc (r INT, n INT, v INT, PRIMARY KEY (r, n)) PARTITION BY KEY(r)",
+                   [f"({r}, {n}, {r + n})" for r in range(0, 300, 3) for n in range(2)])
+        reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
+        sql = "SELECT bjo.id, bjc.n FROM bjo LEFT JOIN bjc ON bjc.r = bjo.r WHERE bjo.g = 1 ORDER BY bjo.id, bjc.n"
+        want = []
+        for i in range(1, 1000, 2):
+            r = None if i % 50 == 49 else i % 300
+            want += [(i, n) for n in range(2)] if r is not None and r % 3 == 0 else [(i, None)]
+        for iso in ("SERIALIZABLE", "READ COMMITTED"):
+            q(c, f"SET SESSION TRANSACTION ISOLATION LEVEL {iso}")
+            for txn in (False, True):
+                if txn:
+                    q(c, "BEGIN")
+                before = reads()
+                got = list(q(c, sql))
+                n = reads() - before
+                if txn:
+                    q(c, "COMMIT")
+                what = f"{iso}, {'in a transaction' if txn else 'autocommit'}"
+                self.check(got == want, f"{what}: rows ({got[:4]}...)")
+                # 500 outer rows: 2 batches x 2 shards, plus the outer read
+                self.check(0 < n <= 12, f"{what}: {n} storage reads for 500 outer rows")
+        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        # a child row inserted under a key the join read conflicts (also a
+        # key that had no rows); one under a key it did not read does not
+        a, b = connect(self.args.tarn), connect(self.args.tarn)
+        for r, conflict in ((3, True), (1, True), (2, False), (300, False)):
+            q(a, "BEGIN")
+            q(a, "SELECT bjo.id, bjc.v FROM bjo JOIN bjc ON bjc.r = bjo.r WHERE bjo.g = 1")
+            q(a, "UPDATE bjo SET g = g WHERE id = 0")
+            q(b, f"INSERT INTO bjc VALUES ({r}, 7, 0)")
+            self.check(expect_conflict(lambda: q(a, "COMMIT")) == conflict,
+                       f"insert of a child of r = {r}: {'conflict' if conflict else 'no conflict'}")
+            q(b, f"DELETE FROM bjc WHERE r = {r} AND n = 7")
+
+    def test_batched_join_read_committed_pages(self):
+        # issue #84: the default storage page is 4096 rows (lua/tarn.lua).
+        # All 256 distinct inner prefixes route by the same tenant to one
+        # shard: together they return 5120 rows, but each lookup is only
+        # 20 rows. READ COMMITTED must discard the partial batch and fall
+        # back to the individual lookups without dropping or repeating rows.
+        c = self.fresh("bpo", "CREATE TABLE bpo (tenant_id INT, id INT, PRIMARY KEY (tenant_id, id)) "
+                             "PARTITION BY KEY(tenant_id)", [f"(7, {r})" for r in range(256)])
+        inner = self.fresh("bpc", "CREATE TABLE bpc (tenant_id INT, r INT, n INT, v INT, "
+                                 "PRIMARY KEY (tenant_id, r, n)) PARTITION BY KEY(tenant_id)", [])
+        inner.close()
+        want = [(r, n, r * 100 + n) for r in range(256) for n in range(20)]
+        for lo in range(0, len(want), 1000):
+            q(c, "INSERT INTO bpc VALUES " + ", ".join(f"(7, {r}, {n}, {v})" for r, n, v in want[lo:lo + 1000]))
+        sql = ("SELECT bpo.id, bpc.n, bpc.v FROM bpo LEFT JOIN bpc "
+               "ON bpc.tenant_id = bpo.tenant_id AND bpc.r = bpo.id "
+               "WHERE bpo.tenant_id = 7 ORDER BY bpo.id, bpc.n")
+        reads = lambda: int(dict(q(c, "SHOW STATUS LIKE 'Tarn_storage_reads'"))["Tarn_storage_reads"])
+
+        def check_rows(expected, what):
+            before = reads()
+            got = list(q(c, sql))
+            n = reads() - before
+            self.check(got == expected, f"{what}: {len(got)} rows, expected {len(expected)}")
+            # The rejected batched page plus 256 individual lookups proves
+            # this exercised the fallback, rather than a small single page.
+            self.check(n >= 257, f"{what}: {n} storage reads, expected the per-key fallback")
+
+        try:
+            q(c, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            check_rows(want, "READ COMMITTED batched multi-page join")
+            q(c, "BEGIN")
+            q(c, "DELETE FROM bpc WHERE tenant_id = 7 AND r = 0 AND n = 0")
+            q(c, "UPDATE bpc SET r = 255, n = 20 WHERE tenant_id = 7 AND r = 1 AND n = 0")
+            own = [row for row in want if row[:2] not in ((0, 0), (1, 0))]
+            own.append((255, 20, 100))
+            check_rows(sorted(own), "READ COMMITTED batched multi-page join with own writes")
+        finally:
+            q(c, "ROLLBACK")
+            c.close()
+
     def test_ordered_limit_merged(self):
         # issue #86: an ordered page over an index that does not fix the
         # shard key reads a page per shard and merges them; a serializable

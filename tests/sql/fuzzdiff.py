@@ -139,7 +139,7 @@ def main():
     args = ap.parse_args()
     a, b = D.connect(args.tarn), D.connect(args.ref)
     D.setup(a, args.db)
-    D.setup(b, args.db)
+    D.setup(b, args.db, reference=True)
     g = Gen(random.Random(args.seed))
     fails = errs_both = 0
     shown = 0

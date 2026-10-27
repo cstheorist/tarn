@@ -31,7 +31,12 @@ servers write to it (`tests/sql/`).
 * `SELECT` with `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` /
   `OFFSET` (both syntaxes), `DISTINCT`, column aliases, ordinal `ORDER BY 2`.
 * Joins: `[INNER] JOIN`, `LEFT [OUTER] JOIN`, comma joins, `ON` / `USING`.
-  Joins are nested loops with index lookups on the inner table.
+  Joins are nested loops with index lookups on the inner table. When the
+  inner table is reached by equality on an index key or key prefix, the
+  lookups of up to 256 outer rows are read together: one storage call per
+  shard they touch, in parallel, instead of one call per outer row.
+  DECIMAL lookup parts and global lookups whose primary key contains
+  DECIMAL retain per-row native lookups for exact key matching.
 * Index access: equality (including `IS NULL` and `<=>`) and range
   predicates on an index prefix, and
   multi-key lookups for `col IN (...)`, `OR`s of equalities and row-value
