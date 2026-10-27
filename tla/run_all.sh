@@ -14,6 +14,7 @@ for cfg in "$@"; do
     LazyHandoff|LazyHandoffLive|Bug_LazyHandoff*) module=LazyHandoff.tla ;;
     LazyMeter|Bug_LazyMeter*) module=LazyMeter.tla ;;
     LazyTargetConfirm|Bug_UnconfirmedAck) module=LazyTargetConfirm.tla ;;
+    LazyApplyConfirm|Bug_UnconfirmedApply) module=LazyApplyConfirm.tla ;;
     GroupedRead|Bug_GroupedReadSeparateSnapshots) module=GroupedRead.tla ;;
     GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;

@@ -1,0 +1,70 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 6 and seed -7417171781462911521 with 1 worker on 2 cores with 455MB heap and 64MB offheap memory [pid: 52] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /model/LazyApplyConfirm.tla
+Parsing file /tmp/tlc-3614311784006046122/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-3614311784006046122/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-3614311784006046122/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-3614311784006046122/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-3614311784006046122/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-3614311784006046122/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-3614311784006046122/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyApplyConfirm
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyApplyConfirm
+Starting... (2026-10-27 09:28:30)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 09:28:30.
+Error: Invariant OwnReadSafe is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ applied = FALSE
+/\ first = "idle"
+/\ read = "none"
+/\ ownPending = TRUE
+/\ reply = "none"
+/\ delivered = FALSE
+
+State 2: <StartApply line 14, col 5 to line 16, col 64 of module LazyApplyConfirm>
+/\ applied = FALSE
+/\ first = "pending"
+/\ read = "none"
+/\ ownPending = TRUE
+/\ reply = "none"
+/\ delivered = FALSE
+
+State 3: <DuplicatePending line 18, col 5 to line 20, col 64 of module LazyApplyConfirm>
+/\ applied = FALSE
+/\ first = "pending"
+/\ read = "none"
+/\ ownPending = TRUE
+/\ reply = "applied"
+/\ delivered = FALSE
+
+State 4: <ReleaseOwnPending line 33, col 5 to line 35, col 59 of module LazyApplyConfirm>
+/\ applied = FALSE
+/\ first = "pending"
+/\ read = "none"
+/\ ownPending = FALSE
+/\ reply = "applied"
+/\ delivered = FALSE
+
+State 5: <LazyRead line 45, col 5 to line 47, col 65 of module LazyApplyConfirm>
+/\ applied = FALSE
+/\ first = "pending"
+/\ read = "missing"
+/\ ownPending = FALSE
+/\ reply = "applied"
+/\ delivered = FALSE
+
+12 states generated, 10 distinct states found, 3 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-27 09:28:30)
+Trace exploration spec path: ./LazyApplyConfirm_TTrace_1793093310.tla

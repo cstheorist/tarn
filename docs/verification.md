@@ -627,9 +627,56 @@ tla/check.sh LazyTargetConfirm Bug_UnconfirmedAck
 | `LazyTargetConfirm` | 19 | 5 | passes |
 | `Bug_UnconfirmedAck` | 17 | 5 | violates `DrainedObligationSafe` |
 
-The default list now contains 120 configurations, including 82 expected
-broken/trade-off outcomes. All 132 generated configurations reproduce from
-`gen_cfgs.sh`; explicit check arguments still override the default list.
+### Confirmed participant APPLY acknowledgement
+
+`LazyApplyConfirm.tla` refines the participant-completion premise used by
+`LazyBarrier`. A durable COMMITTED decision and YES already exist. The
+first physical APPLY can be waiting for its synchronous quorum while a
+duplicate reads its provisional `applied` participant record. Such a
+record cannot discharge the session's own pending-APPLY obligation.
+Otherwise a correctly confirmed source counter/outbox view can still be
+zero/empty, so its frontier barrier passes and an own committed row is
+missing from the lazy read **while the first APPLY is still pending**.
+Native rollback makes that loss persistent until a later recovery APPLY.
+
+An actual `tarn_apply` probe on Tarantool 3.9.0, with MVCC, fsync WAL and
+`cfg.sync=true`, reproduced the boundary on both memtx and vinyl. A durable
+PREPARE and COMMITTED decision preceded the probe. While the first APPLY
+waited for quorum two, the duplicate returned `ok/applied`. The first then
+timed out with error 216; a read-confirmed view still showed `prepared`,
+one reservation, no base row, counter zero and no outbox entry. A private
+control changing only that APPLY transaction to read-confirmed returned
+conflict 1213 to the duplicate while the first was pending, retained the
+obligation, and completed the known-committed idempotent retry with quorum
+one. These are native-engine probes with the optional C module disabled;
+they do not establish the cause of a separate SQL CI failure.
+
+The model separates native completion, duplicate reply, pending-history
+release, delivery and the lazy snapshot. Its confirmed counter/frontier
+read and delivery rules reuse `LazyBarrier`/`LazyIndex` premises. The
+positive model requires confirmed participant completion before release;
+`Bug_UnconfirmedApply` reaches the missing-row read while the first APPLY
+is pending. This local refinement does not change the commit protocol or
+prove every participant procedure, native queue implementation, recovery
+schedule, or SQL consumer. Production must justify every successful APPLY
+completion proof, including no-write duplicate paths.
+
+```sh
+tla/check.sh LazyApplyConfirm Bug_UnconfirmedApply
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyApplyConfirm` | 14 | 7 | passes |
+| `Bug_UnconfirmedApply` | 10 | 5 | violates `OwnReadSafe` |
+
+The default list now contains 122 configurations, including 83 expected
+broken/trade-off outcomes. The lazy-index refinements account for 51 of
+those configurations: eight positive cases and 43 controls. The 132
+generated configurations reproduce from `gen_cfgs.sh`; two additional
+grouped-read configurations are maintained directly, for 134 total.
+All 132 previous configuration files are unchanged. Explicit check
+arguments still override the default list.
 
 ## Verus proofs
 
