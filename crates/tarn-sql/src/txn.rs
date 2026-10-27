@@ -1648,11 +1648,7 @@ pub async fn select_keys(
         match client.call(0, "tarn_storage.ts_select", &m.0).await {
             Ok(r) => {
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no native batch data"))?;
-                if !crate::mpw::status_is(&d, "lua") {
-                    let page = page_of(&d, t)?;
-                    if page.1.is_some() || page.0.len() > keys.len() {
-                        return Err(crate::mpw::proto("incomplete or oversized native key batch"));
-                    }
+                if let Some(page) = native_batch_reply(&d, t, keys.len())? {
                     return Ok(page);
                 }
             }
@@ -1733,6 +1729,36 @@ fn native_batch_capability(data: &[u8]) -> SqlResult<bool> {
         return Err(crate::mpw::proto("trailing native batch capability data"));
     }
     Ok(supported)
+}
+
+/// Unlike Lua's general pager, a served batch must be complete in one reply.
+/// Only an exact handback permits calling Lua; malformed replies are errors.
+fn native_batch_reply(data: &Bytes, t: &TableDef, requested: usize) -> SqlResult<Option<Page>> {
+    let mut rd = Rd::shared_at(data, Rd::new(data));
+    if rd.array()? != 1 {
+        return Err(crate::mpw::proto("invalid native batch envelope"));
+    }
+    let fields = rd.array()?;
+    let status = rd.string()?;
+    let page = match (fields, status.as_str()) {
+        (1, "lua") => None,
+        (2, "ok") => {
+            let n = rd.array()?;
+            if n > requested {
+                return Err(crate::mpw::proto("oversized native key batch"));
+            }
+            let mut rows = Vec::with_capacity(n);
+            for _ in 0..n {
+                rows.push(rd.row_of(t)?);
+            }
+            Some((rows, None))
+        }
+        _ => return Err(crate::mpw::proto("invalid native batch status or completion")),
+    };
+    if !rd.buf.is_empty() {
+        return Err(crate::mpw::proto("trailing native batch data"));
+    }
+    Ok(page)
 }
 
 /// A predicate a shard evaluates on stored tuples while counting
@@ -1973,6 +1999,38 @@ mod tests {
         assert!(native_batch_capability(&bad.0).is_err());
     }
 
+    #[test]
+    fn native_key_batch_reply_preserves_physical_rows_and_requires_completion() {
+        let mut table = join_table();
+        table.layout.identity = false;
+        table.layout.col_field.swap(0, 1);
+        table.layout.field_col[0] = Some(1);
+        table.layout.field_col[1] = Some(0);
+        table.layout.fills[2] = Value::str("filled");
+        let mut m = Mp::new();
+        m.arr(1).arr(2).str("ok").arr(2);
+        for _ in 0..2 {
+            m.vals(&[Value::Int(7), Value::str("tenant")]);
+        }
+        let data = m.bytes();
+        let page = native_batch_reply(&data, &table, 3).unwrap().unwrap();
+        assert_eq!(
+            page.0,
+            vec![vec![Value::str("tenant"), Value::Int(7), Value::str("filled")]; 2]
+        );
+        assert!(page.1.is_none());
+        assert!(native_batch_reply(&data, &table, 1).is_err());
+        for end in 0..data.len() {
+            assert!(native_batch_reply(&data.slice(..end), &table, 3).is_err());
+        }
+        let mut trailing = data.to_vec();
+        trailing.push(0xc0);
+        assert!(native_batch_reply(&Bytes::from(trailing), &table, 3).is_err());
+        let mut handback = Mp::new();
+        handback.arr(1).arr(1).str("lua");
+        assert!(native_batch_reply(&handback.bytes(), &table, 3).unwrap().is_none());
+    }
+
     #[tokio::test]
     async fn native_key_batch_negotiates_once_and_preserves_fallback_calls() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2006,6 +2064,21 @@ mod tests {
                 let (status, version) = status.unwrap();
                 packet.map(1).uint(0x30).arr(1);
                 match (status, version) {
+                    ("bad-page", _) => {
+                        packet.arr(4).str("ok").arr(0).nil().bool(false);
+                    }
+                    ("yes", _) => {
+                        packet.arr(2).str("yes").arr(0);
+                    }
+                    ("bad-lua", _) => {
+                        packet.arr(2).str("lua").nil();
+                    }
+                    ("large-page", _) => {
+                        packet.arr(2).str("ok").arr(4);
+                        for _ in 0..4 {
+                            packet.vals(&[Value::str("tenant"), Value::Int(7), Value::str("label"), Value::UInt(1)]);
+                        }
+                    }
                     ("ok", _) => {
                         packet.arr(2).str(status).arr(0);
                     }
@@ -2062,8 +2135,9 @@ mod tests {
 
         // 0: supported, 1: older module, 2: per-request handback,
         // 3: native data error, 4: switch disabled, 5: missing module,
-        // 6: existing stream, 7: primary-key prefixes.
-        for case in 0..8 {
+        // 6: existing stream, 7: primary-key prefixes; 8..12: malformed
+        // completion/status/handback/row-count replies must never call Lua.
+        for case in 0..12 {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             let peer = tokio::spawn(async move {
@@ -2121,7 +2195,10 @@ mod tests {
                     } else {
                         assert_eq!(name, "tarn_storage.ts_select");
                         names.push("native");
-                        if case == 3 {
+                        if case >= 8 {
+                            let status = ["bad-page", "yes", "bad-lua", "large-page"][case - 8];
+                            reply(&mut sock, sync, 0, Some((status, None))).await;
+                        } else if case == 3 {
                             reply(&mut sock, sync, 0x8000 | 35, None).await;
                         } else if case == 2 {
                             reply(&mut sock, sync, 0, Some(("lua", None))).await;
@@ -2173,7 +2250,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-                if case == 3 {
+                if case == 3 || case >= 8 {
                     assert!(result.is_err());
                 } else {
                     let page = result.unwrap();
@@ -2186,7 +2263,7 @@ mod tests {
             client.close();
             let names = timeout(Duration::from_secs(3), peer).await.unwrap().unwrap();
             let expected = match case {
-                0 | 3 => vec!["caps", "native", "native"],
+                0 | 3 | 8..=11 => vec!["caps", "native", "native"],
                 1 | 5 => vec!["caps", "lua", "lua"],
                 2 => vec!["caps", "native", "lua", "native", "lua"],
                 4 | 6 | 7 => vec!["lua", "lua"],
