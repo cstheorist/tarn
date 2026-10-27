@@ -454,8 +454,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were collected, that earlier refusal could resurrect an aborted decision
   over committed history. Runtime controls retain the committed row and
   verify both the absent-history and collected-history cases.
-
-
+- Hexadecimal literals (`X'4142'`, the form in which PyMySQL 1.2.3 sends
+  bytes), strings with the `_binary` or a UTF-8 introducer (`_binary 'ab'`,
+  `_binary X'4142'`, `_utf8mb4 'ab'`) and national strings (`N'ab'`) failed
+  in text queries with 1064 or 1235. They are binary strings, or text ones,
+  as in MariaDB: typed as such, compared as such, and named by their text
+  (`SELECT X'41'` is a column `X'41'`). An odd number of digits, or another
+  character, is 1064, as in MariaDB. A binary string is coercible: a column's
+  collation, or an explicit one, wins over it, so a case-insensitive column
+  compared with `X'41'` compares as text; between two literals the binary
+  one wins, also in `LIKE` and `LOCATE`. A prepared statement executed with
+  a binary parameter is planned for it. `0x123` is `0x0123`
+  ([#122](https://github.com/cstheorist/tarn/issues/122)).
+- A cached plan served statements whose literals were of another kind: after
+  `SELECT 1`, `SELECT 'abc'` came back as an integer column, which PyMySQL
+  could not convert. Plans are cached per kind of each parameter too
+  ([#122](https://github.com/cstheorist/tarn/issues/122)).
 - A local commit or PREPARE of the reads of a stream that began before the
   shard's leader was demoted and elected again is refused, as a validation
   is: the stream may have missed writes of the leader in between. They

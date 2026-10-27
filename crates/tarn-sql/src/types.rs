@@ -714,7 +714,9 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
 /// comparison, as in MySQL.
 pub fn compare_coll(a: &Value, b: &Value, coll: Collation) -> Option<Ordering> {
     match (a, b) {
-        (Value::Str(x), Value::Str(y)) if coll.is_ci() => Some(coll.cmp(x, y)),
+        // (a binary string compared under a text collation was converted to
+        // its character set: ci_col = X'41')
+        (Value::Str(x) | Value::Bin(x), Value::Str(y) | Value::Bin(y)) if coll.is_ci() => Some(coll.cmp(x, y)),
         _ => compare(a, b),
     }
 }
@@ -732,7 +734,7 @@ pub fn sort_cmp_coll(a: &Value, b: &Value, coll: Collation) -> Ordering {
 /// `key_val` under a collation: text values equal under it get one key.
 pub fn key_val_coll(v: &Value, coll: Collation) -> KeyVal {
     match v {
-        Value::Str(b) if coll.is_ci() => KeyVal::Bytes(coll.key(b)),
+        Value::Str(b) | Value::Bin(b) if coll.is_ci() => KeyVal::Bytes(coll.key(b)),
         other => key_val(other),
     }
 }
