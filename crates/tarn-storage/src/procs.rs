@@ -156,14 +156,11 @@ struct IndexInfo {
     nfields: u8,
 }
 
-/// What a space is, as far as writes need: memtx, synchronous (its commits
-/// wait for a quorum, and may fail as Lua's commit_failure knows), and the
-/// field (from 0) of its rows' bucket (BK.field: the first part of its
-/// index bucket_id).
+/// What a space is, as far as writes need: memtx, and the field (from 0)
+/// of its rows' bucket (BK.field: the first part of its index bucket_id).
 #[derive(Clone, Copy)]
 struct SpaceInfo {
     memtx: bool,
-    sync: bool,
     bucket_field: Option<u32>,
 }
 
@@ -495,18 +492,6 @@ unsafe fn read_space_info(space_id: u32) -> Result<Option<SpaceInfo>, ()> {
     let Some(memtx) = field(t, 3).and_then(|mut f| f.str()).map(|e| e == b"memtx") else {
         return Ok(None);
     };
-    let Some(sync) = field(t, 5).and_then(|mut flags| {
-        let mut sync = false;
-        for _ in 0..flags.map()? {
-            match flags.str() {
-                Some(b"is_sync") => sync = flags.bool()?,
-                _ => flags.skip()?,
-            }
-        }
-        Some(sync)
-    }) else {
-        return Ok(None);
-    };
     // _index: [space_id, index_id, name, type, opts, parts]: the index
     // bucket_id, among the space's: the first part of it is the field of
     // the rows' bucket (BK.field; a space without it has none)
@@ -539,11 +524,7 @@ unsafe fn read_space_info(space_id: u32) -> Result<Option<SpaceInfo>, ()> {
     let Ok(bucket_field) = bucket_field else {
         return Ok(None);
     };
-    Ok(Some(SpaceInfo {
-        memtx,
-        sync,
-        bucket_field,
-    }))
+    Ok(Some(SpaceInfo { memtx, bucket_field }))
 }
 
 /// Reply with one MessagePack value.
@@ -552,9 +533,6 @@ unsafe fn reply(ctx: *mut BoxFunctionCtx, mp: &[u8]) -> c_int {
 }
 
 const TO_LUA: &[u8] = &[0x91, 0xa3, b'l', b'u', b'a'];
-/// ["lua", "all"]: this write, and every later one of the connection, to
-/// the Lua procedure (`Served::LuaAll`).
-const TO_LUA_ALL: &[u8] = &[0x92, 0xa3, b'l', b'u', b'a', 0xa3, b'a', b'l', b'l'];
 
 /// `ts_state([layout])`: the address of the state, which the Lua module
 /// keeps current (lua/tarn.lua, "Native procedures"). `layout` is the one
@@ -857,11 +835,6 @@ enum Served {
     /// Its commit failed with ER_READONLY, left as the error of the call:
     /// the SQL server follows the leader change (reraise_readonly).
     Raise,
-    /// Handed to tarn_autocommit, as every write of this shard's tables
-    /// will be: they are synchronous (a shard with replicas, whose commits
-    /// wait for a quorum). The SQL server stops calling this procedure on
-    /// the connection.
-    LuaAll,
 }
 
 /// What became of an autocommit write served here, or None for one left
@@ -894,15 +867,13 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if s.count != 0 && opts.wb.iter().any(|&b| !s.writable(b)) {
         return None;
     }
-    // Each table: memtx, not synchronous, no lock of a prepared
-    // transaction on it. (What the writes need of the schema is read
-    // before the transaction, which must not read the system spaces.)
+    // Each table: memtx, no lock of a prepared transaction on it. (What the
+    // writes need of the schema is read before the transaction, which must
+    // not read the system spaces.) A synchronous table's commit waits for
+    // its quorum, as tarn_autocommit's does, and is in flight until then.
     let mut infos = Vec::with_capacity(writes.len());
     for w in &writes {
         let sp = space_info(w.space_id)?;
-        if sp.sync {
-            return Some(Served::LuaAll);
-        }
         if !sp.memtx || s.space_locked(w.space_id) {
             return None;
         }
@@ -1084,7 +1055,6 @@ pub unsafe extern "C" fn ts_autocommit(
             }
             return -1;
         }
-        Some(Served::LuaAll) => Err(TO_LUA_ALL),
         None => Err(TO_LUA),
     };
     match to_lua {
