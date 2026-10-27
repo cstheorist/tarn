@@ -1136,6 +1136,8 @@ allowed.
 it, on every shard and with SQL servers whose catalogs lag behind. Ordinary
 instant changes retain the stored layout; building an index over a missing
 non-NULL fill materializes only the missing tuple suffix.
+An engine-only change instead copies an owned replacement space and
+rotates physical identities; its additional cutover is described in §2.11.
 
 **Layout.** A column has a field number that never changes. Fields of
 columns created with the table are their positions; `bucket_id` follows;
@@ -1385,6 +1387,47 @@ does not hold its writes for hours. Checking existing rows (a narrower
 type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
+**Online engine changes.** A separate `ALTER TABLE ... ENGINE=memtx` or
+`ENGINE=vinyl` creates an owned shadow with a fresh space ID. The source
+remains authoritative while confirmed primary-index pages are copied;
+source on-replace capture records conservative old/new primary keys before
+a write can commit. Rollback may leave extra keys, but no unconfirmed
+payload is replayed. Capture is installed before a prefix drain. Capture
+loss or a term change before PREPARED discards the incomplete baseline and
+starts a new copy generation.
+
+The shadow has only its primary index during the online copy. A final
+persistent hold/fence drains old work, including decided APPLY, then
+rereads dirty keys as confirmed values or deletes. Only afterward are the
+actual secondary indexes, including their sparse native IDs, built and
+fresh global/lazy copies filled. This avoids a false uniqueness failure
+when an unfinished shadow still holds a unique key its source row gave
+up. The final fence can include long index builds. PREPARED certifies that
+complete image; APPLY and restart retain it rather than recopying it.
+
+The global job's confirmed APPLY decision precedes native renames and
+catalog publication. Recovery uses the explicit old/new IDs even if a
+rename committed before its catalog update. Catalog observations bind SID,
+definition JSON and bucket-index ID from the same committed definition,
+rather than resolving a public name that native DDL is changing. Holds and
+stream watermarks cover the old/new strong object groups, including old
+global-index-only misses. Publication retires obsolete auxiliary
+generations, then repeatable cleanup drops the original spaces and
+releases holds. A published-but-not-cleaned receipt must finish that work.
+
+AUTO_INCREMENT and hidden-row-ID counters retain a stable logical ID;
+central storage aliases protect old gateway calls after the physical SID
+changes, including later catalog JSON roundtrips. Lazy bucket counters and
+outstanding obligations retain their own history. Shadow/cursor writes use
+zero-delta instances of the existing terminal-ticket helper: an RPC ending
+does not erase a detached native transaction. Reset, cleanup and
+certification wait for actual terminal effects and the native queue cut.
+`EngineCopy` and `EngineCutover` check bounded refinements, composed with
+the existing commit, DDL and bootstrap premises; native MVCC, callbacks and
+replication still require runtime evidence ([verification](verification.md#online-engine-copying-and-publication-issue-57)).
+See [operations](operations.md#online-engine-changes) for capacity, pause
+and raw native-read limits.
+
 **Performance.** Cached, vinyl tables served 73–89% of memtx's throughput
 in sysbench. With data ten times the cache, point selects ran at 72% of the
 cached rate and single-row writes kept theirs, at 2.9× and 4.4–6.2× TiDB's
@@ -1393,9 +1436,11 @@ with the same data ten times its block cache
 disk latency). [Sizing](operations.md#sizing) gives the memory and disk a
 vinyl shard needs.
 
-**Not yet.** Replica bootstrap and backups copy a shard's whole data set
-(issue #56). A table cannot move between engines (issue #57). Writes are
-not slowed down when compaction falls behind (issue #58).
+**Limits.** Replica bootstrap and backups copy a shard's whole data set
+(issue #56). Engine changes copy whole tables, without hot/cold range
+partitioning. Shared storage-side [vinyl write admission](operations.md#vinyl-write-admission)
+uses estimated credit during pressure; it is not a native-memory or
+disk-bandwidth reservation.
 
 ### 2.12 Bucket moves
 
@@ -1746,6 +1791,16 @@ is proven, and the storage tests compare each procedure with the Lua one.
 
 ## 4. Tests
 
+Engine migration has separate protocol, native-terminal and replicated
+failure gates; their results are functional/durability checks, not matched
+throughput measurements:
+
+| Suite | Engine-change boundary | Recorded result |
+|---|---|---|
+| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup | 75 checks with actual native ABI 8; 74 with native disabled; both engine directions |
+| `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
+| `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy forces recopy; a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
+
 | Suite | Scope | Result |
 |---|---|---|
 | `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts | 392/392 and 138/138 |
@@ -1813,6 +1868,28 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
 | Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
+| Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
+| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
+| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
+| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 6447 | 18399 | 15 | 00s | 15 |
+| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 1354 | 3342 | 9 | 00s | 9 |
+| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
+| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 4006 | 11372 | 13 | 00s | 13 |
+| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 4048 | 11203 | 12 | 00s | 12 |
+| Bug_EngineCopyStaleBatch | violates PreparedImage | 6254 | 18563 | 17 | 00s | 17 |
+| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 3881 | 10918 | 13 | 00s | 13 |
+| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 269 | 542 | 6 | 00s | 6 |
+| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 235 | 742 | 10 | 00s | 10 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 322 | 977 | 11 | 00s | 11 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
+| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 173 | 522 | 8 | 00s | 8 |
+| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 3 | 3 | 2 | 00s | 2 |
+| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 4 | 4 | 2 | 00s | 2 |
+| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 198 | 547 | 7 | 00s | 7 |
+| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 241 | 726 | 9 | 00s | 9 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 318 | 965 | 12 | 00s | 12 |
+| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 216 | 707 | 10 | 00s | 10 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
@@ -1906,6 +1983,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
+| EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
@@ -1999,8 +2078,9 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   Writes wait during PREPARE and, on memtx, index building; other vinyl
   indexes build before that wait. Checking or materializing existing rows
   (a narrower type, `NOT NULL`, indexed fills) is refused above
-  `tarn.cfg.alter_check_rows` rows per shard. A table cannot move between
-  memtx and vinyl.
+  `tarn.cfg.alter_check_rows` rows per shard. Engine changes use a separate
+  full-table copy with a final write/read fence (§2.11), require capacity
+  for both copies, and cannot combine with another schema alteration.
 * Vinyl tables (§2.11): an autocommit read whose range a cross-shard
   transaction writes again and again while it scans runs again each time,
   and fails with 1213 after `lock_wait` (1 s); benchmarks with data larger

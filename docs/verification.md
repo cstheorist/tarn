@@ -1054,6 +1054,14 @@ Implementation refinement obligations remain explicit:
   topology proof in these models. Preserve the actual source format and
   explicit native index IDs/parts/collations, including gaps; only engine,
   owned physical ID and native name change.
+* A running stream's raw IPROTO SELECT may meet a retired physical ID.
+  Only the typed server error `ER_NO_SUCH_SPACE` (36) falls through to the
+  existing Lua read on the same client and stream with the same arguments
+  and `begin=false`, skipping `ts_select`. No transport error or mutation
+  is replayed and no transaction is restarted. Lua maps a known retired
+  identity to 1412 and a genuinely unknown one to 1146. Existing read sets
+  and `ValidateRO`/local/PREPARE lost-stream checks remain the commit
+  premise; the models do not prove Rust dispatch/error-code matching.
 * Fresh global/lazy target identities must be complete and READY before
   publication. Existing global-fill/lazy bootstrap proofs are reused,
   not reimplemented here. Preserve source bucket counters, row-version and
@@ -1067,6 +1075,26 @@ TLC checks safety, not a throughput or progress guarantee. Actual writer
 progress, memtx/vinyl behavior, capacity refusal, rename/restart recovery,
 index gaps and auxiliary integrity require independent live tests. The
 final write fence includes secondary-index construction and may be long.
+
+The independent [protocol suite](../lua/test/engine_test.lua) exercises
+both directions with actual native ABI 8 loaded and with native disabled:
+75 and 74 checks respectively on the recorded revision. It verifies
+acknowledged writes during a paused copy, a unique-key cycle, DELETE/PK
+moves, rollback extras, sparse index IDs, unchanged physical tuple suffixes,
+capture recopy, stale workers, both decision-flip refusals, counter aliases
+across a second migration, owned-trigger cleanup and native eligibility.
+Owned caller cancellation interrupts native rename and post-publication
+cleanup; this is separate from actual process-loss tests.
+
+Two before-fix witnesses also refine the new controls. During a held
+rename, the old catalog procedure returned the replacement SID with the
+original definition JSON on both engines; the corrected resolver returns
+the original bound pair until publication. A stream that read only an old
+global-index miss could validate after publication while that unchanged
+index still existed; the corrected strong-group guard returns 1213 before
+its removal. These are runtime boundary checks, not a proof that every
+native execution refines the models. Terminal-ticket fault tests and the
+separate process-loss/replicated-promotion suites cover other premises.
 
 ```sh
 tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrain \
