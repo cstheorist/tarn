@@ -217,12 +217,12 @@ INNER/LEFT padding, residual predicates and final SQL processing. Native CI
 weight fields are copied directly; DECIMAL/float probes and representation
 coercions retain the existing executor.
 
-All aliases share one read-confirmed native transaction and one
-`checked_read` lock-history interval. The final check covers the union of
-all probed table prefixes and DDL claims; a conflict or incomplete history
-restarts the whole group. Streams retain their existing MVCC transaction
-and record each returned point/range with its root bucket for commit
-validation. The bucket is checked before and after the RPC. This refines
+Autocommit and READ COMMITTED reads share one read-confirmed native
+transaction and one `checked_read` lock-history interval across all aliases.
+The final check covers the union of all probed table prefixes and DDL
+claims; a conflict or incomplete history restarts the whole group.
+Serializable streams retain their existing MVCC transaction and record each
+returned point/range with its root bucket for commit validation. The bucket is checked before and after the RPC. This refines
 `SnapshotRead` over the union of its abstract keys; the grouped-table and
 shared-snapshot witnesses are described in [verification](verification.md).
 

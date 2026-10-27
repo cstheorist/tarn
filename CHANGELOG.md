@@ -295,9 +295,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   use one bounded storage call when their full shard key is bound and their
   join equalities prove identical native hash inputs. The shard reads child
   prefixes derived from earlier primary-key rows; Rust retains the original
-  INNER/LEFT joins, filters and projection. Every table shares one snapshot
-  and prepared-write/DDL lock-history check, including empty probes, and
-  serializable streams record every prefix. Buffered writes, locking reads,
+  INNER/LEFT joins, filters and projection. Autocommit and READ COMMITTED
+  reads share one snapshot and prepared-write/DDL lock-history check across
+  all tables, including empty probes; serializable streams retain their MVCC
+  transaction and record every prefix. Buffered writes, locking reads,
   unsupported accesses and exhausted shared reply budgets use the existing
   executor. Focused TLA+ workloads and broken-guard controls check the
   grouped-read assumptions; native memtx, vinyl and mixed-engine tests cover
