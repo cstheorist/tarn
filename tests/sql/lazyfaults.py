@@ -68,10 +68,25 @@ end
 function s.release()
     s.mode, s.hold_prepare = 'pass', false
 end
+function s.restore_sync()
+    if s.sync == nil then return true end
+    box.cfg{replication_synchro_quorum = 1}
+    local deadline = clock.monotonic() + 5
+    while box.info.synchro.queue.len > 0 and clock.monotonic() < deadline do fiber.sleep(.01) end
+    assert(box.info.synchro.queue.len == 0, 'owned synchronous APPLY did not drain')
+    local saved = s.sync
+    assert(box.space[s.sid]):alter{is_sync = saved.is_sync}
+    if saved.owner == 0 then box.ctl.demote() end
+    box.cfg{replication_synchro_quorum = saved.quorum, replication_synchro_timeout = saved.timeout}
+    s.sync = nil
+    return true
+end
 function s.restore()
     if rawget(_G, '__tarn_lazyfaults') ~= s then return {'ownership changed'} end
     s.release()
     local errors = {}
+    local sync_ok, sync_err = pcall(s.restore_sync)
+    if not sync_ok then errors[#errors + 1] = 'sync restore: ' .. tostring(sync_err) end
     for key, original in pairs(s.original) do
         if rawget(_G, key) == s.wrapped[key] then rawset(_G, key, original)
         else errors[#errors + 1] = key .. ' changed outside this lease' end
@@ -394,7 +409,7 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
             lease.release()
             worker.finish()
 
-    def case(self, index, recovered=False, silent=False):
+    def case(self, index, recovered=False, silent=False, overlap=False):
         key, tag = self.keys[1][index], 1000 + index
         c = connect(self.args.tarn, self.db)
         commit = None
@@ -427,7 +442,9 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
                     self.pending_witness(c, lease)
                     if recovered:
                         assert lease.snapshot()["status_calls"] == 0, "COMMITTED recovery queried unavailable status"
-                    if silent:
+                    if overlap:
+                        self.canceled_apply_overlap(c, lease, key, tag)
+                    elif silent:
                         self.silent_deadline(c, lease, key, tag)
                     else:
                         self.catch_up(c, lease, key, tag)
@@ -481,6 +498,102 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
             lease.release()
             if not worker.done.is_set():
                 worker.finish()
+
+    def canceled_apply_overlap(self, c, lease, key, tag):
+        """Hold a canceled APPLY in a real synchronous commit, not a sleep."""
+        q(c, "SET SESSION tarn_lazy_read_your_writes=ON")
+        q(c, "SET SESSION tarn_lazy_wait_timeout=1")
+        before, falls = stat(c, "Tarn_lazy_reads"), stat(c, "Tarn_lazy_fallbacks")
+        lease.mode("silent")
+        workers = []
+
+        def read():
+            w = Worker(lambda: q(c, "SELECT id,k,v FROM t FORCE INDEX(by_k) WHERE k=%s ORDER BY id", (tag,)))
+            workers.append(w)
+            return w
+
+        def timeout(w, label):
+            started = time.monotonic()
+            try:
+                rows = w.finish(4)
+            except pymysql.MySQLError as exc:
+                assert exc.args[0] == 1205, f"{label}: unexpected error {exc}"
+            else:
+                state = lease.snapshot()
+                self.record("overlap_early_result", rows=rows, participant=state,
+                            pending_apply=stat(c, "Tarn_lazy_session_pending_apply"))
+                raise AssertionError(f"{label}: returned before native quorum confirmation: rows={rows}, state={state}")
+            assert time.monotonic() - started < 4, f"{label}: catch-up ignored its deadline"
+            assert stat(c, "Tarn_lazy_session_pending_apply") > 0, f"{label}: pending APPLY was forgotten"
+            assert stat(c, "Tarn_lazy_session_strong_fallback") == 0, f"{label}: history became sticky"
+            assert stat(c, "Tarn_lazy_reads") == before, f"{label}: incomplete read counted as lazy success"
+            assert stat(c, "Tarn_lazy_fallbacks") == falls, f"{label}: strong fallback masked the witness"
+
+        try:
+            first = read()
+            wait_for(lambda: lease.snapshot()["silent_calls"] > 0, 2, "first canceled APPLY entering")
+            timeout(first, "first silent read")
+            saved = ev(self.nodes[1], """
+local s = assert(rawget(_G, '__tarn_lazyfaults')); assert(s.owner == ...)
+assert(s.enabled and s.mode == 'silent' and s.sync == nil)
+local queue = box.info.synchro.queue
+assert(queue.len == 0 and (queue.owner == 0 or queue.owner == box.info.id), 'fixture does not own sync queue')
+local sp = assert(box.space[s.sid])
+s.sync = {is_sync=sp.is_sync,quorum=box.cfg.replication_synchro_quorum,
+          timeout=box.cfg.replication_synchro_timeout,owner=queue.owner}
+box.cfg{replication_synchro_quorum=1,replication_synchro_timeout=30}
+if queue.owner ~= box.info.id then box.ctl.promote() end
+sp:alter{is_sync=true}
+tarn.lazy.invalidate(); tarn.lazy.fresh()
+return s.sync
+""", [lease.owner])
+            self.record("overlap_sync_saved", settings=saved)
+            wait_for(lambda: ev(self.nodes[1], """
+local s=assert(rawget(_G,'__tarn_lazyfaults')); assert(s.owner==...)
+return tarn.lazy.quota.ready() and not tarn.lazy.stale and tarn.lazy.sources[s.sid] ~= nil
+""", [lease.owner]), 5, "capture and quota rebuild before unavailable quorum")
+            ev(self.nodes[1], """
+local s=assert(rawget(_G,'__tarn_lazyfaults')); assert(s.owner==... and s.sync~=nil)
+assert(box.info.synchro.queue.len==0); box.cfg{replication_synchro_quorum=2}; return true
+""", [lease.owner])
+            lease.mode("pass")
+            queue = wait_for(lambda: (value if (value := ev(self.nodes[1],
+                             "return box.info.synchro.queue"))["len"] == 1 else None),
+                             5, "canceled APPLY's real native quorum wait")
+            self.record("overlap_quorum_pending", queue=queue)
+            timeout(read(), "overlapping RYW read")
+            queue = ev(self.nodes[1], "return box.info.synchro.queue")
+            assert queue["len"] >= 1, f"native commit was not still held: {queue}"
+            self.record("overlap_timeout_retained", queue=queue, participant=lease.snapshot())
+            ev(self.nodes[1], """
+local s=assert(rawget(_G,'__tarn_lazyfaults')); assert(s.owner==... and s.sync~=nil)
+box.cfg{replication_synchro_quorum=1}; return true
+""", [lease.owner])
+            wait_for(lambda: ev(self.nodes[1], "return box.info.synchro.queue.len") == 0,
+                     5, "owned APPLY quorum completion")
+            q(c, "SET SESSION tarn_lazy_wait_timeout=5")
+            rows = q(c, "SELECT id,k,v FROM t FORCE INDEX(by_k) WHERE k=%s ORDER BY id", (tag,))
+            assert rows == ((key, tag, 42),), f"confirmed retry lost own row: {rows}"
+            assert stat(c, "Tarn_lazy_reads") == before + 1, "confirmed retry did not use lazy path"
+            assert stat(c, "Tarn_lazy_fallbacks") == falls, "confirmed retry fell back strongly"
+            assert stat(c, "Tarn_lazy_session_pending_apply") == 0, "confirmed retry kept pending APPLY"
+            self.record("overlap_confirmed", rows=rows, participant=lease.snapshot())
+        finally:
+            # Restore the exact owned configuration before Lease invokes
+            # ordinary APPLY cleanup; never leave that cleanup behind q=2.
+            ev(self.nodes[1], """
+local s=assert(rawget(_G,'__tarn_lazyfaults')); assert(s.owner==...)
+s.release(); return s.restore_sync()
+""", [lease.owner])
+            for w in workers:
+                if not w.done.is_set():
+                    try:
+                        w.finish()
+                    except pymysql.MySQLError as exc:
+                        assert exc.args[0] == 1205, exc
+
+    def test_canceled_apply_overlap(self):
+        self.case(3, overlap=True)
 
     def test_apply_exhaustion(self):
         self.case(0)
