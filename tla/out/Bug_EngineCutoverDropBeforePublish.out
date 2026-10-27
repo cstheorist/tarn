@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 58 and seed -8738416727654427623 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 599] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 59 and seed -8402948977849481171 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 130] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /work/EngineCutover.tla
-Parsing file /tmp/tlc-17443247315746347242/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-17443247315746347242/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-17443247315746347242/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-17443247315746347242/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-17443247315746347242/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-17443247315746347242/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-17443247315746347242/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-1824096524762743738/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1824096524762743738/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1824096524762743738/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1824096524762743738/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1824096524762743738/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1824096524762743738/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1824096524762743738/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,9 +19,9 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-10-27 16:46:21)
+Starting... (2026-10-27 17:40:44)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-27 16:46:21.
+Finished computing initial states: 1 distinct state generated at 2026-10-27 17:40:44.
 Error: Invariant CatalogHasSpace is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -37,14 +37,16 @@ State 1: <Initial predicate>
 /\ auxReady = {}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <DropOriginal("A") line 83, col 5 to line 86, col 80 of module EngineCutover>
+State 2: <DropOriginal("A") line 90, col 5 to line 93, col 90 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -57,14 +59,16 @@ State 2: <DropOriginal("A") line 83, col 5 to line 86, col 80 of module EngineCu
 /\ auxReady = {}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
 3 states generated, 3 distinct states found, 1 states left on queue.
 The depth of the complete state graph search is 2.
-Finished in 00s at (2026-10-27 16:46:21)
-Trace exploration spec path: ./EngineCutover_TTrace_1793119581.tla
+Finished in 00s at (2026-10-27 17:40:44)
+Trace exploration spec path: ./EngineCutover_TTrace_1793122844.tla

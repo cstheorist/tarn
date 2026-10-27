@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 106 and seed 6999145944264558769 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 521] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 12 and seed -7889967266527243025 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 52] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /work/EngineCutover.tla
-Parsing file /tmp/tlc-16671037300986954069/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-16671037300986954069/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-16671037300986954069/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-16671037300986954069/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-16671037300986954069/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-16671037300986954069/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-16671037300986954069/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-12492119972658354630/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-12492119972658354630/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-12492119972658354630/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-12492119972658354630/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-12492119972658354630/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-12492119972658354630/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-12492119972658354630/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,9 +19,9 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-10-27 16:46:20)
+Starting... (2026-10-27 17:40:44)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-27 16:46:20.
+Finished computing initial states: 1 distinct state generated at 2026-10-27 17:40:44.
 Error: Invariant NoAbortPublished is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -37,14 +37,16 @@ State 1: <Initial predicate>
 /\ auxReady = {}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <Prepared("A") line 49, col 5 to line 51, col 74 of module EngineCutover>
+State 2: <Prepared("A") line 50, col 5 to line 52, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -57,14 +59,16 @@ State 2: <Prepared("A") line 49, col 5 to line 51, col 74 of module EngineCutove
 /\ auxReady = {}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A"}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 3: <ReadyAux("A") line 53, col 5 to line 55, col 74 of module EngineCutover>
+State 3: <ReadyAux("A") line 54, col 5 to line 56, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -77,14 +81,16 @@ State 3: <ReadyAux("A") line 53, col 5 to line 55, col 74 of module EngineCutove
 /\ auxReady = {"A"}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A"}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 4: <Prepared("B") line 49, col 5 to line 51, col 74 of module EngineCutover>
+State 4: <Prepared("B") line 50, col 5 to line 52, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -97,14 +103,16 @@ State 4: <Prepared("B") line 49, col 5 to line 51, col 74 of module EngineCutove
 /\ auxReady = {"A"}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 5: <ReadyAux("B") line 53, col 5 to line 55, col 74 of module EngineCutover>
+State 5: <ReadyAux("B") line 54, col 5 to line 56, col 74 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -117,14 +125,38 @@ State 5: <ReadyAux("B") line 53, col 5 to line 55, col 74 of module EngineCutove
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 6: <Rename("A") line 69, col 5 to line 73, col 79 of module EngineCutover>
+State 6: <Unname("A") line 70, col 5 to line 74, col 88 of module EngineCutover>
+/\ decision = "none"
+/\ allocated = {1, 2}
+/\ catalog = [A |-> 1, B |-> 1]
+/\ counter = 2
+/\ oldRef = [A |-> 1, B |-> 1]
+/\ doomed = {}
+/\ renamed = {}
+/\ streamCommitted = {}
+/\ ackedOld = {}
+/\ auxReady = {"A", "B"}
+/\ crashed = FALSE
+/\ reused = FALSE
+/\ nameGone = {"A"}
+/\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
+/\ allocatedNew = FALSE
+/\ awake = {"A", "B"}
+/\ prepared = {"A", "B"}
+/\ retired = {}
+/\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
+
+State 7: <Rename("A") line 76, col 5 to line 80, col 89 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -137,14 +169,16 @@ State 6: <Rename("A") line 69, col 5 to line 73, col 79 of module EngineCutover>
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 7: <Publish("A") line 75, col 5 to line 81, col 43 of module EngineCutover>
+State 8: <Publish("A") line 82, col 5 to line 88, col 56 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 2, B |-> 1]
@@ -157,14 +191,16 @@ State 7: <Publish("A") line 75, col 5 to line 81, col 43 of module EngineCutover
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
 /\ retired = {"A"}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 8: <DecideAbort line 64, col 5 to line 66, col 74 of module EngineCutover>
+State 9: <DecideAbort line 65, col 5 to line 67, col 74 of module EngineCutover>
 /\ decision = "abort"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 2, B |-> 1]
@@ -177,14 +213,16 @@ State 8: <DecideAbort line 64, col 5 to line 66, col 74 of module EngineCutover>
 /\ auxReady = {"A", "B"}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {"A"}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {"A", "B"}
 /\ retired = {"A"}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-342 states generated, 189 distinct states found, 51 states left on queue.
-The depth of the complete state graph search is 8.
-Finished in 00s at (2026-10-27 16:46:20)
-Trace exploration spec path: ./EngineCutover_TTrace_1793119580.tla
+726 states generated, 241 distinct states found, 56 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-27 17:40:44)
+Trace exploration spec path: ./EngineCutover_TTrace_1793122844.tla

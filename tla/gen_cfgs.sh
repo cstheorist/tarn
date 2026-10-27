@@ -523,7 +523,7 @@ mk_handback Bug_HandbackResendAfterLoss_Autocommit FALSE BugResendAfterLoss
 engine_flags () {
     case "$1" in
       EngineCopy) echo 'BugBeforeCapture BugSkipPrefixDrain BugCaptureOnlyNewKeys BugUnconfirmedSource BugTailIgnoresDeletes BugSkipFinalDrain BugLostCaptureContinues BugStaleBatch BugRebuildPrepared BugPrepareWithoutIndexes BugLosePersistentFence' ;;
-      EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity' ;;
+      EngineCutover) echo 'BugPublishBeforeDecision BugPublishBeforeAuxReady BugDropBeforePublish BugAbortAfterDecision BugApplyAfterAbort BugOldStreamValidates BugForgetOldObligations BugResetCounterIdentity BugRenameLosesOriginalIdentity BugCatalogByName' ;;
     esac
 }
 mk_engine () {
@@ -539,7 +539,7 @@ mk_engine () {
         if [ "$family" = EngineCopy ]; then
             echo 'INVARIANTS TypeOK ConfirmedCopies PreparedImage'
         else
-            echo 'INVARIANTS TypeOK CatalogHasSpace PublishedReady NoAbortPublished OldObligationsRetained OldStreamsRejected CounterNeverReuses'
+            echo 'INVARIANTS TypeOK CatalogHasSpace PublishedReady NoAbortPublished OldObligationsRetained OldStreamsRejected CounterNeverReuses CatalogObservationBound'
         fi
         echo 'CHECK_DEADLOCK FALSE'
     } > "$name.cfg"

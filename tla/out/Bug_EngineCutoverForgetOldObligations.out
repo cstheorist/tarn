@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 119 and seed 3996360902589943447 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 755] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 121 and seed -5587433097601717980 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 286] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /work/EngineCutover.tla
-Parsing file /tmp/tlc-13566736840187141757/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-13566736840187141757/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-13566736840187141757/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-13566736840187141757/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-13566736840187141757/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-13566736840187141757/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-13566736840187141757/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-15281886843557863943/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-15281886843557863943/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-15281886843557863943/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-15281886843557863943/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-15281886843557863943/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-15281886843557863943/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-15281886843557863943/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -19,9 +19,9 @@ Semantic processing of module EngineCutover
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module EngineCutover
-Starting... (2026-10-27 16:46:22)
+Starting... (2026-10-27 17:40:46)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-27 16:46:22.
+Finished computing initial states: 1 distinct state generated at 2026-10-27 17:40:46.
 Error: Invariant OldObligationsRetained is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -37,14 +37,16 @@ State 1: <Initial predicate>
 /\ auxReady = {}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {}
 /\ retired = {}
 /\ pendingOld = {"A", "B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
-State 2: <ForgetOld("A") line 110, col 5 to line 112, col 73 of module EngineCutover>
+State 2: <ForgetOld("A") line 117, col 5 to line 119, col 73 of module EngineCutover>
 /\ decision = "none"
 /\ allocated = {1, 2}
 /\ catalog = [A |-> 1, B |-> 1]
@@ -57,14 +59,16 @@ State 2: <ForgetOld("A") line 110, col 5 to line 112, col 73 of module EngineCut
 /\ auxReady = {}
 /\ crashed = FALSE
 /\ reused = FALSE
+/\ nameGone = {}
 /\ spaces = [A |-> {1, 2}, B |-> {1, 2}]
 /\ allocatedNew = FALSE
 /\ awake = {"A", "B"}
 /\ prepared = {}
 /\ retired = {}
 /\ pendingOld = {"B"}
+/\ observation = [sid |-> 1, def_id |-> 1, json_version |-> 0]
 
 4 states generated, 4 distinct states found, 2 states left on queue.
 The depth of the complete state graph search is 2.
-Finished in 00s at (2026-10-27 16:46:22)
-Trace exploration spec path: ./EngineCutover_TTrace_1793119582.tla
+Finished in 00s at (2026-10-27 17:40:46)
+Trace exploration spec path: ./EngineCutover_TTrace_1793122846.tla

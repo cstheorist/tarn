@@ -1008,7 +1008,12 @@ and its roll-forward state instead of rebuilding it.
 confirmed central decision, native rename, local catalog publication and
 old-space cleanup. A crash after rename resumes from explicit original
 and replacement IDs, not whichever space currently has the public name.
-Neither APPLY-to-ABORT nor ABORT-to-APPLY is permitted. Publication retires
+A separate catalog observation retains its own committed definition ID and
+JSON version. It must resolve the physical SID by that catalog ID, even
+while native renames leave the public name absent or bound to the new
+space before catalog publication. Deriving SID from that name mixes old
+JSON with SID zero or the replacement. Neither APPLY-to-ABORT nor
+ABORT-to-APPLY is permitted. Publication retires
 old auxiliary generations and dooms old streams; their pending assignments
 remain until an explicit retirement/ACK proof permits removal. Allocation
 continues through one stable logical counter identity, including IDs that
@@ -1067,7 +1072,7 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
   Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision \
   Bug_EngineCutoverApplyAfterAbort Bug_EngineCutoverOldStreamValidates \
   Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity \
-  Bug_EngineCutoverRenameLosesOriginalIdentity
+  Bug_EngineCutoverRenameLosesOriginalIdentity Bug_EngineCutoverCatalogByName
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
@@ -1084,23 +1089,24 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCopyStaleBatch` | 6,254 | 17 | violates `PreparedImage` |
 | `Bug_EngineCopyTailIgnoresDeletes` | 3,881 | 13 | violates `PreparedImage` |
 | `Bug_EngineCopyUnconfirmedSource` | 269 | 6 | violates `ConfirmedCopies` |
-| `EngineCutover` | 452 | 17 | passes |
-| `Bug_EngineCutoverAbortAfterDecision` | 202 | 9 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverApplyAfterAbort` | 262 | 10 | violates `CatalogHasSpace` |
+| `EngineCutover` | 856 | 20 | passes |
+| `Bug_EngineCutoverAbortAfterDecision` | 235 | 10 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverApplyAfterAbort` | 322 | 11 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverDropBeforePublish` | 3 | 2 | violates `CatalogHasSpace` |
 | `Bug_EngineCutoverForgetOldObligations` | 4 | 2 | violates `OldObligationsRetained` |
-| `Bug_EngineCutoverOldStreamValidates` | 197 | 9 | violates `OldStreamsRejected` |
-| `Bug_EngineCutoverPublishBeforeAuxReady` | 129 | 6 | violates `PublishedReady` |
-| `Bug_EngineCutoverPublishBeforeDecision` | 189 | 8 | violates `NoAbortPublished` |
-| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 271 | 11 | violates `CatalogHasSpace` |
-| `Bug_EngineCutoverResetCounterIdentity` | 198 | 9 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverOldStreamValidates` | 214 | 10 | violates `OldStreamsRejected` |
+| `Bug_EngineCutoverPublishBeforeAuxReady` | 198 | 7 | violates `PublishedReady` |
+| `Bug_EngineCutoverPublishBeforeDecision` | 241 | 9 | violates `NoAbortPublished` |
+| `Bug_EngineCutoverRenameLosesOriginalIdentity` | 318 | 12 | violates `CatalogHasSpace` |
+| `Bug_EngineCutoverResetCounterIdentity` | 216 | 10 | violates `CounterNeverReuses` |
+| `Bug_EngineCutoverCatalogByName` | 173 | 8 | violates `CatalogObservationBound` |
 
 ### Configuration counts
 
-The default list contains 175 configurations, including 128 expected
-broken/trade-off outcomes. The 186 generated configurations reproduce from
+The default list contains 176 configurations, including 129 expected
+broken/trade-off outcomes. The 187 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 188 total. Explicit check arguments override the default
+directly, for 189 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs
