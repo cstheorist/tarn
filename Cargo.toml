@@ -7,6 +7,7 @@ members = [
     "crates/tarn-sql",
     "crates/tarn-verified",
     "crates/tarn-server",
+    "crates/tarn-storage",
 ]
 
 [workspace.package]

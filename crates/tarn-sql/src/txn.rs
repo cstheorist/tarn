@@ -1426,6 +1426,38 @@ pub async fn select_rows(
         None => m.nil(),
     };
     route.encode(&mut m);
+    // The shard's native procedure serves the reads it can decide without
+    // Lua (crates/tarn-storage/src/select.rs) and hands the others back
+    // ("lua"); a shard without it is noted on the connection. (Reads it
+    // always hands back are not sent to it.)
+    if stream == 0
+        && matches!(t.engine, crate::catalog::Engine::Memtx)
+        && end.is_none()
+        && !begin
+        && after.is_none()
+        && limit != Some(0)
+        && !client.marked(MARK_NO_NATIVE_SELECT)
+    {
+        use tarn_iproto::errcode::{
+            ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
+        };
+        match client.call(0, "tarn_storage.ts_select", &m.0).await {
+            Ok(r) => {
+                let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+                if !crate::mpw::status_is(&d, "lua") {
+                    return page_of(&d, t);
+                }
+            }
+            Err(tarn_iproto::Error::Server {
+                code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                message,
+            }) => {
+                tracing::debug!("native reads unavailable on this shard: {}", message);
+                client.mark(MARK_NO_NATIVE_SELECT);
+            }
+            Err(e) => return Err(from_iproto_read(e)),
+        }
+    }
     let r = client
         .call(stream, "tarn_select", &m.0)
         .await
@@ -1433,6 +1465,10 @@ pub async fn select_rows(
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     page_of(&d, t)
 }
+
+/// The mark (`Client::mark`) of a connection to a shard without the native
+/// read procedure.
+const MARK_NO_NATIVE_SELECT: u32 = 0;
 
 #[cfg(test)]
 mod tests {

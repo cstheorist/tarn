@@ -1,0 +1,18 @@
+[package]
+name = "tarn-storage"
+description = "Native storage procedures for Tarn's shards: a Tarantool C module (issue #28)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lib]
+name = "tarn_storage"
+crate-type = ["cdylib"]
+# (The procedures call Tarantool's module API, which only the tarantool
+# process defines: the unit tests cover the parts that do not.)
+doctest = false

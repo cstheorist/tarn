@@ -61,7 +61,7 @@ You need Rust (via [rustup](https://rustup.rs)), Tarantool 3.x on your
 
 ```sh
 git clone https://github.com/cstheorist/tarn.git && cd tarn
-cargo build --release -p tarn-server
+cargo build --release       # tarn-server, and the storage nodes' native procedures
 scripts/cluster.sh start -n 2 -r 1 -p 4000      # 2 shards, SQL on port 4000
 ```
 
@@ -136,7 +136,11 @@ MySQL: they need 10–20 storage round trips each, and on two shards almost
 every write transaction is a two-phase commit. Rankings shift with hardware:
 on another host Tarn was behind MySQL on point selects. Full tables,
 latencies, abort rates and a per-vCPU comparison with published TiDB and
-YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md).
+YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md). These runs
+predate the shards' native procedures, which serve autocommit reads without
+running Lua: on one shard they raise point selects by about a quarter, at a
+third of the shard's CPU per statement
+([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## Correctness
 
@@ -180,6 +184,7 @@ crates/tarn-sql        SQL parsing, planning and execution; transactions and the
 crates/tarn-iproto     async, pipelined Tarantool IPROTO client
 crates/tarn-verified   Verus-verified routing, coordinator decisions, wire codec
 crates/tarn-common     shared value, column and error types
+crates/tarn-storage    native storage procedures: a Tarantool C module for the most frequent reads
 lua/                   storage-node module (tarn.lua), bootstrap (storage.lua), protocol tests
 tla/                   TLA+ specification, model configurations, TLC results
 tests/                 SQL differential and transaction tests, failover and fault-injection tests
