@@ -25,6 +25,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+import traceback
 import uuid
 
 import pymysql
@@ -125,15 +126,21 @@ return {owner = owner, id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid),
 """
 
 SNAPSHOT = r"""
-local owner, name, key = ...
+local owner, name, key, bucket = ...
 local s = assert(rawget(_G, '__tarn_lazyfaults'), 'lazyfaults lease expired')
 assert(s.owner == owner, 'wrong lazyfaults owner')
 local p = s.txid and box.space._tarn_part:get{s.txid} or nil
 local row = box.space[name]:get{key}
+local counter = box.space._tarn_lazy_counter:get{bucket}
+local pending = {}
+for _,r in box.space._tarn_lazy_outbox.index.pending:pairs({bucket}, {iterator='EQ'}) do
+    pending[#pending+1] = {seq=r.seq,gen=r.gen}
+end
 return {txid = s.txid, prepared = s.prepared, dshard = s.dshard or 0,
         parts = s.parts or {}, apply_calls = s.apply_calls,
         silent_calls = s.silent_calls, status_calls = s.status_calls,
-        state = p and p.state or 'none', row = row and row:totable() or box.NULL}
+        state = p and p.state or 'none', row = row and row:totable() or box.NULL,
+        source_bucket=bucket, counter=counter and counter.seq or 0, outbox=pending}
 """
 
 
@@ -209,7 +216,8 @@ class Lease:
             raise
 
     def snapshot(self):
-        value = ev(self.test.nodes[1], SNAPSHOT, [self.owner, self.test.space, self.key])
+        value = ev(self.test.nodes[1], SNAPSHOT, [self.owner, self.test.space, self.key,
+                                                     bucket_of(self.key, self.test.bucket_count)])
         if value["txid"]:
             self.txid = value["txid"]
         return value
@@ -321,6 +329,7 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
                  f"KEY by_k (k) COMMENT 'tarn:lazy') ENGINE={self.args.engine}")
             ranges = q(c, "SHOW TARN BUCKETS")
             count = sum(int(r[1]) for r in ranges)
+            self.bucket_count = count
             owned = {}
             for row in ranges:
                 ids = owned.setdefault(int(row[0]), set())
@@ -445,16 +454,29 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
                 assert exc.args[0] == 1205, f"unexpected catch-up error: {exc}"
             else:
                 raise AssertionError("silent APPLY was bypassed with a stale result")
-            assert time.monotonic() - started < 4, "catch-up ignored its absolute deadline"
-            assert stat(c, "Tarn_lazy_reads") == before
-            assert stat(c, "Tarn_lazy_session_pending_apply") > 0, "cancellation erased pending obligations"
-            assert stat(c, "Tarn_lazy_session_strong_fallback") == 0
+            elapsed = time.monotonic() - started
+            assert elapsed < 4, f"catch-up ignored its absolute deadline: {elapsed:.3f}s"
+            reads = stat(c, "Tarn_lazy_reads")
+            pending = stat(c, "Tarn_lazy_session_pending_apply")
+            strong = stat(c, "Tarn_lazy_session_strong_fallback")
+            self.record("silent_timed_out", elapsed=elapsed, lazy_reads=reads, before=before,
+                        pending_apply=pending, strong_fallback=strong)
+            assert reads == before, f"timed-out read completed lazily: before={before}, after={reads}"
+            assert pending > 0, f"cancellation erased pending obligations: pending={pending}"
+            assert strong == 0, f"bounded catch-up timeout made history sticky: strong={strong}"
             lease.mode("pass")
             q(c, "SET SESSION tarn_lazy_wait_timeout=5")
-            assert q(c, "SELECT id,k,v FROM t FORCE INDEX(by_k) WHERE k=%s ORDER BY id", (tag,)) == ((key, tag, 42),)
-            assert stat(c, "Tarn_lazy_reads") == before + 1
-            assert stat(c, "Tarn_lazy_fallbacks") == falls
-            assert stat(c, "Tarn_lazy_session_pending_apply") == 0
+            rows = q(c, "SELECT id,k,v FROM t FORCE INDEX(by_k) WHERE k=%s ORDER BY id", (tag,))
+            retry_state = lease.snapshot()
+            reads, fallbacks = stat(c, "Tarn_lazy_reads"), stat(c, "Tarn_lazy_fallbacks")
+            pending = stat(c, "Tarn_lazy_session_pending_apply")
+            self.record("silent_retry", rows=rows, expected=((key, tag, 42),), lazy_reads=reads,
+                        before=before, fallbacks=fallbacks, before_fallbacks=falls, pending_apply=pending,
+                        participant=retry_state)
+            assert rows == ((key, tag, 42),), f"retry lost committed row: expected={((key, tag, 42),)}, actual={rows}"
+            assert reads == before + 1, f"retry did not complete lazily: before={before}, after={reads}"
+            assert fallbacks == falls, f"retry used strong fallback: before={falls}, after={fallbacks}"
+            assert pending == 0, f"successful retry retained pending APPLY: pending={pending}"
         finally:
             lease.release()
             if not worker.done.is_set():
@@ -507,19 +529,22 @@ def main():
                 print("  ok  " + name, flush=True)
             except Exception as exc:
                 failed += 1
-                t.record("failed", method=name, error=f"{type(exc).__name__}: {exc}")
+                t.record("failed", method=name, error=f"{type(exc).__name__}: {exc}", traceback=traceback.format_exc())
+                traceback.print_exc()
                 print(f"  FAIL {name}: {type(exc).__name__}: {exc}", flush=True)
                 # Do not continue mutating a cluster after a fault fails.
                 break
     except Exception as exc:
         failed += 1
-        t.record("setup_failed", error=f"{type(exc).__name__}: {exc}")
+        t.record("setup_failed", error=f"{type(exc).__name__}: {exc}", traceback=traceback.format_exc())
+        traceback.print_exc()
         print(f"  FAIL setup: {type(exc).__name__}: {exc}", flush=True)
     finally:
         try:
             t.close(failed)
         except Exception as exc:
             failed += 1
+            traceback.print_exc()
             print(f"  FAIL cleanup: {type(exc).__name__}: {exc}", flush=True)
     print(f"{t.completed} completed, {failed} failures; evidence {t.evidence}")
     return 1 if failed else 0
