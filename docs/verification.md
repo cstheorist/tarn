@@ -1140,10 +1140,36 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 
 ### Configuration counts
 
-The default list contains 177 configurations, including 130 expected
-broken/trade-off outcomes. The 188 generated configurations reproduce from
+`EngineSourceDrain.tla` refines the final source drain independently of the
+copy model. A source transaction admitted while the synchronous fence is
+pending may sit after that fence in the native queue. Detaching its caller
+removes caller tracking without settling the transaction. The correct tail
+waits for native termination before its confirmed reread; a later queue cut
+alone cannot repair an old payload already copied into the replacement.
+The positive model explores 18 states to depth 8. The caller-only control
+explores 22 states to depth 9 and violates `PreparedImage`: after the stale
+tail, the detached source commits, the post-tail cut passes, and PREPARED
+certifies a missing row. Capture completeness, immutable ownership and the
+final exclusion of new writes remain premises of the composed models.
+
+The native mapping is explicit, rather than proved by TLC. Pinned
+Tarantool 3.9 confirms only the acknowledged prefix and stops at a newer
+synchronous entry ([queue confirmation](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn_limbo_queue.c#L649)).
+A failed/cancelled wait can detach its caller while the transaction remains
+pending ([transaction completion](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L1188)).
+The runtime must therefore establish its source native/queue cut before
+the first tail read, in addition to caller/claim draining. A test that
+injects a replica ACK prefix schedules this native boundary; it does not
+claim to test actual replication transport or prove full distributed DDL.
+
+```sh
+tla/check.sh EngineSourceDrain Bug_EngineSourceDrainCallerOnly
+```
+
+The default list contains 179 configurations, including 131 expected
+broken/trade-off outcomes. The 190 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 190 total. Explicit check arguments override the default
+directly, for 192 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

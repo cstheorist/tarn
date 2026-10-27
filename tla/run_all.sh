@@ -24,6 +24,7 @@ for cfg in "$@"; do
     Handback*|Bug_Handback*) module=NativeHandback.tla ;;
     EngineCopy|Bug_EngineCopy*) module=EngineCopy.tla ;;
     EngineCutover|Bug_EngineCutover*) module=EngineCutover.tla ;;
+    EngineSourceDrain|Bug_EngineSourceDrain*) module=EngineSourceDrain.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;
     *) module=MC.tla ;;

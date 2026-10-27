@@ -58,6 +58,7 @@ Bug_EngineCutoverDropBeforePublish Bug_EngineCutoverAbortAfterDecision Bug_Engin
 Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity Bug_EngineCutoverRenameLosesOriginalIdentity"
 DEFAULT="$DEFAULT Bug_EngineCutoverCatalogByName"
 DEFAULT="$DEFAULT Bug_EngineCutoverAuxStreamOmitted"
+DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do
