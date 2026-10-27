@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
+  `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
+  writes continue, then fences writes for catch-up and secondary-index
+  builds. The final pause depends on the table and indexes. The replacement
+  preserves native index IDs, frozen defaults and counter identities, with
+  fresh global and lazy index generations. Confirmed publication rolls
+  forward after a failure; a predecision abort retains the original table.
+  Request engine changes separately from other schema alterations; the
+  existing engine remains a no-op. See
+  [the operational procedure](docs/operations.md#online-engine-changes).
+
 - Vinyl write admission ([#58](https://github.com/cstheorist/tarn/issues/58)):
   storage shards share a pressure-sensitive admission budget across SQL
   servers, refusing new writes before user data changes and preserving
