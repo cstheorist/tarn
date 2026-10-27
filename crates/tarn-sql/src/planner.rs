@@ -508,6 +508,11 @@ impl<'a, 'c> Binder<'a, 'c> {
                     Some(Derived::new(Collation::Utf8Bin, IMPLICIT))
                 }
             }
+            // (a text query's parameters are its literals: the plan is
+            // cached for their kinds)
+            Expr::Param(i) if matches!(self.ctx.params.get(*i), Some(Value::Bin(_))) => {
+                Some(Derived::new(Collation::Binary, COERCIBLE))
+            }
             Expr::Lit(Value::Str(_)) | Expr::Param(_) => Some(self.conn(COERCIBLE)),
             Expr::Lit(Value::Bin(_)) => Some(Derived::new(Collation::Binary, COERCIBLE)),
             Expr::Lit(_) => None,
@@ -581,6 +586,21 @@ impl<'a, 'c> Binder<'a, 'c> {
                 }
             }
             E::Value(v) => self.bind_value(&v.value)?,
+            // a string with a character set introducer (`_binary 'ab'`,
+            // `_utf8mb4 X'6162'`): binary, or text
+            E::Prefixed { prefix, value } if prefix.value.starts_with('_') => {
+                let bin = match prefix.value.to_ascii_lowercase().as_str() {
+                    "_binary" => true,
+                    "_utf8mb4" | "_utf8mb3" | "_utf8" => false,
+                    _ => return Err(SqlError::unsupported(format!("introducer {}", prefix.value))),
+                };
+                match self.bind(value)? {
+                    Expr::Lit(Value::Str(b) | Value::Bin(b)) => {
+                        Expr::Lit(if bin { Value::Bin(b) } else { Value::Str(b) })
+                    }
+                    _ => return Err(SqlError::unsupported(format!("expression {}", e))),
+                }
+            }
             E::Nested(inner) => self.bind(inner)?,
             E::BinaryOp {
                 left,
@@ -876,12 +896,17 @@ impl<'a, 'c> Binder<'a, 'c> {
             | V::DoubleQuotedString(s)
             | V::NationalStringLiteral(s)
             | V::EscapedStringLiteral(s) => Value::str(s),
-            V::HexStringLiteral(h) => Value::Bin(
-                (0..h.len() / 2)
-                    .filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok())
-                    .collect::<Vec<u8>>()
-                    .into(),
-            ),
+            // (X'4142', or 0x4142; an odd number of digits only comes from
+            // 0x123, which is 0x0123: the normalizer refuses X'123')
+            V::HexStringLiteral(h) => {
+                let d = if h.len() % 2 == 1 { format!("0{}", h) } else { h.clone() };
+                let b = (0..d.len() / 2).map(|i| u8::from_str_radix(&d[2 * i..2 * i + 2], 16));
+                Value::Bin(
+                    b.collect::<Result<Vec<u8>, _>>()
+                        .map_err(|_| SqlError::parse(format!("invalid hexadecimal literal {}", v)))?
+                        .into(),
+                )
+            }
             V::Boolean(b) => Value::Int(*b as i64),
             V::Null => Value::Null,
             V::Placeholder(p) => {
@@ -3107,6 +3132,45 @@ mod tests {
             Stmt::Select(s) => (*s).clone(),
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn hexadecimal_literals_and_introducers_are_binary_strings() {
+        // a prepared statement keeps its literals (#122): the planner reads them
+        let cat = catalog();
+        let n = normalize(
+            "SELECT X'41', _binary'xy', _utf8mb4 X'6162', 0x123, c FROM sbtest1 WHERE id = ?",
+            Mode::Placeholders,
+        )
+        .unwrap();
+        let ctx = PlanCtx {
+            catalog: &cat,
+            db: Some("sbtest"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::Select(s) = plan(&n.template, &ctx).unwrap() else {
+            panic!()
+        };
+        let lit = |i: usize| match &s.project[i] {
+            Expr::Lit(Value::Bin(b)) => (true, b.to_vec()),
+            Expr::Lit(Value::Str(b)) => (false, b.to_vec()),
+            e => panic!("{:?}", e),
+        };
+        assert_eq!(lit(0), (true, b"A".to_vec()));
+        assert_eq!(lit(1), (true, b"xy".to_vec()));
+        assert_eq!(lit(2), (false, b"ab".to_vec()));
+        assert_eq!(lit(3), (true, vec![0x01, 0x23]), "0x123 is 0x0123");
+        // typed as MariaDB types a binary string
+        assert_eq!(
+            (s.columns[0].ty, s.columns[0].charset),
+            (ColumnType::VarString, tarn_common::CHARSET_BINARY)
+        );
+        // ... and so in a text query, whose literal is a parameter
+        let s = plan_sel("SELECT X'41', 'a' FROM sbtest1 WHERE id = 1");
+        assert_eq!(s.columns[0].charset, tarn_common::CHARSET_BINARY);
+        assert_ne!(s.columns[1].charset, tarn_common::CHARSET_BINARY);
     }
 
     fn path_of(sql: &str) -> AccessPath {
