@@ -43,6 +43,56 @@ impl Output {
     }
 }
 
+fn autocommit_count(data: &[u8]) -> SqlResult<u64> {
+    let mut rd = Rd::new(data);
+    if rd.array()? != 1 {
+        return Err(crate::mpw::proto("invalid autocommit acknowledgement"));
+    }
+    let fields = rd.array()?;
+    if !matches!(fields, 2 | 3) || rd.value()? != Value::str("ok") {
+        return Err(crate::mpw::proto("invalid autocommit acknowledgement"));
+    }
+    let n = match rd.value()? {
+        Value::UInt(n) => n,
+        Value::Int(n) if n >= 0 => n as u64,
+        _ => return Err(crate::mpw::proto("invalid write count")),
+    };
+    // Lua and the native writer may return the last affected tuple. It
+    // is optional metadata, not an additional result or acknowledgement.
+    if fields == 3 {
+        if !matches!(rd.buf.first(), Some(0x90..=0x9f | 0xdc | 0xdd | 0xc0)) {
+            return Err(crate::mpw::proto("invalid autocommit last tuple"));
+        }
+        rd.skip()?;
+    }
+    if !rd.buf.is_empty() {
+        return Err(crate::mpw::proto("trailing autocommit acknowledgement"));
+    }
+    Ok(n)
+}
+
+fn autocommit_ack(data: &[u8], shard: u32) -> SqlResult<u64> {
+    // The request has already run. A broken success envelope cannot prove
+    // a rollback, and must never enter the statement's retry path.
+    autocommit_count(data).map_err(|e| crate::mpw::ambiguous(shard, &e))
+}
+
+fn known_write_rollback(code: u16) -> bool {
+    // These write/commit APIs emit these errors only after refusing or
+    // rolling back the local transaction (or proving 2PC ABORT). This is
+    // session-history classification, NOT permission to replay a mutation.
+    matches!(
+        code,
+        1041 | 1048 | 1062 | 1146 | 1205 | 1213 | 1264 | 1265 | 1406 | 1412 | 1690
+    )
+}
+
+fn note_lazy_write_error(history: &mut crate::lazy::History, error: &SqlError) {
+    if !known_write_rollback(error.code) {
+        history.uncertain();
+    }
+}
+
 pub struct Prepared {
     template: String,
     pub n_params: usize,
@@ -1000,8 +1050,8 @@ impl Session {
             Err(e) => {
                 // A malformed post-write acknowledgement can be uncertain
                 // even when it was not classified as a transport error.
-                if lazy && !matches!(e.code, 1213 | 1412 | 1205) {
-                    self.lazy_history.uncertain();
+                if lazy {
+                    note_lazy_write_error(&mut self.lazy_history, &e);
                 }
                 Err(e)
             }
@@ -1044,10 +1094,14 @@ impl Session {
             };
             return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
         }
-        if crate::lazy::eligible(p)
-            && !self.lazy_history.strong
-            && (!self.lazy_read_your_writes || self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await)
-        {
+        if crate::lazy::eligible(p) && !self.lazy_history.strong {
+            if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
+                return Err(SqlError::new(
+                    1205,
+                    "HY000",
+                    "Lazy index catch-up could not complete; retry the read",
+                ));
+            }
             let cx = self.cx(params, &now);
             if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
                 self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
@@ -1420,19 +1474,15 @@ impl Session {
                 Ok(d) => d,
                 Err(e) => {
                     if table.has_lazy() {
-                        self.lazy_history.uncertain();
+                        note_lazy_write_error(&mut self.lazy_history, &e);
                     }
                     return Err(e);
                 }
             };
             match lua_status(&d) {
-                Ok((_, mut rd)) => {
-                    let n = match rd.value().and_then(|v| {
-                        v.as_i64()
-                            .filter(|n| *n >= 0)
-                            .ok_or_else(|| crate::mpw::proto("invalid write count"))
-                    }) {
-                        Ok(n) => n as u64,
+                Ok(_) => {
+                    let n = match autocommit_ack(&d, self.cluster.shards[shard].id) {
+                        Ok(n) => n,
                         Err(e) => {
                             if table.has_lazy() {
                                 self.lazy_history.uncertain();
@@ -1453,8 +1503,8 @@ impl Session {
                     backoff(attempt).await;
                 }
                 Err(e) => {
-                    if table.has_lazy() && !matches!(e.code, 1213 | 1412 | 1205) {
-                        self.lazy_history.uncertain();
+                    if table.has_lazy() {
+                        note_lazy_write_error(&mut self.lazy_history, &e);
                     }
                     return Err(e);
                 }
@@ -3572,6 +3622,62 @@ fn first_value(d: &[u8]) -> SqlResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autocommit_ack_requires_exact_count_and_terminal_envelope() {
+        let mut ok = Mp::new();
+        ok.arr(1).arr(2).str("ok").uint(2);
+        assert_eq!(autocommit_count(&ok.0).unwrap(), 2);
+        for value in [Value::Null, Value::Float(2.0), Value::str("2"), Value::Int(-1)] {
+            let mut bad = Mp::new();
+            bad.arr(1).arr(2).str("ok").val(&value);
+            assert!(autocommit_count(&bad.0).is_err());
+        }
+        let mut row = Mp::new();
+        row.arr(1).arr(3).str("ok").uint(1).arr(2).uint(1).str("雪");
+        assert_eq!(autocommit_count(&row.0).unwrap(), 1);
+        let mut none = Mp::new();
+        none.arr(1).arr(3).str("ok").uint(0).nil();
+        assert_eq!(autocommit_count(&none.0).unwrap(), 0);
+        for fields in [1, 3, 4] {
+            let mut bad = Mp::new();
+            bad.arr(1).arr(fields).str("ok");
+            if fields >= 3 {
+                bad.uint(2).str("unexpected metadata");
+            }
+            assert!(autocommit_count(&bad.0).is_err());
+        }
+        ok.nil();
+        assert!(autocommit_count(&ok.0).is_err());
+        let ambiguous = autocommit_ack(&ok.0, 7).unwrap_err();
+        assert_eq!(ambiguous.code, 1180);
+        assert_eq!(&ambiguous.sqlstate, b"40003");
+        assert!(!ambiguous.moved);
+    }
+
+    #[test]
+    fn known_write_failures_preserve_cumulative_lazy_history() {
+        for code in [1041, 1048, 1062, 1146, 1205, 1213, 1264, 1265, 1406, 1412, 1690] {
+            let mut history = crate::lazy::History::default();
+            history.record(crate::txn::CommitOutcome {
+                lazy_buckets: std::collections::BTreeSet::from([11, 29]),
+                pending_apply: Some(crate::txn::PendingApply {
+                    txid: "prior-commit".into(),
+                    participants: vec![2],
+                }),
+            });
+            note_lazy_write_error(&mut history, &SqlError::new(code, "HY000", "known rollback"));
+            assert!(!history.strong, "{code}");
+            assert_eq!(history.bucket_count(), 2);
+            assert_eq!(history.pending_count(), 1);
+        }
+        for code in [1105, 1180, 2003, 2013] {
+            let mut history = crate::lazy::History::default();
+            history.touch([11]);
+            note_lazy_write_error(&mut history, &SqlError::new(code, "HY000", "uncertain"));
+            assert!(history.strong, "{code}");
+        }
+    }
 
     #[test]
     fn sql_string_format_matches_mariadb_bytes() {

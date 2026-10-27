@@ -91,18 +91,40 @@ impl History {
     }
 
     pub fn touch(&mut self, buckets: impl IntoIterator<Item = u32>) {
-        if !self.strong {
-            self.buckets.extend(buckets);
-            self.check_bound();
+        if self.strong {
+            return;
         }
+        for b in buckets {
+            if !self.buckets.contains(&b) && self.buckets.len() == HISTORY_BUCKETS {
+                self.uncertain();
+                return;
+            }
+            self.buckets.insert(b);
+        }
+        self.check_bound();
     }
 
     pub fn record(&mut self, outcome: CommitOutcome) {
         if self.strong {
             return;
         }
-        self.buckets.extend(outcome.lazy_buckets);
+        self.touch(outcome.lazy_buckets);
+        if self.strong {
+            return;
+        }
         if let Some(p) = outcome.pending_apply {
+            let old = self.pending.iter().position(|x| x.txid == p.txid);
+            let added = p.txid.len().saturating_add(p.participants.len().saturating_mul(4));
+            let resident = self.pending.iter().fold(self.buckets.len() * 4, |n, p| {
+                n.saturating_add(p.txid.len())
+                    .saturating_add(p.participants.len().saturating_mul(4))
+            });
+            if (old.is_none() && self.pending.len() == HISTORY_PENDING)
+                || resident.saturating_add(added) > HISTORY_BYTES
+            {
+                self.uncertain();
+                return;
+            }
             if let Some(old) = self.pending.iter_mut().find(|x| x.txid == p.txid) {
                 old.participants.extend(p.participants);
                 old.participants.sort_unstable();
@@ -127,7 +149,8 @@ impl History {
     }
 
     /// Complete before opening ANY lazy read view. Keep the ledger on
-    /// timeout/cancellation; successful prefixes never move backwards.
+    /// timeout/cancellation. A new incarnation's baseline is not eligible
+    /// for SQL reads until its separate all-source bootstrap barrier.
     pub async fn catch_up(&mut self, cluster: &Arc<Cluster>, seconds: u64) -> bool {
         if self.strong {
             return false;
@@ -240,14 +263,16 @@ async fn frontiers(cluster: &Cluster, buckets: &BTreeSet<u32>) -> SqlResult<BTre
     }
     let mut out = BTreeMap::new();
     for (s, bs) in groups {
-        let mut m = Mp::new();
-        m.arr(2).arr(bs.len());
-        for &b in &bs {
-            m.uint(b as u64);
+        for bs in bs.chunks(PAGE_ENTRIES) {
+            let mut m = Mp::new();
+            m.arr(2).arr(bs.len());
+            for &b in bs {
+                m.uint(b as u64);
+            }
+            Route::Buckets(bs.to_vec()).encode(&mut m);
+            let d = cluster.call(s, "tarn_lazy_frontiers", &m.0).await?;
+            out.extend(decode_frontiers(&d, bs)?);
         }
-        Route::Buckets(bs.clone()).encode(&mut m);
-        let d = cluster.call(s, "tarn_lazy_frontiers", &m.0).await?;
-        out.extend(decode_frontiers(&d, &bs)?);
     }
     Ok(out)
 }
@@ -371,6 +396,8 @@ pub fn eligible(p: &SelectPlan) -> bool {
         && p.filter.as_ref().is_none_or(stable)
         && p.project.iter().all(stable)
         && p.order.iter().all(|(e, _)| stable(e))
+        && p.limit.as_ref().is_none_or(stable)
+        && p.offset.as_ref().is_none_or(stable)
 }
 
 fn order_col(e: &Expr, t: &TableDef) -> Option<usize> {
@@ -502,10 +529,10 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
             Some(1),
         )
         .await?;
-        let by_pk: HashMap<Bytes, Row> = rows.into_iter().map(|r| (key_bytes(&t.pk_key(&r)), r)).collect();
+        let mut by_pk: HashMap<Bytes, Row> = rows.into_iter().map(|r| (key_bytes(&t.pk_key(&r)), r)).collect();
         for c in candidates {
             let Some(r) = by_pk.get(&c.pkid) else { continue };
-            if t.index_key(ix, r) != c.key {
+            if key_bytes(&t.index_key(ix, r)) != key_bytes(&c.key) {
                 continue;
             }
             if let Some(f) = &p.filter {
@@ -513,14 +540,14 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                     continue;
                 }
             }
-            if !seen.insert(c.pkid) {
+            if !seen.insert(c.pkid.clone()) {
                 continue;
             }
-            bytes = bytes.saturating_add(key_bytes(r).len());
+            bytes = bytes.saturating_add(key_bytes(r).len()).saturating_add(c.pkid.len());
             if bytes > RESULT_BYTES {
                 return Ok(None);
             }
-            kept.push(r.clone());
+            kept.push(by_pk.remove(&c.pkid).unwrap());
             if want.is_some_and(|n| kept.len() as u64 >= n) {
                 break;
             }
@@ -565,6 +592,7 @@ fn capability(d: &[u8]) -> SqlResult<()> {
     if limits.get("max_entries").copied().unwrap_or(0) < PAGE_ENTRIES as u64
         || limits.get("max_bytes").copied().unwrap_or(0) < PAGE_BYTES as u64
         || limits.get("max_seq").copied() != Some(MAX_SEQ)
+        || limits.get("aux_names").copied() != Some(1)
     {
         return Err(proto("incompatible lazy storage limits"));
     }
@@ -851,6 +879,9 @@ mod tests {
         assert_eq!(ld.lazy[0].base_space_id, 512);
         assert_eq!(ld.lazy[0].key_fields, vec![3, 4, 2]);
         assert_eq!(ld.lazy[0].pk_fields, vec![1, 2]);
+        let mut invalid: serde_json::Value = serde_json::from_str(&json).unwrap();
+        invalid["indexes"][1]["lazy"]["route_parts"] = 2.into();
+        assert!(crate::catalog::parse_def_json(&invalid.to_string()).is_err());
     }
 
     #[test]
@@ -870,6 +901,7 @@ mod tests {
             "CREATE TABLE t (id INT PRIMARY KEY,k INT,n DECIMAL(20,0),KEY lk(k,n) COMMENT 'tarn:lazy')",
             "CREATE TABLE t (tenant_id INT,id FLOAT,k INT,PRIMARY KEY(tenant_id,id),KEY lk(k) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant_id)",
             "CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(k) COMMENT 'tarn:lazy=2')",
+            "CREATE TABLE t (id INT PRIMARY KEY,k JSON,KEY lk(k) COMMENT 'tarn:lazy')",
         ] { assert_eq!(plan(sql,&cx).unwrap_err().code,1235,"{sql}"); }
         assert!(plan("CREATE TABLE t (id INT PRIMARY KEY,k DOUBLE,KEY lk(k))", &cx).is_ok());
         let t = table("CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(k) COMMENT 'notarn:lazy')");
@@ -1004,6 +1036,50 @@ mod tests {
         ] {
             assert_eq!(wait_seconds(Some(&v)).unwrap_err().code, 1232);
         }
+    }
+
+    #[test]
+    fn capability_requires_explicit_matching_protocol_and_bounds() {
+        let make = |version, seq, aux: Option<u64>| {
+            let mut m = Mp::new();
+            m.arr(1)
+                .arr(3)
+                .str("ok")
+                .uint(version)
+                .map(3 + aux.is_some() as usize)
+                .str("max_entries")
+                .uint(128)
+                .str("max_bytes")
+                .uint(1048576)
+                .str("max_seq")
+                .uint(seq);
+            if let Some(aux) = aux {
+                m.str("aux_names").uint(aux);
+            }
+            m.0
+        };
+        assert!(capability(&make(1, MAX_SEQ, Some(1))).is_ok());
+        assert!(capability(&make(0, MAX_SEQ, Some(1))).is_err());
+        assert!(capability(&make(1, MAX_SEQ - 1, Some(1))).is_err());
+        assert!(capability(&make(1, MAX_SEQ, None)).is_err());
+        assert!(capability(&make(1, MAX_SEQ, Some(0))).is_err());
+        let mut d = make(1, MAX_SEQ, Some(1));
+        d.push(0xc0);
+        assert!(capability(&d).is_err());
+    }
+
+    #[test]
+    fn canonical_integer_keys_ignore_value_enum_representation() {
+        for n in [0, 127, 128, 32768, i64::MAX] {
+            assert_eq!(key_bytes(&[Value::Int(n)]), key_bytes(&[Value::UInt(n as u64)]));
+        }
+        let t = fixture();
+        let findings = crate::lint::check_table(&|_, _| None, &t);
+        assert!(findings.iter().all(|f| !f.message.contains("routing prefix")));
+        let redundant = table("CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(id,k) COMMENT 'tarn:lazy')");
+        assert!(crate::lint::check_table(&|_, _| None, &redundant)
+            .iter()
+            .any(|f| f.message.contains("routing prefix")));
     }
 
     #[test]

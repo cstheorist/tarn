@@ -2069,7 +2069,7 @@ pub fn catalog_entry(m: &mut Mp, def: &TableDef, ver: u64) {
 /// `ld` as the storage takes it: name, id, engine, format, indexes, the
 /// global index spaces (`uix`, when there are any), json and `ver`.
 pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) {
-    m.map(6 + ver.is_some() as usize + !ld.uix.is_empty() as usize + !ld.lazy.is_empty() as usize);
+    m.map(7 + ver.is_some() as usize + !ld.uix.is_empty() as usize);
     m.str("name").str(&ld.name);
     m.str("id").uint(ld.id as u64);
     m.str("engine").str(ld.engine);
@@ -2086,35 +2086,35 @@ pub fn lua_def_entry(m: &mut Mp, ld: &crate::catalog::LuaDef, ver: Option<u64>) 
             lua_def_entry(m, u, None);
         }
     }
-    if !ld.lazy.is_empty() {
-        m.str("lazy").arr(ld.lazy.len());
-        for l in &ld.lazy {
-            m.map(10)
-                .str("gen")
-                .uint(l.gen as u64)
-                .str("base_space_id")
-                .uint(l.base_space_id as u64)
-                .str("local_index_id")
-                .uint(l.local_index_id as u64)
-                .str("route_parts")
-                .uint(l.route_parts as u64)
-                .str("bucket_field")
-                .uint(l.bucket_field as u64);
-            for (name, fs) in [
-                ("key_fields", &l.key_fields),
-                ("pk_fields", &l.pk_fields),
-                ("pk_native_fields", &l.pk_native_fields),
-            ] {
-                m.str(name).arr(fs.len());
-                for &f in fs {
-                    m.uint(f as u64);
-                }
+    // Presence is a capability statement, including when this definition
+    // removes the final lazy index. Older gateways omit it and fail closed.
+    m.str("lazy").arr(ld.lazy.len());
+    for l in &ld.lazy {
+        m.map(10)
+            .str("gen")
+            .uint(l.gen as u64)
+            .str("base_space_id")
+            .uint(l.base_space_id as u64)
+            .str("local_index_id")
+            .uint(l.local_index_id as u64)
+            .str("route_parts")
+            .uint(l.route_parts as u64)
+            .str("bucket_field")
+            .uint(l.bucket_field as u64);
+        for (name, fs) in [
+            ("key_fields", &l.key_fields),
+            ("pk_fields", &l.pk_fields),
+            ("pk_native_fields", &l.pk_native_fields),
+        ] {
+            m.str(name).arr(fs.len());
+            for &f in fs {
+                m.uint(f as u64);
             }
-            for (name, ts) in [("key_types", &l.key_types), ("pk_types", &l.pk_types)] {
-                m.str(name).arr(ts.len());
-                for t in ts {
-                    m.str(t);
-                }
+        }
+        for (name, ts) in [("key_types", &l.key_types), ("pk_types", &l.pk_types)] {
+            m.str(name).arr(ts.len());
+            for t in ts {
+                m.str(t);
             }
         }
     }
@@ -2163,6 +2163,74 @@ mod tests {
     use super::*;
     use crate::mpw::Rd;
     use crate::plan::Stmt;
+
+    #[test]
+    fn lazy_incarnation_survives_metadata_changes_and_is_retired_on_drop() {
+        let (mut def,_)=table("CREATE TABLE t (tenant_id INT,id INT,k INT,PRIMARY KEY(tenant_id,id),KEY lk(k) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant_id)");
+        let l = def.indexes[1].lazy.as_mut().unwrap();
+        l.space_id = 10001;
+        l.ready = true;
+        let cat = Catalog::new(1, vec!["db".into()], vec![def.clone()]);
+        let changed = apply(
+            &def,
+            &plan1("ALTER TABLE t ADD COLUMN n INT DEFAULT 5,RENAME INDEX lk TO lk2", &cat),
+            &cat,
+            "2026-01-01 00:00:00",
+        )
+        .unwrap();
+        assert_eq!(changed.def.indexes[1].lazy, def.indexes[1].lazy);
+        assert_eq!(
+            changed.def.lua_def().lazy[0].key_fields,
+            def.lua_def().lazy[0].key_fields
+        );
+        assert!(changed.lazy_drop.is_empty());
+        let dropped = apply(
+            &def,
+            &plan1("ALTER TABLE t DROP INDEX lk", &cat),
+            &cat,
+            "2026-01-01 00:00:00",
+        )
+        .unwrap();
+        assert_eq!(dropped.lazy_drop, vec![10001]);
+        assert!(!dropped.def.has_lazy());
+        let mut wire = Mp::new();
+        catalog_entry(&mut wire, &dropped.def, 2);
+        let mut rd = Rd::new(&wire.0);
+        let mut empty_capability = false;
+        for _ in 0..rd.map().unwrap() {
+            if rd.string().unwrap() == "lazy" {
+                assert_eq!(rd.array().unwrap(), 0);
+                empty_capability = true;
+            } else {
+                rd.skip().unwrap();
+            }
+        }
+        assert!(empty_capability);
+        assert!(rd.buf.is_empty());
+        assert_eq!(
+            apply(
+                &def,
+                &plan1("ALTER TABLE t MODIFY k BIGINT", &cat),
+                &cat,
+                "2026-01-01 00:00:00"
+            )
+            .unwrap_err()
+            .code,
+            1235
+        );
+        // Merely reloading/changing a pre-feature table must not activate a
+        // preexisting comment without a fresh fenced bootstrap.
+        def.indexes[1].lazy = None;
+        let legacy = Catalog::new(1, vec!["db".into()], vec![def.clone()]);
+        let changed = apply(
+            &def,
+            &plan1("ALTER TABLE t ADD COLUMN n INT", &legacy),
+            &legacy,
+            "2026-01-01 00:00:00",
+        )
+        .unwrap();
+        assert!(!changed.def.has_lazy());
+    }
 
     fn table(sql: &str) -> (TableDef, Catalog) {
         let c0 = Catalog::new(1, vec!["db".into()], vec![]);

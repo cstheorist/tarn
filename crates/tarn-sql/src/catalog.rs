@@ -386,7 +386,10 @@ impl TableDef {
             if ix.id == 0 || ix.unique || ix.global.is_some() || ix.cols.is_empty() {
                 return Err(SqlError::unsupported("tarn:lazy requires a non-unique secondary index"));
             }
-            if lazy.route_parts != 1 || (lazy.ready && lazy.space_id == 0) {
+            if lazy.route_parts != 1
+                || lazy.space_id as u64 > crate::cluster::MAX_SPACE_ID
+                || (lazy.ready && lazy.space_id == 0)
+            {
                 return Err(SqlError::unsupported(
                     "unsupported lazy index routing or activation metadata",
                 ));
@@ -395,7 +398,9 @@ impl TableDef {
             // types (scale, signed zero and f32/f64 representations).
             for &c in ix.cols.iter().chain(&self.pk().cols) {
                 let ty = self.columns[c].ty();
-                if !(ty.is_integer() || matches!(ty.tarantool_type(), "string" | "varbinary")) {
+                if matches!(ty.base, crate::types::BaseType::Json)
+                    || !(ty.is_integer() || matches!(ty.tarantool_type(), "string" | "varbinary"))
+                {
                     return Err(SqlError::unsupported(format!(
                         "lazy index identity column '{}' must have an integer or string type",
                         self.columns[c].name
@@ -601,7 +606,8 @@ impl TableDef {
             field_weight,
             floats,
         };
-        self.resolve_globals()
+        self.resolve_globals()?;
+        self.validate_lazy()
     }
 
     /// Build `globals` from the indexes (again once `space_id` is known).

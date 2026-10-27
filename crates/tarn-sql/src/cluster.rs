@@ -191,14 +191,16 @@ pub(crate) struct Job {
     pub(crate) gen: u64,
 }
 
+pub(crate) const MAX_SPACE_ID: u64 = 2_147_483_646;
+
 fn allocated_space_start(start: u64, n: u64) -> SqlResult<u32> {
     let first = start
         .checked_add(10_000)
-        .filter(|_| n > 0)
+        .filter(|_| start > 0 && n > 0)
         .ok_or_else(|| SqlError::internal("space identifier allocation exhausted"))?;
     let last = first
         .checked_add(n - 1)
-        .filter(|&last| last <= u32::MAX as u64)
+        .filter(|&last| last <= MAX_SPACE_ID)
         .ok_or_else(|| SqlError::internal("space identifier allocation exhausted"))?;
     let _ = last;
     Ok(first as u32)
@@ -1464,10 +1466,29 @@ impl Cluster {
             let Some(def) = self.catalog().get(db, table) else {
                 return Ok(false);
             };
+            let lazy_drop: Vec<u32> = def
+                .indexes
+                .iter()
+                .filter_map(|i| i.lazy.as_ref().map(|l| l.space_id))
+                .collect();
+            if !lazy_drop.is_empty() {
+                self.require_lazy_capabilities().await?;
+            }
             let ver = self.next_catalog_version().await?;
             let mut a = Mp::new();
-            a.map(3).str("ver").uint(ver).str("timeout").f64(lock_timeout).str("id");
+            a.map(3 + !lazy_drop.is_empty() as usize)
+                .str("ver")
+                .uint(ver)
+                .str("timeout")
+                .f64(lock_timeout)
+                .str("id");
             a.uint(def.space_id as u64);
+            if !lazy_drop.is_empty() {
+                a.str("lazy_drop").arr(lazy_drop.len());
+                for id in lazy_drop {
+                    a.uint(id as u64);
+                }
+            }
             let name = def.space_name();
             let job = self
                 .job_begin(JobKind::Drop, &name, std::slice::from_ref(&name), ver, &a.0, deadline)
@@ -1492,10 +1513,33 @@ impl Cluster {
             let ver = self.next_catalog_version().await?;
             let mut nd = (*def).clone();
             nd.ver = ver;
+            let mut lazy_drop = Vec::new();
+            if def.has_lazy() {
+                self.require_lazy_capabilities().await?;
+                let count = nd.indexes.iter().filter(|i| i.lazy.is_some()).count();
+                let first = self.alloc_space_ids(count as u64).await?;
+                for (n, i) in nd.indexes.iter_mut().filter(|i| i.lazy.is_some()).enumerate() {
+                    let l = i.lazy.as_mut().unwrap();
+                    lazy_drop.push(l.space_id);
+                    l.space_id = first + n as u32;
+                    l.ready = true;
+                }
+            }
             let mut a = Mp::new();
-            a.map(4).str("ver").uint(ver).str("timeout").f64(lock_timeout).str("id");
+            a.map(4 + if lazy_drop.is_empty() { 0 } else { 2 })
+                .str("ver")
+                .uint(ver)
+                .str("timeout")
+                .f64(lock_timeout)
+                .str("id");
             a.uint(def.space_id as u64).str("def");
             crate::alter::catalog_entry(&mut a, &nd, ver);
+            if !lazy_drop.is_empty() {
+                a.str("lazy_empty").bool(true).str("lazy_drop").arr(lazy_drop.len());
+                for id in lazy_drop {
+                    a.uint(id as u64);
+                }
+            }
             let name = def.space_name();
             let job = self
                 .job_begin(
@@ -1972,7 +2016,8 @@ impl Cluster {
                     failed = Some(e);
                 }
             }
-            if failed.is_none() && !applied && matches!(job.kind, JobKind::Alter | JobKind::Create) {
+            if failed.is_none() && !applied && matches!(job.kind, JobKind::Alter | JobKind::Create | JobKind::Truncate)
+            {
                 if let Err(e) = self.bootstrap_lazy(job, &call.0, &live).await {
                     failed = Some(e);
                 }
@@ -2222,6 +2267,29 @@ impl Cluster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn space_allocations_never_wrap_or_reuse_an_incarnation() {
+        assert_eq!(allocated_space_start(1, 1).unwrap(), 10001);
+        assert_eq!(
+            allocated_space_start(MAX_SPACE_ID - 10000, 1).unwrap(),
+            MAX_SPACE_ID as u32
+        );
+        assert_eq!(
+            allocated_space_start(MAX_SPACE_ID - 10001, 2).unwrap(),
+            MAX_SPACE_ID as u32 - 1
+        );
+        for (start, n) in [
+            (0, 0),
+            (0, 1),
+            (MAX_SPACE_ID - 10000, 2),
+            (MAX_SPACE_ID - 9999, 1),
+            (u64::MAX, 1),
+            (1, u64::MAX),
+        ] {
+            assert!(allocated_space_start(start, n).is_err());
+        }
+    }
 
     fn w(shard: usize, waiter: &str, id: u64, holders: &[&str], held: &[usize]) -> Wait {
         Wait {
