@@ -6,15 +6,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- Quoted administrative SQL tokens preserve UTF-8
-  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
-  savepoints and quoted variable names retain multibyte characters.
-  Doubled quotes and string backslash escapes are decoded without changing
-  the original byte offsets used for SET expressions. Unterminated quoted
-  tokens return syntax error 1064.
-
 ### Added
 
 - Vinyl write admission ([#58](https://github.com/cstheorist/tarn/issues/58)):
@@ -471,6 +462,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- Quoted administrative SQL tokens preserve UTF-8
+  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
+  savepoints and quoted variable names retain multibyte characters.
+  Doubled quotes and string backslash escapes are decoded without changing
+  the original byte offsets used for SET expressions. Unterminated quoted
+  tokens return syntax error 1064.
 
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original
