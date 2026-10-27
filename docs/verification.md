@@ -146,7 +146,7 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`) |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read: the same replies for the reads it serves, every other kind handed back (`native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 465 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
@@ -157,7 +157,7 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Failover | `tests/failover.sh` (`ENGINE=vinyl`: vinyl tables) | Tarantool | 2 shards × 3 replicas under the bank workload, READ COMMITTED transfers and `movetest.py`: a live leader change, then two leader kills; every check must hold |
 | Bucket count | `tests/bucketcount.sh` | Tarantool | the bucket count of a new map: the configured one, 3,000 on a cluster made before bucket moves (whose rows use it), 30,000 on a new cluster |
 | DDL faults | `tests/ddlfaults.sh` | Tarantool | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with a shard down, and with a shard killed while it applies: each takes effect on every shard or on none, checked on the shards directly |
-| Faults | `tests/faults.sh` (`ENGINE=vinyl`: a vinyl table) | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
+| Faults | `tests/faults.sh` (`ENGINE=vinyl`: a vinyl table; `TARN_NATIVE=0`: a shard without the native procedures, whose absence the SQL server must notice) | Tarantool | a reply lost after an autocommit write was applied: the client must get "outcome unknown" and the write must be applied exactly once |
 
 `bench/baselines.sh start mariadb` starts a local MariaDB on port 3407 with
 a `sb` user for the differential tests (or point `--ref` at any MariaDB
@@ -168,9 +168,10 @@ a `sb` user for the differential tests (or point `--ref` at any MariaDB
 `.github/workflows/ci.yml` runs on every push and pull request:
 
 * **lint**: `cargo fmt --check` and `cargo clippy -D warnings`;
-* **test**: unit and integration tests, storage protocol tests, the SQL
-  suites against MariaDB 10.11 (on a cluster with two SQL servers), the
-  schema-change, bucket-move, fault-injection and failover tests;
+* **test**: unit and integration tests, storage protocol tests (with the
+  native procedures and without), the SQL suites against MariaDB 10.11 (on
+  a cluster with two SQL servers), the schema-change, bucket-move,
+  fault-injection and failover tests;
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.

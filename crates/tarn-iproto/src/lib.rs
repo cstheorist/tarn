@@ -170,8 +170,12 @@ pub mod errcode {
     pub const ER_UPDATE_INTEGER_OVERFLOW: u32 = 95;
     /// MVCC conflict: the transaction was aborted and must be retried.
     pub const ER_TRANSACTION_CONFLICT: u32 = 97;
+    /// A C function's module has no such symbol.
+    pub const ER_LOAD_FUNCTION: u32 = 99;
     pub const ER_NO_TRANSACTION: u32 = 114;
     pub const ER_LOADING: u32 = 116;
+    /// A C function's module could not be loaded.
+    pub const ER_LOAD_MODULE: u32 = 138;
     pub const ER_TRANSACTION_YIELD: u32 = 154;
     pub const ER_TXN_ROLLBACK: u32 = 225;
     /// A stream-only request (BEGIN/COMMIT/ROLLBACK) sent with stream id 0 is

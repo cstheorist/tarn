@@ -13,6 +13,7 @@
 #                TARN_TEST_HOOKS=1 (tarn_test_hook may hold protocol steps: tests),
 #                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests),
 #                TARN_LOAD_WINDOW=SECS (the seconds of requests a bucket's load counts),
+#                TARN_NATIVE=PATH|0 (the native procedures' libtarn_storage.so; default: target/release's),
 #                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests),
 #                TARN_BUCKET_COUNT=N (bucket_count in cluster.json: buckets of a new cluster)
 #   scripts/cluster.sh stop  [-d DIR]
@@ -85,7 +86,7 @@ start_storage() {
       TARN_VINYL_PAGE_SIZE=${TARN_VINYL_PAGE_SIZE:-} TARN_VINYL_RANGE_SIZE=${TARN_VINYL_RANGE_SIZE:-} \
       TARN_VINYL_BLOOM_FPR=${TARN_VINYL_BLOOM_FPR:-} \
       TARN_CHECK_YIELDS=${TARN_CHECK_YIELDS:-} TARN_TEST_HOOKS=${TARN_TEST_HOOKS:-} \
-      TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} TARN_LOAD_WINDOW=${TARN_LOAD_WINDOW:-} \
+      TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} TARN_LOAD_WINDOW=${TARN_LOAD_WINDOW:-} TARN_NATIVE=${TARN_NATIVE:-} \
       TARN_LISTEN_UNIX=$([ "$UNIX" = 1 ] && echo "$DIR/s$i.$j.sock") \
       "$T" "$ROOT/lua/storage.lua"
     printf ' >> %q 2>&1 < /dev/null\n' "$DIR/s$i.$j.log"

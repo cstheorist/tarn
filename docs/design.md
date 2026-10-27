@@ -41,6 +41,7 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
 | `crates/tarn-iproto` | Async pipelined Tarantool client: many requests in flight per connection (matched by sync id), coalesced writes, zero-copy decoding, streams (interactive transactions), MP_DECIMAL. |
 | `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, MySQL wire codec. Compiled into the server (proof code is erased). |
 | `lua/tarn.lua` | Storage-node module: system spaces, lock table, the participant side of the commit protocol, lock-aware reads, recovery fiber, DDL, counters. |
+| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads without running Lua (§1.5). |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
 ### 1.1 Data layout and routing
@@ -90,6 +91,9 @@ call to the owning shard's leader, `tarn_select` with a lock check. The scan
 and the check run without yielding, so they observe one state; if a prepared
 cross-shard transaction holds a W lock on the row, the read waits until it is
 applied (this is what makes autocommit reads strictly serializable, see §2.3).
+On a memtx table the SQL server calls the shard's native procedure
+`tarn_storage.ts_select` instead, which serves the read itself when there is
+nothing to wait for and hands it back to `tarn_select` otherwise (§1.5).
 
 **Counts** (`SELECT COUNT(*) FROM t WHERE <index range> [AND <simple
 conditions>]`): each shard the range touches counts it with `tarn_count`,
@@ -363,6 +367,89 @@ table. Writes to the table wait meanwhile, as they do while a memtx index is
 built; an online build, as #43 does for vinyl indexes, is still to come.
 Dropping the key drops the space in APPLY. Renaming one, or changing its
 columns or their types, is refused (1846).
+
+### 1.5 Native procedures
+
+A shard runs its procedures in one thread, Tarantool's transaction thread,
+so the CPU a request takes there bounds what the shard serves. When
+`tarn_select` serves an autocommit point select, half of that thread's time
+goes to Lua code and its garbage collector, and each statement leaves about
+2.5 KB of Lua heap to collect (issue #28, measured with `bench/profile.sh`).
+Most of that is the cost of calling Lua at all, not of `tarn_select`'s
+checks: Tarantool gives every call its own Lua thread, decodes the arguments
+into Lua values and encodes the reply from them. Under load, a Lua procedure
+that only looks the row up cost the thread about 6 µs per call, a C
+function that does the same about 1 µs.
+
+`crates/tarn-storage` builds a Tarantool C module, `libtarn_storage.so`,
+whose procedures run without Lua. A storage node loads it when
+`TARN_NATIVE` names it, or else when the checkout it runs from has a release
+build of it (`cargo build --release`); `TARN_NATIVE=0` runs without it. Its
+first procedure, `tarn_storage.ts_select`, takes `tarn_select`'s arguments
+and serves the reads that SQL statements make most:
+
+* reads of memtx tables, outside a stream's transaction;
+* a point read by the whole key of a unique index, the rows equal to a key
+  of any index, or the rows from a key on, in either direction (`EQ`,
+  `REQ`, `GE`, `GT`, `LE`, `LT`, `ALL`), with or without a limit, but
+  without an end key, an offset or a position to continue after;
+* with or without the lock check, routed by one bucket, by several, by
+  none, or to every shard;
+* whose rows fit one page.
+
+It hands every other read back to the Lua procedure: its reply `["lua"]`
+makes the SQL server call `tarn_select`, one round trip more. It hands a read
+back too whenever `tarn_select` would do more than read and return its rows,
+or might: when the bucket map, the lock index or the definition fences are to
+be read again first; when a bucket of the read is not served here, or a read
+of every shard comes with an old epoch or membership (`tarn_select` refuses
+it, `moved`); with the lock check, when the node is read-only, prepared
+transactions hold locks on the table, or a `TRUNCATE` or `DROP TABLE` holds
+a table; when the page ends before the read does (`tarn_select` then says
+where to continue); and when the window of the buckets' load counts that the
+read would count in has ended (§2.13: the Lua procedure starts the next
+one).
+
+The module knows the shard's state from a struct that `lua/tarn.lua` keeps
+current through LuaJIT's FFI (its section "Native procedures"; `State` in
+`crates/tarn-storage/src/state.rs`): which buckets the shard serves, the
+epoch and the membership version, whether the bucket map, the lock index
+and the fences are stale, how many tables are held, the page limits, and
+how many locks prepared transactions hold on each table. The Lua code
+updates it where it changes that state, in the same step. A native
+procedure runs in the same thread as the Lua code, between two of its
+steps, and does not yield, so it sees the state of one moment, as a Lua
+procedure's step that does not yield does. A read it serves is the one
+`tarn_select` would make in that state, with the same rows: in the model it
+is `SnapshotRead` with nothing to wait for (§2.2), so the model does not
+change. Its reads count for their bucket's load (§2.13) as the Lua
+procedure's do. One difference is deliberate: a read that `tarn_select`
+would refuse for lack of Lua memory (1041, see "Pages" in §1.2) the native
+procedure serves, as it takes none.
+
+The SQL server calls `ts_select` for the reads it serves, and `tarn_select`
+for the others and after a `["lua"]`. A shard without the module (an older
+version, or `TARN_NATIVE=0`) answers that the procedure does not exist, one
+whose module did not load or is of another build than its `lua/tarn.lua`
+(the layout of the state differs) that it failed to load, and the SQL
+server stops calling it on that connection. The two procedures'
+replies are the same values, read the same way: the SQL server announces no
+tuple extension, so Tarantool sends the rows of a Lua reply as their stored
+MessagePack arrays, which is what the native procedure copies. `lua/test/native_test.lua` makes each kind of read
+through both procedures and compares their replies, and checks that the
+native one hands back each kind of read it must.
+
+| One shard, 16 threads (`AB=3 bench/profile.sh`) | `tarn_select` | `ts_select` |
+|---|---:|---:|
+| `oltp_point_select`: statements per second | 22,900 | 28,700 |
+| ... CPU of the shard's transaction thread per statement | 16.2 µs | 5.5 µs |
+| ... Lua heap allocated per statement | 2,450 bytes | 0 |
+
+On this 2-vCPU machine, where the SQL server and sysbench share the CPUs
+with the shard, throughput rises by a quarter while the shard's CPU per
+statement falls by two thirds. `oltp_read_only` does not change: its reads
+run inside transactions, which stay with the Lua procedures
+([bench/RESULTS.md](../bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## 2. Isolation and the commit protocol
 
