@@ -151,6 +151,9 @@ jobs:
           for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log /tmp/tarn-growshrink/*.log; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
+          for f in /tmp/tarn-lazyfaults-*/manifest.json /tmp/tarn-lazyfaults-*/events.jsonl; do
+            [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
+          done
           true
 
   tla:
