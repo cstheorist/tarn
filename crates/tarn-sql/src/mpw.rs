@@ -318,7 +318,7 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
             let msg = if m > 2 { rd.string()? } else { status.clone() };
             Err(SqlError::moved(msg))
         }
-        "conflict" | "no" | "duplicate" | "error" | "locked" | "timeout" | "deadlock" => {
+        "conflict" | "no" | "duplicate" | "error" | "locked" | "timeout" | "throttled" | "deadlock" => {
             let code = if m > 1 { rd.value()?.as_i64().unwrap_or(0) } else { 0 };
             let msg = if m > 2 { rd.string()? } else { status.clone() };
             Err(match code {
