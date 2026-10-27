@@ -241,7 +241,10 @@ returns 1205 and follows its normal rollback/abort path. A fresh PREPARE
 refusal can leave protocol tombstones and cause other prepared
 participants to abort; no business writes survive the aborted transaction.
 Duplicate durable YES votes and already-decided APPLY/recovery bypass new
-admission. Lost mutation replies remain outcome-unknown, 1180/40003.
+admission. An expired PREPARE without a retained record returns `expired`
+before any fresh NO/tombstone, including a missing-stream refusal; it
+cannot resurrect an aborted decision after committed records are collected.
+Lost mutation replies remain outcome-unknown, 1180/40003.
 
 `TARN_VINYL_TIMEOUT` defaults to 0.25 seconds so that a statement admitted
 just before native quota becomes unavailable does not inherit Tarantool's
@@ -291,23 +294,23 @@ compaction pressure witnesses are not a disk or end-to-end throughput
 benchmark. Slow-call counts and maximum latency matter here: eight long
 stalls were only 0.16% of the first run's completions, below its p99 cutoff.
 
-With the new controller and defaults, a fresh local run used two RF1 shards
+With the final ABI 8 controller and defaults, a fresh local run used two RF1 shards
 in one Linux ARM64 Docker container limited to two CPUs and 1 GiB, two
 two-thread debug SQL servers, WAL mode `write`, and eight writers directed
 to one shard. Each shard had 8 MiB of vinyl memory, no cache and two vinyl
 write threads. Native I/O was uncapped for three seconds, limited to
 0.5 MiB/s for ten, then released. The 8 KiB values were base64-encoded
-random bytes. All 6,153 attempts completed:
+random bytes passed as ASCII text with PyMySQL 1.2.3. All 6,162 attempts completed:
 
 | Outcome | Calls | p95 | Maximum |
 |---|---:|---:|---:|
-| Acknowledged | 5,727 | 21.16 ms | 226.35 ms |
-| Refused, SQL 1205 | 426 | 255.93 ms | 332.76 ms |
+| Acknowledged | 5,737 | 19.65 ms | 121.23 ms |
+| Refused, SQL 1205 | 425 | 255.59 ms | 359.80 ms |
 
 All acknowledged IDs existed and all refused IDs were absent. Of the
-refusals, 326 exceeded the pressure burst and 100 were known rolled-back
-native quota waits. Native blocked writers peaked at eight, queued
-compaction input at 17,821,408 bytes, and level zero at 8,387,288 bytes;
+refusals, 328 exceeded the pressure burst, one lacked current credit,
+and 96 were known rolled-back native quota waits. Native blocked writers
+peaked at eight, queued compaction input at 24,219,680 bytes, and level zero at 8,387,288 bytes;
 run amplification was also observed. These are measured single-row call
 latencies in this fixture, separate from replication durability evidence
 and from a matched throughput comparison. The endpoint-driven regression

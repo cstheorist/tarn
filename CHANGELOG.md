@@ -437,6 +437,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retaining the read set of an existing stream. Quorum-overlap and stream
   continuity controls cover both engines and both native modes.
 
+- An expired PREPARE whose stream is gone is rejected before a fresh
+  NO/tombstone can be created. After a committed transaction's records
+  were collected, that earlier refusal could resurrect an aborted decision
+  over committed history. Runtime controls retain the committed row and
+  verify both the absent-history and collected-history cases.
+
 
 - A local commit or PREPARE of the reads of a stream that began before the
   shard's leader was demoted and elected again is refused, as a validation
