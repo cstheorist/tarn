@@ -188,11 +188,16 @@ if native ~= nil and native ~= '0' then
     check('native write on a lazy source falls back before writing', nr[1] == 'lua'
           and box.space[sid]:len() == before and #pending() == 0, nr)
     local ffi = require('ffi')
-    local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({6}))
-    check('ABI6 has the integrated native layout and offsets', ffi.sizeof('struct tarn_ns') == 184
+    local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({7}))
+    check('ABI7 has the integrated native layout and offsets', ffi.sizeof('struct tarn_ns') == 216
           and ffi.offsetof('struct tarn_ns', 'pl_spaces') == 160
-          and ffi.offsetof('struct tarn_ns', 'capture_stale') == 168
-          and ffi.offsetof('struct tarn_ns', 'write_excluded') == 176)
+          and ffi.offsetof('struct tarn_ns', 'held') == 168
+          and ffi.offsetof('struct tarn_ns', 'doomed') == 172
+          and ffi.offsetof('struct tarn_ns', 'c_served') == 176
+          and ffi.offsetof('struct tarn_ns', 'c_to_lua') == 184
+          and ffi.offsetof('struct tarn_ns', 'svp_txn') == 192
+          and ffi.offsetof('struct tarn_ns', 'capture_stale') == 200
+          and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208)
     local saved = ns.write_excluded
     ns.write_excluded = nil
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', sid, {9, 'null-array', 1}}}, {wb = {1}}})
@@ -217,10 +222,10 @@ if native ~= nil and native ~= '0' then
         box.func['tarn_storage.ts_autocommit'], {{{'insert', safe.id, {3, 'bad-layout', 1}}}, {wb = {1}}})
     check('already-ready ABI mismatch blocks the old native entrypoint', not valid
           and mismatch.code == box.error.LOAD_FUNCTION and box.space[safe.id]:get{3} == nil)
-    box.func['tarn_storage.ts_state']:call({6})
+    box.func['tarn_storage.ts_state']:call({7})
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', safe.id, {4, 'restored', 1}}}, {wb = {1}}})
     check('matching ABI restores safe native execution', nr[1] == 'ok' and box.space[safe.id]:get{4} ~= nil)
-    check('ABI6 exclusion is fresh and initialized', tarn_info().native.ready == 1)
+    check('ABI7 exclusion is fresh and initialized', tarn_info().native.ready == 1)
 end
 print(string.format('%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -32,7 +32,7 @@ ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then
     layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-    assert(ni and ni.ready == 1 and layout == 6, 'actual native ABI6 is required')
+    assert(ni and ni.ready == 1 and layout == 7, 'actual native ABI7 is required')
 else
     assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode is required')
 end
