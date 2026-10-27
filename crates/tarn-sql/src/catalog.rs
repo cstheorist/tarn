@@ -310,6 +310,10 @@ pub struct Layout {
     pub col_weight: Vec<Option<usize>>,
     /// Column whose weight string each field holds.
     pub field_weight: Vec<Option<usize>>,
+    /// The FLOAT and DOUBLE columns: a value that is an integer is stored
+    /// as that integer (the storage procedures store what Lua's serializer
+    /// makes of a double), and read as a double (`Rd::row_of`).
+    pub floats: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -582,6 +586,9 @@ impl TableDef {
         }
         let colls: Vec<Collation> = self.columns.iter().map(|c| c.coll()).collect();
         let identity = bucket == n && width == n + 1 && col_field.iter().enumerate().all(|(c, &f)| c == f);
+        let floats = (0..n)
+            .filter(|&c| self.columns[c].ty().tarantool_type() == "double")
+            .collect();
         self.layout = Layout {
             identity,
             width,
@@ -592,6 +599,7 @@ impl TableDef {
             colls,
             col_weight,
             field_weight,
+            floats,
         };
         self.resolve_globals()
     }

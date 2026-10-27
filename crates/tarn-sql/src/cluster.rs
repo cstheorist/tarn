@@ -1110,6 +1110,51 @@ impl Cluster {
         self.call_inner(shard, func, args, false).await
     }
 
+    /// CALL the shard's native procedure `func` once, as `call_once`: its
+    /// reply, or None where it is not there -- an older version, a shard
+    /// without the module, or one whose module did not load, which the
+    /// connection notes with `mark` -- or after a leader change. A reply
+    /// ["lua", "all"] (the procedure hands back every call of this shard)
+    /// is noted with `mark` too.
+    pub async fn call_native_once(&self, shard: usize, func: &str, args: &[u8], mark: u32) -> SqlResult<Option<Bytes>> {
+        use tarn_iproto::errcode::{
+            ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
+        };
+        let s = &self.shards[shard];
+        let c = s.client(self).await?;
+        if c.marked(mark) {
+            return Ok(None);
+        }
+        match c.call(0, func, args).await {
+            Ok(r) => {
+                let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
+                if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
+                    tracing::debug!(shard = s.id, "{} hands back every call", func);
+                    c.mark(mark);
+                }
+                Ok(Some(d))
+            }
+            Err(tarn_iproto::Error::Server {
+                code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                message,
+            }) => {
+                tracing::debug!(shard = s.id, "{} unavailable: {}", func, message);
+                c.mark(mark);
+                Ok(None)
+            }
+            // (the Lua procedure sees the leader change too, and follows it)
+            Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::ER_READONLY => {
+                s.invalidate();
+                Ok(None)
+            }
+            Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) => {
+                s.invalidate();
+                Err(crate::mpw::ambiguous(s.id, &e))
+            }
+            Err(e) => Err(from_iproto(e)),
+        }
+    }
+
     async fn call_inner(&self, shard: usize, func: &str, args: &[u8], idempotent: bool) -> SqlResult<Bytes> {
         let s = &self.shards[shard];
         let mut tries = 0;

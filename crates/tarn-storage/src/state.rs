@@ -8,7 +8,7 @@
 //! both, and `LAYOUT` with them.
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 2;
+pub const LAYOUT: u32 = 4;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -46,8 +46,10 @@ pub struct State {
     /// cfg.load_window), by the event loop's monotonic clock (fiber.clock()).
     /// A read counted after it goes to Lua, which starts the next window.
     pub load_until: f64,
-    /// [count + 1]: 1 where this shard serves reads of the bucket (its
-    /// state is active, sending or fenced: see BK.bad), else 0.
+    /// [count + 1]: what this shard serves of each bucket (BK.bad): 2 reads
+    /// and writes (active), 1 reads only (sending or fenced: a write to a
+    /// bucket being sent is noted for its move, which the Lua procedures
+    /// do), 0 nothing.
     pub serves: *mut u8,
     /// [count + 1]: the reads routed by each bucket in the current window of
     /// the load counts (BK.load).
@@ -58,6 +60,26 @@ pub struct State {
     /// Reads served here, and handed to the Lua procedure.
     pub served: u64,
     pub to_lua: u64,
+    /// PL_N: the row locks held (READ COMMITTED); a write needs none.
+    pub pl_n: u32,
+    /// The test hooks held (tarn_test_hook): while any is, every request
+    /// goes to Lua, whose steps the hooks hold.
+    pub hooks: u32,
+    /// The native commits, numbered as they start (box_txn_commit()), and
+    /// the oldest one in flight (u64::MAX: none): what waits for the commits
+    /// in flight (wait_commits) waits for those that started before it.
+    pub commit_seq: u64,
+    pub oldest_inflight: u64,
+    /// [count + 1]: the rows written to each bucket in the current window of
+    /// the load counts, and their bytes (BK.load).
+    pub writes: *mut u32,
+    pub wbytes: *mut f64,
+    /// [SPACES]: the highest definition fence (FENCE) of the spaces of each
+    /// slot: a write made with an older definition is refused (1412).
+    pub fences: *mut u64,
+    /// Autocommit writes served here, and handed to the Lua procedure.
+    pub w_served: u64,
+    pub w_to_lua: u64,
 }
 
 impl Default for State {
@@ -87,17 +109,59 @@ impl State {
             space_locks: std::ptr::null_mut(),
             served: 0,
             to_lua: 0,
+            pl_n: 0,
+            hooks: 0,
+            commit_seq: 0,
+            oldest_inflight: u64::MAX,
+            writes: std::ptr::null_mut(),
+            wbytes: std::ptr::null_mut(),
+            fences: std::ptr::null_mut(),
+            w_served: 0,
+            w_to_lua: 0,
         }
     }
 
     /// Whether this shard serves reads routed by bucket b.
     pub fn serves(&self, b: u64) -> bool {
+        self.serving(b) != 0
+    }
+
+    /// Whether this shard takes writes to bucket b here (it is active).
+    pub fn writable(&self, b: u64) -> bool {
+        self.serving(b) == 2
+    }
+
+    fn serving(&self, b: u64) -> u8 {
         if self.serves.is_null() || b == 0 || b > self.count as u64 {
-            return false;
+            return 0;
         }
         // SAFETY: the Lua module keeps `serves` an array of count + 1 bytes
-        // (BK.ns_arrays), alive while the pointer is set.
-        unsafe { *self.serves.add(b as usize) != 0 }
+        // (BK.ns_serves_all), alive while the pointer is set.
+        unsafe { *self.serves.add(b as usize) }
+    }
+
+    /// The highest definition fence of space `id`'s slot (unknown: none
+    /// lower than any).
+    pub fn fence(&self, id: u32) -> u64 {
+        if self.fences.is_null() {
+            return u64::MAX;
+        }
+        // SAFETY: the Lua module keeps `fences` an array of SPACES
+        // versions, alive while the pointer is set.
+        unsafe { *self.fences.add((id % SPACES) as usize) }
+    }
+
+    /// Count a row of `bytes` written to bucket b (BK.count_writes).
+    pub fn count_write(&mut self, b: u64, bytes: u64) {
+        if self.writes.is_null() || self.wbytes.is_null() || b == 0 || b > self.count as u64 {
+            return;
+        }
+        // SAFETY: as for `reads`, arrays of count + 1.
+        unsafe {
+            let p = self.writes.add(b as usize);
+            *p = (*p).wrapping_add(1);
+            *self.wbytes.add(b as usize) += bytes as f64;
+        }
     }
 
     /// Whether prepared transactions may hold locks on space `id` (unknown:
@@ -147,7 +211,16 @@ mod tests {
         assert_eq!(offset_of!(State, space_locks), 72);
         assert_eq!(offset_of!(State, served), 80);
         assert_eq!(offset_of!(State, to_lua), 88);
-        assert_eq!(std::mem::size_of::<State>(), 96);
+        assert_eq!(offset_of!(State, pl_n), 96);
+        assert_eq!(offset_of!(State, hooks), 100);
+        assert_eq!(offset_of!(State, commit_seq), 104);
+        assert_eq!(offset_of!(State, oldest_inflight), 112);
+        assert_eq!(offset_of!(State, writes), 120);
+        assert_eq!(offset_of!(State, wbytes), 128);
+        assert_eq!(offset_of!(State, fences), 136);
+        assert_eq!(offset_of!(State, w_served), 144);
+        assert_eq!(offset_of!(State, w_to_lua), 152);
+        assert_eq!(std::mem::size_of::<State>(), 160);
     }
 
     #[test]

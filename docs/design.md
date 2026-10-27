@@ -108,7 +108,11 @@ validation exactly as reading the rows would record them.
 
 **Autocommit single-shard DML** (`UPDATE ... WHERE pk = ?`, single-shard
 `INSERT`, `DELETE ... WHERE pk = ?`): one call to `tarn_autocommit`, which runs
-one local Tarantool transaction (lock check + apply + commit).
+one local Tarantool transaction (lock check + apply + commit). On a memtx
+table the SQL server calls the shard's native procedure
+`tarn_storage.ts_autocommit` first, which does the writes itself when there
+is nothing to wait for or refuse, and otherwise hands them, unwritten, to
+`tarn_autocommit` (§1.5).
 
 **Transactions** (`BEGIN ... COMMIT`, or statements that touch several shards):
 
@@ -488,18 +492,68 @@ MessagePack arrays, which is what the native procedure copies. `lua/test/native_
 through both procedures and compares their replies, and checks that the
 native one hands back each kind of read it must.
 
+**Autocommit writes.** The module's second procedure,
+`tarn_storage.ts_autocommit`, takes `tarn_autocommit`'s arguments and makes
+its writes -- inserts, replaces, deletes, and updates that assign values or
+add to integer columns -- in one local transaction, with the same reads of
+the rows they replace, the same affected rows, MySQL's checks of the
+arithmetic, and the same reply. It stores the values as the Lua procedure
+does, which decodes them and has Tarantool encode them again: a double that
+holds an integer (the SQL server sends every `DOUBLE` and `FLOAT` value as
+a double) is stored as that integer. The rows must be the same bytes
+whichever procedure wrote them, since the affected rows of a later write
+compare them. It hands the writes to `tarn_autocommit`, having written
+nothing (it rolls its transaction back), when anything could make the Lua
+procedure wait, refuse or do more:
+
+* a table that is vinyl, or on which prepared transactions hold locks; a
+  synchronous one (a replicated shard: its commit waits for a quorum),
+  after which the SQL server stops calling the procedure on that
+  connection (the reply `["lua", "all"]`);
+* any row lock held on the shard (READ COMMITTED), a definition fence above
+  the one the writes were made with (`tarn_autocommit` refuses them with
+  1412), a bucket of the writes, or of the rows they write, that does not
+  take writes here (being sent, moved away), or a window of the load counts
+  that ended;
+* a write that fails (a duplicate key: `tarn_autocommit` retries writes
+  that move a unique value, then refuses), an update of a row written
+  before an `ALTER TABLE` added fields (`tarn_autocommit` fills them in),
+  arithmetic that leaves its column's range or the integers (1264, 1690),
+  or a value that is not a number;
+* stale state of the shard, a read-only node, or a test hook held.
+
+Its checks and writes are the model's CommitLocal step for a transaction
+that read nothing: nothing else runs between them, as the procedure does
+not yield until it commits. For the checks, the state also mirrors the
+number of row locks, the definition fences (the highest of each slot of
+space ids), which buckets take writes, and the test hooks held. While its
+commit waits for the WAL, it is a commit in flight, and what waits for the
+commits in flight (`wait_commits`: a row lock's grant, a schema change, a
+bucket move) waits for it too. The commits are numbered as they start and
+the state holds the oldest one still in flight, so a wait ends once the
+commits that began before it have ended, however many begin after it. A
+commit that fails replies as `tarn_autocommit`'s would: 1213 for a
+conflict, and a read-only node's error as the call's error. Once its
+commit began, the procedure never hands the writes back: should it fail
+there, it replies 1180 (outcome unknown).
+
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
 | `oltp_point_select`, Lua → native | 26,796 → 36,943 | 16.4 → 4.7 µs | 2,756 → 0 bytes |
 | `oltp_read_only` | 9,603 → 15,349 | 66.4 → 25.1 µs | 5,702 → 410 bytes |
 | `oltp_read_write` | 9,773 → 15,063 | 64.7 → 27.4 µs | 3,925 → 562 bytes |
+| `oltp_update_index` | 13,345 → 22,878 | 45.7 → 20.0 µs | 3,446 → 0 bytes |
+| `oltp_update_non_index` | 13,760 → 24,210 | 42.6 → 17.1 µs | 3,459 → 1 byte |
+| `oltp_insert` | 12,946 → 22,557 | 41.6 → 14.7 µs | 3,161 → 2 bytes |
 
 On this 2-vCPU machine, where the SQL server and sysbench share the CPUs
 with the shard, throughput rises less than the shard's CPU per statement
 falls. In the transactions of `oltp_read_only` and `oltp_read_write` the
 native procedure serves the four range reads, two thirds of their storage
 calls; their point reads are IPROTO SELECTs, and their first read and
-their commit stay with the Lua procedures
+their commit (with the writes of `oltp_read_write`) stay with the Lua
+procedures. The native procedure makes every autocommit write of the last
+three workloads, which were measured in a later run
 ([bench/RESULTS.md](../bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## 2. Isolation and the commit protocol
@@ -1546,7 +1600,7 @@ does not check.
 | `tests/failover.sh` | 2 shards × 3 synchronous replicas under the bank workload, READ COMMITTED transfers and `movetest.py` (buckets moving through the leader changes): leadership of shard 1 moved with `box.ctl.promote()` (the old leader keeps its connections), then kill -9 of the leader of shard 1, then of shard 2; with memtx tables, and with vinyl tables (`ENGINE=vinyl`) | passes on both: new leaders in ≈2.5 s, all workload checks hold, final sums exact via SQL and via direct KV reads on the new leaders |
 | `tests/bucketcount.sh` | the number of buckets a SQL server gives the map it makes: the configured `bucket_count`; 3,000 on shards that have tables but no map (a cluster made before bucket moves, simulated by removing the map and restarting the nodes); 30,000 on a new cluster; each time the shards' ranges and, with rows, their bucket ids, reads by key and writes | 20/20 |
 | `tests/ddlfaults.sh` | `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` with shard 2 down, and with shard 2 killed while a test hook holds its APPLY; the abandoned jobs are finished by the SQL server (`ddl_job_stale` = 2 s) | 6/6: rolled back with the shard down (the table on no shard, or unchanged), rolled forward when killed while applying; checked on each shard directly |
-| `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
+| `tests/faults.sh` | a proxy delivers an autocommit `UPDATE ... SET v = v + 1` to the shard, swallows the reply and closes the connection; on a memtx table through the native procedure and through `tarn_autocommit`, and on a vinyl table | the client gets 1180 (outcome unknown), the row is incremented exactly once |
 
 ## 5. Results
 

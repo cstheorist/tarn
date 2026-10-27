@@ -62,7 +62,7 @@ clients or on the storage machines.
 | `TARN_IPROTO_THREADS` | `1` | Tarantool network threads |
 | `TARN_LOG_LEVEL` | `5` | Tarantool log level |
 | `TARN_LOAD_WINDOW` | `60` | seconds per window of the requests counted for each bucket: `TARN REBALANCE BY LOAD` sees the last one to two windows |
-| `TARN_NATIVE` | `target/release/libtarn_storage.so` of the checkout, if it was built | the native procedures' module ([design §1.5](design.md#15-native-procedures)), which serves the most frequent reads without running Lua; `0`: none, the Lua procedures serve every request. The file must be named `libtarn_storage.so`. |
+| `TARN_NATIVE` | `target/release/libtarn_storage.so` of the checkout, if it was built | the native procedures' module ([design §1.5](design.md#15-native-procedures)), which serves the most frequent reads and autocommit writes without running Lua; `0`: none, the Lua procedures serve every request. The file must be named `libtarn_storage.so`. |
 
 The bootstrap enables memtx MVCC, sets the default isolation to
 `read-confirmed` (plain reads never see data that a failover could roll
@@ -472,7 +472,8 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
   for their bucket), `move_broken_locks`, `bucket_sends`, `bucket_recvs`),
   and `native`: false without the native procedures, else whether they are
   in use (`ready`), the reads they served (`served`) and those they handed
-  to the Lua procedure (`to_lua`).
+  to the Lua procedure (`to_lua`), and the same of autocommit writes
+  (`writes`, `writes_to_lua`).
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted
