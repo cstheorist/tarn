@@ -55,9 +55,10 @@ read them as **key/value**.
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
   and model-checked with TLC (143 default configurations, including 100
-  broken or tradeoff cases that TLC must expose). Shard routing, commit decisions and
-  the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
-  and compiled into the server.
+  broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
+  the MySQL packet codec and the MessagePack of the native storage procedures are
+  proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
+  into the server and its native module.
 * **Tested against reality.** Exact differential tests against MariaDB,
   transaction-anomaly tests, a ledger-checked bank workload under leader
   failover and bucket moves, and fault injection for lost replies.
@@ -162,9 +163,9 @@ shard's CPU per statement
   moves between shards. TLC found a real design flaw early on: single-shard
   reads could break strict serializability. It later caught a flaw in a fix
   too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 66 verified
-  functions and lemmas for routing, coordinator decisions and the MySQL wire
-  codec.
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 115 verified
+  functions and lemmas for routing, coordinator decisions, global index
+  maintenance, the MySQL wire codec and the native procedures' MessagePack.
 * **Tests**: 874 storage-protocol checks, 967 SQL cases compared exactly
   with MariaDB plus 2,000 random queries, transaction-anomaly tests, failover
   and fault-injection tests. An independent code review found five bugs
@@ -193,7 +194,7 @@ crates/tarn-server     the tarn-server binary
 crates/tarn-mysql      MySQL wire protocol (server side)
 crates/tarn-sql        SQL parsing, planning and execution; transactions and the 2PC coordinator
 crates/tarn-iproto     async, pipelined Tarantool IPROTO client
-crates/tarn-verified   Verus-verified routing, coordinator decisions, wire codec
+crates/tarn-verified   Verus-verified routing, coordinator decisions, global indexes, wire codec, MessagePack
 crates/tarn-common     shared value, column and error types
 crates/tarn-storage    native storage procedures: a Tarantool C module for the most frequent reads and writes
 lua/                   storage-node module (tarn.lua), bootstrap (storage.lua), protocol tests

@@ -5,8 +5,8 @@ shards. Every SQL table is an ordinary Tarantool space, so the same rows that
 SQL clients read and write can be read directly as Key/Value by any Tarantool
 client (`box.space['db.t'].index.primary:get{...}`). SQL transactions are
 **strictly serializable** across shards by default; the commit protocol is specified in
-TLA+ and model-checked with TLC, and the routing, coordinator-decision and
-MySQL wire-codec code is verified in Verus.
+TLA+ and model-checked with TLC, and the routing, coordinator-decision,
+MySQL wire-codec and MessagePack code is verified in Verus.
 
 This document describes the architecture, the protocol and its verification,
 the test suites, the benchmarks on this machine and the known limitations.
@@ -45,9 +45,9 @@ specifies capture, delivery, session catch-up, bootstrap and topology rules.
 | `crates/tarn-mysql` | Server side of the MySQL protocol: HandshakeV10, `mysql_native_password` (auth switch from `caching_sha2_password`), text and binary result sets, prepared statements (`COM_STMT_*`, long data), `CLIENT_DEPRECATE_EOF`. All length-encoded integers/strings and packet framing go through the Verus-verified codec. |
 | `crates/tarn-sql` | Parsing (sqlparser, MySQL dialect), literal normalization and a shared plan cache, planning (access-path selection, joins, aggregation), execution, sessions, the transaction coordinator, DDL, catalog cache, AUTO_INCREMENT. |
 | `crates/tarn-iproto` | Async pipelined Tarantool client: many requests in flight per connection (matched by sync id), coalesced writes, zero-copy decoding, streams (interactive transactions), MP_DECIMAL. |
-| `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, MySQL wire codec. Compiled into the server (proof code is erased). |
+| `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, global index maintenance, MySQL wire codec, the MessagePack codec of the native procedures. Compiled into the server and the native module (proof code is erased). |
 | `lua/tarn.lua` | Storage-node module: system spaces, lock table, the participant side of the commit protocol, lock-aware reads, recovery fiber, DDL, counters. |
-| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads without running Lua (§1.5). |
+| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
 ### 1.1 Data layout and routing
@@ -519,9 +519,11 @@ does, which decodes them and has Tarantool encode them again: a double that
 holds an integer (the SQL server sends every `DOUBLE` and `FLOAT` value as
 a double) is stored as that integer. The rows must be the same bytes
 whichever procedure wrote them, since the affected rows of a later write
-compare them. It hands the writes to `tarn_autocommit`, having written
-nothing (it rolls its transaction back), when anything could make the Lua
-procedure wait, refuse or do more:
+compare them. The module writes integers, and the headers of arrays,
+strings and binaries, with the Verus-verified codec (§3), which proves them
+Tarantool's encodings: the shortest. It hands the writes to
+`tarn_autocommit`, having written nothing (it rolls its transaction back),
+when anything could make the Lua procedure wait, refuse or do more:
 
 * a table that is vinyl, or on which prepared transactions hold locks, or
   row locks are held (READ COMMITTED: `tarn_autocommit` waits for one on
@@ -1676,8 +1678,8 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **66 verified, 0 errors**) and compiled into the server as plain
-Rust. What is proven:
+src/lib.rs`: **115 verified, 0 errors**) and compiled into the server and the
+native module as plain Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
   specification (`crc_bytes`) for any input; `bucket_from_crc` returns a
@@ -1713,6 +1715,21 @@ Rust. What is proven:
   `deframe` is proven to return precisely the payload that `frames_spec`
   framed, or `None` while incomplete. No overflow or panic on any input.
   `tarn-mysql::codec` delegates to these functions.
+* **MessagePack of the native procedures** (`mp.rs`, §1.5). The native
+  procedures read their arguments and write their replies and the tuples
+  they store with these functions (`tarn-storage`'s `Rd` and `Wr`). Each
+  writer emits a byte-level specification: an integer unsigned when it is
+  not negative, a negative one in two's complement, each in the fewest
+  bytes, and the shortest header of an array, a string or a binary. These
+  are the encodings Tarantool writes: it is proven that no encoding of the
+  same integer, and no header of the same length, is shorter. The readers
+  decode per their specifications and read back what the writers emit,
+  whatever follows. `skip` ends where a value ends, however nested -- the
+  values an array or a map holds, the bytes a string, a binary, a number or
+  an extension takes -- or returns None for a value cut short or a byte no
+  value starts with; a value the writers emit ends where its encoding does.
+  No function can panic, overflow or read past its buffer, whatever bytes
+  it is given.
 * **Global index maintenance** (`uix.rs`, §1.4). `index_delta` decides
   which entry writes a row write makes. It is proven that applying them to
   an index that holds the row's old entry leaves the other rows' entries
@@ -1723,15 +1740,16 @@ Rust. What is proven:
 
 Not covered by the proofs: how SQL values are turned into the bytes that
 are hashed for routing (`tarn-sql/src/route.rs`, tested against Tarantool's
-own `digest.crc32` instead), and packet sequence numbers, which `deframe`
-does not check.
+own `digest.crc32` instead); packet sequence numbers, which `deframe` does
+not check; and which values a native procedure reads and writes: the codec
+is proven, and the storage tests compare each procedure with the Lua one.
 
 ## 4. Tests
 
 | Suite | Scope | Result |
 |---|---|---|
 | `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts | 392/392 and 138/138 |
-| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map; the rebalancer's plans (even weights, and even shares of buckets of uneven sizes) and its record | all pass |
+| `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries (MySQL's and MessagePack's), values skipped however nested, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map; the rebalancer's plans (even weights, and even shares of buckets of uneven sizes) and its record | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
 | `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings; collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
