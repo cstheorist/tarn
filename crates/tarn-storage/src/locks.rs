@@ -24,6 +24,7 @@
 //! `msgpack.encode` writes it (`write::lua_array`), after its space and
 //! index (4 bytes each, big-endian).
 
+use crate::fallback::Why;
 use crate::mp::{Rd, Wr};
 use crate::write::{lua_array, lua_value};
 use std::borrow::Cow;
@@ -451,7 +452,17 @@ pub struct KeyIndex {
 /// transaction on its key (point_w_locked; TarnCommit!SnapshotRead,
 /// readsOK).
 pub fn point_read_free(sid: u32, iid: u32, key: &[u8]) -> bool {
-    lock_key(key).is_some_and(|k| v::read_free(self::point(sid, iid, &k)))
+    point_read_met(sid, iid, key).is_none()
+}
+
+/// What a point read meets, as `point_read_free` checks: a W lock, or a key
+/// it does not look up here; None when it is free.
+pub fn point_read_met(sid: u32, iid: u32, key: &[u8]) -> Option<Why> {
+    match lock_key(key) {
+        None => Some(Why::LockKey),
+        Some(k) if !v::read_free(self::point(sid, iid, &k)) => Some(Why::WLock),
+        Some(_) => None,
+    }
 }
 
 /// Whether a read of a range of index `iid` of space `sid` meets no W lock
@@ -497,43 +508,73 @@ pub fn write_free(
     plocked: bool,
     bounds: &mut dyn Bounds,
 ) -> bool {
+    write_met(sid, pk, old, new, indexes, locked, plocked, bounds).is_none()
+}
+
+/// What a write meets, as `write_free` checks: a row lock, a lock, a range
+/// lock, or a key it does not look up or compare here; None when it meets
+/// none.
+#[allow(clippy::too_many_arguments)]
+pub fn write_met(
+    sid: u32,
+    pk: &[u8],
+    old: Option<&[&[u8]]>,
+    new: Option<&[&[u8]]>,
+    indexes: &[KeyIndex],
+    locked: bool,
+    plocked: bool,
+    bounds: &mut dyn Bounds,
+) -> Option<Why> {
     let secondary = || indexes.iter().filter(|ix| ix.iid != 0);
     if plocked {
         if row_locked(sid, 0, pk) {
-            return false;
+            return Some(Why::RowLock);
         }
         if let Some(t) = new {
             for ix in secondary().filter(|ix| ix.unique) {
                 match key_of(t, &ix.parts) {
                     Some(k) if !row_locked(sid, ix.iid, &k) => {}
-                    _ => return false,
+                    Some(_) => return Some(Why::RowLock),
+                    None => return Some(Why::LockKey),
                 }
             }
         }
     }
     if !locked {
-        return true;
+        return None;
     }
     // (range_locked: a range lock of the index whose range holds the key)
     let mut ranged = |iid: u32, k: &[u8]| {
-        ranges_on_index(sid, iid) && (!bounds.key(iid, k) || range_hit(sid, iid, |lo, hi| bounds.within(lo, hi)))
+        if !ranges_on_index(sid, iid) {
+            None
+        } else if !bounds.key(iid, k) {
+            Some(Why::LockKey)
+        } else {
+            range_hit(sid, iid, |lo, hi| bounds.within(lo, hi)).then_some(Why::RangeLock)
+        }
     };
-    if !v::primary_free(self::point(sid, 0, pk)) || ranged(0, pk) {
-        return false;
+    if !v::primary_free(self::point(sid, 0, pk)) {
+        return Some(Why::Lock);
+    }
+    if let Some(w) = ranged(0, pk) {
+        return Some(w);
     }
     for (t, new) in [(old, false), (new, true)] {
         let Some(t) = t else { continue };
         for ix in secondary() {
             let Some(k) = key_of(t, &ix.parts) else {
-                return false;
+                return Some(Why::LockKey);
             };
             let claims = new && ix.unique && !has_null(&k);
-            if !v::secondary_free(self::point(sid, ix.iid, &k), claims) || ranged(ix.iid, &k) {
-                return false;
+            if !v::secondary_free(self::point(sid, ix.iid, &k), claims) {
+                return Some(Why::Lock);
+            }
+            if let Some(w) = ranged(ix.iid, &k) {
+                return Some(w);
             }
         }
     }
-    true
+    None
 }
 
 #[cfg(test)]
@@ -861,6 +902,34 @@ mod tests {
             !write_free(512, &[0x91, 0x03], None, Some(&shorter), &indexes, true, false, any),
             "else to Lua"
         );
+        locks_clear(3);
+    }
+
+    #[test]
+    fn says_what_a_step_meets() {
+        locks_clear(3);
+        let indexes = [ix(0, true, &[0]), ix(1, false, &[1])];
+        let new = fields_of(&[0x92, 0x01, 0x05]).unwrap();
+        let pk = [0x91, 0x01];
+        let met = |bounds: &mut dyn Bounds| write_met(512, &pk, None, Some(&new), &indexes, true, true, bounds);
+        assert_eq!(met(&mut ByteOrder::default()), None);
+        let p = |iid, k: &[u8], from, to| unsafe { lk_point(512, iid, k.as_ptr(), k.len(), from, to) };
+        p(0, &pk, NONE, R);
+        assert_eq!(met(&mut ByteOrder::default()), Some(Why::Lock));
+        assert_eq!(point_read_met(512, 0, &pk), None, "(an R lock: a read is free)");
+        p(0, &pk, R, W);
+        assert_eq!(point_read_met(512, 0, &pk), Some(Why::WLock));
+        assert_eq!(
+            point_read_met(512, 0, &[0x91, 0xd5, 0x01, 0x00, 0x1c]),
+            Some(Why::LockKey)
+        );
+        p(0, &pk, W, NONE);
+        range(1, Some(&[0x91, 0x05]), None, 1);
+        assert_eq!(met(&mut ByteOrder::default()), Some(Why::RangeLock));
+        assert_eq!(met(&mut Unknown), Some(Why::LockKey), "a key it cannot compare");
+        range(1, Some(&[0x91, 0x05]), None, -1);
+        unsafe { pl_key(512, 0, pk.as_ptr(), pk.len(), 1) };
+        assert_eq!(met(&mut ByteOrder::default()), Some(Why::RowLock));
         locks_clear(3);
     }
 

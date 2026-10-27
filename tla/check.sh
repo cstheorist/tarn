@@ -49,6 +49,7 @@ Bug_StreamMarksLuaTermCheckEarly Bug_StreamMarksValidateNoFenceFresh Bug_StreamM
 Bug_StreamMarksDoomBeforeClear Bug_StreamMarksDoomAfterCommit"
 DEFAULT="$DEFAULT Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAfterCommitBegan
 Bug_HandbackAfterCommitBegan_Autocommit Bug_HandbackResendAfterLoss Bug_HandbackResendAfterLoss_Autocommit"
+DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

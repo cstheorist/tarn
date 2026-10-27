@@ -8,6 +8,7 @@
 //! tells the SQL server to call it. The decisions are the ones tarn_select
 //! makes in that case, so either gives the same reply.
 
+use crate::fallback::{back, Why};
 use crate::mp::Rd;
 use crate::state::State;
 
@@ -112,11 +113,11 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
     };
     let lock_check = r.bool()?;
     if !r.nil() && r.uint()? != 0 {
-        return None; // offset
+        return back(Why::Offset);
     }
     let begin = !r.nil() && r.bool()?;
     if !r.nil() {
-        return None; // after
+        return back(Why::NextPage); // after
     }
     let route = match r.peek()? {
         0xc0 => {
