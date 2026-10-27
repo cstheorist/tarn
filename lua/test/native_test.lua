@@ -438,17 +438,51 @@ n, l = wsame('a replace by the same row, with doubles', {{'replace', drow(61, D(
 check('... (1 affected)', l[2] == 1, l)
 wsame('a delete by a key given as a double', {{'delete', {D(68)}}}, nil, true)
 wsame('a value that is not a number', {{'insert', drow(69, D(0 / 0))}}, nil, false)
--- a synchronous table (a shard with replicas): handed back, as every write
--- of the shard will be
-local ssid = c:eval([[local s = box.schema.space.create('test_native_sync', {is_sync = true,
-        format = {{name = 'id', type = 'unsigned'}, {name = 'bucket_id', type = 'unsigned'}}})
-    s:create_index('primary')
-    s:create_index('bucket_id', {parts = {'bucket_id'}, unique = false})
-    return s.id]])
-n = c:call('tarn_storage.ts_autocommit', wargs(ssid, {{'insert', {1, b}}}))
-check('a write to a synchronous table: handed back, as every one will be', n[1] == 'lua' and n[2] == 'all', n)
-check('... having written nothing', c:eval('return box.space.test_native_sync:len()') == 0)
-c:eval('box.space.test_native_sync:drop()')
+-- synchronous tables (a shard with replicas): served, each commit waiting
+-- for its quorum, as the Lua procedure's does (here this node alone, once
+-- it owns the queue of synchronous transactions)
+local function sync_twin(name)
+    return c:eval([[local name, like = ...
+        local s = box.schema.space.create(name, {is_sync = true, format = box.space[like]:format()})
+        s:create_index('primary', {parts = {'id'}})
+        s:create_index('bucket_id', {parts = {'bucket_id'}, unique = false})
+        return s.id]], {name, 'test.wa'})
+end
+c:eval("box.ctl.promote() require('fiber').sleep(0.1)")
+local wa0, wb0 = wa, wb
+wa, wb = sync_twin('test_native_sync_a'), sync_twin('test_native_sync_b')
+-- (the promotion makes the state stale: the Lua procedures read it again)
+local deadline0 = fiber.clock() + 5
+repeat
+    c:call('tarn_autocommit', wargs(wb, {{'delete', {999}}}))
+    n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'delete', {999}}}))
+until n[1] ~= 'lua' or fiber.clock() > deadline0
+wsame('inserts into a synchronous table', {{'insert', trow(1)}, {'insert', trow(2)}}, nil, true)
+wsame('... an update', {{'update', {1}, {{'=', 3, 'x'}}, {}, box.NULL}}, nil, true)
+wsame('... a delete', {{'delete', {2}}}, nil, true)
+-- (a quorum of 2, which this node alone cannot give)
+c:eval('box.cfg{replication_synchro_quorum = 2, replication_synchro_timeout = 0.5}')
+local tn = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(4)}}))
+local tl = c:call('tarn_autocommit', wargs(wb, {{'insert', trow(4)}}))
+check('a commit whose quorum times out: the Lua procedure\'s reply',
+      tn[1] == tl[1] and tn[2] == tl[2] and tn[3] == tl[3] and tn[1] ~= 'ok', {native = tn, lua = tl})
+check('... nothing written', rows(wa) == rows(wb))
+c:eval('box.cfg{replication_synchro_timeout = 30}')
+local fw = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(3)}}), {is_async = true})
+fiber.sleep(0.2)
+check('a write whose commit waits for its quorum', not fw:is_ready())
+local fl = c:call('tarn_lock', {'NAT-SYNC', {{wa, 0, {3}}}, 'X', {timeout = 5}}, {is_async = true})
+fiber.sleep(0.2)
+check('... is in flight: a row lock on its row waits for it', not fl:is_ready())
+c:eval('box.cfg{replication_synchro_quorum = 1}')
+local rw = fw:wait_result(5)
+check('... it is made once its quorum is', rw ~= nil and rw[1][1] == 'ok', rw)
+local rl = fl:wait_result(5)
+check('... then the lock is granted', rl ~= nil and rl[1][1] == 'ok', rl)
+c:call('tarn_unlock', {'NAT-SYNC'})
+c:eval('box.cfg{replication_synchro_timeout = 5}')
+wa, wb = wa0, wb0
+c:eval('box.space.test_native_sync_a:drop() box.space.test_native_sync_b:drop()')
 -- a bucket being sent: the Lua procedure notes its writes for the move
 local b2   -- another bucket this shard owns
 for _, rg in ipairs(map[4]) do for x = rg[1], rg[2] do if x ~= b and b2 == nil then b2 = x end end end

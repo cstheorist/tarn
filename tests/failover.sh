@@ -142,6 +142,12 @@ print("direct KV sum on new leaders:", total)
 sys.exit(0 if total == 64000 else 1)
 EOF
 kv=$?
+# (what the new leaders' native procedures served: tarn_info().native)
+for s in 1 2; do
+  "$T" -e "local c = require('net.box').connect('tarn:tarn@127.0.0.1:$(leader_of $s)', {wait_connected = 1})
+    print('shard $s leader, native procedures:', require('json').encode(c:call('tarn_info').native))
+    os.exit(0)" < /dev/null 2> /dev/null
+done
 grep -h -E "tarn recovery|resolve" "$DIR"/s*.log | grep -v "^$" | tail -5
 if [ $rc -eq 0 ] && [ $rcrc -eq 0 ] && [ $mvrc -eq 0 ] && [ $kv -eq 0 ] && [ -z "${MOVE_FAILED:-}" ]; then
   "$ROOT/scripts/cluster.sh" stop -d "$DIR"

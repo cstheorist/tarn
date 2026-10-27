@@ -335,14 +335,31 @@ and throughput rises by 71% to 76%. (`oltp_delete` is not among them: run
 with the others, it empties the tables they update, and most of its own
 deletes find no row.)
 
+On a shard of three replicas (`R=3`), whose tables are synchronous, each
+commit waits for a second replica, and the leader also sends every write
+to the other two. `R=3 AB=3 bench/profile.sh`, which profiles the leader
+and restarts every replica for each run, gives:
+
+| One shard of 3 replicas, 16 threads, Lua → native | statements per second | leader CPU per statement | Lua heap per statement | calls served natively | profiler samples in Lua / GC |
+|---|---:|---:|---:|---:|---:|
+| `oltp_update_index` | 5,508 → 7,281 | 68.8 → 34.1 µs | 3,469 → 1 B | 100% | 23% / 10% → 0% / 0% |
+| `oltp_update_non_index` | 5,747 → 7,844 | 63.0 → 29.0 µs | 3,441 → 2 B | 100% | 22% / 11% → 0% / 0% |
+| `oltp_insert` | 5,592 → 7,402 | 61.9 → 25.6 µs | 3,257 → 5 B | 100% | 19% / 11% → 0% / 0% |
+
+The leader's CPU per write falls by half or more here too; throughput rises
+by about a third, as the three replicas share the two vCPUs with the SQL
+server and sysbench, and every commit waits for its quorum.
+
 ## What would make Tarn faster
 
 * **Native procedures for the other hot paths**
   ([#28](https://github.com/cstheorist/tarn/issues/28)): commits and
-  validation, the first read of a transaction, and the autocommit writes of
-  replicated shards (whose tables are synchronous) still run as Lua
+  validation, and the first read of a transaction, still run as Lua
   procedures, whose calls cost a shard more than their storage work, as
-  they did for reads and autocommit writes (see above).
+  they did for reads and autocommit writes (see above). And the native
+  procedures hand a request to Lua whenever a prepared transaction holds a
+  lock on its table, and a write whenever any row lock is held: with the
+  lock index in the native module, they would check the rows themselves.
 * **Fewer round trips per transaction**: batch the 10 point selects of a
   transaction when the client pipelines; push UPDATE/DELETE ... WHERE pk = ?
   inside transactions down as deferred operations instead of read-then-buffer.
