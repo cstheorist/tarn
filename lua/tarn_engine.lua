@@ -423,6 +423,9 @@ function M.new(c)
         end)
         refresh()
         if not c.drain(r.old_id, deadline) then fail(1205, 'Engine source writes have not drained') end
+        -- A source caller may detach while its write remains in the sync
+        -- queue behind the fence. Confirm that prefix before reading payloads.
+        cut(deadline)
         local t = E.tracks[r.old_id]
         if not capture_valid(t) then fail(1213, 'Engine capture was lost before the final tail') end
         for offset = 1, #t.list, 128 do
