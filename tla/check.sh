@@ -50,6 +50,8 @@ Bug_StreamMarksDoomBeforeClear Bug_StreamMarksDoomAfterCommit"
 DEFAULT="$DEFAULT Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAfterCommitBegan
 Bug_HandbackAfterCommitBegan_Autocommit Bug_HandbackResendAfterLoss Bug_HandbackResendAfterLoss_Autocommit"
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
+DEFAULT="$DEFAULT DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect
+Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

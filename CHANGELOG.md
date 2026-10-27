@@ -8,6 +8,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Distributed transactions spread decision records across active writing
+  participants using a stable hash of the transaction ID
+  ([#132](https://github.com/cstheorist/tarn/issues/132)). Durable shard IDs
+  determine the candidate order; every PREPARE and recovery operation uses
+  the one selected identity. Atomic local commits keep their existing path.
+  Placement models, lost-reply/coordinator-crash tests and a repeated
+  record/WAL/GC benchmark cover the change.
+
 - Why the native storage procedures hand requests to Lua
   ([#131](https://github.com/cstheorist/tarn/issues/131)):
   `tarn_info().native.fallbacks` counts, for each procedure, the requests

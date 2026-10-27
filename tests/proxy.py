@@ -9,6 +9,7 @@ connection, so the SQL server cannot know whether the statement ran.
     proxy.py LISTEN_PORT UPSTREAM_PORT [MATCH...]
 """
 import socket
+import os
 import sys
 import threading
 import time
@@ -17,6 +18,7 @@ LP, UP = int(sys.argv[1]), int(sys.argv[2])
 MATCH = [m.encode() for m in (sys.argv[3:] or ["tarn_autocommit", "update"])]
 state = {"left": 1}
 lock = threading.Lock()
+ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
 
 
 def pump(src, dst, conn, c2s):
@@ -27,7 +29,8 @@ def pump(src, dst, conn, c2s):
                 break
             if c2s:
                 with lock:
-                    trig = state["left"] > 0 and all(m in data for m in MATCH)
+                    trig = (state["left"] > 0 and (not ARM_FILE or os.path.isfile(ARM_FILE))
+                            and all(m in data for m in MATCH))
                     if trig:
                         state["left"] -= 1
                         conn["drop"] = True

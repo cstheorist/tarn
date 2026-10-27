@@ -1023,6 +1023,56 @@ tla/check.sh LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCo
 `TARN_CHECK_LOCKS` checks the same at run time: the Lua module compares the
 copy with the index after each change.
 
+### Decision-record placement (issue #132)
+
+`TarnCommit!DecisionParticipant` abstracts a stable choice from frozen writing
+participants. `Placement_Recov`, `Placement_Failover` and `Placement_RC`
+override it with a transaction-specific choice that places the common
+two-shard writer's record on B. They check the existing commit invariants
+with coordinator crashes/message loss and GC, leader failure, and READ
+COMMITTED locks, respectively. The tombstone and expiry-fence controls are
+also checked with that placement. This checks another placement of the
+record without changing the commit or GC guards.
+
+`DecisionPlacement.tla` checks separate local premises on three shards:
+every nonempty writing set, read-only participants, every active membership,
+and a membership change before or after PREPARE. Selection prefers an
+active writer, falls back to a writer when none is active, and keeps that
+identity in durable records and recovery lookups. A leaving candidate is
+refused rather than redirected. With hashing abstracted by any eligible
+choice, the positive configuration has 1,970 states; allowing a read-only
+decision, ignoring active writers, and selecting again during recovery
+violate their invariants in 162, 252 and 1,142 states, respectively.
+
+These are bounded protocol/identity checks. They do not prove uniform hash
+distribution, the membership service, Lua serialization, clocks, storage
+durability, or behavior for arbitrary cluster sizes. Rust tests check
+canonical durable-ID ordering, gateway position changes, active preference
+and realistic transaction-ID spread. `tests/decision.sh` checks actual
+participant/decision records on three shards, excludes read-only decision
+participants, keeps the local path free of distributed records, drops a
+PREPARE reply through a TCP proxy, and kills its owned coordinator after
+all participants prepared at a non-first decision writer. Recovery must
+apply exactly once using the persisted identity. CI runs this with native
+memtx, Lua-only memtx and vinyl tables.
+
+```sh
+tla/check.sh DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect \
+  Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry
+tests/decision.sh
+TARN_NATIVE=0 tests/decision.sh
+ENGINE=vinyl tests/decision.sh
+```
+
+`bench/decision_placement.py` makes repeated, matched placement measurements:
+new RF1/fsync clusters for each build/sample, disjoint rows per client and
+one write per shard per transaction. It checks all committed tuples and
+recorded identities, captures per-shard participant/decision records and
+WAL rows/file growth, then waits for the eligible records' GC and counts its
+deletions and WAL. The shorter retention and zero clock-skew allowance are
+confined to these owned single-host fixtures. This is a placement workload;
+it does not establish an RF3 performance or operational advantage.
+
 ### Configuration counts
 
 The default list contains 158 configurations, including 112 expected

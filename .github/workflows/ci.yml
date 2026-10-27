@@ -91,6 +91,11 @@ jobs:
         run: ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
+      - name: Decision placement, lost PREPARE reply and coordinator crash
+        run: |
+          ci/annotate.sh decision bash tests/decision.sh
+          TARN_NATIVE=0 ci/annotate.sh decision-lua bash tests/decision.sh
+          ENGINE=vinyl ci/annotate.sh decision-vinyl bash tests/decision.sh
       - name: Start a 2-shard cluster (two SQL servers)
         run: TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11

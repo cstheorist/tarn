@@ -148,6 +148,13 @@ is nothing to wait for or refuse, and otherwise hands them, unwritten, to
   PREPARE runs on every participant in parallel and, in one local
   transaction, validates the reads, takes durable R/W locks (W locks carry the
   new tuple as an intent), and on the decision shard writes a STAGING record.
+  The SQL server selects that shard once, by CRC-32C of the transaction ID
+  modulo the number of active writing participants, ordered by durable
+  shard ID. This spreads records for a common writer set independently of
+  gateway configuration order. If none is active, it retains a writing
+  candidate and the existing leaving-shard check refuses its PREPARE.
+  Participants persist the selected ID; recovery never recomputes it after
+  a membership change. The membership and table/bucket fences still apply.
   The transaction is committed exactly when the record is STAGING and every
   participant is prepared, so the decision needs no extra round trip. APPLY
   then moves the intents into the plain spaces and releases the locks; the

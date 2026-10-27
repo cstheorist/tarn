@@ -209,9 +209,13 @@ Msg(type, t, s, yes) == [type |-> type, t |-> t, s |-> s, yes |-> yes]
 CurParts(t) ==
     IF t \in RC THEN {loc[t][k] : k \in LSet[t]}
     ELSE {loc[t][k] : k \in RSet[t]} \cup scanned[t] \cup {place[k] : k \in WSet[t]}
-\* Decision shard: holds the transaction record.  Prefer a shard t writes to.
-D(t) == IF WSet[t] # {} THEN CHOOSE s \in {wt[t][k] : k \in WSet[t]} : TRUE
-                        ELSE CHOOSE s \in parts[t] : TRUE
+\* Selection is a stable function of the transaction identity and frozen
+\* candidates. Implementations may distribute records instead of choosing
+\* the first writer. MC also checks a different transaction-specific choice.
+\* This abstracts the hash, not membership admission or its durable identity
+\* (DecisionPlacement checks those local premises).
+DecisionParticipant(t, candidates) == CHOOSE s \in candidates : TRUE
+D(t) == DecisionParticipant(t, IF WSet[t] # {} THEN {wt[t][k] : k \in WSet[t]} ELSE parts[t])
 RKeysOn(t, s) == {k \in RSet[t] : loc[t][k] = s}    \* point reads made on s
 LKeysOn(t, s) == {k \in LSet[t] : loc[t][k] = s}    \* RC row locks taken on s
 WKeysOn(t, s) == {k \in WSet[t] : wt[t][k] = s}     \* writes PREPAREd on s
