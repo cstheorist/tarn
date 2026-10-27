@@ -357,6 +357,159 @@ all previous configuration files are unchanged.
 | `Bug_BackfillDDLNoFinisherSerialization` | 65 | 9 | violates `PublishedIndexMatches` |
 | `Bug_BackfillDDLWrongSpace` | 15 | 4 | violates `ReplacementIndexUnchanged` |
 
+### Lazy secondary indexes (issue #82)
+
+Four separate local refinement modules specify the eventual-index contract
+before implementation. They leave `TarnCommit.tla` and its configurations
+unchanged. They do **not** establish distributed serializability for lazy
+reads: missing recently matching rows is allowed until propagation finishes.
+Only single-table, nonlocking autocommit reads may use this path; explicit
+transactions, locking reads and writes retain the existing strong paths.
+The first implementation always fetches base rows, without a covering
+index shortcut.
+
+* `LazyIndex.tla`: one primary key, two canonical index keys/destinations,
+  a key move, delete/reinsert, two index incarnations and a speculative
+  write that never commits. The committed row and immutable assignments
+  enter durable state atomically. Shipping sees only confirmed commits;
+  lost frames, duplicated/reordered frames, destination apply, ACK and
+  source deletion are separate actions. Target membership and tombstones
+  keep the newest sequence per `(index incarnation, key, base PK)`.
+  A same-key change has one final assignment, never contradictory DELETE
+  and ADD assignments at the same version. Authoritative retirement permits
+  obsolete ACKs; a missing/not-ready destination does not.
+* `LazyHandoff.tla`: one base bucket moves from S to R, including when
+  empty. S fences/drains and ACK-flushes before counter/live-version copy
+  and transfer. The variable `oldSourceRemoved` removes **S**, not R:
+  `pending2` belongs to S; a subsequent `pending3` belongs to R and remains
+  deliverable after S is removed. Removing a current receiver requires
+  another instance of the same source-drain protocol. Independently, one
+  target bucket moves X to Y. In-flight admission lasts through the native
+  commit interval, final ownership checks reject newly fenced/stale work,
+  and copy notes preserve writes during transfer. Live markers, tombstones
+  and acceptance floors travel with the target bucket.
+* `LazyCapacity.tla`: two prepared transactions and a local commit compete
+  for bounded entries, worst encoded bytes and remaining sequence numbers.
+  YES reserves all three durably without allocating a delivery sequence;
+  APPLY converts the reservation into row/outbox state, while ABORT
+  releases it. In the correct model every promised APPLY fits; its action
+  needs no capacity rejection. Controls vary the limits so each omitted
+  reservation has its own witness rather than being masked by another cap.
+* `LazyBarrier.tla`: two own acknowledged commits on different buckets,
+  one of which may still await row APPLY, plus another writer that can
+  expose a hole in ACK order. Own obligations accumulate even while the
+  session flag is OFF; it is enabled only after those writes in this
+  fixture. Resolve every pending APPLY first, then sample counters and
+  wait for per-bucket completion frontiers, **before** the index snapshot.
+  Forgetting unresolved/unknown/expired history cannot claim success: the
+  implementation must keep a bounded obligation or use explicit strong
+  fallback/error. A timeout does not justify replaying the original DML.
+
+The source completion prefix is `counter` when its pending outbox is empty,
+otherwise `min(pending sequence) - 1`, sampled together in one native
+read-confirmed view. All assignments at a sequence remain pending until
+ACKed. Sequence-zero baseline work can therefore report a signed completed
+prefix of -1; counters stay unsigned. This may conservatively delay another
+index's barrier during bootstrap. Tarantool distinguishes visibility at
+commit start from visibility after commit returns; source shipping and
+frontier reads require the latter ([transaction model](https://www.tarantool.io/en/doc/latest/platform/atomic/transaction_model/)).
+
+Tombstone GC first persists an acceptance floor, then removes only covered
+tombstones. Its exact key is `(index incarnation, target bucket, source
+bucket)`. A source's **all-destination** confirmed completion prefix proves
+that floor; a largest ACK observed at one destination does not. Incoming
+assignments at or below the floor are obsolete ACKs before per-key lookup.
+Live entries remain. A later duplicate cannot recreate a deleted entry,
+even after its individual tombstone is gone; target transfer must copy the
+floor even if no visible rows remain. `LazyIndex` checks safe floor/GC
+ordering and rejects the max-ACK proof; `LazyHandoff` checks floor copying.
+Each models one source-bucket scope. Correct exact-scope lookup when many
+such machines coexist is an implementation obligation, not a proof that
+arbitrary floor records may be interchanged.
+
+The invariants cover committed-only delivery, exact index projection once
+writes stop and the outbox is ACK-drained, deleted-row/key rechecks, durable
+source obligations, counter/live-version continuity, capacity promises and
+causal session catch-up. The recheck fixture uses row existence and exact
+current candidate-key equality. Actual full `WHERE` evaluation, canonical
+key/type/collation encoding, PK deduplication and refill after rejecting a
+stale candidate require SQL/storage tests. A passed barrier establishes
+coverage of the session's committed index effects, not a global snapshot
+or completeness for concurrent other writers.
+
+Refinement premises remain explicit: bootstrap enumerates the complete
+baseline, reads each row and its version in one consistent view, ACKs every
+baseline assignment before READY, and refuses late bootstrap enqueue after
+READY. These enumeration/snapshot/late-request guards are not separately
+mutated here; native witnesses must exercise them. Existing fence/drain
+contracts (including the backfill models above) protect the bootstrap write
+window. New/forward-schema writes wait until this shard's durable matching
+capture/catalog activation; a stale/unknown registry fails closed. The
+forward-admission and registry controls expose omissions of those guards.
+Physical materialization, bucket copies and temporary unique-swap deletes
+must not become logical outbox changes. Native commit atomicity and
+confirmation, byte accounting, integer exhaustion checks, full bucket-copy
+implementation and fair eventual delivery/recovery remain runtime premises.
+Process/network failure may lose transient frames/receipts; durable
+row/outbox/markers/floors survive. The finite checks prove safety and
+conditional drained convergence, not that a partitioned queue will drain.
+
+All 37 focused configurations are generated by `gen_cfgs.sh`, selected by
+`run_all.sh` module routing and included in the default `check.sh` list:
+5 positive cases and 32 expected counterexamples. Explicit configuration
+arguments still override the default list. The default list grows from
+71 to 108; previous configurations and the core commit module are unchanged.
+To run just these refinements:
+
+```sh
+configs=(LazyIndex LazyCapacity LazyBarrier LazyHandoff LazyHandoffLive)
+for f in tla/Bug_Lazy*.cfg; do
+  name=${f#tla/}
+  configs+=("${name%.cfg}")
+done
+tla/check.sh "${configs[@]}"
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyIndex` | 237 | 38 | passes |
+| `LazyCapacity` | 71 | 9 | passes |
+| `LazyBarrier` | 80 | 13 | passes |
+| `LazyHandoff` | 156 | 13 | passes |
+| `LazyHandoffLive` | 76 | 12 | passes |
+| `Bug_LazyBarrierForgetUnresolved` | 126 | 8 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierLastOnly` | 72 | 9 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierMaxAck` | 81 | 12 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierSkipApplyWait` | 57 | 7 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierSplitFrontierView` | 197 | 13 | violates `PrefixCovered` |
+| `Bug_LazyBarrierTrackOnlyWhenEnabled` | 57 | 7 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierWaitAfterSnapshot` | 106 | 11 | violates `OwnWritesCovered` |
+| `Bug_LazyCapacityAbortLeaks` | 8 | 3 | violates `AbortedReleased` |
+| `Bug_LazyCapacityNoByteReserve` | 7 | 3 | violates `BytePromisesFit` |
+| `Bug_LazyCapacityNoEntryReserve` | 6 | 3 | violates `EntryPromisesFit` |
+| `Bug_LazyCapacityNoSeqReserve` | 6 | 3 | violates `SequencePromisesFit` |
+| `Bug_LazyHandoffDropFloors` | 56 | 7 | violates `DrainedProjection` |
+| `Bug_LazyHandoffDropLiveVersion` | 9 | 4 | violates `LiveVersionSurvives` |
+| `Bug_LazyHandoffDropMarkers` | 18 | 5 | violates `DrainedProjection` |
+| `Bug_LazyHandoffNoTargetDrain` | 136 | 11 | violates `DrainedProjection` |
+| `Bug_LazyHandoffNoTargetFence` | 136 | 11 | violates `DrainedProjection` |
+| `Bug_LazyHandoffNoTargetNote` | 127 | 11 | violates `DrainedProjection` |
+| `Bug_LazyHandoffRemovePending` | 4 | 2 | violates `SourceObligationsSurvive` |
+| `Bug_LazyHandoffResetCounter` | 10 | 4 | violates `CounterContinues` |
+| `Bug_LazyHandoffSourceNoFlush` | 8 | 3 | violates `SourceObligationsSurvive` |
+| `Bug_LazyIndexAckMissingTarget` | 862 | 21 | violates `DrainedConverges` |
+| `Bug_LazyIndexCaptureFailOpen` | 171 | 10 | violates `DrainedConverges` |
+| `Bug_LazyIndexFloorFromMaxAck` | 149 | 22 | violates `DrainedConverges` |
+| `Bug_LazyIndexForgetBeforeAck` | 58,065 | 17 | violates `DrainedConverges` |
+| `Bug_LazyIndexForwardBeforeCapture` | 54 | 8 | violates `DrainedConverges` |
+| `Bug_LazyIndexGcBeforeFloor` | 279 | 24 | violates `DrainedConverges` |
+| `Bug_LazyIndexIgnoreGeneration` | 163 | 29 | violates `DrainedConverges` |
+| `Bug_LazyIndexNoBaseRecheck` | 50 | 9 | violates `BaseReadSafe` |
+| `Bug_LazyIndexNoKeyRecheck` | 31 | 8 | violates `CandidateKeySafe` |
+| `Bug_LazyIndexShipBeforeCommit` | 560 | 12 | violates `CommittedOnly` |
+| `Bug_LazyIndexSplitOutbox` | 44 | 9 | violates `DrainedConverges` |
+| `Bug_LazyIndexStaleOverwrite` | 86 | 21 | violates `DrainedConverges` |
+
 ## Verus proofs
 
 `crates/tarn-verified` is ordinary Rust inside `verus!` blocks: `cargo`

@@ -1,0 +1,210 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 115 and seed -1622441401037498267 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 1489] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/LazyIndex.tla
+Parsing file /tmp/tlc-6694336213510621521/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-6694336213510621521/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-6694336213510621521/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-6694336213510621521/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-6694336213510621521/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-6694336213510621521/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-6694336213510621521/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyIndex
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyIndex
+Starting... (2026-10-27 05:30:13)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 05:30:13.
+Error: Invariant DrainedConverges is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = FALSE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 0
+/\ acks = {}
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {0}
+/\ speculative = FALSE
+/\ step = 0
+/\ sent = {}
+/\ base = "A"
+/\ published = FALSE
+/\ prepared = FALSE
+/\ gen = 1
+/\ retired = FALSE
+
+State 2: <Ship(0) line 78, col 5 to line 82, col 62 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = FALSE
+/\ wire = {0}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 0
+/\ acks = {}
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {0}
+/\ speculative = FALSE
+/\ step = 0
+/\ sent = {0}
+/\ base = "A"
+/\ published = FALSE
+/\ prepared = FALSE
+/\ gen = 1
+/\ retired = FALSE
+
+State 3: <Deliver(0) line 95, col 5 to line 105, col 77 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = FALSE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 0
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {0}
+/\ speculative = FALSE
+/\ step = 0
+/\ sent = {0}
+/\ base = "A"
+/\ published = FALSE
+/\ prepared = FALSE
+/\ gen = 1
+/\ retired = FALSE
+
+State 4: <Forget(0) line 112, col 5 to line 116, col 62 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = FALSE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 0
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ speculative = FALSE
+/\ step = 0
+/\ sent = {0}
+/\ base = "A"
+/\ published = FALSE
+/\ prepared = FALSE
+/\ gen = 1
+/\ retired = FALSE
+
+State 5: <PrepareReady line 51, col 5 to line 55, col 62 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = FALSE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 0
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ speculative = FALSE
+/\ step = 0
+/\ sent = {0}
+/\ base = "A"
+/\ published = FALSE
+/\ prepared = TRUE
+/\ gen = 1
+/\ retired = FALSE
+
+State 6: <Publish line 57, col 5 to line 61, col 62 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = TRUE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 0
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ speculative = FALSE
+/\ step = 0
+/\ sent = {0}
+/\ base = "A"
+/\ published = TRUE
+/\ prepared = TRUE
+/\ gen = 1
+/\ retired = FALSE
+
+State 7: <CommitRow line 64, col 5 to line 69, col 86 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = TRUE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 1
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ speculative = FALSE
+/\ step = 1
+/\ sent = {0}
+/\ base = "B"
+/\ published = TRUE
+/\ prepared = TRUE
+/\ gen = 1
+/\ retired = FALSE
+
+State 8: <CommitRow line 64, col 5 to line 69, col 86 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = TRUE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 2
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ speculative = FALSE
+/\ step = 2
+/\ sent = {0}
+/\ base = "none"
+/\ published = TRUE
+/\ prepared = TRUE
+/\ gen = 1
+/\ retired = FALSE
+
+State 9: <CommitRow line 64, col 5 to line 69, col 86 of module LazyIndex>
+/\ badKeyRead = FALSE
+/\ uncommittedApplied = FALSE
+/\ capturing = TRUE
+/\ wire = {}
+/\ floors = [A |-> -1, B |-> -1]
+/\ badBaseRead = FALSE
+/\ counter = 3
+/\ acks = {0}
+/\ markers = [A |-> [seq |-> 0, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ speculative = FALSE
+/\ step = 3
+/\ sent = {0}
+/\ base = "B"
+/\ published = TRUE
+/\ prepared = TRUE
+/\ gen = 1
+/\ retired = FALSE
+
+119 states generated, 44 distinct states found, 17 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-27 05:30:13)
+Trace exploration spec path: ./LazyIndex_TTrace_1793079012.tla

@@ -1,0 +1,250 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 18 and seed -4316859214280738083 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 817] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/LazyHandoff.tla
+Parsing file /tmp/tlc-16345669933667211689/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-16345669933667211689/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-16345669933667211689/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-16345669933667211689/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-16345669933667211689/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-16345669933667211689/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-16345669933667211689/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyHandoff
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyHandoff
+Starting... (2026-10-27 05:29:25)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 05:29:26.
+Error: Invariant DrainedProjection is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ rowVersion = 0
+/\ source = "S"
+/\ newWritten = FALSE
+/\ pending2 = TRUE
+/\ counter = 2
+/\ pending3 = FALSE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 0, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 1, present |-> TRUE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "active"
+
+State 2: <DeliverTwo line 32, col 5 to line 35, col 108 of module LazyHandoff>
+/\ rowVersion = 0
+/\ source = "S"
+/\ newWritten = FALSE
+/\ pending2 = FALSE
+/\ counter = 2
+/\ pending3 = FALSE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 0, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "active"
+
+State 3: <FenceSource line 37, col 5 to line 39, col 115 of module LazyHandoff>
+/\ rowVersion = 0
+/\ source = "S"
+/\ newWritten = FALSE
+/\ pending2 = FALSE
+/\ counter = 2
+/\ pending3 = FALSE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "fenced"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 0, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "active"
+
+State 4: <MoveSource line 41, col 5 to line 47, col 67 of module LazyHandoff>
+/\ rowVersion = 0
+/\ source = "R"
+/\ newWritten = FALSE
+/\ pending2 = FALSE
+/\ counter = 2
+/\ pending3 = FALSE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 0, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "active"
+
+State 5: <WriteNew line 57, col 5 to line 60, col 80 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = TRUE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 0, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "active"
+
+State 6: <BeginTargetMove line 73, col 5 to line 76, col 92 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = TRUE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 2, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "sending"
+
+State 7: <BeginBatch line 78, col 5 to line 81, col 113 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = TRUE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "read"
+/\ stagedMarker = [seq |-> 2, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "sending"
+
+State 8: <FinalCheck line 83, col 5 to line 87, col 122 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = TRUE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "committing"
+/\ stagedMarker = [seq |-> 2, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "sending"
+
+State 9: <FenceTarget line 97, col 5 to line 102, col 92 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = TRUE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "committing"
+/\ stagedMarker = [seq |-> 2, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 2, present |-> FALSE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "fenced"
+
+State 10: <CommitBatch line 89, col 5 to line 95, col 100 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = FALSE
+/\ oldSourceRemoved = FALSE
+/\ owner = "X"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 2, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 3, present |-> TRUE], Y |-> [seq |-> 0, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "fenced"
+
+State 11: <FlipTarget line 104, col 5 to line 109, col 98 of module LazyHandoff>
+/\ rowVersion = 3
+/\ source = "R"
+/\ newWritten = TRUE
+/\ pending2 = FALSE
+/\ counter = 3
+/\ pending3 = FALSE
+/\ oldSourceRemoved = FALSE
+/\ owner = "Y"
+/\ sourcePhase = "active"
+/\ noted = FALSE
+/\ flight = "none"
+/\ stagedMarker = [seq |-> 2, present |-> FALSE]
+/\ floor = [X |-> 0, Y |-> 0]
+/\ stagedFloor = 0
+/\ marker = [X |-> [seq |-> 3, present |-> TRUE], Y |-> [seq |-> 2, present |-> FALSE]]
+/\ captured = "X"
+/\ lost = FALSE
+/\ targetPhase = "active"
+
+365 states generated, 136 distinct states found, 25 states left on queue.
+The depth of the complete state graph search is 11.
+Finished in 00s at (2026-10-27 05:29:26)
+Trace exploration spec path: ./LazyHandoff_TTrace_1793078965.tla
