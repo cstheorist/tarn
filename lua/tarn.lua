@@ -3689,8 +3689,10 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         return {status == 'moved' and 'moved' or 'no', code, msg}
     end
     local ok, res = pcall(function()
-        -- Write-only participants are prepared outside any stream.
-        if not box.is_in_txn() then box.begin(RW) end
+        -- A new participant view must not revote YES from another PREPARE
+        -- whose synchronous commit can still roll back. Existing streams
+        -- retain their transaction and its original read trackers.
+        if not box.is_in_txn() then box.begin({txn_isolation = 'read-confirmed'}) end
         local existing = box.space._tarn_part:get{txid}
         if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
             box.rollback()
