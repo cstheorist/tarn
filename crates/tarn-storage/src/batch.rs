@@ -30,6 +30,13 @@ pub fn capability(buf: &[u8]) -> bool {
     r.array() == Some(0) && r.peek().is_none()
 }
 
+/// An opt-in allocator observation, separate from data and read counters.
+#[cfg(feature = "alloc-metrics")]
+pub fn allocation_query(buf: &[u8]) -> bool {
+    let mut r = Rd::new(buf);
+    r.array() == Some(1) && r.str() == Some(&b"native_batch_allocs"[..]) && r.peek().is_none()
+}
+
 /// `(space, 0, keys, limit, true, false, nil, route)`.
 /// A full unique key returns at most one row regardless of a positive
 /// per-key limit, as Lua's `keys_scan` does. Zero and other shapes stay Lua.
@@ -142,6 +149,22 @@ mod tests {
         let mut wrong_index = raw;
         wrong_index[4] = 1;
         assert!(parse(&wrong_index).is_none());
+    }
+
+    #[cfg(feature = "alloc-metrics")]
+    #[test]
+    fn allocation_query_has_one_exact_command_and_no_trailing_data() {
+        let mut w = Wr::default();
+        w.array(1).str("native_batch_allocs");
+        assert!(allocation_query(&w.0));
+        for end in 0..w.0.len() {
+            assert!(!allocation_query(&w.0[..end]));
+        }
+        w.0.push(0xc0);
+        assert!(!allocation_query(&w.0));
+        for raw in [&[0x90][..], &[0x91, 1], &[0x91, 0xa1, b'x']] {
+            assert!(!allocation_query(raw));
+        }
     }
 
     #[test]

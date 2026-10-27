@@ -637,6 +637,11 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
     if batch::capability(buf) {
         return reply(ctx, BATCH_CAPABILITY);
     }
+    #[cfg(feature = "alloc-metrics")]
+    if batch::allocation_query(buf) {
+        let (data, len) = crate::alloc_metrics::reply();
+        return reply(ctx, &data[..len]);
+    }
     fallback::begin();
     let out = std::panic::catch_unwind(|| {
         if Rd::new(buf).array() == Some(8) {

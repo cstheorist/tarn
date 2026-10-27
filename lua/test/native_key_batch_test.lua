@@ -183,6 +183,31 @@ local yes, err = xpcall(function()
         and after_reads.served == before_reads.served + n and after_reads.to_lua == before_reads.to_lua,
         'writes=' .. writes .. ' served=' .. (after_reads.served - before_reads.served))
     check('native lock-copy checks remain exact', c:call('tarn_info').stats.lock_copy_errors == 0)
+    local before_allocs = census()
+    local allocs = native_read({'native_batch_allocs'})
+    local after_allocs = census()
+    if allocs[1] == 'native_batch_allocs' then
+        local fields = {'allocations', 'reallocations', 'deallocations', 'allocated_bytes', 'freed_bytes', 'live_bytes'}
+        local valid = type(allocs[2]) == 'table' and type(allocs[2].scope) == 'string'
+            and allocs[2].scope:find('excludes Lua/C/tuples/RSS', 1, true) ~= nil
+        for _, field in ipairs(fields) do
+            local v = allocs[2][field]
+            valid = valid and (type(v) == 'number' or type(v) == 'cdata') and v >= 0
+        end
+        check('opt-in Rust allocator diagnostics are scoped and do not count as data reads',
+            valid and allocs[2].allocations > 0 and allocs[2].allocated_bytes > 0 and allocs[2].freed_bytes > 0
+            and allocs[2].allocated_bytes - allocs[2].freed_bytes == allocs[2].live_bytes
+            and after_allocs.served == before_allocs.served and after_allocs.to_lua == before_allocs.to_lua)
+        -- Read two snapshots directly: census() itself calls ts_state and
+        -- may allocate in Rust, so it must stay outside this observation.
+        local one = native_read({'native_batch_allocs'})
+        local two = native_read({'native_batch_allocs'})
+        check('allocator observation uses no Rust heap allocation', canon(one) == canon(two))
+    else
+        check('default builds leave the optional allocator command to Lua',
+            canon(allocs) == '["lua"]' and after_allocs.served == before_allocs.served
+            and after_allocs.to_lua == before_allocs.to_lua + 1)
+    end
     c:eval("box.func['tarn_storage.ts_state']:call({12})")
     local compatible = pcall(native_read, {})
     c:eval("box.func['tarn_storage.ts_state']:call({11})")
