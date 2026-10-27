@@ -38,6 +38,10 @@ Bug_LazyMeterNoQueueCut Bug_LazyMeterStaleInstall Bug_LazyMeterStaleCallback Bug
 DEFAULT="$DEFAULT LazyTargetConfirm Bug_UnconfirmedAck"
 DEFAULT="$DEFAULT LazyApplyConfirm Bug_UnconfirmedApply"
 DEFAULT="$DEFAULT BootstrapCount Bug_CountsAuxMetadata"
+DEFAULT="$DEFAULT StreamMarks Bug_StreamMarksRoAfterTermChange Bug_StreamMarksWritableBeforeTrigger
+Bug_StreamMarksNativeNoTermCheck Bug_StreamMarksNativeIgnoresLkStale Bug_StreamMarksLuaNoTermCheck
+Bug_StreamMarksLuaTermCheckEarly Bug_StreamMarksValidateNoFenceFresh Bug_StreamMarksCommitInNewTxn
+Bug_StreamMarksDoomBeforeClear Bug_StreamMarksDoomAfterCommit"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

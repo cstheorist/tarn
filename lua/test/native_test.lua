@@ -581,6 +581,21 @@ check('... but not one that began after it', r3 ~= nil and r3[1][1] == 'ok', r3)
 c:eval('tarn.ns_inflight(false)')
 c:call('tarn_unlock', {'NAT-RC3'})
 
+-- A new election term: a stream begun before it may have missed writes of
+-- another leader (TarnCommit: lost).
+local function new_term()
+    -- (this node owns the queue of synchronous transactions already: a
+    -- promotion alone keeps the term)
+    local t0 = c:eval('return box.info.election.term')
+    c:eval("box.ctl.demote() box.ctl.promote() require('fiber').sleep(0.1)")
+    check('a new election term', c:eval('return box.info.election.term') > t0)
+    local deadline = fiber.clock() + 5
+    while c:eval('return box.info.ro') and fiber.clock() < deadline do fiber.sleep(0.05) end
+    -- (a Lua read with the lock check reads the lock index again: the state
+    -- is fresh)
+    c:call('tarn_select', args({key = {7}, limit = 1}))
+end
+
 print('commits of one shard')
 -- (the twins the same again: the native procedure alone wrote some rows)
 c:eval('local a, b = ... box.space[b]:truncate() for _, t in box.space[a]:pairs() do box.space[b]:replace(t) end',
@@ -684,6 +699,9 @@ check('... (which the Lua procedure commits there: the native one took back its 
 unique_rows()
 n, l = csame('... whose read is overwritten once it was handed back', moves, {{9}}, {after = overwrite(9)}, false)
 check('... (its stream\'s transaction, with its read, as it was: a conflict)', l[1] == 'conflict', l)
+unique_rows()
+n, l = csame('... one begun before a new election term', moves, {{9}}, {between = new_term}, false)
+check('... (which the Lua procedure refuses, as it may have missed writes)', l[1] == 'conflict', l)
 -- ... or whose vinyl table read is emptied by a TRUNCATE then: the TRUNCATE
 -- dooms it (DDL_TXN), the rollback to its savepoint notwithstanding
 local vdef = c:eval('return box.space._tarn_catalog:get{...}.def', {'test.natv'})
@@ -765,7 +783,9 @@ n, l = csame('a commit of a transaction that was open then', {{'insert', trow(84
 check('... (which the Lua procedure commits: it did not read that table)', l[1] == 'ok', l)
 csame('... once those transactions ended', {{'insert', trow(85)}}, {{1}}, nil, true)
 c:call('tarn_drop_table', {'test.ntr'})
-csame('a commit that read rows here, without a stream', {{'insert', trow(86)}}, {{1}}, {no_stream = true}, false)
+n, l = csame('a commit that read rows here, without a stream', {{'insert', trow(86)}}, {{1}}, {no_stream = true},
+             false)
+check('... (which the Lua procedure refuses: those reads cannot be validated)', l[1] == 'conflict', l)
 n = c:call('tarn_storage.ts_commit_local', cargs(vsid, {{'insert', trow(87)}}))
 check('a commit that writes a vinyl table: handed to the Lua procedure', n[1] == 'lua', n)
 c:eval('box.cfg{read_only = true}')
@@ -869,21 +889,7 @@ n, l = vsame('one open when a TRUNCATE was applied', {{7}}, {between = truncate}
 check('... (which the Lua procedure validates: it did not read that table)', l[1] == 'ok', l)
 vsame('one begun after it', {{7}}, nil, true)
 c:call('tarn_drop_table', {'test.ntr2'})
--- a new election term: a stream begun before it may have missed writes of
--- another leader (TarnCommit: lost)
-local function promote()
-    -- (this node owns the queue of synchronous transactions already: a
-    -- promotion alone keeps the term)
-    local t0 = c:eval('return box.info.election.term')
-    c:eval("box.ctl.demote() box.ctl.promote() require('fiber').sleep(0.1)")
-    check('a new election term', c:eval('return box.info.election.term') > t0)
-    local deadline = fiber.clock() + 5
-    while c:eval('return box.info.ro') and fiber.clock() < deadline do fiber.sleep(0.05) end
-    -- (a Lua read with the lock check reads the lock index again: the state
-    -- is fresh)
-    c:call('tarn_select', args({key = {7}, limit = 1}))
-end
-n, l = vsame('one begun before a new election term', {{7}}, {between = promote}, false)
+n, l = vsame('one begun before a new election term', {{7}}, {between = new_term}, false)
 check('... (which the Lua procedure refuses)', l[1] == 'conflict', l)
 vsame('one begun in the new term', {{7}}, nil, true)
 -- a table held by a TRUNCATE or DROP TABLE (its hold, as their PREPARE
