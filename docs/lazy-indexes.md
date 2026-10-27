@@ -224,6 +224,10 @@ source counters in confirmed views and waits for the corresponding
 completed frontiers. This can conservatively wait for unrelated writes in
 the same bucket. It does not replay a SQL mutation. A later successful
 commit on another bucket must not replace an unresolved earlier obligation.
+An idempotent participant APPLY reply must certify confirmed completion:
+another APPLY's unconfirmed `applied` record cannot discharge the session's
+obligation. Otherwise a confirmed counter read could still see the old
+counter and admit an index read before the session's row exists.
 
 History is bounded. Overflow or an expired/ambiguous receipt requires
 backpressure, a sticky strong fallback or an error; it cannot silently
@@ -242,7 +246,7 @@ asynchronously collected samples. Missing or stale samples are exposed as
 such. A cached depth of zero is not a read-your-writes barrier.
 
 The bounded TLA+ refinements cover delivery and replay, capture admission,
-capacity promises, confirmed target acknowledgements, tombstone floors,
+capacity promises, confirmed target and participant acknowledgements, tombstone floors,
 handoff and cumulative session barriers, with broken-control configurations
 that violate the corresponding invariants. Complete bootstrap enumeration,
 consistent baseline row/version reads and late-enqueue rejection are

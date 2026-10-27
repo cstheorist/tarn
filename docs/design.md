@@ -1728,6 +1728,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 18873 | 69552 | 12 | 05s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
+| Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 08s |  |
@@ -1740,6 +1741,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
 | Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
+| LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
 | LazyHandoff | no errors | 156 | 432 | 13 | 00s |  |
