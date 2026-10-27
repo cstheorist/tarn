@@ -59,6 +59,7 @@ Bug_EngineCutoverForgetOldObligations Bug_EngineCutoverResetCounterIdentity Bug_
 DEFAULT="$DEFAULT Bug_EngineCutoverCatalogByName"
 DEFAULT="$DEFAULT Bug_EngineCutoverAuxStreamOmitted"
 DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
+DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

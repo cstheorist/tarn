@@ -116,6 +116,21 @@ local function same(name, o, want_served, via)
     return n, l
 end
 
+-- Why the native procedures handed requests back: the count of procedure p
+-- (read, write, commit, validate) for `reason` (tarn_info().native.fallbacks).
+local function fallbacks(p, reason)
+    local f = c:call('tarn_info').native.fallbacks
+    return f and f[p] and f[p][reason] or 0
+end
+-- f() hands one request of procedure p back, for `reason`.
+local function because(p, reason, f)
+    local all0 = c:call('tarn_info').native.fallbacks[p] or {}
+    f()
+    local all1 = c:call('tarn_info').native.fallbacks[p] or {}
+    local n0, n1 = all0[reason] or 0, all1[reason] or 0
+    check('... counted as ' .. p .. ' ' .. reason, n1 == n0 + 1, {before = all0, after = all1})
+end
+
 -- (the first Lua read with lock_check refreshes the lock index and the held
 -- tables; until then the state says they are stale)
 c:call('tarn_select', args({key = {1}, limit = 1}))
@@ -167,7 +182,7 @@ print('reads it hands to the Lua procedure')
 -- (a read to an end key: see above)
 same('a read with an offset', {key = {10}, iter = 5, limit = 5, offset = 2}, false)
 same('a limit of 0', {key = {10}, iter = 5, limit = 0}, false)
-same('a vinyl table', {sid = vsid, key = {7}, limit = 1}, false)
+because('read', 'vinyl', function() same('a vinyl table', {sid = vsid, key = {7}, limit = 1}, false) end)
 same('a missing index', {index = 9, key = {7}, limit = 1}, false)
 local n, l
 if other ~= nil then   -- (a shard that owns every bucket has none of these)
@@ -180,9 +195,9 @@ check('... refused', l[1] == 'moved', l)
 same('... or an old membership', {key = {7}, limit = 1, route = {e = epoch, m = -1}}, false)
 -- pages: the Lua procedure ends them early (rows, then bytes)
 c:eval('tarn.cfg.scan_page_rows = 3; tarn.ns_sync()')
-n, l = same('a read past the page\'s rows', {key = {10}, iter = 5}, false)
+because('read', 'page', function() n, l = same('a read past the page\'s rows', {key = {10}, iter = 5}, false) end)
 check('... (the Lua procedure ends the page and says where it goes on)', l[1] == 'ok' and #l[2] == 3 and l[3] ~= nil, l)
-same('the page after it', {key = {10}, iter = 5, after = l[3]}, false)
+because('read', 'next_page', function() same('the page after it', {key = {10}, iter = 5, after = l[3]}, false) end)
 same('a read of exactly the limit within the page\'s rows', {key = {10}, iter = 5, limit = 3}, true)
 c:eval('tarn.cfg.scan_page_rows = 4096; tarn.cfg.scan_page_bytes = 100; tarn.ns_sync()')
 same('a read past the page\'s bytes', {key = {40}, iter = 5, limit = 5}, false)
@@ -264,7 +279,7 @@ handed('... of the key the row had there', {index = 3, key = {6, 20}, limit = 1}
 -- last row when its limit cut it short, compared with the W-locked keys of
 -- the index (select_locked, its bounds included)
 same('... a read of a range of the primary key short of the row', {key = {1}, iter = 5, limit = 3}, true)
-handed('... one whose last row is the row', {key = {18}, iter = 5, limit = 3})
+because('read', 'w_lock', function() handed('... one whose last row is the row', {key = {18}, iter = 5, limit = 3}) end)
 same('... one past it', {key = {21}, iter = 5, limit = 3}, true)
 handed('... one from it, though the row is excluded (GT)', {key = {20}, iter = 6, limit = 3})
 same('... to an end key short of it', {key = {10}, iter = 5, end_key = {19}}, true)
@@ -315,16 +330,16 @@ check('a prepared transaction holds a lock on another table', r[1] == 'yes', r)
 same('then a read with the lock check of this one', {key = {7}, limit = 1}, true)
 same('... and of that one, handed back as a vinyl table', {sid = vsid, key = {21}, limit = 1}, false)
 c:call('tarn_abort', {txid2, 1, {1}})
--- the bucket map read again (a leader change)
+-- a leader change: the state read again
 c:eval('box.cfg{read_only = true}')
 fiber.sleep(0.1)
-n = c:call('tarn_storage.ts_select', args({key = {7}, limit = 1}))
+because('read', 'read_only', function() n = c:call('tarn_storage.ts_select', args({key = {7}, limit = 1})) end)
 check('on a read-only node: handed to the Lua procedure', n[1] == 'lua', n)
 c:eval('box.cfg{read_only = false}')
 local deadline = fiber.clock() + 5
 while c:eval('return box.info.ro') and fiber.clock() < deadline do fiber.sleep(0.05) end
-n = c:call('tarn_storage.ts_select', args({key = {7}, limit = 1}))
-check('then, until the map is read again, too', n[1] == 'lua', n)
+because('read', 'stale_locks', function() n = c:call('tarn_storage.ts_select', args({key = {7}, limit = 1})) end)
+check('then, until the lock index is made again, too', n[1] == 'lua', n)
 c:call('tarn_select', args({key = {7}, limit = 1}))
 same('once a Lua read read it again: served', {key = {7}, limit = 1}, true)
 -- the fences and the held tables read again (a leader change, a DDL)
@@ -451,7 +466,9 @@ wsame('an insert', {{'insert', trow(1)}}, nil, true)
 wsame('... of rows: they count, the last one is returned', {{'insert', trow(2)}, {'insert', trow(3, 5, 9)}}, nil, true)
 local n, l = wsame('an insert of a row that is there', {{'insert', trow(1)}}, nil, false)
 check('... (the Lua procedure refuses it: 1062)', l[1] == 'duplicate' and l[2] == 1062, l)
-wsame('rows of which one is there', {{'insert', trow(4)}, {'insert', trow(2)}}, nil, false)
+because('write', 'write_error', function()
+    wsame('rows of which one is there', {{'insert', trow(4)}, {'insert', trow(2)}}, nil, false)
+end)
 wsame('a replace of a new row', {{'replace', trow(5)}}, nil, true)
 wsame('... of a row that is there, changed (2 affected)', {{'replace', trow(5, 1)}}, nil, true)
 wsame('... unchanged (1 affected)', {{'replace', trow(5, 1)}}, nil, true)
@@ -464,16 +481,20 @@ wsame('... of a row that is not there', {{'update', {99}, {{'=', 3, 'x'}}, {}, b
 wsame('an addition in range', {{'update', {3}, {{'+', 5, 2}}, {{5, -2147483648, 2147483647, 'w'}}, box.NULL}},
       nil, true)
 wsame('an addition to NULL (stays NULL)', {{'update', {1}, {{'+', 5, 2}}, {{5, 0, 255, 'w'}}, box.NULL}}, nil, true)
-n, l = wsame('an addition out of range', {{'update', {3}, {{'+', 5, 1000}}, {{5, 0, 255, 'w'}}, box.NULL}}, nil,
-             false)
+because('write', 'arith', function()
+    n, l = wsame('an addition out of range', {{'update', {3}, {{'+', 5, 1000}}, {{5, 0, 255, 'w'}}, box.NULL}}, nil,
+                 false)
+end)
 check('... (the Lua procedure refuses it: 1264)', l[1] == 'error' and l[2] == 1264, l)
 -- (a pad {4, 0}: the rows have 5 fields, which rows written before an
 -- ALTER TABLE added the fifth lack)
 wsame('an update with a pad, of a row that has every field', {{'update', {3}, {{'=', 3, 'y'}}, {}, {4, 0}}}, nil,
       true)
 wsame('a row without its last fields', {{'insert', {8, 1, 'r8', b}}}, nil, true)
-wsame('... updated with a pad (the Lua procedure fills them in)', {{'update', {8}, {{'=', 3, 'y'}}, {}, {4, 0}}},
-      nil, false)
+because('write', 'pad', function()
+    wsame('... updated with a pad (the Lua procedure fills them in)', {{'update', {8}, {{'=', 3, 'y'}}, {}, {4, 0}}},
+          nil, false)
+end)
 wsame('an update of an indexed column', {{'update', {2}, {{'=', 2, 6}}, {}, box.NULL}}, nil, true)
 wsame('a write to a bucket this shard does not own', {{'insert', trow(6)}}, {wb = {other or 1000000}}, false)
 wsame('... of a row of such a bucket', {{'insert', {7, 0, 'x', other or 1000000}}}, nil, false)
@@ -487,7 +508,7 @@ local wtx = 'NAT-' .. require('uuid').str()
 r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', wa, trow(40)}}, {{wa, 2, {6}, b}}, {}, fiber.time(),
                                box.NULL, box.NULL, {b}})
 check('a prepared transaction holds locks on the table', r[1] == 'yes', r)
-n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(40)}}))
+because('write', 'lock', function() n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(40)}})) end)
 check('then a write of the row it writes: handed to the Lua procedure', n[1] == 'lua', n)
 n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
 check('... of a row with the key of index v it read (6): handed to the Lua procedure', n[1] == 'lua', n)
@@ -518,7 +539,9 @@ for _, x in ipairs({{'then an insert of a row whose primary key is in a range', 
                     {'... whose key of index padci is (without case)', trow(41, 6, 50)},
                     {'... whose key of index v is on a bound its range excludes (taken as included)',
                      trow(49, 0, 50)}}) do
-    n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', x[2]}}))
+    because('write', 'range_lock', function()
+        n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', x[2]}}))
+    end)
     check(x[1] .. ': handed to the Lua procedure', n[1] == 'lua', n)
 end
 n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'delete', {150}}}))
@@ -533,7 +556,7 @@ c:call('tarn_abort', {wtx, 1, {1}})
 -- writes
 r = c:call('tarn_lock', {'NAT-RC', {{wa, 0, {9}}}, 'X', {timeout = 1}})
 check('a row lock is held on a row of the table', r[1] == 'ok', r)
-n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'replace', trow(9)}}))
+because('write', 'row_lock', function() n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'replace', trow(9)}})) end)
 check('then a write of that row: handed to the Lua procedure', n[1] == 'lua', n)
 wsame('... of another row', {{'insert', trow(41)}}, nil, true)
 c:call('tarn_unlock', {'NAT-RC'})
@@ -545,11 +568,15 @@ c:call('tarn_unlock', {'NAT-RC'})
 -- a definition fence raised (ALTER TABLE): writes with the old one refused
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wa})
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wb})
-n, l = wsame('a write with an older definition than the fence', {{'insert', trow(42)}}, {fence = 6}, false)
+because('write', 'stale_fences', function()
+    n, l = wsame('a write with an older definition than the fence', {{'insert', trow(42)}}, {fence = 6}, false)
+end)
 check('... (refused: 1412)', l[2] == 1412, l)
 -- (the Lua procedure read the fences again: now the native one compares
 -- the write's definition with them)
-n, l = wsame('... again, with the fences read', {{'insert', trow(42)}}, {fence = 6}, false)
+because('write', 'fence', function()
+    n, l = wsame('... again, with the fences read', {{'insert', trow(42)}}, {fence = 6}, false)
+end)
 check('... (refused: 1412)', l[2] == 1412, l)
 wsame('... and one with the current definition', {{'insert', trow(42)}}, {fence = 7}, true)
 c:eval("box.space._tarn_meta:delete{'fence:' .. ...} tarn.stale_fences()", {wa})
@@ -619,6 +646,26 @@ check('... it is made once its quorum is', rw ~= nil and rw[1][1] == 'ok', rw)
 local rl = fl:wait_result(5)
 check('... then the lock is granted', rl ~= nil and rl[1][1] == 'ok', rl)
 c:call('tarn_unlock', {'NAT-SYNC'})
+-- a PREPARE that waits for its quorum (its records synchronous): its locks
+-- are in the lock index, and its copy, from the step that took them
+c:eval([[box.space._tarn_locks:alter{is_sync = true} box.space._tarn_part:alter{is_sync = true}
+         box.cfg{replication_synchro_quorum = 2}]])
+local qtx = 'NAT-' .. require('uuid').str()
+local fp = c:call('tarn_prepare', {qtx, 1, {1}, {{'replace', wa, trow(5)}}, {}, {}, fiber.time(), box.NULL,
+                                   box.NULL, {b}}, {is_async = true})
+fiber.sleep(0.2)
+check('a PREPARE that waits for its quorum', not fp:is_ready())
+because('read', 'w_lock', function() n = c:call('tarn_storage.ts_select', args({sid = wa, key = {5}, limit = 1})) end)
+check('... then a read of the row it writes: handed to the Lua procedure', n[1] == 'lua', n)
+n = c:call('tarn_storage.ts_select', args({sid = wa, key = {1}, limit = 1}))
+check('... a read of another row: served', n[1] == 'ok' and #n[2] == 1, n)
+because('write', 'lock', function() n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'replace', trow(5)}})) end)
+check('... a write of the row it writes: handed to the Lua procedure', n[1] == 'lua', n)
+c:eval('box.cfg{replication_synchro_quorum = 1}')
+local rp = fp:wait_result(5)
+check('... it is prepared once its quorum is', rp ~= nil and rp[1][1] == 'yes', rp)
+c:call('tarn_abort', {qtx, 1, {1}})
+c:eval('box.space._tarn_locks:alter{is_sync = false} box.space._tarn_part:alter{is_sync = false}')
 c:eval('box.cfg{replication_synchro_timeout = 5}')
 wa, wb = wa0, wb0
 c:eval('box.space.test_native_sync_a:drop() box.space.test_native_sync_b:drop()')
@@ -843,7 +890,9 @@ c:call('tarn_abort', {utx, 1, {1}})
 wa, wb = wa0, wb0
 c:eval('box.space.test_native_u_a:drop() box.space.test_native_u_b:drop()')
 -- what its checks leave to the Lua procedure
-n, l = csame('a commit of a transaction with row locks here', {{'insert', trow(75)}}, nil, {lock_gen = 'x/1'}, false)
+because('commit', 'own_row_locks', function()
+    n, l = csame('a commit of a transaction with row locks here', {{'insert', trow(75)}}, nil, {lock_gen = 'x/1'}, false)
+end)
 check('... (which the Lua procedure refuses: they were lost)', l[1] == 'error' and l[2] == 1213, l)
 csame('a commit of a transaction that read every shard with the current membership', {{'insert', trow(75)}}, nil,
       {mver = map[6] or 0}, true)
@@ -868,7 +917,9 @@ r = cps:call('tarn_prepare', {ctx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, 
                               box.NULL, {b}})
 check('a prepared transaction holds a lock on test.nat', r[1] == 'yes', r)
 csame('then a commit that read another row of it', {{'insert', trow(78)}}, {{7}}, {rsid = sid}, true)
-n, l = csame('... one that read the row it writes', {{'insert', trow(79)}}, {{20}}, {rsid = sid}, false)
+because('commit', 'w_lock', function()
+    n, l = csame('... one that read the row it writes', {{'insert', trow(79)}}, {{20}}, {rsid = sid}, false)
+end)
 check('... (which the Lua procedure refuses)', l[1] == 'conflict' and l[2] == 1213, l)
 -- (ranges read: compared with the W-locked keys of their index)
 local function rr(iid, lo, hi, lo_incl) return {{sid, iid, lo, hi, lo_incl ~= false, true, b}} end
@@ -910,7 +961,9 @@ c:call('tarn_commit_local', cargs(wb, {{'delete', {81}}}))   -- (the fences: rea
 c:call('tarn_commit_local', cargs(wa, {{'delete', {81}}}))
 c:eval('box.space._tarn_meta:replace{..., {op = "TRUNCATE", ver = 0, label = "NAT-HOLD"}} tarn.stale_fences()', {hold})
 c:call('tarn_select', args({key = {7}, limit = 1}))
-csame('a commit while a TRUNCATE or DROP TABLE holds a table', {{'insert', trow(82)}}, nil, nil, false)
+because('commit', 'held_table', function()
+    csame('a commit while a TRUNCATE or DROP TABLE holds a table', {{'insert', trow(82)}}, nil, nil, false)
+end)
 c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
 c:call('tarn_select', args({key = {7}, limit = 1}))
 csame('... once it ends', {{'insert', trow(83)}}, nil, nil, true)
@@ -1013,7 +1066,7 @@ check('... (refused)', l[1] == 'moved', l)
 if other ~= nil then
     vsame('one whose read was routed by a bucket this shard does not own', {{7}}, {rb = other}, false)
 end
-n, l = vsame('reads without a stream', {{7}}, {no_stream = true}, false)
+because('validate', 'stream', function() n, l = vsame('reads without a stream', {{7}}, {no_stream = true}, false) end)
 check('... (which the Lua procedure refuses)', l[1] == 'conflict', l)
 local vps = c:new_stream()
 vps:begin()
@@ -1050,7 +1103,9 @@ n, l = vsame('one open when a TRUNCATE was applied', {{7}}, {between = truncate}
 check('... (which the Lua procedure validates: it did not read that table)', l[1] == 'ok', l)
 vsame('one begun after it', {{7}}, nil, true)
 c:call('tarn_drop_table', {'test.ntr2'})
-n, l = vsame('one begun before a new election term', {{7}}, {between = new_term}, false)
+because('validate', 'term', function()
+    n, l = vsame('one begun before a new election term', {{7}}, {between = new_term}, false)
+end)
 check('... (which the Lua procedure refuses)', l[1] == 'conflict', l)
 vsame('one begun in the new term', {{7}}, nil, true)
 -- a table held by a TRUNCATE or DROP TABLE (its hold, as their PREPARE

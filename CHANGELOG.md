@@ -19,6 +19,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   existing engine remains a no-op. See
   [the operational procedure](docs/operations.md#online-engine-changes).
 
+- Why the native storage procedures hand requests to Lua
+  ([#131](https://github.com/cstheorist/tarn/issues/131)):
+  `tarn_info().native.fallbacks` counts, for each procedure, the requests
+  it handed back by reason. The reasons include a lock on what the request
+  touches (by kind), state being read again (the lock index, the bucket
+  map, the fences), a table that lazy capture or a DDL holds, a vinyl
+  table, reads of more than a page, and request shapes left to Lua.
+  See [operations](docs/operations.md).
 - Vinyl write admission ([#58](https://github.com/cstheorist/tarn/issues/58)):
   storage shards share a pressure-sensitive admission budget across SQL
   servers, refusing new writes before user data changes and preserving

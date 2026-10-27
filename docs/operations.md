@@ -696,8 +696,27 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
   to the Lua procedure (`to_lua`), and the same of autocommit writes
   (`writes`, `writes_to_lua`), of one-shard commits (`commits`,
   `commits_to_lua`) and of validations (`validations`,
-  `validations_to_lua`). The counters in `stats` count what the Lua procedures
-  do (`commit_local`, `conflicts`, `validate_changed`); `native` counts the
+  `validations_to_lua`), and why they handed requests back (`fallbacks`:
+  for each procedure, `read`, `write`, `commit` and `validate`, the count
+  of each reason). The reasons, listed in
+  `crates/tarn-storage/src/fallback.rs`, include:
+  - `w_lock`, `lock`, `range_lock` and `row_lock`: a lock on what the
+    request reads or writes;
+  - `lock_key`: a key the lock checks cannot look up or compare;
+  - `stale_locks`, `stale_buckets` and `stale_fences`: state being read
+    again after an election, a move or a DDL;
+  - `held_table`, `term`, `fence` and `lazy_capture`: a table that a
+    `TRUNCATE` or `DROP TABLE` holds, a stream begun before a new election
+    term, a definition fence above the request's, a table that a lazy
+    index captures;
+  - `vinyl`: a vinyl table;
+  - `page`, `next_page` and `offset`: a read longer than a page, or a later
+    page;
+  - `own_row_locks`: a transaction with row locks;
+  - `shape`: arguments of a kind left to Lua.
+
+  The counters in `stats` count what the Lua procedures do
+  (`commit_local`, `conflicts`, `validate_changed`); `native` counts the
   rest.
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol

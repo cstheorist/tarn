@@ -1138,7 +1138,7 @@ tla/check.sh EngineCopy Bug_EngineCopyBeforeCapture Bug_EngineCopySkipPrefixDrai
 | `Bug_EngineCutoverCatalogByName` | 173 | 8 | violates `CatalogObservationBound` |
 | `Bug_EngineCutoverAuxStreamOmitted` | 214 | 10 | violates `OldStreamsRejected` |
 
-### Configuration counts
+### Detached source transactions
 
 `EngineSourceDrain.tla` refines the final source drain independently of the
 copy model. A source transaction admitted while the synchronous fence is
@@ -1170,10 +1170,56 @@ the optional private ACK-input harness is not part of the default suite.
 tla/check.sh EngineSourceDrain Bug_EngineSourceDrainCallerOnly
 ```
 
-The default list contains 179 configurations, including 131 expected
-broken/trade-off outcomes. The 190 generated configurations reproduce from
+### The copy of the lock index
+
+The native procedures check locks against a copy of the Lua module's lock
+index, which the Lua module changes in the same step as the index
+(`crates/tarn-storage/src/locks.rs`, design §1.5). Verus proves what the
+copy counts and what the checks conclude from the counts. It does not
+prove when the copy changes. `NativeLockCopy.tla` models that:
+- the steps that take a PREPARE's locks, before its quorum confirms it;
+- the steps that release them (APPLY, ABORT, a PREPARE whose quorum
+  fails);
+- an election, after which the index is made again from the lock records.
+
+Native steps run between those steps and decide from the copy alone.
+`NativeFindsLocks`: no native step goes ahead while the index holds a lock
+that the Lua check of the same step would find. For a write of a key, that
+is any lock on it; for a read, a W lock. `CopyIsIndex`: between steps, the
+copy counts what the index holds.
+
+Each switch moves one change of the copy to another step than the
+index's, and TLC must find a native step in between:
+
+| Switch | The copy changes |
+|---|---|
+| `BugCopyAfterYield` | a step after the PREPARE takes its lock (a yield between, as vinyl reads would make) |
+| `BugCopyReleaseFirst` | a step before a release takes the lock out of the index |
+| `BugCopyOnQuorum` | once the quorum confirms the PREPARE (the index has its lock before) |
+| `BugReloadNoCopy` | not at all when the index is made again: the copy stays cleared |
+
+```sh
+tla/check.sh LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum \
+  Bug_LockReloadNoCopy
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LockCopy` | 290 | 6 | passes |
+| `Bug_LockCopyAfterYield` | 16 | 3 | violates `NativeFindsLocks` |
+| `Bug_LockCopyReleaseFirst` | 162 | 5 | violates `NativeFindsLocks` |
+| `Bug_LockCopyOnQuorum` | 17 | 3 | violates `NativeFindsLocks` |
+| `Bug_LockReloadNoCopy` | 166 | 5 | violates `NativeFindsLocks` |
+
+`TARN_CHECK_LOCKS` checks the same at run time: the Lua module compares the
+copy with the index after each change.
+
+### Configuration counts
+
+The default list contains 184 configurations, including 135 expected
+broken/trade-off outcomes. The 195 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 192 total. Explicit check arguments override the default
+directly, for 197 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs
@@ -1209,8 +1255,8 @@ result. Verus proves:
 * **MessagePack of the native procedures** (`mp.rs`): the writers emit
   Tarantool's encodings: an integer unsigned when it is not negative, and
   every integer and header in its fewest bytes (no encoding of the same
-  integer, and no header of an array, a string or a binary of the same
-  length, is shorter). The readers read back what the writers emit.
+  integer, and no header of an array, a map, a string or a binary of the
+  same length, is shorter). The readers read back what the writers emit.
   `skip` ends where a value ends, however nested, and refuses a value cut
   short or a byte no value starts with. No function can panic or read past
   its buffer, whatever bytes it is given.
@@ -1240,7 +1286,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 131 verified, 0 errors
+# verification results:: 134 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with

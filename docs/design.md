@@ -719,7 +719,17 @@ the Lua module copies every change is tested instead: with
 `TARN_CHECK_LOCKS` it compares the copy with the index after each change
 (the key's counts, the index's ranges) and after a transaction's locks are
 released (all of it), and logs a difference; the storage tests and the SQL
-suites in CI run with it, and fail on one.
+suites in CI run with it, and fail on one. That changing the copy in the
+steps that change the index is enough is modelled
+(`tla/NativeLockCopy.tla`): no native step goes ahead past a lock the Lua
+check would find, the locks of a PREPARE still waiting for its quorum and
+an index made again after an election included; a copy changed a step
+early or late, or not made again with the index, lets one through.
+
+Each procedure counts why it hands requests back, by reason: a lock on
+what it touches (and of which kind), state being read again, a held table,
+a vinyl table, a read of more than a page, and so on
+(`tarn_info().native.fallbacks`, [operations](operations.md)).
 
 On two shards under `oltp_write_only` (16 threads, three runs of each
 build, `bench/sysbench.sh`), the native procedure handed 93% of the
@@ -747,7 +757,10 @@ while they prepare:
 With `--skip_trx` each read of `oltp_read_only` is its own transaction,
 and one that reads a range on both shards is validated on each. There the
 writers lost what the readers gained: the queries per second of both
-together did not change (7,425 and 7,429).
+together did not change (7,425 and 7,429). [bench/RESULTS.md](../bench/RESULTS.md#next-to-locks)
+compares the two builds with no locks, with locks on other rows and under
+contention: throughput, latency percentiles, and the shards' CPU and Lua
+heap per statement.
 
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
@@ -1812,7 +1825,7 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **131 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **134 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
@@ -1854,7 +1867,7 @@ native module as plain Rust. What is proven:
   they store with these functions (`tarn-storage`'s `Rd` and `Wr`). Each
   writer emits a byte-level specification: an integer unsigned when it is
   not negative, a negative one in two's complement, each in the fewest
-  bytes, and the shortest header of an array, a string or a binary. These
+  bytes, and the shortest header of an array, a map, a string or a binary. These
   are the encodings Tarantool writes: it is proven that no encoding of the
   same integer, and no header of the same length, is shorter. The readers
   decode per their specifications and read back what the writers emit,
@@ -2059,6 +2072,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyMeterStaleInstall | violates ReadyEpochCurrent | 25 | 38 | 5 | 00s | 5 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
+| Bug_LockCopyAfterYield | violates NativeFindsLocks | 16 | 20 | 3 | 00s | 3 |
+| Bug_LockCopyOnQuorum | violates NativeFindsLocks | 17 | 21 | 3 | 00s | 3 |
+| Bug_LockCopyReleaseFirst | violates NativeFindsLocks | 162 | 387 | 5 | 00s | 5 |
+| Bug_LockReloadNoCopy | violates NativeFindsLocks | 166 | 395 | 5 | 00s | 5 |
 | Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
 | Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
 | Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
@@ -2122,6 +2139,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 52s |  |
 | Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
 | Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
+| LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |

@@ -2,6 +2,7 @@
 //! {language = 'C'})`), and the part of Tarantool's module API they use
 //! (module.h).
 
+use crate::fallback::{self, back, note, Proc, Why};
 use crate::locks::{self, KeyIndex};
 use crate::mp::{Rd, Wr};
 use crate::select::{self, Page, ITER_EQ, ITER_REQ};
@@ -629,7 +630,8 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
     }
     let len = (args_end as usize).saturating_sub(args as usize);
     let buf = std::slice::from_raw_parts(args as *const u8, len);
-    let out = std::panic::catch_unwind(|| select_page(buf)).unwrap_or(None);
+    fallback::begin();
+    let out = std::panic::catch_unwind(|| select_page(buf)).unwrap_or_else(|_| back(Why::Panic));
     match out {
         Some(page) => {
             if let Some(s) = state() {
@@ -641,6 +643,7 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
             if let Some(s) = state() {
                 s.to_lua += 1;
             }
+            fallback::counted(Proc::Read, None);
             reply(ctx, TO_LUA)
         }
     }
@@ -649,31 +652,58 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
 /// The reply to a read ts_select serves (["ok", rows]), or None for one it
 /// leaves to tarn_select.
 fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
+    note(Why::Shape);
     let a = select::parse(buf)?;
-    let s = state()?;
-    if s.ready == 0 || s.hooks != 0 || s.page_rows == 0 || !select::route_ok(s, &a.route) {
-        return None;
+    note(Why::Other);
+    let Some(s) = state() else {
+        return back(Why::NotReady);
+    };
+    if s.ready == 0 || s.page_rows == 0 {
+        return back(Why::NotReady);
+    }
+    if s.hooks != 0 {
+        return back(Why::TestHooks);
+    }
+    if !select::route_ok(s, &a.route) {
+        return back(if s.bk_stale != 0 {
+            Why::StaleBuckets
+        } else {
+            Why::Bucket
+        });
     }
     // SAFETY: plain calls of the module API in the transaction thread.
     let in_txn = unsafe {
         // (a read with lock_check on a replica, which tarn_select refuses:
         // ER_READONLY)
-        if a.lock_check && (box_is_ro() || s.lk_stale != 0) {
-            return None;
+        if a.lock_check && box_is_ro() {
+            return back(Why::ReadOnly);
+        }
+        if a.lock_check && s.lk_stale != 0 {
+            return back(Why::StaleLocks);
         }
         // (the window of the load counts ended: tarn_select starts the next
         // one, then counts the read)
         if select::counted(&a.route) && fiber_clock() >= s.load_until {
-            return None;
+            return back(Why::LoadWindow);
         }
         box_txn()
     };
-    let info = index_info(a.space_id, a.index_id)?;
-    let key_parts = Rd::new(a.key).array()?;
+    let Some(info) = index_info(a.space_id, a.index_id) else {
+        return back(Why::Schema);
+    };
+    let Some(key_parts) = Rd::new(a.key).array() else {
+        return back(Why::Shape);
+    };
     // (vinyl reads may yield; a held table, or a prepared transaction's W
     // lock on what the read covers: the lock check may have to wait)
-    if !info.memtx || (a.lock_check && (s.ddl_n != 0 || s.fence_stale != 0)) {
-        return None;
+    if !info.memtx {
+        return back(Why::Vinyl);
+    }
+    if a.lock_check && s.ddl_n != 0 {
+        return back(Why::HeldTable);
+    }
+    if a.lock_check && s.fence_stale != 0 {
+        return back(Why::StaleFences);
     }
     let range_check = match a.lock_check {
         true => lock_check(s, &a, &info, key_parts)?,
@@ -684,17 +714,17 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     let end = match a.end_key {
         Some(k) => {
             if info.key_def.is_null() {
-                return None;
+                return back(Why::Schema);
             }
             let mut size = 0u32;
             // SAFETY: a MessagePack array in `buf`; the key definition is
             // alive (the cache keeps it for this schema version).
             if unsafe { box_key_def_validate_key(info.key_def, k.as_ptr().cast(), &mut size) } != 0 {
                 unsafe { box_error_clear() };
-                return None;
+                return back(Why::Shape);
             }
             if size as usize != k.len() {
-                return None;
+                return back(Why::Shape);
             }
             Some(k.as_ptr().cast::<c_char>())
         }
@@ -766,7 +796,7 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
         }
     }
     if !page.whole() {
-        return None;
+        return back(Why::Page);
     }
     // The range the read covers, from its key to its end key, or to its last
     // row when its limit cut the scan short (select_locked), against the
@@ -780,8 +810,11 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
                     .iter()
                     .map(|&f| (f, true))
                     .collect();
-                let row = locks::fields_of(&out.0[last])?;
-                Some(Cow::Owned(locks::key_of(&row, &parts).filter(|_| !parts.is_empty())?))
+                let key = locks::fields_of(&out.0[last]).and_then(|row| locks::key_of(&row, &parts));
+                match key.filter(|_| !parts.is_empty()) {
+                    Some(k) => Some(Cow::Owned(k)),
+                    None => return back(Why::LockKey),
+                }
             }
             false => a.end_key.map(Cow::Borrowed),
         };
@@ -792,8 +825,8 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
         } else {
             (first, last.as_deref())
         };
-        if !range_read_free(a.space_id, a.index_id, lo, hi) {
-            return None;
+        if let Some(w) = range_read_met(a.space_id, a.index_id, lo, hi) {
+            return back(w);
         }
     }
     out.patch_array(at, n);
@@ -817,10 +850,13 @@ fn lock_check(s: &State, a: &select::Args, info: &IndexInfo, key_parts: u32) -> 
         return Some(false);
     }
     if a.key_nil {
-        return None;
+        return back(Why::Shape);
     }
     if matches!(a.iterator, ITER_EQ | ITER_REQ) && info.unique && key_parts == info.parts {
-        return locks::point_read_free(a.space_id, a.index_id, a.key).then_some(false);
+        return match locks::point_read_met(a.space_id, a.index_id, a.key) {
+            Some(w) => back(w),
+            None => Some(false),
+        };
     }
     Some(locks::w_on_index(a.space_id, a.index_id))
 }
@@ -900,26 +936,45 @@ unsafe fn valid_key(kd: *mut BoxKeyDef, key: &[u8], whole: bool) -> bool {
     size as usize == key.len()
 }
 
-/// Whether no prepared transaction holds a W lock on a key of index `iid` of
-/// space `sid` between `lo` and `hi` (range_w_locked; None: no bound).
-fn range_read_free(sid: u32, iid: u32, lo: Option<&[u8]>, hi: Option<&[u8]>) -> bool {
+/// What a read of index `iid` of space `sid` between `lo` and `hi` meets
+/// (range_w_locked; None: no bound): a prepared transaction's W lock on a
+/// key between them, a key or a bound it cannot compare (which may lie
+/// there), an index definition it does not read; None when it is free.
+fn range_read_met(sid: u32, iid: u32, lo: Option<&[u8]>, hi: Option<&[u8]>) -> Option<Why> {
     if !locks::w_on_index(sid, iid) {
-        return true;
+        return None;
     }
     let Some(info) = index_info(sid, iid) else {
-        return false;
+        return Some(Why::Schema);
     };
     let kd = info.key_def_pos;
+    if kd.is_null() {
+        return Some(Why::Schema);
+    }
     // SAFETY: in the transaction thread; the cache keeps `kd` for this
-    // schema version, and nothing here changes the schema. A key that is
-    // not compared may lie in the range.
+    // schema version, and nothing here changes the schema.
     unsafe {
-        if kd.is_null() || [lo, hi].into_iter().flatten().any(|b| !valid_key(kd, b, false)) {
-            return false;
+        if [lo, hi].into_iter().flatten().any(|b| !valid_key(kd, b, false)) {
+            return Some(Why::LockKey);
         }
-        locks::range_free(sid, iid, &mut |k| {
-            KeyTuple::new(k, kd).and_then(|t| t.within(lo, hi, kd)).unwrap_or(true)
-        })
+        // (a W-locked key that is not compared may lie in the range)
+        let mut uncompared = false;
+        let free = locks::range_free(
+            sid,
+            iid,
+            &mut |k| match KeyTuple::new(k, kd).and_then(|t| t.within(lo, hi, kd)) {
+                Some(within) => within,
+                None => {
+                    uncompared = true;
+                    true
+                }
+            },
+        );
+        match (free, uncompared) {
+            (true, _) => None,
+            (false, true) => Some(Why::LockKey),
+            (false, false) => Some(Why::WLock),
+        }
     }
 }
 
@@ -1199,32 +1254,37 @@ fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<WriteInfo>> {
     // every actual source before schema reads or a transaction/savepoint,
     // independently of the gateway's possibly stale definition fences.
     if writes.iter().any(|w| s.lazy_write_excluded(w.space_id)) {
-        return None;
+        return back(Why::LazyCapture);
     }
     let mut infos = Vec::with_capacity(writes.len());
     for w in writes {
-        let sp = space_info(w.space_id)?;
+        let Some(sp) = space_info(w.space_id) else {
+            return back(Why::Schema);
+        };
         if !sp.memtx {
-            return None;
+            return back(Why::Vinyl);
         }
         let (locked, plocked) = (s.space_locked(w.space_id), s.space_plocked(w.space_id));
         if (locked || plocked) && sp.indexes.is_none() {
-            return None;
+            return back(Why::Schema);
         }
         let mut ranged = Vec::new();
         if locked && locks::ranges_on(w.space_id) {
             for ix in sp.indexes.as_deref().unwrap_or(&[]) {
                 if locks::ranges_on_index(w.space_id, ix.iid) {
-                    let kd = index_info(w.space_id, ix.iid)?.key_def_pos;
+                    let kd = index_info(w.space_id, ix.iid).map_or(std::ptr::null_mut(), |i| i.key_def_pos);
                     if kd.is_null() {
-                        return None;
+                        return back(Why::Schema);
                     }
                     ranged.push((ix.iid, kd));
                 }
             }
         }
         let pk = match w.op {
-            Op::Replace => Some(index_info(w.space_id, 0)?),
+            Op::Replace => match index_info(w.space_id, 0) {
+                Some(i) => Some(i),
+                None => return back(Why::Schema),
+            },
             _ => None,
         };
         infos.push(WriteInfo {
@@ -1246,17 +1306,18 @@ fn version_fields(t: Option<&[u8]>) -> Result<Option<Vec<&[u8]>>, ()> {
     }
 }
 
-/// Whether a write that wrote `old` -> `new` (the row's versions, if any)
-/// meets no lock of a prepared transaction, nor a row lock, as the Lua
-/// procedures' writes_locked finds (locks::write_free). Its primary key:
-/// for an insert or a replace the row's, for an update or a delete the key
-/// it names (write_target).
-fn write_allowed(w: &write::Write, info: &WriteInfo, old: Option<&[u8]>, new: Option<&[u8]>) -> bool {
+/// What a write that wrote `old` -> `new` (the row's versions, if any)
+/// meets of the locks of prepared transactions and the row locks, as the
+/// Lua procedures' writes_locked finds (locks::write_met), or of keys it
+/// cannot look up; None when it meets none. Its primary key: for an insert
+/// or a replace the row's, for an update or a delete the key it names
+/// (write_target).
+fn write_met(w: &write::Write, info: &WriteInfo, old: Option<&[u8]>, new: Option<&[u8]>) -> Option<Why> {
     if !info.locked && !info.plocked {
-        return true;
+        return None;
     }
     let Some(indexes) = info.sp.indexes.as_deref() else {
-        return false;
+        return Some(Why::Schema);
     };
     let pk = match w.op {
         Op::Insert | Op::Replace => {
@@ -1269,16 +1330,16 @@ fn write_allowed(w: &write::Write, info: &WriteInfo, old: Option<&[u8]>, new: Op
         Op::Delete | Op::Update => locks::lock_key(&w.payload).map(|k| k.into_owned()),
     };
     let Some(pk) = pk else {
-        return false;
+        return Some(Why::LockKey);
     };
     let (Ok(old), Ok(new)) = (version_fields(old), version_fields(new)) else {
-        return false;
+        return Some(Why::Other);
     };
     let mut bounds = WriteBounds {
         ranged: &info.ranged,
         key: None,
     };
-    locks::write_free(
+    locks::write_met(
         w.space_id,
         &pk,
         old.as_deref(),
@@ -1317,15 +1378,18 @@ unsafe fn apply_writes(
         let (old, new, res) = match w.op {
             Op::Insert => {
                 if box_insert(w.space_id, p, p_end, &mut t) != 0 {
-                    return None;
+                    return back(Why::WriteError);
                 }
                 let r = data_of(t);
                 (None, r.clone(), r)
             }
             Op::Replace => {
-                let old = get_row(w.space_id, &key_of(&w.payload, pk.as_ref()?)?).ok()?;
+                let Some(key) = pk.as_ref().and_then(|pk| key_of(&w.payload, pk)) else {
+                    return back(Why::Schema);
+                };
+                let old = get_row(w.space_id, &key).ok()?;
                 if box_replace(w.space_id, p, p_end, &mut t) != 0 {
-                    return None;
+                    return back(Why::WriteError);
                 }
                 let r = data_of(t);
                 (old, r.clone(), r)
@@ -1333,7 +1397,7 @@ unsafe fn apply_writes(
             Op::Delete => {
                 let old = get_row(w.space_id, &w.payload).ok()?;
                 if box_delete(w.space_id, 0, p, p_end, &mut t) != 0 {
-                    return None;
+                    return back(Why::WriteError);
                 }
                 (old, None, data_of(t))
             }
@@ -1345,17 +1409,17 @@ unsafe fn apply_writes(
                     // the Lua procedure fills them in)
                     if let Some(width) = w.width {
                         if (Rd::new(&old).array()? as u64) < width {
-                            return None;
+                            return back(Why::Pad);
                         }
                     }
                     let v = |f: u32| write::val(f.checked_sub(1).and_then(|f| field_of(&old, f)));
                     if !write::arith_ok(&w.ops, &w.ranges, v) {
-                        return None;
+                        return back(Why::Arith);
                     }
                     let ops = write::update_ops(&w.ops, v);
                     let o = ops.as_ptr().cast::<c_char>();
                     if box_update(w.space_id, 0, p, p_end, o, o.add(ops.len()), 1, &mut t) != 0 {
-                        return None;
+                        return back(Why::WriteError);
                     }
                     let r = data_of(t);
                     (Some(old), r.clone(), r)
@@ -1365,8 +1429,10 @@ unsafe fn apply_writes(
         // (an update of a row that is not there writes nothing: the Lua
         // procedures check nothing of it)
         let skipped = w.op == Op::Update && old.is_none();
-        if !skipped && !write_allowed(w, info, old.as_deref(), new.as_deref()) {
-            return None;
+        if !skipped {
+            if let Some(why) = write_met(w, info, old.as_deref(), new.as_deref()) {
+                return back(why);
+            }
         }
         n += write::affected(w.op, old.as_deref(), new.as_deref(), found_rows);
         let row = new.as_deref().or(old.as_deref());
@@ -1379,7 +1445,7 @@ unsafe fn apply_writes(
     }
     if s.count != 0 {
         if done.iter().any(|d| d.bucket.is_some_and(|b| !s.writable(b))) {
-            return None;
+            return back(Why::Bucket);
         }
         for d in &done {
             if let Some(b) = d.bucket {
@@ -1443,37 +1509,39 @@ unsafe fn commit_txn(mut undo: Undo, committed: &Cell<bool>) -> Result<(), Serve
 /// to tarn_autocommit, with nothing written. `committed`: set once the
 /// commit begins, from when the writes may have been made.
 fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
+    note(Why::Shape);
     let (writes, opts) = write::parse(buf)?;
-    let s = state()?;
-    if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
-        return None;
-    }
+    note(Why::Other);
+    let s = ready_state()?;
     // Gateway metadata can lag behind local DDL activation. Check every
     // actual source before schema reads or Txn::begin, not just opts.fence;
     // otherwise a stale/partial fence could bypass commit-atomic capture.
     if writes.iter().any(|w| s.lazy_write_excluded(w.space_id)) {
-        return None;
+        return back(Why::LazyCapture);
     }
     // SAFETY: plain calls of the module API in the transaction thread.
     unsafe {
         // (a replica: tarn_autocommit raises ER_READONLY; a transaction in
         // progress: not an autocommit write)
-        if box_is_ro() || box_txn() {
-            return None;
+        if box_is_ro() {
+            return back(Why::ReadOnly);
+        }
+        if box_txn() {
+            return back(Why::Stream);
         }
         // (the writes count for their buckets' load, in a window that has
         // not ended: else tarn_autocommit starts the next one)
         if s.count != 0 && fiber_clock() >= s.load_until {
-            return None;
+            return back(Why::LoadWindow);
         }
     }
     // The definitions the writes were made with are current (else 1412),
     // and their buckets take writes here (else moved).
     if opts.fence.iter().any(|&(sid, ver)| s.fence(sid) > ver) {
-        return None;
+        return back(Why::Fence);
     }
     if s.count != 0 && opts.wb.iter().any(|&b| !s.writable(b)) {
-        return None;
+        return back(Why::Bucket);
     }
     let infos = write_infos(s, &writes)?;
     // SAFETY: the transaction is this call's; tuples are copied before
@@ -1494,17 +1562,41 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     }
 }
 
-/// Whether no prepared transaction holds a W lock on a read of a read set
-/// (reads_w_locked): none on a table without locks; for a point, none on
-/// its key; for a range, none on a key of the index between its bounds.
-fn read_set_free(s: &State, r: &write::Read) -> bool {
+/// What a read of a read set meets (reads_w_locked): a prepared
+/// transaction's W lock on it -- for a point, on its key; for a range, on a
+/// key of the index between its bounds -- or a key it cannot look up or
+/// compare; None when it is free (also on a table without locks).
+fn read_set_met(s: &State, r: &write::Read) -> Option<Why> {
     if !s.space_locked(r.space_id) {
-        return true;
+        return None;
     }
     match r.key {
-        Some(k) => locks::point_read_free(r.space_id, r.index_id, k),
-        None => range_read_free(r.space_id, r.index_id, r.lo, r.hi),
+        Some(k) => locks::point_read_met(r.space_id, r.index_id, k),
+        None => range_read_met(r.space_id, r.index_id, r.lo, r.hi),
     }
+}
+
+/// The state, when the write-side procedures may serve requests in it: the
+/// module in use, no test hooks, and the bucket map, the lock index and the
+/// fences current. Else None, the reason noted.
+fn ready_state() -> Option<&'static mut State> {
+    let Some(s) = state() else {
+        return back(Why::NotReady);
+    };
+    let why = if s.ready == 0 {
+        Why::NotReady
+    } else if s.hooks != 0 {
+        Why::TestHooks
+    } else if s.bk_stale != 0 {
+        Why::StaleBuckets
+    } else if s.lk_stale != 0 {
+        Why::StaleLocks
+    } else if s.fence_stale != 0 {
+        Why::StaleFences
+    } else {
+        return Some(s);
+    };
+    back(why)
 }
 
 /// What became of a commit of one shard served here (TarnCommit!CommitLocal),
@@ -1512,27 +1604,26 @@ fn read_set_free(s: &State, r: &write::Read) -> bool {
 /// stream, its transaction and reads are as they were. `committed`: as for
 /// `autocommit`.
 fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
+    note(Why::Shape);
     let c = write::parse_commit(buf)?;
+    note(Why::Other);
     // (row locks: the Lua procedure checks that they survived, and releases
     // them with the commit)
     if c.locks {
-        return None;
+        return back(Why::OwnRowLocks);
     }
-    let s = state()?;
-    if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
-        return None;
-    }
+    let s = ready_state()?;
     // (a TRUNCATE or DROP TABLE holds a table: reads_ddl_conflict)
     if s.ddl_n != 0 {
-        return None;
+        return back(Why::HeldTable);
     }
     // SAFETY: plain calls of the module API in the transaction thread.
     unsafe {
         if box_is_ro() {
-            return None;
+            return back(Why::ReadOnly);
         }
         if s.count != 0 && fiber_clock() >= s.load_until {
-            return None;
+            return back(Why::LoadWindow);
         }
     }
     // BK.commit_check: the transaction read every shard with the current
@@ -1540,21 +1631,21 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     // the buckets it writes take writes here, and those it read are served
     // here, none of them held (BK.held_conflict)
     if c.mver.is_some_and(|v| v < s.mver) {
-        return None;
+        return back(Why::Bucket);
     }
     if c.fence.iter().any(|&(sid, ver)| s.fence(sid) > ver) {
-        return None;
+        return back(Why::Fence);
     }
     if s.count != 0
         && (s.held != 0
             || c.wb.iter().any(|&b| !s.writable(b))
             || c.reads.iter().any(|r| r.bucket.is_some_and(|b| !s.serves(b))))
     {
-        return None;
+        return back(Why::Bucket);
     }
     // reads_w_locked: no W lock of a prepared transaction on what it read
-    if !c.reads.iter().all(|r| read_set_free(s, r)) {
-        return None;
+    if let Some(w) = c.reads.iter().find_map(|r| read_set_met(s, r)) {
+        return back(w);
     }
     let infos = write_infos(s, &c.writes)?;
     // SAFETY: the transaction is the request's: the stream's, or this call's
@@ -1567,7 +1658,7 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
             // reads_ddl_conflict)
             let id = txn_number();
             if id < s.term_txn || id < s.ddl_txn {
-                return None;
+                return back(Why::Term);
             }
             Undo::Savepoint(Savepoint::take()?)
         } else if c.reads.is_empty() {
@@ -1576,7 +1667,7 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
             Undo::Txn(Txn::begin()?)
         } else {
             // (reads, and no transaction of their stream to commit them in)
-            return None;
+            return back(Why::Stream);
         };
         let (done, _) = apply_writes(s, &c.writes, &infos, false)?;
         if let Err(failed) = commit_txn(undo, committed) {
@@ -1594,26 +1685,31 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
 /// commit of a read-only stream of one shard), or None for one left to
 /// tarn_validate, with nothing changed. `committed`: as for `autocommit`.
 fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
+    note(Why::Shape);
     let v = write::parse_validate(buf)?;
+    note(Why::Other);
     // (row locks: the Lua procedure checks that they survived, and releases
     // them)
     if v.locks {
-        return None;
+        return back(Why::OwnRowLocks);
     }
-    let s = state()?;
-    if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
-        return None;
-    }
+    let s = ready_state()?;
     // (a TRUNCATE or DROP TABLE holds a table: reads_ddl_conflict)
-    if s.ddl_n != 0 || s.scratch == 0 {
-        return None;
+    if s.ddl_n != 0 {
+        return back(Why::HeldTable);
+    }
+    if s.scratch == 0 {
+        return back(Why::NotReady);
     }
     // SAFETY: plain calls of the module API in the transaction thread.
     unsafe {
         // (a demoted node: tarn_validate raises ER_READONLY; no stream
         // transaction: it fails the reads, or only ends row locks)
-        if box_is_ro() || !box_txn() {
-            return None;
+        if box_is_ro() {
+            return back(Why::ReadOnly);
+        }
+        if !box_txn() {
+            return back(Why::Stream);
         }
         // The node has been the leader since the stream began (TERM_TXN),
         // and no TRUNCATE or DROP TABLE was applied since (DDL_TXN: the Lua
@@ -1622,20 +1718,20 @@ fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
         // again: term_txn is the term's here.)
         let id = txn_number();
         if id < s.term_txn || id < s.ddl_txn {
-            return None;
+            return back(Why::Term);
         }
     }
     // BK.commit_check: the membership a read of every shard was routed
     // with; the buckets read are served here, none of them held
     if v.mver.is_some_and(|m| m < s.mver) {
-        return None;
+        return back(Why::Bucket);
     }
     if s.count != 0 && (s.held != 0 || v.reads.iter().any(|r| r.bucket.is_some_and(|b| !s.serves(b)))) {
-        return None;
+        return back(Why::Bucket);
     }
     // reads_w_locked: no W lock of a prepared transaction on what it read
-    if !v.reads.iter().all(|r| read_set_free(s, r)) {
-        return None;
+    if let Some(w) = v.reads.iter().find_map(|r| read_set_met(s, r)) {
+        return back(w);
     }
     // SAFETY: the stream's transaction; nothing yields until it commits
     // (the probe's space is data-temporary: no WAL write).
@@ -1707,6 +1803,7 @@ unsafe fn write_step(
     args: *const c_char,
     args_end: *const c_char,
     step: fn(&[u8], &Cell<bool>) -> Option<Served>,
+    proc_: Proc,
     count: fn(&mut State, bool),
 ) -> c_int {
     if OTHER_LAYOUT.load(Ordering::Relaxed) {
@@ -1721,11 +1818,12 @@ unsafe fn write_step(
     let buf = std::slice::from_raw_parts(args as *const u8, len);
     let committed = Cell::new(false);
     TXN_LOST.with(|l| l.set(false));
+    fallback::begin();
     let out = match std::panic::catch_unwind(AssertUnwindSafe(|| step(buf, &committed))) {
         Ok(out) => out,
         // (once the commit began, the writes must not go to Lua as well)
         Err(_) if committed.get() => Some(Served::Reply(outcome_unknown())),
-        Err(_) => None,
+        Err(_) => back(Why::Panic),
     };
     let out = match out {
         None if TXN_LOST.with(|l| l.get()) => Some(Served::Reply(txn_lost())),
@@ -1733,6 +1831,9 @@ unsafe fn write_step(
     };
     if let Some(s) = state() {
         count(s, out.is_some());
+    }
+    if out.is_none() {
+        fallback::counted(proc_, None);
     }
     match out {
         Some(Served::Reply(mp)) => reply(ctx, &mp),
@@ -1753,7 +1854,7 @@ pub unsafe extern "C" fn ts_autocommit(
     args: *const c_char,
     args_end: *const c_char,
 ) -> c_int {
-    write_step(ctx, args, args_end, autocommit, |s, served| {
+    write_step(ctx, args, args_end, autocommit, Proc::Write, |s, served| {
         if served {
             s.w_served += 1;
         } else {
@@ -1774,7 +1875,7 @@ pub unsafe extern "C" fn ts_commit_local(
     args: *const c_char,
     args_end: *const c_char,
 ) -> c_int {
-    write_step(ctx, args, args_end, commit_local, |s, served| {
+    write_step(ctx, args, args_end, commit_local, Proc::Commit, |s, served| {
         if served {
             s.c_served += 1;
         } else {
@@ -1791,7 +1892,7 @@ pub unsafe extern "C" fn ts_commit_local(
 /// Called by Tarantool with a valid context and argument buffer.
 #[no_mangle]
 pub unsafe extern "C" fn ts_validate(ctx: *mut BoxFunctionCtx, args: *const c_char, args_end: *const c_char) -> c_int {
-    write_step(ctx, args, args_end, validate, |s, served| {
+    write_step(ctx, args, args_end, validate, Proc::Validate, |s, served| {
         if served {
             s.v_served += 1;
         } else {

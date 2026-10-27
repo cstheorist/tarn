@@ -38,7 +38,7 @@ tla/check.sh                               # needs tla/tla2tools.jar
   and lock updates inside `atomic()` with no yield, right before
   `box.commit()` (`lua/tarn.lua` "Yields", `docs/design.md` §2.11); the
   storage tests run with `TARN_CHECK_YIELDS`.
-- Code in `crates/tarn-verified` must keep verifying with Verus (131 verified,
+- Code in `crates/tarn-verified` must keep verifying with Verus (134 verified,
   0 errors); keep its Verus idioms.
 - SQL behaviour is defined by MariaDB 10.11: add cases to
   `tests/sql/difftest.py`.
