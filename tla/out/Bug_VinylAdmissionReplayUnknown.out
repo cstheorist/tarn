@@ -1,0 +1,183 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 19 and seed 643113682225521313 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 247] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /model/VinylAdmission.tla
+Parsing file /tmp/tlc-5490162094500398915/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-5490162094500398915/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5490162094500398915/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5490162094500398915/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5490162094500398915/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5490162094500398915/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5490162094500398915/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module VinylAdmission
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module VinylAdmission
+Starting... (2026-10-27 11:42:03)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 11:42:04.
+Error: Invariant NoBusinessReplay is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "idle"]
+/\ ticks = 0
+/\ credit = [A |-> 0, B |-> 0]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 0, B |-> 0], g2 |-> [A |-> 0, B |-> 0]]
+/\ spent = [A |-> 0, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 0]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 0, B |-> 0]
+
+State 2: <Refill line 47, col 5 to line 53, col 61 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "idle"]
+/\ ticks = 1
+/\ credit = [A |-> 1, B |-> 1]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 1, B |-> 1], g2 |-> [A |-> 1, B |-> 1]]
+/\ spent = [A |-> 0, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 0]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 1, B |-> 1]
+
+State 3: <Refill line 47, col 5 to line 53, col 61 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "idle"]
+/\ ticks = 2
+/\ credit = [A |-> 2, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 0, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 0]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+State 4: <LocalAdmission("y") line 64, col 5 to line 74, col 55 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "admitted"]
+/\ ticks = 2
+/\ credit = [A |-> 1, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 1, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 0]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+State 5: <LocalEffect("y") line 76, col 5 to line 80, col 85 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "effected"]
+/\ ticks = 2
+/\ credit = [A |-> 1, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 1, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 1]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+State 6: <LocalReceipt("y",FALSE) line 82, col 5 to line 85, col 85 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "unknown"]
+/\ ticks = 2
+/\ credit = [A |-> 1, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 1, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 1]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+State 7: <RetryLocal("y") line 90, col 5 to line 96, col 61 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "idle"]
+/\ ticks = 2
+/\ credit = [A |-> 1, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 1, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 1]
+/\ retries = [x |-> 1, y |-> 0]
+/\ attemptBefore = [x |-> 0, y |-> 1]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+State 8: <LocalAdmission("y") line 64, col 5 to line 74, col 55 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "admitted"]
+/\ ticks = 2
+/\ credit = [A |-> 0, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 2, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 1]
+/\ retries = [x |-> 1, y |-> 0]
+/\ attemptBefore = [x |-> 0, y |-> 1]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+State 9: <LocalEffect("y") line 76, col 5 to line 80, col 85 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "effected"]
+/\ ticks = 2
+/\ credit = [A |-> 0, B |-> 2]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 2, B |-> 2], g2 |-> [A |-> 2, B |-> 2]]
+/\ spent = [A |-> 2, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 2]
+/\ retries = [x |-> 1, y |-> 0]
+/\ attemptBefore = [x |-> 0, y |-> 1]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 2, B |-> 2]
+
+12901 states generated, 5536 distinct states found, 2919 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-27 11:42:04)
+Trace exploration spec path: ./VinylAdmission_TTrace_1793101323.tla

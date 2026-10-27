@@ -535,6 +535,7 @@ pub struct Cluster {
     members_ver: AtomicU64,
     pub(crate) members_mu: tokio::sync::Mutex<()>,
     pub(crate) lazy_samples: Mutex<std::collections::BTreeMap<u32, Option<crate::lazy::StatsSample>>>,
+    pub(crate) vinyl_samples: Mutex<std::collections::BTreeMap<u32, crate::vinyl::StatsSample>>,
 }
 
 /// A row-lock request in flight (`Txn::lock`).
@@ -885,6 +886,7 @@ impl Cluster {
             members_ver: AtomicU64::new(0),
             members_mu: tokio::sync::Mutex::new(()),
             lazy_samples: Mutex::new(Default::default()),
+            vinyl_samples: Mutex::new(Default::default()),
         });
         // The first shard (jobs, catalog) must answer, and every shard in
         // the cluster; one of the configuration that left the cluster need
@@ -911,6 +913,7 @@ impl Cluster {
         }
         c.reload_catalog().await?;
         crate::lazy::start_stats(&c);
+        crate::vinyl::start_stats(&c);
         {
             // Schema changes whose server stopped are finished by whichever
             // server finds them first.

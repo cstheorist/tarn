@@ -1451,6 +1451,7 @@ impl Session {
             writes.uint(b as u64);
         }
         let mut attempt = 0;
+        let mut admission_retry = crate::vinyl::RetryBudget::default();
         loop {
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
             // Lazy sources require Lua capture. Avoid a predictable extra
@@ -1479,6 +1480,19 @@ impl Session {
                     return Err(e);
                 }
             };
+            match admission_retry.pause(&d).await {
+                Ok(true) => {
+                    self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    if table.has_lazy() {
+                        note_lazy_write_error(&mut self.lazy_history, &e);
+                    }
+                    return Err(e);
+                }
+            }
             match lua_status(&d) {
                 Ok(_) => {
                     let n = match autocommit_ack(&d, self.cluster.shards[shard].id) {
@@ -3342,6 +3356,12 @@ impl Session {
             .collect();
         rows.extend(
             crate::lazy::stats(&self.cluster)
+                .into_iter()
+                .filter(|(n, _)| like_ci(n, like))
+                .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
+        );
+        rows.extend(
+            crate::vinyl::stats(&self.cluster)
                 .into_iter()
                 .filter(|(n, _)| like_ci(n, like))
                 .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),

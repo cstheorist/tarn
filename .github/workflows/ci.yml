@@ -124,6 +124,15 @@ jobs:
           ci/annotate.sh vinyl-lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407 --engine vinyl
           ci/annotate.sh vinyl-lazyfaults python3 tests/sql/lazyfaults.py --tarn 127.0.0.1:4000 --shards 127.0.0.1:3311,127.0.0.1:3321 --engine vinyl
           if grep -h "yielded inside" /tmp/tarn-cluster/*.log; then echo "::error title=vinyl::an atomic section yielded"; exit 1; fi
+      - name: Vinyl admission and overload latency
+        run: |
+          scripts/cluster.sh stop
+          TARN_VINYL_MEMORY_MB=8 TARN_VINYL_CACHE_MB=0 TARN_VINYL_TIMEOUT=0.25 TARN_TEST_HOOKS=1 \
+            scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
+          ci/annotate.sh vinylpressure python3 tests/sql/vinylpressure.py \
+            --tarn 127.0.0.1:4000,127.0.0.1:4001 --shards 127.0.0.1:3311,127.0.0.1:3321 \
+            --require-native --real-pressure
+          scripts/cluster.sh stop
       - name: Fault injection
         run: |
           ci/annotate.sh faults tests/faults.sh
@@ -152,6 +161,9 @@ jobs:
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           for f in /tmp/tarn-lazyfaults-*/manifest.json /tmp/tarn-lazyfaults-*/events.jsonl; do
+            [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
+          done
+          for f in /tmp/tarn-vinylpressure-*/manifest.json /tmp/tarn-vinylpressure-*/events.jsonl /tmp/tarn-vinylpressure-*/pressure-summary.json; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true

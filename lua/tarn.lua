@@ -57,6 +57,7 @@ local M = {
         gc_batch = 500,          -- records deleted per GC transaction
         lazy_outbox_entries = 65536, -- committed plus PREPARE-promised assignments
         lazy_outbox_bytes = 64 * 1024 * 1024,
+        vinyl_attempt_timeout = .25, -- fresh Vinyl physical-write attempt; APPLY is already decided
         alter_check_rows = 1000000, -- ALTER TABLE refuses to check more existing rows than this per shard
         -- A read returns at most this many rows, or rows of this many bytes,
         -- per call; the SQL server continues it after the last one (issue #77).
@@ -1425,6 +1426,10 @@ end
 -- rolled it back -- it took no effect anywhere, so the client may retry
 -- (1213). Not for APPLY, whose transaction is already decided.
 local function commit_failure(e)
+    if (type(e) == 'cdata' or type(e) == 'table') and e.code == box.error.VY_QUOTA_TIMEOUT then
+        M.vinyl.quota_timeouts = M.vinyl.quota_timeouts + 1
+        return {'error', 1205, 'Timed out waiting for Vinyl memory quota; transaction rolled back'}
+    end
     if type(e) == 'cdata' and e.code == box.error.SYNC_ROLLBACK then
         return conflict('shard leader changed during the commit, retry the transaction (' .. tostring(e.message) .. ')')
     end
@@ -2358,12 +2363,13 @@ end   -- (check_arith)
 -- limit of 200 locals)
 local write_steps
 do
-local function write_step(w)
+local function write_step(w, deadline)
     local space = box.space[w[2]]
     if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
     local pk, new = write_target(space, w)
     local old = space:get(pk)
     yield_point('write')
+    M.vinyl.check_deadline(deadline)
     if w[1] ~= 'update' then
         local res = apply_write(w)
         BK.note(space, old, new)
@@ -2382,6 +2388,7 @@ local function write_step(w)
     -- w[5]: {{field, min, max}} for integer columns changed by arithmetic
     if w[5] ~= nil and #w[5] > 0 then check_arith(old, w[4], w[5]) end
     new = old:update(mysql_update_ops(old, w[4]))
+    M.vinyl.check_deadline(deadline)
     local res = space:replace(new)
     BK.note(space, old, new)
     return {space, pk, old, new, res, false}
@@ -2391,13 +2398,13 @@ end
 -- refuses (TUPLE_FOUND) is tried again after the others: a transaction may
 -- move a unique value from one row to another, and the row giving it up may
 -- come later. Returns the plans in the order of `writes`.
-function write_steps(writes)
+function write_steps(writes, deadline)
     local plans, todo = {lazy_initial = M.lazy.initial(writes, write_target)}, {}
     for i = 1, #writes do todo[#todo + 1] = i end
     while true do
         local again, err = {}, nil
         for _, i in ipairs(todo) do
-            local ok, p = pcall(write_step, writes[i])
+            local ok, p = pcall(write_step, writes[i], deadline)
             if ok then plans[i] = p
             elseif type(p) == 'cdata' and p.code == box.error.TUPLE_FOUND then
                 again[#again + 1], err = i, p
@@ -2414,10 +2421,11 @@ function write_steps(writes)
                 local sp = box.space[w[2]]
                 local pk = write_target(sp, w)
                 old[i] = sp:get(pk)
+                M.vinyl.check_deadline(deadline)
                 sp:delete(pk)
             end
             for _, i in ipairs(again) do
-                plans[i] = write_step(writes[i])
+                plans[i] = write_step(writes[i], deadline)
                 plans[i][P_OLD] = old[i]
             end
             return plans
@@ -2533,7 +2541,9 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
             if BK.has_reads(rpoints, rranges) then return conflict(BK.GONE_MSG) end
             box.begin(RW)
         end
-        local plans, n = write_steps(writes), 0
+        local throttle, write_deadline = M.vinyl.guard(writes)
+        if throttle then return throttle end
+        local plans, n = write_steps(writes, write_deadline), 0
         M.lazy.capture(plans)
         for i = 1, #plans do
             if plans[i][P_RES] ~= nil then n = n + 1 end
@@ -2551,9 +2561,12 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        return commit_failure(res)
+        local f = commit_failure(res)
+        if f[2] == 1205 then pl_release_all(txid) end
+        return f
     end
     if res[1] ~= OK and box.is_in_txn() then box.rollback() end
+    if res[2] == 1205 then pl_release_all(txid) end
     return res
 end
 
@@ -3459,7 +3472,9 @@ function tarn_autocommit(writes, opts)
             local stale = stale_definition(fence) or BK.commit_check(wb, nil, nil, false)
             if stale then return stale end
             box.begin(RW)
-            local plans, n, last = write_steps(writes), 0, nil
+            local throttle, write_deadline = M.vinyl.guard(writes)
+            if throttle then box.rollback(); return throttle end
+            local plans, n, last = write_steps(writes, write_deadline), 0, nil
             M.lazy.capture(plans)
             for i = 1, #writes do
                 local p = plans[i]
@@ -3540,7 +3555,9 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
             end
             seq = inflight_begin()
             box.begin(RW)
-            local plans, n = write_steps(writes), 0
+            local throttle, write_deadline = M.vinyl.guard(writes)
+            if throttle then box.rollback(); pl_release_all(txid); return throttle end
+            local plans, n = write_steps(writes, write_deadline), 0
             M.lazy.capture(plans)
             for i = 1, #plans do
                 if plans[i][P_RES] ~= nil then n = n + 1 end
@@ -3572,7 +3589,9 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        return commit_failure(res)
+        local f = commit_failure(res)
+        if f[2] == 1205 then pl_release_all(txid) end
+        return f
     end
     return res
 end
@@ -3706,21 +3725,25 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         return {status == 'moved' and 'moved' or 'no', code, msg}
     end
     local ok, res = pcall(function()
-        -- Write-only participants are prepared outside any stream.
+        -- A new participant view must not revote YES from another PREPARE
+        -- whose synchronous commit can still roll back. Existing streams
+        -- retain their transaction and its original read trackers.
         local in_stream = box.is_in_txn()
-        if not in_stream then box.begin(RW) end
+        if not in_stream then box.begin({txn_isolation = 'read-confirmed'}) end
         local existing = box.space._tarn_part:get{txid}
         if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
             box.rollback()
             if existing.state == 'aborted' then return {'no', 1213, 'transaction was aborted'} end
             return {'yes'}
         end
-        if not in_stream and BK.has_reads(rpoints, rranges) then return vote_no(1213, BK.GONE_MSG) end
+        -- Every fresh NO/tombstone follows expiry: a missing participant
+        -- record can belong to an old committed transaction after GC.
         if txn_ts ~= nil and now() - txn_ts > M.cfg.max_txn_age then
             box.rollback()
             M.stats.prepare_no = M.stats.prepare_no + 1
             return {'expired', 1213, 'transaction too old'}
         end
+        if not in_stream and BK.has_reads(rpoints, rranges) then return vote_no(1213, BK.GONE_MSG) end
         lk_fresh()
         fence_fresh()
         BK.fresh()
@@ -3733,6 +3756,8 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         if stale_definition(fence) then return vote_no(1412, STALE_DEF_MSG) end
         local mv = BK.commit_check(wb, rpoints, rranges, true, nil, mver)
         if mv then return vote_no(mv[2], mv[3], mv[1]) end
+        local throttle = M.vinyl.guard(writes)
+        if throttle then return vote_no(throttle[2], throttle[3]) end
         -- Reads (may yield, see "Yields"): the rows the writes replace and the
         -- holders of the unique values the new rows take (tracked by MVCC).
         local plans = {}
@@ -6465,7 +6490,7 @@ function tarn_info()
             locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, plock_txns = ptx,
             ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
-            schema_version = box.info.schema_version or 0,
+            schema_version = box.info.schema_version or 0, vinyl = M.vinyl.stats(),
             native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
                                        to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
                                        writes_to_lua = tonumber(BK.ns.w_to_lua),
@@ -6543,6 +6568,7 @@ end
 
 function M.init(cfg)
     M.lazy.quota_invalidate()
+    M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
     pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
     if not M.cfg.sync and not box.info.ro then
@@ -6555,6 +6581,7 @@ function M.init(cfg)
     -- any election state change makes it stale (rebuilt before next use).
     box.ctl.on_election(function()
         LK_STALE = true; FENCE_STALE = true
+        M.vinyl.reset()
         pcall(BK.term_mark)   -- (else lk_reload makes it)
         M.lazy.invalidate()
         M.lazy.quota_invalidate()
@@ -6562,6 +6589,7 @@ function M.init(cfg)
     end)
     box.watch('box.status', function()   -- read-only changes
         LK_STALE = true; FENCE_STALE = true
+        M.vinyl.reset()
         M.lazy.invalidate()
         M.lazy.quota_invalidate()
         pl_fresh(); BK.reset()
@@ -6576,6 +6604,7 @@ function M.init(cfg)
     return M
 end
 
+M.vinyl = require('tarn_vinyl').new{cfg = M.cfg, key_def = index_key_def}
 M.lazy = require('tarn_lazy').new{
     cfg = M.cfg, bk = BK, rw = RW, failure = failure, writable = writable,
     inflight_begin = inflight_begin, inflight_writes = inflight_writes, inflight_end = inflight_end,
@@ -6611,5 +6640,6 @@ end
 function tarn_lazy_gc(gen, bucket, route) return M.lazy.gc(gen, bucket, route) end
 function tarn_lazy_stats() return M.lazy.stats() end
 function tarn_lazy_control(action, arg) return M.lazy.control(action, arg) end
+function tarn_vinyl_stats() return {OK, M.vinyl.stats()} end
 
 return M

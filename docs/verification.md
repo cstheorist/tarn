@@ -731,6 +731,130 @@ tla/check.sh BootstrapCount Bug_CountsAuxMetadata
 | `BootstrapCount` | 2,160 | 4 | passes |
 | `Bug_CountsAuxMetadata` | 1,741 | 4 | violates `NewClusterDefault` |
 
+### Vinyl fresh-write admission (issue #58)
+
+`VinylAdmission.tla` checks a storage-side admission guard as a local
+refinement of the existing commit protocol. Each shard has one shared
+weighted-credit budget, used by both gateways and all fresh local commits
+and PREPAREs. Checking and debiting that budget must be one nonyielding
+action before business-row effects. The bounded pressure interval has two
+gateways, two local transactions, a two-shard transaction, three refill
+steps, and one leadership reset. The controller starts with zero credit;
+promotion discards unused credit rather than granting a new full burst.
+An admitted operation can complete after that reset without being charged
+again.
+
+A fresh PREPARE refused for admission follows the existing durable NO,
+ABORT and tombstone protocol. Other participants may already be prepared;
+the invariant requires no surviving business-row changes after abort,
+not an absence of protocol metadata or WAL work. Duplicate durable YES
+records and decided/recovered APPLY bypass fresh admission. The model
+checks that those operations cannot receive an admission refusal; it does
+not claim that the native engine completes them within a fixed time.
+Local admission, a nonidempotent effect and its reply are separate steps.
+Only an explicit before-effect `throttled` result permits a bounded caller
+retry. Replaying an unknown result after a lost receipt can perform the
+same mutation twice and is forbidden.
+
+The credit cost is an estimate, not a native allocator reservation.
+Tarantool exposes the effective transaction rate limit alongside dump
+bandwidth and blocked writers
+([pinned introspection](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/vinyl.c#L255)).
+Its regulator adjusts memory and compaction limits from observed progress
+([regulator](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/vy_regulator.c#L413));
+the engine's own quota reservation/actual-use adjustment remains separate
+([native quota](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/vy_quota.h#L281)).
+`SharedBudget` bounds charged estimates by credits earned from elapsed
+refill; it does not bound actual memory, physical write amplification,
+compaction debt or old decided work. A healthy bypass is outside this
+pressure-interval bound; this fixture does not model entry to or exit from
+a healthy period in which no admission budget is active. Runtime
+refinement must establish cost accounting,
+numeric/sentinel handling, role and metric freshness, cold reset behavior,
+guard coverage before effects, native rejection identity, and the absolute
+caller deadline. The one retry in this fixture abstracts a bounded retry
+budget; it does not prove the implementation's 250 ms wall-clock bound or
+bound native vinyl/quorum latency after admission. The model assumes the
+existing durable YES, decision and abort semantics of `TarnCommit`; that
+module and all previous model/configuration bytes are unchanged.
+
+```sh
+tla/check.sh VinylAdmission Bug_VinylAdmissionPerGatewayBudget \
+  Bug_VinylAdmissionGateAfterEffect Bug_VinylAdmissionNegativeCredit \
+  Bug_VinylAdmissionThrottleExistingYes Bug_VinylAdmissionThrottleDecidedApply \
+  Bug_VinylAdmissionReplayUnknown Bug_VinylAdmissionResetFullBurst
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `VinylAdmission` | 67,072 | 20 | passes |
+| `Bug_VinylAdmissionPerGatewayBudget` | 50 | 4 | violates `SharedBudget` |
+| `Bug_VinylAdmissionGateAfterEffect` | 4 | 2 | violates `NoEffectRefusal` |
+| `Bug_VinylAdmissionNegativeCredit` | 4 | 2 | violates `NonnegativeCredit` |
+| `Bug_VinylAdmissionThrottleExistingYes` | 54 | 4 | violates `ExistingYesStable` |
+| `Bug_VinylAdmissionThrottleDecidedApply` | 593 | 6 | violates `DecidedApplyNotThrottled` |
+| `Bug_VinylAdmissionReplayUnknown` | 5,536 | 9 | violates `NoBusinessReplay` |
+| `Bug_VinylAdmissionResetFullBurst` | 15 | 3 | violates `SharedBudget` |
+
+### Confirmed duplicate PREPARE receipts
+
+`PrepareConfirm.tla` refines the native visibility premise of
+`TarnCommit!Revote` and admission's duplicate durable-YES bypass. It
+separates the first pending native PREPARE, its confirmation or rollback,
+the duplicate receipt, and the coordinator's receipt-certification step.
+An unconfirmed `prepared` tuple is not a durable YES: the first transaction
+can still roll back after the duplicate responds. A later idempotent
+PREPARE can establish a confirmed promise if no abort tombstone remains.
+The core commit protocol and previous models are unchanged.
+
+An actual Tarantool 3.9.0 probe on both memtx and vinyl reproduced the false
+YES with fsync WAL, synchronous metadata, native ABI7 ready, and a real
+quorum-two wait. The second `tarn_prepare` returned `yes` while the first
+was pending; the first later returned NO/error 216. A read-confirmed final
+view contained no participant, decision, intent locks or business row.
+The isolation control called the same unmodified procedure inside an
+already-open read-confirmed native transaction. It returned conservative
+NO/1213 while the first was pending. After restoring quorum one, a later
+PREPARE returned YES with a confirmed prepared participant, STAGING
+decision and intent locks. This control checks the isolation choice; it is
+not a separate network-stream/read-set preservation proof.
+
+The implementation begins read-confirmed only when no stream transaction
+already exists. It must preserve a pre-existing stream and its reads;
+normal conflict cleanup may roll that transaction back, but inspecting a
+duplicate must not restart it or silently discard its read set. Supported
+gateway streams already use read-confirmed isolation; this does not
+certify arbitrary external read-committed streams. The
+current SQL coordinator sends normal PREPARE once per participant, so the
+probe establishes the native duplicate-delivery boundary, not a claim
+that an observed SQL or CI failure used that schedule. The model checks
+only the confirmed-receipt premise, not all PREPARE scheduling, native
+replication, admission timing, or distributed serializability.
+
+Every fresh refusal that can create a NO/tombstone follows the expiry
+guard, including the missing-stream check. `TarnCommit!Prepare` already
+requires `t` outside `expired`: after committed records are collected, a
+late PREPARE must not recreate an aborted decision. The existing
+`Recov_GC` positive gate passes 1,136,892 states; `Bug_FenceAfterExpiry`
+violates `NoAbortAfterCommit` in 114,735 states. That mutant changes the
+recovery branch of the same post-GC obligation, rather than directly
+modeling the missing-stream branch. A paired Tarantool-runtime control
+(Lua mode)
+closes that refinement: on both engines the old ordering creates aborted
+records after an actual COMMITTED/APPLIED transaction's owned records
+are removed, while the corrected order returns `expired` without records
+or business changes. Confirmed existing-record revotes still precede
+expiry, since they retain a durable promise instead of creating one.
+
+```sh
+tla/check.sh PrepareConfirm Bug_UnconfirmedPrepare
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `PrepareConfirm` | 9 | 5 | passes |
+| `Bug_UnconfirmedPrepare` | 6 | 4 | violates `CertifiedYesDurable` |
+
 ### Stream watermarks and the native steps (issue #28)
 
 `StreamMarks.tla` checks how a shard knows, when a step commits the reads
@@ -857,10 +981,10 @@ that writes must keep, whatever it checks before.
 
 ### Configuration counts
 
-The default list contains 143 configurations, including 100 expected
-broken/trade-off outcomes. The 154 generated configurations reproduce from
+The default list contains 153 configurations, including 108 expected
+broken/trade-off outcomes. The 164 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 156 total. Explicit check arguments override the default
+directly, for 166 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

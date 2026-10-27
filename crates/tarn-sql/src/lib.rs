@@ -30,6 +30,7 @@ pub mod route;
 pub mod session;
 pub mod txn;
 pub mod types;
+pub mod vinyl;
 
 pub use cluster::{Cluster, ClusterConfig, ShardConfig};
 pub use session::{Output, Session};

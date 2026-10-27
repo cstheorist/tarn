@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Vinyl write admission ([#58](https://github.com/cstheorist/tarn/issues/58)):
+  storage shards share a pressure-sensitive admission budget across SQL
+  servers, refusing new writes before user data changes and preserving
+  decided APPLY and recovery. SQL servers briefly wait only after explicit
+  before-effect refusals; overload and rolled-back native quota waits
+  return 1205. `tarn_info()` and cached `SHOW TARN STATUS` expose regulator,
+  compaction, run and admission statistics. See
+  [the operational limits and measurements](docs/operations.md#vinyl-write-admission).
+
 - `tla/StreamMarks.tla` models how a shard knows that a stream began in
   its current election term and after any `TRUNCATE` or `DROP TABLE` of a
   table it read (the transaction numbers `TERM_TXN` and `DDL_TXN`), for the
@@ -433,6 +442,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- A duplicate PREPARE on a participant without an open stream could vote
+  YES from an unconfirmed record, then lose that promise when the original
+  PREPARE rolled back. It now reads confirmed participant state while
+  retaining the read set of an existing stream. Quorum-overlap and stream
+  continuity controls cover both engines and both native modes.
+
+- An expired PREPARE whose stream is gone is rejected before a fresh
+  NO/tombstone can be created. After a committed transaction's records
+  were collected, that earlier refusal could resurrect an aborted decision
+  over committed history. Runtime controls retain the committed row and
+  verify both the absent-history and collected-history cases.
+
 
 - A local commit or PREPARE of the reads of a stream that began before the
   shard's leader was demoted and elected again is refused, as a validation

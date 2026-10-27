@@ -9,6 +9,7 @@
 --   TARN_MEMORY_MB     memtx memory (default 1024)
 --   TARN_VINYL_MEMORY_MB  vinyl in-memory level of the LSM trees (default 128)
 --   TARN_VINYL_CACHE_MB   vinyl tuple cache (default 128)
+--   TARN_VINYL_TIMEOUT    max seconds per native memory-quota wait (default .25)
 --   TARN_VINYL_READ_THREADS  threads reading vinyl pages from disk (default:
 --                      the CPUs divided among TARN_HOST_INSTANCES, 1 to 8)
 --   TARN_HOST_INSTANCES storage instances sharing this machine (default 1)
@@ -61,6 +62,10 @@ local function default_read_threads()
 end
 
 local replicated = #replicas > 1
+local vinyl_timeout = tonumber(env('TARN_VINYL_TIMEOUT', '.25'))
+if vinyl_timeout == nil or vinyl_timeout ~= vinyl_timeout or vinyl_timeout < 0 or vinyl_timeout > 60 then
+    error('TARN_VINYL_TIMEOUT must be a finite number from 0 through 60')
+end
 -- Optionally also listen on a Unix socket (co-located SQL servers use it to
 -- skip the TCP stack).
 local listen_cfg = listen
@@ -74,6 +79,7 @@ box.cfg{
     memtx_use_mvcc_engine = true,
     vinyl_memory = tonumber(env('TARN_VINYL_MEMORY_MB', '128')) * 1024 * 1024,
     vinyl_cache = tonumber(env('TARN_VINYL_CACHE_MB', '128')) * 1024 * 1024,
+    vinyl_timeout = vinyl_timeout,
     vinyl_read_threads = tonumber(env('TARN_VINYL_READ_THREADS', '')) or default_read_threads(),
     vinyl_write_threads = tonumber(env('TARN_VINYL_WRITE_THREADS', '')),
     vinyl_page_size = tonumber(env('TARN_VINYL_PAGE_SIZE', '')),
