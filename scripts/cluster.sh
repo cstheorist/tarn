@@ -10,6 +10,7 @@
 #   Environment: TARN_VINYL_MEMORY_MB, TARN_VINYL_CACHE_MB (vinyl memory per storage instance),
 #                TARN_VINYL_READ_THREADS, _WRITE_THREADS, _PAGE_SIZE, _RANGE_SIZE, _BLOOM_FPR,
 #                TARN_CHECK_YIELDS=1 (an atomic protocol step that yields fails: tests),
+#                TARN_CHECK_LOCKS=1 (the native module's copy of the lock index is checked: tests),
 #                TARN_TEST_HOOKS=1 (tarn_test_hook may hold protocol steps: tests),
 #                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests),
 #                TARN_LOAD_WINDOW=SECS (the seconds of requests a bucket's load counts),
@@ -87,6 +88,7 @@ start_storage() {
       TARN_VINYL_PAGE_SIZE=${TARN_VINYL_PAGE_SIZE:-} TARN_VINYL_RANGE_SIZE=${TARN_VINYL_RANGE_SIZE:-} \
       TARN_VINYL_BLOOM_FPR=${TARN_VINYL_BLOOM_FPR:-} \
       TARN_CHECK_YIELDS=${TARN_CHECK_YIELDS:-} TARN_TEST_HOOKS=${TARN_TEST_HOOKS:-} \
+      TARN_CHECK_LOCKS=${TARN_CHECK_LOCKS:-} \
       TARN_DUMP_EVERY=${TARN_DUMP_EVERY:-} TARN_LOAD_WINDOW=${TARN_LOAD_WINDOW:-} TARN_NATIVE=${TARN_NATIVE:-} \
       TARN_LISTEN_UNIX=$([ "$UNIX" = 1 ] && echo "$DIR/s$i.$j.sock") \
       "$T" "$ROOT/lua/storage.lua"

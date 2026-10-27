@@ -513,12 +513,10 @@ impl Expr {
             }
             Expr::Like(a, p, negated, coll) => {
                 let (x, y) = (a.eval(row, cx)?, p.eval(row, cx)?);
-                // A binary string makes the match byte by byte.
-                let coll = if matches!(x, Value::Bin(_)) || matches!(y, Value::Bin(_)) {
-                    Collation::Binary
-                } else {
-                    *coll
-                };
+                // (under the collation the planner derived: binary when a
+                // binary string wins, not when a column's collation wins over
+                // a binary literal, as in ci_col LIKE X'41')
+                let coll = *coll;
                 match (text(&x), text(&y)) {
                     (Some(s), Some(p)) => Value::Int((coll.like(&s, &p) != *negated) as i64),
                     _ => Value::Null,
@@ -553,7 +551,7 @@ impl Expr {
                 v => v,
             },
             Expr::Key(a, coll) => match a.eval(row, cx)? {
-                Value::Str(b) if coll.is_ci() => Value::Bin(coll.key(&b)),
+                Value::Str(b) | Value::Bin(b) if coll.is_ci() => Value::Bin(coll.key(&b)),
                 v => v,
             },
         })
@@ -892,11 +890,7 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             if a.is_null() || b.is_null() {
                 return Ok(Value::Null);
             }
-            let coll = if matches!(a, Value::Bin(_)) || matches!(b, Value::Bin(_)) {
-                Collation::Binary
-            } else {
-                coll
-            };
+            // (under the collation the planner derived, as for LIKE)
             let (needle, hay) = (a.to_text().unwrap_or_default(), b.to_text().unwrap_or_default());
             Value::Int(coll.locate(&needle, &hay))
         }
@@ -1066,9 +1060,11 @@ pub fn value_type(v: &Value) -> ExprType {
             nullable: false,
             decimals: 0,
         },
+        // a binary string (X'41', 0x41): of the binary character set, as
+        // MariaDB types it
         Value::Bin(_) => ExprType {
-            ty: C::Blob,
-            sql: None,
+            ty: C::VarString,
+            sql: Some(SqlType::new(BaseType::VarBinary)),
             nullable: false,
             decimals: 0,
         },

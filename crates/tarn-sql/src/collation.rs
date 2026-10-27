@@ -106,11 +106,13 @@ pub fn aggregate(items: &[Option<Derived>], op: &str) -> tarn_common::SqlResult<
     if strs.is_empty() {
         return Ok(None);
     }
-    if let Some(b) = strs.iter().find(|d| d.coll == Collation::Binary) {
-        return Ok(Some((*b).clone()));
-    }
     let best = strs.iter().map(|d| d.coercibility).min().unwrap();
     let tied: Vec<&&Derived> = strs.iter().filter(|d| d.coercibility == best).collect();
+    // (a binary string literal is coercible: a column's collation wins over
+    // it, ci_col = X'41' compares under the column's; X'61' = 'A' by bytes)
+    if let Some(b) = tied.iter().find(|d| d.coll == Collation::Binary) {
+        return Ok(Some((**b).clone()));
+    }
     let first = tied[0];
     if tied.iter().all(|d| d.coll == first.coll) {
         return Ok(Some((*first).clone()));
@@ -677,5 +679,27 @@ mod tests {
             G
         );
         assert_eq!(aggregate(&[None, None], "=").unwrap(), None);
+        // a binary string wins at a tie only (#122): over a coercible
+        // literal, not over a column or an explicit collation
+        let bin = |k| d(Collation::Binary, k);
+        assert_eq!(
+            aggregate(&[bin(COERCIBLE), d(G, COERCIBLE)], "=")
+                .unwrap()
+                .unwrap()
+                .coll,
+            Collation::Binary
+        );
+        assert_eq!(
+            aggregate(&[d(G, IMPLICIT), bin(IMPLICIT)], "=").unwrap().unwrap().coll,
+            Collation::Binary
+        );
+        assert_eq!(
+            aggregate(&[d(G, IMPLICIT), bin(COERCIBLE)], "=").unwrap().unwrap().coll,
+            G
+        );
+        assert_eq!(
+            aggregate(&[bin(IMPLICIT), d(G, EXPLICIT)], "=").unwrap().unwrap().coll,
+            G
+        );
     }
 }

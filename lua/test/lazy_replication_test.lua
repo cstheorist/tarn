@@ -7,7 +7,7 @@ local stage, pass = assert(arg[1]), 0
 assert(engine == 'memtx' or engine == 'vinyl')
 local expected_mode = assert(os.getenv('LAZY_RF3_EXPECT_MODE'))
 assert(expected_mode == 'native' or expected_mode == 'lua')
-local mode_label = expected_mode == 'native' and 'native ABI8' or 'Lua'
+local mode_label = expected_mode == 'native' and 'native ABI' or 'Lua'
 local sid, gen, name, bucket = 64001, 64002, 'test.lazy_rf3', 1
 local txid = 'lazy-rf3-' .. engine
 local ids = {}
@@ -52,7 +52,8 @@ if rawget(_G,'tarn') == nil or box.space._tarn_lazy_outbox == nil then return fa
 local x={pid=box.info.pid,uuid=tostring(box.info.uuid),id=box.info.id,term=box.info.election.term,
     ro=box.info.ro,workdir=fio and fio.cwd() or require('fio').cwd(),sync=tarn.cfg.sync,
     queue=box.info.synchro.queue,quota_ready=tarn.lazy.quota.ready(),capture_stale=tarn.lazy.stale,
-    wal=box.cfg.wal_mode,version=box.info.version,configured_native=tarn.cfg.native~=false and tarn.cfg.native~=nil}
+    wal=box.cfg.wal_mode,version=box.info.version,configured_native=tarn.cfg.native~=false and tarn.cfg.native~=nil,
+    want_layout=tarn.NS_LAYOUT}
 if not x.ro then
     local n=tarn_info().native
     x.native=n
@@ -89,7 +90,7 @@ local function state(i)
 end
 local function mode_ok(s)
     if expected_mode == 'native' then
-        return s.configured_native and s.native and s.native.ready == 1 and s.layout == 8
+        return s.configured_native and s.native and s.native.ready == 1 and s.layout == s.want_layout
     end
     return s.configured_native == false and s.native == false and s.layout == nil
 end

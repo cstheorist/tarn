@@ -16,7 +16,7 @@ box.cfg{work_dir = work, listen = uri, memtx_use_mvcc_engine = true, memtx_memor
     replication_synchro_timeout = .5, log_level = 3}
 box.ctl.promote()
 local tarn = require('tarn'); tarn.lazy.paused = true
-tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields = true,
+tarn.init{shard_id = 1, peers = {}, sync = true, test_hooks = true, check_yields = true, check_locks = true,
     recovery_after = 1000000, native = native ~= nil and native ~= '0' and native or false}
 
 local pass, fail, sequence = 0, 0, 88000
@@ -499,8 +499,10 @@ local yes, err = xpcall(function()
     ok(tarn_bucket_init(16, {{1, 16}}))
     local ni, layout = tarn_info().native
     if native ~= nil and native ~= '0' then
-        layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-        assert(ni and ni.ready == 1 and layout == 8, 'actual native ABI8 required')
+        local ffi = require('ffi')
+        layout = tonumber(ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
+        assert(ni and ni.ready == 1 and layout == tarn.NS_LAYOUT and layout == 10
+               and ffi.sizeof('struct tarn_ns') == 304, 'actual native ABI10/size304 required')
     else assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode required') end
     print('IDENTITY ' .. json.encode{version = box.info.version, native = ni, layout = layout,
         sync = tarn.cfg.sync, wal = box.cfg.wal_mode})
@@ -508,6 +510,11 @@ local yes, err = xpcall(function()
     exercise('memtx'); exercise('vinyl')
 end, debug.traceback)
 cleanup()
+if native ~= nil and native ~= '0' then
+    local errors = tarn_info().stats.lock_copy_errors
+    check('native lock copy held the lock index through engine cleanup',
+          tarn.cfg.check_locks == true and errors == 0, errors)
+end
 if not yes then fail = fail + 1; print('  FAIL engine test exception: ' .. tostring(err)) end
 print(string.format('%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

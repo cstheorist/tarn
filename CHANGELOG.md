@@ -386,6 +386,26 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The native storage procedures check locks key by key
+  ([#28](https://github.com/cstheorist/tarn/issues/28)): a read with the
+  lock check, a commit or a validation goes to Lua only when a prepared
+  transaction holds a W lock on what it read (a key it read, or a key in a
+  range it read), and a write only when a lock is on a key it writes or a
+  range lock's range holds one -- no longer whenever its table has any
+  lock. The native module keeps a copy of the lock index, which the Lua
+  module changes in the same step as the index; its counts, the checks on
+  them and the decision whether a key lies in a range are verified with
+  Verus (`crates/tarn-verified/src/locks.rs`). `TARN_CHECK_LOCKS` makes
+  the Lua module compare the copy with the index after each change; the
+  storage tests, the SQL suites and the failover tests in CI run with it.
+  On two shards under `oltp_write_only` (16 threads), the native procedures
+  now commit 99.9% of the one-shard transactions, where they handed 93% to
+  Lua, and the transactions per second rise 10%. Next to cross-shard
+  transactions that read ranges, one-shard autocommit writes go to Lua
+  0.4% of the time, where 37% did (`oltp_update_non_index` next to
+  `oltp_read_write`: 28% more transactions per second), and the validations
+  of read-only transactions next to writers 0.4-1.7% of the time, where
+  53-81% did.
 - A READ COMMITTED `SELECT ... WHERE <primary key prefix> [ORDER BY
   <primary key>] LIMIT n FOR UPDATE | FOR SHARE [NOWAIT | SKIP LOCKED]`
   makes one storage call: the shard scans the range and takes the locks
@@ -465,8 +485,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were collected, that earlier refusal could resurrect an aborted decision
   over committed history. Runtime controls retain the committed row and
   verify both the absent-history and collected-history cases.
-
-
+- Hexadecimal literals (`X'4142'`, the form in which PyMySQL 1.2.3 sends
+  bytes), strings with the `_binary` or a UTF-8 introducer (`_binary 'ab'`,
+  `_binary X'4142'`, `_utf8mb4 'ab'`) and national strings (`N'ab'`) failed
+  in text queries with 1064 or 1235. They are binary strings, or text ones,
+  as in MariaDB: typed as such, compared as such, and named by their text
+  (`SELECT X'41'` is a column `X'41'`). An odd number of digits, or another
+  character, is 1064, as in MariaDB. A binary string is coercible: a column's
+  collation, or an explicit one, wins over it, so a case-insensitive column
+  compared with `X'41'` compares as text; between two literals the binary
+  one wins, also in `LIKE` and `LOCATE`. A prepared statement executed with
+  a binary parameter is planned for it. `0x123` is `0x0123`
+  ([#122](https://github.com/cstheorist/tarn/issues/122)).
+- A cached plan served statements whose literals were of another kind: after
+  `SELECT 1`, `SELECT 'abc'` came back as an integer column, which PyMySQL
+  could not convert. Plans are cached per kind of each parameter too
+  ([#122](https://github.com/cstheorist/tarn/issues/122)).
 - A local commit or PREPARE of the reads of a stream that began before the
   shard's leader was demoted and elected again is refused, as a validation
   is: the stream may have missed writes of the leader in between. They

@@ -9,6 +9,7 @@
 //! lua/tarn.lua loads it ("Native procedures"); SQL servers call
 //! `tarn_storage.ts_select` instead of `tarn_select` where it is.
 
+pub mod locks;
 pub mod mp;
 pub mod select;
 pub mod state;

@@ -45,9 +45,9 @@ specifies capture, delivery, session catch-up, bootstrap and topology rules.
 | `crates/tarn-mysql` | Server side of the MySQL protocol: HandshakeV10, `mysql_native_password` (auth switch from `caching_sha2_password`), text and binary result sets, prepared statements (`COM_STMT_*`, long data), `CLIENT_DEPRECATE_EOF`. All length-encoded integers/strings and packet framing go through the Verus-verified codec. |
 | `crates/tarn-sql` | Parsing (sqlparser, MySQL dialect), literal normalization and a shared plan cache, planning (access-path selection, joins, aggregation), execution, sessions, the transaction coordinator, DDL, catalog cache, AUTO_INCREMENT. |
 | `crates/tarn-iproto` | Async pipelined Tarantool client: many requests in flight per connection (matched by sync id), coalesced writes, zero-copy decoding, streams (interactive transactions), MP_DECIMAL. |
-| `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, global index maintenance, MySQL wire codec, the MessagePack codec of the native procedures. Compiled into the server and the native module (proof code is erased). |
+| `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, global index maintenance, MySQL wire codec, the MessagePack codec and the lock checks of the native procedures. Compiled into the server and the native module (proof code is erased). |
 | `lua/tarn.lua` | Storage-node module: system spaces, lock table, the participant side of the commit protocol, lock-aware reads, recovery fiber, DDL, counters. |
-| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec. |
+| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads, writes and commits without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec, their lock checks through the Verus-verified counts of a copy of the lock index. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
 ### 1.1 Data layout and routing
@@ -330,7 +330,10 @@ before both fields.
 **In the SQL layer.** The binder derives every text expression's collation
 with MySQL's coercibility rules (an explicit `COLLATE` wins over a column,
 a column over a literal; between two columns a `_bin` collation wins and
-two other different ones are error 1267) and stores it in each comparison
+two other different ones are error 1267; a binary string wins over a text
+one of the same coercibility only: `X'61' = 'A'` compares bytes, but a
+case-insensitive column compared with `X'41'` converts it to text) and
+stores it in each comparison
 (`=`, `IN`, `BETWEEN`, `LIKE`, `CASE`, `NULLIF`, `GREATEST`, `LEAST`,
 `LOCATE`). `ORDER BY` items become collation keys (`Expr::Key`); `GROUP BY`
 items, `DISTINCT` columns and aggregates record their collation, and `UNION`
@@ -339,7 +342,13 @@ a predicate only if the index orders by the predicate's collation -- or, for
 an equality, if the index is case-insensitive and the comparison binary:
 the index then finds a superset, which the statement's filter narrows.
 Literals take `collation_connection` (from the client's handshake or `SET
-NAMES`), and plans are cached per connection collation.
+NAMES`). A text query's literals are its plan's parameters
+(`normalize.rs`): a hexadecimal literal (`X'4142'`, as PyMySQL sends bytes)
+or a string with the `_binary` introducer is a binary one, typed and
+compared as a binary string, and `N'ab'` or a UTF-8 introducer a text one.
+Plans are cached per connection collation and per kind of each parameter,
+which types the expressions it appears in: `SELECT 1` and `SELECT 'abc'`
+share a template but not a plan.
 
 ### 1.4 Global unique indexes
 
@@ -468,23 +477,23 @@ back too whenever `tarn_select` would do more than read and return its rows,
 or might: when the bucket map, the lock index or the definition fences are to
 be read again first; when a bucket of the read is not served here, or a read
 of every shard comes with an old epoch or membership (`tarn_select` refuses
-it, `moved`); with the lock check, when the node is read-only, prepared
-transactions hold locks on the table, or a `TRUNCATE` or `DROP TABLE` holds
-a table; when the page ends before the read does (`tarn_select` then says
-where to continue); and when the window of the buckets' load counts that the
-read would count in has ended (§2.13: the Lua procedure starts the next
-one).
+it, `moved`); with the lock check, when the node is read-only, a prepared
+transaction holds a W lock on what the read covers (see *Locks, key by key*
+below), or a `TRUNCATE` or `DROP TABLE` holds a table; when the page ends
+before the read does (`tarn_select` then says where to continue); and when
+the window of the buckets' load counts that the read would count in has
+ended (§2.13: the Lua procedure starts the next one).
 
 The module knows the shard's state from a struct that `lua/tarn.lua` keeps
 current through LuaJIT's FFI (its section "Native procedures"; `State` in
 `crates/tarn-storage/src/state.rs`): which buckets the shard serves, the
 epoch and the membership version, whether the bucket map, the lock index
-and the fences are stale, how many tables are held, the page limits, and
-how many locks prepared transactions hold on each table. The Lua code
-updates it where it changes that state, in the same step. A native
-procedure runs in the same thread as the Lua code, between two of its
-steps, and does not yield, so it sees the state of one moment, as a Lua
-procedure's step that does not yield does. A read it serves is the one
+and the fences are stale, how many tables are held, the page limits, how
+many locks prepared transactions hold on each table, and a copy of the lock
+index (below). The Lua code updates it where it changes that state, in the
+same step. A native procedure runs in the same thread as the Lua code,
+between two of its steps, and does not yield, so it sees the state of one
+moment, as a Lua procedure's step that does not yield does. A read it serves is the one
 `tarn_select` would make in that state, with the same rows: in the model it
 is `SnapshotRead` with nothing to wait for (§2.2), so the model does not
 change. Its reads count for their bucket's load (§2.13) as the Lua
@@ -525,9 +534,9 @@ Tarantool's encodings: the shortest. It hands the writes to
 `tarn_autocommit`, having written nothing (it rolls its transaction back),
 when anything could make the Lua procedure wait, refuse or do more:
 
-* a table that is vinyl, or on which prepared transactions hold locks, or
-  row locks are held (READ COMMITTED: `tarn_autocommit` waits for one on
-  what it writes);
+* a table that is vinyl; a write that meets a lock of a prepared
+  transaction or a row lock (READ COMMITTED: `tarn_autocommit` waits for
+  one on what it writes; below);
 * a definition fence above the one the writes were made with
   (`tarn_autocommit` refuses them with 1412), a bucket of the writes, or of
   the rows they write, that does not take writes here (being sent, moved
@@ -542,10 +551,9 @@ when anything could make the Lua procedure wait, refuse or do more:
 Its checks and writes are the model's CommitLocal step for a transaction
 that read nothing: nothing else runs between them, as the procedure does
 not yield until it commits. For the checks, the state also mirrors the
-row locks held (by slot of space ids, as the locks of prepared
-transactions), the definition fences (the highest of each slot of space
-ids), which buckets take writes, and the test hooks held. While its
-commit waits for the WAL, it is a commit in flight, and what waits for the
+definition fences (the highest of each slot of space ids), which buckets
+take writes, and the test hooks held; the locks are the copy's (below).
+While its commit waits for the WAL, it is a commit in flight, and what waits for the
 commits in flight (`wait_commits`: a row lock's grant, a schema change, a
 bucket move) waits for it too; on a replicated shard, whose tables are
 synchronous, the commit waits for its quorum too, as `tarn_autocommit`'s
@@ -581,9 +589,8 @@ back, and also:
 
 * a transaction with row locks on this shard (`FOR UPDATE`, `FOR SHARE`):
   `tarn_commit_local` checks that they survived, and releases them;
-* reads of a table on which prepared transactions hold locks
-  (`tarn_commit_local` checks the rows read against them), or routed by a
-  bucket not served here (`moved`); reads of every shard with an older
+* reads that a prepared transaction holds a W lock on (below), or routed
+  by a bucket not served here (`moved`); reads of every shard with an older
   membership (`moved`); and any commit while a bucket is held here
   (`tarn_commit_local` checks the reads of every shard against its rows,
   §2.12);
@@ -606,10 +613,9 @@ before schema reads or a transaction/savepoint, so a stale gateway cannot
 bypass the outbox. Unknown capture state fails closed for writes.
 
 Its checks are those of the model's CommitLocal step, made on the state of
-one moment before its writes, each of them as strict as the Lua
-procedure's or stricter (a table where the Lua procedure checks rows, any
-table where it checks those read), so the model does not change. Its
-commit is a commit in flight as `ts_autocommit`'s is, and fails as
+one moment, from its writes to the start of its commit, each of them as
+strict as the Lua procedure's or stricter (below), so the model does not
+change. Its commit is a commit in flight as `ts_autocommit`'s is, and fails as
 `tarn_commit_local`'s does: 1213 when MVCC finds a read overwritten or the
 new leader of a replicated shard rolled the commit back, a read-only
 node's error as the call's error, 1180 should it fail once its commit
@@ -627,7 +633,7 @@ replies 1213, as `tarn_validate` does, having rolled the transaction
 back), and commits the transaction; the probe's space is data-temporary,
 so nothing yields from its checks to its commit. It hands the stream back,
 unchanged, when the transaction holds row locks here, when a prepared
-transaction holds locks on a table it read, when a bucket it read is not
+transaction holds a W lock on what it read, when a bucket it read is not
 served here or one is held here, when it read every shard with an older
 membership, when a `TRUNCATE` or `DROP TABLE` holds a table, and when the
 node is read-only or its state stale. `lua/test/native_test.lua` validates
@@ -659,6 +665,89 @@ This relies on that trigger running, as it does on a storage node, which
 runs no other code. A single instance (election mode `off`) changes its
 term only when an operator promotes it, and there no other node can have
 written anything its streams' MVCC tracking missed.
+
+**Locks, key by key.** The native procedures check the keys they read and
+write against the locks on them, as the Lua procedures do. The Lua module
+owns the lock index (§2.5: the point and range locks of prepared
+transactions, `LK` and `RL`; the row locks of READ COMMITTED transactions,
+`PL`, §2.9). The native module keeps a copy of it
+(`crates/tarn-storage/src/locks.rs`), which the Lua module changes in the
+same step as the index, through functions the module puts in the state:
+when a transaction's point lock on a key goes from one mode to another
+(taken, raised from R to W, released), when range locks are taken or
+released, when a row lock is taken or released, and when the index is made
+again. The copy counts, for each key, the transactions that hold a lock on
+it in each mode and those with a row lock on it; for each index, the W
+locks on its keys and the keys they are on, and its range locks by their
+bounds. It does not record which transactions: the native procedures
+serve only transactions that hold no lock on the shard (a one-shard
+transaction never prepared there, and one with row locks goes to Lua), so
+every lock they meet is another transaction's. They hand back:
+
+* a read with the lock check, when a W lock is on its key (a point read by
+  the whole key of a unique index), or on a key of its index in the range
+  it covers (any other read): from its key to its end key, or to its last
+  row when its limit ended it sooner;
+* a commit or a validation, when a W lock is on a key of its read set, or
+  on a key of its index in a range it read;
+* a write, when there is a lock of any mode on the primary key of its row,
+  an R lock on a key the row had or takes in another index, a lock of any
+  mode on a key the new row takes in a unique index (one without a NULL
+  part: a NULL takes no key), a range lock whose range holds the primary
+  key or one of those keys, or a row lock on its primary key or on a key
+  the new row takes in a unique index.
+
+These are the checks of `select_locked`, `reads_w_locked`,
+`write_conflict` and `write_plocked`, on the same keys, so the model does
+not change; where they are coarser they hand back more: they take every
+bound of a range as included, and a key they cannot compare with a range
+(a key or a bound that is not one of the index, or the start of one) as in
+it. A key is looked up by the bytes the Lua module gives it, the
+MessagePack of `msgpack.encode`: the native module encodes the keys it
+reads, and those of the rows it writes, as the Lua serializer would (a key
+with a decimal goes to Lua). A key is compared with a bound as `in_range`
+compares them (`key_def:compare_keys`, on the parts the bound has), by
+Tarantool's comparator of the index's parts, collations included: the
+module API compares tuples with keys, so the key becomes a tuple of its
+parts, which a key definition of the index's parts at fields 1, 2 and so
+on compares with the bound. The counts change, and the checks read them, through
+`tarn_verified::locks`, which proves (§3) that the counts stay the census
+of the locks through every change, that a key a check passes has no lock
+that the Lua check would find, and that a key the comparisons put outside a
+range is outside it for `in_range`, whichever bounds that includes. That
+the Lua module copies every change is tested instead: with
+`TARN_CHECK_LOCKS` it compares the copy with the index after each change
+(the key's counts, the index's ranges) and after a transaction's locks are
+released (all of it), and logs a difference; the storage tests and the SQL
+suites in CI run with it, and fail on one.
+
+On two shards under `oltp_write_only` (16 threads, three runs of each
+build, `bench/sysbench.sh`), the native procedure handed 93% of the
+one-shard commits to Lua (15,534 of 16,638), as cross-shard transactions
+held locks on the same tables; with the checks by key, 0.14% (26 of
+18,432), and the transactions per second rose from 1,109 to 1,221
+(medians). The transactions of `oltp_read_write` span both shards: they
+prepare in Lua whatever the native checks, and their throughput did not
+change.
+
+Ranges were compared with keys in a second step. Before, a one-shard write
+went to Lua whenever a prepared transaction held a range lock on its
+table, and a validation whenever one held a W lock on an index it read a
+range of. On two shards, two sysbench workloads ran at once on the same 4
+tables of 20,000 rows (8 threads each; three runs of each build, medians).
+The first workload's transactions span both shards and hold those locks
+while they prepare:
+
+| Workloads at once | handed to Lua, before → after | transactions per second, before → after |
+|---|---|---|
+| `oltp_read_write` + `oltp_update_non_index` | autocommit writes: 36.9% → 0.4% | 195 → 194; 3,371 → 4,317 |
+| `oltp_write_only` + `oltp_read_only` | validations: 80.9% → 1.7% | 672 → 671; 222 → 236 |
+| `oltp_write_only` + `oltp_read_only --skip_trx` | validations: 53.2% → 0.4% | 733 → 693; 216 → 232 |
+
+With `--skip_trx` each read of `oltp_read_only` is its own transaction,
+and one that reads a range on both shards is validated on each. There the
+writers lost what the readers gained: the queries per second of both
+together did not change (7,425 and 7,429).
 
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
@@ -1723,7 +1812,7 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **115 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **131 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
@@ -1775,6 +1864,25 @@ native module as plain Rust. What is proven:
   value starts with; a value the writers emit ends where its encoding does.
   No function can panic, overflow or read past its buffer, whatever bytes
   it is given.
+* **Lock checks of the native procedures** (`locks.rs`, §1.5). The holders
+  of a key are modelled as a map from transactions to modes, the locks of
+  an index as a map from (key, transaction) to mode, the holders of a row
+  lock as a set; `census` counts those of a mode. `step`, `step_w` and
+  `row_step`, through which the copy changes its counts, are proven to keep
+  them the census of the locks through any change the Lua module tells it
+  of (a lock taken, raised from R to W, released). With counts that are the
+  census, a key that `read_free` passes has no W lock of any transaction, a
+  primary key that `primary_free` passes no lock, the key of another index
+  that `secondary_free` passes no R lock (nor any lock when the new row
+  claims it), an index that `index_free` passes no W lock on any key, and a
+  key that `row_free` passes no row lock: so none that the Lua module's
+  checks find, whoever reads or writes. `within` decides from the
+  comparisons of a key with the bounds of a range whether the key may lie
+  in it, taking the bounds as included: it is proven to find the key there
+  wherever the Lua module's `in_range` does, whichever bounds that includes.
+  That the Lua module tells the copy of every change, that a key is looked
+  up by the bytes its `kbin` gives, and that Tarantool's comparator gives
+  the comparisons `compare_keys` gives, are tested, not proven.
 * **Global index maintenance** (`uix.rs`, §1.4). `index_delta` decides
   which entry writes a row write makes. It is proven that applying them to
   an index that holds the row's old entry leaves the other rows' entries
@@ -1806,7 +1914,7 @@ throughput measurements:
 | `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts | 392/392 and 138/138 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries (MySQL's and MessagePack's), values skipped however nested, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map; the rebalancer's plans (even weights, and even shares of buckets of uneven sizes) and its record | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
-| `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings; collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
+| `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings, hexadecimal literals and introducers (binary strings, their coercibility, plans cached per kind of literal); collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent cross-shard inserts of case variants of one case-insensitive key (serializable and READ COMMITTED: exactly one commits); concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 13/13 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), a UNION ALL of SKIP LOCKED reservations (every unit free or held once while carts reserve and release), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, primary-key point writes locked and read in one step, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 28/28 |

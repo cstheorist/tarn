@@ -26,6 +26,7 @@
 --                      rebalancer's TARN REBALANCE BY LOAD; default 60:
 --                      the last one or two minutes)
 --   TARN_CHECK_YIELDS, TARN_TEST_HOOKS  (tests) see lua/tarn.lua "Yields"
+--   TARN_CHECK_LOCKS   (tests) see lua/tarn.lua "Native procedures"
 --   TARN_DUMP_EVERY    (tests) checkpoint every N seconds, so that vinyl rows
 --                      go to disk and reads of them yield
 local json = require('json')
@@ -156,6 +157,9 @@ require('tarn').init{
     -- let tests hold a step at its yield points (lua/tarn.lua "Yields").
     check_yields = env('TARN_CHECK_YIELDS', '') ~= '',
     test_hooks = env('TARN_TEST_HOOKS', '') ~= '',
+    -- Tests: check the native module's copy of the lock index after each
+    -- change (lua/tarn.lua "Native procedures").
+    check_locks = env('TARN_CHECK_LOCKS', '') ~= '',
     load_window = tonumber(env('TARN_LOAD_WINDOW', '60')),
     native = native ~= '0' and native or false,
 }

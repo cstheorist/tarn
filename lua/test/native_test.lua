@@ -239,17 +239,73 @@ check('... one that read another row commits', n[1] == 'ok' and ok, n)
 c.space['test.nat']:replace(row(7))
 c.space['test.nat']:delete{61}
 c.space['test.nat']:delete{60}
--- a prepared transaction's lock
+-- a prepared transaction's locks: W on the row it writes, and on that row's
+-- keys in the other indexes (index 3 is vid, unique: (v, id))
 local ps = c:new_stream()
 ps:begin()
 local txid = 'NAT-' .. require('uuid').str()
 local r = ps:call('tarn_prepare', {txid, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(),
                                    box.NULL, box.NULL, {b}})
 check('a prepared transaction holds a lock', r[1] == 'yes', r)
-same('then a read with the lock check', {key = {7}, limit = 1}, false)
-same('... but not one without', {key = {7}, limit = 1, lock_check = false}, true)
+-- (a read the Lua procedure would wait for: the native procedure alone)
+local function handed(name, o)
+    local _, l0 = stats()
+    local n = c:call('tarn_storage.ts_select', args(o))
+    local _, l1 = stats()
+    check(name .. ': handed to the Lua procedure', l1 == l0 + 1 and n[1] == 'lua', n)
+end
+handed('then a point read of the row it writes, with the lock check', {key = {20}, limit = 1})
+same('... but not one without', {key = {20}, limit = 1, lock_check = false}, true)
+same('... a point read of another row', {key = {7}, limit = 1}, true)
+same('... of a key of another index that it does not write', {index = 3, key = {0, 7}, limit = 1}, true)
+handed('... of the key it gives the row there', {index = 3, key = {1, 20}, limit = 1})
+handed('... of the key the row had there', {index = 3, key = {6, 20}, limit = 1})
+-- reads of ranges: the range from the read's key to its end key, or to its
+-- last row when its limit cut it short, compared with the W-locked keys of
+-- the index (select_locked, its bounds included)
+same('... a read of a range of the primary key short of the row', {key = {1}, iter = 5, limit = 3}, true)
+handed('... one whose last row is the row', {key = {18}, iter = 5, limit = 3})
+same('... one past it', {key = {21}, iter = 5, limit = 3}, true)
+handed('... one from it, though the row is excluded (GT)', {key = {20}, iter = 6, limit = 3})
+same('... to an end key short of it', {key = {10}, iter = 5, end_key = {19}}, true)
+handed('... to an end key past it', {key = {10}, iter = 5, end_key = {25}})
+same('... with no end and no limit, past it', {key = {21}, iter = 5}, true)
+handed('... from the start', {key = {1}, iter = 5})
+same('... backwards, short of it', {key = {19}, iter = 3, limit = 3}, true)
+same('... backwards, past it', {key = {22}, iter = 4, limit = 2}, true)
+handed('... backwards, to it', {key = {22}, iter = 4, limit = 3})
+same('... backwards to an end key short of it', {key = {30}, iter = 4, end_key = {21}}, true)
+handed('... backwards to an end key past it', {key = {30}, iter = 4, end_key = {20}})
+-- (index v: the row's key was 6, is 1)
+same('... rows of a key of index v the row neither had nor takes', {index = 2, key = {5}}, true)
+handed('... of the key it had', {index = 2, key = {6}})
+handed('... of the key it takes', {index = 2, key = {1}})
+same('... a range of keys between them, cut by its limit', {index = 2, key = {2}, iter = 5, limit = 3}, true)
+handed('... a range of keys that holds one of them', {index = 2, key = {5}, iter = 5, limit = 50})
+-- (index vid: a key of its first part is a prefix of the row's keys there)
+handed('... rows of index vid by the first part of the key the row takes', {index = 3, key = {1}})
+same('... by another', {index = 3, key = {2}}, true)
+-- (index padci compares without case: the row's key was 20 'p's, is 'x')
+handed('... rows of index padci by the key the row had, in capitals', {index = 5, key = {string.rep('P', 20)}})
+handed('... by the key it takes, in capitals', {index = 5, key = {'X'}})
+same('... by another', {index = 5, key = {'PPP'}}, true)
+-- (index w: the row's key was 20, is NULL)
+same('... a range of index w above both', {index = 4, key = {21}, iter = 5, limit = 2}, true)
+handed('... one below 21, backwards, whose last row is the row', {index = 4, key = {21}, iter = 3, limit = 1})
 c:call('tarn_abort', {txid, 1, {1}})
-same('once it ended, a read with the lock check', {key = {7}, limit = 1}, true)
+same('once it ended, a read with the lock check', {key = {20}, limit = 1}, true)
+same('... of a range', {key = {1}, iter = 5, limit = 3}, true)
+-- R locks: a prepared transaction that read rows of the table, a range of it
+-- (and wrote another table)
+ps = c:new_stream()
+ps:begin()
+txid = 'NAT-' .. require('uuid').str()
+r = ps:call('tarn_prepare', {txid, 1, {1}, {{'replace', vsid, {20, 1, 'x', b}}}, {{sid, 0, {7}, b}},
+                             {{sid, 2, {1}, {3}, true, true, b}}, fiber.time(), box.NULL, box.NULL, {b}})
+check('a prepared transaction read rows of the table', r[1] == 'yes', r)
+same('then a point read of one of them', {key = {7}, limit = 1}, true)
+same('... a read of the range it read', {index = 2, key = {2}, limit = 20}, true)
+c:call('tarn_abort', {txid, 1, {1}})
 ps = c:new_stream()
 ps:begin()
 local txid2 = 'NAT-' .. require('uuid').str()
@@ -421,27 +477,70 @@ wsame('... updated with a pad (the Lua procedure fills them in)', {{'update', {8
 wsame('an update of an indexed column', {{'update', {2}, {{'=', 2, 6}}, {}, box.NULL}}, nil, true)
 wsame('a write to a bucket this shard does not own', {{'insert', trow(6)}}, {wb = {other or 1000000}}, false)
 wsame('... of a row of such a bucket', {{'insert', {7, 0, 'x', other or 1000000}}}, nil, false)
--- a prepared transaction's lock on the table
+-- a prepared transaction's locks on the table: W on the row it writes and on
+-- its keys in the other indexes, R on a key of index v (2) it read.
+-- (tarn_autocommit waits for those its writes meet: the native procedure
+-- alone is called then)
 local wps = c:new_stream()
 wps:begin()
 local wtx = 'NAT-' .. require('uuid').str()
-r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', wa, trow(40)}}, {}, {}, fiber.time(), box.NULL, box.NULL,
-                               {b}})
-check('a prepared transaction holds a lock on the table', r[1] == 'yes', r)
+r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', wa, trow(40)}}, {{wa, 2, {6}, b}}, {}, fiber.time(),
+                               box.NULL, box.NULL, {b}})
+check('a prepared transaction holds locks on the table', r[1] == 'yes', r)
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(40)}}))
+check('then a write of the row it writes: handed to the Lua procedure', n[1] == 'lua', n)
 n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
-check('then a write to it: handed to the Lua procedure', n[1] == 'lua', n)
+check('... of a row with the key of index v it read (6): handed to the Lua procedure', n[1] == 'lua', n)
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'update', {3}, {{'=', 2, 6}}, {}, box.NULL}}))
+check('... an update that gives a row that key: handed to the Lua procedure', n[1] == 'lua', n)
+-- (row 43 has the keys of row 40 in the indexes bucket_id and w, which are
+-- not unique: their W locks are no conflict)
+wsame('... an insert of another row', {{'insert', trow(43)}}, nil, true)
+wsame('... its delete', {{'delete', {43}}}, nil, true)
 c:call('tarn_abort', {wtx, 1, {1}})
--- a row lock (READ COMMITTED) on the table: tarn_autocommit waits for one
--- on what it writes
+-- range locks on the table (a prepared transaction read ranges of it): the
+-- keys a write gives each index are compared with the ranges of the
+-- index's locks (range_locked, every bound taken as included)
+wps = c:new_stream()
+wps:begin()
+wtx = 'NAT-' .. require('uuid').str()
+local function rl(iid, lo, hi, lo_incl) return {wa, iid, lo, hi, lo_incl ~= false, true, b} end
+r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', sid, {21, 1, 'x', b}}}, {},
+                               {rl(0, {100}, {200}), rl(2, {2}, {3}), rl(3, {5}, {5}), rl(4, box.NULL, {5}),
+                                rl(5, {'R40'}, {'R41'}), rl(2, {0}, {0}, false)},
+                               fiber.time(), box.NULL, box.NULL, {b}})
+check('a prepared transaction read ranges of the table', r[1] == 'yes', r)
+for _, x in ipairs({{'then an insert of a row whose primary key is in a range', trow(150, 4, 50)},
+                    {'... whose key of index v is', trow(44, 2, 50)},
+                    {'... on its upper bound', trow(45, 3, 50)},
+                    {'... whose key of index vid is, by a prefix', trow(47, 5, 50)},
+                    {'... whose NULL of index w is (no lower bound)', trow(48, 4)},
+                    {'... whose key of index padci is (without case)', trow(41, 6, 50)},
+                    {'... whose key of index v is on a bound its range excludes (taken as included)',
+                     trow(49, 0, 50)}}) do
+    n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', x[2]}}))
+    check(x[1] .. ': handed to the Lua procedure', n[1] == 'lua', n)
+end
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'delete', {150}}}))
+check('... a delete of a row that is not there, by a key in a range: handed to the Lua procedure', n[1] == 'lua', n)
+wsame('... an insert of a row whose keys are in none', {{'insert', trow(46, 4, 50)}}, nil, true)
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'update', {46}, {{'=', 2, 2}}, {}, box.NULL}}))
+check('... an update that gives it a key in one: handed to the Lua procedure', n[1] == 'lua', n)
+wsame('... one that keeps its keys out of them', {{'update', {46}, {{'=', 5, 60}}, {}, box.NULL}}, nil, true)
+wsame('... its delete', {{'delete', {46}}}, nil, true)
+c:call('tarn_abort', {wtx, 1, {1}})
+-- a row lock (READ COMMITTED): tarn_autocommit waits for one on what it
+-- writes
 r = c:call('tarn_lock', {'NAT-RC', {{wa, 0, {9}}}, 'X', {timeout = 1}})
-check('a row lock is held on the table', r[1] == 'ok', r)
-n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
-check('then a write to the table: handed to the Lua procedure', n[1] == 'lua', n)
+check('a row lock is held on a row of the table', r[1] == 'ok', r)
+n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'replace', trow(9)}}))
+check('then a write of that row: handed to the Lua procedure', n[1] == 'lua', n)
+wsame('... of another row', {{'insert', trow(41)}}, nil, true)
 c:call('tarn_unlock', {'NAT-RC'})
 -- ... on another table
 r = c:call('tarn_lock', {'NAT-RC', {{sid, 0, {9}}}, 'X', {timeout = 1}})
 check('a row lock is held on another table', r[1] == 'ok', r)
-wsame('then a write', {{'insert', trow(41)}}, nil, true)
+wsame('then a write', {{'replace', trow(41, 2)}}, nil, true)
 c:call('tarn_unlock', {'NAT-RC'})
 -- a definition fence raised (ALTER TABLE): writes with the old one refused
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wa})
@@ -603,14 +702,16 @@ c:eval('local a, b = ... box.space[b]:truncate() for _, t in box.space[a]:pairs(
 local function cstats() local i = c:call('tarn_info').native return i.commits, i.commits_to_lua end
 -- tarn_commit_local's arguments for the writes `ws` ({op, payload}) to
 -- space sid, after point reads of the keys `rkeys` (of space o.rsid, else
--- sid; routed by o.rb, else b); o: lock_gen, fence (the definition the
--- writes were made with), wb (b for each write unless given), mver
+-- sid; routed by o.rb, else b) and reads of the ranges o.ranges ({space,
+-- index, lo, hi, lo_incl, hi_incl, bucket}); o: lock_gen, fence (the
+-- definition the writes were made with), wb (b for each write unless
+-- given), mver
 local function cargs(sid, ws, rkeys, o)
     o = o or {}
     local out, pts, wbs = {}, {}, {}
     for i, w in ipairs(ws) do out[i], wbs[i] = {w[1], sid, w[2]}, b end
     for i, k in ipairs(rkeys or {}) do pts[i] = {o.rsid or sid, 0, k, o.rb or b} end
-    return {'NAT-C-' .. require('uuid').str(), out, pts, {}, o.lock_gen or box.NULL,
+    return {'NAT-C-' .. require('uuid').str(), out, pts, o.ranges or {}, o.lock_gen or box.NULL,
             o.fence and {sid, o.fence} or box.NULL, o.wb or wbs, o.mver or box.NULL}
 end
 -- A transaction on each twin: one that reads (rkeys) in a stream, whose
@@ -715,6 +816,30 @@ end
 unique_rows()
 n, l = csame('... one that read a vinyl table', moves, {{7}}, {rsid = vsid, after = truncate_natv}, false)
 check('... (which the TRUNCATE doomed, as the Lua procedure\'s twin: a conflict)', l[1] == 'conflict', l)
+-- per key, on the unique index w (2): the W locks of a prepared transaction
+-- on the keys of the rows it writes (row 2: from 5 to 6; row 9: from 9 to
+-- NULL), and a row lock on another key (8). (The Lua procedure waits for, or
+-- refuses, what meets them: the native procedure alone is called then.)
+unique_rows()
+local ups = c:new_stream()
+ups:begin()
+local utx = 'NAT-' .. require('uuid').str()
+r = ups:call('tarn_prepare', {utx, 1, {1}, {{'replace', wa, {2, 1, 'r2', b, 6}}, {'replace', wa, {9, 1, 'r9', b, box.NULL}}},
+                              {}, {}, fiber.time(), box.NULL, box.NULL, {b, b}})
+check('a prepared transaction holds W locks on keys of a unique index', r[1] == 'yes', r)
+r = c:call('tarn_lock', {'NAT-RC5', {{wa, 2, {8}}}, 'X', {timeout = 1}})
+check('... and a row lock is held on another key of it', r[1] == 'ok', r)
+for _, x in ipairs({{'then a commit of a row that takes a key it holds a W lock on', {3, 1, 'r3', b, 6}},
+                    {'... of one that takes the key with the row lock', {3, 1, 'r3', b, 8}},
+                    {'... of a row it writes', {9, 1, 'r9', b, 10}}}) do
+    n = c:call('tarn_storage.ts_commit_local', cargs(wa, {{'replace', x[2]}}))
+    check(x[1] .. ': handed to the Lua procedure', n[1] == 'lua', n)
+end
+csame('... of one that takes NULL there (a NULL takes no key)', {{'insert', {4, 1, 'r4', b, box.NULL}}}, nil, nil,
+      true)
+csame('... of one that takes another key', {{'insert', {5, 1, 'r5', b, 7}}}, nil, nil, true)
+c:call('tarn_unlock', {'NAT-RC5'})
+c:call('tarn_abort', {utx, 1, {1}})
 wa, wb = wa0, wb0
 c:eval('box.space.test_native_u_a:drop() box.space.test_native_u_b:drop()')
 -- what its checks leave to the Lua procedure
@@ -742,13 +867,36 @@ local ctx = 'NAT-' .. require('uuid').str()
 r = cps:call('tarn_prepare', {ctx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(), box.NULL,
                               box.NULL, {b}})
 check('a prepared transaction holds a lock on test.nat', r[1] == 'yes', r)
-csame('then a commit that read another row of it', {{'insert', trow(78)}}, {{7}}, {rsid = sid}, false)
+csame('then a commit that read another row of it', {{'insert', trow(78)}}, {{7}}, {rsid = sid}, true)
+n, l = csame('... one that read the row it writes', {{'insert', trow(79)}}, {{20}}, {rsid = sid}, false)
+check('... (which the Lua procedure refuses)', l[1] == 'conflict' and l[2] == 1213, l)
+-- (ranges read: compared with the W-locked keys of their index)
+local function rr(iid, lo, hi, lo_incl) return {{sid, iid, lo, hi, lo_incl ~= false, true, b}} end
+csame('... one that read a range of it short of the row', {{'insert', trow(93)}}, {{7}},
+      {rsid = sid, ranges = rr(0, {1}, {19})}, true)
+csame('... one with no lower bound', {{'insert', trow(94)}}, {{7}}, {rsid = sid, ranges = rr(0, box.NULL, {19})},
+      true)
+csame('... one with no upper bound, past the row', {{'insert', trow(95)}}, {{7}},
+      {rsid = sid, ranges = rr(0, {21}, box.NULL)}, true)
+csame('... one of the keys of index v between those the row had and takes', {{'insert', trow(96)}}, {{7}},
+      {rsid = sid, ranges = rr(2, {2}, {5})}, true)
+for _, x in ipairs({{'... one that read a range that holds the row', rr(0, {15}, {25})},
+                    {'... one with no bounds', rr(0, box.NULL, box.NULL)},
+                    {'... one of keys of index v that holds the key the row takes', rr(2, {1}, {1})},
+                    {'... one of keys of index vid that hold it, by a prefix', rr(3, {6}, {6})}}) do
+    n, l = csame(x[1], {{'insert', trow(97)}}, {{7}}, {rsid = sid, ranges = x[2]}, false)
+    check('... (which the Lua procedure refuses)', l[1] == 'conflict' and l[2] == 1213, l)
+end
+n, l = csame('... one whose range excludes the row, its bound', {{'insert', trow(97)}}, {{7}},
+             {rsid = sid, ranges = rr(0, {20}, {25}, false)}, false)
+check('... (handed back: the bounds are taken as included; the Lua procedure commits it)', l[1] == 'ok', l)
 c:call('tarn_abort', {ctx, 1, {1}})
-csame('once it ended', {{'insert', trow(79)}}, {{7}}, {rsid = sid}, true)
+csame('once it ended', {{'insert', trow(79)}}, {{20}}, {rsid = sid}, true)
 r = c:call('tarn_lock', {'NAT-RC4', {{wa, 0, {9}}}, 'X', {timeout = 1}})
-check('a row lock is held on the table', r[1] == 'ok', r)
-n = c:call('tarn_storage.ts_commit_local', cargs(wa, {{'insert', trow(80)}}))
-check('then a commit that writes it: handed to the Lua procedure', n[1] == 'lua', n)
+check('a row lock is held on a row of the table', r[1] == 'ok', r)
+n = c:call('tarn_storage.ts_commit_local', cargs(wa, {{'replace', trow(9)}}))
+check('then a commit that writes that row: handed to the Lua procedure', n[1] == 'lua', n)
+csame('... one that writes another row', {{'insert', trow(80)}}, nil, nil, true)
 c:call('tarn_unlock', {'NAT-RC4'})
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wa})
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wb})
@@ -808,11 +956,13 @@ print('validations of read-only streams')
 do
 local function vstats() local i = c:call('tarn_info').native return i.validations, i.validations_to_lua end
 -- tarn_validate's arguments, after point reads of the keys `rkeys` of
--- test.nat (o.rsid; routed by o.rb, else b); o: lock_gen, mver
+-- test.nat (o.rsid; routed by o.rb, else b) and reads of the ranges
+-- o.ranges; o: lock_gen, mver
 local function vargs(rkeys, o)
     local pts = {}
     for i, k in ipairs(rkeys) do pts[i] = {o.rsid or sid, 0, k, o.rb or b} end
-    return {'NAT-V-' .. require('uuid').str(), pts, {}, false, o.lock_gen or box.NULL, o.mver or box.NULL}
+    return {'NAT-V-' .. require('uuid').str(), pts, o.ranges or {}, false, o.lock_gen or box.NULL,
+            o.mver or box.NULL}
 end
 -- A read-only transaction on each of two streams: its reads (rkeys; the
 -- first begins its transaction, natively with o.native_begin; o.no_stream:
@@ -871,9 +1021,20 @@ local vtx = 'NAT-' .. require('uuid').str()
 local r = vps:call('tarn_prepare', {vtx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(), box.NULL,
                                     box.NULL, {b}})
 check('a prepared transaction holds a lock on test.nat', r[1] == 'yes', r)
-vsame('then one that read another row of it', {{7}}, nil, false)
+vsame('then one that read another row of it', {{7}}, nil, true)
+n, l = vsame('... one that read the row it writes', {{8}, {20}}, nil, false)
+check('... (which the Lua procedure refuses)', l[1] == 'conflict' and l[2] == 1213, l)
+local function rr(iid, lo, hi) return {{sid, iid, lo, hi, true, true, b}} end
+vsame('... one that read a range short of it', {{7}}, {ranges = rr(0, {1}, {19})}, true)
+vsame('... one that read a range of index padci without its keys', {{7}}, {ranges = rr(5, {'Q'}, {'W'})}, true)
+for _, x in ipairs({{'... one that read a range that holds it', rr(0, {19}, box.NULL)},
+                    {'... one that read the key of index padci it had, in capitals',
+                     rr(5, {string.rep('P', 20)}, {string.rep('P', 20)})}}) do
+    n, l = vsame(x[1], {{7}}, {ranges = x[2]}, false)
+    check('... (which the Lua procedure refuses)', l[1] == 'conflict' and l[2] == 1213, l)
+end
 c:call('tarn_abort', {vtx, 1, {1}})
-vsame('once it ended', {{7}}, nil, true)
+vsame('once it ended', {{8}, {20}}, nil, true)
 -- a TRUNCATE applied while the streams were open: they fail if they read
 -- its table (the Lua procedure checks)
 c:call('tarn_create_table', {def('test.ntr2', 'memtx', 28006)})
@@ -937,5 +1098,11 @@ same('the same layout again: served', {key = {7}, limit = 1}, true)
 
 c:call('tarn_drop_table', {'test.nat'})
 c:call('tarn_drop_table', {'test.natv'})
+-- (with cfg.check_locks, as lua/test/run.sh starts the shards: the copy of
+-- the lock index held what the index held after each change)
+if c:eval('return tarn.cfg.check_locks') then
+    local e = c:call('tarn_info').stats.lock_copy_errors
+    check('the copy of the lock index held what the index held', e == 0, e)
+end
 print(string.format('%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

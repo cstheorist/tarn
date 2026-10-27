@@ -7,6 +7,7 @@ use crate::cluster::Cluster;
 use crate::collation::Collation;
 use crate::expr::CmpOp;
 use crate::expr::{EvalCtx, Expr};
+use crate::normalize::LitName;
 use crate::plan::*;
 use crate::txn::{
     count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Route, Row,
@@ -1850,24 +1851,29 @@ fn aggregate(rows: Vec<Row>, ap: &AggPlan, cx: &EvalCtx) -> SqlResult<Vec<Row>> 
 }
 
 /// Substitute statement parameters into column names cached as templates.
-pub fn render_columns(cols: &Arc<[Column]>, params: &[Value]) -> Arc<[Column]> {
+/// The columns of a plan, named with the values of its parameters. `names`:
+/// the parameters that were literals naming a column by their text
+/// (`crate::normalize::LitName`).
+pub fn render_columns(cols: &Arc<[Column]>, params: &[Value], names: &[LitName]) -> Arc<[Column]> {
     if params.is_empty() || !cols.iter().any(|c| c.name.contains('?')) {
         return cols.clone();
     }
     cols.iter()
         .map(|c| {
             let mut c = c.clone();
-            c.name = render_name(&c.name, params);
+            c.name = render_name(&c.name, params, names);
             c
         })
         .collect::<Vec<_>>()
         .into()
 }
 
-pub fn render_name(s: &str, params: &[Value]) -> String {
+pub fn render_name(s: &str, params: &[Value], names: &[LitName]) -> String {
     let b = s.as_bytes();
     // A bare literal is named by its value (SELECT 'abc' -> abc); inside an
     // expression, string literals keep their quotes as typed (LOWER('ABC')).
+    // A hexadecimal literal is named by its text (SELECT X'41' -> X'41'), and
+    // so is a string with an introducer inside an expression.
     let bare = b.len() > 1 && b[0] == b'?' && b[1..].iter().all(u8::is_ascii_digit);
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -1879,11 +1885,20 @@ pub fn render_name(s: &str, params: &[Value]) -> String {
             }
             if let Ok(n) = s[i + 1..j].parse::<usize>() {
                 if let Some(v) = n.checked_sub(1).and_then(|k| params.get(k)) {
+                    let lit = names.iter().find(|l| l.param + 1 == n);
                     match v {
-                        Value::Str(x) if bare => out.push_str(&String::from_utf8_lossy(x)),
+                        _ if lit.is_some_and(|l| !bare || l.bare_text) => out.push_str(&lit.unwrap().text),
+                        Value::Str(x) | Value::Bin(x) if bare => out.push_str(&String::from_utf8_lossy(x)),
                         Value::Str(x) => {
                             out.push('\'');
                             out.push_str(&String::from_utf8_lossy(x).replace('\'', "''"));
+                            out.push('\'');
+                        }
+                        Value::Bin(x) => {
+                            out.push_str("X'");
+                            for c in x.iter() {
+                                out.push_str(&format!("{:02X}", c));
+                            }
                             out.push('\'');
                         }
                         other => out.push_str(&other.to_string()),
@@ -3673,6 +3688,30 @@ pub async fn matching_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn columns_of_literals_are_named_as_mariadb_names_them() {
+        use crate::normalize::{normalize, Mode};
+        let names = |sql: &str, cols: &[&str]| -> Vec<String> {
+            let n = normalize(sql, Mode::Literals).unwrap();
+            cols.iter().map(|c| render_name(c, &n.params, &n.names)).collect()
+        };
+        assert_eq!(
+            names(
+                "SELECT X'41', x'4142', 'ab', HEX(X'00ff'), _binary'xy', HEX(_binary'xy'), N'cd'",
+                &["?1", "?2", "?3", "HEX(?4)", "?5", "HEX(?6)", "?7"]
+            ),
+            vec!["X'41'", "x'4142'", "ab", "HEX(X'00ff')", "xy", "HEX(_binary'xy')", "cd"]
+        );
+        assert_eq!(names("SELECT X'61' = 'A'", &["?1 = ?2"]), vec!["X'61' = 'A'"]);
+        // binary values without their text (statements made again from an
+        // AST): in hexadecimal
+        let p = [Value::Bin(Bytes::from_static(b"A"))];
+        assert_eq!(
+            (render_name("?1", &p, &[]), render_name("HEX(?1)", &p, &[])),
+            ("A".into(), "HEX(X'41')".into())
+        );
+    }
     use crate::catalog::Catalog;
     use crate::normalize::{normalize, Mode};
     use crate::planner::{plan, PlanCtx};
