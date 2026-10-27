@@ -396,13 +396,18 @@ check('a prepared transaction holds a lock on the table', r[1] == 'yes', r)
 n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
 check('then a write to it: handed to the Lua procedure', n[1] == 'lua', n)
 c:call('tarn_abort', {wtx, 1, {1}})
--- a row lock (READ COMMITTED), anywhere
-r = c:call('tarn_lock', {'NAT-RC', {{sid, 0, {9}}}, 'X', {timeout = 1}})
-check('a row lock is held', r[1] == 'ok', r)
+-- a row lock (READ COMMITTED) on the table: tarn_autocommit waits for one
+-- on what it writes
+r = c:call('tarn_lock', {'NAT-RC', {{wa, 0, {9}}}, 'X', {timeout = 1}})
+check('a row lock is held on the table', r[1] == 'ok', r)
 n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'insert', trow(41)}}))
-check('then a write: handed to the Lua procedure', n[1] == 'lua', n)
+check('then a write to the table: handed to the Lua procedure', n[1] == 'lua', n)
 c:call('tarn_unlock', {'NAT-RC'})
-wsame('once it is released, a write', {{'insert', trow(41)}}, nil, true)
+-- ... on another table
+r = c:call('tarn_lock', {'NAT-RC', {{sid, 0, {9}}}, 'X', {timeout = 1}})
+check('a row lock is held on another table', r[1] == 'ok', r)
+wsame('then a write', {{'insert', trow(41)}}, nil, true)
+c:call('tarn_unlock', {'NAT-RC'})
 -- a definition fence raised (ALTER TABLE): writes with the old one refused
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wa})
 c:eval("box.space._tarn_meta:replace{'fence:' .. ..., {ver = 7}} tarn.stale_fences()", {wb})

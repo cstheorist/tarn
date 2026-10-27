@@ -843,7 +843,7 @@ enum Served {
 fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     let (writes, opts) = write::parse(buf)?;
     let s = state()?;
-    if s.ready == 0 || s.hooks != 0 || s.pl_n != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
+    if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
         return None;
     }
     // SAFETY: plain calls of the module API in the transaction thread.
@@ -867,14 +867,16 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if s.count != 0 && opts.wb.iter().any(|&b| !s.writable(b)) {
         return None;
     }
-    // Each table: memtx, no lock of a prepared transaction on it. (What the
-    // writes need of the schema is read before the transaction, which must
-    // not read the system spaces.) A synchronous table's commit waits for
-    // its quorum, as tarn_autocommit's does, and is in flight until then.
+    // Each table: memtx, no lock of a prepared transaction on it, and no row
+    // lock (READ COMMITTED: tarn_autocommit would wait for one on what it
+    // writes). (What the writes need of the schema is read before the
+    // transaction, which must not read the system spaces.) A synchronous
+    // table's commit waits for its quorum, as tarn_autocommit's does, and is
+    // in flight until then.
     let mut infos = Vec::with_capacity(writes.len());
     for w in &writes {
         let sp = space_info(w.space_id)?;
-        if !sp.memtx || s.space_locked(w.space_id) {
+        if !sp.memtx || s.space_locked(w.space_id) || s.space_plocked(w.space_id) {
             return None;
         }
         let pk = match w.op {

@@ -358,8 +358,9 @@ server and sysbench, and every commit waits for its quorum.
   procedures, whose calls cost a shard more than their storage work, as
   they did for reads and autocommit writes (see above). And the native
   procedures hand a request to Lua whenever a prepared transaction holds a
-  lock on its table, and a write whenever any row lock is held: with the
-  lock index in the native module, they would check the rows themselves.
+  lock on its table, and a write whenever a row lock is held on its table:
+  with the lock index in the native module, they would check the rows
+  themselves.
 * **Fewer round trips per transaction**: batch the 10 point selects of a
   transaction when the client pipelines; push UPDATE/DELETE ... WHERE pk = ?
   inside transactions down as deferred operations instead of read-then-buffer.

@@ -904,9 +904,10 @@ struct tarn_ns {
     double *wbytes;
     uint64_t *fences;
     uint64_t w_served, w_to_lua;
+    uint32_t *pl_spaces;
 };
 ]]
-BK.NS_LAYOUT = 4
+BK.NS_LAYOUT = 5
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -956,9 +957,20 @@ function BK.ns_fence(sid)
 end
 
 -- PL_N, after each change.
-function BK.ns_pl()
+-- The row locks: their number, and by space (BK.NS_SPACES slots, as for
+-- the locks of prepared transactions): d more held on space sid, or (sid
+-- nil) none.
+function BK.ns_pl(sid, d)
     local ns = BK.ns
-    if ns ~= nil then ns.pl_n = PL_N end
+    if ns == nil then return end
+    ns.pl_n = PL_N
+    local a = BK.ns_pl_spaces
+    if sid == nil then
+        ffi.fill(a, ffi.sizeof('uint32_t') * BK.NS_SPACES)
+    else
+        local k = sid % BK.NS_SPACES
+        a[k] = a[k] + d
+    end
 end
 
 function BK.ns_sync()
@@ -1044,7 +1056,10 @@ function BK.ns_init()
     -- (the fences as FENCE has them, which fence_stale says when stale)
     BK.ns_fences = ffi.new('uint64_t[?]', BK.NS_SPACES)
     ns.fences = BK.ns_fences
+    BK.ns_pl_spaces = ffi.new('uint32_t[?]', BK.NS_SPACES)
+    ns.pl_spaces = BK.ns_pl_spaces
     BK.ns = ns
+    BK.ns_pl_held()
     BK.ns_fence(nil)
     BK.ns_serves_all()
     BK.ns_sync()
@@ -1665,7 +1680,7 @@ local function pl_hold(txid, sid, iid, kb, e, mode)
     local cur = e.holders[txid]
     if cur == nil then
         PL_N = PL_N + 1
-        BK.ns_pl()
+        BK.ns_pl(sid, 1)
         pl_txn(txid).keys[sid .. '\0' .. iid .. '\0' .. kb] = {sid, iid, kb}
     end
     if cur ~= 'X' then e.holders[txid] = mode end
@@ -1706,7 +1721,7 @@ local function pl_release_key(txid, sid, iid, kb)
     if e == nil or e.holders[txid] == nil then return end
     e.holders[txid] = nil
     PL_N = PL_N - 1
-    BK.ns_pl()
+    BK.ns_pl(sid, -1)
     pl_grant_waiters(sid, iid, kb, e)
     pl_drop_if_free(sid, iid, kb, e)
     M.pl_cond:broadcast()
@@ -1732,7 +1747,7 @@ local function pl_release_all(txid)
         if e ~= nil and e.holders[txid] ~= nil then
             e.holders[txid] = nil
             PL_N = PL_N - 1
-            BK.ns_pl()
+            BK.ns_pl(k[1], -1)
             pl_grant_waiters(k[1], k[2], k[3], e)
             pl_drop_if_free(k[1], k[2], k[3], e)
         end
@@ -1760,6 +1775,15 @@ local function pl_fresh()
     M.pl_cond:broadcast()
 end
 M.pl_fresh = pl_fresh
+
+-- The row locks held now, by space, into the native procedures' state (as
+-- it is made: BK.ns_init).
+function BK.ns_pl_held()
+    BK.ns_pl(nil)
+    for _, p in pairs(PTX) do
+        for _, k in pairs(p.keys) do BK.ns_pl(k[1], 1) end
+    end
+end
 
 -- The transactions a waiting request waits for: conflicting holders and,
 -- unless it is an upgrade, conflicting requests queued before it.
