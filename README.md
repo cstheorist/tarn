@@ -159,7 +159,7 @@ quarter to over a third, the read transactions of `oltp_read_only` and
 * **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 66 verified
   functions and lemmas for routing, coordinator decisions and the MySQL wire
   codec.
-* **Tests**: 757 storage-protocol checks, 887 SQL cases compared exactly
+* **Tests**: 874 storage-protocol checks, 967 SQL cases compared exactly
   with MariaDB plus 2,000 random queries, transaction-anomaly tests, failover
   and fault-injection tests. An independent code review found five bugs
   that the tests had missed, one of them critical. All are fixed, each with
