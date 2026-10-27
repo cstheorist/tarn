@@ -1,0 +1,162 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 112 and seed 1220207302837166230 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 286] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/InstantBackfill.tla
+Parsing file /tmp/tlc-7503766445098343706/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-7503766445098343706/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-7503766445098343706/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-7503766445098343706/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-7503766445098343706/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-7503766445098343706/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-7503766445098343706/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module InstantBackfill
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module InstantBackfill
+Starting... (2026-10-27 03:41:31)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 03:41:31.
+Error: Invariant AbortedUndoClean is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "idle"
+/\ aborted = {}
+/\ undo = <<[short |-> 0, long |-> 0], [short |-> 0, long |-> 0]>>
+/\ indexReady = FALSE
+/\ catalog = 0
+/\ fenced = FALSE
+/\ job = 0
+/\ reqActive = FALSE
+/\ wanted = [short |-> 2, long |-> 5]
+/\ writerPending = FALSE
+/\ memFence = FALSE
+/\ reqJob = 1
+/\ taken = FALSE
+/\ reqRow = "short"
+/\ crashed = FALSE
+/\ physical = [short |-> <<0>>, long |-> <<0, 5>>]
+/\ writerUsed = FALSE
+/\ reqOwner = 1
+/\ awake = TRUE
+/\ owner = 1
+
+State 2: <Start(1) line 58, col 5 to line 63, col 81 of module InstantBackfill>
+/\ phase = "preparing"
+/\ aborted = {}
+/\ undo = <<[short |-> 0, long |-> 0], [short |-> 0, long |-> 0]>>
+/\ indexReady = FALSE
+/\ catalog = 0
+/\ fenced = TRUE
+/\ job = 1
+/\ reqActive = FALSE
+/\ wanted = [short |-> 2, long |-> 5]
+/\ writerPending = FALSE
+/\ memFence = TRUE
+/\ reqJob = 1
+/\ taken = FALSE
+/\ reqRow = "short"
+/\ crashed = FALSE
+/\ physical = [short |-> <<0>>, long |-> <<0, 5>>]
+/\ writerUsed = FALSE
+/\ reqOwner = 1
+/\ awake = TRUE
+/\ owner = 1
+
+State 3: <BeginBatch("short") line 78, col 5 to line 81, col 47 of module InstantBackfill>
+/\ phase = "preparing"
+/\ aborted = {}
+/\ undo = <<[short |-> 0, long |-> 0], [short |-> 0, long |-> 0]>>
+/\ indexReady = FALSE
+/\ catalog = 0
+/\ fenced = TRUE
+/\ job = 1
+/\ reqActive = TRUE
+/\ wanted = [short |-> 2, long |-> 5]
+/\ writerPending = FALSE
+/\ memFence = TRUE
+/\ reqJob = 1
+/\ taken = FALSE
+/\ reqRow = "short"
+/\ crashed = FALSE
+/\ physical = [short |-> <<0>>, long |-> <<0, 5>>]
+/\ writerUsed = FALSE
+/\ reqOwner = 1
+/\ awake = TRUE
+/\ owner = 1
+
+State 4: <DecideAbort line 125, col 5 to line 128, col 89 of module InstantBackfill>
+/\ phase = "aborting"
+/\ aborted = {}
+/\ undo = <<[short |-> 0, long |-> 0], [short |-> 0, long |-> 0]>>
+/\ indexReady = FALSE
+/\ catalog = 0
+/\ fenced = TRUE
+/\ job = 1
+/\ reqActive = TRUE
+/\ wanted = [short |-> 2, long |-> 5]
+/\ writerPending = FALSE
+/\ memFence = TRUE
+/\ reqJob = 1
+/\ taken = FALSE
+/\ reqRow = "short"
+/\ crashed = FALSE
+/\ physical = [short |-> <<0>>, long |-> <<0, 5>>]
+/\ writerUsed = FALSE
+/\ reqOwner = 1
+/\ awake = TRUE
+/\ owner = 1
+
+State 5: <FinishAbort line 137, col 5 to line 141, col 96 of module InstantBackfill>
+/\ phase = "done"
+/\ aborted = {1}
+/\ undo = <<[short |-> 0, long |-> 0], [short |-> 0, long |-> 0]>>
+/\ indexReady = FALSE
+/\ catalog = 0
+/\ fenced = FALSE
+/\ job = 1
+/\ reqActive = TRUE
+/\ wanted = [short |-> 2, long |-> 5]
+/\ writerPending = FALSE
+/\ memFence = FALSE
+/\ reqJob = 1
+/\ taken = FALSE
+/\ reqRow = "short"
+/\ crashed = FALSE
+/\ physical = [short |-> <<0>>, long |-> <<0, 5>>]
+/\ writerUsed = FALSE
+/\ reqOwner = 1
+/\ awake = TRUE
+/\ owner = 1
+
+State 6: <FinishBatch line 90, col 5 to line 96, col 74 of module InstantBackfill>
+/\ phase = "done"
+/\ aborted = {1}
+/\ undo = <<[short |-> 1, long |-> 0], [short |-> 0, long |-> 0]>>
+/\ indexReady = FALSE
+/\ catalog = 0
+/\ fenced = FALSE
+/\ job = 1
+/\ reqActive = FALSE
+/\ wanted = [short |-> 2, long |-> 5]
+/\ writerPending = FALSE
+/\ memFence = FALSE
+/\ reqJob = 1
+/\ taken = FALSE
+/\ reqRow = "short"
+/\ crashed = FALSE
+/\ physical = [short |-> <<0, 2, 3>>, long |-> <<0, 5>>]
+/\ writerUsed = FALSE
+/\ reqOwner = 1
+/\ awake = TRUE
+/\ owner = 1
+
+105 states generated, 86 distinct states found, 50 states left on queue.
+The depth of the complete state graph search is 6.
+Finished in 00s at (2026-10-27 03:41:31)
+Trace exploration spec path: ./InstantBackfill_TTrace_1793072491.tla

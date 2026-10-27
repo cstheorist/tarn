@@ -935,8 +935,9 @@ allowed.
 ### 2.10 Schema changes
 
 `ALTER TABLE` (issue #16) changes a table while transactions read and write
-it, on every shard and with SQL servers whose catalogs lag behind, without
-rewriting rows.
+it, on every shard and with SQL servers whose catalogs lag behind. Ordinary
+instant changes retain the stored layout; building an index over a missing
+non-NULL fill materializes only the missing tuple suffix.
 
 **Layout.** A column has a field number that never changes. Fields of
 columns created with the table are their positions; `bucket_id` follows;
@@ -952,6 +953,9 @@ would need every value converted (`INT` to `VARCHAR`, a different
 `DECIMAL` scale) are refused. The SQL servers map rows to fields
 (`TableDef::encode_tuple`, `Rd::row_of`), and update operations address
 fields by number, padding rows older than an added field with the fills.
+Direct KV clients use the committed definition's field mapping too: a
+materializing PREPARE can append physical fields before catalog publication,
+while preserving every value visible through the old layout.
 
 **Fences.** Every table definition has a version (`ver`): the catalog
 version of its last `ALTER TABLE`. Every commit request carries, for each
@@ -984,30 +988,52 @@ idempotent steps per shard (lua/tarn.lua "Schema changes"):
    PREPARE instead: its stored field (or collation weight field) must be
    physically present in every existing tuple. Otherwise the native index
    would hold NULL where SQL reads the fill, missing rows and failing to
-   enforce logical uniqueness. PREPARE refuses that change with 1846;
-   automatic backfill is not implemented. NULL fills need no such check.
+   enforce logical uniqueness. PREPARE materializes that suffix before the
+   index is built. NULL fills already have the correct native key.
 2. PREPARE raises the table's fence to V in memory, waits until no local
    commit that passed the check is still in flight (`wait_commits`) and no
    prepared cross-shard transaction holds locks on the table (their writes
    were encoded with the old definition and are applied by APPLY of the
    commit protocol), checks the existing rows against the new types --
-   rows that end early by the column's fill -- and builds the new indexes
-   BUILD has not (a unique one fails on duplicates, 1062). Writes wait
-   while it checks rows, so it refuses to check more rows than
+   rows that end early by the column's fill -- then materializes missing
+   indexed fills and builds the indexes BUILD has not (a unique one fails
+   on duplicates, 1062). Materializing changes persist their fence and job
+   generation before changing rows, so recovery retains it. Writes wait
+   while it checks or materializes rows, so it refuses to scan more rows than
    `tarn.cfg.alter_check_rows` (one million by default) on a shard, with
    1846, before raising the fence.
-3. When every shard has prepared, APPLY drops the indexes that go, changes
-   the space format, renames indexes and the space, and stores the new
+3. When every shard has prepared and any global unique-index fill succeeded,
+   APPLY drops the indexes that go, changes the space format, renames
+   indexes and the space, and stores the new
    definition, with `ver` = V, in `_tarn_catalog` (where the fence survives
-   restarts and leader changes: `FENCE` is rebuilt from it). An APPLY that
-   finds the in-memory fence gone (a restart or a new leader since PREPARE)
-   runs PREPARE again first.
+   restarts and leader changes: `FENCE` is rebuilt from it). A materializing
+   APPLY resumes its durable prepared/applying state; other APPLYs rerun
+   PREPARE first when their in-memory fence was lost.
 4. The catalog version is bumped; the other SQL servers reload within their
    0.3 s poll, or at once when a statement meets the fence.
 
-If a BUILD or a PREPARE fails anywhere (a row does not fit, a duplicate, a
-timeout waiting for prepared transactions), every shard is ABORTed:
-temporary indexes are dropped and the fence returns to the stored version.
+During a materializing PREPARE, each bounded transaction saves the row's
+first original tuple length in `_tarn_alter_undo` and appends its missing
+suffix atomically. Existing fields
+(including explicit NULLs) never change. Old physical slots use the committed
+definition's frozen fills, even when this ALTER drops those columns; only
+new slots use the proposed definition's fills. Old-catalog readers therefore
+keep the same logical values throughout PREPARE.
+
+If BUILD, PREPARE or a global unique-index fill fails (a row does not fit, a
+duplicate, a timeout), every shard is ABORTed. Temporary indexes are dropped.
+ABORT keeps the durable fence while it trims each row to its saved length
+and deletes that undo entry in the same transaction. Only an empty journal
+allows the aborted tombstone and fence release. A later ALTER can then
+reuse the physical slot with a different default safely. APPLY publishes
+only a prepared change; after publication, retries remove undo metadata
+without changing rows, and late ABORT cannot trim committed data. Every
+batch reads the durable version, generation and phase in its native write
+transaction, so takeover or abort conflicts with a stale batch. A per-space
+reentrant mutex serializes ALTER RPCs across native index builds and other
+DDL that yield; cleanup cannot finish while an older build is still running.
+The bounded row and DDL-quiescence models are described in
+[verification](verification.md).
 
 From BUILD on, a new unique index refuses rows that would break it, so an
 undecided write that the finished change would make fail fails at once
@@ -1023,12 +1049,13 @@ shard, with one record per table name it touches (an `ALTER TABLE ...
 RENAME` touches two). Schema changes of the same table run one at a time;
 those of other tables do not wait, which matters since an `ALTER TABLE` of a
 large vinyl table may build an index for hours. The job records its phase:
-`prepare` until every shard has prepared, then `apply`, or `abort` if one
-could not, written before the first APPLY or ABORT is sent. Its SQL server
-touches it every few seconds; every SQL server looks for jobs untouched for
+`prepare` until every shard has prepared and any global index fill has
+succeeded, then `apply`, or `abort` on failure, written before the first
+APPLY or ABORT is sent. Its SQL server touches it every few seconds; every SQL server looks for jobs untouched for
 `ddl_job_stale` (30 s, `cluster.json`) at startup and every 10 s, takes one
-over, and finishes it from its phase: back (ABORT everywhere) before
-`apply`, forward (APPLY everywhere) after. A statement whose job is left
+over, and resumes its recorded phase. A job without a decision reruns
+preparation and any global index fill before deciding; `abort` runs ABORT
+everywhere, and `apply` only goes forward. A statement whose job is left
 unfinished reports the outcome as unknown (1180).
 
 Writes wait (in the SQL server: the statement is retried, up to the lock
@@ -1555,6 +1582,20 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 <!-- TLC -->
 | Configuration | Result | Distinct states | States generated | Depth | Time | Trace length |
 |---|---|---:|---:|---:|---|---:|
+| Backfill | no errors | 3757 | 7686 | 21 | 00s |  |
+| BackfillDDL | no errors | 33 | 42 | 11 | 00s |  |
+| Bug_BackfillAbortAfterApply | violates PublishedIndexCorrect | 1249 | 2126 | 11 | 00s | 11 |
+| Bug_BackfillDDLNoFinisherSerialization | violates PublishedIndexMatches | 65 | 90 | 9 | 00s | 9 |
+| Bug_BackfillDDLNoQuiescence | violates NoLateAbortedIndex | 33 | 42 | 6 | 00s | 6 |
+| Bug_BackfillDDLWrongSpace | violates ReplacementIndexUnchanged | 15 | 18 | 4 | 00s | 4 |
+| Bug_BackfillLoseUndo | violates PublishedIndexCorrect | 2584 | 4161 | 12 | 00s | 12 |
+| Bug_BackfillNoPersistentFence | violates OldProjectionPreserved | 1004 | 1605 | 10 | 00s | 10 |
+| Bug_BackfillOverwriteUndo | violates PublishedIndexCorrect | 6251 | 11089 | 15 | 00s | 15 |
+| Bug_BackfillPublishEarly | violates PublishedIndexCorrect | 22 | 22 | 4 | 00s | 4 |
+| Bug_BackfillReleaseEarly | violates AbortedUndoClean | 80 | 101 | 6 | 00s | 6 |
+| Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
+| Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
+| Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
@@ -1653,13 +1694,13 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   key enters the read set as a separate lookup's would. Lookup parts of
   type DECIMAL, and global lookups with DECIMAL primary keys, retain per-row
   native lookups until exact batch matching supports them.
-* `ALTER TABLE` does not rewrite rows: conversions between type families
-  and `DECIMAL` scale changes are refused, dropped columns keep their
-  stored values (no space is reclaimed), and writes to the table wait while
-  a change prepares (§2.10): on memtx tables also while their new indexes
-  are built, at memory speed; vinyl tables build them before unless they
-  need a physical-field presence check for a non-NULL fill. Checking the
-  existing rows (a narrower type, `NOT NULL`, indexed field presence) is refused above
+* Ordinary instant `ALTER TABLE` changes keep the physical layout; an index
+  on a missing non-NULL fill appends the missing suffix with durable undo
+  (§2.10). Conversions between type families and `DECIMAL` scale changes
+  are refused. Dropped columns retain their fields (no space is reclaimed).
+  Writes wait during PREPARE and, on memtx, index building; other vinyl
+  indexes build before that wait. Checking or materializing existing rows
+  (a narrower type, `NOT NULL`, indexed fills) is refused above
   `tarn.cfg.alter_check_rows` rows per shard. A table cannot move between
   memtx and vinyl.
 * Vinyl tables (§2.11): an autocommit read whose range a cross-shard

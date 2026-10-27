@@ -18,6 +18,10 @@ Bug_MoveNoDrain Bug_MoveNoHold Bug_MoveServeStale Move_Scan Move_RC Move_ScanFai
 Bug_JoinNoCheck Bug_JoinNoCheck3 Bug_JoinNoCheck3Prepare Join_Scan Join_ScanFailover Join3_Scan Join3_ScanPrepare"
 DEFAULT="$DEFAULT GroupedTables Bug_GroupedTablesNoWLockCheck GroupedRead Bug_GroupedReadSeparateSnapshots"
 DEFAULT="$DEFAULT GroupedDDL Bug_GroupedDDLIgnoreGeneration Bug_GroupedDDLIgnoreStale"
+DEFAULT="$DEFAULT Backfill Bug_BackfillNoPersistentFence Bug_BackfillSkipDrain Bug_BackfillLoseUndo
+Bug_BackfillOverwriteUndo Bug_BackfillPublishEarly Bug_BackfillReleaseEarly Bug_BackfillStaleBatch
+Bug_BackfillWrongOldPad Bug_BackfillAbortAfterApply"
+DEFAULT="$DEFAULT BackfillDDL Bug_BackfillDDLNoQuiescence Bug_BackfillDDLNoFinisherSerialization Bug_BackfillDDLWrongSpace"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

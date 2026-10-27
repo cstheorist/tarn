@@ -103,6 +103,18 @@ local function ensure_schema()
     local cat = space('_tarn_catalog', {{'name', 'string'}, {'def', 'map'}})
     cat:create_index('pk', {parts = {'name'}, if_not_exists = true})
 
+    -- SQL allocates IDs from 10001 upward. On an upgraded, populated node
+    -- auto-ID allocation would consume its next planned SQL ID instead.
+    local undo = box.space._tarn_alter_undo
+    if undo == nil then
+        local id = box.schema.SYSTEM_ID_MAX + 1
+        while id < 10000 and box.space[id] ~= nil do id = id + 1 end
+        if id >= 10000 then error('tarn: no free internal space ID for ALTER undo') end
+        undo = box.schema.space.create('_tarn_alter_undo', {id = id, is_sync = sync,
+            format = {{'space_id', 'unsigned'}, {'ver', 'unsigned'}, {'key', 'string'}, {'oldlen', 'unsigned'}}})
+    end
+    undo:create_index('pk', {parts = {'space_id', 'ver', 'key'}, if_not_exists = true})
+
     -- A space made by an earlier version gets the fields added since (at
     -- the end, nullable: its tuples stay valid).
     local function extend(s, format)
@@ -4130,9 +4142,10 @@ end
 -------------------------------------------------------------------------------
 -- Schema changes (ALTER TABLE, RENAME TABLE, CREATE / DROP INDEX)
 -------------------------------------------------------------------------------
--- No stored row changes: ALTER TABLE adds fields after the last one (rows
--- written before hold the column's fill value, which the SQL servers know),
--- keeps the fields of dropped columns, and changes names, types and indexes.
+-- Instant ADD normally leaves stored rows short: SQL supplies their frozen
+-- fill values. An index that needs those values materializes missing suffixes
+-- behind a durable write fence, with original-length undo until publication.
+-- ALTER keeps dropped fields and changes names, types and indexes.
 -- What makes it safe while transactions run is the table's definition
 -- version (`ver`): writes carry the version of the definition they were
 -- encoded with (FENCE above), and an ALTER TABLE to version V runs on every
@@ -4224,13 +4237,13 @@ local function check_value(c, v)
     return nil
 end
 
-local function run_checks(sp, checks)
+local function run_checks(sp, checks, before_materialize)
     if checks == nil or checks == box.NULL or #checks == 0 then return nil end
     local n = 0
     for _, t in sp.index[0]:pairs() do
         n = n + 1
         for _, c in ipairs(checks) do
-            if c[3] == 'indexed' and #t < c[1] then
+            if not before_materialize and c[3] == 'indexed' and #t < c[1] then
                 return {'error', 1846, string.format(
                     "Indexing column '%s' is not supported while existing rows omit its non-NULL fill "
                     .. "(row %d). The stored field must be materialized before adding the index", c[2], n)}
@@ -4280,6 +4293,184 @@ end
 
 local function alter_space(name, a)
     return box.space[name] or (a.rename ~= nil and a.rename ~= box.NULL and box.space[a.rename]) or nil
+end
+
+-- Automatic materialization only appends a missing suffix. The SQL server
+-- preserves the old definition's padding for old slots (even dropped ones)
+-- and supplies frozen fills for new slots. Existing values, including NULL,
+-- are never rewritten. Undo therefore needs the original length, not a copy
+-- of the row. Its identity deliberately excludes the job's takeover gen.
+function UIX.mat_args(sp, a, gen)
+    local p, width = a.pad, a.old_width
+    if type(p) ~= 'table' or type(p[1]) ~= 'number' or p[1] < 1 or p[1] % 1 ~= 0
+       or type(width) ~= 'number' or width % 1 ~= 0 or width < p[1]
+       or p[1] + #p - 1 < width then
+        return nil, {'error', 1210, 'Incorrect ALTER materialization padding'}
+    end
+    for i = 2, #p do
+        if type(p[i]) == 'nil' then return nil, {'error', 1210, 'Incomplete ALTER materialization padding'} end
+    end
+    local r = UIX.record(sp.id)
+    if gen == nil or gen == box.NULL then gen = r and r.ver == a.ver and r.gen or 0 end
+    return gen
+end
+
+-- Called INSIDE the same RW transaction as its row/journal mutations.
+-- Reading this durable owner also makes native MVCC abort a batch whose
+-- generation/phase changes while a vinyl operation or WAL wait yields.
+function UIX.mat_owned(sp, a, gen, phase)
+    local r = UIX.record(sp.id)
+    if catalog_ver(sp.name) >= a.ver or r == nil or r.ver ~= a.ver or r.gen ~= gen
+       or r.aborted or r.phase ~= phase then return {'error', 1412, STALE_DEF_MSG} end
+    return nil
+end
+
+function UIX.mat_tx(fn)
+    local ok, res = pcall(function()
+        box.begin(RW)
+        local bad = fn()
+        if bad then box.rollback(); return bad end
+        box.commit()
+        return {OK}
+    end)
+    if box.is_in_txn() then box.rollback() end
+    return ok and res or failure(res)
+end
+
+-- Persist ownership before raising the in-memory fence or changing rows.
+-- Aborting remains a LIVE fence; only the final aborted tombstone releases
+-- it. Applying is irreversible, even before catalog publication finishes.
+function UIX.mat_phase(sp, a, gen, phase)
+    local r = UIX.mat_tx(function()
+        if catalog_ver(sp.name) >= a.ver then return {OK, 'applied'} end
+        local had = UIX.record(sp.id)
+        if had ~= nil and (had.ver > a.ver or (had.ver == a.ver and (had.gen or 0) > gen)) then
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+        if had ~= nil and had.ver == a.ver then
+            if had.aborted or had.phase == 'aborting' then
+                if phase ~= 'aborting' then return {'error', 1412, STALE_DEF_MSG} end
+                if had.aborted then return {OK, 'aborted'} end
+            elseif had.phase == 'applying' and phase ~= 'applying' then
+                return {'error', 1412, STALE_DEF_MSG}
+            end
+        end
+        if phase == 'applying' and (had == nil or had.ver ~= a.ver
+           or (had.phase ~= 'prepared' and had.phase ~= 'applying')) then
+            return {'error', 1412, 'ALTER has not durably prepared on this shard'}
+        end
+        box.space._tarn_meta:replace{'fence:' .. sp.id,
+            {ver = a.ver, gen = gen, phase = phase, materialize = true}}
+        return nil
+    end)
+    if r[1] == OK and r[2] == nil and (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
+    return r
+end
+
+function UIX.mat_rows(sp, a, gen, deadline)
+    local after, seen, target = nil, 0, a.pad[1] + #a.pad - 1
+    local padding_bytes = #msgpack.encode(a.pad)
+    while true do
+        if clock.monotonic() > deadline then return {'timeout', 1205, LOCK_TIMEOUT_MSG} end
+        local n, bytes = 0, 0
+        local r = UIX.mat_tx(function()
+            local bad = UIX.mat_owned(sp, a, gen, 'preparing')
+            if bad then return bad end
+            yield_point('alter_backfill')
+            for _, t in sp.index[0]:pairs(after or {}, {iterator = after and 'GT' or 'ALL'}) do
+                local pk = index_key_def(sp.id, 0):extract_key(t):totable()
+                local kb = kbin(pk)
+                n, seen, after = n + 1, seen + 1, pk
+                if seen > M.cfg.alter_check_rows then
+                    return {'error', 1846, 'ALTER materialization exceeds tarn.cfg.alter_check_rows'}
+                end
+                if #t < a.pad[1] then return {'error', 1210, 'Stored tuple is shorter than ALTER padding base'} end
+                if #t < target then
+                    local undo = box.space._tarn_alter_undo
+                    if undo:get{sp.id, a.ver, kb} == nil then undo:insert{sp.id, a.ver, kb, #t} end
+                    local row = t:totable()
+                    for f = #row + 1, target do row[f] = a.pad[f - a.pad[1] + 1] end
+                    sp:replace(row)
+                end
+                bytes = bytes + t:bsize() + #kb + padding_bytes
+                if n >= 128 or bytes >= 1024 * 1024 then break end
+            end
+            yield_point('alter_backfill_written')
+            return UIX.mat_owned(sp, a, gen, 'preparing')
+        end)
+        if r[1] ~= OK then return r end
+        if n == 0 then return {OK} end
+        yield_point('alter_backfill_chunk')
+        if PG.heap_low() then return {'error', 1041, 'Out of memory during ALTER materialization'} end
+        fiber.yield()
+    end
+end
+
+-- Cleanup is bounded and restartable. ABORT trims and deletes each undo
+-- entry atomically under the live aborting owner. After publication only
+-- journal deletion is allowed; it cannot change rows or a newer fence.
+function UIX.mat_clean(sp, a, gen, abort)
+    while true do
+        local n, bytes = 0, 0
+        local r = UIX.mat_tx(function()
+            if abort then
+                local bad = UIX.mat_owned(sp, a, gen, 'aborting')
+                if bad then return bad end
+            elseif catalog_ver(sp.name) < a.ver then
+                return {'error', 1412, STALE_DEF_MSG}
+            end
+            local undo = box.space._tarn_alter_undo
+            for _, u in undo.index[0]:pairs({sp.id, a.ver}, {iterator = 'EQ'}) do
+                if abort then
+                    local key = msgpack.decode(u.key)
+                    local t = sp:get(key)
+                    if t == nil or #t < u.oldlen then
+                        return {'error', 1412, 'ALTER undo no longer matches its fenced tuple'}
+                    end
+                    if #t > u.oldlen then sp:update(key, {{'#', u.oldlen + 1, #t - u.oldlen}}) end
+                end
+                undo:delete{sp.id, a.ver, u.key}
+                n, bytes = n + 1, bytes + #u.key + 32
+                if n >= 128 or bytes >= 1024 * 1024 then break end
+            end
+            if abort then return UIX.mat_owned(sp, a, gen, 'aborting') end
+            return nil
+        end)
+        if r[1] ~= OK or n == 0 then return r end
+        yield_point(abort and 'alter_backfill_undo' or 'alter_backfill_gc')
+        fiber.yield()
+    end
+end
+
+function UIX.mat_prepare(sp, a, gen)
+    local bad
+    gen, bad = UIX.mat_args(sp, a, gen)
+    if bad then return bad end
+    local r = UIX.mat_phase(sp, a, gen, 'preparing')
+    if r[1] ~= OK or r[2] ~= nil then return r end
+    local deadline = clock.monotonic() + (a.timeout or 50)
+    if not drain(sp.id, deadline) then return {'timeout', 1205, LOCK_TIMEOUT_MSG} end
+    bad = run_checks(sp, a.checks, true)
+    if bad then return bad end
+    r = UIX.mat_rows(sp, a, gen, deadline)
+    if r[1] ~= OK then return r end
+    bad = run_checks(sp, a.checks)
+    if bad then return bad end
+    -- A failure keeps the fence and journal until the coordinator's ABORT.
+    yield_point('alter_backfill_index')
+    bad = build_indexes(sp, a.builds)
+    if bad then return bad end
+    for _, u in ipairs(a.uix or {}) do
+        if UIX.mat_owned(sp, a, gen, 'preparing') then return {'error', 1412, STALE_DEF_MSG} end
+        create_space(u)
+    end
+    return UIX.mat_tx(function()
+        local lost = UIX.mat_owned(sp, a, gen, 'preparing')
+        if lost then return lost end
+        box.space._tarn_meta:replace{'fence:' .. sp.id,
+            {ver = a.ver, gen = gen, phase = 'prepared', materialize = true}}
+        return nil
+    end)
 end
 
 -- a: {ver, checks, builds, timeout, drop = {index ids}, renames = {{id, name}},
@@ -4336,6 +4527,7 @@ function tarn_alter_prepare(name, a, gen)
         end
     end
     fence_fresh()
+    if a.materialize == true then return UIX.mat_prepare(sp, a, gen) end
     -- Stored first when a new global index is filled (see fence_rebuild).
     if fills then
         local had = UIX.record(sp.id)
@@ -4399,7 +4591,9 @@ function tarn_alter_prepare(name, a, gen)
 end
 
 -- The stored fence of table space `sid` (see tarn_alter_prepare):
--- {ver, gen} or {ver, aborted = true}, or nil.
+-- {ver, gen} or {ver, aborted = true}, or nil. Materialization also records
+-- preparing/prepared/applying/aborting/aborted; only the final aborted state
+-- sets aborted=true, so a restart retains the fence throughout undo.
 function UIX.record(sid)
     local t = box.space._tarn_meta:get{'fence:' .. sid}
     return t ~= nil and type(t.value) == 'table' and t.value or nil
@@ -4416,6 +4610,7 @@ function UIX.filling(sid, ver, gen)
     if sp == nil or catalog_ver(sp.name) >= ver then return false end
     local v = UIX.record(sid)
     return v ~= nil and v.ver == ver and not v.aborted and v.gen == gen
+           and (v.phase == nil or v.phase == 'prepared')
 end
 
 -- Insert entries `tuples` into new global index space `id` of the ALTER
@@ -4428,32 +4623,62 @@ end
 -- never emptied for a new fill (ABORT drops it, and PREPARE makes a new one).
 function tarn_uix_fill(id, tuples, sid, ver, gen)
     writable()
-    if not UIX.filling(sid, ver, gen) then return {'error', 1412, STALE_DEF_MSG} end
-    local sp = box.space[id]
-    if sp == nil then return {'error', 1146, 'no such space ' .. tostring(id)} end
-    box.begin(RW)
-    for i, t in ipairs(tuples) do
-        local ok, err = pcall(sp.insert, sp, t)
-        if not ok then
-            local dup = type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND
-            if not (dup and msgpack.encode(err.old_tuple) == msgpack.encode(t)) then
-                box.rollback()
-                if dup then return {'duplicate', i} end
-                error(err)
+    local ok, res = pcall(function()
+        box.begin(RW)
+        -- The owner/phase/catalog read belongs to the same transaction as
+        -- the entries. A takeover or APPLY cannot leave a late fill behind.
+        if not UIX.filling(sid, ver, gen) then
+            box.rollback()
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+        local sp = box.space[id]
+        if sp == nil then
+            box.rollback()
+            return {'error', 1146, 'no such space ' .. tostring(id)}
+        end
+        yield_point('uix_fill')
+        for i, t in ipairs(tuples) do
+            local wrote, err = pcall(sp.insert, sp, t)
+            if not wrote then
+                local dup = type(err) == 'cdata' and err.code == box.error.TUPLE_FOUND
+                if not (dup and msgpack.encode(err.old_tuple) == msgpack.encode(t)) then
+                    box.rollback()
+                    if dup then return {'duplicate', i} end
+                    error(err)
+                end
             end
         end
-    end
-    box.commit()
-    return {OK}
+        yield_point('uix_fill_written')
+        if not UIX.filling(sid, ver, gen) then
+            box.rollback()
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+        box.commit()
+        return {OK}
+    end)
+    if box.is_in_txn() then box.rollback() end
+    return ok and res or failure(res)
 end
 
-function tarn_alter_apply(name, a)
+function tarn_alter_apply(name, a, gen)
     writable()
     local sp = alter_space(name, a)
     if sp == nil then return {'error', 1146, "Table '" .. name .. "' doesn't exist"} end
-    if catalog_ver(sp.name) >= a.ver then return {OK, 'applied'} end
+    if catalog_ver(sp.name) >= a.ver then
+        if a.materialize == true then
+            local r = UIX.mat_clean(sp, a, gen, false)
+            if r[1] ~= OK then return r end
+        end
+        return {OK, 'applied'}
+    end
     fence_fresh()
-    if (FENCE[sp.id] or 0) < a.ver then
+    if a.materialize == true then
+        local bad
+        gen, bad = UIX.mat_args(sp, a, gen)
+        if bad then return bad end
+        local r = UIX.mat_phase(sp, a, gen, 'applying')
+        if r[1] ~= OK or r[2] ~= nil then return r end
+    elseif (FENCE[sp.id] or 0) < a.ver then
         -- The fence PREPARE raised is gone (restart, new leader): again.
         local r = tarn_alter_prepare(sp.name, a)
         if r[1] ~= OK then return r end
@@ -4462,7 +4687,6 @@ function tarn_alter_apply(name, a)
     -- behind the fence.)
     local bad = build_indexes(sp, a.builds)
     if bad then return bad end
-    local old_name = sp.name
     for _, id in ipairs(a.drop or {}) do
         if sp.index[id] ~= nil then sp.index[id]:drop() end
     end
@@ -4480,23 +4704,62 @@ function tarn_alter_apply(name, a)
         PENDING_NAME[sp.id .. '/' .. b[1]] = nil
     end
     if a.rename ~= nil and a.rename ~= box.NULL and sp.name ~= a.rename then sp:rename(a.rename) end
-    box.begin()
-    if old_name ~= sp.name then box.space._tarn_catalog:delete{old_name} end
+    yield_point('alter_schema')
+    box.begin(RW)
+    if a.materialize == true then
+        local lost = UIX.mat_owned(sp, a, gen, 'applying')
+        if lost then box.rollback(); return lost end
+    end
+    -- Native RENAME may already have committed before a crash/retry. Its
+    -- current name then is the target; the request still binds the old key.
+    if name ~= sp.name then box.space._tarn_catalog:delete{name} end
     box.space._tarn_catalog:replace{sp.name, a.def}
     box.space._tarn_meta:delete{'fence:' .. sp.id}
     box.commit()
-    FENCE[sp.id] = a.ver
+    if (FENCE[sp.id] or 0) < a.ver then FENCE[sp.id] = a.ver end
     invalidate_key_defs()
     M.stats.alters = M.stats.alters + 1
+    if a.materialize == true then
+        yield_point('alter_backfill_apply')
+        local r = UIX.mat_clean(sp, a, gen, false)
+        if r[1] ~= OK then return r end
+    end
     return {OK}
 end
 
-function tarn_alter_abort(name, a)
+function tarn_alter_abort(name, a, gen)
     writable()
     local sp = alter_space(name, a)
     if sp == nil then return {OK} end
     local cur = catalog_ver(sp.name)
     if cur >= a.ver then return {OK, 'applied'} end
+    if a.materialize == true then
+        local bad
+        gen, bad = UIX.mat_args(sp, a, gen)
+        if bad then return bad end
+        local r = UIX.mat_phase(sp, a, gen, 'aborting')
+        if r[1] ~= OK or r[2] ~= nil then return r end
+        drop_built(sp, a.builds)
+        for _, u in ipairs(a.uix or {}) do
+            if box.space[u.id] ~= nil then box.space[u.id]:drop() end
+        end
+        r = UIX.mat_clean(sp, a, gen, true)
+        if r[1] ~= OK then return r end
+        r = UIX.mat_tx(function()
+            local lost = UIX.mat_owned(sp, a, gen, 'aborting')
+            if lost then return lost end
+            if box.space._tarn_alter_undo.index[0]:count{sp.id, a.ver} ~= 0 then
+                return {'error', 1412, 'ALTER undo cleanup is not complete'}
+            end
+            box.space._tarn_meta:replace{'fence:' .. sp.id,
+                {ver = a.ver, gen = gen, phase = 'aborted', materialize = true, aborted = true}}
+            return nil
+        end)
+        if r[1] ~= OK then return r end
+        M.stale_fences()
+        fence_fresh()
+        return {OK}
+    end
     drop_built(sp, a.builds)
     for _, u in ipairs(a.uix or {}) do
         if box.space[u.id] ~= nil then box.space[u.id]:drop() end
@@ -4521,6 +4784,67 @@ function tarn_alter_abort(name, a)
     end
     return {OK}
 end
+
+-- Native index/format DDL may yield before an index becomes visible in
+-- box.space. Serialize the whole ALTER RPC, not just its final phase check:
+-- ABORT cannot miss an in-flight build, and an older finisher cannot resume
+-- after a later ALTER reused an index ID. The lock is process-local: a
+-- restart also kills all the native DDL fibers it protects. Cache/election
+-- refreshes must NOT reset it. APPLY -> PREPARE is reentrant on one fiber.
+UIX.alter_locks, UIX.alter_cond = {}, fiber.cond()
+function UIX.alter_admit(fn, op, name, a, gen, sid)
+    writable()
+    local current = alter_space(name, a)
+    if current == nil or current.id ~= sid or (type(a.def) == 'table' and a.def.id ~= nil
+       and a.def.id ~= box.NULL and a.def.id ~= current.id) then return {'error', 1412, STALE_DEF_MSG} end
+    -- Admission is checked AFTER acquiring the lock. In particular, a
+    -- delayed ordinary BUILD must not touch a newer job's reused IDs.
+    if catalog_ver(current.name) < a.ver then
+        local r = UIX.record(sid)
+        if r ~= nil and (r.ver > a.ver or (r.ver == a.ver and
+           ((gen ~= nil and gen ~= box.NULL and (r.gen or 0) > gen)
+            or ((r.aborted or r.phase == 'aborting') and op ~= 'abort')
+            or (r.phase == 'applying' and op ~= 'apply')
+            or (r.materialize and a.materialize ~= true)))) then
+            return {'error', 1412, STALE_DEF_MSG}
+        end
+    end
+    return fn(name, a, gen)
+end
+function UIX.alter_serial(fn, op, name, a, gen)
+    local sp = alter_space(name, a)
+    if sp == nil then return fn(name, a, gen) end
+    local sid, me = sp.id, fiber.self()
+    local deadline = clock.monotonic() + (a.timeout or 50)
+    while UIX.alter_locks[sid] ~= nil and UIX.alter_locks[sid].owner ~= me do
+        local left = deadline - clock.monotonic()
+        if left <= 0 then return {'timeout', 1205, LOCK_TIMEOUT_MSG} end
+        UIX.alter_cond:wait(math.min(left, 0.05))
+    end
+    local lock = UIX.alter_locks[sid]
+    if lock == nil then
+        lock = {owner = me, depth = 0}
+        UIX.alter_locks[sid] = lock
+    end
+    lock.depth = lock.depth + 1
+    -- A named protected body avoids allocating a closure after acquisition.
+    local ok, res = pcall(UIX.alter_admit, fn, op, name, a, gen, sid)
+    local rollback_ok, rollback_error = true, nil
+    if box.is_in_txn() then rollback_ok, rollback_error = pcall(box.rollback) end
+    -- No result-table allocation between the protected call and release:
+    -- even an allocation/native error must not leak the per-space mutex.
+    lock.depth = lock.depth - 1
+    if lock.depth == 0 then UIX.alter_locks[sid] = nil; UIX.alter_cond:broadcast() end
+    if not rollback_ok then error(rollback_error) end
+    if not ok then error(res) end
+    return res
+end
+UIX.alter_build, UIX.alter_prepare = tarn_alter_build, tarn_alter_prepare
+UIX.alter_apply, UIX.alter_abort = tarn_alter_apply, tarn_alter_abort
+function tarn_alter_build(name, a, gen) return UIX.alter_serial(UIX.alter_build, 'build', name, a, gen) end
+function tarn_alter_prepare(name, a, gen) return UIX.alter_serial(UIX.alter_prepare, 'prepare', name, a, gen) end
+function tarn_alter_apply(name, a, gen) return UIX.alter_serial(UIX.alter_apply, 'apply', name, a, gen) end
+function tarn_alter_abort(name, a, gen) return UIX.alter_serial(UIX.alter_abort, 'abort', name, a, gen) end
 
 -------------------------------------------------------------------------------
 -- CREATE TABLE, DROP TABLE and TRUNCATE (issue #30)

@@ -188,61 +188,68 @@ class T:
             self.check(code(lambda: q(c, sql)) == 1235, sql)
         self.check(q(c, "SELECT * FROM rf")[0][:3] == (1, 1, "a"), "table unchanged")
 
-    def test_indexed_default_guard(self):
-        """A native index cannot index a non-NULL SQL fill absent from a tuple."""
+    def test_indexed_default_backfill(self):
+        """An index materializes missing frozen fills before it becomes usable."""
         c = self.c()
-        for change in ["ADD COLUMN c INT DEFAULT 3, ADD INDEX ic (c)",
-                       "ADD COLUMN c INT DEFAULT 0, ADD INDEX ic (c)",
-                       "ADD COLUMN c VARCHAR(10) COLLATE utf8mb4_bin DEFAULT '', ADD INDEX ic (c)",
-                       "ADD COLUMN c INT DEFAULT 3 FIRST, ADD INDEX ic (v, c)",
-                       "ADD COLUMN c INT DEFAULT 3 AFTER id, ADD INDEX ic (c, v)"]:
+        for change, value in [
+                ("ADD COLUMN c INT DEFAULT 3, ADD INDEX ic (c)", 3),
+                ("ADD COLUMN c INT DEFAULT 0, ADD INDEX ic (c)", 0),
+                ("ADD COLUMN c INT NOT NULL, ADD INDEX ic (c)", 0),
+                ("ADD COLUMN c VARCHAR(10) COLLATE utf8mb4_bin DEFAULT '', ADD INDEX ic (c)", ""),
+                ("ADD COLUMN c INT DEFAULT 3 FIRST, ADD INDEX ic (v, c)", 3),
+                ("ADD COLUMN c INT DEFAULT 3 AFTER id, ADD INDEX ic (c, v)", 3)]:
             q(c, "DROP TABLE IF EXISTS df_guard")
             q(c, "CREATE TABLE df_guard (id INT PRIMARY KEY, v INT)")
             q(c, "INSERT INTO df_guard VALUES (1, 10), (2, 20)")
-            before = q(c, "SHOW CREATE TABLE df_guard")
-            e = code(lambda: q(c, f"ALTER TABLE df_guard {change}"))
-            self.check(e == 1846, f"short-row index refused ({change}): {e}")
-            self.check(q(c, "SHOW CREATE TABLE df_guard") == before,
-                       f"failed combined ALTER publishes neither column nor index: {change}")
-            self.check(q(c, "SELECT id, v FROM df_guard ORDER BY id") == ((1, 10), (2, 20)),
-                       f"failed ALTER leaves rows intact: {change}")
+            q(c, f"ALTER TABLE df_guard {change}")
+            self.check(q(c, "SELECT id, v, c FROM df_guard ORDER BY id") == ((1, 10, value), (2, 20, value)),
+                       f"combined ALTER preserves rows and supplies the frozen fill: {change}")
+            self.check(q(c, "SELECT id FROM df_guard WHERE c = %s ORDER BY id", (value,)) == ((1,), (2,)),
+                       f"the new index finds both previously short tuples: {change}")
+            self.check(any(row[2] == "ic" for row in q(c, "SHOW INDEX FROM df_guard")),
+                       f"the index is published: {change}")
             self.check(q(c, "UPDATE df_guard SET v = v + 1 WHERE id = 1") == 1,
-                       f"failed ALTER releases its write fence: {change}")
+                       f"successful ALTER releases its write fence: {change}")
 
         q(c, "DROP TABLE IF EXISTS df_frozen")
         q(c, "CREATE TABLE df_frozen (id INT PRIMARY KEY, v INT)")
         q(c, "INSERT INTO df_frozen VALUES (1, 10)")
         q(c, "ALTER TABLE df_frozen ADD COLUMN c INT DEFAULT 3")
         q(c, "ALTER TABLE df_frozen ALTER COLUMN c SET DEFAULT NULL")
-        before = q(c, "SHOW CREATE TABLE df_frozen")
-        e = code(lambda: q(c, "ALTER TABLE df_frozen ADD INDEX ic (c)"))
-        self.check(e == 1846 and q(c, "SHOW CREATE TABLE df_frozen") == before,
-                   "current NULL default cannot hide an earlier non-NULL frozen fill")
-        q(c, "ALTER TABLE df_frozen ALTER COLUMN c SET DEFAULT 9")
         q(c, "INSERT INTO df_frozen (id, v) VALUES (2, 20)")
-        self.check(q(c, "SELECT id, c FROM df_frozen ORDER BY id") == ((1, 3), (2, 9)),
-                   "old short rows retain fill3 while new rows use default9")
+        q(c, "ALTER TABLE df_frozen ALTER COLUMN c SET DEFAULT 9")
+        q(c, "INSERT INTO df_frozen (id, v) VALUES (3, 30)")
+        q(c, "INSERT INTO df_frozen (id, v, c) VALUES (4, 40, 77)")
         q(c, "UPDATE df_frozen SET c = c")
-        e = code(lambda: q(c, "ALTER TABLE df_frozen ADD INDEX ic (c)"))
-        self.check(e == 1846, "generic self-assignment does not materialize short tuples")
-        # A real change to another column rewrites the full logical row.
-        q(c, "UPDATE df_frozen SET v = v + 1")
-        self.check(q(c, "SELECT id, c FROM df_frozen ORDER BY id") == ((1, 3), (2, 9)),
-                   "materialization uses the frozen fill, not the changed default")
-        q(c, "UPDATE df_frozen SET c = NULL WHERE id = 2")
         q(c, "ALTER TABLE df_frozen ADD INDEX ic (c)")
+        self.check(q(c, "SELECT id, c FROM df_frozen ORDER BY id") == ((1, 3), (2, None), (3, 9), (4, 77)),
+                   "backfill uses the frozen fill and preserves physically present NULL and custom values")
         indexed = q(c, "SELECT id FROM df_frozen WHERE c = 3 ORDER BY id")
         scanned = q(c, "SELECT id FROM df_frozen WHERE c + 0 = 3 ORDER BY id")
-        self.check(indexed == scanned == ((1,),), "materialized fill has matching indexed and scan results")
+        self.check(indexed == scanned == ((1,),), "backfilled fill has matching indexed and scan results")
         self.check(q(c, "SELECT id FROM df_frozen WHERE c IS NULL") == ((2,),),
                    "physically present NULL is allowed despite a non-NULL frozen fill")
-        q(c, "INSERT INTO df_frozen (id, v) VALUES (3, 30)")
-        self.check(q(c, "SELECT id FROM df_frozen WHERE c = 9") == ((3,),), "new default is indexed")
-        q(c, "UPDATE df_frozen SET c = 10 WHERE id = 3")
+        q(c, "INSERT INTO df_frozen (id, v) VALUES (5, 50)")
+        self.check(q(c, "SELECT id FROM df_frozen WHERE c = 9 ORDER BY id") == ((3,), (5,)), "new default is indexed")
+        q(c, "UPDATE df_frozen SET c = 10 WHERE id = 5")
         q(c, "DELETE FROM df_frozen WHERE id = 1")
-        self.check(q(c, "SELECT id FROM df_frozen WHERE c = 10") == ((3,),)
-                   and q(c, "SELECT id FROM df_frozen WHERE c = 9") == ()
+        self.check(q(c, "SELECT id FROM df_frozen WHERE c = 10") == ((5,),)
+                   and q(c, "SELECT id FROM df_frozen WHERE c = 9") == ((3,),)
                    and q(c, "SELECT id FROM df_frozen WHERE c = 3") == (), "index stays current under DML")
+
+        q(c, "DROP TABLE IF EXISTS df_ci")
+        q(c, "CREATE TABLE df_ci (id INT PRIMARY KEY, v INT)")
+        q(c, "INSERT INTO df_ci VALUES (1, 10), (2, 20)")
+        q(c, "ALTER TABLE df_ci ADD COLUMN c VARCHAR(10) COLLATE utf8mb4_unicode_ci DEFAULT 'Á ', "
+             "ADD INDEX ic (c)")
+        self.check(q(c, "SELECT id FROM df_ci WHERE c = 'a' ORDER BY id") == ((1,), (2,)),
+                   "same-statement CI column gets the frozen weight including Unicode and PAD SPACE")
+        q(c, "INSERT INTO df_ci VALUES (3, 30, 'a')")
+        self.check(q(c, "SELECT id FROM df_ci WHERE c = 'Á' ORDER BY id") == ((1,), (2,), (3,)),
+                   "the backfilled CI index agrees with weights of future writes")
+        q(c, "ALTER TABLE df_ci ADD COLUMN unweighted VARCHAR(10) COLLATE utf8mb4_unicode_ci DEFAULT 'x'")
+        self.check(code(lambda: q(c, "ALTER TABLE df_ci ADD INDEX iu (unweighted)")) == 1235,
+                   "retrofitting a weight field to an older unweighted CI column remains explicitly unsupported")
 
     def test_indexed_default_allowed(self):
         """Empty tables, NULL fills and indexes of existing fields remain supported."""
@@ -266,6 +273,10 @@ class T:
         self.check(q(c, "SELECT id FROM df_null WHERE c IS NULL ORDER BY id") == ((1,), (2,))
                    and q(c, "SELECT id FROM df_null WHERE c = 3") == ((3,),),
                    "a later non-NULL default does not change the original NULL fill")
+        q(c, "ALTER TABLE df_null ADD COLUMN d INT DEFAULT 5, ADD INDEX id_d (d, c)")
+        self.check(q(c, "SELECT id, c, d FROM df_null ORDER BY id") == ((1, None, 5), (2, None, 5), (3, 3, 5))
+                   and q(c, "SELECT id FROM df_null WHERE d = 5 AND c IS NULL ORDER BY id") == ((1,), (2,)),
+                   "materializing a later indexed fill accepts and preserves earlier NULL padding")
 
         q(c, "DROP TABLE IF EXISTS df_existing")
         q(c, "CREATE TABLE df_existing (id INT PRIMARY KEY, v INT)")
@@ -273,11 +284,12 @@ class T:
         q(c, "ALTER TABLE df_existing ADD COLUMN c INT DEFAULT 3, ADD INDEX iv (v)")
         self.check(q(c, "SELECT c FROM df_existing WHERE v = 10") == ((3,),),
                    "a separate new non-NULL fill does not block an index of existing fields")
-        self.check(code(lambda: q(c, "ALTER TABLE df_existing ADD INDEX ic (c)")) == 1846,
-                   "the unmaterialized field itself remains protected")
+        q(c, "ALTER TABLE df_existing ADD INDEX ic (c)")
+        self.check(q(c, "SELECT id FROM df_existing WHERE c = 3 ORDER BY id") == ((1,), (2,)),
+                   "a previously added default column can be indexed without a manual row rewrite")
 
     def test_indexed_default_unique(self):
-        """The guard prevents false uniqueness; real duplicates still report1062."""
+        """Duplicate fills fail with1062 and restore reusable physical slots."""
         c = self.c()
         q(c, "DROP TABLE IF EXISTS df_unique")
         q(c, "CREATE TABLE df_unique (tenant INT, id INT, v INT, PRIMARY KEY (tenant, id)) "
@@ -285,13 +297,16 @@ class T:
         q(c, "INSERT INTO df_unique VALUES (1, 1, 10), (1, 2, 20)")
         before = q(c, "SHOW CREATE TABLE df_unique")
         e = code(lambda: q(c, "ALTER TABLE df_unique ADD COLUMN c INT DEFAULT 3, ADD UNIQUE KEY uc (c, tenant)"))
-        self.check(e == 1846 and q(c, "SHOW CREATE TABLE df_unique") == before,
-                   "short non-NULL fills cannot falsely satisfy a composite unique index")
+        self.check(e == 1062 and q(c, "SHOW CREATE TABLE df_unique") == before,
+                   "duplicate frozen fills report1062 and publish neither column nor unique index")
+        q(c, "ALTER TABLE df_unique ADD COLUMN d INT DEFAULT 9, ADD INDEX id_d (d, tenant, id)")
+        self.check(q(c, "SELECT tenant, id, d FROM df_unique ORDER BY tenant, id") == ((1, 1, 9), (1, 2, 9))
+                   and q(c, "SELECT id FROM df_unique WHERE d = 9 ORDER BY id") == ((1,), (2,)),
+                   "a different default reuses an aborted slot without inheriting its failed fill")
         q(c, "ALTER TABLE df_unique ADD COLUMN c INT DEFAULT 3")
-        q(c, "UPDATE df_unique SET v = v + 1")
         e = code(lambda: q(c, "ALTER TABLE df_unique ADD UNIQUE KEY uc (c, tenant)"))
         self.check(e == 1062 and not any(row[2] == "uc" for row in q(c, "SHOW INDEX FROM df_unique")),
-                   "materialized duplicates report1062 and leave no index")
+                   "duplicate fills from an older instant column report1062 and leave no index")
         q(c, "UPDATE df_unique SET c = 4 WHERE tenant = 1 AND id = 2")
         q(c, "INSERT INTO df_unique (tenant, id, v, c) VALUES (1, 3, 30, NULL), (1, 4, 40, NULL)")
         q(c, "ALTER TABLE df_unique ADD UNIQUE KEY uc (c, tenant)")
@@ -302,6 +317,24 @@ class T:
         q(c, "INSERT INTO df_unique (tenant, id, v, c) VALUES (2, 5, 50, 3)")
         self.check(q(c, "SELECT tenant, id FROM df_unique WHERE c = 3 ORDER BY tenant, id") == ((1, 1), (2, 5)),
                    "all composite key parts participate in uniqueness and indexed reads")
+
+    def test_indexed_default_global_rollback(self):
+        """A global unique fill failure also restores every prepared shard."""
+        c = self.c()
+        q(c, "DROP TABLE IF EXISTS df_global")
+        q(c, "CREATE TABLE df_global (id INT PRIMARY KEY, v INT)")
+        q(c, "INSERT INTO df_global VALUES (1, 10), (2, 20), (3, 30)")
+        before = q(c, "SHOW CREATE TABLE df_global")
+        e = code(lambda: q(c, "ALTER TABLE df_global ADD COLUMN c INT DEFAULT 3, ADD UNIQUE KEY uc (c)"))
+        self.check(e == 1062 and q(c, "SHOW CREATE TABLE df_global") == before,
+                   "global duplicate fills abort without publishing the new schema")
+        q(c, "ALTER TABLE df_global ADD COLUMN d INT DEFAULT 9, ADD INDEX id_d (d)")
+        self.check(q(c, "SELECT id, v, d FROM df_global ORDER BY id") == ((1, 10, 9), (2, 20, 9), (3, 30, 9))
+                   and q(c, "SELECT id FROM df_global WHERE d = 9 ORDER BY id") == ((1,), (2,), (3,)),
+                   "a global-fill abort cannot poison the next instant-column slot")
+        q(c, "ALTER TABLE df_global ADD UNIQUE KEY udv (d, v)")
+        self.check(q(c, "SELECT id FROM df_global WHERE d = 9 AND v = 20") == ((2,),),
+                   "a later valid global index contains the restored and backfilled values")
 
     def test_global_unique(self):
         """ALTER TABLE ADD / DROP of unique keys without the shard key
@@ -684,11 +717,6 @@ class T:
                     q(conn, s)
                     bump("ddl")
                     if s.startswith("ALTER TABLE acc ADD COLUMN x"):
-                        # Do not index lazy fills: point literal updates
-                        # physically pad each old tuple before x writers run.
-                        # Generic UPDATE x=x is a SQL no-op and does not.
-                        for i in range(1, 65):
-                            q(conn, "UPDATE acc SET x = 0 WHERE id = %s", (i,))
                         x_ready.set()
                 except pymysql.MySQLError as e:
                     with lock:
