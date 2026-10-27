@@ -1214,7 +1214,7 @@ tla/check.sh LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCo
 `TARN_CHECK_LOCKS` checks the same at run time: the Lua module compares the
 copy with the index after each change.
 
-### Configuration counts
+### Counter aliases
 
 `EngineAlias.tla` refines the central counter-alias ensure used by parallel
 engine APPLYs. Two callers request the same immutable new-SID/canonical-ID
@@ -1245,6 +1245,8 @@ the immutable old/new identity premise.
 ```sh
 tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 ```
+
+### Configuration counts
 
 The default list contains 187 configurations, including 136 expected
 broken/trade-off outcomes. The 198 generated configurations reproduce from
