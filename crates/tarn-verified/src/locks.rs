@@ -25,7 +25,10 @@
 //!     `write_conflict` finds, whoever writes; an index that `index_free`
 //!     passes, no W lock on any of its keys, so none that `range_w_locked`
 //!     finds, whatever the range; a key that `row_free` passes, no row lock
-//!     that `write_plocked` finds.
+//!     that `write_plocked` finds;
+//!   * `within`, which says whether a key lies in a range from its
+//!     comparisons with the bounds, finds it there wherever the Lua module's
+//!     in_range does, whichever bounds are included.
 //! The checks count every holder, the reader's or writer's own locks too:
 //! the native procedures serve transactions that hold none.
 //! Not proven: that the Lua module tells the copy of every change (its test
@@ -306,6 +309,39 @@ pub fn row_step(n: u64, take: bool) -> (out: u64)
     moved(n, !take, take)
 }
 
+/// The Lua module's in_range, from the comparisons of a key with the bounds
+/// of a range (kd:compare_keys: below 0, 0, above 0; None: no bound) and
+/// whether each bound is included.
+pub open spec fn lua_in_range(c_lo: Option<i32>, c_hi: Option<i32>, lo_incl: bool, hi_incl: bool) -> bool {
+    (match c_lo {
+        None => true,
+        Some(c) => c > 0 || (c == 0 && lo_incl),
+    }) && (match c_hi {
+        None => true,
+        Some(c) => c < 0 || (c == 0 && hi_incl),
+    })
+}
+
+/// Whether a key lies in a range, from its comparisons with the bounds, the
+/// bounds taken as included: wherever in_range finds it in the range,
+/// whichever of its bounds are, so is it found here (a range read meets the
+/// W locks the Lua check finds in it, a write the range locks it finds).
+pub fn within(c_lo: Option<i32>, c_hi: Option<i32>) -> (r: bool)
+    ensures
+        r == lua_in_range(c_lo, c_hi, true, true),
+        forall|lo_incl: bool, hi_incl: bool| #[trigger] lua_in_range(c_lo, c_hi, lo_incl, hi_incl) ==> r,
+{
+    let lo = match c_lo {
+        None => true,
+        Some(c) => c >= 0,
+    };
+    let hi = match c_hi {
+        None => true,
+        Some(c) => c <= 0,
+    };
+    lo && hi
+}
+
 /// Another transaction than `txid` holds a row lock (plock_holder).
 pub open spec fn row_locked(s: Set<int>, txid: int) -> bool {
     exists|t: int| t != txid && #[trigger] s.contains(t)
@@ -364,5 +400,7 @@ mod tests {
         assert!(secondary_free(none, true) && !secondary_free(r, false) && secondary_free(w, false));
         assert!(!secondary_free(w, true));
         assert!(index_free(0) && !index_free(1) && row_free(0) && !row_free(2));
+        assert!(within(None, None) && within(Some(0), Some(0)) && within(Some(1), Some(-1)));
+        assert!(!within(Some(-1), None) && !within(None, Some(1)));
     }
 }

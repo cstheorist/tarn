@@ -329,9 +329,9 @@ local function lk_range(txid, sid, iid, lo, hi, lo_incl, hi_incl, bucket)
     local b = BYTX[txid]; if b == nil then b = {}; BYTX[txid] = b end
     b[#b + 1] = {sid, iid, nil, bucket}
     BK.ns_lock(sid, 1)
-    BK.ns_range(sid, 1)
+    BK.ns_range(sid, iid, lo, hi, 1)
     lk_tag(bucket, 1)
-    BK.ns_check_ranges('lk_range', sid)
+    BK.ns_check_ranges('lk_range', sid, iid)
 end
 
 local function lk_release(txid)
@@ -356,7 +356,7 @@ local function lk_release(txid)
             if i ~= nil and i[txid] ~= nil then
                 NLOCK = NLOCK - #i[txid]
                 BK.ns_lock(x[1], -#i[txid])
-                BK.ns_range(x[1], -#i[txid])
+                for _, r in ipairs(i[txid]) do BK.ns_range(x[1], x[2], r[1], r[2], -1) end
                 i[txid] = nil
             end
         end
@@ -962,15 +962,16 @@ struct tarn_ns {
     uint64_t ddl_txn;
     uint64_t v_served, v_to_lua;
     void (*lk_point)(uint32_t, uint32_t, const char *, size_t, uint8_t, uint8_t);
-    void (*lk_range)(uint32_t, int32_t);
+    void (*lk_range)(uint32_t, uint32_t, const char *, size_t, const char *, size_t, int32_t);
     void (*pl_key)(uint32_t, uint32_t, const char *, size_t, int32_t);
     void (*locks_clear)(uint8_t);
     void (*locks_key)(uint32_t, uint32_t, const char *, size_t, uint32_t *);
     void (*locks_index)(uint32_t, uint32_t, uint32_t *);
     void (*locks_sizes)(uint32_t *);
+    void (*locks_range)(uint32_t, uint32_t, const char *, size_t, const char *, size_t, uint32_t *);
 };
 ]]
-BK.NS_LAYOUT = 9
+BK.NS_LAYOUT = 10
 M.NS_LAYOUT = BK.NS_LAYOUT   -- (tests: the layout this module declares)
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
@@ -1041,10 +1042,13 @@ end
 -- locks.rs), which its procedures check the keys they read and write
 -- against: each change of LK, RL and PL is made to it in the same step (no
 -- yield between them), through the functions of the state -- the point
--- locks on each key by mode (BK.NS_MODE), the range locks on each space,
--- the transactions with a row lock on each key. A lock of what is not a
--- space or an index (not a number of 32 bits), or of a key that is not a
--- string, is not copied: no native check is of one.
+-- locks on each key by mode (BK.NS_MODE), the range locks of each index by
+-- their bounds, the transactions with a row lock on each key. A lock of
+-- what is not a space or an index (not a number of 32 bits), or of a key
+-- that is not a string, is not copied: no native check is of one. (A bound
+-- is copied as msgpack.encode writes it, nil for none: the native checks
+-- compare keys with it, and take any key to be in a range whose bound is
+-- not a key of its index.)
 BK.NS_MODE = {R = 1, W = 2}
 function BK.ns_ids(sid, iid)
     return type(sid) == 'number' and type(iid) == 'number' and sid >= 0 and iid >= 0
@@ -1057,11 +1061,18 @@ function BK.ns_point(sid, iid, kb, from, to)
     if ns == nil or from == to or type(kb) ~= 'string' or not BK.ns_ids(sid, iid) then return end
     ns.lk_point(sid, iid, kb, #kb, BK.NS_MODE[from] or 0, BK.NS_MODE[to] or 0)
 end
--- d more range locks on space sid.
-function BK.ns_range(sid, d)
+-- A bound of a range lock as the copy has it: the bytes of msgpack.encode,
+-- or nil for none.
+function BK.ns_bound(b)
+    if b == nil or b == box.NULL then return nil end
+    return msgpack.encode(b)
+end
+-- d more range locks on index iid of space sid, from lo to hi.
+function BK.ns_range(sid, iid, lo, hi, d)
     local ns = BK.ns
-    if ns == nil or not BK.ns_ids(sid, 0) then return end
-    ns.lk_range(sid, d)
+    if ns == nil or not BK.ns_ids(sid, iid) then return end
+    local l, h = BK.ns_bound(lo), BK.ns_bound(hi)
+    ns.lk_range(sid, iid, l, l and #l or 0, h, h and #h or 0, d)
 end
 -- d more transactions hold a row lock on (sid, iid, kb).
 function BK.ns_row(sid, iid, kb, d)
@@ -1116,7 +1127,7 @@ end
 function BK.ns_check_key(what, sid, iid, kb)
     local ns = BK.ns
     if ns == nil or not M.cfg.check_locks or type(kb) ~= 'string' or not BK.ns_ids(sid, iid) then return end
-    local q = BK.ns_q or ffi.new('uint32_t[4]')
+    local q = BK.ns_q or ffi.new('uint32_t[8]')
     BK.ns_q = q
     local r, w, n = BK.ns_key_counts(sid, iid, kb)
     ns.locks_key(sid, iid, kb, #kb, q)
@@ -1133,25 +1144,62 @@ function BK.ns_space_ranges(sid)
     end
     return n
 end
-function BK.ns_check_ranges(what, sid)
+-- (the range locks of index iid of space sid, by their encoded bounds:
+-- {[lo .. '\0' .. hi] = {lo, hi, n}}, and how many bounds)
+function BK.ns_index_ranges(sid, iid)
+    local out, n = {}, 0
+    for _, ranges in pairs(RL[sid] and RL[sid][iid] or {}) do
+        for _, r in ipairs(ranges) do
+            local l, h = BK.ns_bound(r[1]), BK.ns_bound(r[2])
+            local id = (l and 'l' .. l or '-') .. '\0' .. (h and 'h' .. h or '-')
+            local e = out[id]
+            if e == nil then
+                e = {l, h, 0}
+                out[id] = e
+                n = n + 1
+            end
+            e[3] = e[3] + 1
+        end
+    end
+    return out, n
+end
+-- (a difference between the range locks of an index and the copy's, if any)
+function BK.ns_ranges_differ(sid, iid, q)
     local ns = BK.ns
-    if ns == nil or not M.cfg.check_locks or not BK.ns_ids(sid, 0) then return end
-    local q = BK.ns_q or ffi.new('uint32_t[4]')
+    local bounds, n = BK.ns_index_ranges(sid, iid)
+    for _, e in pairs(bounds) do
+        local l, h = e[1], e[2]
+        ns.locks_range(sid, iid, l, l and #l or 0, h, h and #h or 0, q)
+        if q[0] ~= e[3] then
+            return string.format('%d/%d: %d ranges [%s, %s], copied %d', sid, iid, e[3], l and BK.ns_hex(l) or '-',
+                                 h and BK.ns_hex(h) or '-', q[0])
+        end
+    end
+    ns.locks_index(sid, iid, q)
+    if q[3] ~= n then return string.format('%d/%d: range bounds %d, copied %d', sid, iid, n, q[3]) end
+    return nil
+end
+function BK.ns_check_ranges(what, sid, iid)
+    local ns = BK.ns
+    if ns == nil or not M.cfg.check_locks or not BK.ns_ids(sid, iid) then return end
+    local q = BK.ns_q or ffi.new('uint32_t[8]')
     BK.ns_q = q
     local n = BK.ns_space_ranges(sid)
-    ns.locks_index(sid, 0, q)
+    ns.locks_index(sid, iid, q)
     if q[1] ~= n then BK.ns_check_differs(what, {string.format('%d: ranges %d, copied %d', sid, n, q[1])}) end
+    local d = BK.ns_ranges_differ(sid, iid, q)
+    if d then BK.ns_check_differs(what, {d}) end
 end
 function BK.ns_check_locks(what)
     local ns = BK.ns
     if ns == nil or not M.cfg.check_locks then return end
-    local q = BK.ns_q or ffi.new('uint32_t[4]')
+    local q = BK.ns_q or ffi.new('uint32_t[8]')
     BK.ns_q = q
     local bad = {}
     local function differs(fmt, ...)
         if #bad < 5 then bad[#bad + 1] = string.format(fmt, ...) end
     end
-    local keys, rows, windexes, rspaces = 0, 0, 0, 0
+    local keys, rows, windexes, rspaces, rindexes = 0, 0, 0, 0, 0
     -- (each key with point or row locks, once)
     local function key(sid, iid, kb, seen)
         local id = sid .. '\0' .. iid .. '\0' .. kb
@@ -1170,18 +1218,23 @@ function BK.ns_check_locks(what)
     for sid, s in pairs(LK) do
         for iid, i in pairs(s) do
             if BK.ns_ids(sid, iid) then
-                local wn = 0
+                local wn, wkeys = 0, 0
                 for kb, e in pairs(i) do
                     if type(kb) == 'string' then
                         key(sid, iid, kb, seen)
+                        local w = 0
                         for _, m in pairs(e) do
-                            if m == 'W' then wn = wn + 1 end
+                            if m == 'W' then w = w + 1 end
                         end
+                        wn = wn + w
+                        if w > 0 then wkeys = wkeys + 1 end
                     end
                 end
                 if wn > 0 then windexes = windexes + 1 end
                 ns.locks_index(sid, iid, q)
-                if q[0] ~= wn then differs('%d/%d: W %d, copied %d', sid, iid, wn, q[0]) end
+                if q[0] ~= wn or q[2] ~= wkeys then
+                    differs('%d/%d: W %d on %d keys, copied %d on %d', sid, iid, wn, wkeys, q[0], q[2])
+                end
             end
         end
     end
@@ -1194,18 +1247,28 @@ function BK.ns_check_locks(what)
             end
         end
     end
-    for sid in pairs(RL) do
+    for sid, s in pairs(RL) do
         if BK.ns_ids(sid, 0) then
             local n = BK.ns_space_ranges(sid)
             if n > 0 then rspaces = rspaces + 1 end
             ns.locks_index(sid, 0, q)
             if q[1] ~= n then differs('%d: ranges %d, copied %d', sid, n, q[1]) end
+            for iid in pairs(s) do
+                if BK.ns_ids(sid, iid) then
+                    local _, b = BK.ns_index_ranges(sid, iid)
+                    if b > 0 then rindexes = rindexes + 1 end
+                    local d = BK.ns_ranges_differ(sid, iid, q)
+                    if d then differs('%s', d) end
+                end
+            end
         end
     end
     ns.locks_sizes(q)
-    if q[0] ~= keys or q[1] ~= rows or q[2] ~= windexes or q[3] ~= rspaces then
-        differs('keys %d, row-locked keys %d, W-locked indexes %d, range-locked spaces %d; copied %d, %d, %d, %d',
-                keys, rows, windexes, rspaces, q[0], q[1], q[2], q[3])
+    if q[0] ~= keys or q[1] ~= rows or q[2] ~= windexes or q[3] ~= rspaces or q[4] ~= windexes
+            or q[5] ~= rindexes then
+        differs('keys %d, row-locked keys %d, W-locked indexes %d, range-locked spaces %d and indexes %d; copied '
+                .. '%d, %d, %d, %d, %d and %d', keys, rows, windexes, rspaces, rindexes, q[0], q[1], q[2], q[3],
+                q[4], q[5])
     end
     BK.ns_check_differs(what, bad)
 end
