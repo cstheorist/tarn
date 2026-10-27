@@ -506,12 +506,13 @@ compare them. It hands the writes to `tarn_autocommit`, having written
 nothing (it rolls its transaction back), when anything could make the Lua
 procedure wait, refuse or do more:
 
-* a table that is vinyl, or on which prepared transactions hold locks;
-* any row lock held on the shard (READ COMMITTED), a definition fence above
-  the one the writes were made with (`tarn_autocommit` refuses them with
-  1412), a bucket of the writes, or of the rows they write, that does not
-  take writes here (being sent, moved away), or a window of the load counts
-  that ended;
+* a table that is vinyl, or on which prepared transactions hold locks, or
+  row locks are held (READ COMMITTED: `tarn_autocommit` waits for one on
+  what it writes);
+* a definition fence above the one the writes were made with
+  (`tarn_autocommit` refuses them with 1412), a bucket of the writes, or of
+  the rows they write, that does not take writes here (being sent, moved
+  away), or a window of the load counts that ended;
 * a write that fails (a duplicate key: `tarn_autocommit` retries writes
   that move a unique value, then refuses), an update of a row written
   before an `ALTER TABLE` added fields (`tarn_autocommit` fills them in),
@@ -522,8 +523,9 @@ procedure wait, refuse or do more:
 Its checks and writes are the model's CommitLocal step for a transaction
 that read nothing: nothing else runs between them, as the procedure does
 not yield until it commits. For the checks, the state also mirrors the
-number of row locks, the definition fences (the highest of each slot of
-space ids), which buckets take writes, and the test hooks held. While its
+row locks held (by slot of space ids, as the locks of prepared
+transactions), the definition fences (the highest of each slot of space
+ids), which buckets take writes, and the test hooks held. While its
 commit waits for the WAL, it is a commit in flight, and what waits for the
 commits in flight (`wait_commits`: a row lock's grant, a schema change, a
 bucket move) waits for it too; on a replicated shard, whose tables are
