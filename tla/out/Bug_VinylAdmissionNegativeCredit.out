@@ -1,0 +1,64 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 6 and seed 5233242182266088198 with 1 worker on 2 cores with 910MB heap and 64MB offheap memory [pid: 130] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /model/VinylAdmission.tla
+Parsing file /tmp/tlc-12793939830436773016/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-12793939830436773016/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-12793939830436773016/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-12793939830436773016/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-12793939830436773016/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-12793939830436773016/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-12793939830436773016/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module VinylAdmission
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module VinylAdmission
+Starting... (2026-10-27 11:42:03)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 11:42:03.
+Error: Invariant NonnegativeCredit is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "idle", y |-> "idle"]
+/\ ticks = 0
+/\ credit = [A |-> 0, B |-> 0]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 0, B |-> 0], g2 |-> [A |-> 0, B |-> 0]]
+/\ spent = [A |-> 0, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 0]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 0, B |-> 0]
+
+State 2: <LocalAdmission("x") line 64, col 5 to line 74, col 55 of module VinylAdmission>
+/\ revote = [A |-> "none", B |-> "none"]
+/\ localStage = [x |-> "admitted", y |-> "idle"]
+/\ ticks = 0
+/\ credit = [A |-> -2, B |-> 0]
+/\ epoch = 0
+/\ part = [A |-> "none", B |-> "none"]
+/\ gwCredit = [g1 |-> [A |-> 0, B |-> 0], g2 |-> [A |-> 0, B |-> 0]]
+/\ spent = [A |-> 2, B |-> 0]
+/\ rows = [A |-> 0, B |-> 0]
+/\ decision = "undecided"
+/\ localRows = [x |-> 0, y |-> 0]
+/\ retries = [x |-> 1, y |-> 1]
+/\ attemptBefore = [x |-> 0, y |-> 0]
+/\ applyReply = [A |-> "none", B |-> "none"]
+/\ earned = [A |-> 0, B |-> 0]
+
+4 states generated, 4 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-27 11:42:03)
+Trace exploration spec path: ./VinylAdmission_TTrace_1793101322.tla

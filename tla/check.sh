@@ -38,6 +38,9 @@ Bug_LazyMeterNoQueueCut Bug_LazyMeterStaleInstall Bug_LazyMeterStaleCallback Bug
 DEFAULT="$DEFAULT LazyTargetConfirm Bug_UnconfirmedAck"
 DEFAULT="$DEFAULT LazyApplyConfirm Bug_UnconfirmedApply"
 DEFAULT="$DEFAULT BootstrapCount Bug_CountsAuxMetadata"
+DEFAULT="$DEFAULT VinylAdmission Bug_VinylAdmissionPerGatewayBudget Bug_VinylAdmissionGateAfterEffect
+Bug_VinylAdmissionNegativeCredit Bug_VinylAdmissionThrottleExistingYes Bug_VinylAdmissionThrottleDecidedApply
+Bug_VinylAdmissionReplayUnknown Bug_VinylAdmissionResetFullBurst"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

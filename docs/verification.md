@@ -727,13 +727,78 @@ tla/check.sh BootstrapCount Bug_CountsAuxMetadata
 | `BootstrapCount` | 2,160 | 4 | passes |
 | `Bug_CountsAuxMetadata` | 1,741 | 4 | violates `NewClusterDefault` |
 
-The default list now contains 124 configurations, including 84 expected
-broken/trade-off outcomes. The lazy-index and bootstrap refinements
-account for 53 of those configurations: nine positive cases and 44
-controls. The 134 generated configurations reproduce from `gen_cfgs.sh`;
-two additional grouped-read configurations are maintained directly, for
-136 total. All 134 previous configuration files are unchanged. Explicit
-check arguments still override the default list.
+### Vinyl fresh-write admission (issue #58)
+
+`VinylAdmission.tla` checks a storage-side admission guard as a local
+refinement of the existing commit protocol. Each shard has one shared
+weighted-credit budget, used by both gateways and all fresh local commits
+and PREPAREs. Checking and debiting that budget must be one nonyielding
+action before business-row effects. The bounded pressure interval has two
+gateways, two local transactions, a two-shard transaction, three refill
+steps, and one leadership reset. The controller starts with zero credit;
+promotion discards unused credit rather than granting a new full burst.
+An admitted operation can complete after that reset without being charged
+again.
+
+A fresh PREPARE refused for admission follows the existing durable NO,
+ABORT and tombstone protocol. Other participants may already be prepared;
+the invariant requires no surviving business-row changes after abort,
+not an absence of protocol metadata or WAL work. Duplicate durable YES
+records and decided/recovered APPLY bypass fresh admission. The model
+checks that those operations cannot receive an admission refusal; it does
+not claim that the native engine completes them within a fixed time.
+Local admission, a nonidempotent effect and its reply are separate steps.
+Only an explicit before-effect `throttled` result permits a bounded caller
+retry. Replaying an unknown result after a lost receipt can perform the
+same mutation twice and is forbidden.
+
+The credit cost is an estimate, not a native allocator reservation.
+Tarantool exposes the effective transaction rate limit alongside dump
+bandwidth and blocked writers
+([pinned introspection](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/vinyl.c#L255)).
+Its regulator adjusts memory and compaction limits from observed progress
+([regulator](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/vy_regulator.c#L413));
+the engine's own quota reservation/actual-use adjustment remains separate
+([native quota](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/vy_quota.h#L281)).
+`SharedBudget` bounds charged estimates by credits earned from elapsed
+refill; it does not bound actual memory, physical write amplification,
+compaction debt or old decided work. A healthy bypass is outside this
+pressure-interval bound; this fixture does not model entry to or exit from
+a healthy period in which no admission budget is active. Runtime
+refinement must establish cost accounting,
+numeric/sentinel handling, role and metric freshness, cold reset behavior,
+guard coverage before effects, native rejection identity, and the absolute
+caller deadline. The one retry in this fixture abstracts a bounded retry
+budget; it does not prove the implementation's 250 ms wall-clock bound or
+bound native vinyl/quorum latency after admission. The model assumes the
+existing durable YES, decision and abort semantics of `TarnCommit`; that
+module and all previous model/configuration bytes are unchanged.
+
+```sh
+tla/check.sh VinylAdmission Bug_VinylAdmissionPerGatewayBudget \
+  Bug_VinylAdmissionGateAfterEffect Bug_VinylAdmissionNegativeCredit \
+  Bug_VinylAdmissionThrottleExistingYes Bug_VinylAdmissionThrottleDecidedApply \
+  Bug_VinylAdmissionReplayUnknown Bug_VinylAdmissionResetFullBurst
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `VinylAdmission` | 67,072 | 20 | passes |
+| `Bug_VinylAdmissionPerGatewayBudget` | 50 | 4 | violates `SharedBudget` |
+| `Bug_VinylAdmissionGateAfterEffect` | 4 | 2 | violates `NoEffectRefusal` |
+| `Bug_VinylAdmissionNegativeCredit` | 4 | 2 | violates `NonnegativeCredit` |
+| `Bug_VinylAdmissionThrottleExistingYes` | 54 | 4 | violates `ExistingYesStable` |
+| `Bug_VinylAdmissionThrottleDecidedApply` | 593 | 6 | violates `DecidedApplyNotThrottled` |
+| `Bug_VinylAdmissionReplayUnknown` | 5,536 | 9 | violates `NoBusinessReplay` |
+| `Bug_VinylAdmissionResetFullBurst` | 15 | 3 | violates `SharedBudget` |
+
+The default list now contains 132 configurations, including 91 expected
+broken/trade-off outcomes. The lazy-index and bootstrap refinements retain
+their 53 configurations; fresh-write admission adds one positive case and
+seven controls. The 142 generated configurations reproduce from
+`gen_cfgs.sh`; two additional grouped-read configurations are maintained
+directly, for 144 total. All 136 previous configuration files are unchanged.
+Explicit check arguments still override the default list.
 
 ## Verus proofs
 
