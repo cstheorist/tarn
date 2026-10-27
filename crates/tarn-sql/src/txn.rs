@@ -1754,24 +1754,44 @@ pub async fn select_rows(
     // plain IPROTO SELECT; a full page goes on after its last tuple (which
     // tarn_select takes as a position too). (Nothing checks their bucket
     // here: the transaction's validation does, as they are in its read set.)
+    let mut raw_space_missing = false;
     if end.is_none() && !lock_check && !begin && after.is_none() {
         let mut k = Mp::new();
         k.vals(key);
         let n = limit.unwrap_or(u32::MAX).min(PAGE_ROWS);
-        let r = client
-            .select(stream, t.space_id, index, iter, 0, n, &k.0)
-            .await
-            .map_err(from_iproto_read)?;
-        let tuples = r.tuples().map_err(crate::mpw::proto)?;
-        let mut out = Vec::with_capacity(tuples.len());
-        for tup in &tuples {
-            out.push(Rd::shared(tup).row_of(t)?);
+        match client.select(stream, t.space_id, index, iter, 0, n, &k.0).await {
+            Ok(r) => {
+                let tuples = r.tuples().map_err(crate::mpw::proto)?;
+                let mut out = Vec::with_capacity(tuples.len());
+                for tup in &tuples {
+                    out.push(Rd::shared(tup).row_of(t)?);
+                }
+                let next = match tuples.last() {
+                    Some(last) if tuples.len() == n as usize && Some(n) != limit => Some(last.to_vec()),
+                    _ => None,
+                };
+                return Ok((out, next));
+            }
+            Err(tarn_iproto::Error::Server {
+                code: tarn_iproto::errcode::ER_NO_SUCH_SPACE,
+                ..
+            }) => {
+                // A physical engine replacement can retire this cached SID.
+                // Lua distinguishes that identity (1412) from a genuinely
+                // missing table (1146). Reuse the same read stream and
+                // arguments; never restart its transaction or replay a
+                // mutation/transport failure. Commit still validates the
+                // stream and refuses one whose transaction was lost.
+                tracing::debug!(
+                    space_id = t.space_id,
+                    index,
+                    stream,
+                    "raw SELECT found no space; checking the same read through Lua"
+                );
+                raw_space_missing = true;
+            }
+            Err(e) => return Err(from_iproto_read(e)),
         }
-        let next = match tuples.last() {
-            Some(last) if tuples.len() == n as usize && Some(n) != limit => Some(last.to_vec()),
-            _ => None,
-        };
-        return Ok((out, next));
     }
     let mut m = Mp::new();
     m.arr(12)
@@ -1804,7 +1824,8 @@ pub async fn select_rows(
     // ("lua"); a shard without it is noted on the connection. (Reads it
     // always hands back are not sent to it: vinyl tables, and the pages
     // after the first.)
-    if matches!(t.engine, crate::catalog::Engine::Memtx)
+    if !raw_space_missing
+        && matches!(t.engine, crate::catalog::Engine::Memtx)
         && after.is_none()
         && limit != Some(0)
         && !client.marked(MARK_NO_NATIVE_SELECT)
@@ -1852,6 +1873,160 @@ const MARK_NO_NATIVE_VALIDATE: u32 = 3;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn raw_missing_space_read_keeps_its_stream_and_only_falls_back_for_error_36() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+        use tokio::time::{timeout, Duration};
+
+        async fn request(sock: &mut TcpStream) -> (u64, u64, u64, Vec<u8>) {
+            assert_eq!(sock.read_u8().await.unwrap(), 0xce);
+            let len = sock.read_u32().await.unwrap();
+            assert!(len < 4096);
+            let mut packet = vec![0; len as usize];
+            sock.read_exact(&mut packet).await.unwrap();
+            let mut rd = Rd::new(&packet);
+            let (mut kind, mut sync, mut stream) = (0, 0, 0);
+            for _ in 0..rd.map().unwrap() {
+                let key = rd.value().unwrap().as_i64().unwrap();
+                let value = match rd.value().unwrap() {
+                    Value::UInt(n) => n,
+                    Value::Int(n) if n >= 0 => n as u64,
+                    other => panic!("unexpected numeric header: {other:?}"),
+                };
+                match key {
+                    0 => kind = value,
+                    1 => sync = value,
+                    10 => stream = value,
+                    _ => {}
+                }
+            }
+            (kind, sync, stream, rd.buf.to_vec())
+        }
+        async fn reply(sock: &mut TcpStream, sync: u64, code: u64, body: &[u8]) {
+            let mut packet = Mp::new();
+            packet.map(2).uint(0).uint(code).uint(1).uint(sync);
+            packet.0.extend_from_slice(body);
+            sock.write_u8(0xce).await.unwrap();
+            sock.write_u32(packet.0.len() as u32).await.unwrap();
+            sock.write_all(&packet.0).await.unwrap();
+        }
+        // None closes the transport. Zero is a healthy SELECT; 35 is a
+        // different server error. Neither may produce a second read RPC.
+        for code in [None, Some(0u64), Some(35), Some(36)] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut greeting = [b' '; 128];
+                let first = b"Tarantool 3.9.0 (Binary)";
+                greeting[..first.len()].copy_from_slice(first);
+                greeting[63] = b'\n';
+                greeting[64..108].copy_from_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+                greeting[127] = b'\n';
+                sock.write_all(&greeting).await.unwrap();
+                let (kind, sync, _, _) = request(&mut sock).await;
+                assert_eq!(kind, 73); // IPROTO_ID
+                let mut id = Mp::new();
+                id.map(2).uint(0x54).uint(6).uint(0x55).arr(2).uint(0).uint(1);
+                reply(&mut sock, sync, 0, &id.0).await;
+                let (kind, sync, stream, _) = request(&mut sock).await;
+                assert_eq!((kind, stream), (1, 73)); // SELECT in the existing stream
+                let mut kinds = vec![kind];
+                let Some(code) = code else { return kinds };
+                let mut body = Mp::new();
+                if code == 0 {
+                    body.map(1).uint(0x30).arr(0);
+                } else {
+                    body.map(1).uint(0x31).str("controlled read error");
+                }
+                reply(&mut sock, sync, if code == 0 { 0 } else { 0x8000 | code }, &body.0).await;
+                if code == 36 {
+                    let (kind, sync, fallback_stream, body) = request(&mut sock).await;
+                    assert_eq!((kind, fallback_stream), (10, stream)); // CALL, not BEGIN or a write
+                    kinds.push(kind);
+                    let mut rd = Rd::new(&body);
+                    let mut saw_name = false;
+                    let mut saw_args = false;
+                    let mut expected = Mp::new();
+                    expected
+                        .arr(12)
+                        .uint(10030)
+                        .uint(0)
+                        .arr(1)
+                        .uint(7)
+                        .uint(0)
+                        .uint(1)
+                        .nil()
+                        .bool(true)
+                        .bool(false)
+                        .nil()
+                        .bool(false)
+                        .nil()
+                        .nil();
+                    for _ in 0..rd.map().unwrap() {
+                        match rd.value().unwrap().as_i64().unwrap() {
+                            0x22 => {
+                                assert_eq!(rd.string().unwrap(), "tarn_select");
+                                saw_name = true;
+                            }
+                            0x21 => {
+                                assert_eq!(rd.raw_value().unwrap(), expected.0);
+                                saw_args = true;
+                            }
+                            other => panic!("unexpected CALL field {other}"),
+                        }
+                    }
+                    assert!(saw_name && saw_args && rd.buf.is_empty());
+                    let mut body = Mp::new();
+                    body.map(1)
+                        .uint(0x30)
+                        .arr(1)
+                        .arr(3)
+                        .str("error")
+                        .uint(1412)
+                        .str("retired identity");
+                    reply(&mut sock, sync, 0, &body.0).await;
+                }
+                // Closing the client must reveal no unexpected extra RPC.
+                assert!(sock.read_u8().await.is_err());
+                kinds
+            });
+            let client = Client::connect(&tarn_iproto::Opts::new(addr.to_string()))
+                .await
+                .unwrap();
+            let mut table = join_table();
+            table.space_id = 10030;
+            let result = timeout(
+                Duration::from_secs(3),
+                select_rows(
+                    &client,
+                    73,
+                    &table,
+                    0,
+                    &[Value::Int(7)],
+                    Iter::Eq,
+                    Some(1),
+                    None,
+                    false,
+                    false,
+                    None,
+                    &Route::None,
+                ),
+            )
+            .await
+            .unwrap();
+            match code {
+                Some(36) => assert_eq!(result.unwrap_err().code, 1412),
+                Some(0) => assert!(result.unwrap().0.is_empty()),
+                _ => assert!(result.is_err()),
+            }
+            client.close();
+            let kinds = timeout(Duration::from_secs(3), peer).await.unwrap().unwrap();
+            assert_eq!(kinds, if code == Some(36) { vec![1, 10] } else { vec![1] });
+        }
+    }
 
     fn empty_txn() -> Txn {
         Txn {

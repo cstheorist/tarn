@@ -423,6 +423,82 @@ the background. SQL readers still see strict serializability (they wait on
 the transaction's locks); direct key/value readers may briefly not see a
 just-acknowledged commit. The model checker covers both modes.
 
+## Online engine changes
+
+Move a whole table between RAM and disk with a separate statement:
+
+```sql
+ALTER TABLE t ENGINE=vinyl;
+ALTER TABLE t ENGINE=memtx;
+```
+
+Requesting its current engine is a no-op. An actual engine change combined
+with `ADD COLUMN`, a new index, a rename or another schema change is refused
+with 1235; run the changes separately. Native indexes must be TREE indexes.
+This operation moves the whole table; range partitioning and automatic
+placement of hot and cold rows are not provided.
+Deploy engine-change-aware storage on every replica before using it;
+the issuing gateway checks storage capabilities, and recovery needs the
+same metadata support after a promotion.
+
+The source stays authoritative and accepts SQL/commit-protocol writes
+during the baseline copy. The replacement has a new physical space ID,
+preserves the actual tuple format and native index IDs, and initially has
+only its primary index. Committed source pages are copied in batches. Source changes are
+noted by primary key, including deletes and both sides of a primary-key
+move. A final fence drains local/native commits, including READ COMMITTED
+commits already in flight, and prepared transactions, then rereads dirty
+keys from confirmed source data. Transactions still holding an old
+definition cannot apply buffered writes after the switch. Secondary and
+unique indexes are built after that tail, followed by new global-index
+fills and lazy-index bootstrap.
+
+**The final pause can be long.** It includes secondary-index construction
+and auxiliary-index readiness, not just a name switch. Reads that honor
+DDL holds and writers can wait or fail their normal lock deadlines during
+this phase. Copying is paged and the job is kept alive; the lock/drain
+timeout is not a whole-migration duration guarantee. A busy source can also
+outgrow its capture set and require another full copy. Its default limits
+are 65,536 keys and 8 MiB of encoded keys (`tarn.cfg.engine_dirty_keys` and
+`engine_dirty_bytes`); Lua tables and other bookkeeping require additional
+memory. Repeated capture loss can return 1205 rather than publishing an
+incomplete copy.
+
+Budget for **both physical copies on every replica**, their indexes, new
+global/lazy index spaces, WAL and checkpoint retention, and vinyl dump or
+compaction work. Moving into memtx requires the destination rows and
+indexes to fit its memory budget. Capture bounds and fresh-write admission
+do not reserve native allocator capacity. A capacity failure before the
+decision leaves the original table authoritative while abort cleanup
+removes the owned replacement.
+
+Before the recorded global decision, a failed change can abort. After
+APPLY is recorded, recovery only rolls forward: it resumes native renames,
+catalog publication and cleanup after a failure, including a failure after
+publication but before old-space removal or hold release. An interrupted
+statement can report 1180 while the job continues; the existing
+`ddl_job_stale` recovery finishes abandoned jobs. Keep the job and engine
+metadata intact so recovery can distinguish the original and replacement
+IDs. Bucket moves and shard JOIN/removal wait for the schema job.
+
+Global and lazy index spaces receive fresh identities. Their replacements
+must be filled and ready before publication; old lazy obligations remain
+until acknowledged or explicitly retired. Source bucket counters retain
+their history. AUTO_INCREMENT and hidden-row-ID allocation retain one
+logical counter identity; durable storage aliases also resolve legacy
+`ai:<physical_id>` and `rid:<physical_id>` calls after a gateway omits the
+optional catalog counter field. Old counter records are not obsolete data
+that can be discarded with the old physical table.
+
+SQL reads and commits use catalog identity, DDL holds and watermarks for
+the whole strong group, including global-index-only misses. Raw native KV
+reads keep their existing weaker contract: the public space name can be
+temporarily absent or refer to the replacement during native renames, and
+cached physical IDs change. Refresh the native schema and resolve the
+public name after DDL. A raw read across that transition does not acquire
+the SQL transaction's DDL snapshot guarantees; stored user tuples retain
+their committed layout and values.
+
 ## Buckets
 
 A row's bucket is a hash of its shard key; a shard owns a set of buckets,

@@ -13,11 +13,17 @@ if [ -z "${TEST:-}" ]; then
   timeout 60 "$T" "$DIR/test/vinyl_admission_test.lua" "$WORK/vinyl-admission" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
-  for test in lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
+  for test in engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
   done
+  TARANTOOL="$T" bash "$DIR/test/engine_faults.sh" "$WORK/engine-faults" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/engine_replication.sh" "$WORK/engine-rf3" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/lazy_faults.sh" "$WORK/lazy-faults" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

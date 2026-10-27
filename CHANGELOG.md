@@ -16,6 +16,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Placement models, lost-reply/coordinator-crash tests and a repeated
   record/WAL/GC benchmark cover the change.
 
+- Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
+  `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
+  writes continue, then fences writes for catch-up and secondary-index
+  builds. The final pause depends on the table and indexes. The replacement
+  preserves native index IDs, frozen defaults and counter identities, with
+  fresh global and lazy index generations. Confirmed publication rolls
+  forward after a failure; a predecision abort retains the original table.
+  Request engine changes separately from other schema alterations; the
+  existing engine remains a no-op. See
+  [the operational procedure](docs/operations.md#online-engine-changes).
+
 - Why the native storage procedures hand requests to Lua
   ([#131](https://github.com/cstheorist/tarn/issues/131)):
   `tarn_info().native.fallbacks` counts, for each procedure, the requests

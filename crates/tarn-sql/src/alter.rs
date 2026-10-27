@@ -15,6 +15,10 @@
 //! field type (integer and unsigned may change into each other); existing
 //! values are checked against the new type. Changes that need every value
 //! converted -- INT to VARCHAR, a different DECIMAL scale -- are refused.
+//!
+//! An engine change runs separately from other alterations. It binds the
+//! original physical identity, while the cluster allocates an owned shadow
+//! and fresh auxiliary generations (`EngineCopy` and `EngineCutover`).
 
 use crate::catalog::{self, Catalog, ColumnDef, Fill, ForeignKeyDef, IndexDef, TableDef};
 use crate::mpw::Mp;
@@ -994,10 +998,22 @@ pub struct Build {
     pub parts: Vec<(u32, String, bool)>,
 }
 
+/// The original identity bound by an owned engine replacement.
+#[derive(Clone, Debug)]
+pub struct EngineChange {
+    pub old_id: u32,
+    pub old_ver: u64,
+    pub old_engine: catalog::Engine,
+    pub old_name: String,
+}
+
 /// The result of `apply`: the new definition and what the shards do.
 #[derive(Clone, Debug)]
 pub struct Change {
     pub def: TableDef,
+    /// The original physical identity. The cluster allocates a replacement
+    /// base and fresh auxiliary generations before journaling the job.
+    pub engine_change: Option<EngineChange>,
     /// The new space format, if any field changes.
     pub format: Option<Vec<(String, String, bool)>>,
     /// Tarantool ids of indexes to drop.
@@ -1209,6 +1225,25 @@ fn check_collation_change(def: &TableDef, i: usize, new: &ColumnDef) -> SqlResul
 
 /// Apply the alterations of `plan` to `def` (the current definition).
 pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlResult<Change> {
+    let requested_engine = plan
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            AlterOp::Engine(engine) => Some(*engine),
+            _ => None,
+        })
+        .next_back()
+        .unwrap_or(def.engine);
+    let engine_change = requested_engine != def.engine;
+    let engine_only = plan
+        .ops
+        .iter()
+        .all(|op| matches!(op, AlterOp::Engine(_) | AlterOp::Ignored));
+    if engine_change && !engine_only {
+        return Err(SqlError::unsupported(
+            "combining an engine change with other schema changes; run ALTER TABLE ... ENGINE separately",
+        ));
+    }
     let mut nd = def.clone();
     // Make the layout explicit: from now on fields are not positions.
     for (i, c) in nd.columns.iter_mut().enumerate() {
@@ -1731,15 +1766,12 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 changed = true;
             }
             AlterOp::Engine(e) => {
-                if *e != nd.engine {
-                    return Err(SqlError::unsupported(format!(
-                        "moving a table from {} to {} (it would rewrite every row)",
-                        nd.engine.name(),
-                        e.name()
-                    )));
-                }
+                nd.engine = *e;
             }
         }
+    }
+    if engine_only {
+        changed = engine_change;
     }
     if let Some(name) = became_auto_inc {
         let i = nd.col_index(&name).unwrap();
@@ -1845,6 +1877,12 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
     };
     Ok(Change {
         def: nd,
+        engine_change: engine_change.then(|| EngineChange {
+            old_id: def.space_id,
+            old_ver: def.ver,
+            old_engine: def.engine,
+            old_name: def.space_name(),
+        }),
         format,
         drop,
         renames,
@@ -1944,7 +1982,19 @@ fn check_globals(def: &TableDef, nd: &mut TableDef) -> SqlResult<Vec<u32>> {
 /// carries version `ver`).
 pub fn lua_args(ch: &Change, ver: u64, timeout: f64) -> Vec<u8> {
     let mut m = Mp::new();
-    m.map(14 + !ch.lazy_drop.is_empty() as usize);
+    m.map(14 + !ch.lazy_drop.is_empty() as usize + ch.engine_change.is_some() as usize);
+    if let Some(engine) = &ch.engine_change {
+        m.str("engine_change")
+            .map(4)
+            .str("old_id")
+            .uint(engine.old_id as u64)
+            .str("old_ver")
+            .uint(engine.old_ver)
+            .str("old_engine")
+            .str(engine.old_engine.name())
+            .str("old_name")
+            .str(&engine.old_name);
+    }
     if !ch.lazy_drop.is_empty() {
         m.str("lazy_drop").arr(ch.lazy_drop.len());
         for &id in &ch.lazy_drop {
@@ -2863,9 +2913,21 @@ mod tests {
         );
         let ch = alter(&def, &cat, "ALTER TABLE t ENGINE=InnoDB, DISABLE KEYS").unwrap();
         assert!(!ch.changed);
-        // The table's own engine is accepted; moving to the other one is not.
+        // A real move retains the source identity for the copy protocol.
         assert!(!alter(&def, &cat, "ALTER TABLE t ENGINE = memtx").unwrap().changed);
-        assert_eq!(alter(&def, &cat, "ALTER TABLE t ENGINE=vinyl").unwrap_err().code, 1235);
+        let moved = alter(&def, &cat, "ALTER TABLE t ENGINE=vinyl").unwrap();
+        assert!(moved.changed);
+        assert_eq!(moved.def.engine, catalog::Engine::Vinyl);
+        let source = moved.engine_change.unwrap();
+        assert_eq!((source.old_id, source.old_ver), (def.space_id, def.ver));
+        assert_eq!(source.old_name, def.space_name());
+        assert_eq!(source.old_engine, def.engine);
+        assert_eq!(
+            alter(&def, &cat, "ALTER TABLE t ENGINE=vinyl, ADD COLUMN extra INT")
+                .unwrap_err()
+                .code,
+            1235,
+        );
         let ctx = PlanCtx {
             catalog: &cat,
             db: Some("db"),
