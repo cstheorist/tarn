@@ -792,13 +792,56 @@ tla/check.sh VinylAdmission Bug_VinylAdmissionPerGatewayBudget \
 | `Bug_VinylAdmissionReplayUnknown` | 5,536 | 9 | violates `NoBusinessReplay` |
 | `Bug_VinylAdmissionResetFullBurst` | 15 | 3 | violates `SharedBudget` |
 
-The default list now contains 132 configurations, including 91 expected
+### Confirmed duplicate PREPARE receipts
+
+`PrepareConfirm.tla` refines the native visibility premise of
+`TarnCommit!Revote` and admission's duplicate durable-YES bypass. It
+separates the first pending native PREPARE, its confirmation or rollback,
+the duplicate receipt, and the coordinator's receipt-certification step.
+An unconfirmed `prepared` tuple is not a durable YES: the first transaction
+can still roll back after the duplicate responds. A later idempotent
+PREPARE can establish a confirmed promise if no abort tombstone remains.
+The core commit protocol and previous models are unchanged.
+
+An actual Tarantool 3.9.0 probe on both memtx and vinyl reproduced the false
+YES with fsync WAL, synchronous metadata, native ABI7 ready, and a real
+quorum-two wait. The second `tarn_prepare` returned `yes` while the first
+was pending; the first later returned NO/error 216. A read-confirmed final
+view contained no participant, decision, intent locks or business row.
+The isolation control called the same unmodified procedure inside an
+already-open read-confirmed native transaction. It returned conservative
+NO/1213 while the first was pending. After restoring quorum one, a later
+PREPARE returned YES with a confirmed prepared participant, STAGING
+decision and intent locks. This control checks the isolation choice; it is
+not a separate network-stream/read-set preservation proof.
+
+The implementation begins read-confirmed only when no stream transaction
+already exists. It must preserve a pre-existing stream and its reads;
+normal conflict cleanup may roll that transaction back, but inspecting a
+duplicate must not restart it or silently discard its read set. The
+current SQL coordinator sends normal PREPARE once per participant, so the
+probe establishes the native duplicate-delivery boundary, not a claim
+that an observed SQL or CI failure used that schedule. The model checks
+only the confirmed-receipt premise, not all PREPARE scheduling, native
+replication, admission timing, or distributed serializability.
+
+```sh
+tla/check.sh PrepareConfirm Bug_UnconfirmedPrepare
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `PrepareConfirm` | 9 | 5 | passes |
+| `Bug_UnconfirmedPrepare` | 6 | 4 | violates `CertifiedYesDurable` |
+
+The default list now contains 134 configurations, including 92 expected
 broken/trade-off outcomes. The lazy-index and bootstrap refinements retain
-their 53 configurations; fresh-write admission adds one positive case and
-seven controls. The 142 generated configurations reproduce from
-`gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 144 total. All 136 previous configuration files are unchanged.
-Explicit check arguments still override the default list.
+their 53 configurations; fresh-write admission and PREPARE confirmation
+add two positive cases and eight controls. The 144 generated
+configurations reproduce from `gen_cfgs.sh`; two additional grouped-read
+configurations are maintained directly, for 146 total. All 144 previous
+configuration files are unchanged. Explicit check arguments still
+override the default list.
 
 ## Verus proofs
 

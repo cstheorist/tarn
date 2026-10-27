@@ -41,6 +41,7 @@ DEFAULT="$DEFAULT BootstrapCount Bug_CountsAuxMetadata"
 DEFAULT="$DEFAULT VinylAdmission Bug_VinylAdmissionPerGatewayBudget Bug_VinylAdmissionGateAfterEffect
 Bug_VinylAdmissionNegativeCredit Bug_VinylAdmissionThrottleExistingYes Bug_VinylAdmissionThrottleDecidedApply
 Bug_VinylAdmissionReplayUnknown Bug_VinylAdmissionResetFullBurst"
+DEFAULT="$DEFAULT PrepareConfirm Bug_UnconfirmedPrepare"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

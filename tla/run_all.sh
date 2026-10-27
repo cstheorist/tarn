@@ -17,6 +17,7 @@ for cfg in "$@"; do
     LazyApplyConfirm|Bug_UnconfirmedApply) module=LazyApplyConfirm.tla ;;
     BootstrapCount|Bug_CountsAuxMetadata) module=BootstrapCount.tla ;;
     VinylAdmission|Bug_VinylAdmission*) module=VinylAdmission.tla ;;
+    PrepareConfirm|Bug_UnconfirmedPrepare) module=PrepareConfirm.tla ;;
     GroupedRead|Bug_GroupedReadSeparateSnapshots) module=GroupedRead.tla ;;
     GroupedDDL|Bug_GroupedDDLIgnoreGeneration|Bug_GroupedDDLIgnoreStale) module=GroupedDDL.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
