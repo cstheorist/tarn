@@ -61,6 +61,7 @@ DEFAULT="$DEFAULT Bug_EngineCutoverAuxStreamOmitted"
 DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
 DEFAULT="$DEFAULT EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex"
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
+DEFAULT="$DEFAULT Fairness Bug_FairnessPrefix"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

@@ -33,6 +33,9 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/alter_backfill_faults.sh" "$WORK/backfill" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/recovery_faults.sh" "$WORK/recovery-faults" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
 fi
 P1=${P1:-3511}; P2=${P2:-3512}; P3=${P3:-3513}
 PEERS="{\"1\":[\"tarn:tarn@127.0.0.1:$P1\"],\"2\":[\"tarn:tarn@127.0.0.1:$P2\"]}"
