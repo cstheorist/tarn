@@ -837,7 +837,8 @@ late PREPARE must not recreate an aborted decision. The existing
 `Recov_GC` positive gate passes 1,136,892 states; `Bug_FenceAfterExpiry`
 violates `NoAbortAfterCommit` in 114,735 states. That mutant changes the
 recovery branch of the same post-GC obligation, rather than directly
-modeling the missing-stream branch. A paired native-runtime control
+modeling the missing-stream branch. A paired Tarantool-runtime control
+(Lua mode)
 closes that refinement: on both engines the old ordering creates aborted
 records after an actual COMMITTED/APPLIED transaction's owned records
 are removed, while the corrected order returns `expired` without records
