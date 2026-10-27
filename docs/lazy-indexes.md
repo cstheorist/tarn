@@ -80,6 +80,15 @@ APPLY atomically converts it into committed assignments. A decided
 transaction must not discover an avoidable capacity or sequence-exhaustion
 failure for the first time during APPLY.
 
+These limits count encoded assignments and promises; they do not reserve
+the native allocator's RAM. Admission uses a conservative in-memory meter
+whose durable truth is the individual outbox and reservation records.
+Positive charges precede mutation, rollback refunds them, and negative
+credits become reusable only after confirmed commit. This avoids a shared
+usage tuple that would create MVCC conflicts between independent writers.
+After a leadership transition, admission waits for old terminal callbacks
+and the native queue cut before a confirmed scan rebuilds the meter.
+
 A leader fiber reads only confirmed outbox entries and sends bounded
 batches to the current destination owners. A source retains each exact
 assignment until a durable acknowledgement. An acknowledgement means that
@@ -119,6 +128,13 @@ with target buckets, including otherwise empty buckets. Trusted import of
 live entries must not discard them merely because their versions are below
 an imported floor. Collection is disabled until bootstrap is fully
 acknowledged and the incarnation is ready.
+
+A permanent old delivery hole can hold back this global source prefix
+while later changes at other destinations are acknowledged. Their
+tombstones remain until the hole is resolved. Source outbox limits alone
+therefore do not give a finite target tombstone-retention bound. Target
+capacity failures retain source assignments and eventually apply source
+backpressure; they must not be acknowledged as successful delivery.
 
 ## Bootstrap, DDL and native writes
 
