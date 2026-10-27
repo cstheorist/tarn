@@ -1,14 +1,14 @@
 //! What the native procedures know of the shard's state: a struct the Lua
 //! module (lua/tarn.lua, "Native procedures") keeps current through LuaJIT's
-//! FFI. Both run in the transaction thread, one at a time, and a native
-//! procedure does not yield, so it sees the state as of one moment, as a Lua
-//! procedure's step that does not yield does.
+//! FFI. Both run in the transaction thread, one at a time. Native checks
+//! see one moment while they do not yield; a commit can yield for WAL or
+//! quorum and must reacquire the state afterward.
 //!
 //! The layout is declared again in lua/tarn.lua (`struct tarn_ns`): change
 //! both, and `LAYOUT` with them.
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 6;
+pub const LAYOUT: u32 = 7;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -97,6 +97,13 @@ pub struct State {
     /// savepoint, while it does (else 0): its on_rollback triggers run
     /// then, and must not take that for its end (note_stream_term).
     pub svp_txn: u64,
+    /// The local lazy-capture registry is unknown or stale. Native writes
+    /// cannot capture an outbox, so every one must go through Lua until
+    /// the registry is rebuilt. Reads do not depend on this flag.
+    pub capture_stale: u8,
+    /// [SPACES]: a source with active or prepared lazy capture excludes
+    /// its slot from native writes. Hash collisions only overexclude.
+    pub write_excluded: *mut u8,
 }
 
 impl Default for State {
@@ -141,6 +148,8 @@ impl State {
             c_served: 0,
             c_to_lua: 0,
             svp_txn: 0,
+            capture_stale: 1,
+            write_excluded: std::ptr::null_mut(),
         }
     }
 
@@ -172,6 +181,19 @@ impl State {
         // SAFETY: the Lua module keeps `fences` an array of SPACES
         // versions, alive while the pointer is set.
         unsafe { *self.fences.add((id % SPACES) as usize) }
+    }
+
+    /// Native writes cannot maintain a lazy source's commit-atomic outbox.
+    /// Unknown state is excluded too, including after a leader change and
+    /// while local DDL capture metadata is being activated. Check actual
+    /// write space IDs, independently of the gateway's version/fence list.
+    pub fn lazy_write_excluded(&self, id: u32) -> bool {
+        if self.capture_stale != 0 || self.write_excluded.is_null() {
+            return true;
+        }
+        // SAFETY: Lua keeps an array of SPACES bytes alive while its pointer
+        // is set, on the same transaction thread as the native procedures.
+        unsafe { *self.write_excluded.add((id % SPACES) as usize) != 0 }
     }
 
     /// Count a row of `bytes` written to bucket b (BK.count_writes).
@@ -263,7 +285,37 @@ mod tests {
         assert_eq!(offset_of!(State, c_served), 176);
         assert_eq!(offset_of!(State, c_to_lua), 184);
         assert_eq!(offset_of!(State, svp_txn), 192);
-        assert_eq!(std::mem::size_of::<State>(), 200);
+        assert_eq!(offset_of!(State, capture_stale), 200);
+        assert_eq!(offset_of!(State, write_excluded), 208);
+        assert_eq!(std::mem::size_of::<State>(), 216);
+    }
+
+    #[test]
+    fn lazy_capture_excludes_unknown_sources_and_slot_collisions() {
+        let mut s = State::new();
+        assert!(s.lazy_write_excluded(512));
+        s.capture_stale = 0;
+        assert!(
+            s.lazy_write_excluded(512),
+            "an absent registry is not an empty registry"
+        );
+        let mut excluded = vec![0u8; SPACES as usize];
+        s.write_excluded = excluded.as_mut_ptr();
+        assert!(!s.lazy_write_excluded(512));
+        excluded[512] = 1;
+        assert!(s.lazy_write_excluded(512));
+        assert!(s.lazy_write_excluded(512 + SPACES), "collisions must fail closed");
+        assert!(!s.lazy_write_excluded(513));
+        s.capture_stale = 1;
+        assert!(
+            s.lazy_write_excluded(513),
+            "leader/schema invalidation excludes every source"
+        );
+        // Capture invalidation is not a reason to abandon native reads.
+        let mut serves = vec![0u8, 2];
+        s.serves = serves.as_mut_ptr();
+        s.count = 1;
+        assert!(s.serves(1));
     }
 
     #[test]

@@ -184,6 +184,16 @@ pub fn check_table(look: &Lookup<'_>, t: &TableDef) -> Vec<Finding> {
             true,
         ));
     }
+    for ix in &t.indexes {
+        if let Some(lazy) = &ix.lazy {
+            let prefix = &ix.cols[..lazy.route_parts as usize];
+            if t.shard_key.iter().all(|c| prefix.contains(c)) {
+                out.push(finding(Level::Warning,format!(
+                    "lazy index '{}': its routing prefix already contains the full table shard key; a local read can route to one shard",ix.name
+                ),false));
+            }
+        }
+    }
     let Some((pdb, pname)) = parent_of(t) else {
         return out;
     };

@@ -352,8 +352,12 @@ class T:
 
     def test_counter_concurrent(self):
         n = 6
-        self.fresh("ctr", "CREATE TABLE ctr (id INT PRIMARY KEY, n BIGINT)", [f"({i}, 10000)" for i in range(1, n + 1)])
-        a, b = self.two_shards(list(range(1, n + 1)))
+        candidates = list(range(1, 41))
+        a, b = self.two_shards(candidates)
+        # Bucket moves can put the first six ids on one shard. Keep a real
+        # cross-shard pair from the helper's pool, plus the hot row, in six rows.
+        ids = list(dict.fromkeys([1, a, b] + candidates))[:n]
+        self.fresh("ctr", "CREATE TABLE ctr (id INT PRIMARY KEY, n BIGINT)", [f"({i}, 10000)" for i in ids])
         errors, done = [], [0]
         lock = threading.Lock()
         per = self.args.rounds

@@ -92,7 +92,7 @@ jobs:
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
       - name: Start a 2-shard cluster (two SQL servers)
-        run: scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
+        run: TARN_TEST_HOOKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
@@ -103,12 +103,16 @@ jobs:
         run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Schema changes and dumps
         run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+      - name: Lazy-index semantics and own-commit recovery
+        run: |
+          ci/annotate.sh lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407
+          ci/annotate.sh lazyfaults python3 tests/sql/lazyfaults.py --tarn 127.0.0.1:4000 --shards 127.0.0.1:3311,127.0.0.1:3321
       - name: Bucket moves under load
         run: ci/annotate.sh movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
       - name: The same suites with vinyl tables, read from disk
         run: |
           scripts/cluster.sh stop
-          TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_CHECK_YIELDS=1 \
+          TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 \
             scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2 -e vinyl
           # (moves first: with the tables the other suites leave, which every
           # move reads from disk, a runner moves too few buckets to tell)
@@ -117,6 +121,8 @@ jobs:
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
           ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+          ci/annotate.sh vinyl-lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407 --engine vinyl
+          ci/annotate.sh vinyl-lazyfaults python3 tests/sql/lazyfaults.py --tarn 127.0.0.1:4000 --shards 127.0.0.1:3311,127.0.0.1:3321 --engine vinyl
           if grep -h "yielded inside" /tmp/tarn-cluster/*.log; then echo "::error title=vinyl::an atomic section yielded"; exit 1; fi
       - name: Fault injection
         run: |
@@ -143,6 +149,9 @@ jobs:
         if: failure()
         run: |
           for f in /tmp/tarn-cluster/*.log /tmp/tarn-cluster/*/*.log /tmp/tarn-failover*/*.log /tmp/tarn-failover*/*/*.log /tmp/tarn-ddlfaults/*.log /tmp/tarn-movefaults/*.log /tmp/tarn-bucketcount/*.log /tmp/tarn-join*/*.log /tmp/tarn-growshrink/*.log; do
+            [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
+          done
+          for f in /tmp/tarn-lazyfaults-*/manifest.json /tmp/tarn-lazyfaults-*/events.jsonl; do
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true

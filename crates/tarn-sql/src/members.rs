@@ -16,7 +16,103 @@ use crate::mpw::{lua_status, Mp, Rd};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tarn_common::{SqlError, SqlResult};
+use tarn_common::{SqlError, SqlResult, Value};
+
+/// The native export, rather than this gateway's catalog cache, decides
+/// whether JOIN requires lazy-capable replicas. Retired-only clusters must
+/// retain their retirement fences too.
+struct SchemaImport<'a> {
+    export: &'a [u8],
+    lazy: bool,
+}
+
+impl<'a> SchemaImport<'a> {
+    fn parse(export: &'a [u8]) -> SqlResult<Self> {
+        let mut rd = Rd::new(export);
+        // Old Lua can encode an empty table as an empty map.
+        if rd.peek_map().is_some() {
+            if rd.map()? == 0 && rd.buf.is_empty() {
+                return Ok(Self { export, lazy: false });
+            }
+            return Err(crate::mpw::proto("schema export must be an array"));
+        }
+        let mut lazy = false;
+        for pos in 0..rd.array()? {
+            let mut tag = false;
+            let mut schema_version = false;
+            let fields = rd.map()?;
+            for _ in 0..fields {
+                match rd.string()?.as_str() {
+                    "lazy_v1" => {
+                        if pos != 0 || tag {
+                            return Err(crate::mpw::proto("lazy schema tag must occur first, exactly once"));
+                        }
+                        tag = true;
+                        let (mut version, mut active, mut retired) = (false, false, false);
+                        for _ in 0..rd.map()? {
+                            match rd.string()?.as_str() {
+                                "version" => {
+                                    if version || !matches!(rd.value()?, Value::Int(1) | Value::UInt(1)) {
+                                        return Err(SqlError::unsupported("unsupported lazy schema export version"));
+                                    }
+                                    version = true;
+                                }
+                                "active" => {
+                                    if active {
+                                        return Err(crate::mpw::proto("duplicate active lazy export"));
+                                    }
+                                    active = true;
+                                    for _ in 0..rd.array()? {
+                                        rd.skip()?;
+                                    }
+                                }
+                                "retired" => {
+                                    if retired {
+                                        return Err(crate::mpw::proto("duplicate retired lazy export"));
+                                    }
+                                    retired = true;
+                                    for _ in 0..rd.array()? {
+                                        rd.skip()?;
+                                    }
+                                }
+                                _ => rd.skip()?,
+                            }
+                        }
+                        if !version || !active || !retired {
+                            return Err(crate::mpw::proto("incomplete lazy schema export"));
+                        }
+                    }
+                    "schema_version" => {
+                        if schema_version || !matches!(rd.value()?, Value::UInt(_) | Value::Int(0..)) {
+                            return Err(crate::mpw::proto("invalid exported native schema version"));
+                        }
+                        schema_version = true;
+                    }
+                    _ => rd.skip()?,
+                }
+            }
+            if tag {
+                if !schema_version || fields != 2 {
+                    return Err(crate::mpw::proto("invalid lazy schema export header"));
+                }
+                lazy = true;
+            }
+        }
+        if !rd.buf.is_empty() {
+            return Err(crate::mpw::proto("trailing schema export data"));
+        }
+        Ok(Self { export, lazy })
+    }
+
+    fn args(&self) -> Vec<u8> {
+        let mut m = Mp::new();
+        m.arr(if self.lazy { 2 } else { 1 }).raw(self.export);
+        if self.lazy {
+            m.uint(1);
+        }
+        m.0
+    }
+}
 
 /// One shard of the membership.
 #[derive(Clone, Debug, PartialEq)]
@@ -611,9 +707,19 @@ impl Cluster {
         // Every table, as the first shard has it (no schema change runs).
         let d = self.call(0, "tarn_schema_export", &[0x90]).await?;
         let (_, mut rd) = lua_status(&d)?;
-        let mut m = Mp::new();
-        m.arr(1).raw(rd.raw_value()?);
-        lua_status(&call("tarn_schema_import", m.0).await?)?;
+        let start = d.len() - rd.buf.len();
+        rd.skip()?;
+        if !rd.buf.is_empty() {
+            return Err(crate::mpw::proto("trailing schema export reply"));
+        }
+        let schema = SchemaImport::parse(&d[start..])?;
+        if schema.lazy {
+            // Check EVERY configured candidate replica before sending the
+            // coordinator token. A capable leader alone is insufficient:
+            // an older follower could later promote without row capture.
+            self.lazy_capabilities_on(replicas).await?;
+        }
+        lua_status(&call("tarn_schema_import", schema.args()).await?)?;
         // A bucket map with no buckets.
         let mut m = Mp::new();
         m.arr(2).uint(count as u64).arr(0);
@@ -684,6 +790,132 @@ impl Cluster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lazy_tag(m: &mut Mp, active: bool, retired: bool, version: Value) {
+        m.map(2)
+            .str("schema_version")
+            .uint(100)
+            .str("lazy_v1")
+            .map(3)
+            .str("version")
+            .val(&version)
+            .str("active")
+            .arr(active as usize);
+        if active {
+            m.map(1).str("gen").uint(10002);
+        }
+        m.str("retired").arr(retired as usize);
+        if retired {
+            m.arr(8)
+                .uint(10001)
+                .uint(10000)
+                .uint(9)
+                .str("retired")
+                .uint(1)
+                .map(0)
+                .nil()
+                .bool(true);
+        }
+    }
+
+    #[test]
+    fn schema_import_uses_authoritative_active_or_retired_tag() {
+        for (active, retired) in [(true, false), (false, true), (true, true)] {
+            let mut export = Mp::new();
+            export.arr(2);
+            lazy_tag(&mut export, active, retired, Value::UInt(1));
+            export.map(1).str("name").str("d.t");
+            // No catalog cache participates. Even a retired-only export
+            // requires every candidate replica to support the token.
+            let parsed = SchemaImport::parse(&export.0).unwrap();
+            assert!(parsed.lazy);
+            let args = parsed.args();
+            let mut rd = Rd::new(&args);
+            assert_eq!(rd.array().unwrap(), 2);
+            assert_eq!(rd.raw_value().unwrap(), export.0);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(1));
+            assert!(rd.buf.is_empty());
+        }
+    }
+
+    #[test]
+    fn ordinary_schema_import_keeps_one_argument_compatibility() {
+        for export in [vec![0x90], vec![0x80]] {
+            let parsed = SchemaImport::parse(&export).unwrap();
+            assert!(!parsed.lazy);
+            let args = parsed.args();
+            let mut rd = Rd::new(&args);
+            assert_eq!(rd.array().unwrap(), 1);
+            assert_eq!(rd.raw_value().unwrap(), export);
+            assert!(rd.buf.is_empty());
+        }
+        let mut export = Mp::new();
+        export
+            .arr(1)
+            .map(2)
+            .str("name")
+            .str("d.t")
+            .str("def")
+            .map(1)
+            .str("lazy")
+            .arr(0);
+        let parsed = SchemaImport::parse(&export.0).unwrap();
+        assert!(!parsed.lazy);
+        let args = parsed.args();
+        let mut rd = Rd::new(&args);
+        assert_eq!(rd.array().unwrap(), 1);
+        assert_eq!(rd.raw_value().unwrap(), export.0);
+        assert!(rd.buf.is_empty());
+    }
+
+    #[test]
+    fn unsupported_or_malformed_lazy_join_tag_fails_before_import() {
+        for version in [Value::UInt(0), Value::UInt(2), Value::Float(1.0), Value::str("1")] {
+            let mut export = Mp::new();
+            export.arr(1);
+            lazy_tag(&mut export, true, false, version);
+            assert!(SchemaImport::parse(&export.0).is_err());
+        }
+        let mut late = Mp::new();
+        late.arr(2).map(1).str("name").str("d.t");
+        lazy_tag(&mut late, true, false, Value::UInt(1));
+        assert!(SchemaImport::parse(&late.0).is_err());
+        let mut incomplete = Mp::new();
+        incomplete
+            .arr(1)
+            .map(2)
+            .str("schema_version")
+            .uint(1)
+            .str("lazy_v1")
+            .map(2)
+            .str("version")
+            .uint(1)
+            .str("active")
+            .arr(0);
+        assert!(SchemaImport::parse(&incomplete.0).is_err());
+        let mut d = Mp::new();
+        d.arr(1);
+        lazy_tag(&mut d, true, false, Value::UInt(1));
+        d.nil();
+        assert!(SchemaImport::parse(&d.0).is_err());
+        let mut ambiguous = Mp::new();
+        ambiguous
+            .arr(1)
+            .map(3)
+            .str("schema_version")
+            .uint(1)
+            .str("name")
+            .str("d.t")
+            .str("lazy_v1")
+            .map(3)
+            .str("version")
+            .uint(1)
+            .str("active")
+            .arr(0)
+            .str("retired")
+            .arr(0);
+        assert!(SchemaImport::parse(&ambiguous.0).is_err());
+    }
 
     #[test]
     fn members_round_trip() {

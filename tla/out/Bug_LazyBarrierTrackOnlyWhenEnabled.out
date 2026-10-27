@@ -1,0 +1,135 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 106 and seed -3541862600585301340 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 439] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/LazyBarrier.tla
+Parsing file /tmp/tlc-5094919072169826444/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5094919072169826444/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5094919072169826444/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5094919072169826444/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5094919072169826444/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5094919072169826444/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-5094919072169826444/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyBarrier
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyBarrier
+Starting... (2026-10-27 05:29:23)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 05:29:23.
+Error: Invariant OwnWritesCovered is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = FALSE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = FALSE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {}
+/\ ready = FALSE
+/\ ryw = FALSE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+State 2: <AckOwn(1) line 29, col 5 to line 35, col 53 of module LazyBarrier>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = FALSE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = FALSE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {1}
+/\ ready = FALSE
+/\ ryw = FALSE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+State 3: <AckOwn(2) line 29, col 5 to line 35, col 53 of module LazyBarrier>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = FALSE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = FALSE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {1, 2}
+/\ ready = FALSE
+/\ ryw = FALSE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+State 4: <Enable line 77, col 5 to line 79, col 70 of module LazyBarrier>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = FALSE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = FALSE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {1, 2}
+/\ ready = FALSE
+/\ ryw = TRUE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+State 5: <BeginRead line 51, col 5 to line 56, col 53 of module LazyBarrier>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = FALSE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = TRUE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {1, 2}
+/\ ready = FALSE
+/\ ryw = TRUE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+State 6: <PassBarrier line 64, col 5 to line 71, col 59 of module LazyBarrier>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = FALSE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = TRUE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {1, 2}
+/\ ready = TRUE
+/\ ryw = TRUE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+State 7: <Return line 73, col 5 to line 75, col 65 of module LazyBarrier>
+/\ pending = {}
+/\ obligations = {}
+/\ returned = TRUE
+/\ sampled = FALSE
+/\ applied = {}
+/\ begun = TRUE
+/\ sampleEmpty = [A |-> TRUE, B |-> TRUE]
+/\ acknowledged = {1, 2}
+/\ ready = TRUE
+/\ ryw = TRUE
+/\ snapshot = {}
+/\ delivered = {}
+/\ requested = [A |-> 0, B |-> 0]
+
+96 states generated, 57 distinct states found, 24 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-10-27 05:29:23)
+Trace exploration spec path: ./LazyBarrier_TTrace_1793078963.tla

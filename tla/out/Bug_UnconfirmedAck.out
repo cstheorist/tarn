@@ -1,0 +1,65 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 40 and seed -8532850049070461151 with 1 worker on 2 cores with 455MB heap and 64MB offheap memory [pid: 52] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /model/LazyTargetConfirm.tla
+Parsing file /tmp/tlc-9030496217696970752/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-9030496217696970752/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-9030496217696970752/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-9030496217696970752/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-9030496217696970752/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-9030496217696970752/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-9030496217696970752/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyTargetConfirm
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyTargetConfirm
+Starting... (2026-10-27 08:44:46)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 08:44:46.
+Error: Invariant DrainedObligationSafe is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ first = "idle"
+/\ reply = "none"
+/\ retained = TRUE
+/\ durable = "none"
+/\ provisional = "none"
+
+State 2: <Start("marker") line 14, col 5 to line 16, col 45 of module LazyTargetConfirm>
+/\ first = "pending"
+/\ reply = "none"
+/\ retained = TRUE
+/\ durable = "none"
+/\ provisional = "marker"
+
+State 3: <RetryPending line 18, col 5 to line 20, col 58 of module LazyTargetConfirm>
+/\ first = "pending"
+/\ reply = "ack"
+/\ retained = TRUE
+/\ durable = "none"
+/\ provisional = "marker"
+
+State 4: <DeleteSource line 35, col 5 to line 37, col 55 of module LazyTargetConfirm>
+/\ first = "pending"
+/\ reply = "ack"
+/\ retained = FALSE
+/\ durable = "none"
+/\ provisional = "marker"
+
+State 5: <Finish(FALSE) line 22, col 5 to line 25, col 49 of module LazyTargetConfirm>
+/\ first = "resolved"
+/\ reply = "ack"
+/\ retained = FALSE
+/\ durable = "none"
+/\ provisional = "marker"
+
+20 states generated, 17 distinct states found, 6 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-27 08:44:46)
+Trace exploration spec path: ./LazyTargetConfirm_TTrace_1793090686.tla

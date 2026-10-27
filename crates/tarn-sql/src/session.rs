@@ -43,6 +43,56 @@ impl Output {
     }
 }
 
+fn autocommit_count(data: &[u8]) -> SqlResult<u64> {
+    let mut rd = Rd::new(data);
+    if rd.array()? != 1 {
+        return Err(crate::mpw::proto("invalid autocommit acknowledgement"));
+    }
+    let fields = rd.array()?;
+    if !matches!(fields, 2 | 3) || rd.value()? != Value::str("ok") {
+        return Err(crate::mpw::proto("invalid autocommit acknowledgement"));
+    }
+    let n = match rd.value()? {
+        Value::UInt(n) => n,
+        Value::Int(n) if n >= 0 => n as u64,
+        _ => return Err(crate::mpw::proto("invalid write count")),
+    };
+    // Lua and the native writer may return the last affected tuple. It
+    // is optional metadata, not an additional result or acknowledgement.
+    if fields == 3 {
+        if !matches!(rd.buf.first(), Some(0x90..=0x9f | 0xdc | 0xdd | 0xc0)) {
+            return Err(crate::mpw::proto("invalid autocommit last tuple"));
+        }
+        rd.skip()?;
+    }
+    if !rd.buf.is_empty() {
+        return Err(crate::mpw::proto("trailing autocommit acknowledgement"));
+    }
+    Ok(n)
+}
+
+fn autocommit_ack(data: &[u8], shard: u32) -> SqlResult<u64> {
+    // The request has already run. A broken success envelope cannot prove
+    // a rollback, and must never enter the statement's retry path.
+    autocommit_count(data).map_err(|e| crate::mpw::ambiguous(shard, &e))
+}
+
+fn known_write_rollback(code: u16) -> bool {
+    // These write/commit APIs emit these errors only after refusing or
+    // rolling back the local transaction (or proving 2PC ABORT). This is
+    // session-history classification, NOT permission to replay a mutation.
+    matches!(
+        code,
+        1041 | 1048 | 1062 | 1146 | 1205 | 1213 | 1264 | 1265 | 1406 | 1412 | 1690
+    )
+}
+
+fn note_lazy_write_error(history: &mut crate::lazy::History, error: &SqlError) {
+    if !known_write_rollback(error.code) {
+        history.uncertain();
+    }
+}
+
 pub struct Prepared {
     template: String,
     pub n_params: usize,
@@ -91,6 +141,9 @@ pub struct Session {
     client_collation: String,
     /// Warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
+    lazy_history: crate::lazy::History,
+    lazy_read_your_writes: bool,
+    lazy_wait_timeout: u64,
 }
 
 /// A warning or note of a statement, as SHOW WARNINGS lists it.
@@ -372,6 +425,9 @@ impl Session {
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
+            lazy_history: crate::lazy::History::default(),
+            lazy_read_your_writes: false,
+            lazy_wait_timeout: 5,
             cluster,
         }
     }
@@ -544,6 +600,27 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
+            "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        format!(
+                            "Variable '{}' is a SESSION variable and can't be used with SET GLOBAL",
+                            name
+                        ),
+                    ));
+                }
+                let v = if name == "tarn_lazy_read_your_writes" {
+                    self.lazy_read_your_writes = crate::lazy::flag(value.as_ref())?;
+                    Value::Int(self.lazy_read_your_writes as i64)
+                } else {
+                    self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
+                    Value::Int(self.lazy_wait_timeout as i64)
+                };
+                self.sys_vars.insert(name.to_string(), v);
+                return Ok(());
+            }
             n if n.starts_with("character_set_") && n != "character_set_system" => {
                 if value.is_some() && !matches!(value, Some(Value::Null)) && !utf8_compatible_charset(&text) {
                     return Err(SqlError::unsupported(format!(
@@ -958,9 +1035,27 @@ impl Session {
 
     async fn implicit_commit(&mut self) -> SqlResult<()> {
         if let Some(t) = self.txn.take() {
-            t.commit(&self.cluster).await?;
+            self.commit_tracked(t).await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn commit_tracked(&mut self, t: Txn) -> SqlResult<()> {
+        let lazy = t.writes.values().any(|w| w.table.has_lazy());
+        match t.commit(&self.cluster).await {
+            Ok(outcome) => {
+                self.lazy_history.record(outcome);
+                Ok(())
+            }
+            Err(e) => {
+                // A malformed post-write acknowledgement can be uncertain
+                // even when it was not classified as a transport error.
+                if lazy {
+                    note_lazy_write_error(&mut self.lazy_history, &e);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub(crate) fn txn_needed(&self) -> bool {
@@ -998,6 +1093,24 @@ impl Session {
                 }
             };
             return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+        }
+        if crate::lazy::eligible(p) && !self.lazy_history.strong {
+            if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
+                return Err(SqlError::new(
+                    1205,
+                    "HY000",
+                    "Lazy index catch-up could not complete; retry the read",
+                ));
+            }
+            let cx = self.cx(params, &now);
+            if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
+                self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
+                self.found_rows = rows.len() as u64;
+                return Ok(Output::Rows { columns, rows });
+            }
+        }
+        if crate::lazy::eligible(p) {
+            self.cluster.stats.lazy_fallbacks.fetch_add(1, Ordering::Relaxed);
         }
         if self.isolation.mode() == TxnMode::ReadCommitted {
             // READ COMMITTED autocommit: every storage read sees the latest
@@ -1088,7 +1201,7 @@ impl Session {
         };
         match res {
             Ok(rows) => {
-                txn.commit(&self.cluster).await?;
+                self.commit_tracked(txn).await?;
                 self.found_rows = rows.len() as u64;
                 Ok(Output::Rows { columns, rows })
             }
@@ -1161,7 +1274,7 @@ impl Session {
         loop {
             let mut txn = self.new_txn(false);
             let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
-                Ok(r) => txn.commit(&self.cluster).await.map(|_| r),
+                Ok(r) => self.commit_tracked(txn).await.map(|_| r),
                 Err(e) => {
                     txn.rollback(&self.cluster);
                     Err(e)
@@ -1334,29 +1447,52 @@ impl Session {
         writes.str("found_rows").bool(self.found_rows_flag);
         writes.str("fence").arr(2).uint(table.space_id as u64).uint(table.ver);
         writes.str("wb").arr(wb.len());
-        for b in wb {
+        for &b in &wb {
             writes.uint(b as u64);
         }
         let mut attempt = 0;
         loop {
-            // Not idempotent (e.g. SET v = v + 1): never re-sent blindly. The
-            // shard's native procedure does the writes it can without Lua
-            // (crates/tarn-storage/src/write.rs), and hands the others back
-            // ("lua") having written nothing.
-            let native = if matches!(table.engine, crate::catalog::Engine::Memtx) {
-                self.cluster
-                    .call_native_once(shard, "tarn_storage.ts_autocommit", &writes.0, MARK_NO_NATIVE_WRITE)
-                    .await?
-            } else {
-                None
-            };
-            let d = match native {
-                Some(d) if !crate::mpw::status_is(&d, "lua") => d,
-                _ => self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await?,
+            // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
+            // Lazy sources require Lua capture. Avoid a predictable extra
+            // native call; the shard also enforces capture exclusions for
+            // stale gateways that do not yet know this metadata.
+            let result = async {
+                let native = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
+                    self.cluster
+                        .call_native_once(shard, "tarn_storage.ts_autocommit", &writes.0, MARK_NO_NATIVE_WRITE)
+                        .await?
+                } else {
+                    None
+                };
+                match native {
+                    Some(d) if !crate::mpw::status_is(&d, "lua") => Ok(d),
+                    _ => self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await,
+                }
+            }
+            .await;
+            let d = match result {
+                Ok(d) => d,
+                Err(e) => {
+                    if table.has_lazy() {
+                        note_lazy_write_error(&mut self.lazy_history, &e);
+                    }
+                    return Err(e);
+                }
             };
             match lua_status(&d) {
-                Ok((_, mut rd)) => {
-                    let n = rd.value()?.as_i64().unwrap_or(0) as u64;
+                Ok(_) => {
+                    let n = match autocommit_ack(&d, self.cluster.shards[shard].id) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            if table.has_lazy() {
+                                self.lazy_history.uncertain();
+                            }
+                            return Err(e);
+                        }
+                    };
+                    if table.has_lazy() {
+                        self.lazy_history.touch(wb.iter().copied());
+                    }
                     return Ok(Some(self.dml_output(n, insert_id)));
                 }
                 // (A bucket refused: nothing was written; the statement
@@ -1366,7 +1502,12 @@ impl Session {
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
                     backoff(attempt).await;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    if table.has_lazy() {
+                        note_lazy_write_error(&mut self.lazy_history, &e);
+                    }
+                    return Err(e);
+                }
             }
         }
     }
@@ -2505,7 +2646,7 @@ impl Session {
             }
             Admin::Commit => {
                 if let Some(t) = self.txn.take() {
-                    t.commit(&self.cluster).await?;
+                    self.commit_tracked(t).await?;
                 }
                 Ok(Output::ok(0))
             }
@@ -3182,12 +3323,29 @@ impl Session {
             ("Tarn_bucket_map_reads", self.cluster.bucket_loads()),
             ("Tarn_buckets", self.cluster.bucket_map().count as u64),
             ("Tarn_shards", self.cluster.nlive() as u64),
+            ("Tarn_lazy_reads", s.lazy_reads.load(Ordering::Relaxed)),
+            ("Tarn_lazy_fallbacks", s.lazy_fallbacks.load(Ordering::Relaxed)),
+            (
+                "Tarn_lazy_session_pending_apply",
+                self.lazy_history.pending_count() as u64,
+            ),
+            (
+                "Tarn_lazy_session_touched_buckets",
+                self.lazy_history.bucket_count() as u64,
+            ),
+            ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
         stats.retain(|(n, _)| like_ci(n, like));
-        let rows = stats
+        let mut rows: Vec<Row> = stats
             .into_iter()
             .map(|(n, v)| vec![Value::str(n), Value::str(&v.to_string())])
             .collect();
+        rows.extend(
+            crate::lazy::stats(&self.cluster)
+                .into_iter()
+                .filter(|(n, _)| like_ci(n, like))
+                .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
+        );
         Output::Rows {
             columns: cols(&[
                 ("Variable_name", ColumnType::VarString),
@@ -3464,6 +3622,62 @@ fn first_value(d: &[u8]) -> SqlResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autocommit_ack_requires_exact_count_and_terminal_envelope() {
+        let mut ok = Mp::new();
+        ok.arr(1).arr(2).str("ok").uint(2);
+        assert_eq!(autocommit_count(&ok.0).unwrap(), 2);
+        for value in [Value::Null, Value::Float(2.0), Value::str("2"), Value::Int(-1)] {
+            let mut bad = Mp::new();
+            bad.arr(1).arr(2).str("ok").val(&value);
+            assert!(autocommit_count(&bad.0).is_err());
+        }
+        let mut row = Mp::new();
+        row.arr(1).arr(3).str("ok").uint(1).arr(2).uint(1).str("雪");
+        assert_eq!(autocommit_count(&row.0).unwrap(), 1);
+        let mut none = Mp::new();
+        none.arr(1).arr(3).str("ok").uint(0).nil();
+        assert_eq!(autocommit_count(&none.0).unwrap(), 0);
+        for fields in [1, 3, 4] {
+            let mut bad = Mp::new();
+            bad.arr(1).arr(fields).str("ok");
+            if fields >= 3 {
+                bad.uint(2).str("unexpected metadata");
+            }
+            assert!(autocommit_count(&bad.0).is_err());
+        }
+        ok.nil();
+        assert!(autocommit_count(&ok.0).is_err());
+        let ambiguous = autocommit_ack(&ok.0, 7).unwrap_err();
+        assert_eq!(ambiguous.code, 1180);
+        assert_eq!(&ambiguous.sqlstate, b"40003");
+        assert!(!ambiguous.moved);
+    }
+
+    #[test]
+    fn known_write_failures_preserve_cumulative_lazy_history() {
+        for code in [1041, 1048, 1062, 1146, 1205, 1213, 1264, 1265, 1406, 1412, 1690] {
+            let mut history = crate::lazy::History::default();
+            history.record(crate::txn::CommitOutcome {
+                lazy_buckets: std::collections::BTreeSet::from([11, 29]),
+                pending_apply: Some(crate::txn::PendingApply {
+                    txid: "prior-commit".into(),
+                    participants: vec![2],
+                }),
+            });
+            note_lazy_write_error(&mut history, &SqlError::new(code, "HY000", "known rollback"));
+            assert!(!history.strong, "{code}");
+            assert_eq!(history.bucket_count(), 2);
+            assert_eq!(history.pending_count(), 1);
+        }
+        for code in [1105, 1180, 2003, 2013] {
+            let mut history = crate::lazy::History::default();
+            history.touch([11]);
+            note_lazy_write_error(&mut history, &SqlError::new(code, "HY000", "uncertain"));
+            assert!(history.strong, "{code}");
+        }
+    }
 
     #[test]
     fn sql_string_format_matches_mariadb_bytes() {

@@ -357,6 +357,384 @@ all previous configuration files are unchanged.
 | `Bug_BackfillDDLNoFinisherSerialization` | 65 | 9 | violates `PublishedIndexMatches` |
 | `Bug_BackfillDDLWrongSpace` | 15 | 4 | violates `ReplacementIndexUnchanged` |
 
+### Lazy secondary indexes (issue #82)
+
+Four separate local refinement modules specify the eventual-index contract
+before implementation. They leave `TarnCommit.tla` and its configurations
+unchanged. They do **not** establish distributed serializability for lazy
+reads: missing recently matching rows is allowed until propagation finishes.
+Only single-table, nonlocking autocommit reads may use this path; explicit
+transactions, locking reads and writes retain the existing strong paths.
+The first implementation always fetches base rows, without a covering
+index shortcut.
+
+* `LazyIndex.tla`: one primary key, two canonical index keys/destinations,
+  a key move, delete/reinsert, two index incarnations and a speculative
+  write that never commits. The committed row and immutable assignments
+  enter durable state atomically. Shipping sees only confirmed commits;
+  lost frames, duplicated/reordered frames, destination apply, ACK and
+  source deletion are separate actions. Target membership and tombstones
+  keep the newest sequence per `(index incarnation, key, base PK)`.
+  A same-key change has one final assignment, never contradictory DELETE
+  and ADD assignments at the same version. Authoritative retirement permits
+  obsolete ACKs; a missing/not-ready destination does not.
+* `LazyHandoff.tla`: one base bucket moves from S to R, including when
+  empty. S fences/drains and ACK-flushes before counter/live-version copy
+  and transfer. The variable `oldSourceRemoved` removes **S**, not R:
+  `pending2` belongs to S; a subsequent `pending3` belongs to R and remains
+  deliverable after S is removed. Removing a current receiver requires
+  another instance of the same source-drain protocol. Independently, one
+  target bucket moves X to Y. In-flight admission lasts through the native
+  commit interval, final ownership checks reject newly fenced/stale work,
+  and copy notes preserve writes during transfer. Live markers, tombstones
+  and acceptance floors travel with the target bucket.
+* `LazyCapacity.tla`: two prepared transactions and a local commit compete
+  for bounded entries, worst encoded bytes and remaining sequence numbers.
+  YES reserves all three durably without allocating a delivery sequence;
+  APPLY converts the reservation into row/outbox state, while ABORT
+  releases it. In the correct model every promised APPLY fits; its action
+  needs no capacity rejection. Controls vary the limits so each omitted
+  reservation has its own witness rather than being masked by another cap.
+* `LazyBarrier.tla`: two own acknowledged commits on different buckets,
+  one of which may still await row APPLY, plus another writer that can
+  expose a hole in ACK order. Own obligations accumulate even while the
+  session flag is OFF; it is enabled only after those writes in this
+  fixture. Resolve every pending APPLY first, then sample counters and
+  wait for per-bucket completion frontiers, **before** the index snapshot.
+  Forgetting unresolved/unknown/expired history cannot claim success: the
+  implementation must keep a bounded obligation or use explicit strong
+  fallback/error. A timeout does not justify replaying the original DML.
+
+The source completion prefix is `counter` when its pending outbox is empty,
+otherwise `min(pending sequence) - 1`, sampled together in one native
+read-confirmed view. All assignments at a sequence remain pending until
+ACKed. Sequence-zero baseline work can therefore report a signed completed
+prefix of -1; counters stay unsigned. Creating another index incarnation
+can enqueue baseline sequence zero even when the shared source counter is
+already positive, so this global completion frontier is not monotonic
+across bootstrap. It may conservatively delay another ready index's barrier;
+per-incarnation target floors remain independently scoped. Tarantool distinguishes visibility at
+commit start from visibility after commit returns; source shipping and
+frontier reads require the latter ([transaction model](https://www.tarantool.io/en/doc/latest/platform/atomic/transaction_model/)).
+
+Tombstone GC first persists an acceptance floor, then removes only covered
+tombstones. Its exact key is `(index incarnation, target bucket, source
+bucket)`. A source's **all-destination** confirmed completion prefix proves
+that floor; a largest ACK observed at one destination does not. Incoming
+assignments at or below the floor are obsolete ACKs before per-key lookup.
+Live entries remain. A later duplicate cannot recreate a deleted entry,
+even after its individual tombstone is gone; target transfer must copy the
+floor even if no visible rows remain. `LazyIndex` checks safe floor/GC
+ordering and rejects the max-ACK proof; `LazyHandoff` checks floor copying.
+Each models one source-bucket scope. Correct exact-scope lookup when many
+such machines coexist is an implementation obligation, not a proof that
+arbitrary floor records may be interchanged.
+
+The invariants cover committed-only delivery, exact index projection once
+writes stop and the outbox is ACK-drained, deleted-row/key rechecks, durable
+source obligations, counter/live-version continuity, capacity promises and
+causal session catch-up. The recheck fixture uses row existence and exact
+current candidate-key equality. Actual full `WHERE` evaluation, canonical
+key/type/collation encoding, PK deduplication and refill after rejecting a
+stale candidate require SQL/storage tests. A passed barrier establishes
+coverage of the session's committed index effects, not a global snapshot
+or completeness for concurrent other writers.
+
+Refinement premises remain explicit: bootstrap enumerates the complete
+baseline, reads each row and its version in one consistent view, ACKs every
+baseline assignment before READY, and refuses late bootstrap enqueue after
+READY. These enumeration/snapshot/late-request guards are not separately
+mutated here; native witnesses must exercise them. Existing fence/drain
+contracts (including the backfill models above) protect the bootstrap write
+window. New/forward-schema writes wait until this shard's durable matching
+capture/catalog activation; a stale/unknown registry fails closed. The
+forward-admission and registry controls expose omissions of those guards.
+Physical materialization, bucket copies and temporary unique-swap deletes
+must not become logical outbox changes. Native commit atomicity and
+confirmation, byte accounting, integer exhaustion checks, full bucket-copy
+implementation and fair eventual delivery/recovery remain runtime premises.
+Process/network failure may lose transient frames/receipts; durable
+row/outbox/markers/floors survive. The finite checks prove safety and
+conditional drained convergence, not that a partitioned queue will drain.
+
+All 37 focused configurations are generated by `gen_cfgs.sh`, selected by
+`run_all.sh` module routing and included in the default `check.sh` list:
+5 positive cases and 32 expected counterexamples. Explicit configuration
+arguments still override the default list. The default list grows from
+71 to 108 before the capacity-meter refinements below; previous
+configurations and the core commit module are unchanged.
+To run just these refinements:
+
+```sh
+configs=(LazyIndex LazyCapacity LazyBarrier LazyHandoff LazyHandoffLive)
+for f in tla/Bug_Lazy*.cfg; do
+  name=${f#tla/}
+  configs+=("${name%.cfg}")
+done
+tla/check.sh "${configs[@]}"
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyIndex` | 475,615 | 38 | passes |
+| `LazyCapacity` | 71 | 9 | passes |
+| `LazyBarrier` | 80 | 13 | passes |
+| `LazyHandoff` | 156 | 13 | passes |
+| `LazyHandoffLive` | 76 | 12 | passes |
+| `Bug_LazyBarrierForgetUnresolved` | 126 | 8 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierLastOnly` | 72 | 9 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierMaxAck` | 81 | 12 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierSkipApplyWait` | 57 | 7 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierSplitFrontierView` | 197 | 13 | violates `PrefixCovered` |
+| `Bug_LazyBarrierTrackOnlyWhenEnabled` | 57 | 7 | violates `OwnWritesCovered` |
+| `Bug_LazyBarrierWaitAfterSnapshot` | 106 | 11 | violates `OwnWritesCovered` |
+| `Bug_LazyCapacityAbortLeaks` | 8 | 3 | violates `AbortedReleased` |
+| `Bug_LazyCapacityNoByteReserve` | 7 | 3 | violates `BytePromisesFit` |
+| `Bug_LazyCapacityNoEntryReserve` | 6 | 3 | violates `EntryPromisesFit` |
+| `Bug_LazyCapacityNoSeqReserve` | 6 | 3 | violates `SequencePromisesFit` |
+| `Bug_LazyHandoffDropFloors` | 56 | 7 | violates `DrainedProjection` |
+| `Bug_LazyHandoffDropLiveVersion` | 9 | 4 | violates `LiveVersionSurvives` |
+| `Bug_LazyHandoffDropMarkers` | 18 | 5 | violates `DrainedProjection` |
+| `Bug_LazyHandoffNoTargetDrain` | 136 | 11 | violates `DrainedProjection` |
+| `Bug_LazyHandoffNoTargetFence` | 136 | 11 | violates `DrainedProjection` |
+| `Bug_LazyHandoffNoTargetNote` | 127 | 11 | violates `DrainedProjection` |
+| `Bug_LazyHandoffRemovePending` | 4 | 2 | violates `SourceObligationsSurvive` |
+| `Bug_LazyHandoffResetCounter` | 10 | 4 | violates `CounterContinues` |
+| `Bug_LazyHandoffSourceNoFlush` | 8 | 3 | violates `SourceObligationsSurvive` |
+| `Bug_LazyIndexAckMissingTarget` | 537,216 | 21 | violates `DrainedConverges` |
+| `Bug_LazyIndexCaptureFailOpen` | 171 | 10 | violates `DrainedConverges` |
+| `Bug_LazyIndexFloorFromMaxAck` | 775,423 | 22 | violates `DrainedConverges` |
+| `Bug_LazyIndexForgetBeforeAck` | 58,065 | 17 | violates `DrainedConverges` |
+| `Bug_LazyIndexForwardBeforeCapture` | 54 | 8 | violates `DrainedConverges` |
+| `Bug_LazyIndexGcBeforeFloor` | 552,060 | 24 | violates `DrainedConverges` |
+| `Bug_LazyIndexIgnoreGeneration` | 473,050 | 29 | violates `DrainedConverges` |
+| `Bug_LazyIndexNoBaseRecheck` | 50 | 9 | violates `BaseReadSafe` |
+| `Bug_LazyIndexNoKeyRecheck` | 31 | 8 | violates `CandidateKeySafe` |
+| `Bug_LazyIndexShipBeforeCommit` | 560 | 12 | violates `CommittedOnly` |
+| `Bug_LazyIndexSplitOutbox` | 44 | 9 | violates `DrainedConverges` |
+| `Bug_LazyIndexStaleOverwrite` | 249,637 | 21 | violates `DrainedConverges` |
+
+### Conservative capacity meter
+
+`LazyMeter.tla` refines the entry/byte admission premise of `LazyCapacity`
+without changing that module or the commit protocol. Durable outbox entries
+and per-transaction reservations remain resource truth. A volatile meter
+precharges positive allocations before publication, refunds them only on
+definite rollback, and defers negative releases until confirmed commit.
+It conservatively covers both durable obligations and positive operations
+that may still commit. APPLY converts a reservation already promised at YES;
+it cannot be refused by a fresh capacity check. This fixture permits a
+temporary double charge for conversion, so the meter itself may exceed the
+limit and delay new admission while durable resource usage stays bounded.
+It is not a bound on native transaction memory, target-index memory, or
+process RSS. Sequence-capacity reservations remain the separate
+`LazyCapacity` obligation.
+
+Startup or leadership invalidation makes the meter UNKNOWN. Every quota
+mutator must fail transiently before charging or changing durable truth,
+including ACK, reservation release/ABORT, bootstrap and retirement cleanup.
+A separate worker drains old native effects and the old sync/applier queue,
+then sums entries and reservations in a confirmed view while admission is
+fenced. READY installation must still match the rebuild epoch and current
+writable role, with the native cut still valid. Source callers already in
+INFLIGHT must never wait for that worker to drain themselves. A caller
+returning or being cancelled is not sufficient evidence that a native
+transaction has ended: the pinned native implementation can detach a
+synchronous waiter while its transaction is unresolved
+([`txn_commit_impl`](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L1188)).
+
+Each callback carries its immutable meter epoch. Old callbacks cannot alter
+a rebuilt meter. The model separates native completion from its callback,
+allowing a delayed old callback after rebuild; this deliberately
+overapproximates the actual nonyielding completion callback. The native
+success path requires no outstanding sync wait, commits the engines, then
+runs commit callbacks before waking the caller; rollback callbacks follow
+engine rollback
+([native completion](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L755)).
+Runtime refinement still requires exact-image callback and promotion/queue
+witnesses, all quota-mutator coverage, and atomic final role/epoch
+publication. Callback tickets must be allocated and registered before
+charging, and their terminal arithmetic must not yield, fail, or query
+spaces ([callback restrictions](https://www.tarantool.io/en/doc/latest/reference/reference_lua/box_txn_management/on_commit/)).
+
+The terminal-callback premise applies to quota-bearing Lua transactions,
+not every invocation of a native rollback callback. The pinned engine also
+runs transaction `on_rollback` callbacks when rolling back to a savepoint,
+without ending the transaction or removing its callback list
+([savepoint rollback](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L395)).
+The native one-shard commit may use that operation before handing a request
+back to Lua. Supported accepted native streams must therefore have no
+pre-existing lazy quota ticket: SQL buffers user writes until commit, and
+the shared native write-admission guard checks every actual source against
+the capture registry **before** creating a transaction or savepoint. Lazy
+writes defer to Lua before native mutation. The stream-lifetime callback
+separately recognizes native savepoint rollback, preserving the existing
+read set and DDL/election tracking. These are implementation refinement
+obligations; the model does not prove arbitrary savepoint use safe for an
+armed meter ticket. The ordinary terminal-callback runtime evidence still
+applies to the guarded quota-bearing Lua paths.
+
+The bounded fixture contains one reservation that can APPLY or ABORT, a
+disjoint local enqueue/ACK, two invalidations, and one old queued native
+effect. Its queue-cut action is an explicit runtime premise, not a proof
+that a particular `box.info` field establishes that cut. It proves no
+delivery or recovery liveness. In particular, unknown admission, unresolved
+old effects, an unresolved queue, stale snapshot installation and late
+callbacks have independent reachable controls. The default list now has
+118 configurations before the target-confirmation refinement below (108
+plus these 10); explicit arguments still override it. To run only this
+refinement:
+
+```sh
+tla/check.sh LazyMeter Bug_LazyMeter{NoPrecharge,EarlyRelease,RefundUncertain,MutateUnknown,NoDrain,NoQueueCut,StaleInstall,StaleCallback,ApplyCap}
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyMeter` | 1,918,745 | 30 | passes |
+| `Bug_LazyMeterNoPrecharge` | 26 | 5 | violates `ReadyConservative` |
+| `Bug_LazyMeterEarlyRelease` | 91 | 7 | violates `ReadyConservative` |
+| `Bug_LazyMeterRefundUncertain` | 45 | 6 | violates `ReadyConservative` |
+| `Bug_LazyMeterMutateUnknown` | 559 | 6 | violates `ReadyConservative` |
+| `Bug_LazyMeterNoDrain` | 200 | 8 | violates `ReadyConservative` |
+| `Bug_LazyMeterNoQueueCut` | 27 | 4 | violates `ReadyConservative` |
+| `Bug_LazyMeterStaleInstall` | 25 | 5 | violates `ReadyEpochCurrent` |
+| `Bug_LazyMeterStaleCallback` | 1,035 | 10 | violates `ReadyConservative` |
+| `Bug_LazyMeterApplyCap` | 90 | 7 | violates `NoCapacityRefusal` |
+
+### Confirmed target acknowledgement
+
+`LazyTargetConfirm.tla` refines the existing durable-target acknowledgement
+premise. One committed source assignment is retained after the first
+target CALL loses its receipt. That native target transaction may still be
+waiting for its synchronous quorum when the source retries the **same**
+assignment. Observing the first transaction's unconfirmed marker and doing
+no writes does not justify acknowledging the duplicate: the first
+transaction can still roll back. The source could otherwise delete its
+only assignment and leave no durable target effect.
+
+An exact Tarantool 3.9.0 primitive witness, with MVCC and fsync WAL, reached
+this failure on both memtx and vinyl: the duplicate read-committed
+transaction observed the pending sequence, performed no writes and
+acknowledged while the sync queue still contained the first transaction.
+That transaction later timed out with error 216 and rolled back. The
+read-confirmed control returned conflict 97 while the first was pending,
+so the source retained its assignment for a later idempotent retry.
+The implementation must use confirmed target proofs, including no-op
+duplicate, floor and retirement paths; a write-mode transaction alone is
+not evidence that every read it uses for an ACK is confirmed
+([native visibility levels](https://www.tarantool.io/en/doc/latest/platform/atomic/transaction_model/)).
+
+The bounded model separates the first pending native effect, duplicate
+reply, source deletion and first commit/rollback. Its proof tokens abstract
+a committed marker or retirement; the primitive witness exercises the
+marker case. The broken control reaches pending marker, duplicate ACK,
+source deletion, then native rollback and violates
+`DrainedObligationSafe`. Existing `LazyIndex` retains the broader
+version/floor/delivery contract; this refinement does not prove native
+batch parsing, replication, or all transaction scheduling. The core and
+previous refinement modules/configurations are unchanged.
+
+```sh
+tla/check.sh LazyTargetConfirm Bug_UnconfirmedAck
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyTargetConfirm` | 19 | 5 | passes |
+| `Bug_UnconfirmedAck` | 17 | 5 | violates `DrainedObligationSafe` |
+
+### Confirmed participant APPLY acknowledgement
+
+`LazyApplyConfirm.tla` refines the participant-completion premise used by
+`LazyBarrier`. A durable COMMITTED decision and YES already exist. The
+first physical APPLY can be waiting for its synchronous quorum while a
+duplicate reads its provisional `applied` participant record. Such a
+record cannot discharge the session's own pending-APPLY obligation.
+Otherwise a correctly confirmed source counter/outbox view can still be
+zero/empty, so its frontier barrier passes and an own committed row is
+missing from the lazy read **while the first APPLY is still pending**.
+Native rollback makes that loss persistent until a later recovery APPLY.
+
+An actual `tarn_apply` probe on Tarantool 3.9.0, with MVCC, fsync WAL and
+`cfg.sync=true`, reproduced the boundary on both memtx and vinyl. A durable
+PREPARE and COMMITTED decision preceded the probe. While the first APPLY
+waited for quorum two, the duplicate returned `ok/applied`. The first then
+timed out with error 216; a read-confirmed view still showed `prepared`,
+one reservation, no base row, counter zero and no outbox entry. A private
+control changing only that APPLY transaction to read-confirmed returned
+conflict 1213 to the duplicate while the first was pending, retained the
+obligation, and completed the known-committed idempotent retry with quorum
+one. These are native-engine probes with the optional C module disabled;
+they do not establish the cause of a separate SQL CI failure.
+
+The model separates native completion, duplicate reply, pending-history
+release, delivery and the lazy snapshot. Its confirmed counter/frontier
+read and delivery rules reuse `LazyBarrier`/`LazyIndex` premises. The
+positive model requires confirmed participant completion before release;
+`Bug_UnconfirmedApply` reaches the missing-row read while the first APPLY
+is pending. This local refinement does not change the commit protocol or
+prove every participant procedure, native queue implementation, recovery
+schedule, or SQL consumer. Production must justify every successful APPLY
+completion proof, including no-write duplicate paths.
+
+```sh
+tla/check.sh LazyApplyConfirm Bug_UnconfirmedApply
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyApplyConfirm` | 14 | 7 | passes |
+| `Bug_UnconfirmedApply` | 10 | 5 | violates `OwnReadSafe` |
+
+### Bootstrap count reports and auxiliary metadata
+
+`BootstrapCount.tla` checks the boundary between a storage shard's no-map
+report and the coordinator's later initialization decision. Internal lazy
+counter/version/floor spaces participate in bucket transport, but their
+presence does not mean a legacy user table exists. Counting those spaces
+as user tables makes an otherwise new cluster choose the legacy 3,000
+bucket default instead of 30,000.
+
+Two shards report independently, in either order; a separate coordinator
+action consumes the complete reports. The bounded fixture varies user
+table presence, auxiliary metadata, legacy rows, coherent existing maps,
+and explicit configuration. It checks existing-map precedence, configured
+count precedence when no map exists, the legacy count for real user
+tables, and the fresh default when only auxiliary metadata exists. A
+stored legacy row's abstract routing hash also retains its bucket when
+the legacy count is inferred. `Bug_CountsAuxMetadata` changes the storage
+report, leaving the coordinator unchanged; the trace reports a false user
+table on one auxiliary-only shard and then chooses 3,000.
+
+The model assumes stable committed table presence during these reports
+and mutually consistent existing map counts. It does not prove concurrent
+DDL/bootstrap serialization, conflicting-map reconciliation, the CRC
+implementation, or migration between configured counts. The existing
+`tests/bucketcount.sh` integration test is the runtime gate: configured,
+legacy with persisted rows, fresh empty, and fresh configured clusters,
+including row lookup/write routing and complete ownership ranges. Source
+refinement must exclude auxiliary metadata only from the no-map table
+presence report; ordinary bucket copy/send enumeration must retain it.
+The commit and previous refinement models/configurations are unchanged.
+
+```sh
+tla/check.sh BootstrapCount Bug_CountsAuxMetadata
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `BootstrapCount` | 2,160 | 4 | passes |
+| `Bug_CountsAuxMetadata` | 1,741 | 4 | violates `NewClusterDefault` |
+
+The default list now contains 124 configurations, including 84 expected
+broken/trade-off outcomes. The lazy-index and bootstrap refinements
+account for 53 of those configurations: nine positive cases and 44
+controls. The 134 generated configurations reproduce from `gen_cfgs.sh`;
+two additional grouped-read configurations are maintained directly, for
+136 total. All 134 previous configuration files are unchanged. Explicit
+check arguments still override the default list.
+
 ## Verus proofs
 
 `crates/tarn-verified` is ordinary Rust inside `verus!` blocks: `cargo`
@@ -421,6 +799,20 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 `bench/baselines.sh start mariadb` starts a local MariaDB on port 3407 with
 a `sb` user for the differential tests (or point `--ref` at any MariaDB
 10.11). `scripts/cluster.sh start -n 2 -r 1 -p 4000` starts a cluster.
+
+The heap-watchdog fixture retains the 40 MiB garbage/64 MiB margin setup,
+then stops pressure near 2 MiB free, keeping at least 1 MiB for native-core
+work. It requires a node-triggered collection, successful calls and a live
+lazy worker without a manual recovery collection. An isolated control
+that cancels only the heap-watchdog fiber fails the collection assertion
+under the same bounded pressure. Earlier unbounded pressure reproduced a
+native `cfg_get('read_only')` panic in both native and Lua modes; active
+and stopped lazy-worker controls did not establish worker causation.
+Tarantool's pinned [`cfg_get` implementation](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/cfg.c#L40)
+evaluates a Lua chunk and panics on a Lua error. The fixture verifies Tarn's
+near-limit garbage recovery with native-core headroom; it is not a proof
+that arbitrary privileged EVAL allocations can safely exhaust the hard
+Lua heap limit.
 
 ## Continuous integration
 

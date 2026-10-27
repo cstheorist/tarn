@@ -1,0 +1,54 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 53 and seed -6351107310757355061 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 649] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/LazyCapacity.tla
+Parsing file /tmp/tlc-13150888243464118809/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-13150888243464118809/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-13150888243464118809/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-13150888243464118809/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-13150888243464118809/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-13150888243464118809/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-13150888243464118809/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyCapacity
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyCapacity
+Starting... (2026-10-27 05:29:24)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 05:29:24.
+Error: Invariant SequencePromisesFit is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ counter = 0
+/\ localDone = FALSE
+/\ phase = [p |-> "idle", q |-> "idle"]
+/\ leaked = {}
+/\ bytes = 0
+
+State 2: <Prepare("p") line 25, col 5 to line 27, col 59 of module LazyCapacity>
+/\ pending = {}
+/\ counter = 0
+/\ localDone = FALSE
+/\ phase = [p |-> "yes", q |-> "idle"]
+/\ leaked = {}
+/\ bytes = 0
+
+State 3: <Local line 38, col 5 to line 41, col 33 of module LazyCapacity>
+/\ pending = {"local"}
+/\ counter = 1
+/\ localDone = TRUE
+/\ phase = [p |-> "yes", q |-> "idle"]
+/\ leaked = {}
+/\ bytes = 1
+
+6 states generated, 6 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-10-27 05:29:24)
+Trace exploration spec path: ./LazyCapacity_TTrace_1793078964.tla

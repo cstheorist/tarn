@@ -923,6 +923,12 @@ enum Served {
 /// commit waits for its quorum, as the Lua procedures' do, and is in flight
 /// until then.
 fn write_infos(s: &State, writes: &[write::Write]) -> Option<Vec<(SpaceInfo, Option<IndexInfo>)>> {
+    // Both autocommit and stream commits must defer capture to Lua. Check
+    // every actual source before schema reads or a transaction/savepoint,
+    // independently of the gateway's possibly stale definition fences.
+    if writes.iter().any(|w| s.lazy_write_excluded(w.space_id)) {
+        return None;
+    }
     let mut infos = Vec::with_capacity(writes.len());
     for w in writes {
         let sp = space_info(w.space_id)?;
@@ -1085,6 +1091,12 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     let (writes, opts) = write::parse(buf)?;
     let s = state()?;
     if s.ready == 0 || s.hooks != 0 || s.bk_stale != 0 || s.lk_stale != 0 || s.fence_stale != 0 {
+        return None;
+    }
+    // Gateway metadata can lag behind local DDL activation. Check every
+    // actual source before schema reads or Txn::begin, not just opts.fence;
+    // otherwise a stale/partial fence could bypass commit-atomic capture.
+    if writes.iter().any(|w| s.lazy_write_excluded(w.space_id)) {
         return None;
     }
     // SAFETY: plain calls of the module API in the transaction thread.

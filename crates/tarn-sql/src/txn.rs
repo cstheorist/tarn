@@ -12,7 +12,9 @@
 //! * several shards, writes: parallel-commit 2PC, `tarn_prepare` on all
 //!   participants (the decision shard also writes the STAGING record), then
 //!   `tarn_apply` (TarnCommit!Prepare, ApplyAt). The client is acknowledged
-//!   after APPLY unless `ack_on_prepare` is set.
+//!   after bounded APPLY attempts unless `ack_on_prepare` is set. A successful
+//!   SQL commit can therefore still have pending APPLYs. `CommitOutcome`
+//!   preserves them for the lazy-index session barrier (LazyBarrier.tla).
 //!
 //! READ COMMITTED transactions (`Mode::ReadCommitted`, issue #17) read the
 //! latest committed state outside any stream and record no read set. Their
@@ -39,6 +41,34 @@ use tarn_iproto::{Client, Iter};
 use tarn_verified::coord::{self, Decision, Vote};
 
 pub type Row = Vec<Value>;
+
+/// A known-committed transaction whose physical APPLY is not yet confirmed
+/// everywhere. Participant identifiers are stable shard IDs, not positions
+/// in a gateway's current routing map. This is never an unknown decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingApply {
+    pub txid: String,
+    pub participants: Vec<u32>,
+}
+
+/// Cumulative session catch-up obligations from a successful SQL commit.
+/// Keep these even while read-your-writes through lazy indexes is disabled:
+/// enabling it later must cover the session's earlier commits too.
+#[must_use = "a session must retain successful writes for its lazy-index barrier"]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommitOutcome {
+    pub lazy_buckets: BTreeSet<u32>,
+    pub pending_apply: Option<PendingApply>,
+}
+
+/// A recovered decision is separate from the physical completion of its
+/// participants. Missing expired records cannot certify an unknown commit.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Resolved {
+    Committed { pending_apply: Vec<u32> },
+    Aborted,
+    Gone,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WOp {
@@ -542,6 +572,16 @@ impl Txn {
         s.into_iter().collect()
     }
 
+    /// Only request-only nonparticipants need an explicit unlock after a
+    /// successful commit. Participants either released their locks already
+    /// or still need them until recovery finishes the known-committed APPLY.
+    fn take_extra_lock_shards(&mut self, parts: &BTreeSet<usize>) -> Vec<usize> {
+        self.take_lock_shards()
+            .into_iter()
+            .filter(|p| !parts.contains(p))
+            .collect()
+    }
+
     /// Release every row lock of this transaction (best effort).
     async fn release_plocks(&mut self, cluster: &Arc<Cluster>) {
         let shards = self.take_lock_shards();
@@ -830,7 +870,7 @@ impl Txn {
         });
     }
 
-    pub async fn commit(mut self, cluster: &Arc<Cluster>) -> SqlResult<()> {
+    pub async fn commit(mut self, cluster: &Arc<Cluster>) -> SqlResult<CommitOutcome> {
         if let Some(e) = self.doomed.take() {
             self.rollback(cluster);
             return Err(e);
@@ -840,31 +880,35 @@ impl Txn {
             // (lock requests that granted nothing, if any)
             let shards = self.take_lock_shards();
             self.unlock_later(cluster, shards);
-            return Ok(());
+            return Ok(CommitOutcome::default());
         }
+        let lazy_buckets = self
+            .writes
+            .values()
+            .filter(|w| w.table.has_lazy())
+            .map(|w| cluster.bucket_of(&w.table.shard_key_of_pk(&w.pk)))
+            .collect();
         let res = if self.mode == Mode::ReadCommitted && self.writes.is_empty() {
             // Nothing to validate: just end the locks.
             self.release_plocks(cluster).await;
-            Ok(())
+            Ok(Vec::new())
         } else if self.writes.is_empty() {
-            self.commit_read_only(cluster, &parts).await
+            self.commit_read_only(cluster, &parts).await.map(|()| Vec::new())
         } else if parts.len() == 1 && self.mode == Mode::ReadCommitted {
-            self.commit_rc(cluster, *parts.iter().next().unwrap()).await
+            self.commit_rc(cluster, *parts.iter().next().unwrap())
+                .await
+                .map(|()| Vec::new())
         } else if parts.len() == 1 {
-            self.commit_local(cluster, *parts.iter().next().unwrap()).await
+            self.commit_local(cluster, *parts.iter().next().unwrap())
+                .await
+                .map(|()| Vec::new())
         } else {
             self.commit_2pc(cluster, &parts).await
         };
         if res.is_ok() {
-            // Every commit path releases the row locks on the shards it
-            // commits on (tarn_commit_local/_rc, tarn_validate, APPLY): not
-            // on a shard whose lock requests granted nothing, which is no
-            // participant.
-            self.plocks.clear();
-            let rest: Vec<usize> = std::mem::take(&mut self.lock_shards)
-                .difference(&parts)
-                .copied()
-                .collect();
+            // Durable recovery owns any participant locks whose APPLY is
+            // pending; only extra lock requests may be unlocked here.
+            let rest = self.take_extra_lock_shards(&parts);
             self.unlock_later(cluster, rest);
         } else if !self.plocks.is_empty() || !self.lock_shards.is_empty() {
             self.release_plocks(cluster).await;
@@ -874,7 +918,13 @@ impl Txn {
                 cluster.stats.conflicts.fetch_add(1, Ordering::Relaxed);
             }
         }
-        res
+        res.map(|pending| CommitOutcome {
+            lazy_buckets,
+            pending_apply: (!pending.is_empty()).then(|| PendingApply {
+                txid: self.id.clone(),
+                participants: pending,
+            }),
+        })
     }
 
     async fn commit_read_only(&mut self, cluster: &Arc<Cluster>, parts: &BTreeSet<usize>) -> SqlResult<()> {
@@ -961,7 +1011,7 @@ impl Txn {
     /// the transaction's stream, and hands the others back ("lua") having
     /// written nothing, its stream transaction and reads as they were: its
     /// reply, or None for a commit handed back, or not sent to it -- one that
-    /// writes a vinyl table, which it always hands back; one that sent row
+    /// writes a vinyl table or needs lazy outbox capture; one that sent row
     /// lock requests to the shard, whose row-lock state there only the Lua
     /// procedure releases (it hands back those that hold locks); or to a
     /// shard without it, which the connection notes. Its errors are
@@ -976,13 +1026,7 @@ impl Txn {
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
-        if client.marked(MARK_NO_NATIVE_COMMIT)
-            || self.lock_shards.contains(&shard)
-            || self
-                .writes
-                .values()
-                .any(|w| w.shard == shard && !matches!(w.table.engine, crate::catalog::Engine::Memtx))
-        {
+        if client.marked(MARK_NO_NATIVE_COMMIT) || !self.native_commit_eligible(shard) {
             return None;
         }
         match client.call(stream, "tarn_storage.ts_commit_local", args).await {
@@ -1000,6 +1044,13 @@ impl Txn {
             }
             Err(e) => Some(Err(e)),
         }
+    }
+
+    fn native_commit_eligible(&self, shard: usize) -> bool {
+        !self.lock_shards.contains(&shard)
+            && !self.writes.values().any(|w| {
+                w.shard == shard && (!matches!(w.table.engine, crate::catalog::Engine::Memtx) || w.table.has_lazy())
+            })
     }
 
     /// READ COMMITTED, one shard: `tarn_commit_rc` checks that the row locks
@@ -1031,7 +1082,7 @@ impl Txn {
         Ok(())
     }
 
-    async fn commit_2pc(&mut self, cluster: &Arc<Cluster>, parts: &BTreeSet<usize>) -> SqlResult<()> {
+    async fn commit_2pc(&mut self, cluster: &Arc<Cluster>, parts: &BTreeSet<usize>) -> SqlResult<Vec<u32>> {
         cluster.stats.commits_2pc.fetch_add(1, Ordering::Relaxed);
         // A READ COMMITTED transaction holds no stream transactions and may
         // run (and wait for locks) for long: its PREPAREs carry the time its
@@ -1117,12 +1168,15 @@ impl Txn {
                     let c = cluster.clone();
                     let id = self.id.clone();
                     tokio::spawn(async move {
-                        apply_all(&c, &id, &parts_v).await;
+                        let _ = apply_all(&c, &id, &parts_v).await;
                     });
+                    // The background task may finish immediately, but no
+                    // completion has been observed on this session yet.
+                    Ok(part_ids)
                 } else {
-                    apply_all(cluster, &self.id, &parts_v).await;
+                    let pending = apply_all(cluster, &self.id, &parts_v).await;
+                    Ok(pending.iter().map(|&p| cluster.shards[p].id).collect())
                 }
-                Ok(())
             }
             Decision::Abort => {
                 abort_all(cluster, &self.id, did, &part_ids, &parts_v).await;
@@ -1134,13 +1188,13 @@ impl Txn {
                 // decision shard's record and the participants' states.
                 let expired = now_secs() - self.ts > cluster.cfg.max_txn_age;
                 match resolve(cluster, &self.id, dshard, &parts_v, expired).await {
-                    Ok(Some(true)) => Ok(()),
+                    Ok(Resolved::Committed { pending_apply }) => Ok(pending_apply),
                     // Aborted for certain: retryable.
-                    Ok(Some(false)) => Err(SqlError::conflict(match first_err {
+                    Ok(Resolved::Aborted) => Err(SqlError::conflict(match first_err {
                         Some(e) => format!("transaction aborted ({})", e.message),
                         None => "transaction aborted".to_string(),
                     })),
-                    Ok(None) => Err(ambiguous(did, &"transaction expired before its outcome was known")),
+                    Ok(Resolved::Gone) => Err(ambiguous(did, &"transaction expired before its outcome was known")),
                     Err(e) => Err(ambiguous(
                         did,
                         &format!("{}; recovery will finish transaction {}", e, self.id),
@@ -1178,46 +1232,85 @@ fn now_secs() -> f64 {
 /// decision shard's APPLY also marks the record COMMITTED. A participant
 /// counts as done when it reports `applied` (or `none`: applied earlier and
 /// garbage-collected). Failed APPLYs are retried a few times; if a shard
-/// stays unreachable the commit is acknowledged anyway -- it is decided, SQL
-/// readers wait on its W locks, and recovery applies it -- which gives up
-/// direct read-your-writes for that transaction, exactly as ack-on-prepare
-/// does (TarnCommit: Tradeoff_AckOnPrepare_DirectRYW).
-async fn apply_all(cluster: &Arc<Cluster>, txid: &str, parts: &[usize]) {
-    let mut m = Mp::new();
-    m.arr(1).str(txid);
-    let args = m.0;
+/// stays unreachable the commit is acknowledged anyway -- it is decided,
+/// strong SQL readers wait on its W locks, and recovery applies it. Return
+/// the exact remaining participants so a lazy read cannot mistake that
+/// acknowledgement for an already-applied row/outbox (LazyBarrier!Apply).
+async fn apply_all(cluster: &Arc<Cluster>, txid: &str, parts: &[usize]) -> Vec<usize> {
     let mut todo: Vec<usize> = parts.to_vec();
     for attempt in 0..4u64 {
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(50 << attempt)).await;
         }
-        let futs = todo.iter().map(|&p| cluster.call(p, "tarn_apply", &args));
-        let results = futures::future::join_all(futs).await;
-        let mut left = Vec::new();
-        for (&p, r) in todo.iter().zip(results) {
-            let r = r.and_then(|d| lua_status(&d).and_then(|(_, mut rd)| rd.string()));
-            match r {
-                Ok(st) if st == "applied" || st == "none" => {}
-                Ok(st) => {
-                    tracing::error!("APPLY of {} on shard {} returned '{}'", txid, cluster.shards[p].id, st);
-                    left.push(p);
-                }
-                Err(e) => {
-                    tracing::warn!("APPLY of {} on shard {} failed: {}", txid, cluster.shards[p].id, e);
-                    left.push(p);
-                }
-            }
+        todo = apply_positions_once(cluster, txid, &todo).await;
+        if todo.is_empty() {
+            return todo;
         }
-        if left.is_empty() {
-            return;
-        }
-        todo = left;
     }
     tracing::warn!(
         "APPLY of {} still pending on {} shard(s); recovery will finish it",
         txid,
         todo.len()
     );
+    todo
+}
+
+/// Only this exact terminal reply can discharge a known-committed APPLY.
+/// In particular, `yes`, an empty/malformed reply or a partial status table
+/// cannot erase a session obligation. `none` is safe only for this API's
+/// known-committed transactions: their YES record can disappear only after
+/// APPLY and the existing participant-GC protections (TarnCommit!GCPart).
+fn applied_reply(data: &[u8]) -> SqlResult<()> {
+    lua_status(data)?;
+    let mut rd = Rd::new(data);
+    if rd.array()? != 1 || rd.array()? != 2 || rd.value()? != Value::str("ok") {
+        return Err(crate::mpw::proto("invalid APPLY acknowledgement"));
+    }
+    let status = rd.value()?;
+    if !matches!(status, Value::Str(s) if s.as_ref() == b"applied" || s.as_ref() == b"none") || !rd.buf.is_empty() {
+        return Err(crate::mpw::proto("nonterminal or malformed APPLY acknowledgement"));
+    }
+    Ok(())
+}
+
+async fn apply_positions_once(cluster: &Arc<Cluster>, txid: &str, parts: &[usize]) -> Vec<usize> {
+    let mut m = Mp::new();
+    m.arr(1).str(txid);
+    let args = m.0;
+    let futs = parts.iter().map(|&p| cluster.call(p, "tarn_apply", &args));
+    let results = futures::future::join_all(futs).await;
+    let mut left = Vec::new();
+    for (&p, r) in parts.iter().zip(results) {
+        if let Err(e) = r.and_then(|d| applied_reply(&d)) {
+            tracing::warn!("APPLY of {} on shard {} failed: {}", txid, cluster.shards[p].id, e);
+            left.push(p);
+        }
+    }
+    left
+}
+
+/// Make one idempotent APPLY attempt for a known-committed session
+/// obligation. Errors and malformed acknowledgements remain pending. The
+/// caller owns the original read deadline, retries and safe fallback; this
+/// helper neither replays SQL nor starts an unbounded retry loop.
+pub async fn apply_pending(cluster: &Arc<Cluster>, pending: &PendingApply) -> SqlResult<Vec<u32>> {
+    if pending.txid.is_empty() {
+        return Err(crate::mpw::proto("empty transaction ID in pending APPLY"));
+    }
+    let positions: Vec<usize> = pending
+        .participants
+        .iter()
+        .map(|&id| {
+            cluster
+                .shard_position(id)
+                .ok_or_else(|| crate::mpw::proto(format!("unknown pending APPLY shard {}", id)))
+        })
+        .collect::<SqlResult<_>>()?;
+    Ok(apply_positions_once(cluster, &pending.txid, &positions)
+        .await
+        .into_iter()
+        .map(|p| cluster.shards[p].id)
+        .collect())
 }
 
 async fn abort_all(cluster: &Arc<Cluster>, txid: &str, did: u32, part_ids: &[u32], parts: &[usize]) {
@@ -1239,36 +1332,50 @@ async fn call_str(cluster: &Arc<Cluster>, shard: usize, f: &str, args: &[u8]) ->
 }
 
 /// Determine the outcome of a transaction whose votes are not all known.
-/// Ok(Some(true)) = committed (and applied), Ok(Some(false)) = aborted,
-/// Ok(None) = cannot be known any more (expired, records gone).
+/// A committed decision retains the exact participants still awaiting
+/// confirmed APPLY. Gone records cannot certify a previously unknown
+/// decision, even if they would be safe terminal replies for a transaction
+/// already known to have committed.
 pub async fn resolve(
     cluster: &Arc<Cluster>,
     txid: &str,
     dshard: usize,
     parts: &[usize],
     expired: bool,
-) -> SqlResult<Option<bool>> {
+) -> SqlResult<Resolved> {
+    if parts.is_empty() {
+        return Err(crate::mpw::proto("recovery has no participants"));
+    }
     let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
     let did = cluster.shards[dshard].id;
     let mut idm = Mp::new();
     idm.arr(1).str(txid);
     for _ in 0..4 {
         let status = call_str(cluster, dshard, "tarn_txn_status", &idm.0).await?;
-        let mut states = Vec::new();
-        for &p in parts {
-            states.push(call_str(cluster, p, "tarn_part_status", &idm.0).await?);
+        let rec = coord::RecStatus::parse(&status);
+        // resolve_step proves terminal decisions independent of participant
+        // state. Do not let an unavailable participant turn an authoritative
+        // COMMITTED decision into an unknown outcome before apply_all can
+        // retain it. Placeholder states are never used for an open decision.
+        let mut states = vec![coord::PartState::None; parts.len()];
+        if !matches!(rec, coord::RecStatus::Committed | coord::RecStatus::Aborted) {
+            for (&p, state) in parts.iter().zip(&mut states) {
+                let s = call_str(cluster, p, "tarn_part_status", &idm.0).await?;
+                *state = coord::PartState::parse(&s);
+            }
         }
-        let states: Vec<coord::PartState> = states.iter().map(|s| coord::PartState::parse(s)).collect();
-        match coord::resolve_step(coord::RecStatus::parse(&status), &states, expired) {
+        match coord::resolve_step(rec, &states, expired) {
             coord::Step::Committed => {
-                apply_all(cluster, txid, parts).await;
-                return Ok(Some(true));
+                let pending = apply_all(cluster, txid, parts).await;
+                return Ok(Resolved::Committed {
+                    pending_apply: pending.into_iter().map(|p| cluster.shards[p].id).collect(),
+                });
             }
             coord::Step::Aborted => {
                 abort_all(cluster, txid, did, &part_ids, parts).await;
-                return Ok(Some(false));
+                return Ok(Resolved::Aborted);
             }
-            coord::Step::Gone => return Ok(None),
+            coord::Step::Gone => return Ok(Resolved::Gone),
             coord::Step::DecideCommit => {
                 let mut m = Mp::new();
                 m.arr(3).str(txid).str("staging").str("committed");
@@ -1694,6 +1801,130 @@ const MARK_NO_NATIVE_COMMIT: u32 = 2;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_txn() -> Txn {
+        Txn {
+            id: "test/1".into(),
+            ts: 0.0,
+            explicit: true,
+            mode: Mode::Serializable,
+            lock_timeout: 0.0,
+            plocks: BTreeMap::new(),
+            lock_shards: BTreeSet::new(),
+            savepoints: Vec::new(),
+            streams: BTreeMap::new(),
+            writes: BTreeMap::new(),
+            rpoints: BTreeMap::new(),
+            rranges: BTreeMap::new(),
+            defs: BTreeMap::new(),
+            doomed: None,
+            mver: 0,
+        }
+    }
+
+    #[test]
+    fn successful_commit_unlocks_only_extra_lock_requests() {
+        let mut txn = empty_txn();
+        // Participants 1 and 3 may still hold prepared locks awaiting APPLY.
+        // A refused request on shard 2 must still release its row-lock state.
+        txn.lock_shards.extend([1, 2, 3]);
+        let parts = BTreeSet::from([1, 3]);
+        assert_eq!(txn.take_extra_lock_shards(&parts), vec![2]);
+        assert!(txn.lock_shards.is_empty());
+        assert!(txn.take_lock_shards().is_empty());
+
+        txn.lock_shards.insert(2);
+        assert_eq!(txn.take_extra_lock_shards(&BTreeSet::new()), vec![2]);
+    }
+
+    #[test]
+    fn native_commit_excludes_lazy_writes_and_lock_requests() {
+        let mut txn = empty_txn();
+        let table = Arc::new(join_table());
+        let key = (table.space_id, key_bytes(&[Value::str("tenant"), Value::Int(4)]));
+        let write = BufWrite {
+            shard: 1,
+            table: table.clone(),
+            op: WOp::Insert,
+            row: Some(vec![Value::str("tenant"), Value::Int(4), Value::str("label")]),
+            pk: vec![Value::str("tenant"), Value::Int(4)],
+        };
+        txn.writes.insert(key.clone(), write);
+        assert!(txn.native_commit_eligible(1));
+        txn.lock_shards.insert(2);
+        assert!(txn.native_commit_eligible(1));
+        txn.lock_shards.insert(1);
+        assert!(!txn.native_commit_eligible(1));
+        txn.lock_shards.clear();
+
+        let mut lazy_table = (*table).clone();
+        let mut index = lazy_table.indexes[0].clone();
+        index.name = "by_label".into();
+        index.id = 1;
+        index.cols = vec![2];
+        index.unique = false;
+        index.lazy = Some(crate::catalog::LazyDef {
+            space_id: 0,
+            route_parts: 1,
+            ready: false,
+        });
+        lazy_table.indexes.push(index);
+        txn.writes.get_mut(&key).unwrap().table = Arc::new(lazy_table.clone());
+        assert!(txn.native_commit_eligible(1), "unactivated metadata needs no capture");
+        lazy_table.indexes[1].lazy.as_mut().unwrap().space_id = 513;
+        txn.writes.get_mut(&key).unwrap().table = Arc::new(lazy_table);
+        for op in [WOp::Insert, WOp::Replace, WOp::Delete] {
+            txn.writes.get_mut(&key).unwrap().op = op;
+            assert!(!txn.native_commit_eligible(1), "every lazy write needs Lua capture");
+        }
+        assert!(txn.native_commit_eligible(2), "another shard's writes are not local");
+
+        let mut vinyl_table = (*table).clone();
+        vinyl_table.engine = crate::catalog::Engine::Vinyl;
+        txn.writes.get_mut(&key).unwrap().table = Arc::new(vinyl_table);
+        assert!(!txn.native_commit_eligible(1));
+    }
+
+    #[test]
+    fn apply_acknowledgement_must_certify_physical_completion() {
+        let reply = |status: &str, detail: &str| {
+            let mut m = Mp::new();
+            m.arr(1).arr(2).str(status).str(detail);
+            m.0
+        };
+        for terminal in ["applied", "none"] {
+            assert!(applied_reply(&reply("ok", terminal)).is_ok());
+        }
+        // A YES vote is a durable promise, not an applied row/outbox.
+        for (status, detail) in [("yes", "applied"), ("ok", "prepared"), ("ok", "staging")] {
+            assert!(applied_reply(&reply(status, detail)).is_err());
+        }
+        let mut missing = Mp::new();
+        missing.arr(1).arr(1).str("ok");
+        assert!(applied_reply(&missing.0).is_err());
+        let mut extra_return = Mp::new();
+        extra_return.arr(2).arr(2).str("ok").str("applied").nil();
+        assert!(applied_reply(&extra_return.0).is_err());
+        let mut extra_field = Mp::new();
+        extra_field.arr(1).arr(3).str("ok").str("applied").nil();
+        assert!(applied_reply(&extra_field.0).is_err());
+        let mut trailing = reply("ok", "applied");
+        trailing.push(0xc0);
+        assert!(applied_reply(&trailing).is_err());
+        let mut binary_status = Mp::new();
+        binary_status
+            .arr(1)
+            .arr(2)
+            .val(&Value::Bin(Bytes::from_static(b"ok")))
+            .str("applied");
+        assert!(applied_reply(&binary_status.0).is_err());
+        let mut truncated = reply("ok", "applied");
+        truncated.pop();
+        assert!(applied_reply(&truncated).is_err());
+        let mut error = Mp::new();
+        error.arr(1).arr(3).str("error").uint(1213).str("retry");
+        assert_eq!(applied_reply(&error.0).unwrap_err().code, 1213);
+    }
 
     fn join_table() -> TableDef {
         use crate::catalog::Catalog;

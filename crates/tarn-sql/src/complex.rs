@@ -327,7 +327,7 @@ impl Session {
                 return res;
             }
             let res = match (res, self.set_txn(None)) {
-                (Ok(out), Some(t)) => t.commit(&self.cluster).await.map(|_| out),
+                (Ok(out), Some(t)) => self.commit_tracked(t).await.map(|_| out),
                 (Ok(out), None) => Ok(out),
                 (Err(e), Some(t)) => {
                     t.rollback(&self.cluster);

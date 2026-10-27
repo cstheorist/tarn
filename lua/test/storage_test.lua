@@ -1620,7 +1620,7 @@ do
     local limit0 = c[1]:eval('return ' .. alloc .. '.getlimit()')
     -- 40 MiB live through a full cycle puts the next threshold near 80 MiB
     -- over the base, above a limit 64 MiB over it; then the 40 MiB is garbage.
-    c[1]:eval([[
+    local reserve = c[1]:eval([[
         local a = require('internal.alloc')
         collectgarbage() collectgarbage()
         a.setlimit(a.used() + 64 * 1048576)
@@ -1628,18 +1628,36 @@ do
         for i = 1, 40 * 1024 do _G.__t73[i] = string.rep('l', 1000) .. i end
         collectgarbage()
         _G.__t73 = nil
+        return math.max(a.getlimit() / 16, 16 * 1048576)
     ]])
-    -- garbage in small calls, as requests leave it, past the limit
+    -- Leave native-core headroom: cfg/vote handling compiles Lua chunks
+    -- outside a request's protected call and can panic at hard exhaustion.
+    -- This tests the unreachable GC threshold, rather than arbitrary EVALs
+    -- exhausting every byte. Stop at 2 MiB free, or once the watcher ran.
+    local pressure_ok, min_unused = true, math.huge
     for _ = 1, 6000 do
-        pcall(c[1].eval, c[1], "for i = 1, 100 do local _ = {i, string.rep('g', 300) .. i} end")
+        local good, more, unused, collections = pcall(c[1].eval, c[1], [[
+            local a = require('internal.alloc')
+            if a.unused() <= 2 * 1048576 then return false, a.unused(), tarn.stats.heap_collects end
+            for i = 1, 100 do local _ = {i, string.rep('g', 300) .. i} end
+            return true, a.unused(), tarn.stats.heap_collects
+        ]])
+        if not good then pressure_ok = false; break end
+        min_unused = math.min(min_unused, unused)
+        if not more or collections > collects0 then break end
     end
+    check('garbage pressure reaches the heap reserve while preserving native-core headroom',
+          pressure_ok and min_unused < reserve and min_unused >= 1048576, min_unused)
     local ok = wait_for(function()
-        return pcall(c[1].call, c[1], 'tarn_info') and pcall(c[1].eval, c[1], 'return 1')
+        local good, info = pcall(c[1].call, c[1], 'tarn_info')
+        return good and info.stats.heap_collects > collects0 and pcall(c[1].eval, c[1], 'return 1')
     end, 5)
     local info = ok and c[1]:call('tarn_info')
     pcall(c[1].eval, c[1], 'collectgarbage() ' .. alloc .. '.setlimit(...)', {limit0})
     check('a heap of garbage at the limit is collected without a manual collect, and calls succeed',
           ok and info.stats.heap_collects > collects0, info and info.stats.heap_collects)
+    check('the lazy delivery worker survives recovered Lua heap pressure',
+          c[1]:eval('return tarn.lazy.worker ~= nil and tarn.lazy.worker:status() ~= "dead"'))
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

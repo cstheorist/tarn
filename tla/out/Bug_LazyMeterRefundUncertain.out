@@ -1,0 +1,168 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 76 and seed 5655789506843550568 with 1 worker on 2 cores with 1820MB heap and 64MB offheap memory [pid: 89] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /model/LazyMeter.tla
+Parsing file /tmp/tlc-4127637767611044032/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-4127637767611044032/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-4127637767611044032/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-4127637767611044032/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-4127637767611044032/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-4127637767611044032/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-4127637767611044032/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyMeter
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyMeter
+Starting... (2026-10-27 06:48:34)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 06:48:34.
+Error: Invariant ReadyConservative is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+s = [ p |-> "none",
+  q |-> "none",
+  remote |-> "pending",
+  phase |->
+      [ reserve |-> "idle",
+        apply |-> "idle",
+        abort |-> "idle",
+        local |-> "idle",
+        ack |-> "idle" ],
+  me |-> 0,
+  mb |-> 0,
+  ready |-> FALSE,
+  ticketEpoch |->
+      [reserve |-> 0, apply |-> 0, abort |-> 0, local |-> 0, ack |-> 0],
+  detached |-> {},
+  epoch |-> 0,
+  meterEpoch |-> -1,
+  buildEpoch |-> -1,
+  be |-> 0,
+  bb |-> 0,
+  refused |-> FALSE ]
+
+State 2: <RemoteComplete("committed") line 97, col 5 to line 98, col 41 of module LazyMeter>
+s = [ p |-> "none",
+  q |-> "none",
+  remote |-> "committed",
+  phase |->
+      [ reserve |-> "idle",
+        apply |-> "idle",
+        abort |-> "idle",
+        local |-> "idle",
+        ack |-> "idle" ],
+  me |-> 0,
+  mb |-> 0,
+  ready |-> FALSE,
+  ticketEpoch |->
+      [reserve |-> 0, apply |-> 0, abort |-> 0, local |-> 0, ack |-> 0],
+  detached |-> {},
+  epoch |-> 0,
+  meterEpoch |-> -1,
+  buildEpoch |-> -1,
+  be |-> 0,
+  bb |-> 0,
+  refused |-> FALSE ]
+
+State 3: <BeginRebuild line 88, col 5 to line 89, col 79 of module LazyMeter>
+s = [ p |-> "none",
+  q |-> "none",
+  remote |-> "committed",
+  phase |->
+      [ reserve |-> "idle",
+        apply |-> "idle",
+        abort |-> "idle",
+        local |-> "idle",
+        ack |-> "idle" ],
+  me |-> 0,
+  mb |-> 0,
+  ready |-> FALSE,
+  ticketEpoch |->
+      [reserve |-> 0, apply |-> 0, abort |-> 0, local |-> 0, ack |-> 0],
+  detached |-> {},
+  epoch |-> 0,
+  meterEpoch |-> -1,
+  buildEpoch |-> 0,
+  be |-> 1,
+  bb |-> 1,
+  refused |-> FALSE ]
+
+State 4: <Install line 91, col 5 to line 95, col 67 of module LazyMeter>
+s = [ p |-> "none",
+  q |-> "none",
+  remote |-> "committed",
+  phase |->
+      [ reserve |-> "idle",
+        apply |-> "idle",
+        abort |-> "idle",
+        local |-> "idle",
+        ack |-> "idle" ],
+  me |-> 1,
+  mb |-> 1,
+  ready |-> TRUE,
+  ticketEpoch |->
+      [reserve |-> 0, apply |-> 0, abort |-> 0, local |-> 0, ack |-> 0],
+  detached |-> {},
+  epoch |-> 0,
+  meterEpoch |-> 0,
+  buildEpoch |-> -1,
+  be |-> 1,
+  bb |-> 1,
+  refused |-> FALSE ]
+
+State 5: <Admit("reserve") line 46, col 5 to line 51, col 73 of module LazyMeter>
+s = [ p |-> "none",
+  q |-> "none",
+  remote |-> "committed",
+  phase |->
+      [ reserve |-> "active",
+        apply |-> "idle",
+        abort |-> "idle",
+        local |-> "idle",
+        ack |-> "idle" ],
+  me |-> 2,
+  mb |-> 3,
+  ready |-> TRUE,
+  ticketEpoch |->
+      [reserve |-> 0, apply |-> 0, abort |-> 0, local |-> 0, ack |-> 0],
+  detached |-> {},
+  epoch |-> 0,
+  meterEpoch |-> 0,
+  buildEpoch |-> -1,
+  be |-> 1,
+  bb |-> 1,
+  refused |-> FALSE ]
+
+State 6: <Detach("reserve") line 78, col 5 to line 81, col 75 of module LazyMeter>
+s = [ p |-> "none",
+  q |-> "none",
+  remote |-> "committed",
+  phase |->
+      [ reserve |-> "active",
+        apply |-> "idle",
+        abort |-> "idle",
+        local |-> "idle",
+        ack |-> "idle" ],
+  me |-> 1,
+  mb |-> 1,
+  ready |-> TRUE,
+  ticketEpoch |->
+      [reserve |-> 0, apply |-> 0, abort |-> 0, local |-> 0, ack |-> 0],
+  detached |-> {"reserve"},
+  epoch |-> 0,
+  meterEpoch |-> 0,
+  buildEpoch |-> -1,
+  be |-> 1,
+  bb |-> 1,
+  refused |-> FALSE ]
+
+76 states generated, 45 distinct states found, 18 states left on queue.
+The depth of the complete state graph search is 6.
+Finished in 00s at (2026-10-27 06:48:34)
+Trace exploration spec path: ./LazyMeter_TTrace_1793083714.tla
