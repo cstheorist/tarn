@@ -5567,9 +5567,10 @@ end
 -- tarn_bucket_recv_abort). (TarnCommit: MoveFence, MoveDrained,
 -- MoveSendFlip, MoveRecvFlip, MoveAbort.)
 
--- The data spaces (with a bucket_id index): the tables and their global
--- indexes, in space id order.
-function BK.spaces()
+-- The data spaces (with a bucket_id index): the tables, their global
+-- indexes and lazy metadata, in space id order. Only the no-map legacy
+-- table report excludes lazy spaces; moves include them by default.
+function BK.spaces(include_lazy)
     local ids = {}
     for _, t in box.space._tarn_catalog:pairs() do
         local sp = box.space[t.name]
@@ -5580,7 +5581,9 @@ function BK.spaces()
             end
         end
     end
-    for _, id in ipairs(M.lazy.spaces()) do ids[#ids + 1] = id end
+    if include_lazy ~= false then
+        for _, id in ipairs(M.lazy.spaces()) do ids[#ids + 1] = id end
+    end
     table.sort(ids)
     return ids
 end
@@ -5789,7 +5792,7 @@ end
 function tarn_buckets()
     writable()
     BK.fresh()
-    if BK.count == 0 then return {OK, 0, #BK.spaces()} end
+    if BK.count == 0 then return {OK, 0, #BK.spaces(false)} end
     local r = BK.report
     if r ~= nil and r.ver == BK.ver then return r.reply end
     local owned, others, lo, hi = {}, {}, nil, nil

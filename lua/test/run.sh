@@ -10,7 +10,7 @@ if [ -z "${TEST:-}" ]; then
   TARN_METER_DIR="$WORK/lazy-meter" timeout 60 "$T" "$DIR/test/lazy_meter_test.lua" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
-  for test in lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test lazy_native_commit_test; do
+  for test in lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
