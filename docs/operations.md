@@ -615,9 +615,11 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
   and `native`: false without the native procedures, else whether they are
   in use (`ready`), the reads they served (`served`) and those they handed
   to the Lua procedure (`to_lua`), and the same of autocommit writes
-  (`writes`, `writes_to_lua`) and of one-shard commits (`commits`,
-  `commits_to_lua`). The counters in `stats` count what the Lua procedures
-  do (`commit_local`, `conflicts`); `native` counts the rest.
+  (`writes`, `writes_to_lua`), of one-shard commits (`commits`,
+  `commits_to_lua`) and of validations (`validations`,
+  `validations_to_lua`). The counters in `stats` count what the Lua procedures
+  do (`commit_local`, `conflicts`, `validate_changed`); `native` counts the
+  rest.
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted

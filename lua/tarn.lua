@@ -375,6 +375,7 @@ end
 
 local function lk_reload()
     writable()
+    BK.term_mark()   -- (in this fiber: outside the caller's transaction)
     -- Reads in progress cannot trust the history: it starts again here.
     LOG_SEQ = LOG_SEQ + 1
     LOG_SID[LOG_SEQ % LOG_N] = nil
@@ -440,13 +441,36 @@ local DDL_HELD, DDL_N = {}, 0
 local DDL_GEN = {}
 -- A TRUNCATE or DROP applied here also fails the validation of the open
 -- stream transactions that read the table before it: memtx MVCC aborts the
--- readers of a space that changes, vinyl only its writers.
--- DOOMED[txn id] = {space_id = true}, set when one is applied; DOOMED_N of
--- them (for the native procedures, which leave those transactions to Lua).
-local DOOMED, DOOMED_N = {}, 0
--- Election term at the start of each open stream transaction (by txn id),
--- recorded by the request that begins it (tarn_select with begin).
-local STREAM_TERM = {}
+-- readers of a space that changes, vinyl only its writers. Transactions are
+-- numbered as they begin (box.txn_id(), see BK.txn_mark): DDL_TXN[space_id]
+-- = the number of one begun once a TRUNCATE or DROP of the table was
+-- applied, above that of every transaction that began before.
+local DDL_TXN = {}
+-- Only a leader that has been the leader since a stream transaction began
+-- may validate it (TarnCommit: lost; see tarn_validate): TERM_TXN = the
+-- number of a transaction begun once this node saw election term LAST_TERM.
+-- A stream transaction below it may have begun in an earlier term.
+local TERM_TXN, LAST_TERM = 0, nil
+
+-- The number of a transaction begun now: Tarantool numbers transactions as
+-- they begin (box.txn_id()), so every one that began before is below it.
+-- Outside a transaction.
+function BK.txn_mark()
+    box.begin()
+    local ok, id = pcall(box.txn_id)
+    box.rollback()
+    if not ok then error(id) end
+    return id
+end
+
+-- After a change of the election term (or at start): TERM_TXN. Outside a
+-- transaction.
+function BK.term_mark()
+    local t = box.info.election.term
+    if t == LAST_TERM then return end
+    TERM_TXN, LAST_TERM = BK.txn_mark(), t
+    BK.ns_sync()
+end
 
 local function fence_rebuild()
     local f = {}
@@ -521,13 +545,11 @@ local function ddl_release(sid)
 end
 
 -- The open stream transactions may have read space `sid` before a TRUNCATE
--- or DROP that is applied now: their validation fails if they did.
+-- or DROP that is applied now: their validation fails if they did. They
+-- began before now (DDL_TXN). Outside a transaction.
 local function doom_readers(sid)
-    for id in pairs(STREAM_TERM) do
-        local d = DOOMED[id]
-        if d == nil then d = {}; DOOMED[id] = d; DOOMED_N = DOOMED_N + 1 end
-        d[sid] = true
-    end
+    BK.ddl_last = BK.txn_mark()
+    DDL_TXN[sid] = BK.ddl_last
     BK.ns_sync()
 end
 
@@ -535,11 +557,11 @@ end
 -- validation because of a TRUNCATE or DROP TABLE, or nil: one holds a table
 -- they read, or one was applied to it since the stream began. Does not yield.
 local function reads_ddl_conflict(points, ranges)
-    if DDL_N == 0 and next(DOOMED) == nil then return nil end
-    local doomed = DOOMED[box.txn_id() or -1]
+    if DDL_N == 0 and next(DDL_TXN) == nil then return nil end
+    local id = box.txn_id() or 0
     local function bad(sid)
         if DDL_HELD[sid] ~= nil then return 'read a table held by ' .. DDL_HELD[sid] end
-        if doomed ~= nil and doomed[sid] then
+        if id < (DDL_TXN[sid] or 0) then
             M.stats.ddl_doomed = M.stats.ddl_doomed + 1
             return 'read a table that a TRUNCATE or DROP TABLE changed since'
         end
@@ -922,14 +944,16 @@ struct tarn_ns {
     uint64_t *fences;
     uint64_t w_served, w_to_lua;
     uint32_t *pl_spaces;
-    uint32_t held, doomed;
+    uint32_t held, scratch;
     uint64_t c_served, c_to_lua;
-    uint64_t svp_txn;
+    uint64_t term_txn;
     uint8_t capture_stale;
     uint8_t *write_excluded;
+    uint64_t ddl_txn;
+    uint64_t v_served, v_to_lua;
 };
 ]]
-BK.NS_LAYOUT = 7
+BK.NS_LAYOUT = 8
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
 BK.ns_serves = nil  -- its `serves` array, kept alive here
@@ -1008,13 +1032,15 @@ function BK.ns_sync()
     ns.load_until = BK.load.t0 + M.cfg.load_window
     ns.pl_n = PL_N
     ns.held = BK.held
-    ns.doomed = DOOMED_N
+    ns.term_txn, ns.ddl_txn = TERM_TXN, BK.ddl_last or 0
+    local sc = box.space._tarn_scratch
+    ns.scratch = sc ~= nil and sc.id or 0
     if ns.count ~= BK.count then BK.ns_serves_all() end
 end
 
 -- (tests: after changing cfg.scan_page_rows or scan_page_bytes)
 function M.ns_sync() BK.ns_sync() end
--- ABI7: an unknown capture registry excludes every native write. Slots
+-- An unknown capture registry excludes every native write. Slots
 -- collide conservatively; a false positive only hands a write back to Lua.
 BK.lazy_stale, BK.lazy_excluded, BK.ns_write_excluded = true, {}, nil
 function BK.ns_lazy(excluded, stale)
@@ -2521,24 +2547,6 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
     return res
 end
 
--- (STREAM_TERM: see the definition fences above.)
-local function note_stream_term()
-    local id = box.txn_id()
-    if id == nil then return end
-    STREAM_TERM[id] = box.info.election.term
-    local function forget()
-        -- (a native procedure that takes its writes back to a savepoint
-        -- runs the on_rollback triggers too: the transaction goes on)
-        if BK.ns ~= nil and tonumber(BK.ns.svp_txn) == id then return end
-        STREAM_TERM[id] = nil
-        if DOOMED[id] ~= nil then
-            DOOMED[id], DOOMED_N = nil, DOOMED_N - 1
-            BK.ns_sync()
-        end
-    end
-    box.on_commit(forget)
-    box.on_rollback(forget)
-end
 
 -- Commit of a read-only single-shard transaction (TarnCommit!SnapshotRead):
 -- the lock check runs in the same MVCC view as the reads.
@@ -2556,15 +2564,19 @@ function tarn_validate(txid, rpoints, rranges, cross, lock_gen, mver)
         pl_release_all(txid)
         return {'error', 1213, BROKEN_MSG}
     end
-    if box.is_in_txn() then
-        local t0 = STREAM_TERM[box.txn_id()]
-        if t0 ~= nil and t0 ~= box.info.election.term then
-            box.rollback()
-            return conflict('shard leader changed during the transaction')
-        end
-    end
     lk_fresh()
+    -- (the tables held by a TRUNCATE or DROP TABLE, which a new leader or a
+    -- restarted node reads from storage: reads_ddl_conflict)
+    fence_fresh()
     BK.fresh()
+    -- From here on nothing yields: the checks, the probe write and the
+    -- commit are one step, on a node that is the leader, and has been since
+    -- the stream began (TERM_TXN).
+    writable()
+    if box.is_in_txn() and (box.info.election.term ~= LAST_TERM or box.txn_id() < TERM_TXN) then
+        box.rollback()
+        return conflict('shard leader changed during the transaction')
+    end
     if not box.is_in_txn() and (#(rpoints or {}) > 0 or #(rranges or {}) > 0) then
         return conflict('the stream transaction of these reads no longer exists')
     end
@@ -2904,7 +2916,6 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     -- stays open after the call because the request carries a stream id).
     if begin == true and not box.is_in_txn() then
         box.begin(BEGIN_STREAM)
-        note_stream_term()
     end
     if lock_check == true then
         -- An autocommit read is only linearizable on the current leader.
@@ -3000,9 +3011,11 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin, af
     if mv then return mv end
     if begin == true and not box.is_in_txn() then
         box.begin(BEGIN_STREAM)
-        note_stream_term()
     end
-    if lock_check == true then lk_fresh() end
+    if lock_check == true then
+        lk_fresh()
+        fence_fresh()   -- (the tables held by a TRUNCATE or DROP TABLE)
+    end
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
@@ -3134,7 +3147,6 @@ function tarn_select_join(reads, lock_check, begin, route)
     if bad then return bad end
     if begin and not box.is_in_txn() then
         box.begin(BEGIN_STREAM)
-        note_stream_term()
     end
     if not lock_check then
         if not box.is_in_txn() then return {'error', 1210, 'tarn_select_join needs a stream transaction'} end
@@ -3273,9 +3285,11 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
     if mv then return mv end
     if begin == true and not box.is_in_txn() then
         box.begin(BEGIN_STREAM)
-        note_stream_term()
     end
-    if lock_check == true then lk_fresh() end
+    if lock_check == true then
+        lk_fresh()
+        fence_fresh()   -- (the tables held by a TRUNCATE or DROP TABLE)
+    end
     local space = box.space[space_id]
     if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
     local idx = space.index[index_id]
@@ -5071,7 +5085,7 @@ function tarn_alter_abort(name, a, gen) return UIX.alter_serial(UIX.alter_abort,
 --             it fails), then waits for the local commits in flight and for
 --             the prepared transactions holding locks on it (drain). APPLY
 --             drops or truncates it, dooms the open streams that may have
---             read it before (DOOMED) and releases it; TRUNCATE also stores
+--             read it before (DDL_TXN) and releases it; TRUNCATE also stores
 --             the table's definition under a new version, so that writes
 --             encoded before it stay refused. ABORT lowers the fence and
 --             releases the table.
@@ -5179,6 +5193,7 @@ local function clear_apply(op, name, a)
         -- Dropped by an earlier APPLY: finish what it may have left.
         UIX.drop(a.id)
         M.lazy.clear_versions(a.id)
+        doom_readers(a.id)   -- (it may have failed before)
         box.begin(RW)
         box.space._tarn_lazy_capture:delete{a.id}
         local c = box.space._tarn_catalog:get{name}
@@ -5200,6 +5215,11 @@ local function clear_apply(op, name, a)
         M.lazy.retire(a.lazy_drop)
         UIX.drop(sid)
         sp:drop()
+        -- Until the table is released below, the hold fails the validation
+        -- of its readers; from now on, the streams that began before are
+        -- doomed too (before the catalog's commit, which may fail: APPLY
+        -- runs again).
+        doom_readers(sid)
         yield_point('lazy_clear_schema')
         M.lazy.clear_versions(sid)
         box.begin(RW)
@@ -5207,16 +5227,13 @@ local function clear_apply(op, name, a)
         box.space._tarn_catalog:delete{name}
         box.space._tarn_meta:delete{hold_key(sid)}
         box.commit()
-        -- From here on nothing yields: until the table is released below,
-        -- the hold fails the validation of its readers; from then on, the
-        -- streams that began before are doomed.
-        doom_readers(sid)
         FENCE[sid] = nil
         BK.ns_fence(sid)
         M.stats.drops = M.stats.drops + 1
     else
         for _, u in ipairs(UIX.spaces(sid)) do u:truncate() end
         sp:truncate()
+        doom_readers(sid)
         yield_point('lazy_clear_schema')
         M.lazy.clear_versions(sid)
         box.begin(RW)
@@ -5225,7 +5242,6 @@ local function clear_apply(op, name, a)
         box.space._tarn_catalog:replace{name, a.def}
         box.space._tarn_meta:delete{hold_key(sid)}
         box.commit()
-        doom_readers(sid)
         FENCE[sid] = a.ver
         BK.ns_fence(sid)
         M.stats.truncates = M.stats.truncates + 1
@@ -6453,7 +6469,9 @@ function tarn_info()
                                        to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
                                        writes_to_lua = tonumber(BK.ns.w_to_lua),
                                        commits = tonumber(BK.ns.c_served),
-                                       commits_to_lua = tonumber(BK.ns.c_to_lua)} or false}
+                                       commits_to_lua = tonumber(BK.ns.c_to_lua),
+                                       validations = tonumber(BK.ns.v_served),
+                                       validations_to_lua = tonumber(BK.ns.v_to_lua)} or false}
 end
 
 -------------------------------------------------------------------------------
@@ -6480,7 +6498,7 @@ local function setup_schema()
     ensure_schema()
     if M.cfg.native then
         for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit',
-                            'tarn_storage.ts_commit_local'}) do
+                            'tarn_storage.ts_commit_local', 'tarn_storage.ts_validate'}) do
             box.schema.func.create(f, {language = 'C', if_not_exists = true})
         end
     end
@@ -6526,6 +6544,7 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
     if not M.cfg.sync and not box.info.ro then
         setup_schema()          -- a single instance: before it serves requests
     else
@@ -6537,6 +6556,7 @@ function M.init(cfg)
     box.ctl.on_election(function()
         LK_STALE = true; FENCE_STALE = true
         M.vinyl.reset()
+        pcall(BK.term_mark)   -- (else lk_reload makes it)
         M.lazy.invalidate()
         M.lazy.quota_invalidate()
         pl_fresh(); BK.reset()

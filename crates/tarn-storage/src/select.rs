@@ -63,6 +63,8 @@ pub struct Args<'a> {
     pub end_key: Option<&'a [u8]>,
     pub end_incl: bool,
     pub lock_check: bool,
+    /// The first read of a stream: it begins the stream's transaction.
+    pub begin: bool,
     pub route: Route<'a>,
 }
 
@@ -70,8 +72,8 @@ const EMPTY_KEY: &[u8] = &[0x90];
 
 /// tarn_select's arguments: (space_id, index_id, key, iterator, limit,
 /// end_key, end_incl, lock_check, offset, begin, after, route). None for a
-/// read ts_select leaves to tarn_select: one that skips rows, begins a
-/// stream transaction or continues a page; or arguments it does not read.
+/// read ts_select leaves to tarn_select: one that skips rows or continues a
+/// page; or arguments it does not read.
 pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
     let mut r = Rd::new(buf);
     if r.array()? != 12 {
@@ -108,9 +110,7 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
     if !r.nil() && r.uint()? != 0 {
         return None; // offset
     }
-    if !r.nil() && r.bool()? {
-        return None; // begin
-    }
+    let begin = !r.nil() && r.bool()?;
     if !r.nil() {
         return None; // after
     }
@@ -142,6 +142,7 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
         end_key,
         end_incl,
         lock_check,
+        begin,
         route,
     })
 }
@@ -350,6 +351,7 @@ mod tests {
                 end_key: None,
                 end_incl: false,
                 lock_check: true,
+                begin: false,
                 route: Route::Bucket(7)
             }
         );
@@ -379,6 +381,8 @@ mod tests {
         assert_eq!(parse(&point(Some((11, &[0xc0])))).unwrap().route, Route::None);
         // an offset of 0 and begin = false are no offset and no begin
         assert!(parse(&point(Some((8, &[0x00])))).is_some());
+        assert!(!parse(&point(Some((9, &[0xc2])))).unwrap().begin);
+        assert!(parse(&point(Some((9, &[0xc3])))).unwrap().begin);
     }
 
     #[test]
@@ -386,7 +390,7 @@ mod tests {
         for (i, v) in [
             (5, &[0x05][..]),    // an end key that is not an array
             (8, &[0x02]),        // an offset
-            (9, &[0xc3]),        // begin
+            (9, &[0x01]),        // a begin that is not a boolean
             (10, &[0xa1, b'x']), // after
             (3, &[0x07]),        // BITS_ALL_SET
             (3, &[0xa2, b'E', b'Q']),

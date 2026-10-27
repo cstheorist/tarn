@@ -26,13 +26,17 @@ local function wait(label, fn)
     repeat if fn() then return end; fiber.sleep(.005) until fiber.clock() >= deadline
     error(label .. ' timed out')
 end
-wait('schema and quota ready', function() return box.space._tarn_part ~= nil and tarn.lazy.quota.ready() end)
+wait('schema and quota ready', function()
+    return box.space._tarn_part ~= nil and tarn.lazy.quota.ready()
+        -- (and the native procedures, which the schema's setup makes last)
+        and (native == nil or native == '0' or (tarn_info().native or {}).ready == 1)
+end)
 ok(tarn_bucket_init(16, {{1, 16}}))
 ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then
     layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-    assert(ni and ni.ready == 1 and layout == 7, 'actual native ABI7 is required')
+    assert(ni and ni.ready == 1 and layout == 8, 'actual native ABI8 is required')
 else
     assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode is required')
 end

@@ -54,7 +54,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (134 default configurations, including 92
+  and model-checked with TLC (135 default configurations, including 93
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions and
   the MySQL packet codec are proven correct with [Verus](https://github.com/verus-lang/verus)
   and compiled into the server.
@@ -146,11 +146,11 @@ on another host Tarn was behind MySQL on point selects. Full tables,
 latencies, abort rates and a per-vCPU comparison with published TiDB and
 YugabyteDB results are in [bench/RESULTS.md](bench/RESULTS.md). These runs
 predate the shards' native procedures, which serve reads, autocommit
-writes and the commits of one-shard transactions without running Lua: on
-one shard they raise point selects by a quarter to over a third, the
-read transactions of `oltp_read_only` and `oltp_read_write` by over half,
-`oltp_write_only`'s by 41%, and autocommit writes by 71% to 76%, at 29%
-to 51% of the shard's CPU per statement
+writes and the transactions of one shard without running Lua: on one
+shard they raise point selects by a quarter to over a third, the
+transactions of `oltp_read_only`, `oltp_read_write` and `oltp_write_only`
+by half or more, and autocommit writes by 71% to 76%, at 29% to 44% of the
+shard's CPU per statement
 ([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
 ## Correctness

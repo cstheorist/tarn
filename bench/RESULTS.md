@@ -350,33 +350,38 @@ The leader's CPU per write falls by half or more here too; throughput rises
 by about a third, as the three replicas share the two vCPUs with the SQL
 server and sysbench, and every commit waits for its quorum.
 
-The commits of transactions that write on one shard are native too
-(`tarn_storage.ts_commit_local`), measured later in a run of
-`oltp_read_write` and of `oltp_write_only`, whose transactions update two
-rows, delete one and insert it again, reading each row first:
+The transactions are native too: the commit of one that wrote on one shard
+(`tarn_storage.ts_commit_local`), the validation of a read-only one
+(`ts_validate`), and the first read of each, which begins its stream
+(`ts_select`). In a later run of `oltp_read_only`, `oltp_read_write` and
+`oltp_write_only`, whose transactions update two rows, delete one and
+insert it again, reading each row first:
 
 | One shard, 16 threads, Lua → native | statements per second | shard CPU per statement | Lua heap per statement | calls served natively | profiler samples in Lua / GC |
 |---|---:|---:|---:|---:|---:|
-| `oltp_read_write` | 7,473 → 12,570 | 84.5 → 31.7 µs | 3,763 → 132 B | 83% | 35% / 14% → 4% / 1% |
-| `oltp_write_only` | 15,780 → 22,214 | 30.6 → 15.7 µs | 1,472 → 397 B | 50% | 21% / 15% → 10% / 4% |
+| `oltp_read_only` | 7,546 → 13,401 | 88.2 → 26.8 µs | 4,806 → 1 B | 100% | 36% / 18% → 0% / 0% |
+| `oltp_read_write` | 8,042 → 13,619 | 75.7 → 26.6 µs | 4,094 → 5 B | 99% | 35% / 14% → 0% / 0% |
+| `oltp_write_only` | 17,154 → 25,761 | 27.1 → 11.2 µs | 1,492 → 1 B | 100% | 23% / 14% → 0% / 0% |
 
-A run of the build before, whose commits ran in Lua, gave 48% and 95% of
-the Lua procedures' CPU per statement with the native procedures (11,588
-and 16,770 statements a second, against 8,042 and 16,099 with Lua); with
-native commits they take 38% and 51%. What still runs in Lua is the first
-read of each transaction, which begins its stream (`tarn_select`): half
-of `oltp_write_only`'s storage calls. The VM ran slower in these two runs
-than in the first table's: the Lua procedures took 84.5 and 77.5 µs per
-statement of `oltp_read_write`, against 64.7 µs there.
+The shard runs no Lua for these transactions any more: they take 30%, 35%
+and 41% of the Lua procedures' CPU per statement, and 1.5 to 1.8 times
+their throughput. A run of the build before, whose first reads and
+validations ran in Lua, gave 40%, 38% and 54% (11,910, 12,788 and 22,205
+statements a second). The VM ran slower in these runs than in the first
+table's: the Lua procedures took 75.7 to 78.3 µs per statement of
+`oltp_read_write` in them, against 64.7 µs there. Run again on the build
+that also has the lazy indexes
+([#116](https://github.com/cstheorist/tarn/pull/116)), the comparison gave
+36%, 34% and 41% of the CPU, at 1.6, 1.7 and 1.5 times the throughput.
 
 ## What would make Tarn faster
 
 * **Native procedures for the other hot paths**
-  ([#28](https://github.com/cstheorist/tarn/issues/28)): the first read of
-  a transaction, the validation of read-only ones and the commits of
-  cross-shard ones still run as Lua procedures, whose calls cost a shard
-  more than their storage work, as they did for reads, autocommit writes
-  and one-shard commits (see above). And the native
+  ([#28](https://github.com/cstheorist/tarn/issues/28)): the commits of
+  cross-shard transactions (PREPARE, APPLY) and the row locks of READ
+  COMMITTED still run as Lua procedures, whose calls cost a shard more than
+  their storage work, as they did for reads, autocommit writes and
+  one-shard transactions (see above). And the native
   procedures hand a request to Lua whenever a prepared transaction holds a
   lock on its table, and a write whenever a row lock is held on its table:
   with the lock index in the native module, they would check the rows

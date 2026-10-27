@@ -21,13 +21,16 @@ local function wait(label, fn)
     repeat if fn() then return end; fiber.sleep(.005) until fiber.clock() >= until_
     error(label .. ' timed out')
 end
-wait('schema/quota ready', function() return box.space._tarn_part ~= nil and tarn.lazy.quota.ready() end)
+wait('schema/quota/native ready', function()
+    return box.space._tarn_part ~= nil and tarn.lazy.quota.ready()
+        and (native == nil or native == '0' or (tarn_info().native or {}).ready == 1)
+end)
 local function ok(r) assert(r[1] == 'ok', json.encode(r)); return r end
 ok(tarn_bucket_init(16, {{1, 16}})); ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then
     layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-    assert(ni and ni.ready == 1 and layout == 7, 'actual native ABI7 is required')
+    assert(ni and ni.ready == 1 and layout == 8, 'actual native ABI8 is required')
 else assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode is required') end
 print('IDENTITY ' .. json.encode{version = box.info.version, native = ni, layout = layout,
     sync = tarn.cfg.sync, wal = box.cfg.wal_mode, part_sync = box.space._tarn_part.is_sync})

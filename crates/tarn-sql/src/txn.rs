@@ -942,9 +942,37 @@ impl Txn {
             m.bool(cross);
             self.encode_gen(p, &mut m);
             self.encode_mver(&mut m);
+            // The shard's native procedure validates in the stream what it
+            // can without Lua (crates/tarn-storage/src/procs.rs `validate`)
+            // and hands the rest back ("lua"), having changed nothing. Not
+            // sent where the transaction has no stream, or sent row lock
+            // requests: their row-lock state only the Lua procedure ends.
+            let native = id != 0 && !self.lock_shards.contains(&p) && !client.marked(MARK_NO_NATIVE_VALIDATE);
             futs.push(async move {
+                use tarn_iproto::errcode::{
+                    ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
+                };
                 // Read-only: a lost connection or a demoted leader just
                 // means "retry" (nothing was written).
+                if native {
+                    match client.call(id, "tarn_storage.ts_validate", &m.0).await {
+                        Ok(r) => {
+                            let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
+                            if !crate::mpw::status_is(&d, "lua") {
+                                return lua_status(&d).map(|_| ());
+                            }
+                        }
+                        Err(tarn_iproto::Error::Server {
+                            code:
+                                ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                            message,
+                        }) => {
+                            tracing::debug!("native validation unavailable on this shard: {}", message);
+                            client.mark(MARK_NO_NATIVE_VALIDATE);
+                        }
+                        Err(e) => return Err(from_iproto_read(e)),
+                    }
+                }
                 let r = client.call(id, "tarn_validate", &m.0).await.map_err(from_iproto_read)?;
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
                 lua_status(&d).map(|_| ())
@@ -1752,12 +1780,11 @@ pub async fn select_rows(
     route.encode(&mut m);
     // The shard's native procedure serves the reads it can decide without
     // Lua (crates/tarn-storage/src/select.rs), also in a stream's
-    // transaction, and hands the others back ("lua"); a shard without it is
-    // noted on the connection. (Reads it always hands back are not sent to
-    // it: vinyl tables, a stream's first read, which begins its
-    // transaction, and the pages after the first.)
+    // transaction, whose first read begins it, and hands the others back
+    // ("lua"); a shard without it is noted on the connection. (Reads it
+    // always hands back are not sent to it: vinyl tables, and the pages
+    // after the first.)
     if matches!(t.engine, crate::catalog::Engine::Memtx)
-        && !begin
         && after.is_none()
         && limit != Some(0)
         && !client.marked(MARK_NO_NATIVE_SELECT)
@@ -1797,6 +1824,10 @@ const MARK_NO_NATIVE_SELECT: u32 = 0;
 /// The mark of a connection to a shard without the native commit procedure
 /// (session.rs has 1, for the native autocommit procedure).
 const MARK_NO_NATIVE_COMMIT: u32 = 2;
+
+/// The mark of a connection to a shard without the native validation
+/// procedure.
+const MARK_NO_NATIVE_VALIDATE: u32 = 3;
 
 #[cfg(test)]
 mod tests {

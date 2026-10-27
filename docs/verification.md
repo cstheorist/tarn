@@ -159,7 +159,8 @@ A vinyl grouped read exposed a further refinement gap: with its root
 already held by TRUNCATE, it captured the old root rows, yielded, and then
 returned those rows after APPLY emptied the table and released the hold.
 The final current-hold check saw no hold; the prepared-write history had
-no DDL event. The stream-only `DOOMED` mechanism did not cover this
+no DDL event. The failing of the stream transactions that read a table
+before its `TRUNCATE` (then `DOOMED`, now `DDL_TXN`) did not cover this
 autocommit read. Refreshing the DDL cache on entrance fixes a cold cache,
 but cannot detect a claim released during the scan.
 
@@ -567,12 +568,13 @@ back to Lua. Supported accepted native streams must therefore have no
 pre-existing lazy quota ticket: SQL buffers user writes until commit, and
 the shared native write-admission guard checks every actual source against
 the capture registry **before** creating a transaction or savepoint. Lazy
-writes defer to Lua before native mutation. The stream-lifetime callback
-separately recognizes native savepoint rollback, preserving the existing
-read set and DDL/election tracking. These are implementation refinement
-obligations; the model does not prove arbitrary savepoint use safe for an
-armed meter ticket. The ordinary terminal-callback runtime evidence still
-applies to the guarded quota-bearing Lua paths.
+writes defer to Lua before native mutation. A stream's transaction carries
+no Lua callbacks before its commit (what the shard knows of when it began,
+for elections and DDL, are transaction numbers: design §1.5), so a native
+savepoint rollback keeps its read set and that tracking. These are
+implementation refinement obligations; the model does not prove arbitrary
+savepoint use safe for an armed meter ticket. The ordinary terminal-callback
+runtime evidence still applies to the guarded quota-bearing Lua paths.
 
 The bounded fixture contains one reservation that can APPLY or ABORT, a
 disjoint local enqueue/ACK, two invalidations, and one old queued native
@@ -834,7 +836,7 @@ tla/check.sh PrepareConfirm Bug_UnconfirmedPrepare
 | `PrepareConfirm` | 9 | 5 | passes |
 | `Bug_UnconfirmedPrepare` | 6 | 4 | violates `CertifiedYesDurable` |
 
-The default list now contains 134 configurations, including 92 expected
+The default list now contains 135 configurations, including 93 expected
 broken/trade-off outcomes. The lazy-index and bootstrap refinements retain
 their 53 configurations; fresh-write admission and PREPARE confirmation
 add two positive cases and eight controls. The 144 generated
@@ -891,7 +893,7 @@ concrete inputs (codec boundaries, CRC check value, decision cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes against `tarn_autocommit` on twin tables: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having written nothing, and the commits in flight waited for (`native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for (`native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 967 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
