@@ -107,8 +107,8 @@ bounded model, sensitivity controls and actual SQL/storage tests.
 
 ## Live validation and unresolved variability
 
-The [validation receipt](pushdown-validation/summary.json) records the final
-integrated source and test results: 262 Rust tests; 1,073 differential cases,
+The [validation receipt](pushdown-validation/summary.json) records the measured
+`721d420` checkpoint and its test results: 262 Rust tests; 1,073 differential cases,
 47 exact pushdown controls, 27 transaction tests and 30 READ COMMITTED tests
 in each of native memtx, Lua-only memtx and uncached Vinyl; 1,000 randomized
 queries; and six lost/invalid-reply mutation faults. The complete native/Lua
@@ -127,3 +127,27 @@ were unchanged. The control's release build used one LLVM thread after a
 VM-memory kill. The exact cause of the earlier failures was not isolated;
 the passing repetitions do not erase them or establish an availability or
 RF3 performance guarantee.
+
+## Later main integration
+
+After this study, the branch integrated main `700ce887`, including routing
+diagnostics, RPC admission/deadlines, decision placement and recovery
+fairness. The typed-read kernel keeps its existing read contract and now
+feeds the new query observations. The performance tables remain evidence
+for `721d420`; they are not a measurement of the later integrated build.
+The [merged-code receipt](pushdown-validation/latest-main.json) records
+validation at `56d9ed8`: 285 workspace/IPROTO tests, the focused storage
+controls, and all three storage modes passing 1,106 differential cases,
+47 pushdown comparisons, routing diagnostics, 27 transaction tests and
+30 READ COMMITTED tests each. All six lost/invalid-reply mutation faults
+pass. The typed-read positive and five negative models, existing local
+read validation, grouped snapshots and DDL checks have expected outcomes.
+
+This matrix uses a debug gateway because optimized compilation exceeded
+the shared VM memory limit. Its first default-stack run aborted on a plain
+`SET @variable` with a worker stack overflow; the isolated statement and
+complete matrix pass with `RUST_MIN_STACK=16777216`. The
+[failed debug trial](pushdown-validation/latest-debug-default-stack.log)
+is retained. These results do not establish release/default-stack
+behavior; release CI runs separately. Performance and RF3 evidence remain
+pinned to the earlier checkpoint.
