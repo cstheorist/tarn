@@ -89,6 +89,8 @@ extern "C" {
     fn box_error_code(error: *const BoxError) -> u32;
     fn box_error_message(error: *const BoxError) -> *const c_char;
     fn fiber_clock() -> f64;
+    fn clock_monotonic64() -> i64;
+    fn clock_realtime64() -> i64;
     fn box_txn_begin() -> c_int;
     fn box_txn_commit() -> c_int;
     fn box_txn_rollback() -> c_int;
@@ -642,15 +644,26 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
         let (data, len) = crate::alloc_metrics::reply();
         return reply(ctx, &data[..len]);
     }
+    // Tarantool may release its CALL argument port when this fiber yields.
+    // The quorum barrier now precedes use of parsed key/route slices, so
+    // those slices must borrow our buffer rather than the argument port.
+    let owned = buf.to_vec();
+    let buf = owned.as_slice();
     fallback::begin();
-    let out = std::panic::catch_unwind(|| {
+    let raise = Cell::new(false);
+    let out = std::panic::catch_unwind(AssertUnwindSafe(|| {
         if Rd::new(buf).array() == Some(8) {
-            select_batch(buf)
+            select_batch(buf, &raise)
         } else {
-            select_page(buf)
+            select_page(buf, &raise)
         }
-    })
+    }))
     .unwrap_or_else(|_| back(Why::Panic));
+    if raise.get() {
+        // A failed quorum barrier is an actual native error, not an
+        // unsupported shape. Do not silently run it a second time in Lua.
+        return -1;
+    }
     match out {
         Some(page) => {
             if let Some(s) = state() {
@@ -668,21 +681,114 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
     }
 }
 
+/// A clock check using actual clock calls, not the cached event-loop time.
+/// In particular a stopped process must not serve before its watcher runs.
+fn read_clock_ready() -> bool {
+    // SAFETY: public clock API calls do not yield or inspect transactions.
+    let (mono, wall) = unsafe { (clock_monotonic64(), clock_realtime64()) };
+    let (Ok(mono), Ok(wall)) = (u64::try_from(mono), u64::try_from(wall)) else {
+        return false;
+    };
+    state().is_some_and(|s| crate::freshness::clock_ready(s, mono, wall))
+}
+
+/// Copy callbacks out of State before invoking them. They are protected,
+/// nonyielding Lua callbacks, but no Rust State reference may span them.
+fn fresh_controls_ok() -> bool {
+    let callback = state().and_then(|s| s.fresh_controls);
+    callback.is_some_and(|f| matches!(unsafe { f() }, 1 | 2))
+}
+
+fn fresh_space_ok(space: u32) -> bool {
+    let callback = state().and_then(|s| s.fresh_space);
+    callback.is_some_and(|f| unsafe { f(space) } == 1)
+}
+
+fn fresh_stream_ok() -> bool {
+    let callback = state().and_then(|s| s.fresh_ok);
+    // SAFETY: a public transaction identity query, followed by the exact
+    // current-ID certificate lookup. Neither step yields.
+    let id = unsafe { txn_number() };
+    id != 0 && callback.is_some_and(|f| unsafe { f(id) } == 1)
+}
+
+/// Prepare a supported read before acquiring schema/lock/native State.
+/// None hands back; Some(None) owns no stream; Some(Some(txn)) owns a new
+/// certified stream which its caller retains ONLY on complete success.
+/// Barrier errors set `raise` and preserve the native diagnostic.
+fn fresh_read(first: bool, checked: bool, space: u32, raise: &Cell<bool>) -> Option<Option<Txn>> {
+    // A known demotion must reach Lua's ER_READONLY path even if clock
+    // health is unknown, so the gateway can follow a replacement leader.
+    if unsafe { box_is_ro() } {
+        return back(Why::ReadOnly);
+    }
+    let timeout = {
+        let s = ready_state()?;
+        s.read_timeout
+    };
+    if !timeout.is_finite() || timeout <= 0.0 || !fresh_controls_ok() || !read_clock_ready() {
+        return back(Why::Freshness);
+    }
+    let in_txn = unsafe { box_txn() };
+    let owned = if in_txn {
+        if !fresh_stream_ok() {
+            return back(Why::Freshness);
+        }
+        None
+    } else if first {
+        // A new, empty transaction: no State reference crosses this wait.
+        let t = unsafe { Txn::begin_stream(raise)? };
+        let mark = state().and_then(|s| s.fresh_mark);
+        let id = unsafe { txn_number() };
+        if id == 0 || !mark.is_some_and(|f| unsafe { f(id) } == 1) {
+            drop(t);
+            return back(Why::Freshness);
+        }
+        Some(t)
+    } else if checked {
+        // Preserve the original no-TX memtx scan behavior. This rollback
+        // closes only the empty barrier, never a caller's stream/read set.
+        let t = unsafe { Txn::begin_fresh(timeout, raise)? };
+        drop(t);
+        None
+    } else {
+        return back(Why::Stream);
+    };
+    // The quorum wait may have applied a new term, schema or configuration.
+    // Recheck actual synchronous flags; a cached fresh_mode is insufficient.
+    if unsafe { box_is_ro() } {
+        return back(Why::ReadOnly);
+    }
+    if !fresh_controls_ok() || !fresh_space_ok(space) || !read_clock_ready() {
+        return back(Why::Freshness);
+    }
+    // Other native requests can run during the barrier; their diagnostic
+    // counters must not determine this request's handback reason.
+    fallback::begin();
+    Some(owned)
+}
+
 /// Full primary-key autocommit batches (the eight-argument form of
 /// tarn_select_keys). Every read is memtx and none yields: the state and
 /// all requested keys' W claims describe the same snapshot, including
 /// missing rows. Anything needing a continuation is handed back whole.
-fn select_batch(buf: &[u8]) -> Option<Vec<u8>> {
+fn select_batch(buf: &[u8], raise: &Cell<bool>) -> Option<Vec<u8>> {
     note(Why::Shape);
     let a = batch::parse(buf)?;
     note(Why::Other);
+    // Only an autocommit request is supported by this bounded kernel.
+    // The empty freshness transaction is closed before its no-yield scan.
+    if unsafe { box_txn() } {
+        return back(Why::Stream);
+    }
+    let _owned = fresh_read(false, true, a.space_id, raise)?;
     let s = ready_state()?;
     if s.page_rows == 0 || s.page_bytes == 0 {
         return back(Why::NotReady);
     }
     // SAFETY: plain module API calls in the transaction thread. A batch
-    // never starts or borrows a transaction, so handback leaves no stream
-    // reads or callbacks to undo.
+    // has closed its owned empty barrier and never borrows a stream, so
+    // handback leaves no caller reads or callbacks to undo.
     unsafe {
         if box_is_ro() {
             return back(Why::ReadOnly);
@@ -770,10 +876,14 @@ fn select_batch(buf: &[u8]) -> Option<Vec<u8>> {
 
 /// The reply to a read ts_select serves (["ok", rows]), or None for one it
 /// leaves to tarn_select.
-fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
+fn select_page(buf: &[u8], raise: &Cell<bool>) -> Option<Vec<u8>> {
     note(Why::Shape);
     let a = select::parse(buf)?;
     note(Why::Other);
+    // The only yielding step precedes every State/schema/claim borrow.
+    // If this first stream read hands back, dropping `begun` rolls back
+    // only its newly owned transaction and its certificate.
+    let mut begun = fresh_read(a.begin, a.lock_check, a.space_id, raise)?;
     let Some(s) = state() else {
         return back(Why::NotReady);
     };
@@ -852,11 +962,6 @@ fn select_page(buf: &[u8]) -> Option<Vec<u8>> {
     let reverse = select::reverse(a.iterator);
     // The first read of a stream begins its transaction, as tarn_select
     // does; a read handed back takes it back.
-    let mut begun = match a.begin && !in_txn {
-        // SAFETY: a plain call of the module API in the transaction thread.
-        true => Some(unsafe { Txn::begin_stream()? }),
-        false => None,
-    };
     let in_txn = in_txn || begun.is_some();
     let mut page = Page::new(&a, in_txn, s.page_rows, s.page_bytes, s.scan_chunk);
     let mut out = Wr::with_capacity(256);
@@ -1197,14 +1302,48 @@ impl Txn {
 
     /// A stream's transaction, as tarn_select begins it (BEGIN_STREAM in
     /// lua/tarn.lua: read-confirmed, rolled back after STREAM_TIMEOUT).
-    unsafe fn begin_stream() -> Option<Txn> {
+    unsafe fn begin_stream(raise: &Cell<bool>) -> Option<Txn> {
+        Self::begin_fresh(STREAM_TIMEOUT, raise)
+    }
+
+    /// Public empty-transaction quorum barrier, followed by confirmed
+    /// visibility before the first statement. Direct LINEARIZABLE Vinyl
+    /// access remains unsupported; this is the pinned barrier composition.
+    unsafe fn begin_fresh(timeout: f64, raise: &Cell<bool>) -> Option<Txn> {
         if box_txn_begin() != 0 {
-            box_error_clear();
+            raise.set(true);
             return None;
         }
         let txn = Txn { open: true };
-        if box_txn_set_isolation(TXN_ISOLATION_READ_CONFIRMED) != 0 || box_txn_set_timeout(STREAM_TIMEOUT) != 0 {
-            box_error_clear();
+        // The final timeout MUST precede the first possible yield: it
+        // cannot be changed after the transaction's timer has started.
+        if box_txn_set_timeout(timeout) != 0
+            || box_txn_set_isolation(TXN_ISOLATION_LINEARIZABLE) != 0
+            || box_txn_set_isolation(TXN_ISOLATION_READ_CONFIRMED) != 0
+        {
+            let e = box_error_last();
+            let (code, message) = if e.is_null() {
+                (
+                    ER_TRANSACTION_CONFLICT,
+                    std::ffi::CString::new("strong read barrier failed").unwrap(),
+                )
+            } else {
+                (
+                    box_error_code(e),
+                    std::ffi::CStr::from_ptr(box_error_message(e)).to_owned(),
+                )
+            };
+            drop(txn);
+            // Rollback and its callbacks may alter the current diagnostic.
+            // Restore the original failure and propagate it without retry.
+            box_error_set(
+                c"tarn-storage".as_ptr(),
+                line!(),
+                code,
+                c"%s".as_ptr(),
+                message.as_ptr(),
+            );
+            raise.set(true);
             return None;
         }
         Some(txn)
@@ -1256,6 +1395,7 @@ fn commit_ends(s: &mut State, seq: u64) {
 /// TXN_ISOLATION_READ_CONFIRMED.
 const TXN_ISOLATION_READ_COMMITTED: u32 = 1;
 const TXN_ISOLATION_READ_CONFIRMED: u32 = 2;
+const TXN_ISOLATION_LINEARIZABLE: u32 = 4;
 /// BEGIN_STREAM's timeout (lua/tarn.lua), seconds.
 const STREAM_TIMEOUT: f64 = 60.0;
 const ER_READONLY: u32 = 7;
@@ -1631,6 +1771,18 @@ fn autocommit(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     note(Why::Shape);
     let (writes, opts) = write::parse(buf)?;
     note(Why::Other);
+    if unsafe { box_txn() } {
+        return back(Why::Stream);
+    }
+    // Even a zero-row DELETE/UPDATE observes data and can return without
+    // a synchronous WAL write. It needs the same freshness as a read.
+    let raise = Cell::new(false);
+    if fresh_read(false, true, writes.first()?.space_id, &raise).is_none() {
+        return if raise.get() { Some(Served::Raise) } else { None };
+    }
+    if writes.iter().any(|w| !fresh_space_ok(w.space_id)) {
+        return back(Why::Freshness);
+    }
     let s = ready_state()?;
     // Gateway metadata can lag behind local DDL activation. Check every
     // actual source before schema reads or Txn::begin, not just opts.fence;
@@ -1731,6 +1883,25 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if c.locks {
         return back(Why::OwnRowLocks);
     }
+    if unsafe { box_txn() } {
+        if !fresh_stream_ok() {
+            return back(Why::Freshness);
+        }
+    } else if c.reads.is_empty() {
+        let raise = Cell::new(false);
+        if fresh_read(false, true, c.writes.first()?.space_id, &raise).is_none() {
+            return if raise.get() { Some(Served::Raise) } else { None };
+        }
+    } else {
+        return back(Why::Stream);
+    }
+    if !fresh_controls_ok()
+        || !read_clock_ready()
+        || c.writes.iter().any(|w| !fresh_space_ok(w.space_id))
+        || c.reads.iter().any(|r| !fresh_space_ok(r.space_id))
+    {
+        return back(Why::Freshness);
+    }
     let s = ready_state()?;
     // (a TRUNCATE or DROP TABLE holds a table: reads_ddl_conflict)
     if s.ddl_n != 0 {
@@ -1811,6 +1982,14 @@ fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     // them)
     if v.locks {
         return back(Why::OwnRowLocks);
+    }
+    // Never certify an arbitrary older ambient view with a late barrier.
+    // The first read must have installed this exact transaction's token.
+    if !unsafe { box_txn() } || !fresh_stream_ok() {
+        return back(Why::Freshness);
+    }
+    if !fresh_controls_ok() || !read_clock_ready() || v.reads.iter().any(|r| !fresh_space_ok(r.space_id)) {
+        return back(Why::Freshness);
     }
     let s = ready_state()?;
     // (a TRUNCATE or DROP TABLE holds a table: reads_ddl_conflict)
@@ -1934,7 +2113,10 @@ unsafe fn write_step(
         );
     }
     let len = (args_end as usize).saturating_sub(args as usize);
-    let buf = std::slice::from_raw_parts(args as *const u8, len);
+    // Write-only local commits and autocommit no-op results also require a
+    // pre-data quorum barrier. Keep every parsed payload alive across it.
+    let owned = std::slice::from_raw_parts(args as *const u8, len).to_vec();
+    let buf = owned.as_slice();
     let committed = Cell::new(false);
     TXN_LOST.with(|l| l.set(false));
     fallback::begin();
