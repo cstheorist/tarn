@@ -109,6 +109,11 @@ fn every_length_encoding_and_fragmented_prefix() {
 
 #[test]
 fn oversized_headers_refuse_before_reserving_payload_memory() {
+    // The gateway's stricter envelope is checked before any allocation too.
+    let mut limited = BytesMut::from(&[0xce, 0, 0x80, 0, 1][..]);
+    let capacity = limited.capacity();
+    assert!(next_frame_limited(&mut limited, 8 << 20).is_err());
+    assert_eq!(limited.capacity(), capacity);
     for len in [iproto::BODY_LEN_MAX as u64 + 1, u32::MAX as u64] {
         for width in [4, 8] {
             let mut header = vec![if width == 4 { 0xce } else { 0xcf }];

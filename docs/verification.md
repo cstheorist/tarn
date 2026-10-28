@@ -12,6 +12,21 @@ kind of mistake:
 What each layer found, and how the findings were fixed, is described in the
 [design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5, §2.8 and §2.9).
 
+## Resource ownership
+
+`QueryBudget.tla` checks two concurrent queries sharing an admission cap,
+wire ownership after caller cancellation, result ownership through output
+flush, validation before successful output, and refusal only before a DML
+commit decision. Three negative controls remove wire ownership, release
+results before delivery, or refuse after decision; each violates its
+corresponding invariant. `TarnCommit`'s execution/commit boundary is unchanged.
+
+The Rust resource meter and heap implementation are ordinary tested Rust,
+not Verus-proved allocation bounds. The model abstracts allocation units and
+RPC completion; it does not prove the concrete multipliers, Tokio scheduling,
+allocator RSS, or socket/kernel behavior. The live and differential controls
+and measured boundaries are recorded in [SQL resource limits](resources.md).
+
 ## TLA+ model
 
 `tla/TarnCommit.tla` specifies the protocol: shards, keys with owners, three

@@ -395,6 +395,7 @@ impl Expr {
     }
 
     pub fn eval(&self, row: &[Value], cx: &EvalCtx) -> SqlResult<Value> {
+        crate::budget::work(1)?;
         Ok(match self {
             Expr::Col(i) => row.get(*i).cloned().unwrap_or(Value::Null),
             Expr::Lit(v) => v.clone(),
@@ -518,7 +519,15 @@ impl Expr {
                 // a binary literal, as in ci_col LIKE X'41')
                 let coll = *coll;
                 match (text(&x), text(&y)) {
-                    (Some(s), Some(p)) => Value::Int((coll.like(&s, &p) != *negated) as i64),
+                    (Some(s), Some(p)) => {
+                        crate::budget::work(
+                            (s.len() as u64 + 1)
+                                .saturating_mul(p.len() as u64 + 1)
+                                .saturating_mul(8),
+                        )?;
+                        crate::budget::charge((s.len() as u64 + p.len() as u64).saturating_mul(16))?;
+                        Value::Int((coll.like(&s, &p) != *negated) as i64)
+                    }
                     _ => Value::Null,
                 }
             }
@@ -551,7 +560,11 @@ impl Expr {
                 v => v,
             },
             Expr::Key(a, coll) => match a.eval(row, cx)? {
-                Value::Str(b) | Value::Bin(b) if coll.is_ci() => Value::Bin(coll.key(&b)),
+                Value::Str(b) | Value::Bin(b) if coll.is_ci() => {
+                    crate::budget::charge((b.len() as u64).saturating_mul(16))?;
+                    crate::budget::work(b.len() as u64)?;
+                    Value::Bin(coll.key(&b))
+                }
                 v => v,
             },
         })
@@ -633,6 +646,7 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             }
             let mut out = Vec::new();
             for v in vals {
+                crate::budget::charge(crate::budget::value_bytes(&v).saturating_mul(4))?;
                 out.extend_from_slice(&v.to_text().unwrap_or_default());
             }
             Value::Str(Bytes::from(out))
@@ -644,6 +658,12 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
                 None => return Ok(Value::Null),
             };
             let parts: Vec<Bytes> = vals[1..].iter().filter_map(|v| v.to_text()).collect();
+            crate::budget::charge(
+                parts
+                    .iter()
+                    .fold(0u64, |n, s| n.saturating_add(s.len() as u64 + sep.len() as u64))
+                    .saturating_mul(4),
+            )?;
             Value::Str(Bytes::from(parts.join(&sep[..])))
         }
         Length => match text(&arg(0)?) {
@@ -658,6 +678,7 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             Value::Null => Value::Null,
             v => {
                 let s = text_str(&v);
+                crate::budget::charge((s.len() as u64).saturating_mul(12))?;
                 Value::str(&if f == Lower { s.to_lowercase() } else { s.to_uppercase() })
             }
         },
@@ -666,6 +687,7 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             if s.is_null() {
                 return Ok(Value::Null);
             }
+            crate::budget::charge(crate::budget::value_bytes(&s).saturating_mul(12))?;
             let chars: Vec<char> = text_str(&s).chars().collect();
             let pos = int_arg(&arg(1)?).unwrap_or(1);
             let n = chars.len() as i64;
@@ -707,6 +729,11 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             if from.is_empty() {
                 return Ok(s);
             }
+            crate::budget::charge(
+                (text_str(&s).len() as u64)
+                    .saturating_mul(text_str(&to).len() as u64 + 1)
+                    .saturating_mul(4),
+            )?;
             Value::str(&text_str(&s).replace(&from, &text_str(&to)))
         }
         Abs => match arg(0)? {
@@ -815,19 +842,23 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             Value::Null => Value::Null,
             Value::Int(i) => Value::str(&format!("{:X}", i)),
             Value::UInt(u) => Value::str(&format!("{:X}", u)),
-            v => Value::str(
-                &v.to_text()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<String>(),
-            ),
+            v => {
+                crate::budget::charge(crate::budget::value_bytes(&v).saturating_mul(8))?;
+                Value::str(
+                    &v.to_text()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<String>(),
+                )
+            }
         },
         Left | Right => {
             let s = arg(0)?;
             let n = int_arg(&arg(1)?);
             match (s.is_null(), n) {
                 (false, Some(n)) => {
+                    crate::budget::charge(crate::budget::value_bytes(&s).saturating_mul(12))?;
                     let chars: Vec<char> = text_str(&s).chars().collect();
                     let n = (n.max(0) as usize).min(chars.len());
                     let slice = if f == Left {
@@ -844,9 +875,13 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
             let (s, n, p) = (arg(0)?, int_arg(&arg(1)?), arg(2)?);
             match (s.is_null() || p.is_null(), n) {
                 (false, Some(n)) => {
+                    crate::budget::charge(
+                        (crate::budget::value_bytes(&s) + crate::budget::value_bytes(&p)).saturating_mul(12),
+                    )?;
                     let s: Vec<char> = text_str(&s).chars().collect();
                     let p: Vec<char> = text_str(&p).chars().collect();
                     let n = n.max(0) as usize;
+                    crate::budget::charge((n as u64).saturating_mul(16))?;
                     if s.len() >= n {
                         Value::str(&s[..n].iter().collect::<String>())
                     } else if p.is_empty() {
@@ -863,7 +898,15 @@ fn eval_func(f: Func, args: &[Expr], row: &[Value], cx: &EvalCtx) -> SqlResult<V
         Repeat => {
             let (s, n) = (arg(0)?, int_arg(&arg(1)?));
             match (s.is_null(), n) {
-                (false, Some(n)) => Value::str(&text_str(&s).repeat(n.clamp(0, 1 << 20) as usize)),
+                (false, Some(n)) => {
+                    let count = n.clamp(0, 1 << 20) as usize;
+                    crate::budget::charge(
+                        (text_str(&s).len() as u64)
+                            .saturating_mul(count as u64)
+                            .saturating_mul(4),
+                    )?;
+                    Value::str(&text_str(&s).repeat(count))
+                }
                 _ => Value::Null,
             }
         }

@@ -308,7 +308,7 @@ fn union_columns(lc: &[Column], rc: &[Column]) -> SqlResult<Arc<[Column]>> {
 
 fn rows_of(out: Output) -> SqlResult<(Arc<[Column]>, Vec<Vec<Value>>)> {
     match out {
-        Output::Rows { columns, rows } => Ok((columns, rows)),
+        Output::Rows { columns, rows, .. } => Ok((columns, rows)),
         Output::Ok { .. } => Err(SqlError::internal("subquery did not return rows")),
     }
 }
@@ -404,10 +404,15 @@ impl Session {
                     let (lc, mut lr) = self.eval_set(left).await?;
                     let (rc, rr) = self.eval_set(right).await?;
                     let cols = union_columns(&lc, &rc)?;
+                    crate::budget::charge((lr.len() as u64 + rr.len() as u64).saturating_mul(64))?;
                     lr.extend(rr);
                     let distinct = !matches!(set_quantifier, A::SetQuantifier::All | A::SetQuantifier::AllByName);
                     if distinct {
                         let colls: Vec<Collation> = cols.iter().map(column_collation).collect();
+                        for row in &lr {
+                            crate::budget::work(1)?;
+                            crate::budget::charge(crate::budget::row_bytes(row).saturating_mul(16))?;
+                        }
                         let mut seen = HashSet::new();
                         lr.retain(|row| {
                             seen.insert(
@@ -494,6 +499,7 @@ impl Session {
                 let rows: Vec<_> = rows.into_iter().flatten().collect();
                 self.found_rows = rows.len() as u64;
                 Ok(Output::Rows {
+                    resource_guard: None,
                     columns: columns.clone(),
                     rows,
                 })
@@ -530,6 +536,15 @@ impl Session {
                     keys.push((idx, matches!(o.options.sort, Some(A::OrderBySort::Desc))));
                 }
                 let colls: Vec<Collation> = columns.iter().map(column_collation).collect();
+                let n = rows.len() as u64;
+                let largest = rows.iter().map(|r| crate::budget::row_bytes(r)).max().unwrap_or(0);
+                let _sort_memory = crate::budget::retain(largest.saturating_mul(32))?;
+                crate::budget::work(
+                    n.saturating_mul(n.max(1).ilog2() as u64 + 1)
+                        .saturating_mul(keys.len() as u64)
+                        .saturating_mul(largest)
+                        .saturating_mul(4),
+                )?;
                 rows.sort_by(|a, b| {
                     for &(i, desc) in &keys {
                         let ord = crate::types::sort_cmp_coll(&a[i], &b[i], colls[i]);
@@ -565,7 +580,11 @@ impl Session {
                 rows.truncate(l);
             }
         }
-        Ok(Output::Rows { columns, rows })
+        Ok(Output::Rows {
+            columns,
+            rows,
+            resource_guard: None,
+        })
     }
 }
 

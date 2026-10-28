@@ -30,6 +30,7 @@ pub enum Output {
     Rows {
         columns: Arc<[Column]>,
         rows: Vec<Vec<Value>>,
+        resource_guard: Option<tarn_common::ResourceGuard>,
     },
 }
 
@@ -105,6 +106,7 @@ pub struct Prepared {
 }
 
 pub struct Session {
+    retained: crate::budget::Account,
     pub cluster: Arc<Cluster>,
     pub db: Option<String>,
     pub user: String,
@@ -182,7 +184,7 @@ pub(crate) const MAX_RETRIES: usize = 20;
 
 /// The mark (`Client::mark`) of a connection to a shard without the native
 /// autocommit procedure.
-const MARK_NO_NATIVE_WRITE: u32 = 1;
+pub(crate) const MARK_NO_NATIVE_WRITE: u32 = 1;
 
 /// Statements that met a stale catalog: a table definition an ALTER TABLE
 /// replaced (1412; the shards refuse writes made with it while the ALTER
@@ -408,6 +410,7 @@ impl Session {
             (g.isolation, g.lock_wait_timeout)
         };
         Session {
+            retained: cluster.resources.account(cluster.cfg.resources.query_bytes),
             db: None,
             user: "root".into(),
             conn_id,
@@ -551,7 +554,7 @@ impl Session {
     async fn set_var(&mut self, scope: VarScope, name: &str, rhs: &str) -> SqlResult<()> {
         if let Some(user) = name.strip_prefix('@') {
             let v = self.eval_set_value(rhs, false).await?.unwrap_or(Value::Null);
-            self.user_vars.insert(user.to_string(), v);
+            self.set_user_value(user.to_string(), v)?;
             return Ok(());
         }
         if name == "names" {
@@ -592,7 +595,7 @@ impl Session {
                 "character_set_connection",
                 "character_set_results",
             ] {
-                self.sys_vars.insert(v.into(), Value::str(&cs));
+                self.set_system_value(v.into(), Value::str(&cs))?;
             }
             self.collation_connection = co;
             return Ok(());
@@ -622,7 +625,7 @@ impl Session {
                     self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
                     Value::Int(self.lazy_wait_timeout as i64)
                 };
-                self.sys_vars.insert(name.to_string(), v);
+                self.set_system_value(name.to_string(), v)?;
                 return Ok(());
             }
             n if n.starts_with("character_set_") && n != "character_set_system" => {
@@ -679,7 +682,7 @@ impl Session {
                     }
                     Some(_) => {
                         let v = admin::TreeChecks::parse(&text).ok_or_else(|| admin::bad_value(name, &text))?;
-                        self.sys_vars.insert(name.to_string(), Value::str(v.name()));
+                        self.set_system_value(name.to_string(), Value::str(v.name()))?;
                     }
                 }
                 return Ok(());
@@ -701,7 +704,7 @@ impl Session {
                 self.sys_vars.remove(name);
             }
             Some(v) => {
-                self.sys_vars.insert(name.to_string(), v);
+                self.set_system_value(name.to_string(), v)?;
             }
         }
         Ok(())
@@ -740,6 +743,36 @@ impl Session {
     // ---- entry points -------------------------------------------------------
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
+        let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
+        crate::budget::scope(query.clone(), async {
+            let result = async {
+                crate::budget::charge((sql.len() as u64).saturating_mul(128).saturating_add(4096))?;
+                crate::budget::work(sql.len() as u64)?;
+                Box::pin(self.query_budgeted(sql)).await
+            }
+            .await;
+            self.finish_budgeted(result, &query)
+        })
+        .await
+    }
+
+    fn finish_budgeted(
+        &mut self,
+        mut result: SqlResult<Output>,
+        query: &Arc<crate::budget::Query>,
+    ) -> SqlResult<Output> {
+        if result.as_ref().is_err_and(crate::budget::is_exhausted) {
+            if let Some(txn) = self.txn.take() {
+                txn.rollback(&self.cluster);
+            }
+        }
+        if let Ok(Output::Rows { resource_guard, .. }) = &mut result {
+            *resource_guard = Some(query.guard());
+        }
+        result
+    }
+
+    async fn query_budgeted(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !admin::reads_diagnostics(sql) {
             self.warnings.clear();
@@ -846,12 +879,28 @@ impl Session {
             ));
         }
         for (v, x) in vars.iter().zip(row) {
-            self.user_vars.insert(v.clone(), x);
+            self.set_user_value(v.clone(), x)?;
         }
         Ok(Output::ok(1))
     }
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
+        let query = self.cluster.resources.query();
+        crate::budget::scope_sync(query, || {
+            let old = self.retained.used();
+            self.retained.resize(
+                old.saturating_add((sql.len() as u64).saturating_mul(128))
+                    .saturating_add(4096),
+            )?;
+            let result = self.prepare_budgeted(id, sql);
+            if result.is_err() {
+                self.retained.resize(old)?;
+            }
+            result
+        })
+    }
+
+    fn prepare_budgeted(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
         let sql = crate::prep::expand_comments(sql);
         let sql: &str = &sql;
         if let Some(a) = admin::recognize(sql)? {
@@ -909,6 +958,19 @@ impl Session {
     }
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+        let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
+        crate::budget::scope(query.clone(), async {
+            let result = async {
+                crate::budget::charge(crate::budget::row_bytes(params).saturating_mul(4))?;
+                self.execute_budgeted(id, params).await
+            }
+            .await;
+            self.finish_budgeted(result, &query)
+        })
+        .await
+    }
+
+    async fn execute_budgeted(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !self
             .prepared
@@ -985,6 +1047,53 @@ impl Session {
 
     pub fn close(&mut self, id: u32) {
         self.prepared.remove(&id);
+        let _ = self.retained.resize(self.retained_size());
+    }
+
+    fn retained_size(&self) -> u64 {
+        let vars = self
+            .user_vars
+            .iter()
+            .chain(self.sys_vars.iter())
+            .fold(0u64, |n, (k, v)| {
+                n.saturating_add((256 + k.len() as u64 + crate::budget::value_bytes(v)).saturating_mul(8))
+            });
+        let plans = self.prepared.values().fold(0u64, |n, p| {
+            n.saturating_add(4096 + (p.template.len() as u64).saturating_mul(128))
+        });
+        self.sql_prepared
+            .iter()
+            .fold(vars.saturating_add(plans), |n, (name, (sql, _))| {
+                n.saturating_add(4096 + (name.len() as u64 + sql.len() as u64).saturating_mul(128))
+            })
+    }
+
+    fn set_user_value(&mut self, name: String, value: Value) -> SqlResult<()> {
+        let old = self
+            .user_vars
+            .get(&name)
+            .map_or(0, |v| (256 + name.len() as u64 + crate::budget::value_bytes(v)) * 8);
+        let desired = self
+            .retained_size()
+            .saturating_sub(old)
+            .saturating_add((256 + name.len() as u64 + crate::budget::value_bytes(&value)) * 8);
+        self.retained.resize(self.retained.used().max(desired))?;
+        drop(self.user_vars.insert(name, crate::budget::own_value(value)));
+        self.retained.resize(desired)
+    }
+
+    fn set_system_value(&mut self, name: String, value: Value) -> SqlResult<()> {
+        let old = self
+            .sys_vars
+            .get(&name)
+            .map_or(0, |v| (256 + name.len() as u64 + crate::budget::value_bytes(v)) * 8);
+        let desired = self
+            .retained_size()
+            .saturating_sub(old)
+            .saturating_add((256 + name.len() as u64 + crate::budget::value_bytes(&value)) * 8);
+        self.retained.resize(self.retained.used().max(desired))?;
+        drop(self.sys_vars.insert(name, crate::budget::own_value(value)));
+        self.retained.resize(desired)
     }
 
     pub fn disconnect(&mut self) {
@@ -1035,18 +1144,26 @@ impl Session {
             default_coll: &self.cluster.cfg.default_collation,
         };
         let stmt = planner::plan(template, &ctx)?;
+        let cache_guard = tarn_common::ResourceMemory::reserve(
+            self.cluster.resources.clone(),
+            4096 + (template.len() as u64 + key.len() as u64).saturating_mul(128),
+        )
+        .ok();
         if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
         ) {
-            self.cluster.cache_plan(
-                &db,
-                &key,
-                Arc::new(CachedPlan {
-                    version: catalog.version,
-                    stmt: stmt.clone(),
-                }),
-            );
+            if let Some(cache_guard) = cache_guard {
+                self.cluster.cache_plan(
+                    &db,
+                    &key,
+                    Arc::new(CachedPlan {
+                        resource_guard: cache_guard,
+                        version: catalog.version,
+                        stmt: stmt.clone(),
+                    }),
+                );
+            }
         }
         Ok(stmt)
     }
@@ -1124,7 +1241,14 @@ impl Session {
                     }
                 }
             };
-            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+            return self.finish_txn_stmt(
+                txn,
+                res.map(|rows| Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                }),
+            );
         }
         if crate::lazy::eligible(p) && !self.lazy_history.strong {
             if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
@@ -1138,7 +1262,11 @@ impl Session {
             if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
                 self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
                 self.found_rows = rows.len() as u64;
-                return Ok(Output::Rows { columns, rows });
+                return Ok(Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                });
             }
         }
         if crate::lazy::eligible(p) {
@@ -1154,7 +1282,11 @@ impl Session {
                 run_select(&self.cluster, &mut mode, p, &cx).await?
             };
             self.found_rows = rows.len() as u64;
-            return Ok(Output::Rows { columns, rows });
+            return Ok(Output::Rows {
+                columns,
+                rows,
+                resource_guard: None,
+            });
         }
         // Autocommit: one lock-aware storage read if the plan allows it,
         // otherwise an implicit read-only transaction (validated at the end).
@@ -1164,7 +1296,11 @@ impl Session {
             match run_select(&self.cluster, &mut mode, p, &cx).await {
                 Ok(rows) => {
                     self.found_rows = rows.len() as u64;
-                    return Ok(Output::Rows { columns, rows });
+                    return Ok(Output::Rows {
+                        columns,
+                        rows,
+                        resource_guard: None,
+                    });
                 }
                 Err(e) if e.code == NEED_TXN => {}
                 Err(e) => return Err(e),
@@ -1188,7 +1324,11 @@ impl Session {
             match res {
                 Ok(rows) => {
                     self.found_rows = rows.len() as u64;
-                    return Ok(Output::Rows { columns, rows });
+                    return Ok(Output::Rows {
+                        columns,
+                        rows,
+                        resource_guard: None,
+                    });
                 }
                 Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
@@ -1224,7 +1364,14 @@ impl Session {
             if let Ok(rows) = &res {
                 self.found_rows = rows.len() as u64;
             }
-            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+            return self.finish_txn_stmt(
+                txn,
+                res.map(|rows| Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                }),
+            );
         }
         let mut txn = self.new_txn(false);
         let res = {
@@ -1235,7 +1382,11 @@ impl Session {
             Ok(rows) => {
                 self.commit_tracked(txn).await?;
                 self.found_rows = rows.len() as u64;
-                Ok(Output::Rows { columns, rows })
+                Ok(Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                })
             }
             Err(e) => {
                 txn.rollback(&self.cluster);
@@ -1261,7 +1412,7 @@ impl Session {
     /// a conflict ends the transaction (as a MySQL deadlock does).
     pub(crate) fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
         match res {
-            Err(e) if e.code == 1213 || e.code == 1412 || txn.doomed.is_some() => {
+            Err(e) if e.code == 1213 || e.code == 1412 || crate::budget::is_exhausted(&e) || txn.doomed.is_some() => {
                 txn.rollback(&self.cluster);
                 Err(e)
             }
@@ -1279,6 +1430,10 @@ impl Session {
         if self.txn_needed() {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
+            if let Err(error) = txn.snapshot_charge() {
+                txn.rollback(&self.cluster);
+                return Err(error);
+            }
             let snapshot = txn.writes.clone();
             let res = match check_defs(&txn, stmt_tables(stmt)) {
                 Err(e) => Err(e),
@@ -1489,21 +1644,15 @@ impl Session {
             // Lazy sources require Lua capture. Avoid a predictable extra
             // native call; the shard also enforces capture exclusions for
             // stale gateways that do not yet know this metadata.
-            let result = async {
-                let native = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
-                    self.cluster
-                        .call_native_once(shard, "tarn_storage.ts_autocommit", &writes.0, MARK_NO_NATIVE_WRITE)
-                        .await?
-                } else {
-                    None
-                };
-                match native {
-                    Some(d) if !crate::mpw::status_is(&d, "lua") => Ok(d),
-                    _ => self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await,
-                }
-            }
+            let result = crate::budget::autocommit(
+                &self.cluster,
+                shard,
+                matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy(),
+                &writes.0,
+                self.lock_wait_timeout,
+            )
             .await;
-            let d = match result {
+            let (d, _wire) = match result {
                 Ok(d) => d,
                 Err(e) => {
                     if table.has_lazy() {
@@ -1909,7 +2058,7 @@ impl Session {
             )
             .await?;
             txn.mark_begun(shard);
-            txn.note_point(shard, g.table.space_id, 0, key, bucket);
+            txn.note_point(shard, g.table.space_id, 0, key, bucket)?;
             rows.into_iter().next()
         };
         let Some(entry) = entry else { return Ok(None) };
@@ -1956,7 +2105,7 @@ impl Session {
         )
         .await?;
         txn.mark_begun(shard);
-        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket);
+        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket)?;
         Ok(rows.into_iter().next())
     }
 
@@ -2299,7 +2448,7 @@ impl Session {
             for (((l, _), r), b) in pending.into_iter().zip(results).zip(buckets) {
                 let (r, _) = r?;
                 txn.mark_begun(l.2);
-                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b);
+                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b)?;
                 place(&mut out, l.0, l.1, r.into_iter().next());
             }
         }
@@ -2388,7 +2537,7 @@ impl Session {
                 )
                 .await?;
                 txn.mark_begun(shard);
-                txn.note_point(shard, t.space_id, id, key, bucket);
+                txn.note_point(shard, t.space_id, id, key, bucket)?;
                 stored.push(rows.into_iter().next());
             }
         }
@@ -2683,7 +2832,13 @@ impl Session {
             self.cluster.refresh_if_newer().await?;
         }
         let catalog = self.cluster.catalog();
-        let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| Ok(Output::Rows { columns, rows });
+        let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| {
+            Ok(Output::Rows {
+                columns,
+                rows,
+                resource_guard: None,
+            })
+        };
         match a {
             Admin::Begin { .. } => {
                 self.implicit_commit().await?;
@@ -2747,6 +2902,8 @@ impl Session {
                 if let Some(t) = self.txn.as_mut() {
                     // A savepoint of the same name is replaced.
                     t.savepoints.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                    t.snapshot_charge()?;
+                    t.savepoint_name_charge(name.len())?;
                     t.savepoints.push((name, t.writes.clone()));
                 }
                 Ok(Output::ok(0))
@@ -2761,6 +2918,7 @@ impl Session {
                     .ok_or_else(missing)?;
                 // Undo the writes since the savepoint; keep the row locks and
                 // the read set (as InnoDB keeps the locks).
+                t.snapshot_charge()?;
                 t.writes = t.savepoints[i].1.clone();
                 t.savepoints.truncate(i + 1);
                 Ok(Output::ok(0))
@@ -2779,6 +2937,7 @@ impl Session {
             Admin::Prepare { name, source } => {
                 // A failed PREPARE leaves no statement of that name, as in MySQL.
                 self.sql_prepared.remove(&name);
+                let _ = self.retained.resize(self.retained_size());
                 let text = match source {
                     admin::PrepareSource::Text(s) => s,
                     admin::PrepareSource::Var(v) => match self.user_vars.get(&v) {
@@ -2805,6 +2964,8 @@ impl Session {
                     return Err(SqlError::parse("You have an error in your SQL syntax: empty statement"));
                 }
                 let n = crate::prep::count_markers(&text);
+                let additional = 4096 + (name.len() as u64 + text.len() as u64).saturating_mul(128);
+                self.retained.charge(additional)?;
                 self.sql_prepared.insert(name, (text, n));
                 Ok(Output::Ok {
                     affected: 0,
@@ -3381,6 +3542,17 @@ impl Session {
             ),
             ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
+        let resources = self.cluster.resources.stats();
+        stats.extend([
+            ("Tarn_resource_bytes", resources[0]),
+            ("Tarn_resource_peak_bytes", resources[1]),
+            ("Tarn_resource_work", resources[2]),
+            ("Tarn_resource_peak_work", resources[3]),
+            ("Tarn_resource_queries", resources[4]),
+            ("Tarn_resource_refusals", resources[5]),
+            ("Tarn_resource_read_deadlines", resources[6]),
+            ("Tarn_topk_scans", self.cluster.stats.topk_scans.load(Ordering::Relaxed)),
+        ]);
         stats.retain(|(n, _)| like_ci(n, like));
         let mut rows: Vec<Row> = stats
             .into_iter()
@@ -3399,6 +3571,7 @@ impl Session {
                 .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
         );
         Output::Rows {
+            resource_guard: None,
             columns: cols(&[
                 ("Variable_name", ColumnType::VarString),
                 ("Value", ColumnType::VarString),

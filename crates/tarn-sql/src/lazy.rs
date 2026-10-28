@@ -310,6 +310,7 @@ fn decode_page(
     if n > PAGE_ENTRIES {
         return Err(proto("lazy page exceeds entry bound"));
     }
+    crate::budget::decoded(d.len(), n, ix.cols.len() + t.pk().cols.len() + 3)?;
     let mut rows = Vec::with_capacity(n);
     for _ in 0..n {
         if rd.array()? != 5 {
@@ -494,7 +495,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
             }
         }
         Route::Buckets(vec![bucket]).encode(&mut m);
-        let d = cluster.call(shard, "tarn_lazy_select", &m.0).await?;
+        let (d, _wire) = crate::budget::cluster_read(cluster, shard, "tarn_lazy_select", &m.0).await?;
         let (candidates, next) = decode_page(&d, l.space_id, t, ix, map.count)?;
         if next.is_some() && next == after {
             return Err(proto("lazy cursor did not advance"));

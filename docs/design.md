@@ -2086,6 +2086,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
 | Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
+| Bug_QueryEarlyResultRelease | violates Ownership | 24 | 30 | 5 | 00s | 5 |
+| Bug_QueryEarlyWireRelease | violates Ownership | 5 | 5 | 3 | 00s | 3 |
+| Bug_QueryPostDecisionRefusal | violates NoPartialBudgetDML | 39 | 58 | 6 | 00s | 6 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
@@ -2152,6 +2155,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
+| QueryBudget | no errors | 142 | 249 | 13 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
 | RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 04min 27s |  |

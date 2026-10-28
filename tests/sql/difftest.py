@@ -1217,6 +1217,13 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # Bounded unindexed ORDER/LIMIT (#134): NULLs, collation keys and
+    # offsets; computed and floating-point sort keys retain the normal path.
+    ("SELECT id,b FROM t1 ORDER BY b DESC,id LIMIT 3 OFFSET 1", "q"),
+    ("SELECT id,a FROM t1 ORDER BY a DESC,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,d FROM t1 ORDER BY d DESC,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,a FROM t1 ORDER BY a+1,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,name FROM ci ORDER BY name COLLATE utf8mb4_bin DESC,id LIMIT 3 OFFSET 1", "q"),
     # joins whose inner lookups are read in batches (issue #84): 600 outer
     # rows, keys repeated, NULL or without rows
     ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),

@@ -62,6 +62,7 @@ DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
 DEFAULT="$DEFAULT EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex"
 DEFAULT="$DEFAULT NativeKeyBatch Bug_KeyBatchMissingClaim Bug_KeyBatchMixedSnapshots Bug_KeyBatchTruncatedComplete"
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
+DEFAULT="$DEFAULT QueryBudget Bug_QueryEarlyWireRelease Bug_QueryEarlyResultRelease Bug_QueryPostDecisionRefusal"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

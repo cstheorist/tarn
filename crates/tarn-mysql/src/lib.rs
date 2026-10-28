@@ -46,6 +46,8 @@ pub const MAX_PREPARED_STMTS: usize = 16382;
 
 #[derive(Clone, Debug)]
 pub struct ServerOpts {
+    /// Shared admission for retained socket buffers and prepared long data.
+    pub memory: Option<Arc<dyn tarn_common::ResourceMemory>>,
     /// Version string in the handshake, e.g. "8.0.40-tarn".
     pub server_version: String,
     pub auth: AuthConfig,
@@ -54,6 +56,7 @@ pub struct ServerOpts {
 impl Default for ServerOpts {
     fn default() -> Self {
         ServerOpts {
+            memory: None,
             server_version: "8.0.40-tarn".to_string(),
             auth: AuthConfig::AllowAll,
         }
@@ -79,6 +82,7 @@ pub enum QueryResult {
     Rows {
         columns: Arc<[Column]>,
         rows: Vec<Vec<Value>>,
+        resource_guard: Option<tarn_common::ResourceGuard>,
     },
 }
 
@@ -119,12 +123,18 @@ struct Stmt {
     /// the next EXECUTE fails.
     long_bytes: usize,
     long_overflow: bool,
+    long_error: Option<SqlError>,
+    long_charge: u64,
+    long_guards: Vec<tarn_common::ResourceGuard>,
 }
 
 struct Conn<B> {
     stream: TcpStream,
     rbuf: BytesMut,
     wbuf: Vec<u8>,
+    result_guards: Vec<tarn_common::ResourceGuard>,
+    buffer_charge: u64,
+    buffer_guards: Vec<tarn_common::ResourceGuard>,
     scratch: Vec<u8>,
     seq: u8,
     caps: u32,
@@ -357,10 +367,14 @@ impl<B: Backend> Conn<B> {
         if !self.wbuf.is_empty() {
             self.stream.write_all(&self.wbuf).await?;
             self.wbuf.clear();
-            if self.wbuf.capacity() > 4 << 20 {
-                self.wbuf = Vec::with_capacity(64 << 10);
+            if self.wbuf.capacity() > 64 << 10 {
+                self.wbuf = Vec::with_capacity(16 << 10);
             }
         }
+        if self.scratch.capacity() > 64 << 10 {
+            self.scratch = Vec::with_capacity(1024);
+        }
+        self.result_guards.clear();
         Ok(())
     }
 
@@ -371,9 +385,20 @@ impl<B: Backend> Conn<B> {
             }
             // Nothing complete buffered: answer everything so far, then block.
             self.flush().await?;
-            if self.rbuf.capacity() - self.rbuf.len() < 4096 {
-                self.rbuf.reserve(64 << 10);
+            let need = (self.rbuf.len().saturating_add(16 << 10).next_power_of_two() as u64)
+                .saturating_mul(4)
+                .saturating_add(256 << 10);
+            if need > self.buffer_charge {
+                if let Some(pool) = &self.opts.memory {
+                    let guard = pool
+                        .clone()
+                        .reserve(need - self.buffer_charge)
+                        .map_err(io::Error::other)?;
+                    self.buffer_guards.push(guard);
+                }
+                self.buffer_charge = need;
             }
+            self.rbuf.reserve(16 << 10);
             if self.stream.read_buf(&mut self.rbuf).await? == 0 {
                 return Ok(None);
             }
@@ -470,7 +495,11 @@ impl<B: Backend> Conn<B> {
                 info,
                 warnings,
             }) => self.send_ok(affected_rows, last_insert_id, warnings, &info),
-            Ok(QueryResult::Rows { columns, rows }) => {
+            Ok(QueryResult::Rows {
+                columns,
+                rows,
+                resource_guard,
+            }) => {
                 if columns.is_empty() {
                     self.send_ok(0, 0, 0, "");
                     return Ok(());
@@ -492,6 +521,9 @@ impl<B: Backend> Conn<B> {
                     }
                 }
                 self.send_eof_or_ok();
+                if let Some(guard) = resource_guard {
+                    self.result_guards.push(guard);
+                }
             }
         }
         Ok(())
@@ -571,9 +603,20 @@ impl<B: Backend> Conn<B> {
                     ));
                     return Ok(true);
                 }
+                if let Some(error) = st.long_error.take() {
+                    st.long_data.clear();
+                    st.long_bytes = 0;
+                    st.long_charge = 0;
+                    st.long_guards.clear();
+                    self.send_err(&error);
+                    return Ok(true);
+                }
                 let params = packets::decode_params(&mut r, st.num_params as usize, &mut st.types, &mut st.long_data);
+                let _long_guards = std::mem::take(&mut st.long_guards);
                 st.long_data.clear();
                 st.long_bytes = 0;
+                st.long_charge = 0;
+                st.long_guards.clear();
                 match params {
                     None => self.send_err(&malformed()),
                     Some(params) => {
@@ -608,6 +651,9 @@ impl<B: Backend> Conn<B> {
                                 long_data: HashMap::new(),
                                 long_bytes: 0,
                                 long_overflow: false,
+                                long_error: None,
+                                long_charge: 0,
+                                long_guards: Vec::new(),
                             },
                         );
                         let ncols = info.columns.len() as u16;
@@ -637,7 +683,30 @@ impl<B: Backend> Conn<B> {
                             st.long_overflow = true;
                             st.long_data.clear();
                             st.long_bytes = 0;
+                            st.long_charge = 0;
+                            st.long_guards.clear();
                         } else {
+                            if st.long_error.is_some() {
+                                return Ok(true);
+                            }
+                            let need =
+                                ((st.long_bytes + chunk.len()).max(1).next_power_of_two() as u64).saturating_mul(4);
+                            if need > st.long_charge {
+                                if let Some(pool) = &self.opts.memory {
+                                    match pool.clone().reserve(need - st.long_charge) {
+                                        Ok(guard) => st.long_guards.push(guard),
+                                        Err(error) => {
+                                            st.long_error = Some(error);
+                                            st.long_data.clear();
+                                            st.long_bytes = 0;
+                                            st.long_charge = 0;
+                                            st.long_guards.clear();
+                                            return Ok(true);
+                                        }
+                                    }
+                                }
+                                st.long_charge = need;
+                            }
                             st.long_bytes += chunk.len();
                             st.long_data.entry(param).or_default().extend_from_slice(chunk);
                         }
@@ -659,6 +728,9 @@ impl<B: Backend> Conn<B> {
                         st.long_data.clear();
                         st.long_bytes = 0;
                         st.long_overflow = false;
+                        st.long_error = None;
+                        st.long_charge = 0;
+                        st.long_guards.clear();
                         self.send_ok(0, 0, 0, "");
                     }
                     None => self.send_err(&unknown_stmt(id, "mysqld_stmt_reset")),
@@ -733,10 +805,20 @@ pub async fn serve_connection<B: Backend>(
     backend: B,
 ) -> io::Result<()> {
     let _ = stream.set_nodelay(true);
+    let initial_charge = (256 + 4 * 16) << 10;
+    let buffer_guard = opts
+        .memory
+        .as_ref()
+        .map(|pool| pool.clone().reserve(initial_charge))
+        .transpose()
+        .map_err(io::Error::other)?;
     let mut c = Conn {
         stream,
         rbuf: BytesMut::with_capacity(16 << 10),
         wbuf: Vec::with_capacity(16 << 10),
+        result_guards: Vec::new(),
+        buffer_charge: initial_charge,
+        buffer_guards: buffer_guard.into_iter().collect(),
         scratch: Vec::with_capacity(1024),
         seq: 0,
         caps: 0,

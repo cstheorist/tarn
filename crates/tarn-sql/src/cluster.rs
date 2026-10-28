@@ -42,6 +42,9 @@ pub struct ShardConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClusterConfig {
+    /// Query/transaction and gateway-wide SQL resource budgets.
+    #[serde(default)]
+    pub resources: crate::budget::Limits,
     pub shards: Vec<ShardConfig>,
     /// The number of buckets of a new cluster (default
     /// `buckets::NEW_CLUSTER_BUCKETS`), fixed when the first SQL server
@@ -402,6 +405,14 @@ impl Shard {
         *self.leader.write() = None;
     }
 
+    pub(crate) fn retire_connections(&self) {
+        if let Some(pool) = self.leader.write().take() {
+            for client in &pool.clients {
+                client.close();
+            }
+        }
+    }
+
     pub fn leader_addr(&self) -> Option<String> {
         self.leader.read().as_ref().map(|p| p.addr.clone())
     }
@@ -474,6 +485,7 @@ impl Shard {
 
 #[derive(Default)]
 pub struct Stats {
+    pub topk_scans: AtomicU64,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
     pub commits_2pc: AtomicU64,
@@ -503,11 +515,13 @@ pub struct Stats {
 }
 
 pub struct CachedPlan {
+    pub resource_guard: tarn_common::ResourceGuard,
     pub version: u64,
     pub stmt: crate::plan::Stmt,
 }
 
 pub struct Cluster {
+    pub resources: Arc<crate::budget::Pool>,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
@@ -870,6 +884,7 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            resources: crate::budget::Pool::new(cfg.resources.clone())?,
             cfg,
             shards,
             globals,
@@ -976,6 +991,7 @@ impl Cluster {
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
+            max_response_bytes: crate::budget::STORAGE_REPLY_BYTES,
         }
     }
 

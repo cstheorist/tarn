@@ -17,6 +17,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Bounded SQL execution ([#134](https://github.com/cstheorist/tarn/issues/134)):
+  configurable query, transaction and gateway allocation/work envelopes refuse
+  oversized operations with 1041/HY000 before commit. Eligible unindexed
+  `ORDER BY ... LIMIT` scans retain bounded top-K candidates. Pending reads,
+  results awaiting socket delivery, prepared state and transaction buffers
+  retain their charges until released. See [resource limits](docs/resources.md)
+  for defaults, cleanup, supported shapes and proof boundaries.
+
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
   lookup loop for complete memtx autocommit batches of up to 128 keys.
