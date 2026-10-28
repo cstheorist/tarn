@@ -742,7 +742,9 @@ before-enqueue refusals, 40003 for enqueued mutations, at-most-once physical
 increments and deadline release. Its live reserve probe discovers a fresh
 connection and reads transaction status while ordinary capacity stays full.
 `TARN_NATIVE=0` and `ENGINE=vinyl` exercise the storage alternatives. These
-are bounded-resource/fault witnesses, not throughput benchmarks.
+are bounded-resource/fault witnesses, not throughput benchmarks. The
+[transport component measurements](../bench/RESULTS.md#storage-rpc-admission-component-measurements-issue-127)
+retain matched repeated evidence and its shared-host uncertainty.
 
 ## Monitoring
 
