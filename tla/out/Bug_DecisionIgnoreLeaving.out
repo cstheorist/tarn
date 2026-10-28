@@ -1,0 +1,59 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 65 and seed -8000020568584347817 with 1 worker on 1 cores with 455MB heap and 64MB offheap memory [pid: 88] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/DecisionPlacement.tla
+Parsing file /tmp/tlc-12010448933107490422/Naturals.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-12010448933107490422/FiniteSets.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-12010448933107490422/TLC.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-12010448933107490422/_TLCTrace.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-12010448933107490422/Sequences.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-12010448933107490422/TLCExt.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-12010448933107490422/Integers.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module DecisionPlacement
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module DecisionPlacement
+Starting... (2026-10-27 22:05:42)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Computed 32 initial states...
+Computed 64 initial states...
+Computed 128 initial states...
+Finished computing initial states: 152 distinct states generated at 2026-10-27 22:05:42.
+Error: Invariant ActivePreferred is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ changed = FALSE
+/\ lookup = 0
+/\ writers = {1, 2}
+/\ frozen = {}
+/\ active = {1}
+/\ selected = 0
+/\ readers = {}
+/\ phase = "new"
+/\ durable = 0
+
+State 2: <Freeze line 24, col 5 to line 29, col 71 of module DecisionPlacement>
+/\ changed = FALSE
+/\ lookup = 0
+/\ writers = {1, 2}
+/\ frozen = {1}
+/\ active = {1}
+/\ selected = 2
+/\ readers = {}
+/\ phase = "frozen"
+/\ durable = 0
+
+252 states generated, 252 distinct states found, 153 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-27 22:05:42)
+Trace exploration spec path: ./DecisionPlacement_TTrace_1793138742.tla

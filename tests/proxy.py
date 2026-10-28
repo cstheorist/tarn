@@ -21,6 +21,7 @@ if REPLY not in ("drop", "invalid-type"):
     raise ValueError("TARN_FAULT_REPLY must be drop or invalid-type")
 state = {"left": 1}
 lock = threading.Lock()
+ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
 
 
 def matching_sync(data):
@@ -68,7 +69,8 @@ def pump(src, dst, conn, c2s):
                 break
             if c2s:
                 with lock:
-                    trig = state["left"] > 0 and all(m in data for m in MATCH)
+                    trig = (state["left"] > 0 and (not ARM_FILE or os.path.isfile(ARM_FILE))
+                            and all(m in data for m in MATCH))
                     if trig:
                         state["left"] -= 1
                         conn["drop"] = True

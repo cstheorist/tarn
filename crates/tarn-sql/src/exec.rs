@@ -22,6 +22,12 @@ use tarn_common::{Column, SqlError, SqlResult, Value};
 use tarn_iproto::Iter;
 
 mod colocated;
+pub(crate) mod diagnostics;
+
+async fn read_client(cluster: &Cluster, shard: usize) -> SqlResult<tarn_iproto::Client> {
+    crate::observe::shard(shard);
+    cluster.shards[shard].client(cluster).await
+}
 
 /// Error code used internally to say "this statement needs a transaction":
 /// an autocommit read touched more than one shard or needed more than one
@@ -499,7 +505,7 @@ pub(crate) async fn fetch_keys(
                 return Err(need_txn());
             }
             for (s, (ks, _)) in &per_shard {
-                let client = cluster.shards[*s].client(cluster).await?;
+                let client = read_client(cluster, *s).await?;
                 rows.extend(
                     keys_pages(
                         &client,
@@ -522,7 +528,7 @@ pub(crate) async fn fetch_keys(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
-                let client = cluster.shards[*s].client(cluster).await?;
+                let client = read_client(cluster, *s).await?;
                 let route = &routes[s];
                 futs.push(async move {
                     keys_pages(
@@ -900,7 +906,7 @@ async fn read_calls(
                 return Err(need_txn());
             }
             for (c, route) in calls.iter().zip(&routes) {
-                let client = cluster.shards[c.shard].client(cluster).await?;
+                let client = read_client(cluster, c.shard).await?;
                 let s = scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await?;
                 read += s.read;
                 out.push(s);
@@ -909,7 +915,7 @@ async fn read_calls(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
-                let client = cluster.shards[c.shard].client(cluster).await?;
+                let client = read_client(cluster, c.shard).await?;
                 futs.push(
                     async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await },
                 );
@@ -1324,7 +1330,7 @@ async fn colocated_rows(
             crate::txn::select_join(&st.client, st.id, &reads, false, st.begin, &route).await
         }
         _ => {
-            let client = cluster.shards[shard].client(cluster).await?;
+            let client = read_client(cluster, shard).await?;
             cluster.stats.storage_reads.fetch_add(1, AtomicOrdering::Relaxed);
             crate::txn::select_join(&client, 0, &reads, true, false, &route).await
         }
@@ -1351,6 +1357,7 @@ async fn colocated_rows(
     let JoinedRead::Complete(groups) = result else {
         return Ok(None);
     };
+    crate::observe::grouped();
     let count: usize = groups.iter().map(|g| g.rows.len()).sum();
     cluster.stats.rows_read.fetch_add(count as u64, AtomicOrdering::Relaxed);
     if let ReadMode::Txn(txn) = mode {
@@ -2293,7 +2300,7 @@ async fn storage_count(
                 return Err(need_txn());
             }
             for (c, route) in calls.iter().zip(&routes) {
-                let client = cluster.shards[c.shard].client(cluster).await?;
+                let client = read_client(cluster, c.shard).await?;
                 let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
                 n += count_rows(
                     &client,
@@ -2315,7 +2322,7 @@ async fn storage_count(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
-                let client = cluster.shards[c.shard].client(cluster).await?;
+                let client = read_client(cluster, c.shard).await?;
                 let preds = &preds;
                 futs.push(async move {
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));

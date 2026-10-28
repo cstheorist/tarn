@@ -474,6 +474,7 @@ impl Shard {
 
 #[derive(Default)]
 pub struct Stats {
+    pub(crate) query_digests: crate::observe::Metrics,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
     pub commits_2pc: AtomicU64,
@@ -505,6 +506,7 @@ pub struct Stats {
 pub struct CachedPlan {
     pub version: u64,
     pub stmt: crate::plan::Stmt,
+    pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
@@ -1133,6 +1135,7 @@ impl Cluster {
         args: &[u8],
         mark: u32,
     ) -> SqlResult<Bytes> {
+        crate::observe::shard(shard);
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
@@ -1180,6 +1183,12 @@ impl Cluster {
         idempotent: bool,
         mut selected: Option<Client>,
     ) -> SqlResult<Bytes> {
+        if matches!(
+            func,
+            "tarn_autocommit" | "tarn_apply" | "tarn_abort" | "tarn_fence" | "tarn_txn_cas"
+        ) {
+            crate::observe::shard(shard);
+        }
         let s = &self.shards[shard];
         let mut tries = 0;
         loop {
@@ -1342,10 +1351,10 @@ impl Cluster {
 
     // ---- DDL ----------------------------------------------------------------
 
-    pub async fn create_database(&self, name: &str, if_not_exists: bool) -> SqlResult<()> {
+    pub async fn create_database(&self, name: &str, if_not_exists: bool) -> SqlResult<u64> {
         if self.catalog().has_db(name) {
             if if_not_exists {
-                return Ok(());
+                return Ok(0);
             }
             return Err(SqlError::new(
                 1007,
@@ -1356,7 +1365,8 @@ impl Cluster {
         let mut a = Mp::new();
         a.arr(1).str(name);
         lua_status(&self.call(0, "tarn_db_create", &a.0).await?)?;
-        self.bump_catalog().await
+        self.bump_catalog().await?;
+        Ok(1)
     }
 
     pub async fn drop_database(&self, name: &str, if_exists: bool, lock_timeout: f64) -> SqlResult<u64> {

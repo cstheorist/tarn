@@ -91,9 +91,14 @@ at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
 | `max_txn_age` | 120 s | PREPAREs of older transactions are refused; must match `max_txn_age` in `cluster.json` |
 | `clock_skew` | 60 s | assumed bound on clock differences between nodes |
 | `recovery_after` | 2 s | age at which an undecided cross-shard transaction is resolved by the recovery fiber |
-| `recovery_interval` | 0.5 s | recovery and garbage-collection period |
+| `recovery_interval` | 0.5 s | period of the recovery fiber's passes, and the first wait before recovery tries a failed transaction, or a shard a call failed on, again |
+| `recovery_batch` | 200 | undecided transactions a recovery pass tries, of each kind (prepared participants, STAGING decision records); it looks at no more than five times as many, from where the previous pass stopped |
+| `recovery_workers` | 4 | transactions a recovery pass resolves at once |
+| `recovery_backoff_max` | 5 s | longest wait before recovery tries a failed transaction, or a shard a call failed on, again; the wait doubles from `recovery_interval` with each failure in a row |
 | `lock_wait` | 1 s | how long an autocommit read or write waits for a conflicting prepared transaction before failing with 1213 |
-| `gc_batch` | 500 | protocol records deleted per garbage-collection transaction |
+| `gc_interval` | 0.5 s | period of the garbage-collection fiber's passes |
+| `gc_batch` | 500 | protocol records deleted per garbage-collection transaction; a pass looks at no more than `gc_batch` × 40 expired records of each kind, from where the previous pass stopped, and deletes no more than `gc_batch` × 4 |
+| `gc_time_budget` | 0.5 s | a garbage-collection pass asks other shards about no more records after this; the rest wait for its next lap |
 | `alter_check_rows` | 1,000,000 | `ALTER TABLE` refuses (1846) to check or materialize existing rows (a narrower type, `NOT NULL`, indexed non-NULL fills) when a shard holds more of them than this: writes to the table wait for the whole scan |
 | `lazy_outbox_entries` | 65,536 | per-shard committed lazy-index assignments plus PREPARE promises; fresh admissions exceeding this cap fail with 1041 |
 | `lazy_outbox_bytes` | 64 MiB | corresponding encoded assignment and promise bytes; this is not a reservation of native allocator memory |
@@ -662,6 +667,95 @@ scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints 
 over Unix sockets. Storage instance *j* of shard *i* listens on
 `BASE + 10·i + j` (default base 3300); SQL server *k* on `SQL_PORT + k − 1`.
 
+## Query plans and fanout
+
+`EXPLAIN FORMAT=JSON SELECT ...` returns one MySQL result column named
+`EXPLAIN`, containing a `tarn-plan-v1` JSON object. Physical SELECT, INSERT,
+UPDATE and DELETE plans are supported. Plain EXPLAIN query plans, ANALYZE,
+other formats, execution options and complex queries outside the physical
+planner are rejected explicitly. Existing `EXPLAIN table` remains DESCRIBE.
+
+Planning uses the gateway's cached catalog and bucket map. It makes no
+user-data reads, allocates no AUTO_INCREMENT values, takes no row locks and
+does not start or commit a transaction. `planned_catalog_version` and each
+table's `definition_version` identify the metadata. Counts are routing
+constraints or upper bounds, not observed rows or transaction participants.
+Unknown counts are JSON `null`, with a reason; a broadcast names every
+current live shard and bucket. Dependent join keys, global-index base-row
+lookups, defaults and unbound parameters can leave routes unknown. Eligible
+lazy-index queries report an unknown alternative and the strong path:
+actual lazy routing depends on session barriers and runtime base rows.
+
+Each access reports its chosen index, columns, shard key and the existing
+schema-linter findings (up to 32). Colocation eligibility uses the same
+ordered hash-input proof as grouped execution, including types, collations,
+primary prefixes and ON equalities. An eligible join reports a conditional
+one-bucket route plus its fallback bounds: storage capability, buffered
+writes and runtime conditions still determine actual execution. LIMIT plans
+may choose the reported alternative index using runtime row-count samples.
+DML also reports potential global-index participants; old/new entries,
+REPLACE conflicts and shard-key relocation may depend on affected rows.
+Diagnostics stop at 64 accesses, 256 keys per access and path depth 16;
+over-budget details remain unknown.
+
+For prepared statements whose parameters are not bound:
+
+```sql
+PREPARE p FROM 'SELECT * FROM t WHERE id=?';
+SHOW TARN PLAN FOR p;          -- unknown parameter-dependent routes
+-- SHOW TARN PLAN FOR 1;       -- binary prepared statement ID on this connection
+```
+
+Binary-prepared `EXPLAIN FORMAT=JSON ... WHERE id=?` binds parameters at
+execution and retains the single EXPLAIN column. `SHOW TARN PLAN` never
+executes the prepared statement.
+
+`SHOW TARN QUERIES` reports completed foreground physical SELECT/DML and
+COMMIT observations on this SQL server. `Query` is a normalized, literal-
+redacted sample (at most 512 UTF-8 bytes), `Digest` a SHA-1 identifier over
+the full normalized text and default database, and `Database` at most 64
+bytes. Text and prepared executions share a digest. Identifiers remain
+visible; these diagnostics have the same administrative visibility as
+existing server status. Comments and literal values are omitted. Complex
+queries, DDL, other administration, planning failures and detached recovery
+are untracked; `Tarn_query_digest_untracked` makes that coverage visible.
+
+`Calls` includes successes and errors; `Errors` counts the latter.
+`No_data`, `Local` and `Distributed` partition calls by zero, one or multiple
+observed shard targets. Targets include data read attempts, buffered write
+destinations and foreground protocol calls, including failed attempts and
+retries. They do not assert physical effects or committed participants.
+`Max_shards` is the maximum distinct targets in one call; `Shard_targets`
+is their sum. `Known_bucket_targets` sums distinct explicitly routed
+buckets, capped at 4096 per call; `Unknown_bucket_calls` counts calls with
+broadcast, buffered-write, unknown or over-cap bucket details. It is not a
+complete bucket total; zero unknown signals does not establish completeness.
+`Read_attempts` counts encoded scan, multi-key, count, grouped and lazy
+read/page requests (not separate row-lock RPCs), with native-to-Lua fallback
+as one attempt; `Grouped_reads` counts successful grouped responses. `Local_commits` and `Distributed_commits`
+count successful coordinator outcomes with one or multiple commit
+participants, while `Commit_errors` counts errors after commit was
+attempted. Explicit transactions attribute their commit to COMMIT rather
+than a preceding statement. `Total_us` sums observed wall-clock duration.
+
+The registry holds at most 256 digests with least-recently-completed eviction;
+SHOW uses only in-memory observations and does not clear them. Status exposes
+`Tarn_query_digest_capacity`, `entries`, `evictions`, `tracked`, `untracked`
+and `cancelled`. Cancelled calls are excluded from completed digest totals.
+No histograms, bindings, row contents or unbounded per-query histories are
+retained. These observations do not change query results, commit decisions,
+retry eligibility or MySQL errors, including 40001 versus 40003.
+
+For example, a parent with `PRIMARY KEY(tenant_id,id)` and child with
+`PRIMARY KEY(tenant_id,parent_id,id)` default to different full-key hash
+inputs. A child prefix lookup can broadcast. Declaring both with
+`PARTITION BY KEY(tenant_id)` and joining on tenant and parent ID allows
+a primary-prefix join under a bound parent to use one bucket. Compare
+EXPLAIN's eligibility/reasons, then the two digests' `Max_shards` and
+`Grouped_reads`. `tests/sql/explaintest.py` verifies equal 16-row results and
+the observed fanout change on two shards. This is a routing demonstration,
+not a latency or throughput benchmark.
+
 ## Monitoring
 
 For lazy indexes, `SHOW STATUS LIKE 'Tarn_lazy%'` includes completed lazy
@@ -694,9 +788,13 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
   collection, row locks held (`row_locks`) and the transactions with
   row-lock state (`plock_txns`), tables held by a `TRUNCATE` or
   `DROP TABLE` in progress (`ddl_held`), and counters (`prepare_yes`,
-  `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `recovered`,
-  `gc_part`, `gc_txn`, `validate_changed`; for row locks `plock_waits`,
-  `deadlocks`, `lock_timeouts`, `commit_rc`, `commit_waits`; for buckets
+  `prepare_no`, `apply`, `abort`, `conflicts`, `lock_waits`, `gc_part`,
+  `gc_txn`, `validate_changed`; for recovery `recovered` (prepared
+  participants of this shard it resolved), `recovery_attempts`,
+  `recovery_failures` and `recovery_shard_backoffs` (failed calls to a
+  shard, after which recovery waits before calling it again); for row
+  locks `plock_waits`, `deadlocks`, `lock_timeouts`, `commit_rc`,
+  `commit_waits`; for buckets
   `buckets` and `bucket_epoch`, and the counters `moved` (requests refused
   for their bucket), `move_broken_locks`, `bucket_sends`, `bucket_recvs`),
   and `native`: false without the native procedures, else whether they are
@@ -726,6 +824,19 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
   The counters in `stats` count what the Lua procedures do
   (`commit_local`, `conflicts`, `validate_changed`); `native` counts the
   rest.
+* `tarn_info().recovery` shows whether recovery and garbage collection
+  keep up: the undecided transactions old enough to resolve, as recovery's
+  last full lap found them (`prepared` participants, `staging` decision
+  records), and the age in seconds of the oldest of each now
+  (`oldest_prepared`, `oldest_staging`); the transactions that wait out a
+  backoff after a failed attempt (`waiting`); the shards a call failed on
+  (`shards_down`), which recovery calls again once their backoff is over;
+  its full laps of each kind (`laps`); and garbage collection's progress:
+  the expired records it looked at (`gc.scanned`), its full laps of each
+  kind (`gc.laps`) and the seconds since each last ended (`gc.lap_ago`).
+  An oldest age that keeps growing, with a shard that stays in
+  `shards_down`, means transactions wait for that shard; their rows stay
+  locked until it answers.
 * `protocol_errors` in `tarn_info().stats` must stay 0: a non-zero value
   means a storage node saw a protocol message that the commit protocol
   should make impossible (for example an APPLY for an aborted
@@ -740,7 +851,7 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
 | Leader change or lost SQL-server connection while READ COMMITTED transactions hold row locks | The row locks live in the leader's memory and are released; each transaction that held some is rolled back with 1213 at its next statement on that shard or at commit, never committed without them. |
 | `tarn-server` dies during a cross-shard commit | The storage nodes' recovery fiber finishes or aborts the transaction after `recovery_after`; its locks block conflicting statements until then. |
 | Connection lost while a commit is in flight | The client gets 1180 / SQLSTATE 40003: the outcome is unknown, and the write is not re-sent. |
-| A shard is down for a while | Transactions that touch it fail; rows of transactions that committed but were not yet applied there stay locked until it returns and recovery applies them. |
+| A shard is down for a while | Transactions that touch it fail. Rows of transactions that committed but were not yet applied there stay locked until it returns and recovery applies them, and so do rows of undecided transactions that need it to be decided. Recovery resolves the transactions that do not need it meanwhile, and calls the shard again once per backoff (up to `recovery_backoff_max`); `tarn_info().recovery.shards_down` lists it. |
 | A shard fails during `CREATE TABLE`, `DROP TABLE`, `TRUNCATE` or `ALTER TABLE` | Before every shard prepared: the statement fails and the change is undone on every shard (once the shard is back, for that shard). After: the statement reports 1180 and the change is completed on every shard once the shard is back. Either way a SQL server finishes the job by itself (`ddl_job_stale`); until then, other schema changes of the same table wait. |
 | A bucket moves | Statements that meet it run again with the new map; a transaction that used its rows while it moved is rolled back with 1213. Writes to its rows wait from the move's fence to its switch. |
 | A move's SQL server stops, or a shard leader dies during a move | Another SQL server finishes the move after `ddl_job_stale`: back if the old shard had not sent the bucket, forward otherwise; a leader change alone does not stop a move. |

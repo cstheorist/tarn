@@ -1306,13 +1306,98 @@ the immutable old/new identity premise.
 tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 ```
 
+### Decision-record placement (issue #132)
+
+`TarnCommit!DecisionParticipant` abstracts a stable choice from frozen writing
+participants. `Placement_Recov`, `Placement_Failover` and `Placement_RC`
+override it with a transaction-specific choice that places the common
+two-shard writer's record on B. They check the existing commit invariants
+with coordinator crashes/message loss and GC, leader failure, and READ
+COMMITTED locks, respectively. The tombstone and expiry-fence controls are
+also checked with that placement. This checks another placement of the
+record without changing the commit or GC guards.
+
+`DecisionPlacement.tla` checks separate local premises on three shards:
+every nonempty writing set, read-only participants, every active membership,
+and a membership change before or after PREPARE. Selection prefers an
+active writer, falls back to a writer when none is active, and keeps that
+identity in durable records and recovery lookups. A leaving candidate is
+refused rather than redirected. With hashing abstracted by any eligible
+choice, the positive configuration has 1,970 states; allowing a read-only
+decision, ignoring active writers, and selecting again during recovery
+violate their invariants in 162, 252 and 1,142 states, respectively.
+
+These are bounded protocol/identity checks. They do not prove uniform hash
+distribution, the membership service, Lua serialization, clocks, storage
+durability, or behavior for arbitrary cluster sizes. Rust tests check
+canonical durable-ID ordering, gateway position changes, active preference
+and realistic transaction-ID spread. `tests/decision.sh` checks actual
+participant/decision records on three shards, excludes read-only decision
+participants, keeps the local path free of distributed records, drops a
+PREPARE reply through a TCP proxy, and kills its owned coordinator after
+all participants prepared at a non-first decision writer. Recovery must
+apply exactly once using the persisted identity. CI runs this with native
+memtx, Lua-only memtx and vinyl tables.
+
+```sh
+tla/check.sh DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect \
+  Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry
+tests/decision.sh
+TARN_NATIVE=0 tests/decision.sh
+ENGINE=vinyl tests/decision.sh
+```
+
+`bench/decision_placement.py` makes repeated, matched placement measurements:
+new RF1/fsync clusters for each build/sample, disjoint rows per client and
+one write per shard per transaction. It checks all committed tuples and
+recorded identities, captures per-shard participant/decision records and
+WAL rows/file growth, then waits for the eligible records' GC and counts its
+deletions and WAL. The shorter retention and zero clock-skew allowance are
+confined to these owned single-host fixtures. This is a placement workload;
+it does not establish an RF3 performance or operational advantage.
+
+### Recovery and garbage collection move on (issue #129)
+
+Recovery and garbage collection go through records in order: undecided
+transactions oldest first, expired records by expiry. Some of them cannot
+be acted on while a shard is down: a transaction that needs it cannot be
+resolved, and some records cannot be collected. `RecoveryFairness.tla`
+models the order of the passes (`lua/tarn.lua`, "Scheduling"), not what
+they do with a record, which `TarnCommit.tla` models:
+- a pass looks at no more than `Scan` records, and acts on no more than
+  `Batch` of those it may act on now (`recovery_batch`, and five times as
+  many; `gc_batch * 4`, and `gc_batch * 40`);
+- it continues after the last record the previous pass looked at, and a
+  pass that reaches the last record starts the next lap from the first;
+- a record it could not act on waits `Backoff` passes.
+
+The stuck records are any set of them: TLC tries each. `BoundedWait`:
+within ceil(N / Batch) + 1 passes, every record that is not stuck has been
+acted on. `BugPrefix` starts every pass from the first record, as both did
+before: TLC finds stuck records first that keep the others from being acted
+on (as many as a pass looks at, and no pass looks past them).
+
+```sh
+tla/check.sh Fairness Bug_FairnessPrefix
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `Fairness` | 2048 | 8 | passes |
+| `Bug_FairnessPrefix` | 1281 | 6 | violates `BoundedWait` |
+
+Both have eight records, `Batch` = 2, `Scan` = 3 and `Backoff` = 2.
+`lua/test/recovery_faults.sh` checks the same on three shards, one of them
+stopped, with 250 transactions that need it on each of the other two
+(`recovery_batch` is 200) and more records than a garbage-collection pass
+looks at.
+
 ### Configuration counts
 
-The default list contains 191 configurations, including 139 expected
-broken/trade-off outcomes. The 202 generated configurations reproduce from
-`gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 204 total. Explicit check arguments override the default
-list.
+The default list contains 202 configurations, including 145 expected
+broken/trade-off outcomes. The 209 generated configurations reproduce from
+`gen_cfgs.sh`; six grouped-read and decision-placement configurations are
+maintained directly, for 215 total. Explicit check arguments override the default list.
 
 ## Verus proofs
 
@@ -1398,7 +1483,7 @@ cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for; the lock checks of each, key by key, with the keys in ranges and the ranges' bounds compared as the Lua checks compare them (collations, prefixes, NULLs; `native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures. The shards run with `TARN_CHECK_LOCKS`: after each change of the lock index, the Lua module compares the native module's copy of it with it, and a difference fails the run |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection (also past transactions that need a stopped shard: `recovery_faults.sh`), refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for; the lock checks of each, key by key, with the keys in ranges and the ranges' bounds compared as the Lua checks compare them (collations, prefixes, NULLs; `native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures. The shards run with `TARN_CHECK_LOCKS`: after each change of the lock index, the Lua module compares the native module's copy of it with it, and a difference fails the run |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 967 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
@@ -1442,3 +1527,17 @@ Lua heap limit.
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.
+
+
+Query routing diagnostics (`observe.rs`, `exec/diagnostics.rs`, issue #133)
+are outside the TLA+ safety state: they neither change protocol messages nor
+read/write user tuples. Coordinator hooks observe existing events only,
+without an observer borrow across await. EXPLAIN shares the executor's
+colocation guards and routing coercions; it supplies no values to execution.
+Unit tests bound cardinality and cancellation/concurrent scopes. The public
+MySQL suite `tests/sql/explaintest.py` checks prepared and text plans,
+unknown parameters, no IDs/implicit commits/read effects, literal redaction,
+eviction, and an exact-result join whose aligned shard keys reduce observed
+fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
+storage protocols, SQL, transaction and live-fault suites remain required;
+these models do not prove observer accuracy or performance.

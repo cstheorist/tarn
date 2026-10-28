@@ -62,6 +62,9 @@ DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
 DEFAULT="$DEFAULT EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex"
 DEFAULT="$DEFAULT NativeKeyBatch Bug_KeyBatchMissingClaim Bug_KeyBatchMixedSnapshots Bug_KeyBatchTruncatedComplete"
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
+DEFAULT="$DEFAULT DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect
+Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry"
+DEFAULT="$DEFAULT Fairness Bug_FairnessPrefix"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

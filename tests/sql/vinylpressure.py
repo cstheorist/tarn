@@ -33,7 +33,7 @@ import uuid
 
 import pymysql
 
-from lazyfaults import Lease as ApplyLease
+from lazyfaults import Lease as ApplyLease, decision_node
 from lazytest import ev, q, rpc
 from movetest import bucket_of
 
@@ -419,7 +419,15 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
                 apply.known_committed = True
                 state = apply.snapshot()
                 assert state["state"] == "prepared" and state["row"] is None, state
-                assert state["dshard"] == self.identities[0]["id"], state
+                decision = decision_node(self.nodes, self.identities, state)
+                # If the pending participant is also the decision writer,
+                # its APPLY has not yet turned STAGING into COMMITTED. The
+                # successful SQL commit already proved unanimous YES;
+                # establish the same confirmed decision witness for either
+                # placement before forcing admission pressure.
+                rpc(decision, "tarn_txn_cas", [state["txid"], "staging", "committed"])
+                assert ev(decision, "local r=box.space._tarn_txn:get{...}; return r and r.status",
+                          [state["txid"]]) == "committed", state
                 with Controls(self) as control:
                     control.pressure()
                     apply.release()
