@@ -8,6 +8,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Define a tested rolling-upgrade/rollback pair with protocol/format
+  admission on every new gateway storage connection, explicit native
+  fallback diagnostics, and RF3/fsync mixed-version regressions for memtx
+  and vinyl. See [rolling upgrades](docs/upgrades.md).
+
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
   lookup loop for complete memtx autocommit batches of up to 128 keys.

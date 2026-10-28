@@ -180,6 +180,45 @@ jobs:
           done
           true
 
+  upgrade:
+    name: Rolling upgrade (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [memtx, vinyl]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Python packages
+        run: pip install PyMySQL
+      - name: Restore Tarantool
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+      - name: Upgrade, mixed components, refusal and rollback
+        run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
+      - name: Retain upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rolling-upgrade-${{ matrix.engine }}
+          path: /tmp/tarn-upgrade-build.*/
+          retention-days: 14
+
   tla:
     name: TLA+ model checking
     runs-on: ubuntu-24.04

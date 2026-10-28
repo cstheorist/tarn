@@ -14,6 +14,14 @@ What each layer found, and how the findings were fixed, is described in the
 
 ## TLA+ model
 
+The [rolling-upgrade contract](upgrades.md) admits connections before the
+existing protocol actions. Its runtime/disk-format checks and exact-version
+compatibility matrix are tested by `tests/rolling_upgrade.sh`, including
+durable prepared state, real leader handoffs, DDL, moves, lazy delivery and
+rollback under RF3/fsync with memtx and vinyl. These checks do not change
+the modeled commit actions or prove compatibility with arbitrary historical
+or future code. Native fallback retains the handback contract below.
+
 `tla/TarnCommit.tla` specifies the protocol: shards, keys with owners, three
 transactions with fixed read and write sets, direct (non-SQL) readers, and
 the actions of execution, single-shard commit, read-only validation,

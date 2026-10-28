@@ -1,6 +1,9 @@
 ------------------------------ MODULE TarnCommit ------------------------------
 (***************************************************************************)
 (* Tarn's transaction protocol over Tarantool shards.                      *)
+(* Connection/version admission precedes these unchanged actions. The     *)
+(* runtime compatibility matrix is tested separately (docs/upgrades.md);  *)
+(* this model does not prove arbitrary mixed-version refinement.          *)
 (*                                                                         *)
 (* Every SQL table is a plain Tarantool space ("data" below).  Clients may *)
 (* read those spaces directly (DirectRead).  SQL transactions run in two   *)

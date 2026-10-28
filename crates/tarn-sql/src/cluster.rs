@@ -445,10 +445,14 @@ impl Shard {
                 last_err = format!("{} is read-only", addr);
                 continue;
             }
+            crate::compat::admit(&c, self.id, cluster.cfg.max_txn_age).await?;
             let mut clients = vec![c.clone()];
             for _ in 1..cluster.cfg.pool_size.max(1) {
                 match Client::connect(&opts).await {
-                    Ok(x) => clients.push(x),
+                    Ok(x) => {
+                        crate::compat::admit(&x, self.id, cluster.cfg.max_txn_age).await?;
+                        clients.push(x);
+                    }
                     Err(e) => {
                         tracing::warn!(shard = self.id, "extra connection to {}: {}", addr, e);
                         break;
