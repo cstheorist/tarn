@@ -990,13 +990,10 @@ struct tarn_ns {
     uint8_t fresh_mode, fresh_clock_ok, fresh_reserved[6];
     double read_timeout;
     uint64_t clock_mono, clock_wall, clock_max_gap, clock_max_drift;
-    uint8_t (*fresh_mark)(uint64_t);
-    uint8_t (*fresh_ok)(uint64_t);
-    uint8_t (*fresh_controls)(void);
-    uint8_t (*fresh_space)(uint32_t);
+    uint64_t fresh_guard_reserved[4];
 };
 ]]
-BK.NS_LAYOUT = 13
+BK.NS_LAYOUT = 14
 M.NS_LAYOUT = BK.NS_LAYOUT   -- (tests: the layout this module declares)
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
@@ -1330,8 +1327,9 @@ function BK.ns_sync()
     ns.clock_mono, ns.clock_wall = mono, wall
     ns.clock_max_gap, ns.clock_max_drift = gap, drift
     ns.read_timeout = M.cfg.read_freshness_timeout
-    ns.fresh_mark, ns.fresh_ok = M.fresh.mark_callback, M.fresh.ok_callback
-    ns.fresh_controls, ns.fresh_space = M.fresh.controls_callback, M.fresh.space_callback
+    -- ABI14 no longer stores LuaJIT FFI callback pointers. Native guards
+    -- enter the strongly rooted M.fresh functions through the public C API.
+    for i = 0, 3 do ns.fresh_guard_reserved[i] = 0 end
     ns.load_until = BK.load.t0 + M.cfg.load_window
     ns.pl_n = PL_N
     ns.held = BK.held

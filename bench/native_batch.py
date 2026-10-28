@@ -158,7 +158,7 @@ def measure(args, root, number, trial, mode, shape, batch, workers, seed, route)
         assert before["uuid"] == after["uuid"] and before["pid"] == after["pid"], "storage restarted"
         for snapshot in (before, after):
             assert snapshot["read_contract"] == ["strong_reads", 1]
-            assert snapshot["native_layout"] == 13 and snapshot["native_size"] == 392
+            assert snapshot["native_layout"] == 14 and snapshot["native_size"] == 392
             assert snapshot["native_fresh_clock_ok"] == 1 and snapshot["info"]["clock"]["read_ready"]
         assert result["operations"] > 0
         operations = result["operations"]
@@ -256,7 +256,7 @@ def run(args):
                 "rust_observer_order": "before counter snapshot AFTER tarn_info; after snapshot BEFORE tarn_info; stack-only counter reply",
                 "cpu_scope": "TX/process CPU includes the observer/background interval between snapshots; idle/probe control retained, not subtracted",
                 "jit_gc": "normal JIT and incremental GC; no stop/collect in timed phases",
-                "read_guarantee": "strong_reads V1: fresh quorum barrier before data on both Lua/native paths; native ABI13/392 and owned CALL input copy"}
+                "read_guarantee": "strong_reads V1: fresh quorum barrier before data on both Lua/native paths; native ABI14/392 and owned CALL input copy"}
     manifest["arguments"]["client"] = str(args.client)
     manifest["arguments"]["output"] = str(args.output)
     write(root/"manifest.json", manifest)
@@ -264,7 +264,7 @@ def run(args):
     write(root/"initial.json", initial)
     assert initial["jit_on"] and initial["gc_running"] is not False
     assert initial["info"]["native"]["ready"] == 1, "other native procedures must stay enabled"
-    assert initial["native_layout"] == 13 and initial["native_size"] == 392
+    assert initial["native_layout"] == 14 and initial["native_size"] == 392
     assert initial["test_hooks"] is False,"performance fixture must omit TARN_TEST_HOOKS rather than set string0"
     assert initial["info"]["locks"] == initial["info"]["prepared"] == initial["info"]["ddl_held"] == 0
     idle0 = observe(args)
@@ -423,7 +423,7 @@ def run_prepared_controls(args):
     assert args.tenant is not None and args.bucket>0 and args.modes==['lua','native']
     assert args.trials*2*(args.warmup+args.seconds)<=40,'prepared control must finish within60s'
     initial=observe(args);write(root/'initial.json',initial)
-    assert initial['native_layout']==13 and initial['native_size']==392 and initial['info']['native']['ready']==1
+    assert initial['native_layout']==14 and initial['native_size']==392 and initial['info']['native']['ready']==1
     assert initial['test_hooks'] is False and initial['active_native_hooks']==0 and initial['jit_on'] and initial['gc_running'] is not False
     assert initial['info']['locks']==initial['info']['prepared']==initial['info']['ddl_held']==0
     write(root/'manifest.json',{'script_sha256':digest(__file__),'client_sha256':digest(args.client),

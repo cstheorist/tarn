@@ -692,11 +692,19 @@ fn read_clock_ready() -> bool {
     state().is_some_and(|s| crate::freshness::clock_ready(s, mono, wall))
 }
 
-/// Copy callbacks out of State before invoking them. They are protected,
-/// nonyielding Lua callbacks, but no Rust State reference may span them.
+unsafe extern "C" {
+    /// Public Lua API bridge. All allocating Lua work is protected inside
+    /// C; the guard functions cannot yield or inspect native State.
+    fn tarn_lua_guard(kind: u8, argument: u64) -> u8;
+}
+
+/// Enter Lua through its explicit protected API, never a stored FFI callback
+/// using LuaJIT's cached state. No Rust State reference spans this call.
 fn fresh_controls_mode() -> Option<u8> {
-    let callback = state().and_then(|s| s.fresh_controls);
-    callback.map(|f| unsafe { f() }).filter(|mode| matches!(mode, 1 | 2))
+    match unsafe { tarn_lua_guard(1, 0) } {
+        mode @ (1 | 2) => Some(mode),
+        _ => None,
+    }
 }
 
 fn fresh_controls_ok() -> bool {
@@ -704,16 +712,14 @@ fn fresh_controls_ok() -> bool {
 }
 
 fn fresh_space_ok(space: u32) -> bool {
-    let callback = state().and_then(|s| s.fresh_space);
-    callback.is_some_and(|f| unsafe { f(space) } == 1)
+    unsafe { tarn_lua_guard(2, u64::from(space)) == 1 }
 }
 
 fn fresh_stream_ok() -> bool {
-    let callback = state().and_then(|s| s.fresh_ok);
     // SAFETY: a public transaction identity query, followed by the exact
     // current-ID certificate lookup. Neither step yields.
     let id = unsafe { txn_number() };
-    id != 0 && callback.is_some_and(|f| unsafe { f(id) } == 1)
+    id != 0 && unsafe { tarn_lua_guard(4, id) == 1 }
 }
 
 /// Prepare a supported read before acquiring schema/lock/native State.
@@ -742,9 +748,8 @@ fn fresh_read(first: bool, checked: bool, space: u32, raise: &Cell<bool>) -> Opt
     } else if first {
         // A new, empty transaction: no State reference crosses this wait.
         let t = unsafe { Txn::begin_stream(raise)? };
-        let mark = state().and_then(|s| s.fresh_mark);
         let id = unsafe { txn_number() };
-        if id == 0 || !mark.is_some_and(|f| unsafe { f(id) } == 1) {
+        if id == 0 || unsafe { tarn_lua_guard(3, id) } != 1 {
             drop(t);
             return back(Why::Freshness);
         }

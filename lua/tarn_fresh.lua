@@ -94,11 +94,12 @@ function M.new(c)
             unavailable('space ' .. sp.name .. ' is not synchronous')
         end
     end
-    -- These native guards run before borrowing State and after a quorum
-    -- wait. Read current public configuration/space properties each time,
+    -- These ordinary Lua guards run through the public Lua C API before
+    -- borrowing native State and after a quorum wait. Read current public
+    -- configuration/space properties each time,
     -- including the immutable clock-policy match between sampler ticks.
     -- No observation, State publication, data access or yield is allowed.
-    local function callback(fn, ...)
+    local function native_guard(fn, ...)
         local old = box.error.last()
         local ok, result = pcall(fn, ...)
         local restored = pcall(function()
@@ -117,9 +118,9 @@ function M.new(c)
         F.space(sp)
         return 1
     end
-    F.controls_callback = ffi.cast('uint8_t (*)(void)', function() return callback(controls) end)
-    F.space_callback = ffi.cast('uint8_t (*)(uint32_t)', function(sid) return callback(space, sid) end)
-    -- Callbacks used by native procedures. They never yield, touch native
+    function F.native_controls() return native_guard(controls) end
+    function F.native_space(sid) return native_guard(space, sid) end
+    -- Guards used by native procedures. They never yield, touch native
     -- State or refresh clock/membership. Both hooks bound registry lifetime
     -- to the exact transaction, including a raw IPROTO COMMIT/ROLLBACK.
     function F.mark(id)
@@ -156,14 +157,8 @@ function M.new(c)
     function F.ok(id)
         return box.is_in_txn() and key(id) == key(current()) and F.streams[key(id)] and 1 or 0
     end
-    F.mark_callback = ffi.cast('uint8_t (*)(uint64_t)', function(id)
-        local ok, result = pcall(F.mark, id)
-        return ok and result == 1 and 1 or 0
-    end)
-    F.ok_callback = ffi.cast('uint8_t (*)(uint64_t)', function(id)
-        local ok, result = pcall(F.ok, id)
-        return ok and result == 1 and 1 or 0
-    end)
+    function F.native_mark(id) return native_guard(F.mark, id) end
+    function F.native_ok(id) return native_guard(F.ok, id) end
     function F.stream()
         c.writable()
         if F.ok(current()) ~= 1 then unavailable('ambient stream has no first-read freshness proof') end

@@ -79,8 +79,13 @@ end
 local read_args = {sid,0,{1,token},0,1,box.NULL,true,true,box.NULL,false,box.NULL,1}
 ok(c:call('tarn_select', read_args))
 local n = ev(leader, [[local ffi=require('ffi');local n=ffi.cast('struct tarn_ns*',box.func['tarn_storage.ts_state']:call())
-    return {layout=tonumber(n.layout),size=ffi.sizeof('struct tarn_ns'),clock=tonumber(n.fresh_clock_ok),hooks=tonumber(n.hooks)}]])
-check('actual ABI13 and production native clock mirror are ready', n.layout == 13 and n.size == 392 and n.clock == 1 and n.hooks == 0, n)
+    local zero=true;for i=0,3 do zero=zero and n.fresh_guard_reserved[i]==0 end
+    return {layout=tonumber(n.layout),size=ffi.sizeof('struct tarn_ns'),clock=tonumber(n.fresh_clock_ok),hooks=tonumber(n.hooks),
+        byte_reserved_offset=ffi.offsetof('struct tarn_ns','fresh_reserved'),
+        guard_reserved_offset=ffi.offsetof('struct tarn_ns','fresh_guard_reserved'),
+        guard_reserved_size=ffi.sizeof(n.fresh_guard_reserved),guard_reserved_zero=zero}]])
+check('actual ABI14 and production native clock mirror are ready', n.layout == 14 and n.size == 392 and n.clock == 1 and n.hooks == 0
+    and n.byte_reserved_offset == 314 and n.guard_reserved_offset == 360 and n.guard_reserved_size == 32 and n.guard_reserved_zero, n)
 check('RF3 fsync synchronous majority-compatible configuration', state(leader).sync and state(leader).wal == 'fsync', state(leader))
 local round = 0
 local function blocked(proc, args, via)

@@ -213,7 +213,7 @@ def wait_cluster(root, m, expected):
                 leaders = [i for i, s in enumerate(states) if not s["ro"]]
                 if len(leaders) == 1:
                     for s in states:
-                        assert s["layout"] == 13 and s["size"] == 392
+                        assert s["layout"] == 14 and s["size"] == 392
                         assert s["test_hooks"] is False and s["check_locks"] is True
                         assert s["wal"] == ("fsync" if expected == 3 else "write")
                         assert s["sync"] == (expected == 3)

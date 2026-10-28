@@ -79,26 +79,40 @@ and its [raw argument port does not copy the request bytes](https://github.com/t
 Native read and shared write-procedure entries therefore copy CALL input
 into an owned Rust buffer before parsing slices that survive the barrier.
 No native State reference, schema-cache pointer or cache borrow crosses
-that wait. Callback pointers are copied before invocation; the protected
-Lua callbacks do not yield, publish/access native State or perform I/O.
+that wait. Before borrowing State and after the wait, native entries call
+ordinary `tarn.fresh.native_controls`, `native_space`, `native_mark` and
+`native_ok` functions through a small public Lua C API shim, looking up
+`_LOADED['tarn'].fresh` in Lua's registry. Lookup,
+argument creation and invocation run inside `lua_cpcall`'s C protection
+boundary, so an allocating Lua error does not unwind across Rust. The shim
+uses `luaT_state()` as an entry stack, restores its stack top and returns
+unavailable on a missing helper, invalid result or protected error. Exact
+transaction IDs enter Lua as uint64 values.
+
+These guards do not yield, publish/access native State or perform I/O.
 Their heap eligibility predicate observes free space without requesting a
-collection. Configuration checks still assume the
+collection. The State stores no LuaJIT FFI callback addresses: ABI 13's
+entrypoints depended on LuaJIT's cached `CTState.L`, which need not identify
+the current native procedure's fiber. Public C API entry, stack/error
+protection and current-fiber transaction behavior remain runtime trust
+boundaries, not Verus-proved properties. Configuration checks still assume the
 [administrative stability contract](operations.md#strong-reads-and-storage-rollout)
 for in-flight commits; they cannot revoke a commit confirmed after an
 unsafe privileged quorum reduction.
 
-The current `State` layout is **ABI 13, 392 bytes**, checked by Rust/Lua
-layout compatibility. The version bump rejects experimental ABI 12 and
-older ABI 11 modules despite unchanged offsets from ABI 12. The current tail is:
+The current `State` layout is **ABI 14, 392 bytes**, checked by Rust/Lua
+layout compatibility. ABI 13, experimental ABI 12 and older ABI 11 modules
+are rejected. The unchanged total size does not make their callable tail
+compatible with ABI 14's reserved storage. The current tail is:
 
 | Field | Byte offset | Meaning |
 |---|---:|---|
 | `fresh_mode`, `fresh_clock_ok` | 312, 313 | published configuration/local-clock eligibility, not a quorum proof |
+| `fresh_reserved[6]` | 314 | reserved bytes, unchanged |
 | `read_timeout` | 320 | final autocommit barrier timeout |
 | `clock_mono`, `clock_wall` | 328, 336 | integer nanosecond observation |
 | `clock_max_gap`, `clock_max_drift` | 344, 352 | observation bounds |
-| `fresh_mark`, `fresh_ok` | 360, 368 | exact-current-transaction certificate callbacks |
-| `fresh_controls`, `fresh_space` | 376, 384 | current policy/configuration and actual-space eligibility callbacks |
+| `fresh_guard_reserved[4]` | 360 | four zero uint64 words; no Lua callback addresses |
 
 The final timeout is set before the first wait; first streams retain their
 60-second transaction timeout. Native admission checks actual control/user
@@ -156,7 +170,7 @@ all rows and claims therefore refer to one memtx state under the existing
 native-read premises.
 
 The twelve-argument `ts_select` shape is retained; current deployments use
-the ABI 13/392 freshness boundary above. An empty argument list returns only the versioned
+the ABI 14/392 freshness boundary above. An empty argument list returns only the versioned
 `['native_batch_keys', 1]` capability; it certifies code support, not
 leadership, readiness or data. Older modules hand that shape back. The
 gateway caches support or absence per connection, preserves existing
@@ -189,6 +203,11 @@ gateway, data, resource limits and repeated workload windows, switching
 only batch dispatch. Warm capability discovery outside the timed window.
 Record served/fallback counts, CPU, latency, throughput and allocation
 scope; a native path that silently falls back is a different experiment.
+Historical ABI 13 checkpoint measurements and ABI 11/12 reports retain
+their recorded source, module and guarantee scope; they are not ABI 14
+measurements. The later storage-process SIGSEGV observed in CI has no
+established cause. Replacing the callback entrypoints corrects the public
+API boundary; it has not been demonstrated to fix that crash.
 The [batch runner](../bench/native_batch.py) retains this experiment
 separately from earlier native-procedure results. The [completed paired experiment](../bench/NATIVE_BATCH.md) publishes
 CPU, allocation, latency and rate results, including SQL regressions,

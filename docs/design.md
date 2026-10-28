@@ -675,10 +675,17 @@ stream, as it does their twins.
 Existing replicated streams conservatively hand back before probe or
 commit. Lua obtains the final quorum prefix in a separate owned child
 transaction, then validates the original caller transaction and read set.
-This adds no yielding native-to-Lua callback. Current Lua and native code
-use ABI 13/392; the version excludes experimental ABI 12 and older ABI 11
-modules with the earlier completion boundary. Historical benchmark builds
-retain their recorded ABI and execution paths.
+This adds no yielding native-to-Lua call. Current Lua and native code use
+ABI 14/392. Nonyielding guard helpers enter through a protected public Lua
+C API shim before State borrowing; the State's four uint64 words at offset
+360 are reserved and contain no LuaJIT callback addresses. Exact transaction
+certificates and their scopes are unchanged. The version rejects ABI 13,
+experimental ABI 12 and older ABI 11 modules. The C API entry and stack/error
+boundary remain runtime premises, not properties proved by Verus.
+Historical benchmark builds retain their recorded ABI and execution paths;
+the ABI 13 checkpoint does not measure ABI 14. A later CI storage SIGSEGV's
+cause remains unproven, so the API correction is not a demonstrated causal
+fix. See the [native boundary](native-storage.md#freshness-and-transaction-ownership).
 
 Two checks of `tarn_validate` concern when the stream began: the node must
 have been the leader since then (TarnCommit: `lost`), and a `TRUNCATE` or

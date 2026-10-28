@@ -187,9 +187,12 @@ to `READ_CONFIRMED` before data access, including Vinyl; direct Vinyl
 
 Deploy the updated storage Lua code on **every replica eligible for
 promotion before upgrading gateways**. With native procedures enabled,
-deploy its matching ABI 13/392 module as well, or explicitly disable native
-execution. The version rejects experimental ABI 12 and older ABI 11
-modules; unchanged field offsets do not establish compatibility. Each new gateway storage connection requires the exact
+deploy its matching ABI 14/392 module as well, or explicitly disable native
+execution. ABI 14 removes stored LuaJIT FFI guard callbacks and enters the
+ordinary nonyielding guards through a protected public Lua C API shim.
+The version rejects ABI 13, experimental ABI 12 and older ABI 11 modules;
+unchanged size or earlier field offsets do not establish compatibility.
+The tail at offset 360 is four reserved zero uint64 words. Each new gateway storage connection requires the exact
 `tarn_read_contract()` capability `{'strong_reads', 1}`. Old/missing or
 future unsupported versions are refused; the gateway never silently
 downgrades to writable-role-only reads. This capability certifies code,
@@ -197,6 +200,12 @@ not current leadership, clock health or a reusable data barrier. Mixed
 deployments and promotion to an old replica can therefore make that shard
 unavailable to a new gateway. Existing unmarked streams cannot be adopted
 across the rollout.
+
+Historical checkpoint timings remain tied to their measured module ABI and
+source; they do not qualify ABI 14 performance. The later CI storage-process
+SIGSEGV remains under investigation. This public-API correction must not be
+treated as a proven fix for that crash or as evidence that every failure
+mode has been resolved.
 
 ### Clock health and record retention
 

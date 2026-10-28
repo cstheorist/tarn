@@ -59,7 +59,7 @@ wait('schema/native', function()
 end)
 if native and native ~= '0' then
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-    assert(ns.layout == 13 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 392)
+    assert(ns.layout == 14 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 392)
     assert(ffi.offsetof('struct tarn_ns', 'fallbacks') == 304)
 else assert(tarn.cfg.native == false and tarn_info().native == false) end
 print('IDENTITY ' .. json.encode{version = box.info.version, native = tarn_info().native,

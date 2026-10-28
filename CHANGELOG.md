@@ -562,8 +562,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Native storage procedures retain their CALL arguments across the yielding
-  freshness barrier. ABI 13 adds current policy, space, clock and exact
-  transaction checks; older modules use the guarded Lua implementation.
+  freshness barrier. ABI 14/392 enters current policy, space and exact
+  transaction guards through a protected public Lua C API shim, replacing
+  stored LuaJIT FFI callback addresses with reserved zero words. ABI 13/12/11
+  modules use the guarded Lua implementation. The later CI storage SIGSEGV
+  has no proven cause; this API correction is not a demonstrated crash fix.
 - Clock policy and the GC rejection floor persist with the receipt
   transitions they protect. Retention uses two skew margins, timing policy
   changes fail closed, and expiring work requires coverage of its relevant

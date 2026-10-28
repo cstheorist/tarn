@@ -10,7 +10,7 @@
 use crate::locks;
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 13;
+pub const LAYOUT: u32 = 14;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -129,7 +129,7 @@ pub struct State {
     /// tarn_info().
     pub fallbacks: unsafe extern "C" fn(*mut u8, usize) -> usize,
     /// Freshness configuration: 0 unknown, 1 standalone, 2 synchronous
-    /// replication, 3 unsupported. Revalidated through fresh_controls at
+    /// replication, 3 unsupported. Revalidated through the Lua API guard at
     /// each native read; this cached value is not a quorum certificate.
     pub fresh_mode: u8,
     pub fresh_clock_ok: u8,
@@ -142,14 +142,9 @@ pub struct State {
     pub clock_wall: u64,
     pub clock_max_gap: u64,
     pub clock_max_drift: u64,
-    /// Nonyielding, protected Lua callbacks. Marking is used only for an
-    /// owned transaction after its fresh barrier and before any read.
-    pub fresh_mark: Option<unsafe extern "C" fn(u64) -> u8>,
-    pub fresh_ok: Option<unsafe extern "C" fn(u64) -> u8>,
-    /// Current configuration/control-space and actual user-space checks.
-    /// Invoke before borrowing State: callbacks may inspect Lua state.
-    pub fresh_controls: Option<unsafe extern "C" fn() -> u8>,
-    pub fresh_space: Option<unsafe extern "C" fn(u32) -> u8>,
+    /// ABI13 stored LuaJIT FFI callback pointers here. ABI14 enters the
+    /// public protected Lua API instead; never invoke those old pointers.
+    pub fresh_guard_reserved: [u64; 4],
 }
 
 impl Default for State {
@@ -216,10 +211,7 @@ impl State {
             clock_wall: 0,
             clock_max_gap: 0,
             clock_max_drift: 0,
-            fresh_mark: None,
-            fresh_ok: None,
-            fresh_controls: None,
-            fresh_space: None,
+            fresh_guard_reserved: [0; 4],
         }
     }
 
@@ -376,10 +368,7 @@ mod tests {
         assert_eq!(offset_of!(State, clock_wall), 336);
         assert_eq!(offset_of!(State, clock_max_gap), 344);
         assert_eq!(offset_of!(State, clock_max_drift), 352);
-        assert_eq!(offset_of!(State, fresh_mark), 360);
-        assert_eq!(offset_of!(State, fresh_ok), 368);
-        assert_eq!(offset_of!(State, fresh_controls), 376);
-        assert_eq!(offset_of!(State, fresh_space), 384);
+        assert_eq!(offset_of!(State, fresh_guard_reserved), 360);
         assert_eq!(std::mem::size_of::<State>(), 392);
     }
 

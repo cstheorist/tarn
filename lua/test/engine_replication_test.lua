@@ -71,7 +71,7 @@ local function state(i)
 end
 local function mode_ok(s)
     return s.check_locks == true and s.lock_copy_errors == 0 and
-        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 13 and s.state_size == 392
+        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 14 and s.state_size == 392
             and s.fallback_offset == 304
         or mode == 'lua' and s.native == false)
 end

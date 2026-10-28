@@ -1,7 +1,6 @@
--- Targeted read-freshness integration and public callback lifetime checks.
+-- Targeted read-freshness integration and protected native guard checks.
 -- A private standalone data directory is required; no services are started.
 local ffi, fio, fiber = require('ffi'), require('fio'), require('fiber')
-jit.off(true, true) -- this test also invokes native FFI callbacks from Lua
 local here = debug.getinfo(1, 'S').source:sub(2):match('(.*/)') or './'
 package.path = here .. '../?.lua;' .. package.path
 local work = assert(arg[1]); fio.mktree(work)
@@ -21,13 +20,12 @@ local function healthy()
     F.set_clock{check = function() return nil end,
                 native_state = function() return true, 1ULL, 2ULL, 3ULL, 4ULL end}
 end
-check(tarn.NS_LAYOUT == 13 and ffi.sizeof('struct tarn_ns') == 392 and ffi.offsetof('struct tarn_ns', 'fresh_mode') == 312
+check(tarn.NS_LAYOUT == 14 and ffi.sizeof('struct tarn_ns') == 392 and ffi.offsetof('struct tarn_ns', 'fresh_mode') == 312
       and ffi.offsetof('struct tarn_ns', 'read_timeout') == 320
       and ffi.offsetof('struct tarn_ns', 'clock_mono') == 328
-      and ffi.offsetof('struct tarn_ns', 'fresh_mark') == 360
-      and ffi.offsetof('struct tarn_ns', 'fresh_ok') == 368
-      and ffi.offsetof('struct tarn_ns', 'fresh_controls') == 376
-      and ffi.offsetof('struct tarn_ns', 'fresh_space') == 384, 'native ABI13 layout')
+      and ffi.offsetof('struct tarn_ns', 'fresh_reserved') == 314
+      and ffi.offsetof('struct tarn_ns', 'fresh_guard_reserved') == 360
+      and ffi.sizeof(ffi.new('struct tarn_ns').fresh_guard_reserved) == 32, 'native ABI14 layout')
 check(not pcall(F.barrier) and not box.is_in_txn(), 'unknown clock fails before owning a transaction')
 check(tarn_txn_status('missing') == 'none' and tarn_part_status('missing') == 'none',
       'fresh recovery status does not require clock health')
@@ -53,12 +51,12 @@ check(native_ok and mono == 5ULL and wall == 6ULL and gap == 7ULL and drift == 8
       'native read mirror prefers local health over full admission certificate')
 local observed = 0
 F.set_clock{policy_ok = function() return true end,
-            read_check = function() observed = observed + 1; error('must not observe in a callback') end}
-check(F.controls_callback() == 1 and observed == 0, 'native controls use pure policy eligibility without observing')
+            read_check = function() observed = observed + 1; error('must not observe in a native guard') end}
+check(F.native_controls() == 1 and observed == 0, 'native controls use pure policy eligibility without observing')
 F.set_clock{policy_ok = function() return false end}
-check(F.controls_callback() == 0, 'native controls reject changed clock policy between sampler ticks')
+check(F.native_controls() == 0, 'native controls reject changed clock policy between sampler ticks')
 F.set_clock{policy_ok = function() error('policy unavailable') end}
-check(F.controls_callback() == 0, 'native controls contain policy errors')
+check(F.native_controls() == 0, 'native controls contain policy errors')
 healthy()
 for _, engine in ipairs({'memtx', 'vinyl'}) do
     local sp = box.schema.space.create('test.fresh_' .. engine, {engine = engine})
@@ -118,22 +116,22 @@ end
 for _ = 1, 4200 do F.begin_stream(); box.rollback() end
 check(F.count == 0, 'abort traffic beyond registry capacity does not leak certificates')
 F.begin_stream()
-check(F.mark_callback(ffi.cast('uint64_t', id())) == 1
-      and F.ok_callback(ffi.cast('uint64_t', id())) == 1
-      and F.mark_callback(9007199254740993ULL) == 0, 'native callbacks require the exact current transaction')
+check(F.native_mark(ffi.cast('uint64_t', id())) == 1
+      and F.native_ok(ffi.cast('uint64_t', id())) == 1
+      and F.native_mark(9007199254740993ULL) == 0, 'native guards require the exact current transaction')
 box.rollback()
-check(F.count == 0, 'native callback certificate reclaimed on empty rollback')
+check(F.count == 0, 'native guard certificate reclaimed on empty rollback')
 F.begin_stream()
-local callback_txn, switches = id(), fiber.self():csw()
-check(F.controls_callback() == 1 and F.space_callback(box.space['test.fresh_memtx'].id) == 1
-      and F.space_callback(4294967295) == 0 and id() == callback_txn and F.ok(callback_txn) == 1
-      and fiber.self():csw() == switches, 'native controls and space callbacks preserve stream and never yield')
+local guard_txn, switches = id(), fiber.self():csw()
+check(F.native_controls() == 1 and F.native_space(box.space['test.fresh_memtx'].id) == 1
+      and F.native_space(4294967295) == 0 and id() == guard_txn and F.ok(guard_txn) == 1
+      and fiber.self():csw() == switches, 'native controls and space guards preserve stream and never yield')
 box.rollback()
 local diagnostic = box.error.new{code = box.error.PROC_LUA, reason = 'preserve native fallback error'}
 box.error.set(diagnostic)
 local controls = F.controls
 F.controls = function() error('control lookup unavailable') end
-check(F.controls_callback() == 0 and box.error.last() == diagnostic, 'native callback failure preserves diagnostics')
+check(F.native_controls() == 0 and box.error.last() == diagnostic, 'native guard failure preserves diagnostics')
 F.controls = controls
 box.error.clear()
 -- Exercise actual asynchronous physical spaces under a synthetic RF-many
@@ -144,8 +142,8 @@ box.space._cluster:delete{2}
 local mode = F.mode; F.mode = function() return 2 end
 check(not pcall(F.space, box.space['test.fresh_memtx']), 'replicated asynchronous user space rejected')
 check(not pcall(F.controls), 'existing asynchronous metadata rejected despite configuration intent')
-check(F.controls_callback() == 0 and F.space_callback(box.space['test.fresh_memtx'].id) == 0,
-      'native callbacks recheck actual asynchronous controls and user spaces')
+check(F.native_controls() == 0 and F.native_space(box.space['test.fresh_memtx'].id) == 0,
+      'native guards recheck actual asynchronous controls and user spaces')
 F.mode = mode
 F.set_clock(nil)
 check(not pcall(tarn_select, box.space['test.fresh_memtx'].id, 0, {1}, 'EQ', 1, nil, true, true)

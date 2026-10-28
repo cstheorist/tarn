@@ -897,12 +897,12 @@ hold on it.
 
 These are local observed-term/DDL marking premises. They do not establish
 that an old leader has observed a replacement before final validation.
-Current ABI 13/392 replicated-stream native validation/local commit hands
+Current ABI 14/392 replicated-stream native validation/local commit hands
 back before effects for Lua's separate final-prefix fence; RF1 kernels
 remain native. `StrongStreamCompletion` below supplies the additional
 prefix/original-read-set composition check without a yielding native
-callback. Historical ABI 11/experimental ABI 12 measurements retain their
-original scope.
+call. Historical ABI 13 checkpoint and ABI 11/experimental ABI 12
+measurements retain their original source, ABI and guarantee scope.
 
 Each protection has a switch, and TLC finds each `Bug_StreamMarks*`
 configuration violating `CommittedReadsCurrent` within seconds:
@@ -1367,8 +1367,28 @@ may conservatively remove a live transaction's certificate too: its later
 read refuses rather than refreshing the old transaction. Five controls
 catch late-snapshot marking, marking before the barrier, another
 transaction's certificate, missing cleanup and ignored capacity. Native ID
-uniqueness, callback execution and ordering, the actual 4096-entry bound,
-FFI layout and non-yielding callback/read admission remain runtime duties.
+uniqueness, terminal-trigger execution and ordering, the actual 4096-entry
+bound, FFI layout and nonyielding guard/read admission remain runtime duties.
+
+ABI 14/392 replaces the four stored LuaJIT FFI guard callback pointers with
+`fresh_guard_reserved: uint64[4]` at offset 360, all zero; the six reserved
+bytes at offset 314 remain unchanged. A small C shim enters the ordinary
+`F.native_controls`, `F.native_space`, `F.native_mark` and `F.native_ok`
+helpers through the public Lua C API before any Rust State borrow and
+again after a yielding freshness wait. It protects lookup, exact uint64
+argument creation and invocation with `lua_cpcall`, restores the entry
+stack and maps errors or invalid results to unavailable. The helpers keep
+their exact current-transaction certificate and nonyielding/no-State-access
+contracts. No guard address is retained from LuaJIT's cached `CTState.L`.
+
+Neither the TLA+ models nor the Verus kernels prove this C entry shim,
+Lua's allocation/error behavior, current-fiber transaction context or the
+underlying Tarantool implementation. Current ABI 14 validation must be
+bound to its own source and artifact. Earlier runtime counts and ABI 13
+checkpoint timings are not evidence for the changed entrypoint. A later
+CI storage-process SIGSEGV prompted this investigation. Its cause has not
+been established; this public-API correction is not a demonstrated causal
+fix for that failure.
 
 `StrongStreamCompletion.tla` checks a different boundary: the first-read
 certificate alone does not certify final validation while a former leader
