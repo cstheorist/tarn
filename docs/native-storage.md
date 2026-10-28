@@ -74,6 +74,11 @@ into an owned Rust buffer before parsing slices that survive the barrier.
 No native State reference, schema-cache pointer or cache borrow crosses
 that wait. Callback pointers are copied before invocation; the protected
 Lua callbacks do not yield, publish/access native State or perform I/O.
+Their heap eligibility predicate observes free space without requesting a
+collection. Configuration checks still assume the
+[administrative stability contract](operations.md#strong-reads-and-storage-rollout)
+for in-flight commits; they cannot revoke a commit confirmed after an
+unsafe privileged quorum reduction.
 
 The current `State` layout is **ABI 12, 392 bytes**, checked by Rust/Lua
 layout compatibility. The new tail is:

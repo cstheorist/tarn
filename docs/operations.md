@@ -130,12 +130,28 @@ returns `ER_READONLY` first so gateways retire the old connection.
 
 Replicated strong paths require memtx MVCC, synchronous control/auxiliary
 and actual user spaces, a majority write quorum `Q`, and a read quorum `R`
-with `Q + R > N` (`N - Q + 1` by default). Unsupported asynchronous or
-partially converted spaces fail closed; `if_not_exists` does not repair
+with `Q + R > N` (`N - Q + 1` by default). Observed asynchronous or
+partially converted spaces are refused; `if_not_exists` does not repair
 their synchronization flags. The scratch space remains data-temporary.
 These checks do not strengthen raw GET/SELECT visibility or lazy-index
 completeness. An eligible lazy lookup can still miss recent matches; its
 session catch-up option covers only its recorded own-write obligations.
+
+Administrative changes must preserve those quorum intersections and the
+selected WAL/synchronous durability guarantees for **all in-flight
+commits**, including protocol receipts and GC. Drain outstanding work
+before weakening membership, write/read quorums, synchronization flags or
+WAL guarantees, or use a reconfiguration that preserves the guarantees
+throughout the overlap. Arbitrary privileged changes outside that contract
+are unsupported. Pinned Tarantool's [write/read quorum validators](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/box.cc#L1613)
+check numeric bounds independently, rather than majority or intersection.
+Its [write-quorum update](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/box.cc#L2679)
+re-evaluates pending work, whose [ACK comparison uses the current threshold](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn_limbo_queue.c#L809).
+Lowering that threshold while `box.commit()` waits can therefore confirm an
+already-submitted transaction. A precommit check cannot revoke that acknowledgement or
+undo its GC deletions. Tarn's `F.controls` checks reject an unsupported
+configuration observed at entry or after planning; they do not prove safe
+configuration transitions while the commit yields.
 
 The first managed stream begins empty, completes its barrier, then records
 the exact native transaction ID before reading. Later reads retain that

@@ -1032,6 +1032,15 @@ composition before any data read; direct `LINEARIZABLE` Vinyl access remains
 unsupported. The native replication/API mapping is a trust boundary,
 separate from the bounded [quorum model](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130).
 
+That refinement requires membership, read/write quorum intersection and
+WAL/synchronous durability guarantees to remain valid for every in-flight
+commit. A privileged write-quorum reduction while `box.commit()` waits can
+confirm work already submitted; a precommit configuration check cannot
+reverse its acknowledgement or GC effects. Observed unsupported settings
+are refused, but arbitrary administrative transitions are outside the
+protocol. Drain outstanding work or preserve the guarantees throughout
+reconfiguration; see [operations](operations.md#strong-reads-and-storage-rollout).
+
 Reads and local DML require a ready local clock policy and a current local
 observation, independently of their data-freshness quorum. They do not wait
 for every physical replica's clock. Fresh protocol admission and GC need

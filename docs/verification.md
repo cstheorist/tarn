@@ -1396,6 +1396,25 @@ check age only before the yield, or ignore uncertain health. The entry-only
 control retains final health/policy checks, forcing a trace that actually
 crosses expiry and GC while planning is paused.
 
+The runtime refines the model's trusted `healthy` guard with both the
+required clock coverage and current supported synchronous-replication and
+control-space settings. Fresh refusal records and every destructive GC
+chunk recheck that conjunction at their final transaction boundary. The
+model does not inspect Tarantool configuration or prove its eligibility
+checks; confirmed receipt lookup separately requires the fresh-quorum
+contract above and must preserve a borrowed ambient transaction if that
+lookup fails.
+
+These checks do not establish safe administrative reconfiguration. The
+quorum model fixes membership and quorum sizes, and the policy model
+assumes atomic native replication. Actual quorum intersection and selected
+WAL/synchronous durability must hold throughout every in-flight commit:
+weakening a write quorum while the native commit yields can confirm an
+already-submitted receipt or GC transaction. An entry/precommit eligibility
+check cannot undo that confirmation. Drain work or preserve the guarantees
+throughout overlapping configuration changes; arbitrary privileged changes
+are outside this refinement.
+
 The policy model assumes a valid immutable past-issued timestamp. It proves
 local rollback protection, not global clock certification, timestamp
 provenance, initial legacy-policy adoption, cross-shard high-water
@@ -1549,10 +1568,14 @@ a `sb` user for the differential tests (or point `--ref` at any MariaDB
 
 The heap-watchdog fixture retains the 40 MiB garbage/64 MiB margin setup,
 then stops pressure near 2 MiB free, keeping at least 1 MiB for native-core
-work. It requires a node-triggered collection, successful calls and a live
-lazy worker without a manual recovery collection. An isolated control
-that cancels only the heap-watchdog fiber fails the collection assertion
-under the same bounded pressure. Earlier unbounded pressure reproduced a
+work. It requires restored heap headroom, successful calls and a live lazy
+worker without a manual recovery collection. The final clock/native
+eligibility preflight uses `PG.heap_available`, which observes free space
+without requesting a collection. An earlier-build
+isolated control that cancelled only the heap-watchdog fiber failed its
+collection assertion under the same bounded pressure. That historical
+control is not a sensitivity result for the current build. Earlier
+unbounded pressure reproduced a
 native `cfg_get('read_only')` panic in both native and Lua modes; active
 and stopped lazy-worker controls did not establish worker causation.
 Tarantool's pinned [`cfg_get` implementation](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/cfg.c#L40)
