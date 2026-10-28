@@ -38,7 +38,7 @@ use crate::catalog::TableDef;
 use crate::cluster::Cluster;
 use crate::mpw::{ambiguous, from_iproto, from_iproto_read, lua_status, Mp, Rd};
 use bytes::Bytes;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tarn_common::{SqlError, SqlResult, Value};
@@ -1143,15 +1143,35 @@ impl Txn {
                 "transaction too old (max_txn_age exceeded); retry it",
             ));
         }
-        // Decision shard: the lowest participant that writes and is not
-        // leaving the cluster (participants refuse one that is: lua/tarn.lua
-        // BK.prep).
+        // Freeze one decision writer using the transaction identity and a
+        // single membership snapshot. Canonical durable IDs spread records
+        // across a common writer set independently of gateway shard order.
+        // PREPARE still fences membership/leaving changes (lua BK.prep), and
+        // every durable record and recovery call uses this same `did`.
         let writers: BTreeSet<usize> = self.writes.values().map(|w| w.shard).collect();
-        let dshard = writers
-            .iter()
-            .copied()
-            .find(|&p| cluster.shard_active(p))
-            .unwrap_or_else(|| *writers.iter().next().unwrap());
+        let dshard = {
+            let members = cluster.members.read();
+            let inactive: HashSet<u32> = members
+                .shards
+                .iter()
+                .filter(|s| s.state != "active")
+                .map(|s| s.id)
+                .collect();
+            let candidates = writers
+                .iter()
+                .map(|&position| {
+                    let id = cluster.shards[position].id;
+                    crate::placement::Writer {
+                        id,
+                        position,
+                        active: !inactive.contains(&id),
+                    }
+                })
+                .collect();
+            crate::placement::decision_writer(&self.id, candidates)
+                .expect("a writing transaction has a writer")
+                .position
+        };
         let did = cluster.shards[dshard].id;
         let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
         // Write-only participants have no stream: their PREPARE runs as its
@@ -1626,6 +1646,7 @@ pub async fn select_keys(
     begin: bool,
     after: Option<&[u8]>,
     route: &Route,
+    native_batch: bool,
 ) -> SqlResult<Page> {
     crate::observe::read(route);
     let mut m = Mp::new();
@@ -1643,12 +1664,136 @@ pub async fn select_keys(
         None => m.nil(),
     };
     route.encode(&mut m);
+    let full_primary = t
+        .indexes
+        .first()
+        .is_some_and(|pk| pk.id == 0 && pk.unique && keys.iter().all(|key| key.len() == pk.cols.len()));
+    if native_batch
+        && stream == 0
+        && lock_check
+        && !begin
+        && index == 0
+        && matches!(t.engine, crate::catalog::Engine::Memtx)
+        && after.is_none()
+        && limit != Some(0)
+        && (1..=128).contains(&keys.len())
+        && full_primary
+        && native_batch_available(client).await?
+    {
+        match client.call(0, "tarn_storage.ts_select", &m.0).await {
+            Ok(r) => {
+                let d = r.data().ok_or_else(|| crate::mpw::proto("no native batch data"))?;
+                if let Some(page) = native_batch_reply(&d, t, keys.len())? {
+                    return Ok(page);
+                }
+            }
+            Err(tarn_iproto::Error::Server { code, message }) if missing_native_read(code) => {
+                tracing::debug!("native batch reads unavailable on this shard: {}", message);
+                client.mark(MARK_NO_NATIVE_SELECT);
+                client.mark(MARK_NO_NATIVE_BATCH);
+            }
+            Err(e) => return Err(from_iproto_read(e)),
+        }
+    }
     let r = client
         .call(stream, "tarn_select_keys", &m.0)
         .await
         .map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     page_of(&d, t)
+}
+
+fn missing_native_read(code: u32) -> bool {
+    use tarn_iproto::errcode::{
+        ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
+    };
+    matches!(
+        code,
+        ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED
+    )
+}
+
+/// Capability is cached separately from per-request handback. An older
+/// module rejects this empty argument list before reading any user state;
+/// its ordinary twelve-argument native reads remain available.
+async fn native_batch_available(client: &Client) -> SqlResult<bool> {
+    if client.marked(MARK_NO_NATIVE_SELECT) || client.marked(MARK_NO_NATIVE_BATCH) {
+        return Ok(false);
+    }
+    if client.marked(MARK_NATIVE_BATCH) {
+        return Ok(true);
+    }
+    let reply = match client.call(0, "tarn_storage.ts_select", &[0x90]).await {
+        Ok(reply) => reply,
+        Err(tarn_iproto::Error::Server { code, .. }) if missing_native_read(code) => {
+            client.mark(MARK_NO_NATIVE_SELECT);
+            client.mark(MARK_NO_NATIVE_BATCH);
+            return Ok(false);
+        }
+        Err(e) => return Err(from_iproto_read(e)),
+    };
+    let data = reply
+        .data()
+        .ok_or_else(|| crate::mpw::proto("no native batch capability data"))?;
+    let supported = native_batch_capability(&data)?;
+    client.mark(if supported {
+        MARK_NATIVE_BATCH
+    } else {
+        MARK_NO_NATIVE_BATCH
+    });
+    Ok(supported)
+}
+
+fn native_batch_capability(data: &[u8]) -> SqlResult<bool> {
+    let mut rd = Rd::new(data);
+    if rd.array()? != 1 {
+        return Err(crate::mpw::proto("invalid native batch capability result"));
+    }
+    let fields = rd.array()?;
+    let status = rd.string()?;
+    let supported = match (fields, status.as_str()) {
+        (1, "lua") => false,
+        (2, "native_batch_keys") => match rd.value()? {
+            Value::UInt(version) => version == 1,
+            Value::Int(version) if version >= 0 => version == 1,
+            _ => return Err(crate::mpw::proto("invalid native batch capability version")),
+        },
+        _ => return Err(crate::mpw::proto("invalid native batch capability status")),
+    };
+    if !rd.buf.is_empty() {
+        return Err(crate::mpw::proto("trailing native batch capability data"));
+    }
+    Ok(supported)
+}
+
+/// Unlike Lua's general pager, a served batch must be complete in one reply.
+/// Only an exact handback permits calling Lua; malformed replies are errors.
+fn native_batch_reply(data: &Bytes, t: &TableDef, requested: usize) -> SqlResult<Option<Page>> {
+    let mut rd = Rd::shared_at(data, Rd::new(data));
+    if rd.array()? != 1 {
+        return Err(crate::mpw::proto("invalid native batch envelope"));
+    }
+    let fields = rd.array()?;
+    let status = rd.string()?;
+    let page = match (fields, status.as_str()) {
+        (1, "lua") => None,
+        (2, "ok") => {
+            let n = rd.array()?;
+            if n > requested {
+                return Err(crate::mpw::proto("oversized native key batch"));
+            }
+            let mut rows = Vec::with_capacity(n);
+            for _ in 0..n {
+                rows.push(rd.row_of(t)?);
+            }
+            Some((rows, None))
+        }
+        _ => return Err(crate::mpw::proto("invalid native batch status or completion")),
+    };
+    if !rd.buf.is_empty() {
+        return Err(crate::mpw::proto("trailing native batch data"));
+    }
+    Ok(page)
 }
 
 /// A predicate a shard evaluates on stored tuples while counting
@@ -1867,9 +2012,303 @@ const MARK_NO_NATIVE_COMMIT: u32 = 2;
 /// procedure.
 const MARK_NO_NATIVE_VALIDATE: u32 = 3;
 
+const MARK_NATIVE_BATCH: u32 = 4;
+const MARK_NO_NATIVE_BATCH: u32 = 5;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_capability_is_versioned_and_complete() {
+        for version in [0, 1, 2] {
+            let mut m = Mp::new();
+            m.arr(1).arr(2).str("native_batch_keys").uint(version);
+            assert_eq!(native_batch_capability(&m.0).unwrap(), version == 1);
+            m.nil();
+            assert!(native_batch_capability(&m.0).is_err());
+        }
+        let mut old = Mp::new();
+        old.arr(1).arr(1).str("lua");
+        assert!(!native_batch_capability(&old.0).unwrap());
+        let mut bad = Mp::new();
+        bad.arr(1).arr(2).str("native_batch_keys").str("1");
+        assert!(native_batch_capability(&bad.0).is_err());
+    }
+
+    #[test]
+    fn native_key_batch_reply_preserves_physical_rows_and_requires_completion() {
+        let mut table = join_table();
+        table.layout.identity = false;
+        table.layout.col_field.swap(0, 1);
+        table.layout.field_col[0] = Some(1);
+        table.layout.field_col[1] = Some(0);
+        table.layout.fills[2] = Value::str("filled");
+        let mut m = Mp::new();
+        m.arr(1).arr(2).str("ok").arr(2);
+        for _ in 0..2 {
+            m.vals(&[Value::Int(7), Value::str("tenant")]);
+        }
+        let data = m.bytes();
+        let page = native_batch_reply(&data, &table, 3).unwrap().unwrap();
+        assert_eq!(
+            page.0,
+            vec![vec![Value::str("tenant"), Value::Int(7), Value::str("filled")]; 2]
+        );
+        assert!(page.1.is_none());
+        assert!(native_batch_reply(&data, &table, 1).is_err());
+        for end in 0..data.len() {
+            assert!(native_batch_reply(&data.slice(..end), &table, 3).is_err());
+        }
+        let mut trailing = data.to_vec();
+        trailing.push(0xc0);
+        assert!(native_batch_reply(&Bytes::from(trailing), &table, 3).is_err());
+        let mut handback = Mp::new();
+        handback.arr(1).arr(1).str("lua");
+        assert!(native_batch_reply(&handback.bytes(), &table, 3).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn native_key_batch_negotiates_once_and_preserves_fallback_calls() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+        use tokio::time::{timeout, Duration};
+
+        async fn request(sock: &mut TcpStream) -> (u64, u64, u64, Vec<u8>) {
+            assert_eq!(sock.read_u8().await.unwrap(), 0xce);
+            let size = sock.read_u32().await.unwrap();
+            assert!(size < 4096);
+            let mut packet = vec![0; size as usize];
+            sock.read_exact(&mut packet).await.unwrap();
+            let mut rd = Rd::new(&packet);
+            let (mut kind, mut sync, mut stream) = (0, 0, 0);
+            for _ in 0..rd.map().unwrap() {
+                let key = rd.value().unwrap().as_i64().unwrap();
+                let value = rd.value().unwrap().as_i64().unwrap() as u64;
+                match key {
+                    0 => kind = value,
+                    1 => sync = value,
+                    10 => stream = value,
+                    _ => {}
+                }
+            }
+            (kind, sync, stream, rd.buf.to_vec())
+        }
+        async fn reply(sock: &mut TcpStream, sync: u64, code: u64, status: Option<(&str, Option<u64>)>) {
+            let mut packet = Mp::new();
+            packet.map(2).uint(0).uint(code).uint(1).uint(sync);
+            if code == 0 {
+                let (status, version) = status.unwrap();
+                packet.map(1).uint(0x30).arr(1);
+                match (status, version) {
+                    ("bad-page", _) => {
+                        packet.arr(4).str("ok").arr(0).nil().bool(false);
+                    }
+                    ("yes", _) => {
+                        packet.arr(2).str("yes").arr(0);
+                    }
+                    ("bad-lua", _) => {
+                        packet.arr(2).str("lua").nil();
+                    }
+                    ("large-page", _) => {
+                        packet.arr(2).str("ok").arr(4);
+                        for _ in 0..4 {
+                            packet.vals(&[Value::str("tenant"), Value::Int(7), Value::str("label"), Value::UInt(1)]);
+                        }
+                    }
+                    ("ok", _) => {
+                        packet.arr(2).str(status).arr(0);
+                    }
+                    (_, Some(version)) => {
+                        packet.arr(2).str(status).uint(version);
+                    }
+                    (_, None) => {
+                        packet.arr(1).str(status);
+                    }
+                }
+            } else {
+                packet.map(1).uint(0x31).str("controlled batch error");
+            }
+            sock.write_u8(0xce).await.unwrap();
+            sock.write_u32(packet.0.len() as u32).await.unwrap();
+            sock.write_all(&packet.0).await.unwrap();
+        }
+        fn call(body: &[u8]) -> (String, Vec<u8>) {
+            let mut rd = Rd::new(body);
+            let (mut name, mut args) = (None, None);
+            for _ in 0..rd.map().unwrap() {
+                match rd.value().unwrap().as_i64().unwrap() {
+                    0x22 => name = Some(rd.string().unwrap()),
+                    0x21 => args = Some(rd.raw_value().unwrap().to_vec()),
+                    other => panic!("unexpected CALL field {other}"),
+                }
+            }
+            assert!(rd.buf.is_empty());
+            (name.unwrap(), args.unwrap())
+        }
+        fn batch_args(args: &[u8], in_stream: bool, prefix: bool) {
+            let mut rd = Rd::new(args);
+            assert_eq!(rd.array().unwrap(), 8);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(512));
+            assert_eq!(rd.value().unwrap().as_i64(), Some(0));
+            assert_eq!(rd.array().unwrap(), 3);
+            for id in [7, 99, 7] {
+                assert_eq!(rd.array().unwrap(), if prefix { 1 } else { 2 });
+                assert_eq!(rd.string().unwrap(), "tenant");
+                if !prefix {
+                    assert_eq!(rd.value().unwrap().as_i64(), Some(id));
+                }
+            }
+            assert_eq!(rd.raw_value().unwrap(), &[0xc0]); // per-key limit
+            assert_eq!(rd.raw_value().unwrap(), &[if in_stream { 0xc2 } else { 0xc3 }]);
+            assert_eq!(rd.raw_value().unwrap(), &[0xc2]);
+            assert_eq!(rd.raw_value().unwrap(), &[0xc0]); // continuation
+            assert_eq!(rd.array().unwrap(), 3);
+            for _ in 0..3 {
+                assert_eq!(rd.value().unwrap().as_i64(), Some(1));
+            }
+            assert!(rd.buf.is_empty());
+        }
+
+        // 0: supported, 1: older module, 2: per-request handback,
+        // 3: native data error, 4: switch disabled, 5: missing module,
+        // 6: existing stream, 7: primary-key prefixes; 8..12: malformed
+        // completion/status/handback/row-count replies must never call Lua.
+        for case in 0..12 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut greeting = [b' '; 128];
+                let first = b"Tarantool 3.9.0 (Binary)";
+                greeting[..first.len()].copy_from_slice(first);
+                greeting[63] = b'\n';
+                greeting[64..108].copy_from_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+                greeting[127] = b'\n';
+                sock.write_all(&greeting).await.unwrap();
+                let (kind, sync, _, _) = request(&mut sock).await;
+                assert_eq!(kind, 73);
+                let mut id = Mp::new();
+                id.map(2).uint(0x54).uint(6).uint(0x55).arr(2).uint(0).uint(1);
+                let mut packet = Mp::new();
+                packet.map(2).uint(0).uint(0).uint(1).uint(sync).raw(&id.0);
+                sock.write_u8(0xce).await.unwrap();
+                sock.write_u32(packet.0.len() as u32).await.unwrap();
+                sock.write_all(&packet.0).await.unwrap();
+                let mut names = Vec::new();
+                if !matches!(case, 4 | 6 | 7) {
+                    let (kind, sync, stream, body) = request(&mut sock).await;
+                    assert_eq!((kind, stream), (10, 0));
+                    let (name, args) = call(&body);
+                    assert_eq!(name, "tarn_storage.ts_select");
+                    assert_eq!(args, [0x90]);
+                    names.push("caps");
+                    if case == 5 {
+                        reply(
+                            &mut sock,
+                            sync,
+                            0x8000 | tarn_iproto::errcode::ER_NO_SUCH_PROC as u64,
+                            None,
+                        )
+                        .await;
+                    } else {
+                        let cap = if case == 1 {
+                            ("lua", None)
+                        } else {
+                            ("native_batch_keys", Some(1))
+                        };
+                        reply(&mut sock, sync, 0, Some(cap)).await;
+                    }
+                }
+                for _ in 0..2 {
+                    let (kind, sync, stream, body) = request(&mut sock).await;
+                    assert_eq!((kind, stream), (10, if case == 6 { 73 } else { 0 }));
+                    let (name, args) = call(&body);
+                    batch_args(&args, case == 6, case == 7);
+                    if matches!(case, 1 | 4 | 5 | 6 | 7) {
+                        assert_eq!(name, "tarn_select_keys");
+                        names.push("lua");
+                        reply(&mut sock, sync, 0, Some(("ok", None))).await;
+                    } else {
+                        assert_eq!(name, "tarn_storage.ts_select");
+                        names.push("native");
+                        if case >= 8 {
+                            let status = ["bad-page", "yes", "bad-lua", "large-page"][case - 8];
+                            reply(&mut sock, sync, 0, Some((status, None))).await;
+                        } else if case == 3 {
+                            reply(&mut sock, sync, 0x8000 | 35, None).await;
+                        } else if case == 2 {
+                            reply(&mut sock, sync, 0, Some(("lua", None))).await;
+                            let (kind, sync, stream, body) = request(&mut sock).await;
+                            assert_eq!((kind, stream), (10, 0));
+                            let (name, fallback_args) = call(&body);
+                            assert_eq!(name, "tarn_select_keys");
+                            assert_eq!(fallback_args, args);
+                            names.push("lua");
+                            reply(&mut sock, sync, 0, Some(("ok", None))).await;
+                        } else {
+                            reply(&mut sock, sync, 0, Some(("ok", None))).await;
+                        }
+                    }
+                }
+                assert!(sock.read_u8().await.is_err());
+                names
+            });
+            let client = Client::connect(&tarn_iproto::Opts::new(addr.to_string()))
+                .await
+                .unwrap();
+            let table = join_table();
+            let keys: Vec<_> = [7, 99, 7]
+                .into_iter()
+                .map(|id| {
+                    if case == 7 {
+                        vec![Value::str("tenant")]
+                    } else {
+                        vec![Value::str("tenant"), Value::Int(id)]
+                    }
+                })
+                .collect();
+            for _ in 0..2 {
+                let result = timeout(
+                    Duration::from_secs(3),
+                    select_keys(
+                        &client,
+                        if case == 6 { 73 } else { 0 },
+                        &table,
+                        0,
+                        &keys,
+                        None,
+                        case != 6,
+                        false,
+                        None,
+                        &Route::Buckets(vec![1, 1, 1]),
+                        case != 4,
+                    ),
+                )
+                .await
+                .unwrap();
+                if case == 3 || case >= 8 {
+                    assert!(result.is_err());
+                } else {
+                    let page = result.unwrap();
+                    assert!(page.0.is_empty() && page.1.is_none());
+                }
+            }
+            if case == 1 {
+                assert!(!client.marked(MARK_NO_NATIVE_SELECT));
+            }
+            client.close();
+            let names = timeout(Duration::from_secs(3), peer).await.unwrap().unwrap();
+            let expected = match case {
+                0 | 3 | 8..=11 => vec!["caps", "native", "native"],
+                1 | 5 => vec!["caps", "lua", "lua"],
+                2 => vec!["caps", "native", "lua", "native", "lua"],
+                4 | 6 | 7 => vec!["lua", "lua"],
+                _ => unreachable!(),
+            };
+            assert_eq!(names, expected);
+        }
+    }
 
     #[tokio::test]
     async fn raw_missing_space_read_keeps_its_stream_and_only_falls_back_for_error_36() {

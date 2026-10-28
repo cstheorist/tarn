@@ -23,6 +23,7 @@ pub mod lint;
 pub mod mpw;
 pub mod normalize;
 mod observe;
+mod placement;
 pub mod plan;
 pub mod planner;
 pub mod prep;

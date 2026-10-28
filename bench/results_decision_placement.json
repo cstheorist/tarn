@@ -1,0 +1,342 @@
+{
+  "complete": true,
+  "platform": "Linux-6.10.14-linuxkit-aarch64-with-glibc2.36",
+  "cpu_count": 16,
+  "before_ref": "12ef447be1c3d236d987755dacfa45b88d9c3324",
+  "after_ref": "4d495692f9e63144bc1f7cabb96b2e6ef4273ce5",
+  "binary_sha256": {
+    "before": "656225259eb977ef99fe346276761e36a240e8dd56d0bef1c899b90ddfc70e48",
+    "after": "88f5628f5ef66b683e22304ae906fd4a969dc3f8f4d28f2dcdbae4de4b87bbc2"
+  },
+  "native_sha256": "fb09005c9d7289ceaa2c06e917842deccc61900f817de0ed18cc400df7b806ee",
+  "topology": "3 shards x 1 replica, memtx, WAL fsync, one two-thread gateway, pool 2",
+  "expiry_seconds": 15,
+  "clock_skew_seconds": 0,
+  "scope": "single-host placement workload; no RF3 or end-to-end speedup claim",
+  "samples": [
+    {
+      "label": "before",
+      "repeat": 1,
+      "transactions": 600,
+      "workers": 4,
+      "elapsed_seconds": 0.5471831669856329,
+      "transactions_per_second": 1096.524959467099,
+      "transaction_p50_ms": 3.3882089774124324,
+      "transaction_p99_ms": 7.430124998791143,
+      "decision_records": [
+        600,
+        0,
+        0
+      ],
+      "participant_records": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_workload": [
+        6000,
+        4800,
+        4800
+      ],
+      "wal_bytes_workload": [
+        394747,
+        306102,
+        306159
+      ],
+      "gc_decision_deletes": [
+        600,
+        0,
+        0
+      ],
+      "gc_participant_deletes": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_gc": [
+        1200,
+        600,
+        600
+      ],
+      "wal_bytes_gc": [
+        6139,
+        4392,
+        3095
+      ],
+      "tarantool_version": "3.9.0-0-g8b9a0f59a9",
+      "decision_id_digest": "af30b83defd352c53e1c79b14b2d861f77b03b07a200f1a673561e38210d9127",
+      "placement_and_tuple_checks": "passed"
+    },
+    {
+      "label": "after",
+      "repeat": 1,
+      "transactions": 600,
+      "workers": 4,
+      "elapsed_seconds": 0.5402655420184601,
+      "transactions_per_second": 1110.564996905723,
+      "transaction_p50_ms": 3.4368750057183206,
+      "transaction_p99_ms": 6.791208987124264,
+      "decision_records": [
+        200,
+        199,
+        201
+      ],
+      "participant_records": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_workload": [
+        5200,
+        5198,
+        5202
+      ],
+      "wal_bytes_workload": [
+        335605,
+        335488,
+        335858
+      ],
+      "gc_decision_deletes": [
+        200,
+        199,
+        201
+      ],
+      "gc_participant_deletes": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_gc": [
+        800,
+        799,
+        801
+      ],
+      "wal_bytes_gc": [
+        12049,
+        13193,
+        11570
+      ],
+      "tarantool_version": "3.9.0-0-g8b9a0f59a9",
+      "decision_id_digest": "0e7e680f504a94df18ca5963a2eedd77baa5bc5751af140cb97e4aaf7321fba7",
+      "placement_and_tuple_checks": "passed"
+    },
+    {
+      "label": "after",
+      "repeat": 2,
+      "transactions": 600,
+      "workers": 4,
+      "elapsed_seconds": 0.5741964589979034,
+      "transactions_per_second": 1044.938523388196,
+      "transaction_p50_ms": 3.4626660053618252,
+      "transaction_p99_ms": 7.420500012813136,
+      "decision_records": [
+        203,
+        193,
+        204
+      ],
+      "participant_records": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_workload": [
+        5206,
+        5186,
+        5208
+      ],
+      "wal_bytes_workload": [
+        336291,
+        334848,
+        336648
+      ],
+      "gc_decision_deletes": [
+        203,
+        193,
+        204
+      ],
+      "gc_participant_deletes": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_gc": [
+        803,
+        793,
+        804
+      ],
+      "wal_bytes_gc": [
+        12507,
+        13417,
+        13968
+      ],
+      "tarantool_version": "3.9.0-0-g8b9a0f59a9",
+      "decision_id_digest": "1b0fdd607b4c5d0f67b6717923880aebddd46389eda1dd24a57cf554ed2dcc68",
+      "placement_and_tuple_checks": "passed"
+    },
+    {
+      "label": "before",
+      "repeat": 2,
+      "transactions": 600,
+      "workers": 4,
+      "elapsed_seconds": 0.575959125009831,
+      "transactions_per_second": 1041.7405922508106,
+      "transaction_p50_ms": 3.663584007881582,
+      "transaction_p99_ms": 7.359708019066602,
+      "decision_records": [
+        600,
+        0,
+        0
+      ],
+      "participant_records": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_workload": [
+        6000,
+        4800,
+        4800
+      ],
+      "wal_bytes_workload": [
+        393588,
+        305038,
+        305209
+      ],
+      "gc_decision_deletes": [
+        600,
+        0,
+        0
+      ],
+      "gc_participant_deletes": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_gc": [
+        1200,
+        600,
+        600
+      ],
+      "wal_bytes_gc": [
+        6208,
+        3449,
+        5217
+      ],
+      "tarantool_version": "3.9.0-0-g8b9a0f59a9",
+      "decision_id_digest": "e65098c6ef45739201f28e9312c08a88351464956b082730365128ac34c79fdc",
+      "placement_and_tuple_checks": "passed"
+    },
+    {
+      "label": "before",
+      "repeat": 3,
+      "transactions": 600,
+      "workers": 4,
+      "elapsed_seconds": 0.56183950099512,
+      "transactions_per_second": 1067.9206409255505,
+      "transaction_p50_ms": 3.3971249940805137,
+      "transaction_p99_ms": 7.5113339989911765,
+      "decision_records": [
+        600,
+        0,
+        0
+      ],
+      "participant_records": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_workload": [
+        6000,
+        4800,
+        4800
+      ],
+      "wal_bytes_workload": [
+        393873,
+        305323,
+        305437
+      ],
+      "gc_decision_deletes": [
+        600,
+        0,
+        0
+      ],
+      "gc_participant_deletes": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_gc": [
+        1200,
+        600,
+        600
+      ],
+      "wal_bytes_gc": [
+        8366,
+        4701,
+        4502
+      ],
+      "tarantool_version": "3.9.0-0-g8b9a0f59a9",
+      "decision_id_digest": "dc06d925b9bc55af8643dc3db3e05b4e0acdd2512b8a53cf932bf47a32c1b099",
+      "placement_and_tuple_checks": "passed"
+    },
+    {
+      "label": "after",
+      "repeat": 3,
+      "transactions": 600,
+      "workers": 4,
+      "elapsed_seconds": 0.636675165995257,
+      "transactions_per_second": 942.3957962331922,
+      "transaction_p50_ms": 3.542250022292137,
+      "transaction_p99_ms": 9.040000004461035,
+      "decision_records": [
+        212,
+        190,
+        198
+      ],
+      "participant_records": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_workload": [
+        5224,
+        5180,
+        5196
+      ],
+      "wal_bytes_workload": [
+        337301,
+        333906,
+        335250
+      ],
+      "gc_decision_deletes": [
+        212,
+        190,
+        198
+      ],
+      "gc_participant_deletes": [
+        600,
+        600,
+        600
+      ],
+      "wal_rows_gc": [
+        812,
+        790,
+        798
+      ],
+      "wal_bytes_gc": [
+        14568,
+        13079,
+        13738
+      ],
+      "tarantool_version": "3.9.0-0-g8b9a0f59a9",
+      "decision_id_digest": "e474d5144757b2c187e4a855df66496e8ee9c067236084455c04212a8065ec3d",
+      "placement_and_tuple_checks": "passed"
+    }
+  ],
+  "execution_limits": {
+    "docker_cpu_quota": 3,
+    "docker_memory_bytes": 1610612736,
+    "host_note": "shared Docker VM; other services were not stopped; no concurrent task-owned checks during these final samples"
+  },
+  "control_native_sha256": "fb09005c9d7289ceaa2c06e917842deccc61900f817de0ed18cc400df7b806ee"
+}

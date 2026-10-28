@@ -15,6 +15,13 @@ MCRKeys  == [r \in MCReaders |-> {"x", "y"}]
 NoReaders == {}
 NoRKeys  == [r \in NoReaders |-> {}]
 
+\* Exercise the other decision writer for the common two-shard workload.
+\* The selector depends only on t and the frozen candidates, as the gateway
+\* hash does. Recovery still asks D(t), regardless of later bucket movement.
+RotatedDecision(t, candidates) ==
+    LET preferred == IF t = "T1" THEN "B" ELSE "A" IN
+    CHOOSE s \in candidates : s = preferred \/ preferred \notin candidates
+
 \* A grouped read of two tables on A (issue #83). x and z stand for keys
 \* or bounded prefixes of different tables; y is on B. T1 applies y before
 \* z, T3 sees that y and commits x, then T2 reads x and z in one snapshot.

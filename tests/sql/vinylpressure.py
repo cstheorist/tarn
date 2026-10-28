@@ -33,7 +33,7 @@ import uuid
 
 import pymysql
 
-from lazyfaults import Lease as ApplyLease
+from lazyfaults import Lease as ApplyLease, decision_node
 from lazytest import ev, q, rpc
 from movetest import bucket_of
 
@@ -63,6 +63,19 @@ def quantiles(values):
         return {}
     return {name: values[min(len(values) - 1, math.ceil(fraction * len(values)) - 1)]
             for name, fraction in (("p50_ms", .5), ("p95_ms", .95), ("p99_ms", .99), ("max_ms", 1))}
+
+
+def native_limit_witness(source_limit, samples):
+    """Observe the actual regulator together with its .5 MiB/s setting.
+
+    The caller selects the immediate receipt of the pressured shard, not an
+    unloaded peer. A low rate before the control was set is not its witness.
+    """
+    control = (source_limit["limit"] == .5
+               and source_limit["native"]["regulator"]["rate_limit"] <= 524288)
+    periodic = any(row["snap_io_rate_limit"] == .5
+                   and row["native"]["regulator"]["rate_limit"] <= 524288 for row in samples)
+    return control, periodic
 
 
 INSTALL = r"""
@@ -119,14 +132,21 @@ class Controls:
             raise
 
     def io_limit(self, limit):
+        receipts = []
         for node in self.test.nodes:
             result = ev(node, """
 local owner,limit=...
 local s=assert(rawget(_G,'__tarn_vinylpressure'));assert(s.owner==owner)
 box.cfg{snap_io_rate_limit=limit};s.io_set=limit
-return {limit=box.cfg.snap_io_rate_limit,vinyl_timeout=box.cfg.vinyl_timeout,stats=tarn_vinyl_stats()}
+-- Record the real regulator in this same call: a completed dump may
+-- recalculate it before the independent periodic sampler next runs.
+local native=box.stat.vinyl()
+return {limit=box.cfg.snap_io_rate_limit,vinyl_timeout=box.cfg.vinyl_timeout,
+    native=native,realtime=require('clock').realtime(),stats=tarn_vinyl_stats()}
 """, [self.owner, limit])
             self.test.record("native_io_control", node=node, result=result)
+            receipts.append({"node": node, "result": result})
+        return receipts
 
     def omit_stat(self, field):
         node = self.test.nodes[0]
@@ -399,7 +419,15 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
                 apply.known_committed = True
                 state = apply.snapshot()
                 assert state["state"] == "prepared" and state["row"] is None, state
-                assert state["dshard"] == self.identities[0]["id"], state
+                decision = decision_node(self.nodes, self.identities, state)
+                # If the pending participant is also the decision writer,
+                # its APPLY has not yet turned STAGING into COMMITTED. The
+                # successful SQL commit already proved unanimous YES;
+                # establish the same confirmed decision witness for either
+                # placement before forcing admission pressure.
+                rpc(decision, "tarn_txn_cas", [state["txid"], "staging", "committed"])
+                assert ev(decision, "local r=box.space._tarn_txn:get{...}; return r and r.status",
+                          [state["txid"]]) == "committed", state
                 with Controls(self) as control:
                     control.pressure()
                     apply.release()
@@ -495,7 +523,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                             note="native I/O control; no forced classifier override", identity=identity)
                 time.sleep(3)
                 phase[0] = "native_io_limited"
-                control.io_limit(.5)
+                limited = control.io_limit(.5)
                 time.sleep(self.args.pressure_seconds)
             finally:
                 # Release real engine I/O before draining any client call.
@@ -517,6 +545,10 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
         queue = max((row["native"]["scheduler"]["compaction_queue"] for row in samples), default=0)
         blocked = max((row["native"]["regulator"]["blocked_writers"] for row in samples), default=0)
         level0 = max((row["native"]["memory"]["level0"] for row in samples), default=0)
+        source_limit = next(row["result"] for row in limited if row["node"] == self.nodes[0])
+        rates = [row["native"]["regulator"]["rate_limit"] for row in samples]
+        control_rate = source_limit["native"]["regulator"]["rate_limit"]
+        control_limit, periodic_limit = native_limit_witness(source_limit, samples)
         outcomes = {}
         for result in ("ok", "error"):
             values = [row["latency_ms"] for row in records if row["result"] == result]
@@ -527,6 +559,13 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                    "by_outcome": outcomes, "worker_errors": errors,
                    "compaction_queue_max_bytes": queue, "blocked_writers_max": blocked,
                    "memory_level0_max_bytes": level0, "unexpected_errors": unexpected,
+                   "rate_limit_witness": {"control_node": self.nodes[0], "control_realtime": source_limit["realtime"],
+                                          "configured_mib_per_second": source_limit["limit"],
+                                          "control_native_rate_limit": control_rate,
+                                          "control_observed_limit": control_limit,
+                                          "periodic_min": min(rates, default=None),
+                                          "periodic_max": max(rates, default=None),
+                                          "periodic_observed_limit": periodic_limit},
                    "error_counts": dict(collections.Counter(str(row.get("error")) for row in records if row["result"] == "error"))}
         summary_path = self.evidence / "pressure-summary.json"
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")
@@ -544,7 +583,12 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
         assert all(row["engine"] == "vinyl" and row["vinyl_memory"] == identity["vinyl_memory"]
                    and row["vinyl_cache"] == 0 and row["vinyl_timeout"] == identity["vinyl_timeout"] for row in samples)
         assert any(row["snap_io_rate_limit"] == .5 for row in samples), "native I/O control was not sampled"
-        assert any(row["native"]["regulator"]["rate_limit"] <= 524288 for row in samples), "real regulator limit was not observed"
+        assert source_limit["limit"] == .5
+        # The setting's immediate raw receipt and the independent periodic
+        # pressure samples have different jobs. Tarantool can recompute the
+        # regulator after a dump; do not require the setting's initial value
+        # to persist until the periodic sampler happens to run.
+        assert control_limit or periodic_limit, "real regulator limit was not observed"
         assert queue > 0, "no actual queued compaction input; pressure fixture did not exercise compaction"
         assert blocked > 0 or level0 >= .75 * identity["vinyl_memory"] or queue >= identity["vinyl_memory"], "no actual native pressure witness"
         assert any(index["run_count"] > index["range_count"] > 0 for row in samples for index in row["indices"]), "no real run amplification"
