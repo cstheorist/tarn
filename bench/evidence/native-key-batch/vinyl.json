@@ -1,0 +1,45 @@
+{
+  "fixture": "[TMP]/tarn-native-batch-4clip53q",
+  "kind": "vinyl",
+  "production_source": "90e174a8bf0687c7b374bfacbb522bee5a626a9d",
+  "harness_commit": "2641f69",
+  "actual_harness_sha256": "40aaca8f0f24f1a62706c02009700ec635443f7d5499a783425dd8fca518f932",
+  "module_sha256": "8b9700a9e91328dffb1e70af4d889ef9964d715c04d61b46abfe59b25632887b",
+  "client_sha256": "b6d0665bf6a9796aa8133cd08ffb8bd8c1308028333f72b8f3ba702c23b71564",
+  "accepted_phases": 6,
+  "operations": 6137,
+  "native_served": 0,
+  "handbacks": 2327,
+  "cleanup": {
+    "errors": [],
+    "owned_services_absent": true,
+    "data_removed": true,
+    "archive_sha256": "2bb6294a3c0e4fdda4c5524fb5f39650e05e360249e8d94516038d45be122031",
+    "files": 10,
+    "frozen_files_unchanged": 126
+  },
+  "oom_killed": false,
+  "manifest_sha256": "5ee067ca82a707f26879d4f4a439498a03797631f0a6aa1457c0948402945246",
+  "label": "same-contract Vinyl guarded handback functional control; no native acceleration or paired speed claim",
+  "rows": 100000,
+  "payload_bytes": 64,
+  "cases": "B32 C1 hits/duplicates/miss,oneABpair each,.5warm/1smeasure",
+  "native_fallbacks": [
+    {
+      "vinyl": 468
+    },
+    {
+      "vinyl": 461
+    },
+    {
+      "vinyl": 1398
+    }
+  ],
+  "dump_witness": {
+    "primary_disk_rows": 100000,
+    "primary_runs": 1,
+    "level0": 0,
+    "tuple_cache": 0
+  },
+  "cache_scope": "box.snapshot() persistent-run witness; Vinylcache0, no OS pagecache drop; no cold-disk claim"
+}

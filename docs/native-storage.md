@@ -112,7 +112,9 @@ only batch dispatch. Warm capability discovery outside the timed window.
 Record served/fallback counts, CPU, latency, throughput and allocation
 scope; a native path that silently falls back is a different experiment.
 The [batch runner](../bench/native_batch.py) retains this experiment
-separately from earlier native-procedure results.
+separately from earlier native-procedure results. The [completed paired experiment](../bench/NATIVE_BATCH.md) publishes
+CPU, allocation, latency and rate results, including SQL regressions,
+all raw trials and immutable build receipts.
 
 The optional `tarn-storage` Cargo feature `alloc-metrics` defaults off.
 The one-argument `ts_select(["native_batch_allocs"])` diagnostic reports
