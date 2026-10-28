@@ -1,13 +1,27 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 107 and seed 2445098026915327470 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 28905] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 128 and seed 4224326489261529133 with 4 workers on 16 cores with 1472MB heap and 64MB offheap memory [pid: 33276] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/LockReplyOwnership.tla
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3877731956064985078/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-7993961374197236952/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
 Semantic processing of module LockReplyOwnership
+Linting of module TLCExt
+Linting of module _TLCTrace
 Linting of module LockReplyOwnership
-Starting... (2026-10-28 13:27:58)
+Starting... (2026-10-28 14:13:24)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-28 13:27:58.
+Finished computing initial states: 1 distinct state generated at 2026-10-28 14:13:25.
 Error: Invariant ReturnedRowsLocked is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -70,7 +84,7 @@ State 4: <PLBegin line 47, col 5 to line 50, col 65 of module LockReplyOwnership
 /\ writable = TRUE
 /\ entryGen = 0
 
-State 5: <Grant("x") line 53, col 5 to line 57, col 70 of module LockReplyOwnership>
+State 5: <Grant("y") line 53, col 5 to line 57, col 70 of module LockReplyOwnership>
 /\ liveSession = TRUE
 /\ disconnected = FALSE
 /\ replies = {}
@@ -79,35 +93,20 @@ State 5: <Grant("x") line 53, col 5 to line 57, col 70 of module LockReplyOwners
 /\ generation = 0
 /\ rows = {}
 /\ entryEpoch = 0
-/\ granted = {"x"}
+/\ granted = {"y"}
 /\ phase = "scan"
-/\ locked = [x |-> 0, y |-> 3]
+/\ locked = [x |-> 3, y |-> 0]
 /\ writable = TRUE
 /\ entryGen = 0
 
-State 6: <Read("x") line 60, col 5 to line 62, col 81 of module LockReplyOwnership>
+State 6: <Grant("x") line 53, col 5 to line 57, col 70 of module LockReplyOwnership>
 /\ liveSession = TRUE
 /\ disconnected = FALSE
 /\ replies = {}
 /\ roleStep = 0
 /\ epoch = 0
 /\ generation = 0
-/\ rows = {"x"}
-/\ entryEpoch = 0
-/\ granted = {"x"}
-/\ phase = "scan"
-/\ locked = [x |-> 0, y |-> 3]
-/\ writable = TRUE
-/\ entryGen = 0
-
-State 7: <Grant("y") line 53, col 5 to line 57, col 70 of module LockReplyOwnership>
-/\ liveSession = TRUE
-/\ disconnected = FALSE
-/\ replies = {}
-/\ roleStep = 0
-/\ epoch = 0
-/\ generation = 0
-/\ rows = {"x"}
+/\ rows = {}
 /\ entryEpoch = 0
 /\ granted = {"x", "y"}
 /\ phase = "scan"
@@ -115,7 +114,22 @@ State 7: <Grant("y") line 53, col 5 to line 57, col 70 of module LockReplyOwners
 /\ writable = TRUE
 /\ entryGen = 0
 
-State 8: <Disconnect line 77, col 5 to line 80, col 55 of module LockReplyOwnership>
+State 7: <Disconnect line 77, col 5 to line 80, col 55 of module LockReplyOwnership>
+/\ liveSession = FALSE
+/\ disconnected = TRUE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {}
+/\ entryEpoch = 0
+/\ granted = {"x", "y"}
+/\ phase = "scan"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 8: <Read("x") line 60, col 5 to line 62, col 81 of module LockReplyOwnership>
 /\ liveSession = FALSE
 /\ disconnected = TRUE
 /\ replies = {}
@@ -160,6 +174,7 @@ State 10: <Reply line 83, col 5 to line 93, col 78 of module LockReplyOwnership>
 /\ writable = TRUE
 /\ entryGen = 0
 
-341 states generated, 153 distinct states found, 36 states left on queue.
-The depth of the complete state graph search is 10.
-Finished in 00s at (2026-10-28 13:27:58)
+438 states generated, 184 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 12.
+Finished in 00s at (2026-10-28 14:13:25)
+Trace exploration spec path: ./LockReplyOwnership_TTrace_1793211204.tla

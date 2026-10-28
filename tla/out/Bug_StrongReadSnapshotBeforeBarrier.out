@@ -1,17 +1,27 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 0 and seed 6040466802086759377 with 4 workers on 16 cores with 1472MB heap and 64MB offheap memory [pid: 27710] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 51 and seed -3968125010824176799 with 4 workers on 16 cores with 1472MB heap and 64MB offheap memory [pid: 32858] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/StrongReadFreshness.tla
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16669607937115223451/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16669607937115223451/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16669607937115223451/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-17387590579219045477/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
 Semantic processing of module StrongReadFreshness
+Linting of module TLCExt
+Linting of module _TLCTrace
 Linting of module StrongReadFreshness
-Starting... (2026-10-28 13:06:49)
+Starting... (2026-10-28 14:13:15)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-28 13:06:49.
+Finished computing initial states: 1 distinct state generated at 2026-10-28 14:13:15.
 Error: Invariant StrongReadsSeePriorAcks is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -350,6 +360,7 @@ State 12: <FirstRead line 207, col 5 to line 215, col 66 of module StrongReadFre
 /\ snapshot = {}
 /\ readTerm = 3
 
-286865 states generated, 79770 distinct states found, 38045 states left on queue.
+286081 states generated, 80486 distinct states found, 38645 states left on queue.
 The depth of the complete state graph search is 12.
-Finished in 00s at (2026-10-28 13:06:50)
+Finished in 00s at (2026-10-28 14:13:16)
+Trace exploration spec path: ./StrongReadFreshness_TTrace_1793211195.tla

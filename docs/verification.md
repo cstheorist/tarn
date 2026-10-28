@@ -75,6 +75,10 @@ of workload, fault budget and options. The names say what is checked:
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
 | `NativeKeyBatch` | a bounded native full-primary-key batch returns the complete ordered filter-map of one memtx image, checking write claims even on missing keys, or hands the whole request back |
+| `StrongReadFreshness` | a request-specific quorum observation, local WAL catch-up and synchronous-queue settlement precede the first strong snapshot |
+| `StrongStreamCertificate` | an owned empty transaction is certified after its first barrier and before any read; later reads require that exact native transaction ID |
+| `LockReplyOwnership` | a yielding locking RPC returns rows only under its original observed role/generation and live session |
+| `RecordExpiryClock` / `RecordExpiryPolicy` | a two-skew retention margin under varying bounded clock offsets, plus local persisted-policy/high-water admission after GC |
 | `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
@@ -1291,12 +1295,148 @@ the immutable old/new identity premise.
 tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 ```
 
+### Strong-read freshness, stream provenance and locking replies (issue #130)
+
+`StrongReadFreshness.tla` refines the replica-freshness premise that the
+commit model's atomic failover does not express. Three replicas retain
+their own observed term, writable role, WAL evidence and settled effects.
+Two requests race two acknowledged writes across A → B → A leadership,
+one pause/resume and one partition/heal. The bounded network choices are a
+healthy mesh and three faults affecting A: isolation, outgoing links only,
+or incoming links only. These are representative directed networks, not
+exhaustive exploration of all 64 edge subsets.
+
+An acknowledged write leaves immutable WAL evidence on a write quorum of
+two. Each request collects fresh replies from a read quorum of two, joins
+their observed WAL, waits for local catch-up and settles the local sync
+queue before taking its first snapshot. Every prior write quorum intersects
+that request's reply quorum, so `CollectedCoversPriorAcks` follows from the
+reply observations and monotone WAL; no action tests the desired freshness
+predicate or reads the client's ACK floor. Catch-up and settlement then
+give `StrongReadsSeePriorAcks`. A later new snapshot, including one after
+an empty barrier transaction was rolled back, remains valid under this
+monotone confirmed-prefix premise.
+
+The six read controls independently admit a role-only read on a former
+leader, reuse an earlier barrier, retain a snapshot taken before the
+barrier, skip catch-up, skip queue settlement, or use a read quorum that
+does not intersect every write quorum. Each reaches an actual strong read
+missing a prior acknowledged write. The nonintersection control omits the
+intermediate coverage invariant so TLC reaches that final missing-data
+result. Native quorum durability, log/term safety, unconfirmed rollback,
+WAL catch-up and queue settlement remain trusted replication premises;
+this model does not implement Tarantool or prove its public C API mapping.
+
+`StrongStreamCertificate.tla` checks a separate provenance obligation.
+Only an owned empty transaction is marked after its first barrier and
+before any read. Later Lua/native reads require the exact current native
+transaction ID; an arbitrary unmarked ambient transaction is refused,
+including one whose old snapshot a late barrier cannot repair. The fixture
+has two stream slots, three never-reused transaction IDs and registry
+capacity one. Commit/rollback cleanup removes that ID. A savepoint rollback
+may conservatively remove a live transaction's certificate too: its later
+read refuses rather than refreshing the old transaction. Five controls
+catch late-snapshot marking, marking before the barrier, another
+transaction's certificate, missing cleanup and ignored capacity. Native ID
+uniqueness, callback execution and ordering, the actual 4096-entry bound,
+FFI layout and non-yielding callback/read admission remain runtime duties.
+
+`LockReplyOwnership.tla` checks the first point/range locking-RPC reply,
+where the gateway has no earlier generation to compare. Capture the role
+epoch and `PL_GEN` after the barrier and `pl_begin`; retain them across
+grants, row reads and yields. A final comparison with the same observed
+local role/generation and live session derives `ReturnedRowsLocked` from
+the grant/invalidation history. It does not assume ownership as an extra
+guard. Two rows race one demote/promote cycle and one disconnect. Relabeling
+the reply with the new generation, or ignoring the disconnected session,
+returns rows whose locks are gone in the two controls. The relabel control
+checks actual lock ownership rather than stopping at the earlier epoch
+mismatch. This local proof does not promise leadership persists after the
+admission barrier; existing commit validation, stream term/read-view checks,
+lock/DDL history, bucket fences, FIFO and native read semantics still apply.
+
+These checks cover default strong procedures, not a stronger contract for
+raw native reads or opted-in lazy indexes. Raw reads have no request-specific
+quorum barrier. A fresh base-row view does not make a lazy index complete:
+recent matching rows may still be absent from its candidates.
+
+### Record-expiry clocks and persisted admission policy (issue #130)
+
+`RecordExpiryClock.tla` refines the core model's irreversible `Expire`
+action. The positive fixture permits offsets to rise or fall while elapsed
+time advances, provided each actual clock is nondecreasing and every
+pairwise difference stays within `S`. Separate forward steps are allowed;
+a paused process delays its actions while wall time continues. The finite
+fixture has elapsed time 0–7, offsets 0–2, age limit `A = 2` and `S = 1`.
+The timestamp is finite, immutable and issued before the record was written;
+the issuer is included in the clock-bound premise.
+
+Retention needs **two** skew margins when offsets vary. At the write,
+`timestamp <= holder_write + S`. If GC requires
+`holder_gc > holder_write + A + 2*S`, the receiving participant's clock is
+`peer_gc >= holder_gc - S > timestamp + A`. Its nondecreasing clock then
+keeps the transaction expired. A single margin fails even with monotone
+clocks whose current pairwise differences always satisfy the bound. The
+other controls exceed the bound, move a clock backward after GC, raise the
+age limit, or omit/provide a future timestamp. Each permits a fresh PREPARE
+after its old record was forgotten. These are premise counterexamples, not
+a proof that a runtime clock monitor detects every such violation.
+
+`RecordExpiryPolicy.tla` checks local protection after local GC. Persist an
+immutable policy and atomically advance a wall high-water mark with each
+destructive GC chunk. Fresh absent-record state creation uses
+`max(current_wall, persisted_high)`, the fixed age limit and current clock
+health. Recheck at final admission after planning may have yielded; an
+unknown or changed policy/health state cannot authorize a fresh YES or
+NO/tombstone. Existing durable receipts and decided finishing are outside
+fresh admission. The fixture retains the high-water mark across two
+restart/promotion actions and permits clock rollback and configured-age
+changes. Its four controls omit the watermark, accept a mutable age policy,
+check age only before the yield, or ignore uncertain health. The entry-only
+control retains final health/policy checks, forcing a trace that actually
+crosses expiry and GC while planning is paused.
+
+The policy model assumes a valid immutable past-issued timestamp. It proves
+local rollback protection, not global clock certification, timestamp
+provenance, initial legacy-policy adoption, cross-shard high-water
+propagation or native atomic replication. The old-clock/future-input
+controls explain why those premises cannot be inferred from a role check,
+fresh read, local elapsed-time sample or per-call future-timestamp check.
+
+The five positive outcomes are:
+
+| Configuration | Distinct states | Depth | Principal invariant |
+|---|---:|---:|---|
+| `StrongReadFreshness` | 2,443,260 | 31 | `StrongReadsSeePriorAcks` |
+| `StrongStreamCertificate` | 24,180 | 19 | certificate provenance, exact ID, lifetime and capacity |
+| `LockReplyOwnership` | 184 | 12 | `ReturnedRowsLocked`, `ReplyKeepsEntryGeneration` |
+| `RecordExpiryClock` | 1,092 | 9 | `NoResurrectedPrepare` |
+| `RecordExpiryPolicy` | 1,368 | 23 | `NoUnsafeAdmission` |
+
+All 28 focused configurations (five positive and 23 expected controls) are
+generated and included in the default list. Their recorded outcomes are
+focused checks, not a claim that the entire default CI suite was rerun for
+this revision. The complete per-control states and violated invariants are
+in the generated [design results table](design.md#51-model-checking).
+Run only these checks with the same outcome checker as CI:
+
+```sh
+configs=(StrongReadFreshness StrongStreamCertificate LockReplyOwnership RecordExpiryClock RecordExpiryPolicy)
+for family in StrongRead StrongStream LockReply RecordExpiry RecordPolicy; do
+  for cfg in tla/Bug_${family}*.cfg; do
+    name=${cfg#tla/}
+    configs+=("${name%.cfg}")
+  done
+done
+tla/check.sh "${configs[@]}"
+```
+
 ### Configuration counts
 
-The default list contains 191 configurations, including 139 expected
-broken/trade-off outcomes. The 202 generated configurations reproduce from
+The default list contains 219 configurations, including 162 expected
+broken/trade-off outcomes. The 230 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 204 total. Explicit check arguments override the default
+directly, for 232 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs
@@ -1305,6 +1445,13 @@ list.
 builds it with the specifications and proofs erased, and the server uses the
 result. Verus proves:
 
+* **Native clock observation arithmetic** (`clock.rs`): `observation_ok`
+  exactly decides that neither clock moved backward, the monotonic elapsed
+  gap is within its bound and the absolute difference of wall/monotonic
+  elapsed time is within the drift allowance. All subtractions are free of
+  overflow/underflow for every `u64` input. The executable body is shared
+  with native admission. This is arithmetic, not certification of clock
+  sources, remote offsets, persisted policy, quorum health or GC safety.
 * **Native batch budgets** (`batch.rs`): `can_step` permits the next lookup
   exactly while work, rows and bytes each have room. `step` either rejects
   the whole native attempt or charges one work unit, one row for a present
@@ -1370,7 +1517,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 137 verified, 0 errors
+# verification results:: 138 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with

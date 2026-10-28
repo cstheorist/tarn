@@ -26,6 +26,11 @@ for cfg in "$@"; do
     EngineCutover|Bug_EngineCutover*) module=EngineCutover.tla ;;
     EngineSourceDrain|Bug_EngineSourceDrain*) module=EngineSourceDrain.tla ;;
     EngineAlias|EngineAlias_Existing|Bug_EngineAlias*) module=EngineAlias.tla ;;
+    StrongReadFreshness|Bug_StrongRead*) module=StrongReadFreshness.tla ;;
+    RecordExpiryClock|Bug_RecordExpiry*) module=RecordExpiryClock.tla ;;
+    RecordExpiryPolicy|Bug_RecordPolicy*) module=RecordExpiryPolicy.tla ;;
+    StrongStreamCertificate|Bug_StrongStream*) module=StrongStreamCertificate.tla ;;
+    LockReplyOwnership|Bug_LockReply*) module=LockReplyOwnership.tla ;;
     NativeKeyBatch|Bug_KeyBatch*) module=NativeKeyBatch.tla ;;
     LockCopy|Bug_Lock*) module=NativeLockCopy.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;

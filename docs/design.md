@@ -2080,6 +2080,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LockCopyOnQuorum | violates NativeFindsLocks | 17 | 21 | 3 | 00s | 3 |
 | Bug_LockCopyReleaseFirst | violates NativeFindsLocks | 162 | 387 | 5 | 00s | 5 |
 | Bug_LockReloadNoCopy | violates NativeFindsLocks | 166 | 395 | 5 | 00s | 5 |
+| Bug_LockReplyIgnoreDisconnect | violates ReturnedRowsLocked | 184 | 438 | 12 | 00s | 10 |
+| Bug_LockReplyRelabelGeneration | violates ReturnedRowsLocked | 187 | 436 | 12 | 00s | 11 |
 | Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
 | Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
 | Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
@@ -2092,6 +2094,16 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 19011 | 70050 | 12 | 06s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
+| Bug_RecordExpiryClockBackward | violates NoResurrectedPrepare | 741 | 9636 | 7 | 00s | 7 |
+| Bug_RecordExpiryExcessSkew | violates NoResurrectedPrepare | 1275 | 39253 | 6 | 00s | 6 |
+| Bug_RecordExpiryFutureTimestamp | violates NoResurrectedPrepare | 274 | 3615 | 6 | 00s | 6 |
+| Bug_RecordExpiryMissingTimestamp | violates NoResurrectedPrepare | 534 | 6952 | 6 | 00s | 6 |
+| Bug_RecordExpiryRaiseMaxAge | violates NoResurrectedPrepare | 689 | 9159 | 7 | 00s | 7 |
+| Bug_RecordExpirySingleMargin | violates NoResurrectedPrepare | 472 | 5681 | 5 | 00s | 5 |
+| Bug_RecordPolicyEntryOnly | violates NoUnsafeAdmission | 316 | 726 | 10 | 00s | 9 |
+| Bug_RecordPolicyIgnoreHealth | violates NoUnsafeAdmission | 104 | 217 | 7 | 00s | 4 |
+| Bug_RecordPolicyMutablePolicy | violates NoUnsafeAdmission | 407 | 997 | 11 | 00s | 10 |
+| Bug_RecordPolicyNoWatermark | violates NoUnsafeAdmission | 393 | 977 | 12 | 00s | 10 |
 | Bug_StreamMarksCommitInNewTxn | violates CommittedReadsCurrent | 11392 | 22752 | 8 | 01s | 8 |
 | Bug_StreamMarksDoomAfterCommit | violates CommittedReadsCurrent | 20376 | 44345 | 9 | 01s | 8 |
 | Bug_StreamMarksDoomBeforeClear | violates CommittedReadsCurrent | 68565 | 172713 | 10 | 02s | 10 |
@@ -2102,6 +2114,17 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_StreamMarksRoAfterTermChange | violates CommittedReadsCurrent | 165 | 202 | 5 | 00s | 4 |
 | Bug_StreamMarksValidateNoFenceFresh | violates CommittedReadsCurrent | 70994 | 178466 | 11 | 02s | 9 |
 | Bug_StreamMarksWritableBeforeTrigger | violates CommittedReadsCurrent | 462 | 706 | 6 | 00s | 5 |
+| Bug_StrongReadNoIntersection | violates StrongReadsSeePriorAcks | 11323 | 31467 | 9 | 00s | 8 |
+| Bug_StrongReadReuseBarrier | violates StrongReadsSeePriorAcks | 342886 | 1571900 | 15 | 02s | 14 |
+| Bug_StrongReadRoleOnly | violates StrongReadsSeePriorAcks | 396 | 727 | 6 | 00s | 5 |
+| Bug_StrongReadSkipCatchup | violates StrongReadsSeePriorAcks | 43183 | 148151 | 11 | 00s | 10 |
+| Bug_StrongReadSkipSettlement | violates StrongReadsSeePriorAcks | 38069 | 127663 | 11 | 00s | 11 |
+| Bug_StrongReadSnapshotBeforeBarrier | violates StrongReadsSeePriorAcks | 80486 | 286081 | 12 | 00s | 12 |
+| Bug_StrongStreamCertifyLateSnapshot | violates CertificateBeforeRead | 523 | 893 | 7 | 00s | 6 |
+| Bug_StrongStreamIgnoreCap | violates RegistryBounded | 770 | 1431 | 7 | 00s | 7 |
+| Bug_StrongStreamMarkBeforeBarrier | violates CertificateHasProvenance | 58 | 69 | 5 | 00s | 3 |
+| Bug_StrongStreamNoCleanup | violates RegistryOnlyLive | 200 | 293 | 6 | 00s | 5 |
+| Bug_StrongStreamWrongTxnID | violates ReadHasOwnCertificate | 373 | 614 | 6 | 00s | 6 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
 | Bug_UnconfirmedPrepare | violates CertifiedYesDurable | 6 | 6 | 4 | 00s | 4 |
@@ -2146,6 +2169,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
 | Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
+| LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
 | Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
@@ -2158,6 +2182,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | RC_Local | no errors | 50606 | 277842 | 19 | 09s |  |
 | RC_Mixed | no errors | 171352 | 1029336 | 20 | 27s |  |
 | RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 56s |  |
+| RecordExpiryClock | no errors | 1092 | 17022 | 9 | 00s |  |
+| RecordExpiryPolicy | no errors | 1368 | 3658 | 23 | 00s |  |
 | Recov | no errors | 71927 | 412881 | 18 | 11s |  |
 | RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
 | Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 14s |  |
@@ -2171,6 +2197,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
 | StreamMarks | no errors | 2134412 | 8112746 | 21 | 24s |  |
 | StreamMarks_TwoTables | no errors | 27772812 | 122862175 | 23 | 06min 23s |  |
+| StrongReadFreshness | no errors | 2443260 | 13421587 | 31 | 17s |  |
+| StrongStreamCertificate | no errors | 24180 | 76876 | 19 | 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
