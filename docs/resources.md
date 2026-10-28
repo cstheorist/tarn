@@ -32,6 +32,12 @@ execution retries. Work counts decoded bytes/cells, expression evaluations,
 join candidates, estimated sort comparisons and LIKE's input/pattern product.
 It is cumulative until query ownership ends; it is not a CPU-time deadline.
 
+The separate `rpc` configuration also limits enqueued request counts/bytes
+per connection, shard and gateway, with reserved completion capacity and its
+own physical-connection deadline. SQL resource accounting complements those
+limits with decoded rows, retained state and output ownership. RPC admission
+refusals retain their existing 1205/HY000 before-enqueue classification.
+
 Transaction accounting covers read-set keys/ranges, buffered writes, lock and
 stream metadata, statement snapshots and savepoints. It is deliberately
 cumulative until commit/rollback, including replaced writes and released

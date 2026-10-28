@@ -8,6 +8,31 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Recovery and garbage collection could be held up by what they cannot
+  resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
+  shard was down, 200 undecided transactions that needed it, the first ones
+  each recovery pass took, kept every newer one from being resolved; and
+  records that could not be collected could fill garbage collection's scan
+  window. Each pass now continues where the previous one stopped,
+  `recovery_workers` fibers resolve transactions at once, and a
+  transaction or a shard that failed waits before it is tried again (up to
+  `recovery_backoff_max`). Garbage collection runs on its own fiber, with
+  its own budget (`gc_interval`, `gc_time_budget`). What recovery does
+  with a transaction, and what garbage collection may delete, are
+  unchanged. `tarn_info().recovery` reports the backlog, the age of its
+  oldest transaction, the shards in backoff and garbage collection's laps;
+  `stats.recovered` counts the participants recovery resolved (it counted
+  the attempts that did not raise). `tla/RecoveryFairness.tla` models the
+  order of the passes, and `lua/test/recovery_faults.sh` stops one of
+  three shards.
+
+- Native-to-Lua autocommit fallback reuses the selected physical connection
+  after a matched handback or cached native unavailability. It no longer
+  advances an even-sized pool twice per write, leaving half its connections
+  unused. Explicit read-only refusals still discover a leader; lost replies
+  remain unknown outcomes and are never replayed
+  ([#155](https://github.com/cstheorist/tarn/issues/155)).
+
 - IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
   malformed frames, unsupported response types and unknown/duplicate SYNCs
   retire the connection instead of certifying a result. Every length-prefix
@@ -25,6 +50,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retain their charges until released. See [resource limits](docs/resources.md)
   for defaults, cleanup, supported shapes and proof boundaries.
 
+- Distributed transactions spread decision records across active writing
+  participants using a stable hash of the transaction ID
+  ([#132](https://github.com/cstheorist/tarn/issues/132)). Durable shard IDs
+  determine the candidate order; every PREPARE and recovery operation uses
+  the one selected identity. Atomic local commits keep their existing path.
+  Placement models, lost-reply/coordinator-crash tests and a repeated
+  record/WAL/GC benchmark cover the change.
+
+- Query routing diagnostics ([#133](https://github.com/cstheorist/tarn/issues/133)):
+  `EXPLAIN FORMAT=JSON` reports physical access paths, shard/bucket bounds,
+  colocation eligibility and possible global-index participants without
+  executing the query. `SHOW TARN PLAN FOR` diagnoses unbound prepared
+  statements, and bounded `SHOW TARN QUERIES` observations distinguish
+  completed runtime fanout from compile-time constraints.
+
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
   lookup loop for complete memtx autocommit batches of up to 128 keys.
@@ -33,6 +73,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checks missing-key locks, snapshot consistency and complete results;
   the executed budget checks are verified with Verus. See the
   [native storage inventory](docs/native-storage.md).
+
+- Bounded storage RPCs ([#127](https://github.com/cstheorist/tarn/issues/127)):
+  connection/shard/gateway count and byte admission, reserved completion
+  capacity, and deadlines that retire stalled physical connections while
+  preserving cancelled identities and 40001 versus 40003. `SHOW TARN RPCS`
+  and cached status counters expose charges, age, refusals and retirements.
 
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
@@ -507,6 +553,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- Database administration matches MariaDB affected-row counts and result
+  metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
+  CREATE DATABASE reports one row for a new database and zero for an
+  existing IF NOT EXISTS target. SHOW DATABASES LIKE filters
+  `information_schema` too, and includes the pattern in its column name.
 
 - Quoted administrative SQL tokens preserve UTF-8
   ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,

@@ -243,13 +243,33 @@ async fn main() {
             (Some(s), a)
         }
     };
-    let opts = Opts {
+    let mut opts = Opts {
         addr: addr.clone(),
         user: Some("tarn".into()),
         password: Some("tarn".into()),
         connect_timeout: Duration::from_secs(5),
         max_response_bytes: tarn_iproto::iproto::BODY_LEN_MAX,
+        ..Opts::new("")
     };
+    // The environment flag lets the unchanged baseline binary ignore the
+    // new hierarchy while the candidate measures all gateway-like scopes.
+    if std::env::var_os("TARN_BENCH_SHARED_LIMITS").is_some() {
+        let limits = tarn_iproto::Limits::default();
+        let scale = |n| tarn_iproto::Limits {
+            requests: limits.requests * n,
+            bytes: limits.bytes * n,
+            reserved_requests: limits.reserved_requests * n,
+            reserved_bytes: limits.reserved_bytes * n,
+        };
+        opts.admission = vec![
+            tarn_iproto::Budget::new("shard", scale(2)).unwrap(),
+            tarn_iproto::Budget::new("global", scale(4)).unwrap(),
+        ];
+        println!(
+            "admission profile: connection + shared shard + shared global; {:?}",
+            opts.request_limits
+        );
+    }
     let mut clients = Vec::new();
     for _ in 0..args.conns {
         clients.push(Client::connect(&opts).await.expect("connect"));
@@ -270,6 +290,10 @@ async fn main() {
             other => panic!("unknown mode {other}"),
         };
         phase(&clients, mode, &args, server.as_ref().map(|s| s.child.id())).await;
+    }
+    for c in &clients {
+        assert_eq!(c.stats().refusals, 0, "benchmark saturation is a different workload");
+        assert_eq!(c.stats().admission.deadline_retirements, 0);
     }
     drop(clients);
     drop(server);

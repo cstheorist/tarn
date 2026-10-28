@@ -802,16 +802,23 @@ pub async fn serve_connection<B: Backend>(
     stream: TcpStream,
     connection_id: u32,
     opts: Arc<ServerOpts>,
-    backend: B,
+    mut backend: B,
 ) -> io::Result<()> {
     let _ = stream.set_nodelay(true);
     let initial_charge = (256 + 4 * 16) << 10;
-    let buffer_guard = opts
+    let buffer_guard = match opts
         .memory
         .as_ref()
         .map(|pool| pool.clone().reserve(initial_charge))
         .transpose()
-        .map_err(io::Error::other)?;
+        .map_err(io::Error::other)
+    {
+        Ok(guard) => guard,
+        Err(error) => {
+            backend.on_disconnect().await;
+            return Err(error);
+        }
+    };
     let mut c = Conn {
         stream,
         rbuf: BytesMut::with_capacity(16 << 10),
@@ -876,6 +883,58 @@ mod tests {
             vec!["/* c; */ SELECT 1", "/*!40101 SET x=1 */"]
         );
         assert!(split_statements(" ; -- only\n; ").is_empty());
+    }
+
+    #[tokio::test]
+    async fn connection_admission_refusal_still_disconnects_the_backend() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        #[derive(Debug)]
+        struct Full;
+        impl tarn_common::ResourceMemory for Full {
+            fn reserve(self: Arc<Self>, _: u64) -> SqlResult<tarn_common::ResourceGuard> {
+                Err(SqlError::new(1041, "HY000", "full"))
+            }
+        }
+        struct OwnedBackend(Arc<AtomicUsize>);
+        impl Backend for OwnedBackend {
+            async fn on_connect(&mut self, _: &str, _: Option<&str>, _: bool, _: u8) -> SqlResult<()> {
+                unreachable!()
+            }
+            async fn on_query(&mut self, _: &str) -> SqlResult<QueryResult> {
+                unreachable!()
+            }
+            async fn on_prepare(&mut self, _: u32, _: &str) -> SqlResult<PrepareInfo> {
+                unreachable!()
+            }
+            async fn on_execute(&mut self, _: u32, _: &[Value]) -> SqlResult<QueryResult> {
+                unreachable!()
+            }
+            async fn on_close_stmt(&mut self, _: u32) {
+                unreachable!()
+            }
+            async fn on_init_db(&mut self, _: &str) -> SqlResult<()> {
+                unreachable!()
+            }
+            fn status_flags(&self) -> u16 {
+                0
+            }
+            async fn on_disconnect(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let disconnected = Arc::new(AtomicUsize::new(0));
+        let opts = Arc::new(ServerOpts {
+            memory: Some(Arc::new(Full)),
+            ..ServerOpts::default()
+        });
+        assert!(serve_connection(server, 1, opts, OwnedBackend(disconnected.clone()))
+            .await
+            .is_err());
+        assert_eq!(disconnected.load(Ordering::Relaxed), 1);
+        drop(client);
     }
 
     #[test]

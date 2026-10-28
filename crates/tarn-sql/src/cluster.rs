@@ -106,6 +106,9 @@ pub struct ClusterConfig {
     /// longer is given up.
     #[serde(default = "default_move_timeout")]
     pub move_timeout: f64,
+    /// Bounded IPROTO admission and physical connection lifetimes.
+    #[serde(default)]
+    pub rpc: crate::RpcConfig,
 }
 
 fn default_move_timeout() -> f64 {
@@ -294,6 +297,7 @@ pub struct Shard {
     replicas: Vec<String>,
     leader: RwLock<Option<Arc<Pool>>>,
     discover: tokio::sync::Mutex<()>,
+    rpc_budget: std::sync::OnceLock<tarn_iproto::Budget>,
     /// The shard left the cluster: it owns no bucket, and fan-outs and
     /// schema changes skip it.
     removed: std::sync::atomic::AtomicBool,
@@ -370,6 +374,14 @@ impl<'a> IntoIterator for &'a ShardList {
 }
 
 impl Shard {
+    pub(crate) fn rpc_budget(&self, cluster: &Cluster) -> tarn_iproto::Budget {
+        self.rpc_budget
+            .get_or_init(|| {
+                tarn_iproto::Budget::new("shard", cluster.cfg.rpc.shard)
+                    .expect("RPC configuration validated before connect")
+            })
+            .clone()
+    }
     pub(crate) fn replicas(&self) -> &[String] {
         &self.replicas
     }
@@ -379,6 +391,7 @@ impl Shard {
             replicas,
             leader: RwLock::new(None),
             discover: tokio::sync::Mutex::new(()),
+            rpc_budget: std::sync::OnceLock::new(),
             removed: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -393,12 +406,20 @@ impl Shard {
     }
 
     pub async fn client(&self, cluster: &Cluster) -> SqlResult<Client> {
+        self.client_for(cluster, false).await
+    }
+
+    pub(crate) async fn client_control(&self, cluster: &Cluster) -> SqlResult<Client> {
+        self.client_for(cluster, true).await
+    }
+
+    async fn client_for(&self, cluster: &Cluster, completion: bool) -> SqlResult<Client> {
         if let Some(p) = self.leader.read().clone() {
             if let Some(c) = p.pick() {
                 return Ok(c);
             }
         }
-        self.discover(cluster).await
+        self.discover(cluster, completion).await
     }
 
     pub fn invalidate(&self) {
@@ -417,7 +438,7 @@ impl Shard {
         self.leader.read().as_ref().map(|p| p.addr.clone())
     }
 
-    async fn discover(&self, cluster: &Cluster) -> SqlResult<Client> {
+    async fn discover(&self, cluster: &Cluster, completion: bool) -> SqlResult<Client> {
         let _g = self.discover.lock().await;
         if let Some(p) = self.leader.read().clone() {
             if let Some(c) = p.pick() {
@@ -426,7 +447,7 @@ impl Shard {
         }
         let mut last_err = String::from("no replicas configured");
         for addr in &self.replicas {
-            let opts = cluster.opts(addr);
+            let opts = cluster.opts_for_shard(self, addr);
             let c = match Client::connect(&opts).await {
                 Ok(c) => c,
                 Err(e) => {
@@ -434,7 +455,14 @@ impl Shard {
                     continue;
                 }
             };
-            let ro = match c.eval(0, "return box.info.ro", &[0x90]).await {
+            // Routing a completion must not first spend ordinary capacity
+            // on its leader probe, or normal overload could strand it.
+            let probe = if completion {
+                c.eval_control(0, "return box.info.ro", &[0x90]).await
+            } else {
+                c.eval(0, "return box.info.ro", &[0x90]).await
+            };
+            let ro = match probe {
                 // DATA = [ro]; Tarantool may use any array header width.
                 Ok(r) => r
                     .data()
@@ -486,6 +514,7 @@ impl Shard {
 #[derive(Default)]
 pub struct Stats {
     pub topk_scans: AtomicU64,
+    pub(crate) query_digests: crate::observe::Metrics,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
     pub commits_2pc: AtomicU64,
@@ -518,10 +547,12 @@ pub struct CachedPlan {
     pub resource_guard: tarn_common::ResourceGuard,
     pub version: u64,
     pub stmt: crate::plan::Stmt,
+    pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
     pub resources: Arc<crate::budget::Pool>,
+    pub(crate) rpc_global: tarn_iproto::Budget,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
@@ -854,6 +885,9 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
 
 impl Cluster {
     pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+        cfg.rpc.validate()?;
+        let rpc_global =
+            tarn_iproto::Budget::new("global", cfg.rpc.global).map_err(|e| SqlError::internal(e.to_string()))?;
         if cfg.shards.is_empty() {
             return Err(SqlError::internal("cluster config has no shards"));
         }
@@ -885,6 +919,7 @@ impl Cluster {
         );
         let c = Arc::new(Cluster {
             resources: crate::budget::Pool::new(cfg.resources.clone())?,
+            rpc_global,
             cfg,
             shards,
             globals,
@@ -986,12 +1021,30 @@ impl Cluster {
     }
 
     pub fn opts(&self, addr: &str) -> Opts {
+        let shard = self.shards.iter().find(|s| s.replicas.iter().any(|a| a == addr));
+        self.rpc_opts(shard, addr)
+    }
+
+    fn opts_for_shard(&self, shard: &Shard, addr: &str) -> Opts {
+        self.rpc_opts(Some(shard), addr)
+    }
+
+    fn rpc_opts(&self, shard: Option<&Shard>, addr: &str) -> Opts {
+        let mut admission = Vec::with_capacity(2);
+        if let Some(s) = shard {
+            admission.push(s.rpc_budget(self));
+        }
+        admission.push(self.rpc_global.clone());
         Opts {
             addr: addr.to_string(),
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
             max_response_bytes: crate::budget::STORAGE_REPLY_BYTES,
+            request_limits: self.cfg.rpc.connection,
+            request_timeout: Duration::from_secs_f64(self.cfg.rpc.timeout_secs),
+            admission,
+            observation_scope: shard.map(|s| s.id),
         }
     }
 
@@ -1125,68 +1178,110 @@ impl Cluster {
     /// not run) and once after a lost connection (it may have run: callers
     /// guarantee that running it twice is harmless).
     pub async fn call(&self, shard: usize, func: &str, args: &[u8]) -> SqlResult<Bytes> {
-        self.call_inner(shard, func, args, true).await
+        self.call_inner(shard, func, args, true, None).await
     }
 
     /// CALL a procedure that must not run twice (autocommit DML). Retried
     /// only after ER_READONLY; a connection lost while the request was in
     /// flight leaves the outcome unknown, reported as such.
     pub async fn call_once(&self, shard: usize, func: &str, args: &[u8]) -> SqlResult<Bytes> {
-        self.call_inner(shard, func, args, false).await
+        self.call_inner(shard, func, args, false, None).await
     }
 
-    /// CALL the shard's native procedure `func` once, as `call_once`: its
-    /// reply, or None where it is not there -- an older version, a shard
-    /// without the module, or one whose module did not load, which the
-    /// connection notes with `mark` -- or after a leader change. A reply
-    /// ["lua", "all"] (the procedure hands back every call of this shard:
-    /// a shard of an earlier version, whose native writes left synchronous
-    /// tables to Lua) is noted with `mark` too.
-    pub async fn call_native_once(&self, shard: usize, func: &str, args: &[u8], mark: u32) -> SqlResult<Option<Bytes>> {
+    /// CALL a native autocommit procedure, or its Lua fallback, as
+    /// `call_once`. An unavailable native procedure or a matched ["lua"]
+    /// handback leaves the operation unwritten: use the selected physical
+    /// client for Lua too, without advancing the pool again. Only an
+    /// explicit ER_READONLY discards that selection and discovers a leader.
+    /// Native unavailability and ["lua", "all"] are cached with `mark`.
+    pub async fn call_native_or_lua_once(
+        &self,
+        shard: usize,
+        func: &str,
+        lua: &str,
+        args: &[u8],
+        mark: u32,
+    ) -> SqlResult<Bytes> {
+        crate::observe::shard(shard);
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
         let s = &self.shards[shard];
         let c = s.client(self).await?;
-        if c.marked(mark) {
-            return Ok(None);
-        }
-        match c.call(0, func, args).await {
-            Ok(r) => {
-                let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
-                if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
-                    tracing::debug!(shard = s.id, "{} hands back every call", func);
+        if !c.marked(mark) {
+            match c.call(0, func, args).await {
+                Ok(r) => {
+                    let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
+                    if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
+                        tracing::debug!(shard = s.id, "{} hands back every call", func);
+                        c.mark(mark);
+                    }
+                    if !crate::mpw::status_is(&d, "lua") {
+                        return Ok(d);
+                    }
+                }
+                Err(tarn_iproto::Error::Server {
+                    code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                    message,
+                }) => {
+                    tracing::debug!(shard = s.id, "{} unavailable: {}", func, message);
                     c.mark(mark);
                 }
-                Ok(Some(d))
+                // A matched before-effect refusal permits Lua on a new leader.
+                Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::ER_READONLY => {
+                    s.invalidate();
+                    return self.call_once(shard, lua, args).await;
+                }
+                Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) => {
+                    s.invalidate();
+                    return Err(crate::mpw::ambiguous(s.id, &e));
+                }
+                Err(e) => return Err(from_iproto(e)),
             }
-            Err(tarn_iproto::Error::Server {
-                code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
-                message,
-            }) => {
-                tracing::debug!(shard = s.id, "{} unavailable: {}", func, message);
-                c.mark(mark);
-                Ok(None)
-            }
-            // (the Lua procedure sees the leader change too, and follows it)
-            Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::ER_READONLY => {
-                s.invalidate();
-                Ok(None)
-            }
-            Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) => {
-                s.invalidate();
-                Err(crate::mpw::ambiguous(s.id, &e))
-            }
-            Err(e) => Err(from_iproto(e)),
         }
+        self.call_inner(shard, lua, args, false, Some(c)).await
     }
 
-    async fn call_inner(&self, shard: usize, func: &str, args: &[u8], idempotent: bool) -> SqlResult<Bytes> {
+    async fn call_inner(
+        &self,
+        shard: usize,
+        func: &str,
+        args: &[u8],
+        idempotent: bool,
+        mut selected: Option<Client>,
+    ) -> SqlResult<Bytes> {
+        if matches!(
+            func,
+            "tarn_autocommit" | "tarn_apply" | "tarn_abort" | "tarn_fence" | "tarn_txn_cas"
+        ) {
+            crate::observe::shard(shard);
+        }
         let s = &self.shards[shard];
         let mut tries = 0;
         loop {
-            let c = s.client(self).await?;
-            match c.call(0, func, args).await {
+            let completion = matches!(
+                func,
+                "tarn_apply"
+                    | "tarn_abort"
+                    | "tarn_fence"
+                    | "tarn_txn_cas"
+                    | "tarn_txn_status"
+                    | "tarn_part_status"
+                    | "tarn_unlock"
+                    | "tarn_lock_waits"
+                    | "tarn_lock_victim"
+            );
+            let c = match selected.take() {
+                Some(c) => c,
+                None if completion => s.client_control(self).await?,
+                None => s.client(self).await?,
+            };
+            let reply = if completion {
+                c.call_control(0, func, args).await
+            } else {
+                c.call(0, func, args).await
+            };
+            match reply {
                 Ok(r) => return r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data")),
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
                     tracing::warn!(shard = s.id, "leader changed: {}", message);
@@ -1341,10 +1436,10 @@ impl Cluster {
 
     // ---- DDL ----------------------------------------------------------------
 
-    pub async fn create_database(&self, name: &str, if_not_exists: bool) -> SqlResult<()> {
+    pub async fn create_database(&self, name: &str, if_not_exists: bool) -> SqlResult<u64> {
         if self.catalog().has_db(name) {
             if if_not_exists {
-                return Ok(());
+                return Ok(0);
             }
             return Err(SqlError::new(
                 1007,
@@ -1355,7 +1450,8 @@ impl Cluster {
         let mut a = Mp::new();
         a.arr(1).str(name);
         lua_status(&self.call(0, "tarn_db_create", &a.0).await?)?;
-        self.bump_catalog().await
+        self.bump_catalog().await?;
+        Ok(1)
     }
 
     pub async fn drop_database(&self, name: &str, if_exists: bool, lock_timeout: f64) -> SqlResult<u64> {
@@ -2345,6 +2441,10 @@ impl Cluster {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "cluster_fallback_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 mod tests {

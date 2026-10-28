@@ -396,7 +396,7 @@ pub async fn call_read(
     });
     let client = client.clone();
     let args = args.to_vec();
-    let task = tokio::spawn(async move {
+    let task = tokio::spawn(crate::observe::inherit(async move {
         let reply = tokio::time::timeout(
             std::time::Duration::from_millis(query.pool.limits.read_timeout_ms),
             client.call(stream, function, &args),
@@ -414,7 +414,7 @@ pub async fn call_read(
             }
         };
         Ok((response, Some(ResourceGuard::new(reservation))))
-    });
+    }));
     task.await
         .map_err(|_| SqlError::internal("storage read worker stopped"))?
 }
@@ -451,7 +451,7 @@ pub async fn select_read(
     });
     let client = client.clone();
     let key = key.to_vec();
-    tokio::spawn(async move {
+    tokio::spawn(crate::observe::inherit(async move {
         let reply = tokio::time::timeout(
             std::time::Duration::from_millis(query.pool.limits.read_timeout_ms),
             client.select(stream, space, index, iter, offset, limit, &key),
@@ -469,7 +469,7 @@ pub async fn select_read(
             }
         };
         Ok((result, Some(ResourceGuard::new(reservation))))
-    })
+    }))
     .await
     .map_err(|_| SqlError::internal("storage read worker stopped"))?
 }
@@ -498,7 +498,7 @@ pub async fn cluster_read(
     });
     let cluster = cluster.clone();
     let args = args.to_vec();
-    tokio::spawn(async move {
+    tokio::spawn(crate::observe::inherit(async move {
         let reply = tokio::time::timeout(
             std::time::Duration::from_millis(query.pool.limits.read_timeout_ms),
             cluster.call(shard, function, &args),
@@ -513,7 +513,7 @@ pub async fn cluster_read(
             }
         };
         Ok((data, Some(ResourceGuard::new(reservation))))
-    })
+    }))
     .await
     .map_err(|_| SqlError::internal("storage read worker stopped"))?
 }
@@ -540,23 +540,20 @@ pub async fn autocommit(
     let args = args.to_vec();
     let timeout = std::time::Duration::from_millis(cluster.cfg.resources.read_timeout_ms)
         .max(std::time::Duration::from_secs_f64(lock_timeout.max(0.0) + 1.0));
-    tokio::spawn(async move {
+    tokio::spawn(crate::observe::inherit(async move {
         let result = tokio::time::timeout(timeout, async {
-            let reply = if native {
+            if native {
                 cluster
-                    .call_native_once(
+                    .call_native_or_lua_once(
                         shard,
                         "tarn_storage.ts_autocommit",
+                        "tarn_autocommit",
                         &args,
                         crate::session::MARK_NO_NATIVE_WRITE,
                     )
-                    .await?
+                    .await
             } else {
-                None
-            };
-            match reply {
-                Some(data) if !crate::mpw::status_is(&data, "lua") => Ok(data),
-                _ => cluster.call_once(shard, "tarn_autocommit", &args).await,
+                cluster.call_once(shard, "tarn_autocommit", &args).await
             }
         })
         .await;
@@ -571,7 +568,7 @@ pub async fn autocommit(
             }
         };
         result.map(|data| (data, guard))
-    })
+    }))
     .await
     .map_err(|_| SqlError::new(1180, "40003", "Autocommit worker stopped; outcome may be unknown"))?
 }

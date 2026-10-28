@@ -298,6 +298,16 @@ class Test:
         a = self.args
         st = self.stats
         c = connect(self.servers[0])
+        # A move whose step failed after its send (a shard's leader died)
+        # is finished by a server that finds its job abandoned.
+        deadline = time.time() + a.settle
+        while True:
+            rows = q(c, "SHOW TARN BUCKETS")
+            moving = [m for r in rows for m in filter(None, r[4].split(", ")) if " sent " not in m]
+            if not moving or time.time() > deadline:
+                break
+            time.sleep(0.5)
+
         # (recovery may still be applying a transaction whose APPLY was cut
         # off: wait for the balances to match the ledger)
         deadline = time.time() + 30
@@ -313,15 +323,6 @@ class Test:
             time.sleep(0.5)
         ctrs = dict(q(c, "SELECT id, n FROM counters"))
         in_ledger = {r[0] for r in ledger}
-        # A move whose step failed after its send (a shard's leader died)
-        # is finished by a server that finds its job abandoned.
-        deadline = time.time() + a.settle
-        while True:
-            rows = q(c, "SHOW TARN BUCKETS")
-            moving = [m for r in rows for m in filter(None, r[4].split(", ")) if " sent " not in m]
-            if not moving or time.time() > deadline:
-                break
-            time.sleep(0.5)
         print(f"  {st['moves']} buckets moved ({len(st['move_errs'])} moves failed); {st['commit']} transfers, "
               f"{st['conflict']} conflicts; {st['rc_ok']} READ COMMITTED increments; {st['audits']} audits, "
               f"{st['rc_reads']} READ COMMITTED reads of every shard; {len(st['err'])} other errors")

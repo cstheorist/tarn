@@ -494,7 +494,10 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                 m.nil();
             }
         }
-        Route::Buckets(vec![bucket]).encode(&mut m);
+        let route = Route::Buckets(vec![bucket]);
+        crate::observe::shard(shard);
+        crate::observe::read(&route);
+        route.encode(&mut m);
         let (d, _wire) = crate::budget::cluster_read(cluster, shard, "tarn_lazy_select", &m.0).await?;
         let (candidates, next) = decode_page(&d, l.space_id, t, ix, map.count)?;
         if next.is_some() && next == after {

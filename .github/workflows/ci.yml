@@ -95,12 +95,19 @@ jobs:
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
+      - name: Decision placement, lost PREPARE reply and coordinator crash
+        run: |
+          ci/annotate.sh decision bash tests/decision.sh
+          TARN_NATIVE=0 ci/annotate.sh decision-lua bash tests/decision.sh
+          ENGINE=vinyl ci/annotate.sh decision-vinyl bash tests/decision.sh
       - name: Start a 2-shard cluster (two SQL servers)
         run: TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
+      - name: Query plans and bounded routing diagnostics
+        run: ci/annotate.sh explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
       - name: Transaction tests
         run: ci/annotate.sh txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
       - name: READ COMMITTED tests
@@ -129,6 +136,7 @@ jobs:
           # move reads from disk, a runner moves too few buckets to tell)
           ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh vinyl-explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
           ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
@@ -147,6 +155,11 @@ jobs:
             --tarn 127.0.0.1:4000,127.0.0.1:4001 --shards 127.0.0.1:3311,127.0.0.1:3321 \
             --require-native --real-pressure
           scripts/cluster.sh stop
+      - name: Bounded RPC admission and blackholed established connections
+        run: |
+          ci/annotate.sh rpcs tests/rpcs.sh
+          TARN_NATIVE=0 ci/annotate.sh rpcs-lua tests/rpcs.sh
+          ENGINE=vinyl ci/annotate.sh rpcs-vinyl tests/rpcs.sh
       - name: Fault injection
         run: |
           TARN_CHECK_LOCKS=1 ci/annotate.sh faults tests/faults.sh
