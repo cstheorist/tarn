@@ -1,0 +1,74 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 58 and seed 8119555468946990784 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 28155] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/RecordExpiryClock.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9934169673887039926/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9934169673887039926/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9934169673887039926/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9934169673887039926/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module RecordExpiryClock
+Linting of module RecordExpiryClock
+Starting... (2026-10-28 13:15:32)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Finished computing initial states: 15 distinct states generated at 2026-10-28 13:15:32.
+Error: Invariant NoResurrectedPrepare is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ changed = FALSE
+/\ elapsed = 0
+/\ forgotten = FALSE
+/\ expires = 3
+/\ timestamp = 1
+/\ maxAge = 2
+/\ accepted = FALSE
+/\ offset = [issuer |-> 1, holder |-> 0, peer |-> 0]
+
+State 2: <Tick([issuer |-> 0, holder |-> 0, peer |-> 0]) line 53, col 5 to line 56, col 77 of module RecordExpiryClock>
+/\ changed = FALSE
+/\ elapsed = 1
+/\ forgotten = FALSE
+/\ expires = 3
+/\ timestamp = 1
+/\ maxAge = 2
+/\ accepted = FALSE
+/\ offset = [issuer |-> 0, holder |-> 0, peer |-> 0]
+
+State 3: <Tick([issuer |-> 1, holder |-> 2, peer |-> 1]) line 53, col 5 to line 56, col 77 of module RecordExpiryClock>
+/\ changed = FALSE
+/\ elapsed = 2
+/\ forgotten = FALSE
+/\ expires = 3
+/\ timestamp = 1
+/\ maxAge = 2
+/\ accepted = FALSE
+/\ offset = [issuer |-> 1, holder |-> 2, peer |-> 1]
+
+State 4: <GC line 59, col 5 to line 60, col 83 of module RecordExpiryClock>
+/\ changed = FALSE
+/\ elapsed = 2
+/\ forgotten = TRUE
+/\ expires = 3
+/\ timestamp = 1
+/\ maxAge = 2
+/\ accepted = FALSE
+/\ offset = [issuer |-> 1, holder |-> 2, peer |-> 1]
+
+State 5: <FreshPrepare line 79, col 5 to line 80, col 84 of module RecordExpiryClock>
+/\ changed = FALSE
+/\ elapsed = 2
+/\ forgotten = TRUE
+/\ expires = 3
+/\ timestamp = 1
+/\ maxAge = 2
+/\ accepted = TRUE
+/\ offset = [issuer |-> 1, holder |-> 2, peer |-> 1]
+
+5272 states generated, 437 distinct states found, 134 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-28 13:15:32)
