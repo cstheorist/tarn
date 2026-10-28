@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
+  malformed frames, unsupported response types and unknown/duplicate SYNCs
+  retire the connection instead of certifying a result. Every length-prefix
+  width is bounded before payload allocation. Pushes retain the pending
+  request's identity, including after caller cancellation. A sent mutation
+  whose reply is invalid remains 1180/40003 and is never replayed.
+
 ### Added
 
 - Exact integer SUM/MIN/MAX partials and filtered column projections over
@@ -498,6 +507,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- Quoted administrative SQL tokens preserve UTF-8
+  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
+  savepoints and quoted variable names retain multibyte characters.
+  Doubled quotes and string backslash escapes are decoded without changing
+  the original byte offsets used for SET expressions. Unterminated quoted
+  tokens return syntax error 1064.
 
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original

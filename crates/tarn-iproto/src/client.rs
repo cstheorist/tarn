@@ -10,7 +10,7 @@
 //!   `write_all`, so every request queued while the previous write was in
 //!   flight goes out in a single syscall.
 //! * The reader task reads into a large `BytesMut`, splits off each complete
-//!   packet as a frozen `Bytes` (no copy), parses only the header, and
+//!   packet as a frozen `Bytes` (no copy), validates its header and body envelope, and
 //!   completes all waiters of one read under a single lock acquisition.
 //!   Error bodies are decoded by the waiting caller, not by the reader.
 //! * When either task fails, the connection is marked closed under the same
@@ -35,6 +35,9 @@ use tokio::task::AbortHandle;
 use crate::iproto::{self, key};
 use crate::mp;
 use crate::{Error, Iter, Opts, TxnIsolation};
+
+#[cfg(test)]
+mod tests;
 
 /// Read buffer growth step.
 const READ_CHUNK: usize = 128 * 1024;
@@ -77,7 +80,12 @@ struct Reply {
 
 impl Reply {
     fn into_response(self) -> Result<Response, Error> {
-        if self.rtype & iproto::TYPE_ERROR != 0 {
+        if !terminal_type(self.rtype) {
+            Err(Error::Protocol(format!(
+                "unsupported terminal response type {}",
+                self.rtype
+            )))
+        } else if self.rtype & iproto::TYPE_ERROR != 0 {
             Err(Error::Server {
                 code: self.rtype & 0x7fff,
                 message: error_message(&self.body),
@@ -361,27 +369,34 @@ struct Frame {
     body: Bytes,
 }
 
+/// Only OK and the 15-bit database-error family are terminal responses.
+/// Request codes, events and future nonfinal statuses cannot certify a result.
+fn terminal_type(rtype: u32) -> bool {
+    rtype == iproto::OK || (iproto::TYPE_ERROR..=0xffff).contains(&rtype)
+}
+
 /// Split one complete packet off the front of `buf`, if there is one. When
 /// the packet is incomplete, makes sure `buf` has room for all of it.
 fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     let b = &buf[..];
     let Some(&first) = b.first() else { return Ok(None) };
     let (plen, len) = match first {
-        0x00..=0x7f => (1usize, first as usize),
-        0xcc if b.len() >= 2 => (2, b[1] as usize),
-        0xcd if b.len() >= 3 => (3, u16::from_be_bytes([b[1], b[2]]) as usize),
-        0xce if b.len() >= 5 => (5, u32::from_be_bytes([b[1], b[2], b[3], b[4]]) as usize),
-        0xcf if b.len() >= 9 => {
-            let v = u64::from_be_bytes(b[1..9].try_into().unwrap());
-            if v > iproto::BODY_LEN_MAX as u64 {
-                return Err(Error::Protocol(format!("packet too large: {v} bytes")));
-            }
-            (9, v as usize)
-        }
+        0x00..=0x7f => (1usize, first as u64),
+        0xcc if b.len() >= 2 => (2, b[1] as u64),
+        0xcd if b.len() >= 3 => (3, u16::from_be_bytes([b[1], b[2]]) as u64),
+        0xce if b.len() >= 5 => (5, u32::from_be_bytes([b[1], b[2], b[3], b[4]]) as u64),
+        0xcf if b.len() >= 9 => (9, u64::from_be_bytes(b[1..9].try_into().unwrap())),
         0xcc..=0xcf => return Ok(None),
         _ => return Err(Error::Protocol(format!("invalid packet length prefix 0x{first:02x}"))),
     };
-    let total = plen + len;
+    // Check every encoding before narrowing or reserving, including an
+    // incomplete uint32-prefixed reply advertising more than BODY_LEN_MAX.
+    if len > iproto::BODY_LEN_MAX as u64 {
+        return Err(Error::Protocol(format!("packet too large: {len} bytes")));
+    }
+    let total = plen
+        .checked_add(len as usize)
+        .ok_or_else(|| Error::Protocol("packet length overflow".into()))?;
     if b.len() < total {
         if buf.capacity() < total {
             buf.reserve(total - buf.len());
@@ -392,20 +407,47 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     pkt.advance(plen);
     let pkt = pkt.freeze();
     let mut p: &[u8] = &pkt;
-    let mut rtype = 0u32;
-    let mut sync = 0u64;
-    let mut schema_version = 0u64;
+    let mut rtype = None;
+    let mut sync = None;
+    let mut schema_version = None;
     let n = mp::read_map_len(&mut p)?;
     for _ in 0..n {
         let k = mp::read_uint(&mut p)?;
         match k {
             k if k == key::REQUEST_TYPE as u64 => {
                 let v = mp::read_uint(&mut p)?;
-                rtype = u32::try_from(v).map_err(|_| Error::Protocol(format!("bad response type {v}")))?;
+                let v = u32::try_from(v).map_err(|_| Error::Protocol(format!("bad response type {v}")))?;
+                if rtype.replace(v).is_some() {
+                    return Err(Error::Protocol("duplicate response type".into()));
+                }
             }
-            k if k == key::SYNC as u64 => sync = mp::read_uint(&mut p)?,
-            k if k == key::SCHEMA_VERSION as u64 => schema_version = mp::read_uint(&mut p)?,
+            k if k == key::SYNC as u64 => {
+                if sync.replace(mp::read_uint(&mut p)?).is_some() {
+                    return Err(Error::Protocol("duplicate response SYNC".into()));
+                }
+            }
+            k if k == key::SCHEMA_VERSION as u64 => {
+                if schema_version.replace(mp::read_uint(&mut p)?).is_some() {
+                    return Err(Error::Protocol("duplicate schema version".into()));
+                }
+            }
             _ => mp::skip_value(&mut p)?,
+        }
+    }
+    let rtype = rtype.ok_or_else(|| Error::Protocol("missing response type".into()))?;
+    let sync = sync.ok_or_else(|| Error::Protocol("missing response SYNC".into()))?;
+    if !terminal_type(rtype) && rtype != iproto::CHUNK {
+        return Err(Error::Protocol(format!("unsupported response type {rtype}")));
+    }
+    // Empty bodies are valid for replies such as PING. Otherwise one complete
+    // map must occupy the rest of the frame; a valid prefix is not a reply.
+    if !p.is_empty() {
+        let mut fields = p;
+        mp::read_map_len(&mut fields)?;
+        let mut tail = p;
+        mp::skip_value(&mut tail)?;
+        if !tail.is_empty() {
+            return Err(Error::Protocol("trailing response body bytes".into()));
         }
     }
     let hdr_len = pkt.len() - p.len();
@@ -413,7 +455,7 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     Ok(Some(Frame {
         rtype,
         sync,
-        schema_version,
+        schema_version: schema_version.unwrap_or(0),
         body,
     }))
 }
@@ -424,27 +466,37 @@ async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: R, mut b
     let why: Error = 'outer: loop {
         loop {
             match next_frame(&mut buf) {
-                Ok(Some(f)) => {
-                    // IPROTO_CHUNK (box.session.push) shares the sync of a
-                    // request that is still running; not a final reply.
-                    if f.rtype != iproto::CHUNK {
-                        done.push(f);
-                    }
-                }
+                Ok(Some(f)) => done.push(f),
                 Ok(None) => break,
                 Err(e) => break 'outer e,
             }
         }
         if !done.is_empty() {
-            shared.counters.replies.fetch_add(done.len() as u64, Ordering::Relaxed);
-            {
+            let bad_sync = {
                 let mut st = shared.state.lock();
+                let mut bad_sync = None;
                 for f in done.drain(..) {
-                    if let Some(tx) = st.waiters.remove(&f.sync) {
-                        ready.push((tx, f));
+                    // A cancelled caller still owns its entry until a final
+                    // reply or connection retirement. CHUNK never removes it.
+                    if f.rtype == iproto::CHUNK && st.waiters.contains_key(&f.sync) {
+                        continue;
                     }
+                    let Some(tx) = st.waiters.remove(&f.sync) else {
+                        bad_sync = Some(f.sync);
+                        break;
+                    };
+                    ready.push((tx, f));
                 }
+                bad_sync
+            };
+            if let Some(sync) = bad_sync {
+                // Do not publish any part of an ambiguously correlated batch.
+                // Dropping these senders and retiring the rest is uncertainty,
+                // never a matched database error that can authorize a retry.
+                ready.clear();
+                break 'outer Error::Protocol(format!("unknown or duplicate response SYNC {sync}"));
             }
+            shared.counters.replies.fetch_add(ready.len() as u64, Ordering::Relaxed);
             for (tx, f) in ready.drain(..) {
                 let _ = tx.send(Reply {
                     rtype: f.rtype,
@@ -660,9 +712,12 @@ impl Client {
         let want_auth = opts.user.is_some();
         while id_reply.is_none() || (want_auth && auth_reply.is_none()) {
             match next_frame(&mut buf)? {
-                Some(f) if f.sync == SYNC_ID => id_reply = Some(f),
-                Some(f) if f.sync == SYNC_AUTH => auth_reply = Some(f),
-                Some(_) => {}
+                Some(f) if !terminal_type(f.rtype) => {
+                    return Err(Error::Protocol("nonterminal handshake reply".into()));
+                }
+                Some(f) if f.sync == SYNC_ID && id_reply.is_none() => id_reply = Some(f),
+                Some(f) if f.sync == SYNC_AUTH && want_auth && auth_reply.is_none() => auth_reply = Some(f),
+                Some(f) => return Err(Error::Protocol(format!("unexpected handshake SYNC {}", f.sync))),
                 None => {
                     if rd.read_buf(&mut buf).await? == 0 {
                         return Err(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
