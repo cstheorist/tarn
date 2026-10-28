@@ -981,6 +981,21 @@ tla/check.sh Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAf
 The model is small on purpose: it is the contract every native procedure
 that writes must keep, whatever it checks before.
 
+The gateway also retains the selected physical connection for autocommit
+Lua fallback, including cached native unavailability (#155). Only an
+explicit read-only refusal permits leader rediscovery. The model abstracts
+pool selection; it does not prove connection distribution or capacity use.
+`cluster::fallback_tests` runs real Session SQL and storage procedures,
+records physical session IDs, and holds concurrent writes before effect.
+With warmed missing/blanket-handback native procedures, pools of two and
+four use every connection, with one held data call per connection and
+exactly one increment per statement. Separate controls cover ordinary
+handbacks, native success and native/Lua read-only refusals. The existing
+lost-reply faults check unknown outcomes without replay. A real socket-loss
+control after a committed native-call effect checks `1180/40003`, separately
+from a refused native conflict's `1213/40001`; neither calls Lua. Pool
+utilization is not evidence of a latency or throughput improvement.
+
 ### Bounded native primary-key batches (issue #141)
 
 `NativeKeyBatch.tla` checks a local read refinement, not a new commit
