@@ -194,7 +194,7 @@ for id,p in pairs(box.info.replication) do
 end
 return require('json').encode{ready=true,id=box.info.id,ro=box.info.ro,
  uuid=tostring(box.info.uuid),status=box.info.status,follow=follow,
- native=i.native,layout=tonumber(n.layout),size=ffi.sizeof('struct tarn_ns'),
+ clock=i.clock,native=i.native,layout=tonumber(n.layout),size=ffi.sizeof('struct tarn_ns'),
  lock_copy_errors=i.stats.lock_copy_errors,
  test_hooks=tarn.cfg.test_hooks,check_locks=tarn.cfg.check_locks,sync=tarn.cfg.sync,
  wal=box.cfg.wal_mode,quorum=box.cfg.replication_synchro_quorum,
@@ -213,13 +213,14 @@ def wait_cluster(root, m, expected):
                 leaders = [i for i, s in enumerate(states) if not s["ro"]]
                 if len(leaders) == 1:
                     for s in states:
-                        assert s["layout"] == 11 and s["size"] == 312
+                        assert s["layout"] == 12 and s["size"] == 392
                         assert s["test_hooks"] is False and s["check_locks"] is True
                         assert s["wal"] == ("fsync" if expected == 3 else "write")
                         assert s["sync"] == (expected == 3)
                         assert s["lock_copy_errors"] == 0
                     leader = leaders[0]
-                    if not states[leader]["native"] or states[leader]["native"]["ready"] != 1:
+                    if (not states[leader]["native"] or states[leader]["native"]["ready"] != 1
+                            or not states[leader]["clock"]["read_ready"] or states[leader]["clock"]["covered_peer_count"] < 1):
                         raise RuntimeError("leader native state is not ready yet")
                     if expected == 3:
                         assert states[leader]["synchro"]["queue"]["owner"] == states[leader]["id"]

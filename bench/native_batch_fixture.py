@@ -251,7 +251,7 @@ def run(args):
         deadline = time.monotonic()+30
         while time.monotonic() < deadline:
             try:
-                ready = observer(root,endpoint,"return require('json').encode({ready=not box.info.ro and box.space._tarn_meta~=nil})")
+                ready = observer(root,endpoint,"return require('json').encode({ready=not box.info.ro and rawget(_G,'tarn')~=nil and tarn.clock.status().read_ready})")
                 if ready["ready"]:
                     break
             except (RuntimeError,subprocess.TimeoutExpired):

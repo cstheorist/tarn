@@ -114,11 +114,14 @@ def phase(args, root, number, trial, mode, batch, shape, workers, pymysql):
         assert not errors, errors
         b,a = record["before"],record["after"]
         assert b["uuid"]==a["uuid"] and b["pid"]==a["pid"], "storage restarted"
-        assert b["native_layout"]==a["native_layout"]==11 and b["native_size"]==a["native_size"]==312
+        assert b["native_layout"]==a["native_layout"]==12 and b["native_size"]==a["native_size"]==392
         assert b["test_hooks"] is False and a["test_hooks"] is False
         assert b["jit_on"] and a["jit_on"]
         assert b["gc_running"] is not False and a["gc_running"] is not False
         assert b["info"]["native"]["ready"]==a["info"]["native"]["ready"]==1
+        for snapshot in (b, a):
+            assert snapshot["read_contract"] == ["strong_reads", 1]
+            assert snapshot["native_fresh_clock_ok"] == 1 and snapshot["info"]["clock"]["read_ready"]
         record.update(operations=count,elapsed_seconds=elapsed,returned_rows=sum(t["rows"] for t in traces),
                       queries_per_second=count/elapsed,p50_ns=percentile(latency,.5),p99_ns=percentile(latency,.99),
                       min_ns=min(latency),max_ns=max(latency),client_cpu_cores=record["client_cpu_seconds"]/elapsed)

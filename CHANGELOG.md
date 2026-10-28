@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Request-specific quorum freshness for default SQL and strong storage
+  reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty
+  transaction establishes the confirmed prefix before data access; a first
+  stream read retains that transaction and its MVCC read set. Existing
+  unmarked ambient transactions are refused without a late refresh.
+  Both engines use the pinned empty-barrier/confirmed-view composition;
+  raw native reads retain local visibility and lazy indexes retain their
+  documented eventual semantics. New gateways require the storage
+  `strong_reads` V1 capability. See [the rollout and trusted
+  configuration boundary](docs/operations.md#strong-reads-and-storage-rollout).
+
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
   lookup loop for complete memtx autocommit batches of up to 128 keys.
@@ -490,6 +501,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- Native storage procedures retain their CALL arguments across the yielding
+  freshness barrier. ABI 12 adds current policy, space, clock and exact
+  transaction checks; older modules use the guarded Lua implementation.
+- Clock policy and the GC rejection floor persist with the receipt
+  transitions they protect. Retention uses two skew margins, timing policy
+  changes fail closed, and expiring work requires coverage of its relevant
+  logical writers. Clock uncertainty never prevents completion of an
+  already decided transaction. See [verification boundaries](docs/verification.md).
+- Uncertain PREPARE receipt checks return no vote and preserve a borrowed
+  stream. Fresh refusal and GC boundaries recheck current durability
+  eligibility; a concurrent confirmed YES cannot become a contradictory NO.
 
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original

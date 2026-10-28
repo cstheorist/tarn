@@ -149,6 +149,12 @@ ok(call(3, 'tarn_bucket_init', 16, {}))
 local members = {ver = 1, shards = {}}
 for i = 1, 3 do members.shards[i] = {id=i,replicas={assert(os.getenv('S'..i))},state='active'} end
 for i = 1, 3 do ok(call(i, 'tarn_members_set', members)) end
+assert(wait(function()
+    for i = 1, 3 do
+        if not c[i]:eval('return tarn.clock.status().read_ready') then return false end
+    end
+    return true
+end), 'clock policy readiness after actual membership change')
 local joined = ok(call(1, 'tarn_bucket_send_begin', target, 3, 'lazy-join', 5))
 ok(call(3, 'tarn_bucket_recv_begin', target, 1, 'lazy-join'))
 copy_rows(1, 3, target, 'lazy-join'); ok(call(3, 'tarn_bucket_hold', target, 'lazy-join'))

@@ -82,7 +82,7 @@ check('a read routed by its bucket is served', r[1] == 'ok' and #r[2] == 1, r)
 -- bucket), then commits in one of the ways a transaction does.
 local function stream()
     local s = c[1]:new_stream()
-    s:begin()
+    s:eval('tarn.fresh.begin_stream()')
     s:call('tarn_select', {sid, 0, {1}, 'EQ', 1, box.NULL, true, true, box.NULL, false, box.NULL, box.NULL})
     return s
 end

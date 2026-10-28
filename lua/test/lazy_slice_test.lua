@@ -195,7 +195,7 @@ if native ~= nil and native ~= '0' then
     check('... counted as a fallback for lazy capture', lazy_fallbacks() == fb + 1, {fb, lazy_fallbacks()})
     local ffi = require('ffi')
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT}))
-    check('the native ABI has the integrated layout and offsets', ffi.sizeof('struct tarn_ns') == 312
+    check('the native ABI has the integrated layout and offsets', ffi.sizeof('struct tarn_ns') == 392
           and ffi.offsetof('struct tarn_ns', 'pl_spaces') == 160
           and ffi.offsetof('struct tarn_ns', 'held') == 168
           and ffi.offsetof('struct tarn_ns', 'scratch') == 172

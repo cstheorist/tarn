@@ -16,7 +16,7 @@ fiber.sleep(.03)
 if native and native ~= '0' then
     local ffi = require('ffi')
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-    assert(ns.layout == 11 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 312)
+    assert(ns.layout == 12 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 392)
     assert(ffi.offsetof('struct tarn_ns', 'capture_stale') == 200
         and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208
         and ffi.offsetof('struct tarn_ns', 'locks_range') == 296
@@ -73,7 +73,7 @@ ok(tarn_test_hook('scan', 'release')); assert(reader:join())
 check('the real held public scan returns 1412 instead of leaking native 1146',
     done and worked and reply[1] == 'error' and reply[2] == 1412,
     worked and reply or tostring(reply))
-local r = tarn_select(87999, 0, {1}, 'EQ', 1)
+local r = tarn_select(87999, 0, {1}, 'EQ', 1, box.NULL, true, true)
 check('unknown table requests still return ordinary 1146', r[1] == 'error' and r[2] == 1146, r)
 r = tarn_lock('engine-old-point', {{sid, 0, {1}, 1}}, 'X', {read = true})
 check('old point-lock requests return schema retry and release their locks',

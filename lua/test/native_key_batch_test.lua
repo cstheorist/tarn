@@ -64,7 +64,7 @@ if not native or native == '0' then
 end
 local info = c:call('tarn_info'); assert(info.native and info.native.ready == 1)
 local ns = require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-assert(ns.layout == 11 and require('ffi').sizeof('struct tarn_ns') == 312)
+assert(ns.layout == 12 and require('ffi').sizeof('struct tarn_ns') == 392)
 print('IDENTITY ' .. json.encode{version = box.info.version, layout = tonumber(ns.layout), native = info.native})
 local function census()
     return c:eval([[local f=require('ffi');local n=f.cast('struct tarn_ns *',box.func['tarn_storage.ts_state']:call())
@@ -114,22 +114,25 @@ local yes, err = xpcall(function()
     local epoch = c:call('tarn_buckets')[3]
     handback('a stale scatter epoch remains Lua', args({{1}}, sid, {e = epoch + 1}))
 
+    -- This standalone fixture has one configured logical writer. Its
+    -- prepared claims use that real membership, rather than an invented
+    -- unreachable participant whose clock coverage would be unknown.
     local tx = 'native-batch-missing-w'
-    local p = c:call('tarn_prepare', {tx, 1, {1, 2}, {{'insert', sid, {9, 99, 'pending', b}}}, {}, {},
+    local p = c:call('tarn_prepare', {tx, 1, {1}, {{'insert', sid, {9, 99, 'pending', b}}}, {}, {},
         require('clock').realtime(), box.NULL, {sid, 0}, {b}})
     assert(p[1] == 'yes', canon(p))
     same('an unrelated prepared W claim does not disable native batches', args({{1}, {2}}))
     handback('a W claim on a missing requested key prevents any complete result', args({{1}, {9}}))
     handback('an all-miss request still checks the prepared insert claim', args({{9}}))
-    c:call('tarn_txn_cas', {tx, 'staging', 'aborted', {1, 2}}); ok(c:call('tarn_abort', {tx, 1, {1, 2}}))
+    c:call('tarn_txn_cas', {tx, 'staging', 'aborted', {1}}); ok(c:call('tarn_abort', {tx, 1, {1}}))
     local st = c:new_stream()
     local read = st:call('tarn_select', {sid, 0, {1}, 'EQ', 1, box.NULL, true, false, box.NULL, true})
     assert(read[1] == 'ok', canon(read))
     tx = 'native-batch-r'
-    p = st:call('tarn_prepare', {tx, 1, {1, 2}, {}, {{sid, 0, {1}, b}}, {}, require('clock').realtime()})
+    p = st:call('tarn_prepare', {tx, 1, {1}, {}, {{sid, 0, {1}, b}}, {}, require('clock').realtime()})
     assert(p[1] == 'yes', canon(p))
     same('prepared R claims do not block snapshot batches', args({{1}, {2}}))
-    c:call('tarn_txn_cas', {tx, 'staging', 'aborted', {1, 2}}); ok(c:call('tarn_abort', {tx, 1, {1, 2}}))
+    c:call('tarn_txn_cas', {tx, 'staging', 'aborted', {1}}); ok(c:call('tarn_abort', {tx, 1, {1}}))
 
     local clear_def = {}; for k, v in pairs(base) do clear_def[k] = v end; clear_def.ver = 1
     local clear = {id = sid, ver = 1, timeout = .1, def = clear_def}
@@ -208,9 +211,9 @@ local yes, err = xpcall(function()
             canon(allocs) == '["lua"]' and after_allocs.served == before_allocs.served
             and after_allocs.to_lua == before_allocs.to_lua + 1)
     end
-    c:eval("box.func['tarn_storage.ts_state']:call({12})")
+    c:eval("box.func['tarn_storage.ts_state']:call({13})")
     local compatible = pcall(native_read, {})
-    c:eval("box.func['tarn_storage.ts_state']:call({11})")
+    c:eval("box.func['tarn_storage.ts_state']:call({12})")
     check('capability discovery does not bypass the existing module-layout guard', not compatible)
 end, debug.traceback)
 -- Restore only this fixture's state; no shared services or hooks are used.
