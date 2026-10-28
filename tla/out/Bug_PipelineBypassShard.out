@@ -1,0 +1,70 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 47 and seed -2321130929108039666 with 1 worker on 1 cores with 455MB heap and 64MB offheap memory [pid: 127] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/PipelineAdmission.tla
+Parsing file /tmp/tlc-1235938638206941107/Naturals.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-1235938638206941107/FiniteSets.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1235938638206941107/_TLCTrace.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-1235938638206941107/Sequences.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1235938638206941107/TLC.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1235938638206941107/TLCExt.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-1235938638206941107/Integers.tla (jar:file:/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PipelineAdmission
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PipelineAdmission
+Starting... (2026-10-28 01:55:51)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-28 01:55:51.
+Error: Invariant ScopeBound is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ ever = {}
+/\ abandoned = {}
+/\ age = [r1 |-> 0, r2 |-> 0, r3 |-> 0, r4 |-> 0]
+/\ ioOwners = [c |-> 2, a |-> 2, b |-> 2]
+/\ closed = {}
+/\ outcome = [r1 |-> "none", r2 |-> "none", r3 |-> "none", r4 |-> "none"]
+/\ phase = [r1 |-> "idle", r2 |-> "idle", r3 |-> "idle", r4 |-> "idle"]
+/\ charged = {}
+
+State 2: <Enqueue("r1") line 60, col 5 to line 63, col 62 of module PipelineAdmission>
+/\ ever = {"r1"}
+/\ abandoned = {}
+/\ age = [r1 |-> 0, r2 |-> 0, r3 |-> 0, r4 |-> 0]
+/\ ioOwners = [c |-> 2, a |-> 2, b |-> 2]
+/\ closed = {}
+/\ outcome = [r1 |-> "none", r2 |-> "none", r3 |-> "none", r4 |-> "none"]
+/\ phase = [r1 |-> "queued", r2 |-> "idle", r3 |-> "idle", r4 |-> "idle"]
+/\ charged = {"r1"}
+
+State 3: <Enqueue("r2") line 60, col 5 to line 63, col 62 of module PipelineAdmission>
+/\ ever = {"r1", "r2"}
+/\ abandoned = {}
+/\ age = [r1 |-> 0, r2 |-> 0, r3 |-> 0, r4 |-> 0]
+/\ ioOwners = [c |-> 2, a |-> 2, b |-> 2]
+/\ closed = {}
+/\ outcome = [r1 |-> "none", r2 |-> "none", r3 |-> "none", r4 |-> "none"]
+/\ phase = [r1 |-> "queued", r2 |-> "queued", r3 |-> "idle", r4 |-> "idle"]
+/\ charged = {"r1", "r2"}
+
+State 4: <Enqueue("r4") line 60, col 5 to line 63, col 62 of module PipelineAdmission>
+/\ ever = {"r1", "r2", "r4"}
+/\ abandoned = {}
+/\ age = [r1 |-> 0, r2 |-> 0, r3 |-> 0, r4 |-> 0]
+/\ ioOwners = [c |-> 2, a |-> 2, b |-> 2]
+/\ closed = {}
+/\ outcome = [r1 |-> "none", r2 |-> "none", r3 |-> "none", r4 |-> "none"]
+/\ phase = [r1 |-> "queued", r2 |-> "queued", r3 |-> "idle", r4 |-> "queued"]
+/\ charged = {"r1", "r2", "r4"}
+
+150 states generated, 65 distinct states found, 53 states left on queue.
+The depth of the complete state graph search is 4.
+Finished in 00s at (2026-10-28 01:55:51)
+Trace exploration spec path: ./PipelineAdmission_TTrace_1793152550.tla

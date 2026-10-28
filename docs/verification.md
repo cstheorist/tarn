@@ -1306,6 +1306,42 @@ the immutable old/new identity premise.
 tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 ```
 
+### Recovery and garbage collection move on (issue #129)
+
+Recovery and garbage collection go through records in order: undecided
+transactions oldest first, expired records by expiry. Some of them cannot
+be acted on while a shard is down: a transaction that needs it cannot be
+resolved, and some records cannot be collected. `RecoveryFairness.tla`
+models the order of the passes (`lua/tarn.lua`, "Scheduling"), not what
+they do with a record, which `TarnCommit.tla` models:
+- a pass looks at no more than `Scan` records, and acts on no more than
+  `Batch` of those it may act on now (`recovery_batch`, and five times as
+  many; `gc_batch * 4`, and `gc_batch * 40`);
+- it continues after the last record the previous pass looked at, and a
+  pass that reaches the last record starts the next lap from the first;
+- a record it could not act on waits `Backoff` passes.
+
+The stuck records are any set of them: TLC tries each. `BoundedWait`:
+within ceil(N / Batch) + 1 passes, every record that is not stuck has been
+acted on. `BugPrefix` starts every pass from the first record, as both did
+before: TLC finds stuck records first that keep the others from being acted
+on (as many as a pass looks at, and no pass looks past them).
+
+```sh
+tla/check.sh Fairness Bug_FairnessPrefix
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `Fairness` | 2048 | 8 | passes |
+| `Bug_FairnessPrefix` | 1281 | 6 | violates `BoundedWait` |
+
+Both have eight records, `Batch` = 2, `Scan` = 3 and `Backoff` = 2.
+`lua/test/recovery_faults.sh` checks the same on three shards, one of them
+stopped, with 250 transactions that need it on each of the other two
+(`recovery_batch` is 200) and more records than a garbage-collection pass
+looks at.
+
 ### Decision-record placement (issue #132)
 
 `TarnCommit!DecisionParticipant` abstracts a stable choice from frozen writing
@@ -1356,48 +1392,12 @@ deletions and WAL. The shorter retention and zero clock-skew allowance are
 confined to these owned single-host fixtures. This is a placement workload;
 it does not establish an RF3 performance or operational advantage.
 
-### Recovery and garbage collection move on (issue #129)
-
-Recovery and garbage collection go through records in order: undecided
-transactions oldest first, expired records by expiry. Some of them cannot
-be acted on while a shard is down: a transaction that needs it cannot be
-resolved, and some records cannot be collected. `RecoveryFairness.tla`
-models the order of the passes (`lua/tarn.lua`, "Scheduling"), not what
-they do with a record, which `TarnCommit.tla` models:
-- a pass looks at no more than `Scan` records, and acts on no more than
-  `Batch` of those it may act on now (`recovery_batch`, and five times as
-  many; `gc_batch * 4`, and `gc_batch * 40`);
-- it continues after the last record the previous pass looked at, and a
-  pass that reaches the last record starts the next lap from the first;
-- a record it could not act on waits `Backoff` passes.
-
-The stuck records are any set of them: TLC tries each. `BoundedWait`:
-within ceil(N / Batch) + 1 passes, every record that is not stuck has been
-acted on. `BugPrefix` starts every pass from the first record, as both did
-before: TLC finds stuck records first that keep the others from being acted
-on (as many as a pass looks at, and no pass looks past them).
-
-```sh
-tla/check.sh Fairness Bug_FairnessPrefix
-```
-
-| Configuration | Distinct states | Depth | Expected result |
-|---|---:|---:|---|
-| `Fairness` | 2048 | 8 | passes |
-| `Bug_FairnessPrefix` | 1281 | 6 | violates `BoundedWait` |
-
-Both have eight records, `Batch` = 2, `Scan` = 3 and `Backoff` = 2.
-`lua/test/recovery_faults.sh` checks the same on three shards, one of them
-stopped, with 250 transactions that need it on each of the other two
-(`recovery_batch` is 200) and more records than a garbage-collection pass
-looks at.
-
 ### Configuration counts
 
-The default list contains 202 configurations, including 145 expected
-broken/trade-off outcomes. The 209 generated configurations reproduce from
+The default list contains 210 configurations, including 152 expected
+broken/trade-off outcomes. The 217 generated configurations reproduce from
 `gen_cfgs.sh`; six grouped-read and decision-placement configurations are
-maintained directly, for 215 total. Explicit check arguments override the default list.
+maintained directly, for 223 total. Explicit check arguments override the default list.
 
 ## Verus proofs
 
@@ -1541,3 +1541,35 @@ eviction, and an exact-result join whose aligned shard keys reduce observed
 fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
 storage protocols, SQL, transaction and live-fault suites remain required;
 these models do not prove observer accuracy or performance.
+
+### IPROTO admission and retirement (issue #127)
+
+`PipelineAdmission.tla` models three connections, two shard scopes and a
+shared gateway scope, with independent count/byte limits and completion
+reserves. Caller cancellation retains identity/charges. A terminal response
+or both physical I/O owners dropping releases them; a logical close alone
+does not. Timer ticks include abandoned requests. Before-enqueue refusal
+certifies no RPC effect; closing an enqueued request reports uncertainty.
+It checks resource/uncertainty contracts outside TarnCommit's state, rather
+than changing commit/locking/recovery actions. Existing Handback and commit
+models remain required for no replay and transaction safety.
+
+The positive model checks 730,752 distinct states (depth 26). Removing any
+of cancellation retention, physical retirement retention, shard/global
+admission, ordinary completion reserves, abandoned deadlines or the
+before-enqueue boundary gives the corresponding `Bug_Pipeline*` witness.
+Config generation and the default check job include all eight profiles.
+This bounded safety model assumes its timer action is serviced. It does not
+prove wall-clock fairness, allocator bounds, query memory, wire correlation
+(which has separate frame tests), arbitrary topology sizes or performance.
+
+Executable tests cover 4097 refused admissions behind retained cancelled
+callers, byte saturation before encoding, slow-peer blocked writes,
+continued other replies behind an abandoned oldest request, out-of-order
+queue compaction, shared scope refund, reserved control CALLs and physical
+I/O drop ordering. `tests/rpcs.sh` checks real MySQL outcomes/effects under
+24-session pressure at each scope; `rpc_reserve` checks cold completion
+routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
+malformed/lost-reply faults and failover preserve the existing uncertainty
+and matched fencing behavior. Resource budgets do not certify whole-query
+memory bounds or benchmark speedups.

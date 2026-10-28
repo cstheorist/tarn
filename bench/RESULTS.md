@@ -547,3 +547,40 @@ python3 bench/decision_placement.py \
 * **More cores per process**: Tarantool's transaction thread is single
   threaded per instance; on real hardware one would run several shards per
   machine and several SQL servers.
+
+
+## Storage RPC admission component measurements (issue #127)
+
+The complete [initial](results_rpc_admission_initial.json) and
+[scope-sharing revision](results_rpc_admission_optimized.json) records retain
+all paired samples, raw output, CPU and latency measurements, exact source
+revisions, binary hashes, fixture/workload hashes and environment. The
+control is `a0faf804372f911e5122317889aaf2cc1dc6ab83`; initial candidate
+`75f53e2404c123c2b34f8426495152d6063e27e4`; revised candidate
+`b944dcb39061d1ab1d10fc29891ca51f5b50afc5`. Both drivers use the exact same
+phase and `init.lua` fixture. `bench/rpc_admission.py` alternates order
+across five repetitions of eight seconds per build, with 64 tasks/four
+connections reading one of 1000 memtx tuples over local TCP. The revised
+candidate uses one per-connection scope-set reference per request instead
+of cloning shared shard/global budget references.
+
+This measures the IPROTO component on one RF1 Tarantool 3.9 process with
+MVCC, no TLS and no timed writes. It is not a MySQL, RF3, durable-write or
+competitor comparison. The fixture uses Tarantool's default WAL mode;
+initialization is outside the timed read phase. Rust 1.98.1 release builds
+use matched thin LTO/codegen settings. The shared Docker VM grants the
+fixture/driver three CPUs and 3 GiB; other task-owned validation/builds were
+stopped during measurements. Other host workloads remained uncontrolled.
+
+| Candidate | Control median (range), ops/s | Candidate median (range), ops/s |
+|---|---:|---:|
+| Initial | 572,629 (109,582–626,623) | 554,509 (527,902–566,400) |
+| Shared scope ownership | 360,729 (335,516–569,769) | 426,295 (289,026–552,590) |
+
+The initial run exposed a cost in several pairs and motivated removing
+avoidable reference churn and waiter metadata. The broad, shifting control
+and candidate ranges prevent a reliable cost estimate or throughput/latency
+improvement claim. No samples were discarded or replaced. An isolated
+machine is required to quantify the remaining overhead. These observations
+do not establish production performance; separate unit, SQL and live-fault
+tests establish the resource/outcome contracts, not this timing probe.

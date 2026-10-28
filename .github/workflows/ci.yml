@@ -153,6 +153,11 @@ jobs:
             --tarn 127.0.0.1:4000,127.0.0.1:4001 --shards 127.0.0.1:3311,127.0.0.1:3321 \
             --require-native --real-pressure
           scripts/cluster.sh stop
+      - name: Bounded RPC admission and blackholed established connections
+        run: |
+          ci/annotate.sh rpcs tests/rpcs.sh
+          TARN_NATIVE=0 ci/annotate.sh rpcs-lua tests/rpcs.sh
+          ENGINE=vinyl ci/annotate.sh rpcs-vinyl tests/rpcs.sh
       - name: Fault injection
         run: |
           TARN_CHECK_LOCKS=1 ci/annotate.sh faults tests/faults.sh
