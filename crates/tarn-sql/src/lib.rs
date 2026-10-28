@@ -29,6 +29,7 @@ pub mod prep;
 pub mod rebalance;
 pub mod route;
 pub mod session;
+pub mod statistics;
 pub mod txn;
 pub mod types;
 pub mod vinyl;

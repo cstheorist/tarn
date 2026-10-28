@@ -139,6 +139,7 @@ pub struct AggPlan {
 
 #[derive(Clone, Debug)]
 pub struct SelectPlan {
+    pub join_estimate: Option<serde_json::Value>,
     pub source: Source,
     pub filter: Option<Expr>,
     pub agg: Option<AggPlan>,

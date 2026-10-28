@@ -1586,6 +1586,9 @@ fn join_rows_of(d: &Bytes, reads: &[JoinRead<'_>]) -> SqlResult<JoinedRead> {
     if !rd.buf.is_empty() || (complete && n != reads.len()) || (!complete && n != 0) {
         return Err(crate::mpw::proto("partial or malformed co-located read reply"));
     }
+    if complete {
+        crate::observe::storage_rows(out.iter().map(|s| s.rows.len()).sum());
+    }
     Ok(if complete {
         JoinedRead::Complete(out)
     } else {
@@ -1607,6 +1610,7 @@ fn page_of(d: &Bytes, t: &TableDef) -> SqlResult<Page> {
     } else {
         Some(rd.raw_value()?.to_vec())
     };
+    crate::observe::storage_rows(out.len());
     Ok((out, next))
 }
 
@@ -1767,6 +1771,7 @@ pub async fn select_rows(
                     Some(last) if tuples.len() == n as usize && Some(n) != limit => Some(last.to_vec()),
                     _ => None,
                 };
+                crate::observe::storage_rows(out.len());
                 return Ok((out, next));
             }
             Err(tarn_iproto::Error::Server {
@@ -2156,6 +2161,7 @@ mod tests {
 
         let catalog = Catalog::default();
         let cx = PlanCtx {
+            statistics: None,
             catalog: &catalog,
             db: Some("d"),
             params: &[],

@@ -239,6 +239,16 @@ check('... and counts in its snapshot', got[1] == 'ok' and got[2] == 10, got)
 st:rollback()
 
 print('row counts for the access path (issue #81)')
+print('bounded optimizer samples (issue #136)')
+got = c[1]:call('tarn_analyze', {sid, 0, 3, {1, 2}})
+check('ANALYZE returns bounded integer projections and a size hint',
+      got[1] == 'ok' and #got[3] == 3 and #got[3][1] == 2 and got[2] >= 3, got)
+got = c[1]:call('tarn_analyze', {sid, 999, 3, {1}})
+check('ANALYZE refuses a mismatched definition', got[1] == 'error' and got[2] == 1412, got)
+for _, args in ipairs({{sid, 0, 257, {1}}, {sid, 0, 3, {3}}}) do
+    got = c[1]:call('tarn_analyze', args)
+    check('ANALYZE refuses excessive samples/noninteger fields', got[1] == 'error' and got[2] == 1235, got)
+end
 got = c[1]:call('tarn_estimate', {sid, 2, {9}, 0, {}, 51})
 check('memtx counts both prefixes in its indexes',
       got[1] == 'ok' and got[2] == #c[1].space['test.acct'].index[2]:select({9})

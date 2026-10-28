@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Optional bounded cardinality hints and conservative two-table inner-join
+  reordering ([#136](https://github.com/cstheorist/tarn/issues/136)).
+  `ANALYZE TABLE` now collects gateway-local integer-prefix statistics,
+  invalidates plans by generation and reports MariaDB analyze status.
+  `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
+  count actual decoded storage tuples separately from RPCs.
+
 - Query routing diagnostics ([#133](https://github.com/cstheorist/tarn/issues/133)):
   `EXPLAIN FORMAT=JSON` reports physical access paths, shard/bucket bounds,
   colocation eligibility and possible global-index participants without

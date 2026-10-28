@@ -506,6 +506,7 @@ pub struct CachedPlan {
 }
 
 pub struct Cluster {
+    pub statistics: crate::statistics::Statistics,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
@@ -868,6 +869,7 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            statistics: crate::statistics::Statistics::default(),
             cfg,
             shards,
             globals,
