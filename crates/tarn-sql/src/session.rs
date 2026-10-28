@@ -2598,7 +2598,9 @@ impl Session {
                 self.note_tree(found);
             }
             Stmt::Truncate { db, table } => c.truncate(db, table, self.lock_wait_timeout).await?,
-            Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
+            Stmt::CreateDatabase { name, if_not_exists } => {
+                return Ok(Output::ok(c.create_database(name, *if_not_exists).await?));
+            }
             Stmt::DropDatabase { name, if_exists } => {
                 let n = c.drop_database(name, *if_exists, self.lock_wait_timeout).await?;
                 if self.db.as_deref().is_some_and(|d| d.eq_ignore_ascii_case(name)) {
@@ -2865,13 +2867,20 @@ impl Session {
                 rows_out(columns.into(), vec![row])
             }
             Admin::ShowDatabases { like } => {
-                let mut rows: Vec<Vec<Value>> = vec![vec![Value::str("information_schema")]];
+                let name = match &like {
+                    Some(pattern) => format!("Database ({pattern})"),
+                    None => "Database".into(),
+                };
+                let mut rows = Vec::new();
+                if like_ci("information_schema", &like) {
+                    rows.push(vec![Value::str("information_schema")]);
+                }
                 for d in &catalog.databases {
                     if like_ci(d, &like) {
                         rows.push(vec![Value::str(d)]);
                     }
                 }
-                rows_out(cols(&[("Database", ColumnType::VarString)]), rows)
+                rows_out(cols(&[(&name, ColumnType::VarString)]), rows)
             }
             Admin::ShowTables { db, full, like } => {
                 let db = self.resolve_db(db)?;

@@ -1325,10 +1325,10 @@ impl Cluster {
 
     // ---- DDL ----------------------------------------------------------------
 
-    pub async fn create_database(&self, name: &str, if_not_exists: bool) -> SqlResult<()> {
+    pub async fn create_database(&self, name: &str, if_not_exists: bool) -> SqlResult<u64> {
         if self.catalog().has_db(name) {
             if if_not_exists {
-                return Ok(());
+                return Ok(0);
             }
             return Err(SqlError::new(
                 1007,
@@ -1339,7 +1339,8 @@ impl Cluster {
         let mut a = Mp::new();
         a.arr(1).str(name);
         lua_status(&self.call(0, "tarn_db_create", &a.0).await?)?;
-        self.bump_catalog().await
+        self.bump_catalog().await?;
+        Ok(1)
     }
 
     pub async fn drop_database(&self, name: &str, if_exists: bool, lock_timeout: f64) -> SqlResult<u64> {
