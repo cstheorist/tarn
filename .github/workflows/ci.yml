@@ -106,6 +106,8 @@ jobs:
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
+      - name: Query plans and bounded routing diagnostics
+        run: ci/annotate.sh explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
       - name: Transaction tests
         run: ci/annotate.sh txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
       - name: READ COMMITTED tests
@@ -132,6 +134,7 @@ jobs:
           # move reads from disk, a runner moves too few buckets to tell)
           ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh vinyl-explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
           ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20

@@ -7,13 +7,15 @@ MySQL-compatible server and compare what comes back.
 Every case is executed on both servers in a fresh database. Result sets are
 compared as multisets unless the query has ORDER BY (then in order); numbers
 are compared numerically (DECIMAL vs DOUBLE representation differences are
-tolerated), strings exactly. DML is compared by affected-row counts and by a
+tolerated), strings exactly. Engine-specific EXPLAIN plans compare their
+JSON envelope, with exact data/transaction checks after them. DML is compared by affected-row counts and by a
 dump of the table afterwards. Errors must occur on both sides (codes are
 reported when they differ but only the presence of an error is required).
 """
 import argparse
 import datetime
 import decimal
+import json
 import re
 import sys
 
@@ -180,8 +182,22 @@ def seed():
     return s
 
 
-# (sql, kind): 'q', 'rows' (requires a row result), 'dml' (then table dumps), or 'err'.
+# (sql, kind): 'q', 'rows', 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
 CASES = [
+    # Engine plans differ; compare the JSON result envelope and subsequent
+    # exact data/transaction behavior, never cost or plan field equality.
+    ("EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE id=1", "plan"),
+    ("EXPLAIN FORMAT=JSON SELECT a,COUNT(*) FROM t1 GROUP BY a", "plan"),
+    ("EXPLAIN FORMAT=JSON SELECT t1.id,t2.name FROM t1 JOIN t2 ON t2.t1_id=t1.id WHERE t1.id=1", "plan"),
+    ("EXPLAIN FORMAT=JSON UPDATE t1 SET a=a+1 WHERE id=1", "plan"),
+    ("EXPLAIN FORMAT=JSON DELETE FROM t1 WHERE id=1", "plan"),
+    ("SELECT id,a,b FROM t1 ORDER BY id", "rows"),
+    ("BEGIN", "q"),
+    ("UPDATE t1 SET a=a+1 WHERE id=1", "dml:t1"),
+    ("EXPLAIN FORMAT=JSON DELETE FROM t1", "plan"),
+    ("ROLLBACK", "q"),
+    ("SELECT id,a,b FROM t1 ORDER BY id", "rows"),
+
     # point and range access
     ("SELECT * FROM t1 WHERE id = 7", "q"),
     ("SELECT id, a, b FROM t1 WHERE id IN (1, 5, 9, 100)", "q"),
@@ -1572,6 +1588,15 @@ def main():
         if kind == "admin_names":
             ok = (ra[0] == rb[0] == "rows"
                   and rows_equal([(r[0],) for r in ra[1]], [(r[0],) for r in rb[1]], False))
+        elif kind == "plan":
+            def json_plan(r):
+                if r[0] != "rows" or r[2] != ["EXPLAIN"] or len(r[1]) != 1 or len(r[1][0]) != 1:
+                    return False
+                try:
+                    return isinstance(json.loads(r[1][0][0]), dict)
+                except (TypeError, ValueError):
+                    return False
+            ok = json_plan(ra) and json_plan(rb)
         elif kind == "err":
             # both must fail, with the same MySQL error code
             ok = ra[0] == "err" and rb[0] == "err" and ra[1] == rb[1]

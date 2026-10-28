@@ -95,6 +95,7 @@ fn note_lazy_write_error(history: &mut crate::lazy::History, error: &SqlError) {
 
 pub struct Prepared {
     template: String,
+    diagnostic: Option<crate::observe::Descriptor>,
     pub n_params: usize,
     pub columns: Arc<[Column]>,
     plan: Option<(u64, Stmt)>,
@@ -740,6 +741,11 @@ impl Session {
     // ---- entry points -------------------------------------------------------
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
+        let cluster = self.cluster.clone();
+        crate::observe::track(&cluster.stats.query_digests, self.query_inner(sql)).await
+    }
+
+    async fn query_inner(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !admin::reads_diagnostics(sql) {
             self.warnings.clear();
@@ -796,9 +802,17 @@ impl Session {
     async fn query_once(&mut self, sql: &str) -> SqlResult<Output> {
         let sql = crate::prep::expand_comments(sql);
         if let Some(a) = admin::recognize(&sql)? {
+            if matches!(a, Admin::Commit) {
+                crate::observe::describe(crate::observe::Descriptor::new(self.db.as_deref(), "COMMIT"));
+            } else if !matches!(a, Admin::Execute { .. }) {
+                crate::observe::disable();
+            }
             return self.run_admin(a).await;
         }
         if let Some((select, vars)) = crate::prep::split_select_into(&sql) {
+            if let Some(diagnostic) = crate::observe::Descriptor::sql(self.db.as_deref(), &sql) {
+                crate::observe::describe(diagnostic);
+            }
             return self.select_into(&select, &vars).await;
         }
         let substituted = self.substitute_vars(&sql, false)?;
@@ -808,10 +822,12 @@ impl Session {
             // refuses, as the normalizer does)
             normalize(sql, Mode::Placeholders)?;
             if let Some(stmt) = crate::complex::parse_if_needed(sql)? {
+                crate::observe::disable();
                 return self.run_complex(stmt).await;
             }
         }
         if is_ddl(sql) {
+            crate::observe::disable();
             // Literals in DDL are syntax (VARCHAR(20), DEFAULT '0'), not values.
             let stmt = self.plan_cached(sql, &[])?;
             return self.run(&stmt, &[]).await;
@@ -859,6 +875,8 @@ impl Session {
                 id,
                 Prepared {
                     template: sql.into(),
+                    diagnostic: matches!(a, Admin::Commit)
+                        .then(|| crate::observe::Descriptor::new(self.db.as_deref(), "COMMIT")),
                     n_params: 0,
                     columns: Arc::from(Vec::new()),
                     plan: None,
@@ -878,6 +896,7 @@ impl Session {
                     id,
                     Prepared {
                         template: n.template,
+                        diagnostic: None,
                         n_params: n.n_params,
                         columns: Arc::from(Vec::new()),
                         plan: None,
@@ -891,13 +910,23 @@ impl Session {
         let stmt = self.plan_cached(&n.template, &[])?;
         let columns = match &stmt {
             Stmt::Select(p) => p.columns.clone(),
+            Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),
         };
         let version = self.cluster.catalog().version;
+        let diagnostic = if matches!(
+            stmt,
+            Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
+        ) {
+            crate::observe::Descriptor::sql(self.db.as_deref(), &n.template)
+        } else {
+            None
+        };
         self.prepared.insert(
             id,
             Prepared {
                 template: n.template,
+                diagnostic,
                 n_params: n.n_params,
                 columns: columns.clone(),
                 plan: Some((version, stmt)),
@@ -909,6 +938,15 @@ impl Session {
     }
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+        let cluster = self.cluster.clone();
+        crate::observe::track(&cluster.stats.query_digests, self.execute_inner(id, params)).await
+    }
+
+    async fn execute_inner(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+        match self.prepared.get(&id).and_then(|p| p.diagnostic.clone()) {
+            Some(diagnostic) => crate::observe::describe(diagnostic),
+            None => crate::observe::disable(),
+        }
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !self
             .prepared
@@ -1024,6 +1062,9 @@ impl Session {
             }));
         }
         if let Some(p) = self.cluster.cached_plan(&db, &key) {
+            if let Some(diagnostic) = &p.diagnostic {
+                crate::observe::describe(diagnostic.clone());
+            }
             return Ok(p.stmt.clone());
         }
         let catalog = self.cluster.catalog();
@@ -1039,12 +1080,17 @@ impl Session {
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
         ) {
+            let diagnostic = crate::observe::Descriptor::sql(self.db.as_deref(), template);
+            if let Some(diagnostic) = &diagnostic {
+                crate::observe::describe(diagnostic.clone());
+            }
             self.cluster.cache_plan(
                 &db,
                 &key,
                 Arc::new(CachedPlan {
                     version: catalog.version,
                     stmt: stmt.clone(),
+                    diagnostic,
                 }),
             );
         }
@@ -1055,6 +1101,10 @@ impl Session {
 
     async fn run(&mut self, stmt: &Stmt, params: &[Value]) -> SqlResult<Output> {
         match stmt {
+            Stmt::Explain {
+                statement,
+                catalog_version,
+            } => self.explain(statement, *catalog_version, params),
             Stmt::Select(p) => self.run_select(p, params).await,
             Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_) => self.run_dml(stmt, params).await,
             Stmt::Admin(a) => self.run_admin(a.clone()).await,
@@ -1063,6 +1113,28 @@ impl Session {
                 self.run_ddl(ddl).await
             }
         }
+    }
+
+    fn explain(&self, stmt: &Stmt, version: u64, params: &[Value]) -> SqlResult<Output> {
+        let now = now_string();
+        let cx = self.cx(params, &now);
+        let next = if self.autocommit {
+            self.isolation
+        } else {
+            self.next_isolation.unwrap_or(self.isolation)
+        };
+        let committed = self.txn.as_ref().map_or(next.mode(), |t| t.mode) == TxnMode::ReadCommitted;
+        let buffered = self
+            .txn
+            .as_ref()
+            .map(|t| t.writes.keys().map(|(space, _)| *space).collect())
+            .unwrap_or_default();
+        let value = exec::diagnostics::render(&self.cluster, stmt, version, &cx, committed, &buffered)?;
+        let text = serde_json::to_string(&value).map_err(|e| SqlError::internal(e.to_string()))?;
+        Ok(Output::Rows {
+            columns: vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
+            rows: vec![vec![Value::str(&text)]],
+        })
     }
 
     async fn implicit_commit(&mut self) -> SqlResult<()> {
@@ -1485,6 +1557,10 @@ impl Session {
         let mut attempt = 0;
         let mut admission_retry = crate::vinyl::RetryBudget::default();
         loop {
+            crate::observe::commit(1);
+            for &bucket in &wb {
+                crate::observe::bucket(Some(bucket));
+            }
             // Not idempotent (e.g. SET v = v + 1): never re-sent blindly.
             // Lazy sources require Lua capture. Avoid a predictable extra
             // native call; the shard also enforces capture exclusions for
@@ -3010,6 +3086,51 @@ impl Session {
             }
             Admin::ShowStatus { like } => Ok(self.show_status(&like)),
             Admin::ShowTarnStatus => Ok(self.show_status(&None)),
+            Admin::ShowTarnQueries => {
+                let mut columns = cols(&[
+                    ("Digest", ColumnType::VarString),
+                    ("Database", ColumnType::VarString),
+                    ("Query", ColumnType::VarString),
+                ])
+                .to_vec();
+                for name in [
+                    "Calls",
+                    "Errors",
+                    "No_data",
+                    "Local",
+                    "Distributed",
+                    "Max_shards",
+                    "Shard_targets",
+                    "Known_bucket_targets",
+                    "Unknown_bucket_calls",
+                    "Read_attempts",
+                    "Grouped_reads",
+                    "Local_commits",
+                    "Distributed_commits",
+                    "Commit_errors",
+                    "Total_us",
+                ] {
+                    columns.push(Column::new(name, ColumnType::LongLong));
+                }
+                rows_out(columns.into(), self.cluster.stats.query_digests.rows())
+            }
+            Admin::ShowTarnPlan(name) => {
+                let template = self
+                    .sql_prepared
+                    .get(&name)
+                    .map(|(text, _)| text.clone())
+                    .or_else(|| {
+                        name.parse::<u32>()
+                            .ok()
+                            .and_then(|id| self.prepared.get(&id).map(|p| p.template.clone()))
+                    })
+                    .ok_or_else(|| {
+                        SqlError::new(1243, "HY000", format!("Unknown prepared statement handler ({name})"))
+                    })?;
+                let normalized = normalize(&template, Mode::Placeholders)?;
+                let stmt = self.plan_cached(&normalized.template, &[])?;
+                self.explain(&stmt, self.cluster.catalog().version, &[])
+            }
             Admin::ShowTarnBuckets => {
                 let rows = self
                     .cluster
@@ -3390,6 +3511,7 @@ impl Session {
             ),
             ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
+        stats.extend(s.query_digests.counters());
         stats.retain(|(n, _)| like_ci(n, like));
         let mut rows: Vec<Row> = stats
             .into_iter()

@@ -17,6 +17,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Query routing diagnostics ([#133](https://github.com/cstheorist/tarn/issues/133)):
+  `EXPLAIN FORMAT=JSON` reports physical access paths, shard/bucket bounds,
+  colocation eligibility and possible global-index participants without
+  executing the query. `SHOW TARN PLAN FOR` diagnoses unbound prepared
+  statements, and bounded `SHOW TARN QUERIES` observations distinguish
+  completed runtime fanout from compile-time constraints.
+
 - Distributed transactions spread decision records across active writing
   participants using a stable hash of the transaction ID
   ([#132](https://github.com/cstheorist/tarn/issues/132)). Durable shard IDs

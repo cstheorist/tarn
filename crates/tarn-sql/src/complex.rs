@@ -248,6 +248,11 @@ pub fn parse_if_needed(sql: &str) -> SqlResult<Option<A::Statement>> {
         return Ok(None);
     }
     let stmt = stmts.pop().unwrap();
+    // Materialization executes nested SELECTs. EXPLAIN must reach the
+    // physical planner unchanged, which rejects unsupported subqueries.
+    if matches!(stmt, A::Statement::Explain { .. }) {
+        return Ok(None);
+    }
     if let A::Statement::Query(q) = &stmt {
         if matches!(*q.body, A::SetExpr::SetOperation { .. }) {
             return Ok(Some(stmt));
@@ -572,6 +577,21 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_never_materializes_subqueries() {
+        for prefix in ["", "/* comment */ ", "--\tcomment\n", "# comment\n"] {
+            for query in [
+                "SELECT (SELECT id FROM t)",
+                "DELETE FROM t WHERE id IN(SELECT id FROM u)",
+            ] {
+                assert!(parse_if_needed(&format!("{prefix}EXPLAIN FORMAT=JSON {query}"))
+                    .unwrap()
+                    .is_none());
+            }
+        }
+        assert!(parse_if_needed("SELECT (SELECT id FROM t)").unwrap().is_some());
+    }
 
     fn body(sql: &str) -> A::SetExpr {
         match Parser::parse_sql(&MySqlDialect {}, sql).unwrap().pop().unwrap() {
