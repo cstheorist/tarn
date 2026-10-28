@@ -1,5 +1,10 @@
 # Benchmarks
 
+The separate [bounded native batch experiment](NATIVE_BATCH.md) measures
+one opt-in read kernel on an Apple M4 Max / Docker ARM64 host. Its matched
+Lua/native data, SQL regressions and raw evidence are independent of the
+historical Firecracker results below.
+
 All numbers were measured on the development machine: **2 vCPUs** (Intel
 Xeon @ 2.80 GHz, a Firecracker VM), 8 GB RAM, Linux 6.18. The load generator
 (sysbench 1.0.20) runs on the same two vCPUs as the database, so every

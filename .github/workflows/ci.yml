@@ -37,6 +37,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Native allocation instrumentation clippy
+        run: cargo clippy -p tarn-storage --features alloc-metrics --all-targets -- -D warnings
 
   test:
     name: Tests
@@ -87,6 +89,8 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Native allocation instrumentation units
+        run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
@@ -151,6 +155,8 @@ jobs:
         run: |
           TARN_CHECK_LOCKS=1 ci/annotate.sh faults tests/faults.sh
           TARN_NATIVE=0 ci/annotate.sh faults-lua tests/faults.sh
+          TARN_FAULT_REPLY=invalid-type ci/annotate.sh faults-invalid-reply tests/faults.sh
+          TARN_NATIVE=0 TARN_FAULT_REPLY=invalid-type ci/annotate.sh faults-invalid-reply-lua tests/faults.sh
           ci/annotate.sh ddlfaults tests/ddlfaults.sh
           ci/annotate.sh movefaults tests/movefaults.sh
           ci/annotate.sh joinfaults tests/joinfaults.sh
@@ -167,6 +173,7 @@ jobs:
       - name: Fault injection and failover with vinyl tables
         run: |
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
+          ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
       - name: Cluster logs
         if: failure()

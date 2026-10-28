@@ -361,7 +361,7 @@ struct Toks {
 }
 
 impl Toks {
-    fn new(sql: &str) -> Toks {
+    fn new(sql: &str) -> SqlResult<Toks> {
         let mut t = Vec::new();
         let mut pos = Vec::new();
         let b = sql.as_bytes();
@@ -383,17 +383,46 @@ impl Toks {
             } else if c == b'\'' || c == b'"' || c == b'`' {
                 let q = c;
                 let mut j = i + 1;
-                let mut s = String::new();
-                s.push(q as char);
-                while j < b.len() && b[j] != q {
-                    if b[j] == b'\\' && j + 1 < b.len() {
-                        j += 1;
+                // Quotes and escapes are ASCII byte boundaries. Copy all other
+                // bytes together so a UTF-8 character never becomes Latin-1.
+                // Keep the opening marker: unquote and SET parsing use it to
+                // distinguish an identifier/string from an unquoted word.
+                let mut s = vec![q];
+                loop {
+                    if j >= b.len() {
+                        return Err(SqlError::parse("unterminated quoted token"));
                     }
-                    s.push(b[j] as char);
+                    if b[j] == b'\\' && q != b'`' && j + 1 < b.len() {
+                        let escaped = match b[j + 1] {
+                            b'b' => 8,
+                            b'n' => b'\n',
+                            b'r' => b'\r',
+                            b't' => b'\t',
+                            b'0' => 0,
+                            b'Z' => 26,
+                            x @ (b'%' | b'_') => {
+                                s.push(b'\\');
+                                x
+                            }
+                            x => x,
+                        };
+                        s.push(escaped);
+                        j += 2;
+                        continue;
+                    }
+                    if b[j] == q {
+                        if b.get(j + 1) == Some(&q) {
+                            s.push(q);
+                            j += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    s.push(b[j]);
                     j += 1;
                 }
-                t.push(s);
-                pos.push((i, (j + 1).min(b.len())));
+                t.push(String::from_utf8(s).map_err(|_| SqlError::parse("invalid UTF-8 in quoted token"))?);
+                pos.push((i, j + 1));
                 i = j + 1;
             } else if c.is_ascii_alphanumeric() || c == b'_' || c == b'@' || c == b'$' || c == b'.' || c >= 0x80 {
                 let mut j = i;
@@ -416,7 +445,7 @@ impl Toks {
                 i += 1;
             }
         }
-        Toks { t, pos, i: 0 }
+        Ok(Toks { t, pos, i: 0 })
     }
     /// Byte offset where token `k` starts (the text length past the end).
     fn offset(&self, k: usize, len: usize) -> usize {
@@ -495,7 +524,7 @@ fn literal_value(tok: &str) -> Value {
 /// Recognize a session-level statement. `None` means "not an admin statement,
 /// hand it to the planner".
 pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
-    let mut t = Toks::new(sql);
+    let mut t = Toks::new(sql)?;
     let first = t.peek_up(0);
     let r = match first.as_str() {
         "BEGIN" => {
@@ -1143,6 +1172,66 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_admin_tokens_preserve_utf8_and_escapes() {
+        for name in ["t_雪", "t_éΩ", "t_雪`fin", "t_雪\\fin"] {
+            let quoted = format!("`{}`", name.replace('`', "``"));
+            assert_eq!(
+                recognize(&format!("SHOW CREATE TABLE {quoted}")).unwrap(),
+                Some(Admin::ShowCreateTable {
+                    db: None,
+                    table: name.into()
+                })
+            );
+        }
+        for (literal, want) in [
+            ("'t_雪🦀%'", "t_雪🦀%"),
+            ("\"t_éΩ%\"", "t_éΩ%"),
+            ("'t_雪''fin'", "t_雪'fin"),
+            (r"'t_雪\'fin'", "t_雪'fin"),
+            (r"'t\_雪\%fin'", r"t\_雪\%fin"),
+            (r"'t_雪\\fin'", r"t_雪\fin"),
+            (r"'\雪%'", "雪%"),
+        ] {
+            assert_eq!(
+                recognize(&format!("SHOW TABLE STATUS LIKE {literal}")).unwrap(),
+                Some(Admin::ShowTableStatus {
+                    db: None,
+                    like: Some(want.into())
+                }),
+                "{literal}"
+            );
+        }
+        assert_eq!(recognize("USE `db_雪`").unwrap(), Some(Admin::Use("db_雪".into())));
+        assert_eq!(
+            recognize("SAVEPOINT `sp_雪`").unwrap(),
+            Some(Admin::Savepoint("sp_雪".into()))
+        );
+        assert_eq!(
+            recognize("SET @`名_雪` = 'é''雪', @tail = 2").unwrap(),
+            Some(Admin::Set(vec![
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@名_雪".into(),
+                    rhs: "'é''雪'".into()
+                },
+                SetItem::Var {
+                    scope: VarScope::Session,
+                    name: "@tail".into(),
+                    rhs: "2".into()
+                },
+            ]))
+        );
+        for sql in [
+            "SHOW TABLES LIKE '雪",
+            "SHOW TABLES LIKE '雪''",
+            "SHOW CREATE TABLE `雪",
+            "SHOW TABLES LIKE '雪\\",
+        ] {
+            assert_eq!(recognize(sql).unwrap_err().code, 1064, "{sql}");
+        }
+    }
 
     #[test]
     fn bucket_statements() {

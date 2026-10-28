@@ -1,0 +1,65 @@
+{
+  "archive": "tarn-native-key-batch-evidence.tar.gz",
+  "bytes": 83160037,
+  "sha256": "13b8a8e96cacf4dcf6b91e85d2e8f1f7b8c28638a3891ee6a2a42b71a395f389",
+  "index_sha256": "be38b3925c5b9a798a3d22089216418bb09bf88eaec23a09f960e7f62a4bd5d6",
+  "files": 2826,
+  "raw_receipt_checks": 878,
+  "uncompressed_bytes": 221723151,
+  "no_binaries_or_WAL": true,
+  "relative_tar_paths": true,
+  "gzip_mtime": 0,
+  "tar_metadata": "sortedpaths/uid0/gid0/mtime0/mode0644",
+  "numeric_JSON_unchanged": true,
+  "raw_bytes_unchanged": true,
+  "url": "https://github.com/cstheorist/tarn/releases/download/bench-native-key-batches-141-v1/tarn-native-key-batch-evidence.tar.gz",
+  "files_including_index": 2827,
+  "tracked_scalars": {
+    "direct/case-plan.json": "c2427369c1489f88e449f79276d34aa1ba4cd61cbe1616322106bf0c917f0aea",
+    "direct/case-summary.json": "a60ff2fccf1e9652d5772b5973d4ac4bec7701dbbaade802e46fb2be9e97a9ec",
+    "direct/pairs.csv": "549ffa935c1f329c34d91946a674405dbc11ef05d3e256c34c7cd9562cede61c",
+    "direct/phases.csv": "35e1fb7492d20bf0ae0222eaf82c525cfc2cc764df8b3024e83d6c13fb260220",
+    "prepared-w.json": "b2af7e78a939a47f49f077f7ba69bae632edb4ac422ab6115edd6e38bbd8d294",
+    "sql/case-summary.json": "8f519cbce22bcc5539de5e64f9cd32d825fc47000cb0b5e7a24a860dbe8f7a75",
+    "sql/pairs.csv": "5ca4a39032cbf3c5dfed1515cc80e34ab24be47c6b995c60df92a1e1d1473c05",
+    "sql/phases.csv": "0b7ff8a08fe29df7ddd1e2d5e228ac6f44e626049df19de31b2a7c936bf8d3ec",
+    "vinyl.json": "03576c17697802ae1be5328b883297669b7d7a0f23857f1410dbf5367bad6f0e"
+  },
+  "hardware": {
+    "host": "Apple M4 Max",
+    "logical_cpus": 16,
+    "physical_memory_bytes": 137438953472,
+    "os": "macOS 27.0.1 ARM64",
+    "docker": "28.0.4",
+    "docker_vcpus": 16,
+    "docker_memory_bytes": 8217190400,
+    "docker_kernel": "6.10.14-linuxkit",
+    "scope": "Inventory read after measurement, not start-time isolation proof"
+  },
+  "artifacts": {
+    "native": "8b9700a9e91328dffb1e70af4d889ef9964d715c04d61b46abfe59b25632887b",
+    "gateway": "f5dd498aebaf71298473cc31d9635d095201d25d5611588610eeac759f0c4e84",
+    "client": "b6d0665bf6a9796aa8133cd08ffb8bd8c1308028333f72b8f3ba702c23b71564"
+  },
+  "cohorts": {
+    "direct": {
+      "phases": 120,
+      "pairs": 60,
+      "all_cpu_ratios_below_1": true,
+      "rate_regressions": 1,
+      "p99_regressions": 8,
+      "actually_native_served": 6041548,
+      "load_window_handbacks": 107
+    },
+    "sql": {
+      "phases": 60,
+      "pairs": 30,
+      "all_cpu_ratios_below_1": true,
+      "actually_native_served": 164052,
+      "load_window_handbacks": 4,
+      "rf1_B128_hits_median_rate_regression": true
+    },
+    "scope": "Ratios concern this instrumented, warm memtx, bounded read kernel. No whole-OLTP or cross-database winner claim."
+  },
+  "public_metadata_redactions": "host home/tmp prefixes and expired test lease owners only; original metadata hashes in INDEX"
+}
