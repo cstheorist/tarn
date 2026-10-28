@@ -425,6 +425,14 @@ function M.new(c)
         if C.fault then C.flush_fault(); return false end
         if C.loaded then
             if box.info.ro then unknown('clock owner is read-only'); return false end
+            -- RF1 has no remote replica that can certify its own clock.
+            -- The initial-time premise plus each current local observation
+            -- keeps only this writer's slot current; other shards still
+            -- require their role-certified interval evidence.
+            if not c.cfg.sync and c.cfg.shard_id and C.local_ready then
+                certificates['shard:' .. c.cfg.shard_id] = {
+                    epoch = C.epoch, until_mono = last_mono + policy.max_gap}
+            end
             if c.certifier then
                 local ok, proof = pcall(c.certifier, C.probe())
                 if ok then C.certify(proof) else unknown('clock peer sampling failed') end

@@ -7139,8 +7139,16 @@ function M.init(cfg)
         M.lazy.quota_invalidate()
         pl_fresh(); BK.reset()
     end)
-    box.watch('box.status', function()   -- read-only changes
-        M.clock.invalidate('read-only state changed')
+    -- A watch delivers its current value once after registration, and may
+    -- also report non-role status changes. Neither revokes a policy that
+    -- init just loaded. Actual RO transitions still invalidate immediately.
+    M.clock_seen_ro = box.info.ro
+    box.watch('box.status', function()
+        local ro = box.info.ro
+        if ro ~= M.clock_seen_ro then
+            M.clock_seen_ro = ro
+            M.clock.invalidate('read-only state changed')
+        end
         LK_STALE = true; FENCE_STALE = true
         M.vinyl.reset()
         M.engine.invalidate(true)

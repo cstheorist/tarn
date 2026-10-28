@@ -13,7 +13,7 @@ if [ -z "${TEST:-}" ]; then
   timeout 60 "$T" "$DIR/test/vinyl_admission_test.lua" "$WORK/vinyl-admission" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
-  for test in clock_guard_test read_freshness_test native_key_batch_test engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
+  for test in clock_guard_test clock_initialization_test read_freshness_test native_key_batch_test engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
