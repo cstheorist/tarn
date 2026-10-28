@@ -1,0 +1,165 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 107 and seed 2445098026915327470 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 28905] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/LockReplyOwnership.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3877731956064985078/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module LockReplyOwnership
+Linting of module LockReplyOwnership
+Starting... (2026-10-28 13:27:58)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-28 13:27:58.
+Error: Invariant ReturnedRowsLocked is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {}
+/\ entryEpoch = 0
+/\ granted = {}
+/\ phase = "idle"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 2: <StartBarrier line 37, col 5 to line 39, col 87 of module LockReplyOwnership>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {}
+/\ entryEpoch = 0
+/\ granted = {}
+/\ phase = "barrier"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 3: <PassBarrier line 42, col 5 to line 44, col 87 of module LockReplyOwnership>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {}
+/\ entryEpoch = 0
+/\ granted = {}
+/\ phase = "begin"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 4: <PLBegin line 47, col 5 to line 50, col 65 of module LockReplyOwnership>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {}
+/\ entryEpoch = 0
+/\ granted = {}
+/\ phase = "scan"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 5: <Grant("x") line 53, col 5 to line 57, col 70 of module LockReplyOwnership>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {}
+/\ entryEpoch = 0
+/\ granted = {"x"}
+/\ phase = "scan"
+/\ locked = [x |-> 0, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 6: <Read("x") line 60, col 5 to line 62, col 81 of module LockReplyOwnership>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {"x"}
+/\ entryEpoch = 0
+/\ granted = {"x"}
+/\ phase = "scan"
+/\ locked = [x |-> 0, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 7: <Grant("y") line 53, col 5 to line 57, col 70 of module LockReplyOwnership>
+/\ liveSession = TRUE
+/\ disconnected = FALSE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {"x"}
+/\ entryEpoch = 0
+/\ granted = {"x", "y"}
+/\ phase = "scan"
+/\ locked = [x |-> 0, y |-> 0]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 8: <Disconnect line 77, col 5 to line 80, col 55 of module LockReplyOwnership>
+/\ liveSession = FALSE
+/\ disconnected = TRUE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {"x"}
+/\ entryEpoch = 0
+/\ granted = {"x", "y"}
+/\ phase = "scan"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 9: <Read("y") line 60, col 5 to line 62, col 81 of module LockReplyOwnership>
+/\ liveSession = FALSE
+/\ disconnected = TRUE
+/\ replies = {}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {"x", "y"}
+/\ entryEpoch = 0
+/\ granted = {"x", "y"}
+/\ phase = "scan"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+State 10: <Reply line 83, col 5 to line 93, col 78 of module LockReplyOwnership>
+/\ liveSession = FALSE
+/\ disconnected = TRUE
+/\ replies = {[label |-> 0, held |-> {}, entry |-> 0, entryRole |-> 0, replyRole |-> 0]}
+/\ roleStep = 0
+/\ epoch = 0
+/\ generation = 0
+/\ rows = {"x", "y"}
+/\ entryEpoch = 0
+/\ granted = {"x", "y"}
+/\ phase = "done"
+/\ locked = [x |-> 3, y |-> 3]
+/\ writable = TRUE
+/\ entryGen = 0
+
+341 states generated, 153 distinct states found, 36 states left on queue.
+The depth of the complete state graph search is 10.
+Finished in 00s at (2026-10-28 13:27:58)
