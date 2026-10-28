@@ -7,12 +7,13 @@
 //!   * the writers emit exactly the specified encodings: `write_uint`
 //!     `uint_spec(v)`, `write_int` `int_spec(v)` (an integer of int64 or
 //!     uint64; it writes nothing for another), `write_array` `array_spec(n)`,
-//!     `write_bytes_header` `bytes_header_spec(bin, n)`, `write_double_bits`
+//!     `write_map` `map_spec(n)`, `write_bytes_header`
+//!     `bytes_header_spec(bin, n)`, `write_double_bits`
 //!     `double_spec(bits)`; `patch_array` fills in the header that
 //!     `write_array_slot` left;
 //!   * those are Tarantool's encodings: the shortest -- no encoding of the
-//!     same integer, and no header of an array, a string or a binary of the
-//!     same length, is shorter (`lemma_*_shortest`) -- and an integer that is
+//!     same integer, and no header of an array, a map, a string or a binary
+//!     of the same length, is shorter (`lemma_*_shortest`) -- and an integer that is
 //!     not negative unsigned;
 //!   * the readers decode per `uint_dec`, `int_dec`, `array_dec`, `map_dec`,
 //!     `bytes_dec` and `float_dec`, and read back what the writers emit,
@@ -590,6 +591,35 @@ pub fn write_array(out: &mut Vec<u8>, n: u32)
     }
 }
 
+/// The header of a map of `n` pairs: the shortest.
+pub open spec fn map_spec(n: u32) -> Seq<u8> {
+    if n <= 15 {
+        seq![(0x80 + n) as u8]
+    } else if n <= 0xffff {
+        seq![0xdeu8] + be2(n as u64)
+    } else {
+        seq![0xdfu8] + be4(n as u64)
+    }
+}
+
+#[inline]
+pub fn write_map(out: &mut Vec<u8>, n: u32)
+    ensures
+        final(out)@ == old(out)@ + map_spec(n),
+{
+    let ghost start = out@;
+    if n <= 15 {
+        out.push((0x80 + n) as u8);
+    } else if n <= 0xffff {
+        put_be2(out, 0xde, n as u64);
+    } else {
+        put_be4(out, 0xdf, n as u64);
+    }
+    proof {
+        assert(out@ =~= start + map_spec(n));
+    }
+}
+
 /// The header of an array at `s[i..]`: its elements, and where it ends.
 pub open spec fn array_dec(s: Seq<u8>, i: int) -> Option<(u64, int)> {
     if i < 0 || i >= s.len() {
@@ -688,6 +718,39 @@ pub proof fn lemma_array_roundtrip(n: u32, pre: Seq<u8>, rest: Seq<u8>)
         assert(s =~= p + be4(n as u64) + rest);
         assert(s[i] == 0xddu8);
         lemma_be_roundtrip(n as u64, p, rest);
+    }
+}
+
+pub proof fn lemma_map_roundtrip(n: u32, pre: Seq<u8>, rest: Seq<u8>)
+    ensures
+        map_dec(pre + map_spec(n) + rest, pre.len() as int) == Some(
+            (n as u64, (pre.len() + map_spec(n).len()) as int),
+        ),
+{
+    let i = pre.len() as int;
+    let s = pre + map_spec(n) + rest;
+    if n <= 15 {
+        assert(s[i] == (0x80 + n) as u8);
+    } else if n <= 0xffff {
+        let p = pre + seq![0xdeu8];
+        assert(s =~= p + be2(n as u64) + rest);
+        assert(s[i] == 0xdeu8);
+        lemma_be_roundtrip(n as u64, p, rest);
+    } else {
+        let p = pre + seq![0xdfu8];
+        assert(s =~= p + be4(n as u64) + rest);
+        assert(s[i] == 0xdfu8);
+        lemma_be_roundtrip(n as u64, p, rest);
+    }
+}
+
+/// No header of a map of as many pairs is shorter than `map_spec`'s.
+pub proof fn lemma_map_shortest(s: Seq<u8>, i: int)
+    ensures
+        map_dec(s, i) matches Some((n, e)) ==> n <= 0xffff_ffff && map_spec(n as u32).len() <= e - i,
+{
+    if 0 <= i < s.len() {
+        lemma_be_max(s, i + 1);
     }
 }
 

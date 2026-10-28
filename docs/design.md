@@ -45,9 +45,9 @@ specifies capture, delivery, session catch-up, bootstrap and topology rules.
 | `crates/tarn-mysql` | Server side of the MySQL protocol: HandshakeV10, `mysql_native_password` (auth switch from `caching_sha2_password`), text and binary result sets, prepared statements (`COM_STMT_*`, long data), `CLIENT_DEPRECATE_EOF`. All length-encoded integers/strings and packet framing go through the Verus-verified codec. |
 | `crates/tarn-sql` | Parsing (sqlparser, MySQL dialect), literal normalization and a shared plan cache, planning (access-path selection, joins, aggregation), execution, sessions, the transaction coordinator, DDL, catalog cache, AUTO_INCREMENT. |
 | `crates/tarn-iproto` | Async pipelined Tarantool client: many requests in flight per connection (matched by sync id), coalesced writes, zero-copy decoding, streams (interactive transactions), MP_DECIMAL. |
-| `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, global index maintenance, MySQL wire codec, the MessagePack codec of the native procedures. Compiled into the server and the native module (proof code is erased). |
+| `crates/tarn-verified` | Verus-verified code: shard routing, coordinator decision/recovery logic, global index maintenance, MySQL wire codec, the MessagePack codec and the lock checks of the native procedures. Compiled into the server and the native module (proof code is erased). |
 | `lua/tarn.lua` | Storage-node module: system spaces, lock table, the participant side of the commit protocol, lock-aware reads, recovery fiber, DDL, counters. |
-| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec. |
+| `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads, writes and commits without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec, their lock checks through the Verus-verified counts of a copy of the lock index. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
 ### 1.1 Data layout and routing
@@ -330,7 +330,10 @@ before both fields.
 **In the SQL layer.** The binder derives every text expression's collation
 with MySQL's coercibility rules (an explicit `COLLATE` wins over a column,
 a column over a literal; between two columns a `_bin` collation wins and
-two other different ones are error 1267) and stores it in each comparison
+two other different ones are error 1267; a binary string wins over a text
+one of the same coercibility only: `X'61' = 'A'` compares bytes, but a
+case-insensitive column compared with `X'41'` converts it to text) and
+stores it in each comparison
 (`=`, `IN`, `BETWEEN`, `LIKE`, `CASE`, `NULLIF`, `GREATEST`, `LEAST`,
 `LOCATE`). `ORDER BY` items become collation keys (`Expr::Key`); `GROUP BY`
 items, `DISTINCT` columns and aggregates record their collation, and `UNION`
@@ -339,7 +342,13 @@ a predicate only if the index orders by the predicate's collation -- or, for
 an equality, if the index is case-insensitive and the comparison binary:
 the index then finds a superset, which the statement's filter narrows.
 Literals take `collation_connection` (from the client's handshake or `SET
-NAMES`), and plans are cached per connection collation.
+NAMES`). A text query's literals are its plan's parameters
+(`normalize.rs`): a hexadecimal literal (`X'4142'`, as PyMySQL sends bytes)
+or a string with the `_binary` introducer is a binary one, typed and
+compared as a binary string, and `N'ab'` or a UTF-8 introducer a text one.
+Plans are cached per connection collation and per kind of each parameter,
+which types the expressions it appears in: `SELECT 1` and `SELECT 'abc'`
+share a template but not a plan.
 
 ### 1.4 Global unique indexes
 
@@ -468,23 +477,23 @@ back too whenever `tarn_select` would do more than read and return its rows,
 or might: when the bucket map, the lock index or the definition fences are to
 be read again first; when a bucket of the read is not served here, or a read
 of every shard comes with an old epoch or membership (`tarn_select` refuses
-it, `moved`); with the lock check, when the node is read-only, prepared
-transactions hold locks on the table, or a `TRUNCATE` or `DROP TABLE` holds
-a table; when the page ends before the read does (`tarn_select` then says
-where to continue); and when the window of the buckets' load counts that the
-read would count in has ended (§2.13: the Lua procedure starts the next
-one).
+it, `moved`); with the lock check, when the node is read-only, a prepared
+transaction holds a W lock on what the read covers (see *Locks, key by key*
+below), or a `TRUNCATE` or `DROP TABLE` holds a table; when the page ends
+before the read does (`tarn_select` then says where to continue); and when
+the window of the buckets' load counts that the read would count in has
+ended (§2.13: the Lua procedure starts the next one).
 
 The module knows the shard's state from a struct that `lua/tarn.lua` keeps
 current through LuaJIT's FFI (its section "Native procedures"; `State` in
 `crates/tarn-storage/src/state.rs`): which buckets the shard serves, the
 epoch and the membership version, whether the bucket map, the lock index
-and the fences are stale, how many tables are held, the page limits, and
-how many locks prepared transactions hold on each table. The Lua code
-updates it where it changes that state, in the same step. A native
-procedure runs in the same thread as the Lua code, between two of its
-steps, and does not yield, so it sees the state of one moment, as a Lua
-procedure's step that does not yield does. A read it serves is the one
+and the fences are stale, how many tables are held, the page limits, how
+many locks prepared transactions hold on each table, and a copy of the lock
+index (below). The Lua code updates it where it changes that state, in the
+same step. A native procedure runs in the same thread as the Lua code,
+between two of its steps, and does not yield, so it sees the state of one
+moment, as a Lua procedure's step that does not yield does. A read it serves is the one
 `tarn_select` would make in that state, with the same rows: in the model it
 is `SnapshotRead` with nothing to wait for (§2.2), so the model does not
 change. Its reads count for their bucket's load (§2.13) as the Lua
@@ -525,9 +534,9 @@ Tarantool's encodings: the shortest. It hands the writes to
 `tarn_autocommit`, having written nothing (it rolls its transaction back),
 when anything could make the Lua procedure wait, refuse or do more:
 
-* a table that is vinyl, or on which prepared transactions hold locks, or
-  row locks are held (READ COMMITTED: `tarn_autocommit` waits for one on
-  what it writes);
+* a table that is vinyl; a write that meets a lock of a prepared
+  transaction or a row lock (READ COMMITTED: `tarn_autocommit` waits for
+  one on what it writes; below);
 * a definition fence above the one the writes were made with
   (`tarn_autocommit` refuses them with 1412), a bucket of the writes, or of
   the rows they write, that does not take writes here (being sent, moved
@@ -542,10 +551,9 @@ when anything could make the Lua procedure wait, refuse or do more:
 Its checks and writes are the model's CommitLocal step for a transaction
 that read nothing: nothing else runs between them, as the procedure does
 not yield until it commits. For the checks, the state also mirrors the
-row locks held (by slot of space ids, as the locks of prepared
-transactions), the definition fences (the highest of each slot of space
-ids), which buckets take writes, and the test hooks held. While its
-commit waits for the WAL, it is a commit in flight, and what waits for the
+definition fences (the highest of each slot of space ids), which buckets
+take writes, and the test hooks held; the locks are the copy's (below).
+While its commit waits for the WAL, it is a commit in flight, and what waits for the
 commits in flight (`wait_commits`: a row lock's grant, a schema change, a
 bucket move) waits for it too; on a replicated shard, whose tables are
 synchronous, the commit waits for its quorum too, as `tarn_autocommit`'s
@@ -581,9 +589,8 @@ back, and also:
 
 * a transaction with row locks on this shard (`FOR UPDATE`, `FOR SHARE`):
   `tarn_commit_local` checks that they survived, and releases them;
-* reads of a table on which prepared transactions hold locks
-  (`tarn_commit_local` checks the rows read against them), or routed by a
-  bucket not served here (`moved`); reads of every shard with an older
+* reads that a prepared transaction holds a W lock on (below), or routed
+  by a bucket not served here (`moved`); reads of every shard with an older
   membership (`moved`); and any commit while a bucket is held here
   (`tarn_commit_local` checks the reads of every shard against its rows,
   §2.12);
@@ -606,10 +613,9 @@ before schema reads or a transaction/savepoint, so a stale gateway cannot
 bypass the outbox. Unknown capture state fails closed for writes.
 
 Its checks are those of the model's CommitLocal step, made on the state of
-one moment before its writes, each of them as strict as the Lua
-procedure's or stricter (a table where the Lua procedure checks rows, any
-table where it checks those read), so the model does not change. Its
-commit is a commit in flight as `ts_autocommit`'s is, and fails as
+one moment, from its writes to the start of its commit, each of them as
+strict as the Lua procedure's or stricter (below), so the model does not
+change. Its commit is a commit in flight as `ts_autocommit`'s is, and fails as
 `tarn_commit_local`'s does: 1213 when MVCC finds a read overwritten or the
 new leader of a replicated shard rolled the commit back, a read-only
 node's error as the call's error, 1180 should it fail once its commit
@@ -627,7 +633,7 @@ replies 1213, as `tarn_validate` does, having rolled the transaction
 back), and commits the transaction; the probe's space is data-temporary,
 so nothing yields from its checks to its commit. It hands the stream back,
 unchanged, when the transaction holds row locks here, when a prepared
-transaction holds locks on a table it read, when a bucket it read is not
+transaction holds a W lock on what it read, when a bucket it read is not
 served here or one is held here, when it read every shard with an older
 membership, when a `TRUNCATE` or `DROP TABLE` holds a table, and when the
 node is read-only or its state stale. `lua/test/native_test.lua` validates
@@ -659,6 +665,102 @@ This relies on that trigger running, as it does on a storage node, which
 runs no other code. A single instance (election mode `off`) changes its
 term only when an operator promotes it, and there no other node can have
 written anything its streams' MVCC tracking missed.
+
+**Locks, key by key.** The native procedures check the keys they read and
+write against the locks on them, as the Lua procedures do. The Lua module
+owns the lock index (§2.5: the point and range locks of prepared
+transactions, `LK` and `RL`; the row locks of READ COMMITTED transactions,
+`PL`, §2.9). The native module keeps a copy of it
+(`crates/tarn-storage/src/locks.rs`), which the Lua module changes in the
+same step as the index, through functions the module puts in the state:
+when a transaction's point lock on a key goes from one mode to another
+(taken, raised from R to W, released), when range locks are taken or
+released, when a row lock is taken or released, and when the index is made
+again. The copy counts, for each key, the transactions that hold a lock on
+it in each mode and those with a row lock on it; for each index, the W
+locks on its keys and the keys they are on, and its range locks by their
+bounds. It does not record which transactions: the native procedures
+serve only transactions that hold no lock on the shard (a one-shard
+transaction never prepared there, and one with row locks goes to Lua), so
+every lock they meet is another transaction's. They hand back:
+
+* a read with the lock check, when a W lock is on its key (a point read by
+  the whole key of a unique index), or on a key of its index in the range
+  it covers (any other read): from its key to its end key, or to its last
+  row when its limit ended it sooner;
+* a commit or a validation, when a W lock is on a key of its read set, or
+  on a key of its index in a range it read;
+* a write, when there is a lock of any mode on the primary key of its row,
+  an R lock on a key the row had or takes in another index, a lock of any
+  mode on a key the new row takes in a unique index (one without a NULL
+  part: a NULL takes no key), a range lock whose range holds the primary
+  key or one of those keys, or a row lock on its primary key or on a key
+  the new row takes in a unique index.
+
+These are the checks of `select_locked`, `reads_w_locked`,
+`write_conflict` and `write_plocked`, on the same keys, so the model does
+not change; where they are coarser they hand back more: they take every
+bound of a range as included, and a key they cannot compare with a range
+(a key or a bound that is not one of the index, or the start of one) as in
+it. A key is looked up by the bytes the Lua module gives it, the
+MessagePack of `msgpack.encode`: the native module encodes the keys it
+reads, and those of the rows it writes, as the Lua serializer would (a key
+with a decimal goes to Lua). A key is compared with a bound as `in_range`
+compares them (`key_def:compare_keys`, on the parts the bound has), by
+Tarantool's comparator of the index's parts, collations included: the
+module API compares tuples with keys, so the key becomes a tuple of its
+parts, which a key definition of the index's parts at fields 1, 2 and so
+on compares with the bound. The counts change, and the checks read them, through
+`tarn_verified::locks`, which proves (§3) that the counts stay the census
+of the locks through every change, that a key a check passes has no lock
+that the Lua check would find, and that a key the comparisons put outside a
+range is outside it for `in_range`, whichever bounds that includes. That
+the Lua module copies every change is tested instead: with
+`TARN_CHECK_LOCKS` it compares the copy with the index after each change
+(the key's counts, the index's ranges) and after a transaction's locks are
+released (all of it), and logs a difference; the storage tests and the SQL
+suites in CI run with it, and fail on one. That changing the copy in the
+steps that change the index is enough is modelled
+(`tla/NativeLockCopy.tla`): no native step goes ahead past a lock the Lua
+check would find, the locks of a PREPARE still waiting for its quorum and
+an index made again after an election included; a copy changed a step
+early or late, or not made again with the index, lets one through.
+
+Each procedure counts why it hands requests back, by reason: a lock on
+what it touches (and of which kind), state being read again, a held table,
+a vinyl table, a read of more than a page, and so on
+(`tarn_info().native.fallbacks`, [operations](operations.md)).
+
+On two shards under `oltp_write_only` (16 threads, three runs of each
+build, `bench/sysbench.sh`), the native procedure handed 93% of the
+one-shard commits to Lua (15,534 of 16,638), as cross-shard transactions
+held locks on the same tables; with the checks by key, 0.14% (26 of
+18,432), and the transactions per second rose from 1,109 to 1,221
+(medians). The transactions of `oltp_read_write` span both shards: they
+prepare in Lua whatever the native checks, and their throughput did not
+change.
+
+Ranges were compared with keys in a second step. Before, a one-shard write
+went to Lua whenever a prepared transaction held a range lock on its
+table, and a validation whenever one held a W lock on an index it read a
+range of. On two shards, two sysbench workloads ran at once on the same 4
+tables of 20,000 rows (8 threads each; three runs of each build, medians).
+The first workload's transactions span both shards and hold those locks
+while they prepare:
+
+| Workloads at once | handed to Lua, before → after | transactions per second, before → after |
+|---|---|---|
+| `oltp_read_write` + `oltp_update_non_index` | autocommit writes: 36.9% → 0.4% | 195 → 194; 3,371 → 4,317 |
+| `oltp_write_only` + `oltp_read_only` | validations: 80.9% → 1.7% | 672 → 671; 222 → 236 |
+| `oltp_write_only` + `oltp_read_only --skip_trx` | validations: 53.2% → 0.4% | 733 → 693; 216 → 232 |
+
+With `--skip_trx` each read of `oltp_read_only` is its own transaction,
+and one that reads a range on both shards is validated on each. There the
+writers lost what the readers gained: the queries per second of both
+together did not change (7,425 and 7,429). [bench/RESULTS.md](../bench/RESULTS.md#next-to-locks)
+compares the two builds with no locks, with locks on other rows and under
+contention: throughput, latency percentiles, and the shards' CPU and Lua
+heap per statement.
 
 | One shard, 16 threads (`AB=3 bench/profile.sh`) | statements per second | shard CPU per statement | Lua heap per statement |
 |---|---:|---:|---:|
@@ -1136,6 +1238,8 @@ allowed.
 it, on every shard and with SQL servers whose catalogs lag behind. Ordinary
 instant changes retain the stored layout; building an index over a missing
 non-NULL fill materializes only the missing tuple suffix.
+An engine-only change instead copies an owned replacement space and
+rotates physical identities; its additional cutover is described in §2.11.
 
 **Layout.** A column has a field number that never changes. Fields of
 columns created with the table are their positions; `bucket_id` follows;
@@ -1385,6 +1489,47 @@ does not hold its writes for hours. Checking existing rows (a narrower
 type, `NOT NULL`) still happens behind the fence, and is refused above
 `tarn.cfg.alter_check_rows` rows per shard.
 
+**Online engine changes.** A separate `ALTER TABLE ... ENGINE=memtx` or
+`ENGINE=vinyl` creates an owned shadow with a fresh space ID. The source
+remains authoritative while confirmed primary-index pages are copied;
+source on-replace capture records conservative old/new primary keys before
+a write can commit. Rollback may leave extra keys, but no unconfirmed
+payload is replayed. Capture is installed before a prefix drain. Capture
+loss or a term change before PREPARED discards the incomplete baseline and
+starts a new copy generation.
+
+The shadow has only its primary index during the online copy. A final
+persistent hold/fence drains old work, including decided APPLY, then
+rereads dirty keys as confirmed values or deletes. Only afterward are the
+actual secondary indexes, including their sparse native IDs, built and
+fresh global/lazy copies filled. This avoids a false uniqueness failure
+when an unfinished shadow still holds a unique key its source row gave
+up. The final fence can include long index builds. PREPARED certifies that
+complete image; APPLY and restart retain it rather than recopying it.
+
+The global job's confirmed APPLY decision precedes native renames and
+catalog publication. Recovery uses the explicit old/new IDs even if a
+rename committed before its catalog update. Catalog observations bind SID,
+definition JSON and bucket-index ID from the same committed definition,
+rather than resolving a public name that native DDL is changing. Holds and
+stream watermarks cover the old/new strong object groups, including old
+global-index-only misses. Publication retires obsolete auxiliary
+generations, then repeatable cleanup drops the original spaces and
+releases holds. A published-but-not-cleaned receipt must finish that work.
+
+AUTO_INCREMENT and hidden-row-ID counters retain a stable logical ID;
+central storage aliases protect old gateway calls after the physical SID
+changes, including later catalog JSON roundtrips. Lazy bucket counters and
+outstanding obligations retain their own history. Shadow/cursor writes use
+zero-delta instances of the existing terminal-ticket helper: an RPC ending
+does not erase a detached native transaction. Reset, cleanup and
+certification wait for actual terminal effects and the native queue cut.
+`EngineCopy` and `EngineCutover` check bounded refinements, composed with
+the existing commit, DDL and bootstrap premises; native MVCC, callbacks and
+replication still require runtime evidence ([verification](verification.md#online-engine-copying-and-publication-issue-57)).
+See [operations](operations.md#online-engine-changes) for capacity, pause
+and raw native-read limits.
+
 **Performance.** Cached, vinyl tables served 73–89% of memtx's throughput
 in sysbench. With data ten times the cache, point selects ran at 72% of the
 cached rate and single-row writes kept theirs, at 2.9× and 4.4–6.2× TiDB's
@@ -1393,9 +1538,11 @@ with the same data ten times its block cache
 disk latency). [Sizing](operations.md#sizing) gives the memory and disk a
 vinyl shard needs.
 
-**Not yet.** Replica bootstrap and backups copy a shard's whole data set
-(issue #56). A table cannot move between engines (issue #57). Writes are
-not slowed down when compaction falls behind (issue #58).
+**Limits.** Replica bootstrap and backups copy a shard's whole data set
+(issue #56). Engine changes copy whole tables, without hot/cold range
+partitioning. Shared storage-side [vinyl write admission](operations.md#vinyl-write-admission)
+uses estimated credit during pressure; it is not a native-memory or
+disk-bandwidth reservation.
 
 ### 2.12 Bucket moves
 
@@ -1678,7 +1825,7 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **115 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **134 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
@@ -1720,7 +1867,7 @@ native module as plain Rust. What is proven:
   they store with these functions (`tarn-storage`'s `Rd` and `Wr`). Each
   writer emits a byte-level specification: an integer unsigned when it is
   not negative, a negative one in two's complement, each in the fewest
-  bytes, and the shortest header of an array, a string or a binary. These
+  bytes, and the shortest header of an array, a map, a string or a binary. These
   are the encodings Tarantool writes: it is proven that no encoding of the
   same integer, and no header of the same length, is shorter. The readers
   decode per their specifications and read back what the writers emit,
@@ -1730,6 +1877,25 @@ native module as plain Rust. What is proven:
   value starts with; a value the writers emit ends where its encoding does.
   No function can panic, overflow or read past its buffer, whatever bytes
   it is given.
+* **Lock checks of the native procedures** (`locks.rs`, §1.5). The holders
+  of a key are modelled as a map from transactions to modes, the locks of
+  an index as a map from (key, transaction) to mode, the holders of a row
+  lock as a set; `census` counts those of a mode. `step`, `step_w` and
+  `row_step`, through which the copy changes its counts, are proven to keep
+  them the census of the locks through any change the Lua module tells it
+  of (a lock taken, raised from R to W, released). With counts that are the
+  census, a key that `read_free` passes has no W lock of any transaction, a
+  primary key that `primary_free` passes no lock, the key of another index
+  that `secondary_free` passes no R lock (nor any lock when the new row
+  claims it), an index that `index_free` passes no W lock on any key, and a
+  key that `row_free` passes no row lock: so none that the Lua module's
+  checks find, whoever reads or writes. `within` decides from the
+  comparisons of a key with the bounds of a range whether the key may lie
+  in it, taking the bounds as included: it is proven to find the key there
+  wherever the Lua module's `in_range` does, whichever bounds that includes.
+  That the Lua module tells the copy of every change, that a key is looked
+  up by the bytes its `kbin` gives, and that Tarantool's comparator gives
+  the comparisons `compare_keys` gives, are tested, not proven.
 * **Global index maintenance** (`uix.rs`, §1.4). `index_delta` decides
   which entry writes a row write makes. It is proven that applying them to
   an index that holds the row's old entry leaves the other rows' entries
@@ -1746,12 +1912,22 @@ is proven, and the storage tests compare each procedure with the Lua one.
 
 ## 4. Tests
 
+Engine migration has separate protocol, native-terminal and replicated
+failure gates; their results are functional/durability checks, not matched
+throughput measurements:
+
+| Suite | Engine-change boundary | Recorded result |
+|---|---|---|
+| `lua/test/engine_test.lua` | online acknowledged writes, unique-key handoff, delete/PK move, physical tuple/index preservation, capture loss/takeover, terminal decisions, native rename and post-publication cancellation, catalog ID/JSON binding, old-base/global-miss streams, counter aliases and owned-trigger cleanup | 75 checks with actual native ABI 8; 74 with native disabled; both engine directions |
+| `lua/test/engine_terminal_test.lua` | a detached shadow commit remains tracked after its caller ends; cleanup waits for the terminal/native queue cut; capture allocation failure cannot certify a lost tail | focused native-terminal fault gate, separate from process loss |
+| `lua/test/engine_replication.sh` | quorum-2/fsync replica sets: leader loss during copy forces recopy; a later leader loss preserves PREPARED and completes publication/cleanup | passes in both engine directions, with native enabled and disabled; eight owned leader terminations across four cohorts |
+
 | Suite | Scope | Result |
 |---|---|---|
 | `lua/test/run.sh` | storage protocol on two real shards: commit paths, locks, PREPARE/APPLY/ABORT, tombstones, fencing, recovery, lock-aware reads; APPLY outcomes, expiry, garbage-collection rules, refusal on demoted nodes and after an election term change, undo of a failed PREPARE's locks, lock-index rebuild while a PREPARE waits for a quorum; multi-key reads, integer arithmetic limits; row locks (queues, upgrades, timeouts, NOWAIT, SKIP LOCKED, local deadlocks, the cross-shard detector's interface with the shards each waiter holds locks on, the generation a failed request reports for the locks it keeps, lost generations and connections, RC commits, unique-value locks, locking reads of a primary-key range in one call); schema changes (definition fences on every write path, waiting for prepared transactions, row checks with fill values, temporary indexes, the job records, two jobs beginning at once); APPLY after a table was dropped; vinyl tables: each commit step held at its yield points while another runs, autocommit reads that meet W locks taken while they scan; index builds ahead of the fence (refused writes, an APPLY that a new index refuses), the row-check limit; jobs (per table name, phases, takeovers); `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` in steps: a `TRUNCATE` that waits for a prepared transaction and then removes its rows, reads and row locks waiting on a held table, validation failing on it, holds that outlive a rebuild from storage, a vinyl reader whose validation fails after a `TRUNCATE`; bucket moves (`bucket_test.lua`): the map, requests refused for buckets the shard does not own on every read, write, lock and commit path (also writes that name no bucket, by their rows' `bucket_id`), a move step by step (copy in pages, writes during the copy in the last copy, the hold failing scans of the receiving shard, the fence refusing writes, row locks and PREPAREs but serving reads, send and receive, repeated steps), the fence breaking row locks and waiting for prepared transactions (also after a leader change, from the lock records) and for a local commit in flight, notes lost to a leader change and the copy made again, giving a move up, an APPLY during a move, a read of every shard that waits for a lock while a bucket is sent, moves and schema changes waiting for each other, the map read again while a send, a last copy or a receive waits for its quorum, two servers making a shard's map at once with different counts | 392/392 and 138/138 |
 | `cargo test` (tarn-verified, tarn-mysql, tarn-sql) | codec boundaries (MySQL's and MessagePack's), values skipped however nested, framing at 16 MiB edges, packet size limits, CRC vs Tarantool, coordinator decisions, binary/text row encoding, parameter decoding (all types, truncated input), SQL normalization, expressions, collation weights against MariaDB's, weight fields and the `ALTER TABLE` rules for them, index use under a collation, the cross-shard deadlock search (walks over simulated shards, cycles, the second collection), the bucket map from the shards' reports (a bucket between send and receive, overlapping and inconsistent reports) and the bucket count of a new map; the rebalancer's plans (even weights, and even shares of buckets of uneven sizes) and its record | all pass |
 | `crates/tarn-iproto/tests` | real Tarantool: auth, iterators, DML, call/eval, streams and conflicts, 20k pipelined requests, connection loss, stale-leader detection (ER_READONLY), MP_DECIMAL written by Tarantool | 30 tests pass |
-| `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings; collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
+| `tests/sql/difftest.py` | 465 SQL cases run on Tarn and MariaDB 10.11 and compared exactly: column names, rows (integers and DECIMALs by exact value, DOUBLEs within 1e-9), error codes, affected rows, final table contents and indexes; access paths, expressions, aggregates, joins, subqueries, UNION, DML, integer arithmetic, unique keys, isolation variables, locking reads, savepoints and statement rollback, ALTER TABLE (adds, drops, type changes and their checks, renames, defaults, indexes, foreign keys), RENAME TABLE, user and system variables, executable comments, errors; tables without a primary key, `information_schema.TABLES`, `SELECT ... INTO @var`, SQL-level `PREPARE` / `EXECUTE`, `CLIENT_FOUND_ROWS`, row-value comparisons, `DATETIME` spellings, hexadecimal literals and introducers (binary strings, their coercibility, plans cached per kind of literal); collations (98 cases): `=`, `IN`, `LIKE`, ranges and lookups through case-insensitive indexes, `ORDER BY`, `GROUP BY`, `DISTINCT`, `UNION`, joins, unique and primary keys that refuse case and accent variants, upserts, coercibility and 1267, `WEIGHT_STRING()` of every kind of character, case-insensitive keys in transactions and at READ COMMITTED, `ALTER TABLE` with collations, case-insensitive keys of tables without a primary key, keyset cursors over case-insensitive keys | 465/465 identical |
 | `tests/sql/fuzzdiff.py` | randomly generated SELECTs (predicates with NULLs/IN/BETWEEN/LIKE, arithmetic, aggregates, GROUP BY/HAVING, ORDER BY+LIMIT, joins, subqueries) on Tarn and MariaDB, rows compared as above | 2,000 queries, 0 mismatches |
 | `tests/sql/txntest.py` | rollback, visibility, write skew, lost update, phantom, fractured read, real-time order, FOR UPDATE, duplicate keys in transactions, cross-shard atomic DML, direct KV reads; concurrent cross-shard inserts of case variants of one case-insensitive key (serializable and READ COMMITTED: exactly one commits); concurrent bank transfers with serializable audits, a ledger written in the same transactions (lost or duplicated transfer writes, acknowledged commits missing, commits reported as 1213 but applied) and autocommit counters (increments applied twice) | 13/13 |
 | `tests/sql/rctest.py` | READ COMMITTED against InnoDB's behaviour: isolation variables, lock waits and timeouts, local and cross-shard deadlocks (also between transactions on two SQL servers, and a cycle of three), no deadlock-detector calls without lock waits, locks of a failed lock request released with its transaction, 8 threads decrementing counters through autocommit, local and cross-shard transactions (no lost update), semi-consistent UPDATE/DELETE, SKIP LOCKED job queue (every job claimed once), a UNION ALL of SKIP LOCKED reservations (every unit free or held once while carts reserve and release), NOWAIT, FOR SHARE, duplicate inserts, concurrent upserts (also with MySQL 8's row alias) and unique-key updates, savepoints, statement rollback, locks released on disconnect, serializable transactions meeting row locks, primary-key point writes locked and read in one step, and 8 s of concurrent transfers checked against a ledger (also run during leader failovers by `tests/failover.sh`) | 28/28 |
@@ -1813,6 +1989,30 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
 | Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
+| Bug_EngineAliasNoMutex | violates BothCallersOK | 25 | 46 | 8 | 00s | 8 |
+| Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
+| Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
+| Bug_EngineCopyLosePersistentFence | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
+| Bug_EngineCopyLostCaptureContinues | violates PreparedImage | 6447 | 18399 | 15 | 00s | 15 |
+| Bug_EngineCopyPrepareWithoutIndexes | violates PreparedImage | 1354 | 3342 | 9 | 00s | 9 |
+| Bug_EngineCopyRebuildPrepared | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
+| Bug_EngineCopySkipFinalDrain | violates PreparedImage | 4006 | 11372 | 13 | 00s | 13 |
+| Bug_EngineCopySkipPrefixDrain | violates PreparedImage | 4048 | 11203 | 12 | 00s | 12 |
+| Bug_EngineCopyStaleBatch | violates PreparedImage | 6254 | 18563 | 17 | 00s | 17 |
+| Bug_EngineCopyTailIgnoresDeletes | violates PreparedImage | 3881 | 10918 | 13 | 00s | 13 |
+| Bug_EngineCopyUnconfirmedSource | violates ConfirmedCopies | 269 | 542 | 6 | 00s | 6 |
+| Bug_EngineCutoverAbortAfterDecision | violates NoAbortPublished | 235 | 742 | 10 | 00s | 10 |
+| Bug_EngineCutoverApplyAfterAbort | violates CatalogHasSpace | 322 | 977 | 11 | 00s | 11 |
+| Bug_EngineCutoverAuxStreamOmitted | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
+| Bug_EngineCutoverCatalogByName | violates CatalogObservationBound | 173 | 522 | 8 | 00s | 8 |
+| Bug_EngineCutoverDropBeforePublish | violates CatalogHasSpace | 3 | 3 | 2 | 00s | 2 |
+| Bug_EngineCutoverForgetOldObligations | violates OldObligationsRetained | 4 | 4 | 2 | 00s | 2 |
+| Bug_EngineCutoverOldStreamValidates | violates OldStreamsRejected | 214 | 703 | 10 | 00s | 10 |
+| Bug_EngineCutoverPublishBeforeAuxReady | violates PublishedReady | 198 | 547 | 7 | 00s | 7 |
+| Bug_EngineCutoverPublishBeforeDecision | violates NoAbortPublished | 241 | 726 | 9 | 00s | 9 |
+| Bug_EngineCutoverRenameLosesOriginalIdentity | violates CatalogHasSpace | 318 | 965 | 12 | 00s | 12 |
+| Bug_EngineCutoverResetCounterIdentity | violates CounterNeverReuses | 216 | 707 | 10 | 00s | 10 |
+| Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
@@ -1873,6 +2073,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyMeterStaleInstall | violates ReadyEpochCurrent | 25 | 38 | 5 | 00s | 5 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
+| Bug_LockCopyAfterYield | violates NativeFindsLocks | 16 | 20 | 3 | 00s | 3 |
+| Bug_LockCopyOnQuorum | violates NativeFindsLocks | 17 | 21 | 3 | 00s | 3 |
+| Bug_LockCopyReleaseFirst | violates NativeFindsLocks | 162 | 387 | 5 | 00s | 5 |
+| Bug_LockReloadNoCopy | violates NativeFindsLocks | 166 | 395 | 5 | 00s | 5 |
 | Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
 | Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
 | Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
@@ -1906,6 +2110,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
+| EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
+| EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
+| EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
+| EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
@@ -1933,6 +2142,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LocalFailover_ROValidate | no errors | 397911 | 2148183 | 21 | 52s |  |
 | Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
 | Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
+| LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
@@ -1999,8 +2209,9 @@ discussion. In short, on this 2-vCPU machine (load generator included):
   Writes wait during PREPARE and, on memtx, index building; other vinyl
   indexes build before that wait. Checking or materializing existing rows
   (a narrower type, `NOT NULL`, indexed fills) is refused above
-  `tarn.cfg.alter_check_rows` rows per shard. A table cannot move between
-  memtx and vinyl.
+  `tarn.cfg.alter_check_rows` rows per shard. Engine changes use a separate
+  full-table copy with a final write/read fence (§2.11), require capacity
+  for both copies, and cannot combine with another schema alteration.
 * Vinyl tables (§2.11): an autocommit read whose range a cross-shard
   transaction writes again and again while it scans runs again each time,
   and fails with 1213 after `lock_wait` (1 s); benchmarks with data larger

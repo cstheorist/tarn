@@ -834,6 +834,54 @@ CASES = [
     ("SELECT id FROM dtp WHERE dd < '2025-01-02 00:00:01' ORDER BY id", "q"),
     ("SELECT d0, COUNT(*) FROM dtp GROUP BY d0 ORDER BY d0", "q"),
     ("UPDATE dtp SET dt = '2025-01-01 00:00:01' WHERE dt = '2025-01-01 00:00:01.000000'", "dml:dtp"),
+    # hexadecimal literals and introducers (issue #122): binary strings, as
+    # PyMySQL sends bytes (X'...', _binary X'...') and older drivers did
+    # (_binary '...'); national and UTF-8 introduced strings are text
+    ("CREATE TABLE hx (id INT PRIMARY KEY, v VARBINARY(8), c VARCHAR(8) COLLATE utf8mb4_general_ci)", "ddl:hx"),
+    ("INSERT INTO hx VALUES (1, X'51554A44', 'a'), (2, x'51554a44', x'616263')", "dml:hx"),
+    ("INSERT INTO hx VALUES (3, _binary X'0102', _utf8mb4'c'), (4, _binary'xy', N'n'), (5, X'', 0x6465)", "dml:hx"),
+    ("INSERT INTO hx VALUES (6, _binary 'q''r', _utf8mb4 X'6566')", "dml:hx"),
+    ("SELECT id, HEX(v), c FROM hx ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE v = X'51554A44' ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE v = x'51554a44' AND c = 'a'", "q"),
+    ("SELECT id FROM hx WHERE v IN (_binary X'0102', _binary'xy', X'') ORDER BY id", "q"),
+    ("UPDATE hx SET v = x'ff00' WHERE id = 5", "dml:hx"),
+    ("SELECT X'41', x'4142', X'', _binary'xy', N'cd', _utf8mb4'ef'", "q"),
+    ("SELECT HEX(X'00ff'), LENGTH(X'0102'), HEX(_binary'xy'), CONCAT(X'41', 'b')", "q"),
+    # a binary string compares by bytes, a text one under the collation; a
+    # number makes an integer column, a string a text one: no plan cached
+    # for one kind of literal serves another
+    ("SELECT 'a' = 'A'", "q"),
+    ("SELECT X'61' = 'A'", "q"),
+    ("SELECT 'a' = 'A'", "q"),
+    ("SELECT 1", "q"),
+    ("SELECT 'abc'", "q"),
+    ("SELECT X'616263'", "q"),
+    # ... and a binary string literal is coercible: a column's collation, or
+    # an explicit one, wins over it (then it compares as text), not over a
+    # text literal
+    ("SELECT id FROM hx WHERE c = 'A' ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE c = X'41' ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE c = _binary'A' ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE c IN (X'41', 'z') ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE c LIKE X'41' ORDER BY id", "q"),
+    ("SELECT X'61' LIKE 'A', _binary'a' LIKE 'A', LOCATE(X'61', 'A'), LOCATE('a', X'41')", "q"),
+    ("SELECT LOCATE(X'41', c), c LIKE _binary'A%' FROM hx WHERE id = 1", "q"),
+    ("SELECT X'41' = 'a' COLLATE utf8mb4_general_ci, _binary'A' = 'a', _binary'A' = 'a' COLLATE utf8mb4_general_ci", "q"),
+    ("SELECT id FROM hx WHERE v = 'qujd' COLLATE utf8mb4_general_ci ORDER BY id", "q"),
+    ("SELECT id FROM hx WHERE v = 'qujd' ORDER BY id", "q"),
+    # as MariaDB: an odd number of digits, or another character, is a
+    # syntax error
+    ("SELECT X'4'", "err"),
+    ("SELECT X'4G'", "err"),
+    ("INSERT INTO hx VALUES (7, X'123', 'z')", "err"),
+    ("SELECT id FROM hx WHERE id IN (SELECT id FROM hx WHERE v = X'010')", "err"),
+    # ... and in prepared statements and variables
+    ("PREPARE hxp FROM 'SELECT id FROM hx WHERE v = X''51554A44'' ORDER BY id'", "q"),
+    ("EXECUTE hxp", "q"),
+    ("DEALLOCATE PREPARE hxp", "q"),
+    ("SET @hxb = X'0102'", "q"),
+    ("SELECT id FROM hx WHERE v = @hxb", "q"),
     # collations (issue #13): comparisons, LIKE, ranges and lookups through
     # case-insensitive indexes, ordering, grouping, unique keys
     ("SELECT id FROM ci WHERE handle = 'alice'", "q"),

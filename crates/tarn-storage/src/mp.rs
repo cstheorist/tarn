@@ -125,6 +125,11 @@ impl Wr {
         self
     }
 
+    pub fn map(&mut self, n: u32) -> &mut Wr {
+        mp::write_map(&mut self.0, n);
+        self
+    }
+
     pub fn str(&mut self, s: &str) -> &mut Wr {
         self.bytes_header(false, s.len()).raw(s.as_bytes())
     }

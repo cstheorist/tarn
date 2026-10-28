@@ -8,6 +8,7 @@
 //! tells the SQL server to call it. The decisions are the ones tarn_select
 //! makes in that case, so either gives the same reply.
 
+use crate::fallback::{back, Why};
 use crate::mp::Rd;
 use crate::state::State;
 
@@ -57,6 +58,9 @@ pub struct Args<'a> {
     pub index_id: u32,
     /// A MessagePack array.
     pub key: &'a [u8],
+    /// The key was nil (an empty one to the scan; its lock check is the Lua
+    /// procedure's).
+    pub key_nil: bool,
     pub iterator: u32,
     pub limit: Option<u64>,
     /// A MessagePack array, and whether rows equal to it are read.
@@ -81,6 +85,7 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
     }
     let space_id = u32::try_from(r.uint()?).ok()?;
     let index_id = u32::try_from(r.uint()?).ok()?;
+    let key_nil = r.peek()? == 0xc0;
     let key = if r.nil() {
         EMPTY_KEY
     } else {
@@ -108,11 +113,11 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
     };
     let lock_check = r.bool()?;
     if !r.nil() && r.uint()? != 0 {
-        return None; // offset
+        return back(Why::Offset);
     }
     let begin = !r.nil() && r.bool()?;
     if !r.nil() {
-        return None; // after
+        return back(Why::NextPage); // after
     }
     let route = match r.peek()? {
         0xc0 => {
@@ -142,6 +147,7 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
         space_id,
         index_id,
         key,
+        key_nil,
         iterator,
         limit,
         end_key,
@@ -351,6 +357,7 @@ mod tests {
                 space_id: 512,
                 index_id: 0,
                 key: &[0x91, 17],
+                key_nil: false,
                 iterator: 0,
                 limit: Some(1),
                 end_key: None,
@@ -372,7 +379,9 @@ mod tests {
         assert!(parse(&buf).is_none(), "an end key without whether it is included");
         // no limit, no key, a list of buckets, a map
         assert_eq!(parse(&point(Some((4, &[0xc0])))).unwrap().limit, None);
-        assert_eq!(parse(&point(Some((2, &[0xc0])))).unwrap().key, &[0x90]);
+        let buf = point(Some((2, &[0xc0])));
+        let a = parse(&buf).unwrap();
+        assert_eq!((a.key, a.key_nil), (&[0x90][..], true));
         assert_eq!(
             parse(&point(Some((11, &[0x92, 3, 4])))).unwrap().route,
             Route::Buckets(&[0x92, 3, 4])

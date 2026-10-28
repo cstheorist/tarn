@@ -5,10 +5,13 @@ run on several SQL servers -- no acknowledged write may be lost, and no
 autocommit statement may fail because a table definition changed.
 
     tests/sql/ddltest.py --tarn 127.0.0.1:4000[,127.0.0.1:4001] [--seconds 20] [--threads 8]
+                       [--kv 127.0.0.1:3311,127.0.0.1:3321]
 
 With two SQL servers (scripts/cluster.sh start -s 2) the online test runs
 writers on both while the schema changes go through the first: the second
 server sees each new definition only after it reloads its catalog.
+Supply one writable leader per shard, in gateway shard order, for the
+engine-change tests' independent native images and legacy counter RPCs.
 """
 import argparse
 import os
@@ -18,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 
 import pymysql
 from pymysql.constants import CLIENT, COMMAND
@@ -28,10 +32,11 @@ RETRY = (1213, 1412, 1205)
 UNKNOWN = 1180
 
 
-def connect(hp, db=DB, autocommit=True, multi=False):
+def connect(hp, db=DB, autocommit=True, multi=False, read_timeout=None):
     host, port = hp.split(":")
     return pymysql.connect(host=host, port=int(port), user="sb", password="", database=db,
                            autocommit=autocommit, charset="utf8mb4",
+                           read_timeout=read_timeout,
                            client_flag=CLIENT.MULTI_STATEMENTS if multi else 0)
 
 
@@ -51,6 +56,46 @@ def code(fn):
     return None
 
 
+ENGINE_IMAGE = r"""
+local name = ...
+box.begin{txn_isolation='read-confirmed'}
+local ok, result = pcall(function()
+local sp = assert(box.space[name], 'missing native table ' .. name)
+local cat = assert(box.space._tarn_catalog:get{name}, 'missing native catalog ' .. name)
+local function hex(s)
+    return (s:gsub('.', function(c) return string.format('%02x', string.byte(c)) end))
+end
+local function image(index)
+    local out = {}
+    for _, row in index:pairs() do
+        out[#out + 1] = hex(require('msgpack').encode(row:totable()))
+    end
+    table.sort(out)
+    return out
+end
+local indexes = {}
+for id, ix in pairs(sp.index) do
+    if type(id) == 'number' then
+        indexes[#indexes + 1] = {id=ix.id, name=ix.name, type=ix.type, unique=ix.unique, parts=ix.parts}
+    end
+end
+table.sort(indexes, function(a, b) return a.id < b.id end)
+local keys, kd = {}, require('key_def').new(sp.index[0].parts)
+for _, row in sp:pairs() do keys[#keys + 1] = kd:extract_key(row):totable() end
+local aux = {}
+for _, u in ipairs(cat.def.uix or {}) do aux[#aux + 1] = u.id end
+for _, l in ipairs(cat.def.lazy or {}) do aux[#aux + 1] = l.gen end
+table.sort(aux)
+return {id=sp.id, name=sp.name, engine=sp.engine, ver=cat.def.ver, format=sp:format(),
+        indexes=indexes, rows=image(sp.index[0]), buckets=image(assert(sp.index.bucket_id)),
+        keys=keys, aux=aux}
+end)
+if box.is_in_txn() then box.rollback() end
+if not ok then error(result) end
+return result
+"""
+
+
 class T:
     def __init__(self, args):
         self.args = args
@@ -66,7 +111,540 @@ class T:
     def c(self, i=0, **kw):
         return connect(self.servers[i % len(self.servers)], **kw)
 
+    def engine_image(self, table):
+        """Confirmed native value/arity images, independent of SQL's decoder.
+
+        MessagePack reencodes the complete tuple fields, including missing
+        suffixes, NULLs and binary weights; it does not assert preservation
+        of the original numeric MessagePack encoding.
+        """
+        if not self.args.kv:
+            return []
+        from lazytest import ev
+        images = [ev(node, ENGINE_IMAGE, [f"{DB}.{table}"]) for node in self.args.kv.split(",")]
+        for image in images:
+            self.check(image["name"] == f"{DB}.{table}", "exact public native name")
+            self.check(image["rows"] == image["buckets"], "native bucket and primary scans contain exactly the same tuples")
+        return images
+
+    def change_engine(self, c, table, engine):
+        q(c, f"ALTER TABLE `{table}` ENGINE={engine}")
+        for server in range(len(self.servers)):
+            with self.c(server) as probe:
+                deadline = time.monotonic() + 10
+                status = []
+                while time.monotonic() < deadline:
+                    # #142: the existing admin lexer corrupts quoted UTF-8
+                    # LIKE tokens. Keep the Unicode table and compare the
+                    # actual unfiltered catalog name, without that parser.
+                    status = [row for row in q(probe, "SHOW TABLE STATUS") if row[0] == table]
+                    if len(status) == 1 and status[0][1].lower() == engine:
+                        break
+                    time.sleep(.01)
+                self.check(len(status) == 1 and status[0][1].lower() == engine,
+                           f"gateway {server}: {table} reports {engine}: {status}")
+
+    def engine_noop(self, c, table, engine):
+        before = self.engine_image(table)
+        # These internal test names are valid unquoted identifiers. The
+        # full schema oracle avoids #142's quoted UTF-8 admin token bug.
+        create = q(c, f"SHOW CREATE TABLE {table}")
+        self.change_engine(c, table, engine)
+        self.check(q(c, f"SHOW CREATE TABLE {table}") == create, "same-engine ALTER preserves the SQL definition")
+        self.check(self.engine_image(table) == before,
+                   "same-engine ALTER preserves native IDs, version, indexes, auxiliaries and physical rows")
+
+    def legacy_counter(self, table, prefix, allocated):
+        """The exact old gateway RPC names must alias the stable counter."""
+        from lazytest import rpc
+        node = self.args.kv.split(",")[0]
+        sid = self.engine_image(table)[0]["id"]
+        start = rpc(node, "tarn_counter_alloc", [f"{prefix}:{sid}", 7])
+        maximum = max(key[0] if isinstance(key, tuple) else key for key in allocated)
+        self.check(isinstance(start, int) and start > maximum,
+                   f"legacy {prefix}:new-SID allocation shares the original high-water mark")
+        floor = maximum + 1_000_000
+        self.check(rpc(node, "tarn_counter_bump", [f"{prefix}:{sid}", floor]) is True,
+                   f"legacy {prefix}:new-SID bump is accepted")
+        return start, floor
+
     # ------------------------------------------------------------------
+    def test_engine_change_fidelity(self):
+        """Engine replacement preserves physical layouts and nonconsecutive index IDs."""
+        c = self.c()
+        table = "ec_雪"
+        q(c, f"DROP TABLE IF EXISTS `{table}`")
+        q(c, f"CREATE TABLE `{table}` (tenant INT NOT NULL,id INT NOT NULL,v INT,old VARCHAR(20),"
+             "name VARCHAR(20) COLLATE utf8mb4_unicode_ci,payload VARCHAR(64),"
+             "PRIMARY KEY(tenant,id),KEY discard(v),KEY by_name(name)) PARTITION BY KEY(tenant) ENGINE=memtx")
+        raw = "\0\n\r\t\\'雪"
+        q(c, f"INSERT INTO `{table}` VALUES (1,1,10,'kept physically','Á ',%s),(2,2,20,NULL,'ß',NULL)", (raw,))
+        q(c, f"ALTER TABLE `{table}` ADD COLUMN frozen INT DEFAULT 3")
+        q(c, f"ALTER TABLE `{table}` ALTER COLUMN frozen SET DEFAULT NULL")
+        q(c, f"INSERT INTO `{table}` (tenant,id,v,name,payload) VALUES (3,3,30,'三','third')")
+        q(c, f"ALTER TABLE `{table}` ALTER COLUMN frozen SET DEFAULT 9")
+        q(c, f"ALTER TABLE `{table}` DROP COLUMN old, DROP INDEX discard")
+        q(c, f"ALTER TABLE `{table}` ADD INDEX by_v(v,tenant,id)")
+        select = f"SELECT tenant,id,v,name,payload,frozen FROM `{table}` ORDER BY tenant,id"
+        expected = ((1, 1, 10, "Á ", raw, 3), (2, 2, 20, "ß", None, 3), (3, 3, 30, "三", "third", None))
+        self.check(q(c, select) == expected, "fidelity source has frozen fills, present NULLs and exact raw text")
+        original = self.engine_image(table)
+        for image in original:
+            ids = [index["id"] for index in image["indexes"]]
+            self.check(ids != list(range(max(ids) + 1)), f"source really has native index-ID gaps: {ids}")
+        for engine in ("vinyl", "memtx"):
+            previous = self.engine_image(table)
+            self.change_engine(c, table, engine)
+            self.check(q(c, select) == expected, f"{engine}: exact logical rows and frozen defaults")
+            self.check(q(c, f"SELECT HEX(payload) FROM `{table}` WHERE tenant=1 AND id=1") == ((raw.encode("utf8").hex().upper(),),),
+                       f"{engine}: raw text bytes survive exactly")
+            self.check(q(c, f"SELECT id FROM `{table}` FORCE INDEX(by_name) WHERE name='a' ORDER BY id") == ((1,),),
+                       f"{engine}: CI index preserves raw spelling and weight semantics")
+            self.check(q(c, f"SELECT tenant,id FROM `{table}` FORCE INDEX(by_v) WHERE v>=20 ORDER BY v") == ((2, 2), (3, 3)),
+                       f"{engine}: replacement secondary uses its retained native ID")
+            self.check(q(c, f"SELECT id FROM `{table}` FORCE INDEX(PRIMARY) WHERE tenant=1 AND id=1") == ((1,),),
+                       f"{engine}: native primary remains index zero")
+            after = self.engine_image(table)
+            for old, new, source in zip(previous, after, original):
+                self.check(new["id"] != old["id"] and new["engine"] == engine,
+                           f"{engine}: a new actual physical base was published")
+                for field in ("name", "format", "indexes", "rows", "buckets", "keys"):
+                    self.check(new[field] == source[field], f"{engine}: exact native {field} preserved")
+            self.engine_noop(c, table, engine)
+        q(c, f"INSERT INTO `{table}` (tenant,id,v) VALUES (4,4,40)")
+        self.check(q(c, f"SELECT frozen FROM `{table}` WHERE tenant=4 AND id=4") == ((9,),),
+                   "migration preserves the current default separately from old frozen fills")
+        before = self.engine_image(table)
+        self.check(code(lambda: q(c, f"ALTER TABLE `{table}` ENGINE=vinyl, ADD COLUMN refused INT")) == 1235,
+                   "combined engine and schema change is explicitly refused")
+        self.check(self.engine_image(table) == before and "`refused`" not in q(c, f"SHOW CREATE TABLE {table}")[0][1],
+                   "refused combined ALTER has no schema or row effects")
+        q(c, f"DROP TABLE `{table}`")
+
+    def test_engine_change_counters(self):
+        """Deleted high IDs and gateway-reserved blocks survive repeated replacements."""
+        a, b = self.c(0), self.c(1)
+        q(a, "DROP TABLE IF EXISTS ec_ai")
+        q(a, "CREATE TABLE ec_ai (id BIGINT PRIMARY KEY AUTO_INCREMENT,n INT) ENGINE=memtx")
+        q(a, "INSERT INTO ec_ai VALUES (100000,-1)")
+        q(a, "DELETE FROM ec_ai")
+        issued = {100000}
+        expected = {}
+        serial = 0
+
+        def insert(connection, count=1, minimum=100000):
+            nonlocal serial
+            values = list(range(serial, serial + count))
+            serial += count
+            q(connection, "INSERT INTO ec_ai(n) VALUES " + ",".join("(%s)" for _ in values), values)
+            rows = q(connection, "SELECT id,n FROM ec_ai WHERE n>=%s AND n<%s ORDER BY n", (values[0], serial))
+            self.check(len(rows) == count, "every generated insert is retained")
+            for identity, n in rows:
+                self.check(identity > minimum and identity not in issued,
+                           f"generated ID {identity} never reuses a deleted or previously allocated value")
+                issued.add(identity)
+                expected[identity] = n
+
+        insert(a)
+        insert(b)
+        for engine in ("vinyl", "memtx"):
+            self.change_engine(a, "ec_ai", engine)
+            if self.args.kv:
+                start, floor = self.legacy_counter("ec_ai", "ai", issued)
+                issued.update(range(start, start + 7))
+                insert(a, 1001, floor)  # fresh SQL block sees the legacy RPC's bump
+            insert(a)
+            insert(b)
+            insert(a, 1001)  # requires a new block, beyond either cached remainder
+            self.engine_noop(a, "ec_ai", engine)
+            self.check(q(b, "SELECT id,n FROM ec_ai ORDER BY id") == tuple(sorted(expected.items())),
+                       f"{engine}: exact generated IDs across all gateway allocations")
+        print(f"    stable AUTO_INCREMENT: {len(expected)} inserts through {len(set(self.servers))} gateway(s)")
+        a.close()
+        b.close()
+
+    def test_engine_change_auxiliaries(self):
+        """New auxiliary IDs preserve global uniqueness and a ready lazy query path."""
+        from lazytest import ev, rpc, stat
+        c = self.c()
+        q(c, "DROP TABLE IF EXISTS ec_aux")
+        q(c, "CREATE TABLE ec_aux (tenant INT NOT NULL,id INT NOT NULL,h VARCHAR(20) COLLATE utf8mb4_unicode_ci,"
+             "k INT,n INT,v VARCHAR(20),PRIMARY KEY(tenant,id),UNIQUE KEY by_h(h),"
+             "KEY by_k(k,n,id) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant) ENGINE=memtx")
+        q(c, "INSERT INTO ec_aux VALUES (1,1,'Á ',7,10,'one'),(2,2,'b',7,20,'two'),(3,3,NULL,NULL,30,'null')")
+        q(c, "SET SESSION tarn_lazy_read_your_writes=ON,tarn_lazy_wait_timeout=5")
+        expected = ((1, 1, "one"), (2, 2, "two"))
+        nodes = self.args.kv.split(",") if self.args.kv else []
+        duplicate_tenant = 9
+        if nodes:
+            from movetest import bucket_of
+            images = self.engine_image("ec_aux")
+            holder = next(i for i, image in enumerate(images) if [1, 1] in image["keys"])
+            holder_shard = rpc(nodes[holder], "tarn_info", [])["shard_id"]
+            ranges = q(c, "SHOW TARN BUCKETS")
+            count = sum(int(row[1]) for row in ranges)
+            other_buckets = set()
+            for row in ranges:
+                if int(row[0]) != holder_shard:
+                    text = row[2]
+                    for part in text.split(", ") if text else []:
+                        low, _, high = part.partition("-")
+                        other_buckets.update(range(int(low), int(high or low) + 1))
+            duplicate_tenant = next(key for key in range(1, 10000) if bucket_of(key, count) in other_buckets)
+
+        def counters():
+            return [ev(node, "local out={} box.begin{txn_isolation='read-confirmed'} "
+                       "for _,t in box.space._tarn_lazy_counter:pairs() do out[#out+1]=t:totable() end "
+                       "box.rollback() return out") for node in nodes]
+
+        def lazy_query():
+            before = stat(c, "Tarn_lazy_reads")
+            self.check(q(c, "SELECT tenant,id,v FROM ec_aux WHERE k=7 ORDER BY n,id") == expected,
+                       "ready lazy generation returns the exact public rows")
+            self.check(stat(c, "Tarn_lazy_reads") == before + 1, "query actually used the lazy path")
+
+        lazy_query()
+        for engine in ("vinyl", "memtx"):
+            old = self.engine_image("ec_aux")
+            sequence = counters()
+            self.change_engine(c, "ec_aux", engine)
+            lazy_query()
+            self.check(counters() == sequence, "physical copy/bootstrap emits no new logical lazy sequence")
+            q(c, "BEGIN")
+            self.check(q(c, "SELECT tenant,id,v FROM ec_aux WHERE k=7 ORDER BY n,id") == expected,
+                       "strong transaction agrees with the fresh lazy generation")
+            q(c, "ROLLBACK")
+            self.check(q(c, "SELECT tenant,id FROM ec_aux WHERE h='a'") == ((1, 1),),
+                       "fresh global unique target preserves CI lookup")
+            self.check(code(lambda: q(c, "INSERT INTO ec_aux VALUES (%s,9,'a',9,90,'duplicate')", (duplicate_tenant,))) == 1062,
+                       "global duplicate on another shard remains refused across the replacement")
+            self.check(q(c, "SELECT id FROM ec_aux WHERE tenant=%s AND id=9", (duplicate_tenant,)) == (),
+                       "refused global duplicate has no base effect")
+            after = self.engine_image("ec_aux")
+            for previous, current in zip(old, after):
+                self.check(len(current["aux"]) == len(previous["aux"]) == 2
+                           and not set(current["aux"]) & set(previous["aux"]),
+                           "both global and lazy target IDs are fresh")
+                self.check(current["rows"] == previous["rows"], "auxiliary migration preserves exact native base tuples")
+            self.engine_noop(c, "ec_aux", engine)
+        q(c, "UPDATE ec_aux SET k=8,v='changed' WHERE tenant=1 AND id=1")
+        self.check(q(c, "SELECT id,v FROM ec_aux WHERE k=8 ORDER BY n,id") == ((1, "changed"),),
+                   "new source capture remains writable after both migrations")
+        q(c, "DELETE FROM ec_aux WHERE tenant=1 AND id=1")
+        q(c, "INSERT INTO ec_aux VALUES (%s,9,'a',8,90,'reused')", (duplicate_tenant,))
+        actual = q(c, "SELECT tenant,id,v FROM ec_aux WHERE k=8 ORDER BY n,id")
+        self.check(actual == ((duplicate_tenant, 9, "reused"),),
+                   f"released global value and lazy DELETE/reinsert stay correct after migration: {actual}")
+        c.close()
+
+    def test_engine_change_hidden_row_ids(self):
+        """A no-PK table retains issued hidden IDs even after high rows are deleted."""
+        a, b = self.c(0), self.c(1)
+        q(a, "DROP TABLE IF EXISTS ec_rid")
+        q(a, "CREATE TABLE ec_rid (n INT NOT NULL,tag VARCHAR(20),KEY by_n(n)) ENGINE=memtx")
+        q(a, "INSERT INTO ec_rid VALUES " + ",".join(f"({n},'old')" for n in range(1001)))
+        q(b, "INSERT INTO ec_rid VALUES (1001,'high')")
+        before = self.engine_image("ec_rid")
+        issued = {tuple(key) for image in before for key in image["keys"]}
+        q(a, "DELETE FROM ec_rid WHERE n>0")
+        retained = self.engine_image("ec_rid")
+        expected = [(0, "old")]
+        for turn, engine in enumerate(("vinyl", "memtx", "vinyl", "memtx")):
+            self.change_engine(a, "ec_rid", engine)
+            current = self.engine_image("ec_rid")
+            for old, new in zip(retained, current):
+                self.check(set(old["rows"]).issubset(new["rows"]), "preserved rows retain exact native hidden IDs")
+            if self.args.kv:
+                start, floor = self.legacy_counter("ec_rid", "rid", issued)
+                issued.update((identity,) for identity in range(start, start + 7))
+                begin = 10000 + 2000 * turn
+                q(a, "INSERT INTO ec_rid VALUES " + ",".join(f"({n},'legacy')" for n in range(begin, begin + 1001)))
+                expected.extend((n, "legacy") for n in range(begin, begin + 1001))
+                following = self.engine_image("ec_rid")
+                prior = {tuple(key) for image in current for key in image["keys"]}
+                fresh = {tuple(key) for image in following for key in image["keys"]} - prior
+                self.check(len(fresh) == 1001 and all(key[0] > floor and key not in issued for key in fresh),
+                           "fresh SQL hidden-ID block shares the legacy RPC's stable-origin bump")
+                issued.update(fresh)
+                current = following
+            for worker, connection in enumerate((a, b)):
+                n = 2000 + 2 * turn + worker
+                q(connection, "INSERT INTO ec_rid VALUES (%s,'new')", (n,))
+                expected.append((n, "new"))
+            after = self.engine_image("ec_rid")
+            previous = {tuple(key) for image in current for key in image["keys"]}
+            now = {tuple(key) for image in after for key in image["keys"]}
+            if after:
+                self.check(len(now - previous) == 2 and not (now - previous) & issued,
+                           "both gateways allocate fresh hidden IDs, including values deleted before migration")
+                issued.update(now)
+            self.check(q(b, "SELECT n,tag FROM ec_rid FORCE INDEX(by_n) WHERE n>=0 ORDER BY n") == tuple(sorted(expected)),
+                       f"{engine}: every no-PK row is retained and indexed")
+            self.engine_noop(a, "ec_rid", engine)
+        a.close()
+        b.close()
+
+    def test_engine_change_online(self):
+        """Every writer class commits while a real partial baseline is held."""
+        if not self.args.kv:
+            print("    copy-window/native audits require --kv and test_hooks; SQL fidelity cases still run")
+            return
+        from lazytest import ev, rpc
+        nodes = self.args.kv.split(",")
+        assert len(nodes) == 2, "copy-window test requires two dedicated writable shard leaders"
+        c = self.c(read_timeout=30)
+        q(c, "DROP TABLE IF EXISTS ec_online")
+        q(c, "CREATE TABLE ec_online (tenant INT NOT NULL,id INT NOT NULL,n INT,tag VARCHAR(20),"
+             "PRIMARY KEY(tenant,id)) PARTITION BY KEY(tenant) ENGINE=memtx")
+        expected = {(tenant, identity): [0, "seed"] for tenant in range(1, 17) for identity in range(128)}
+        for tenant in range(1, 17):
+            q(c, "INSERT INTO ec_online VALUES " + ",".join(f"({tenant},{identity},0,'seed')" for identity in range(128)))
+
+        for engine in ("vinyl", "memtx"):
+            source = self.engine_image("ec_online")
+            assert all(len(image["keys"]) > 256 for image in source), "fixture needs multiple baseline pages on each shard"
+            left, right = [[tuple(key) for key in image["keys"]] for image in source]
+            keys = [(left[0],), (left[1],), (left[2], right[2]), (right[3],)]
+            # Exercise the current native schema cache without a generic hook.
+            # A held tarn_test_hook disables native writes globally, so the
+            # held-window work below is not a native-exclusion witness.
+            before_native = [rpc(node, "tarn_info", [])["native"] for node in nodes]
+            if all(before_native):
+                key = keys[0][0]
+                bucket = ev(nodes[0], "local sid,key=... return box.space[sid].index[0]:get(key)[5]", [source[0]["id"], key])
+                packet = [[["update", source[0]["id"], key, [["+", 3, 1]]]],
+                          {"fence": [source[0]["id"], source[0].get("ver", 0)], "wb": [bucket]}]
+                before_value = q(c, "SELECT n FROM ec_online WHERE tenant=%s AND id=%s", key)
+                answer = rpc(nodes[0], "tarn_storage.ts_autocommit", packet)
+                if source[0]["engine"] == "memtx":
+                    self.check(answer[0] == "ok" and answer[1] == 1, "valid direct native packet commits on actual memtx")
+                    if answer[0] == "ok":
+                        expected[key][0] += 1
+                else:
+                    self.check(answer == ["lua"] and q(c, "SELECT n FROM ec_online WHERE tenant=%s AND id=%s", key) == before_value,
+                               "same valid native packet hands actual vinyl back without mutation")
+                after_native = [rpc(node, "tarn_info", [])["native"] for node in nodes]
+                field = "writes" if source[0]["engine"] == "memtx" else "writes_to_lua"
+                self.check(sum(info[field] for info in after_native) > sum(info[field] for info in before_native),
+                           f"actual {source[0]['engine']} exercises the native eligibility/handback path")
+            # The gateway deliberately skips the native RPC for known vinyl;
+            # an ordinary SQL warmup therefore has no handback-counter claim.
+            q(c, "UPDATE ec_online SET n=n+1 WHERE tenant=%s AND id=%s", keys[0][0])
+            expected[keys[0][0]][0] += 1
+            stop, lock = threading.Event(), threading.Lock()
+            acknowledged = [0] * 4
+            deltas, errors, ddl_errors = {}, [], []
+            ddl_finished = threading.Event()
+            workers = []
+            ddl_connection = self.c(read_timeout=30)
+
+            def alter():
+                try:
+                    q(ddl_connection, f"ALTER TABLE ec_online ENGINE={engine}")
+                except Exception as error:  # retain the original error before cleanup
+                    ddl_errors.append(str(error))
+                finally:
+                    ddl_finished.set()
+
+            def writer(kind):
+                connection = self.c(kind, read_timeout=15)
+                last = ["connect", None]
+
+                def execute(sql, args=None):
+                    last[:] = [sql, args]
+                    return q(connection, sql, args)
+
+                try:
+                    execute("SET SESSION innodb_lock_wait_timeout=5")
+                    if kind == 3:
+                        execute("SET SESSION transaction_isolation='READ-COMMITTED'")
+                    while not stop.is_set():
+                        try:
+                            if kind:
+                                execute("BEGIN")
+                                for key in keys[kind]:
+                                    suffix = " FOR UPDATE" if kind == 3 else ""
+                                    execute("SELECT n FROM ec_online WHERE tenant=%s AND id=%s" + suffix, key)
+                            for key in keys[kind]:
+                                execute("UPDATE ec_online SET n=n+1 WHERE tenant=%s AND id=%s", key)
+                            if kind:
+                                execute("COMMIT")
+                            with lock:
+                                acknowledged[kind] += 1
+                                for key in keys[kind]:
+                                    deltas[key] = deltas.get(key, 0) + 1
+                        except pymysql.MySQLError as error:
+                            code(lambda: q(connection, "ROLLBACK"))
+                            if kind and error.args[0] in RETRY:
+                                continue  # only a known aborted transaction is replayed
+                            with lock:
+                                errors.append(f"writer {kind}, statement {last}: {error}")
+                            return  # never replay a mutation with an unknown outcome
+                except Exception as error:
+                    with lock:
+                        errors.append(f"writer {kind}: {error}")
+                finally:
+                    connection.close()
+
+            ddl_thread = threading.Thread(target=alter, daemon=True)
+            try:
+                for node in nodes:
+                    assert rpc(node, "tarn_test_hook", ["engine_copy", "hold"]) == ["ok"]
+                ddl_thread.start()
+                for node in nodes:
+                    reached = rpc(node, "tarn_test_hook", ["engine_copy", "reached"])
+                    assert reached[0] == "ok" and reached[1] > 0, (node, reached, ddl_errors)
+                witnesses = []
+                for node, image in zip(nodes, source):
+                    state = ev(node, "local sid=... local r=assert(box.space._tarn_meta:get{'engine:'..sid}).value "
+                               "local old,new=assert(box.space[r.old_id]),assert(box.space[r.new_id]) "
+                               "return {old_id=old.id,new_id=new.id,phase=r.phase,old_name=old.name,"
+                               "old_rows=old.index[0]:count(),new_rows=new.index[0]:count()}", [image["id"]])
+                    self.check(state["old_id"] == image["id"] and state["old_name"] == f"{DB}.ec_online"
+                               and state["new_id"] != image["id"] and state["phase"] == "copying"
+                               and 0 < state["new_rows"] < state["old_rows"],
+                               f"{engine}: real partial shadow while source remains authoritative: {state}")
+                    witnesses.append((state["old_id"], state["new_id"], state["old_rows"], state["new_rows"]))
+                print(f"    {engine}: native copy witnesses (old ID,new ID,source rows,shadow rows) {witnesses}")
+                workers = [threading.Thread(target=writer, args=(kind,), daemon=True) for kind in range(4)]
+                for worker in workers:
+                    worker.start()
+                deadline = time.monotonic() + 3
+                while min(acknowledged) < 2 and not errors and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.check(min(acknowledged) >= 2 and not ddl_finished.is_set(),
+                           f"autocommit/local/distributed/RC commit during baseline copy: {acknowledged}")
+                # Dirty keys include rollback-only writes and both sides of
+                # a DELETE/reinsert. The final image must reread confirmed
+                # source state rather than replay a captured payload.
+                for key in (left[5], left[-1]):
+                    q(c, "DELETE FROM ec_online WHERE tenant=%s AND id=%s", key)
+                    del expected[key]
+                key = left[6]
+                q(c, "DELETE FROM ec_online WHERE tenant=%s AND id=%s", key)
+                q(c, "INSERT INTO ec_online VALUES (%s,%s,91,'reinserted')", key)
+                expected[key] = [91, "reinserted"]
+                q(c, "BEGIN")
+                q(c, "INSERT INTO ec_online VALUES (999,999,999,'rolled back')")
+                q(c, "ROLLBACK")
+            finally:
+                for node in nodes:
+                    try:
+                        rpc(node, "tarn_test_hook", ["engine_copy", "release"])
+                    except Exception as error:
+                        errors.append(f"release {node}: {error}")
+                if ddl_thread.ident is not None:
+                    ddl_thread.join(30)
+                stop.set()
+                for worker in workers:
+                    worker.join(20)
+                ddl_connection.close()
+            self.check(not ddl_thread.is_alive() and all(not worker.is_alive() for worker in workers),
+                       "all owned migration/writer threads terminated")
+            self.check(not errors and not ddl_errors, f"copy/cutover errors: {errors[:4]} {ddl_errors}")
+            for key, count in deltas.items():
+                expected[key][0] += count
+            actual = q(c, "SELECT tenant,id,n,tag FROM ec_online ORDER BY tenant,id")
+            wanted = tuple((key[0], key[1], value[0], value[1]) for key, value in sorted(expected.items()))
+            self.check(actual == wanted, f"{engine}: every acknowledged per-key change retained exactly; no rolled-back row")
+            self.check(sum(len(image["rows"]) for image in self.engine_image("ec_online")) == len(wanted),
+                       "direct native primary/bucket images retain each public row once")
+            native_rows = []
+            for node in nodes:
+                rows = ev(node, "local name=... local out={} box.begin{txn_isolation='read-confirmed'} "
+                          "local ok,err=pcall(function() for _,r in box.space[name]:pairs() do "
+                          "out[#out+1]={r[1],r[2],r[3],r[4]} end end) box.rollback() "
+                          "if not ok then error(err) end return out", [f"{DB}.ec_online"])
+                native_rows.extend(tuple(row) for row in rows)
+            self.check(tuple(sorted(native_rows)) == wanted,
+                       "independent native values equal every acknowledged per-key effect exactly")
+            self.change_engine(c, "ec_online", engine)  # completed same-engine request remains usable
+            print(f"    {engine}: copy-window writer commits {acknowledged}; exact {len(wanted)}-row audit")
+        c.close()
+
+    def test_engine_change_old_streams(self):
+        """An old retained-space handle cannot validate after physical publication."""
+        c = self.c(read_timeout=30)
+        q(c, "DROP TABLE IF EXISTS ec_stream")
+        q(c, "CREATE TABLE ec_stream (id INT PRIMARY KEY,n INT) ENGINE=memtx")
+        q(c, "INSERT INTO ec_stream VALUES " + ",".join(f"({identity},10)" for identity in range(1, 9)))
+        for engine in ("vinyl", "memtx"):
+            source_image = self.engine_image("ec_stream")
+            reader = self.c(1, read_timeout=15)
+            writer = self.c(1, read_timeout=15)
+            rc = self.c(0, read_timeout=15)
+            late_writer = self.c(1, read_timeout=15)
+            try:
+                q(reader, "BEGIN")
+                self.check(q(reader, "SELECT SUM(n) FROM ec_stream") == ((80,),), "old read-only stream reads the full committed image")
+                q(writer, "BEGIN")
+                q(writer, "UPDATE ec_stream SET n=n+100 WHERE id=2")
+                q(rc, "SET SESSION transaction_isolation='READ-COMMITTED'")
+                q(rc, "BEGIN")
+                q(rc, "UPDATE ec_stream SET n=n+100 WHERE id=3")
+                q(late_writer, "SET SESSION transaction_isolation='SERIALIZABLE'")
+                q(late_writer, "BEGIN")
+                self.check(q(late_writer, "SELECT n FROM ec_stream WHERE id=4") == ((10,),),
+                           "late writer opens a read stream before the physical replacement")
+                self.change_engine(c, "ec_stream", engine)
+                published_image = self.engine_image("ec_stream")
+                late_error = code(lambda: q(late_writer, "UPDATE ec_stream SET n=n+100 WHERE id=4"))
+                commit_error = code(lambda: q(late_writer, "COMMIT")) if late_error is None else None
+                print(f"    {engine}: late UPDATE/COMMIT errors {late_error}/{commit_error}; native old/new IDs "
+                      f"{[image['id'] for image in source_image]}/{[image['id'] for image in published_image]}")
+                self.check(late_error in (1213, 1412) or (late_error is None and commit_error in (1213, 1412)),
+                           f"{engine}: old read context aborts at UPDATE or COMMIT, never 1146 or a successful commit")
+                code(lambda: q(late_writer, "ROLLBACK"))
+                self.check(code(lambda: q(reader, "COMMIT")) == 1213,
+                           f"{engine}: retained original-space reader cannot validate after publication")
+                for name, connection in (("buffered serializable", writer), ("READ COMMITTED", rc)):
+                    error = code(lambda: q(connection, "COMMIT"))
+                    self.check(error in (1213, 1412), f"{engine}: {name} old writer has a known abort: {error}")
+                self.check(q(c, "SELECT id,n FROM ec_stream ORDER BY id") == tuple((identity, 10) for identity in range(1, 9)),
+                           f"{engine}: neither old buffered writer reached the replacement")
+                q(reader, "BEGIN")
+                q(reader, "SELECT SUM(n) FROM ec_stream")
+                self.change_engine(c, "ec_stream", engine)
+                self.check(code(lambda: q(reader, "COMMIT")) is None, "same-engine no-op does not doom a current reader")
+            finally:
+                for connection in (reader, writer, rc, late_writer):
+                    code(lambda: q(connection, "ROLLBACK"))
+                    connection.close()
+        c.close()
+
+    def test_engine_change_global_miss_stream(self):
+        """A global UNIQUE miss records only auxiliary reads and must be doomed too."""
+        from lazytest import stat
+        c = self.c(read_timeout=30)
+        q(c, "DROP TABLE IF EXISTS ec_miss")
+        q(c, "CREATE TABLE ec_miss (tenant INT NOT NULL,id INT NOT NULL,h VARCHAR(20),"
+             "PRIMARY KEY(tenant,id),UNIQUE KEY by_h(h)) PARTITION BY KEY(tenant) ENGINE=memtx")
+        q(c, "INSERT INTO ec_miss VALUES (1,1,'held')")
+        for engine in ("vinyl", "memtx"):
+            reader = self.c(1, read_timeout=15)
+            try:
+                q(reader, "SET SESSION transaction_isolation='SERIALIZABLE'")
+                q(reader, "BEGIN")
+                calls, rows = stat(reader, "Tarn_storage_reads"), stat(reader, "Tarn_rows_read")
+                self.check(q(reader, "SELECT tenant,id FROM ec_miss FORCE INDEX(by_h) WHERE h='missing'") == (),
+                           "global UNIQUE value is absent")
+                self.check(stat(reader, "Tarn_storage_reads") == calls + 1 and stat(reader, "Tarn_rows_read") == rows,
+                           "global miss reads one auxiliary entry and fetches no base row")
+                self.change_engine(c, "ec_miss", engine)
+                error = code(lambda: q(reader, "COMMIT"))
+                self.check(error == 1213, f"{engine}: old global-only reader cannot validate after publication: {error}")
+                self.check(q(c, "SELECT tenant,id,h FROM ec_miss") == ((1, 1, "held"),),
+                           "rejecting the old auxiliary reader preserves the exact base row")
+                q(reader, "BEGIN")
+                q(reader, "SELECT tenant,id FROM ec_miss FORCE INDEX(by_h) WHERE h='missing'")
+                self.change_engine(c, "ec_miss", engine)
+                self.check(code(lambda: q(reader, "COMMIT")) is None,
+                           "same-engine no-op leaves a current global-miss reader valid")
+            finally:
+                code(lambda: q(reader, "ROLLBACK"))
+                reader.close()
+        c.close()
+
     def test_dump(self):
         """A mysqldump file (executable comments, SET with variables, LOCK
         TABLES, DISABLE KEYS, INVISIBLE indexes, foreign keys, table
@@ -754,6 +1332,7 @@ def main():
     ap.add_argument("--tarn", required=True, help="host:port[,host:port...]")
     ap.add_argument("--seconds", type=float, default=20)
     ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--kv", default="", help="one writable leader per shard for independent engine-change native audits")
     ap.add_argument("--only", default="")
     ap.add_argument("--no-ddl", action="store_true", help="the online test without schema changes")
     args = ap.parse_args()
@@ -770,6 +1349,7 @@ def main():
         except Exception as e:  # noqa: BLE001
             t.failures += 1
             print(f"    EXCEPTION: {type(e).__name__}: {e}")
+            traceback.print_exc()
         print(f"{'ok  ' if t.failures == before else 'FAIL'} {n} ({time.time() - t0:.1f}s)")
     print(f"{len(names)} tests, {t.failures} failures")
     sys.exit(1 if t.failures else 0)

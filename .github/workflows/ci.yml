@@ -88,11 +88,11 @@ jobs:
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
       - name: Storage protocol tests
-        run: ci/annotate.sh storage lua/test/run.sh
+        run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
       - name: Start a 2-shard cluster (two SQL servers)
-        run: TARN_TEST_HOOKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
+        run: TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
@@ -102,17 +102,22 @@ jobs:
       - name: READ COMMITTED tests
         run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Schema changes and dumps
-        run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+        run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
       - name: Lazy-index semantics and own-commit recovery
         run: |
           ci/annotate.sh lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407
           ci/annotate.sh lazyfaults python3 tests/sql/lazyfaults.py --tarn 127.0.0.1:4000 --shards 127.0.0.1:3311,127.0.0.1:3321
       - name: Bucket moves under load
         run: ci/annotate.sh movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+      - name: The native module's copy of the lock index held what the index held
+        run: |
+          if grep -h "lock copy differs" /tmp/tarn-cluster/*.log; then
+            echo "::error title=locks::the native module's copy of the lock index differed from it"; exit 1
+          fi
       - name: The same suites with vinyl tables, read from disk
         run: |
           scripts/cluster.sh stop
-          TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 \
+          TARN_VINYL_CACHE_MB=0 TARN_DUMP_EVERY=2 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 \
             scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2 -e vinyl
           # (moves first: with the tables the other suites leave, which every
           # move reads from disk, a runner moves too few buckets to tell)
@@ -120,10 +125,13 @@ jobs:
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
-          ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 20
+          ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
           ci/annotate.sh vinyl-lazytest python3 tests/sql/lazytest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --ref 127.0.0.1:3407 --engine vinyl
           ci/annotate.sh vinyl-lazyfaults python3 tests/sql/lazyfaults.py --tarn 127.0.0.1:4000 --shards 127.0.0.1:3311,127.0.0.1:3321 --engine vinyl
           if grep -h "yielded inside" /tmp/tarn-cluster/*.log; then echo "::error title=vinyl::an atomic section yielded"; exit 1; fi
+          if grep -h "lock copy differs" /tmp/tarn-cluster/*.log; then
+            echo "::error title=locks::the native module's copy of the lock index differed from it"; exit 1
+          fi
       - name: Vinyl admission and overload latency
         run: |
           scripts/cluster.sh stop
@@ -135,7 +143,7 @@ jobs:
           scripts/cluster.sh stop
       - name: Fault injection
         run: |
-          ci/annotate.sh faults tests/faults.sh
+          TARN_CHECK_LOCKS=1 ci/annotate.sh faults tests/faults.sh
           TARN_NATIVE=0 ci/annotate.sh faults-lua tests/faults.sh
           TARN_FAULT_REPLY=invalid-type ci/annotate.sh faults-invalid-reply tests/faults.sh
           TARN_NATIVE=0 TARN_FAULT_REPLY=invalid-type ci/annotate.sh faults-invalid-reply-lua tests/faults.sh
@@ -151,12 +159,12 @@ jobs:
       - name: Grow from 2 shards to 4 and shrink to 3 under load
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
       - name: Failover (2 shards x 3 replicas)
-        run: SECS=45 ci/annotate.sh failover tests/failover.sh
+        run: SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
         run: |
-          ENGINE=vinyl ci/annotate.sh vinyl-faults tests/faults.sh
-          ENGINE=vinyl TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
-          ENGINE=vinyl SECS=45 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+          ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
+          ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
+          ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
       - name: Cluster logs
         if: failure()
         run: |

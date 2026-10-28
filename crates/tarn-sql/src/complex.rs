@@ -457,11 +457,11 @@ impl Session {
                 return Ok(None);
             };
             let Some(lock) = p.lock else { return Ok(None) };
-            plans.push((p, n.params, lock));
+            plans.push((p, n.params, lock, n.names));
         }
-        let mut columns = exec::render_columns(&plans[0].0.columns, &plans[0].1);
-        for (p, params, _) in &plans[1..] {
-            columns = union_columns(&columns, &exec::render_columns(&p.columns, params))?;
+        let mut columns = exec::render_columns(&plans[0].0.columns, &plans[0].1, &plans[0].3);
+        for (p, params, _, names) in &plans[1..] {
+            columns = union_columns(&columns, &exec::render_columns(&p.columns, params, names))?;
         }
         self.ensure_txn();
         let mut txn = self.set_txn(None).unwrap();
@@ -472,12 +472,16 @@ impl Session {
         let now = now_string();
         let res = match plans
             .iter()
-            .try_for_each(|(p, _, _)| check_defs(&txn, select_tables(p)))
+            .try_for_each(|(p, _, _, _)| check_defs(&txn, select_tables(p)))
         {
             Err(e) => Err(e),
             Ok(()) => {
-                let cxs: Vec<_> = plans.iter().map(|(_, params, _)| self.cx(params, &now)).collect();
-                let parts: Vec<_> = plans.iter().zip(&cxs).map(|((p, _, l), cx)| (&**p, cx, *l)).collect();
+                let cxs: Vec<_> = plans.iter().map(|(_, params, _, _)| self.cx(params, &now)).collect();
+                let parts: Vec<_> = plans
+                    .iter()
+                    .zip(&cxs)
+                    .map(|((p, _, l, _), cx)| (&**p, cx, *l))
+                    .collect();
                 exec::run_locking_selects(&self.cluster, &mut txn, &parts).await
             }
         };

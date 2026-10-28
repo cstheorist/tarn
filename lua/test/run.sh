@@ -13,11 +13,17 @@ if [ -z "${TEST:-}" ]; then
   timeout 60 "$T" "$DIR/test/vinyl_admission_test.lua" "$WORK/vinyl-admission" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
-  for test in lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
+  for test in engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
   done
+  TARANTOOL="$T" bash "$DIR/test/engine_faults.sh" "$WORK/engine-faults" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/engine_replication.sh" "$WORK/engine-rf3" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/lazy_faults.sh" "$WORK/lazy-faults" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
@@ -36,7 +42,7 @@ for i in 1 2 3; do
   # two instances on this machine.
   TARN_VINYL_READ_THREADS=$([ $i = 1 ] && echo 3) TARN_HOST_INSTANCES=2 \
   TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$port TARN_WORKDIR=$WORK/s$i TARN_PEERS="$PEERS" \
-  TARN_MEMORY_MB=256 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 \
+  TARN_MEMORY_MB=256 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 \
   $T "$DIR/storage.lua" > "$WORK/s$i.log" 2>&1 &
   echo $! > "$WORK/s$i.pid"
 done
@@ -58,6 +64,12 @@ for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/alter_backfill_test.lua $D
   [ "$r" -ne 0 ] && rc=$r
 done
 kill $(cat "$WORK"/s*.pid) 2>/dev/null
+# (TARN_CHECK_LOCKS: the native module's copy of the lock index held what the
+# index held after every change)
+if grep -h "lock copy differs" "$WORK"/s*.log | head -5 | tee -a "$WORK/test.out" | grep -q .; then
+  echo "FAIL the native module's copy of the lock index differed from it" | tee -a "$WORK/test.out"
+  rc=1
+fi
 if [ "$rc" -ne 0 ]; then
   echo "--- shard logs ($WORK)"; grep -iE "error|warn" "$WORK"/s*.log | tail -20
   # On GitHub Actions, put the failures in an annotation (job logs are not

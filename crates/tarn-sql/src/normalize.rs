@@ -12,6 +12,15 @@
 //! value: positional `ORDER BY 1` / `GROUP BY 2`, and after keywords that take
 //! a literal as syntax (`INTERVAL`, `COLLATE`, `CHARACTER SET` ...).
 //!
+//! A hexadecimal literal `X'4142'` becomes a binary parameter, as does a
+//! string with the `_binary` introducer (`_binary 'AB'`, `_binary X'4142'`);
+//! one with a UTF-8 introducer (`_utf8mb4 'ab'`), or a national string
+//! (`N'ab'`), a text parameter. Plans are cached by the kinds of their
+//! parameters too (`Session::plan_cached`): a binary value compares and is
+//! typed as a binary string, a text one under the connection's collation.
+//! The literals whose text MariaDB names a column by (`SELECT X'41'` is a
+//! column `X'41'`) keep it in `Normalized::names`.
+//!
 //! It also rewrites MySQL's older `LOCK IN SHARE MODE` to `FOR SHARE`, which
 //! the parser knows.
 
@@ -32,6 +41,22 @@ pub struct Normalized {
     pub params: Vec<Value>,
     /// Number of placeholders in the template.
     pub n_params: usize,
+    /// The parameters made from literals whose text names a column.
+    pub names: Vec<LitName>,
+}
+
+/// A parameter made from a hexadecimal literal or a string with an
+/// introducer: MariaDB names a column of it by its text (`X'41'`,
+/// `HEX(_binary'ab')`), or, for a string alone in a column, by its value
+/// (`_binary'ab'` is a column `ab`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LitName {
+    /// The parameter (0 for `?1`).
+    pub param: usize,
+    /// The literal as written, with its introducer.
+    pub text: String,
+    /// A column of the literal alone is named by `text`, not by its value.
+    pub bare_text: bool,
 }
 
 fn is_ident_char(c: u8) -> bool {
@@ -39,7 +64,77 @@ fn is_ident_char(c: u8) -> bool {
 }
 
 /// Keywords after which a literal must stay literal.
-const KEEP_AFTER: &[&str] = &["INTERVAL", "COLLATE", "SET", "CHARSET", "_UTF8MB4", "_BINARY", "BINARY"];
+const KEEP_AFTER: &[&str] = &["INTERVAL", "COLLATE", "SET", "CHARSET", "BINARY"];
+
+/// A character set introducer of a string literal: whether its strings are
+/// binary.
+fn introducer(word: &str) -> Option<bool> {
+    match word {
+        "_BINARY" => Some(true),
+        "_UTF8MB4" | "_UTF8MB3" | "_UTF8" => Some(false),
+        _ => None,
+    }
+}
+
+/// The quoted string whose opening quote is at `b[i]`: its value, with
+/// MySQL's escapes, and where its closing quote is.
+fn scan_string(b: &[u8], i: usize) -> SqlResult<(Vec<u8>, usize)> {
+    let q = b[i];
+    let n = b.len();
+    let mut j = i + 1;
+    let mut val: Vec<u8> = Vec::new();
+    loop {
+        if j >= n {
+            return Err(SqlError::parse("unterminated string literal"));
+        }
+        let d = b[j];
+        if d == b'\\' && j + 1 < n {
+            let e = b[j + 1];
+            val.push(match e {
+                b'n' => b'\n',
+                b't' => b'\t',
+                b'r' => b'\r',
+                b'0' => 0,
+                b'b' => 8,
+                b'Z' => 26,
+                other => other,
+            });
+            j += 2;
+            continue;
+        }
+        if d == q {
+            if j + 1 < n && b[j + 1] == q {
+                val.push(q);
+                j += 2;
+                continue;
+            }
+            return Ok((val, j));
+        }
+        val.push(d);
+        j += 1;
+    }
+}
+
+/// The hexadecimal literal `X'...'` that starts at `sql[start]`, whose
+/// quote is at `i`: its bytes, and where its closing quote is. As in
+/// MariaDB, an odd number of digits, or anything else than digits, is a
+/// syntax error.
+fn scan_hex(sql: &str, start: usize, i: usize) -> SqlResult<(Vec<u8>, usize)> {
+    let b = sql.as_bytes();
+    let end = match b[i + 1..].iter().position(|&c| c == b'\'') {
+        Some(k) => i + 1 + k,
+        None => return Err(SqlError::parse("unterminated string literal")),
+    };
+    let digits = &b[i + 1..end];
+    if !digits.len().is_multiple_of(2) || !digits.iter().all(u8::is_ascii_hexdigit) {
+        return Err(SqlError::parse(format!(
+            "invalid hexadecimal literal near '{}'",
+            &sql[start..=end]
+        )));
+    }
+    let v = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
+    Ok((digits.chunks(2).map(|p| (v(p[0]) << 4) | v(p[1])).collect(), end))
+}
 
 pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
     let b = sql.as_bytes();
@@ -57,6 +152,23 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
     // The keywords just emitted (with their offsets in `out`) since the last
     // other token, for the LOCK IN SHARE MODE rewrite.
     let mut recent: Vec<(String, usize)> = Vec::new();
+    // Where `last_word` starts in `sql`: an introducer's text names a column.
+    let mut last_src = 0usize;
+    let mut names: Vec<LitName> = Vec::new();
+    // A literal that stays literal: in a prepared statement, a position in
+    // ORDER BY / GROUP BY, or after a keyword that takes one as syntax.
+    let keeps = |in_by: bool, last_word: &str, prev_word: &str| {
+        mode == Mode::Placeholders
+            || in_by
+            || KEEP_AFTER.contains(&last_word)
+            || (last_word == "SET" && prev_word == "CHARACTER")
+    };
+    // The introducer just before a literal (`_binary 'x'`): whether it makes
+    // a binary string, and where it starts in `out` (it goes with the value).
+    let intro_of = |recent: &[(String, usize)], last_word: &str| {
+        let bin = introducer(last_word)?;
+        recent.last().filter(|(w, _)| w == last_word).map(|&(_, at)| (bin, at))
+    };
     let push_param = |out: &mut String, n_params: &mut usize| {
         *n_params += 1;
         out.push('?');
@@ -92,48 +204,27 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
             }
             continue;
         }
-        // quoted strings
+        // quoted strings, with an introducer (`_binary 'x'`) or not
         if c == b'\'' || c == b'"' {
-            let q = c;
-            let mut j = i + 1;
-            let mut val: Vec<u8> = Vec::new();
-            loop {
-                if j >= n {
-                    return Err(SqlError::parse("unterminated string literal"));
-                }
-                let d = b[j];
-                if d == b'\\' && j + 1 < n {
-                    let e = b[j + 1];
-                    val.push(match e {
-                        b'n' => b'\n',
-                        b't' => b'\t',
-                        b'r' => b'\r',
-                        b'0' => 0,
-                        b'b' => 8,
-                        b'Z' => 26,
-                        other => other,
-                    });
-                    j += 2;
-                    continue;
-                }
-                if d == q {
-                    if j + 1 < n && b[j + 1] == q {
-                        val.push(q);
-                        j += 2;
-                        continue;
-                    }
-                    break;
-                }
-                val.push(d);
-                j += 1;
-            }
+            let (val, j) = scan_string(b, i)?;
+            let keep = keeps(in_by, &last_word, &prev_word);
+            let intro = if keep { None } else { intro_of(&recent, &last_word) };
             recent.clear();
-            let keep = mode == Mode::Placeholders
-                || in_by
-                || KEEP_AFTER.contains(&last_word.as_str())
-                || (last_word == "SET" && prev_word == "CHARACTER");
             if keep {
                 out.push_str(&sql[i..=j]);
+            } else if let Some((bin, at)) = intro {
+                out.truncate(at);
+                push_param(&mut out, &mut n_params);
+                names.push(LitName {
+                    param: params.len(),
+                    text: sql[last_src..=j].to_string(),
+                    bare_text: false,
+                });
+                params.push(if bin {
+                    Value::Bin(Bytes::from(val))
+                } else {
+                    Value::Str(Bytes::from(val))
+                });
             } else {
                 push_param(&mut out, &mut n_params);
                 params.push(Value::Str(Bytes::from(val)));
@@ -234,6 +325,46 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
                 j += 1;
             }
             let word = sql[i..j].to_ascii_uppercase();
+            // a literal glued to its prefix: X'4142' (hexadecimal, binary)
+            // or N'ab' (national)
+            if b.get(j) == Some(&b'\'') && (word == "X" || word == "N") {
+                let hex = word == "X";
+                let (val, end) = if hex { scan_hex(sql, i, j)? } else { scan_string(b, j)? };
+                let keep = keeps(in_by, &last_word, &prev_word);
+                // (a hexadecimal one may have an introducer: `_binary X'41'`)
+                let intro = if keep || !hex {
+                    None
+                } else {
+                    intro_of(&recent, &last_word)
+                };
+                recent.clear();
+                if keep {
+                    out.push_str(&sql[i..=end]);
+                } else {
+                    let start = match intro {
+                        Some((_, at)) => {
+                            out.truncate(at);
+                            last_src
+                        }
+                        None => i,
+                    };
+                    push_param(&mut out, &mut n_params);
+                    names.push(LitName {
+                        param: params.len(),
+                        text: sql[start..=end].to_string(),
+                        bare_text: hex,
+                    });
+                    let text = !hex || intro.is_some_and(|(bin, _)| !bin);
+                    params.push(if text {
+                        Value::Str(Bytes::from(val))
+                    } else {
+                        Value::Bin(Bytes::from(val))
+                    });
+                }
+                i = end + 1;
+                last_word.clear();
+                continue;
+            }
             if word == "BY" && (last_word == "ORDER" || last_word == "GROUP") {
                 in_by = true;
                 by_depth = paren_depth;
@@ -264,6 +395,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
             out.push_str(&sql[i..j]);
             prev_word = std::mem::take(&mut last_word);
             last_word = word;
+            last_src = i;
             i = j;
             continue;
         }
@@ -291,6 +423,7 @@ pub fn normalize(sql: &str, mode: Mode) -> SqlResult<Normalized> {
         template: out.trim().to_string(),
         params,
         n_params,
+        names,
     })
 }
 
@@ -399,6 +532,82 @@ mod tests {
         )
         .unwrap();
         assert_eq!(n.template, "SELECT a FROM t WHERE b = 'LOCK IN SHARE MODE' FOR SHARE");
+    }
+
+    fn bin(b: &[u8]) -> Value {
+        Value::Bin(Bytes::copy_from_slice(b))
+    }
+
+    fn lit(param: usize, text: &str, bare_text: bool) -> LitName {
+        LitName {
+            param,
+            text: text.into(),
+            bare_text,
+        }
+    }
+
+    #[test]
+    fn hexadecimal_literals_become_binary_params() {
+        // PyMySQL 1.2.3 sends bytes as X'...' (#122)
+        let n = normalize("INSERT INTO t VALUES (1, X'51554a44', x'00FF', X'')", Mode::Literals).unwrap();
+        assert_eq!(n.template, "INSERT INTO t VALUES (?1, ?2, ?3, ?4)");
+        assert_eq!(n.params, vec![Value::Int(1), bin(b"QUJD"), bin(&[0, 0xff]), bin(b"")]);
+        assert_eq!(
+            n.names,
+            vec![
+                lit(1, "X'51554a44'", true),
+                lit(2, "x'00FF'", true),
+                lit(3, "X''", true)
+            ]
+        );
+        // as MariaDB: an odd number of digits, or another character, is a
+        // syntax error; and so in a prepared statement
+        for bad in ["SELECT X'4'", "SELECT X'4G'", "SELECT x'0 1'", "SELECT X'41"] {
+            for mode in [Mode::Literals, Mode::Placeholders] {
+                assert_eq!(normalize(bad, mode).unwrap_err().code, 1064, "{} {:?}", bad, mode);
+            }
+        }
+        // a prepared statement keeps it; so does a word ending in x, or an x
+        // apart from its string
+        let n = normalize("SELECT X'41' FROM t WHERE c = ?", Mode::Placeholders).unwrap();
+        assert_eq!(n.template, "SELECT X'41' FROM t WHERE c = ?1");
+        let (t, p) = norm("SELECT x, ax FROM t WHERE ax = 'X''41' AND x = 'b'");
+        assert_eq!(t, "SELECT x, ax FROM t WHERE ax = ?1 AND x = ?2");
+        assert_eq!(p, vec![Value::str("X'41"), Value::str("b")]);
+    }
+
+    #[test]
+    fn introducers_and_national_strings() {
+        let n = normalize(
+            "SELECT _binary 'q''r', _binary X'0102', _utf8mb4'ab', N'cd', HEX(_binary'xy') FROM t",
+            Mode::Literals,
+        )
+        .unwrap();
+        assert_eq!(n.template, "SELECT ?1, ?2, ?3, ?4, HEX(?5) FROM t");
+        assert_eq!(
+            n.params,
+            vec![
+                bin(b"q'r"),
+                bin(&[1, 2]),
+                Value::str("ab"),
+                Value::str("cd"),
+                bin(b"xy")
+            ]
+        );
+        assert_eq!(
+            n.names,
+            vec![
+                lit(0, "_binary 'q''r'", false),
+                lit(1, "_binary X'0102'", true),
+                lit(2, "_utf8mb4'ab'", false),
+                lit(3, "N'cd'", false),
+                lit(4, "_binary'xy'", false),
+            ]
+        );
+        // kept where literals are syntax, and in prepared statements
+        let n = normalize("SELECT _binary'ab', N'cd' FROM t WHERE c = ?", Mode::Placeholders).unwrap();
+        assert_eq!(n.template, "SELECT _binary'ab', N'cd' FROM t WHERE c = ?1");
+        assert!(n.names.is_empty());
     }
 
     #[test]

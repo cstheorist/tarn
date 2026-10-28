@@ -115,6 +115,9 @@ pub struct Session {
     pub(crate) found_rows: u64,
     row_count: i64,
     prepared: HashMap<u32, Prepared>,
+    /// While a text query runs: its parameters that were literals naming a
+    /// column by their text (`X'41'`).
+    lit_names: Vec<crate::normalize::LitName>,
     /// Session isolation level (transaction_isolation).
     pub isolation: Isolation,
     /// SET TRANSACTION ISOLATION LEVEL ...: the next transaction only.
@@ -414,6 +417,7 @@ impl Session {
             found_rows: 0,
             row_count: -1,
             prepared: HashMap::new(),
+            lit_names: Vec::new(),
             isolation,
             next_isolation: None,
             lock_wait_timeout,
@@ -800,6 +804,9 @@ impl Session {
         let substituted = self.substitute_vars(&sql, false)?;
         let sql: &str = substituted.as_deref().unwrap_or(&sql);
         if crate::complex::may_need(sql) {
+            // (the parser takes X'123' for a hexadecimal literal, which MariaDB
+            // refuses, as the normalizer does)
+            normalize(sql, Mode::Placeholders)?;
             if let Some(stmt) = crate::complex::parse_if_needed(sql)? {
                 return self.run_complex(stmt).await;
             }
@@ -811,7 +818,11 @@ impl Session {
         }
         let n = normalize(sql, Mode::Literals)?;
         let stmt = self.plan_cached(&n.template, &n.params)?;
-        self.run(&stmt, &n.params).await
+        // (the literals that name columns by their text, while it runs)
+        self.lit_names = n.names;
+        let r = self.run(&stmt, &n.params).await;
+        self.lit_names.clear();
+        r
     }
 
     /// `SELECT ... INTO @a, ...`: at most one row, whose values the
@@ -953,6 +964,12 @@ impl Session {
             return self.run_admin(a).await;
         }
         let stmt = match stmt {
+            // A binary value is typed, and compares, as a binary string: its
+            // statement is planned for the kinds of its parameters.
+            _ if params.iter().any(|v| matches!(v, Value::Bin(_))) => {
+                let template = self.prepared[&id].template.clone();
+                self.plan_cached(&template, params)?
+            }
             Some(s) => s,
             None => {
                 // catalog changed since PREPARE: re-plan
@@ -989,8 +1006,23 @@ impl Session {
 
     pub(crate) fn plan_cached(&self, template: &str, params: &[Value]) -> SqlResult<Stmt> {
         let db = self.db.clone().unwrap_or_default();
-        // Plans depend on collation_connection (literals compare under it).
-        let key = format!("{}\0{}", self.collation_connection, template);
+        // Plans depend on collation_connection (literals compare under it),
+        // and on the kinds of the parameters' values, by which their
+        // expressions are typed: a binary string compares by bytes, and
+        // `SELECT ?1` is an integer column for 1 but a string one for 'abc'.
+        let mut key = format!("{}\0{}", self.collation_connection, template);
+        if !params.is_empty() {
+            key.push('\0');
+            key.extend(params.iter().map(|v| match v {
+                Value::Null => 'n',
+                Value::Int(_) => 'i',
+                Value::UInt(_) => 'u',
+                Value::Float(_) => 'f',
+                Value::Decimal(_) => 'd',
+                Value::Str(_) => 's',
+                Value::Bin(_) => 'b',
+            }));
+        }
         if let Some(p) = self.cluster.cached_plan(&db, &key) {
             return Ok(p.stmt.clone());
         }
@@ -1072,7 +1104,7 @@ impl Session {
 
     async fn run_select(&mut self, p: &Arc<SelectPlan>, params: &[Value]) -> SqlResult<Output> {
         let now = now_string();
-        let columns = exec::render_columns(&p.columns, params);
+        let columns = exec::render_columns(&p.columns, params, &self.lit_names);
         if let Some(lock) = p.lock {
             return self.run_locking_select(p, params, lock, columns).await;
         }

@@ -184,12 +184,18 @@ if native ~= nil and native ~= '0' then
     -- The native procedure must exclude the actual source even with no
     -- opts.fence. The Lua path can then return its precise 1412 error.
     local before = box.space[sid]:len()
+    local function lazy_fallbacks()
+        local w = tarn_info().native.fallbacks.write
+        return w and w.lazy_capture or 0
+    end
+    local fb = lazy_fallbacks()
     local nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', sid, {9, 'native', 1}}}, {wb = {1}}})
     check('native write on a lazy source falls back before writing', nr[1] == 'lua'
           and box.space[sid]:len() == before and #pending() == 0, nr)
+    check('... counted as a fallback for lazy capture', lazy_fallbacks() == fb + 1, {fb, lazy_fallbacks()})
     local ffi = require('ffi')
-    local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({8}))
-    check('ABI8 has the integrated native layout and offsets', ffi.sizeof('struct tarn_ns') == 240
+    local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT}))
+    check('the native ABI has the integrated layout and offsets', ffi.sizeof('struct tarn_ns') == 312
           and ffi.offsetof('struct tarn_ns', 'pl_spaces') == 160
           and ffi.offsetof('struct tarn_ns', 'held') == 168
           and ffi.offsetof('struct tarn_ns', 'scratch') == 172
@@ -197,7 +203,11 @@ if native ~= nil and native ~= '0' then
           and ffi.offsetof('struct tarn_ns', 'c_to_lua') == 184
           and ffi.offsetof('struct tarn_ns', 'term_txn') == 192
           and ffi.offsetof('struct tarn_ns', 'capture_stale') == 200
-          and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208)
+          and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208
+          and ffi.offsetof('struct tarn_ns', 'lk_point') == 240
+          and ffi.offsetof('struct tarn_ns', 'locks_sizes') == 288
+          and ffi.offsetof('struct tarn_ns', 'locks_range') == 296
+          and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304)
     local saved = ns.write_excluded
     ns.write_excluded = nil
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', sid, {9, 'null-array', 1}}}, {wb = {1}}})
@@ -222,10 +232,10 @@ if native ~= nil and native ~= '0' then
         box.func['tarn_storage.ts_autocommit'], {{{'insert', safe.id, {3, 'bad-layout', 1}}}, {wb = {1}}})
     check('already-ready ABI mismatch blocks the old native entrypoint', not valid
           and mismatch.code == box.error.LOAD_FUNCTION and box.space[safe.id]:get{3} == nil)
-    box.func['tarn_storage.ts_state']:call({8})
+    box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT})
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', safe.id, {4, 'restored', 1}}}, {wb = {1}}})
     check('matching ABI restores safe native execution', nr[1] == 'ok' and box.space[safe.id]:get{4} ~= nil)
-    check('ABI8 exclusion is fresh and initialized', tarn_info().native.ready == 1)
+    check('the native exclusion is fresh and initialized', tarn_info().native.ready == 1)
 end
 print(string.format('%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

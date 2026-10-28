@@ -53,8 +53,9 @@ local function deliver()
 end
 deliver(); tarn.lazy.fresh()
 ok(tarn_autocommit({}, {}))
-local ns = require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({8}))
-assert(tarn.cfg.native and ns.layout == 8 and ns.ready == 1, 'actual native ABI8 is required')
+local ns = require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT}))
+assert(tarn.cfg.native and ns.layout == tarn.NS_LAYOUT and ns.ready == 1,
+       'actual native ABI' .. tarn.NS_LAYOUT .. ' is required')
 print('IDENTITY ' .. json.encode{version = box.info.version, layout = tonumber(ns.layout), ready = tonumber(ns.ready)})
 local c = net.connect(uri, {user = 'tarn', password = 'tarn', wait_connected = 3})
 assert(c:is_connected(), 'private stream connection failed')

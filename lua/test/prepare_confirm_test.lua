@@ -30,7 +30,7 @@ ok(tarn_bucket_init(16, {{1, 16}})); ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then
     layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-    assert(ni and ni.ready == 1 and layout == 8, 'actual native ABI8 is required')
+    assert(ni and ni.ready == 1 and layout == tarn.NS_LAYOUT, 'actual native ABI' .. tarn.NS_LAYOUT .. ' is required')
 else assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode is required') end
 print('IDENTITY ' .. json.encode{version = box.info.version, native = ni, layout = layout,
     sync = tarn.cfg.sync, wal = box.cfg.wal_mode, part_sync = box.space._tarn_part.is_sync})

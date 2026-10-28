@@ -120,11 +120,17 @@ pub fn parse(buf: &[u8]) -> Option<(Vec<Write<'_>>, Opts)> {
     Some((writes, opts))
 }
 
-/// A read of a commit, as far as its checks need: its table, and the bucket
-/// it was routed by (None: every shard's).
+/// A read of a commit, as far as its checks need: its table and index, the
+/// key of a point read (a MessagePack value; None: a range), the bounds of
+/// a range (MessagePack values; None: none, or a point read), and the
+/// bucket it was routed by (None: every shard's).
 #[derive(Debug, PartialEq)]
-pub struct Read {
+pub struct Read<'a> {
     pub space_id: u32,
+    pub index_id: u32,
+    pub key: Option<&'a [u8]>,
+    pub lo: Option<&'a [u8]>,
+    pub hi: Option<&'a [u8]>,
     pub bucket: Option<u64>,
 }
 
@@ -134,7 +140,7 @@ pub struct Read {
 pub struct Commit<'a> {
     pub writes: Vec<Write<'a>>,
     /// The points and ranges the transaction read here.
-    pub reads: Vec<Read>,
+    pub reads: Vec<Read<'a>>,
     /// It holds row locks here (lock_gen): the Lua procedure checks them.
     pub locks: bool,
     pub fence: Vec<(u32, u64)>,
@@ -190,18 +196,34 @@ pub fn parse_commit(buf: &[u8]) -> Option<Commit<'_>> {
 
 /// A read set: points {space, index, key, bucket}, ranges {space, index,
 /// lo, hi, lo_incl, hi_incl, bucket}.
-fn read_set(r: &mut Rd, reads: &mut Vec<Read>) -> Option<()> {
-    for (len, skip) in [(4, 2), (7, 5)] {
+fn read_set<'a>(r: &mut Rd<'a>, reads: &mut Vec<Read<'a>>) -> Option<()> {
+    for (len, point) in [(4, true), (7, false)] {
         for _ in 0..r.array()? {
             if r.array()? != len {
                 return None;
             }
             let space_id = u32::try_from(r.uint()?).ok()?;
-            for _ in 0..skip {
+            let index_id = u32::try_from(r.uint()?).ok()?;
+            // (a point's key; a range's bounds, then whether they are
+            // included: the checks here take them as included)
+            let (key, lo, hi) = if point {
+                (Some(r.raw()?), None, None)
+            } else {
+                let lo = if r.nil() { None } else { Some(r.raw()?) };
+                let hi = if r.nil() { None } else { Some(r.raw()?) };
                 r.skip()?;
-            }
+                r.skip()?;
+                (None, lo, hi)
+            };
             let bucket = if r.nil() { None } else { Some(r.uint()?) };
-            reads.push(Read { space_id, bucket });
+            reads.push(Read {
+                space_id,
+                index_id,
+                key,
+                lo,
+                hi,
+                bucket,
+            });
         }
     }
     Some(())
@@ -210,9 +232,9 @@ fn read_set(r: &mut Rd, reads: &mut Vec<Read>) -> Option<()> {
 /// tarn_validate's arguments (txid, rpoints, rranges, cross, lock_gen,
 /// mver), as far as its checks need.
 #[derive(Debug, Default, PartialEq)]
-pub struct Validate {
+pub struct Validate<'a> {
     /// The points and ranges the transaction read here.
-    pub reads: Vec<Read>,
+    pub reads: Vec<Read<'a>>,
     /// It holds row locks here (lock_gen): the Lua procedure checks them.
     pub locks: bool,
     /// The membership version it was routed with, when it read every shard.
@@ -221,7 +243,7 @@ pub struct Validate {
 
 /// tarn_validate's arguments: None for those it leaves to the Lua
 /// procedure, or does not read.
-pub fn parse_validate(buf: &[u8]) -> Option<Validate> {
+pub fn parse_validate(buf: &[u8]) -> Option<Validate<'_>> {
     let mut r = Rd::new(buf);
     if r.array()? != 6 {
         return None;
@@ -626,10 +648,18 @@ mod tests {
             vec![
                 Read {
                     space_id: 512,
+                    index_id: 0,
+                    key: Some(&[0x91, 0x09][..]),
+                    lo: None,
+                    hi: None,
                     bucket: Some(7)
                 },
                 Read {
                     space_id: 513,
+                    index_id: 1,
+                    key: None,
+                    lo: None,
+                    hi: Some(&[0x91, 0x05][..]),
                     bucket: None
                 }
             ]
@@ -663,11 +693,12 @@ mod tests {
         let mut w = Wr::default();
         w.array(6).str("T1");
         w.array(1).array(4).uint(512).uint(0).array(1).uint(9).uint(7);
-        w.array(1)
-            .array(7)
+        w.array(2);
+        w.array(7).uint(513).uint(1).raw(&[0xc0, 0x91, 0x05, 0xc3, 0xc2, 0xc0]);
+        w.array(7)
             .uint(513)
-            .uint(1)
-            .raw(&[0xc0, 0x91, 0x05, 0xc3, 0xc2, 0xc0]);
+            .uint(2)
+            .raw(&[0x92, 0x01, 0xa1, b'a', 0xc0, 0xc2, 0xc3, 0x07]);
         w.raw(&[0xc3, 0xc0, 0xc0]);
         let v = parse_validate(&w.0).unwrap();
         assert_eq!(
@@ -675,14 +706,36 @@ mod tests {
             vec![
                 Read {
                     space_id: 512,
+                    index_id: 0,
+                    key: Some(&[0x91, 0x09][..]),
+                    lo: None,
+                    hi: None,
                     bucket: Some(7)
                 },
                 Read {
                     space_id: 513,
+                    index_id: 1,
+                    key: None,
+                    lo: None,
+                    hi: Some(&[0x91, 0x05][..]),
                     bucket: None
+                },
+                Read {
+                    space_id: 513,
+                    index_id: 2,
+                    key: None,
+                    lo: Some(&[0x92, 0x01, 0xa1, b'a'][..]),
+                    hi: None,
+                    bucket: Some(7)
                 }
             ]
         );
+        // (an index that is not one: the Lua procedure's)
+        let mut w = Wr::default();
+        w.array(6).str("T1");
+        w.array(1).array(4).uint(512).str("i").array(1).uint(9).uint(7);
+        w.array(0).raw(&[0xc3, 0xc0, 0xc0]);
+        assert!(parse_validate(&w.0).is_none());
         assert!(!v.locks && v.mver.is_none());
         // row locks, a membership version
         let mut w = Wr::default();
