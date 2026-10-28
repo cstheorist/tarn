@@ -35,6 +35,7 @@ function M.new(c)
                reason = 'policy not loaded', pending = 0, fault_pending = false}
     local policy, last_wall, last_mono, last_wall64, last_mono64, certificate
     local fake, worker, attached, on_policy
+    local fault_observation
     local certificates = {}
     local function meta() return c.meta or box.space._tarn_meta end
     local function cfg()
@@ -103,12 +104,62 @@ function M.new(c)
     end
     local function sample()
         if fake then
-            return fake.wall, fake.mono, ffi.new('uint64_t', math.floor(fake.wall * BILLION)),
-                   ffi.new('uint64_t', math.floor(fake.mono * BILLION))
+            local w, m = ffi.new('uint64_t', math.floor(fake.wall * BILLION)),
+                         ffi.new('uint64_t', math.floor(fake.mono * BILLION))
+            return fake.wall, fake.mono, w, m, w, m
         end
-        local m, w = unsigned_clock(clock.monotonic64()), unsigned_clock(clock.realtime64())
-        if m == nil or w == nil then return -1, -1, 0ULL, 0ULL end
-        return tonumber(w) / BILLION, tonumber(m) / BILLION, w, m
+        local raw_m, raw_w = clock.monotonic64(), clock.realtime64()
+        local m, w = unsigned_clock(raw_m), unsigned_clock(raw_w)
+        if m == nil or w == nil then return -1, -1, 0ULL, 0ULL, raw_w, raw_m end
+        return tonumber(w) / BILLION, tonumber(m) / BILLION, w, m, raw_w, raw_m
+    end
+    local function ns_string(v)
+        if ffi.istype('uint64_t', v) or ffi.istype('int64_t', v) then
+            return (tostring(v):gsub('U?LL$', ''))
+        end
+    end
+    local function delta_string(current, previous)
+        if previous == nil then return nil end
+        if current >= previous then return ns_string(current - previous) end
+        return '-' .. ns_string(previous - current)
+    end
+    local function capture_fault(reason, kind, w, m, w64, m64, raw_w, raw_m, q,
+                                 prev_w, prev_m, prev_w64, prev_m64, epoch, high, created_wall)
+        fault_observation = {
+            kind = kind, reason = reason, observation_epoch = epoch,
+            previous_wall_ns = ns_string(prev_w64), previous_mono_ns = ns_string(prev_m64),
+            observed_wall_ns = ns_string(raw_w), observed_mono_ns = ns_string(raw_m),
+            wall_delta_ns = finite(w) and delta_string(w64, prev_w64) or nil,
+            mono_delta_ns = finite(m) and delta_string(m64, prev_m64) or nil,
+            -- These are the existing seconds-based detector operands;
+            -- the strings above retain the exact integer observations.
+            wall_delta_seconds = finite(w) and prev_w and w - prev_w or nil,
+            mono_delta_seconds = finite(m) and prev_m and m - prev_m or nil,
+            wall_minus_mono_delta_seconds = finite(w) and finite(m) and prev_w and prev_m
+                                            and (w - prev_w) - (m - prev_m) or nil,
+            max_drift_seconds = q.max_drift, max_gap_seconds = q.max_gap,
+            skew_seconds = q.skew, high = high, policy_created_wall = created_wall,
+        }
+    end
+    local function sample_fault(reason, kind, w, m, w64, m64, raw_w, raw_m, q)
+        -- Latch the original fault before any diagnostic allocation or
+        -- formatting. A failed capture cannot turn rejection into admission.
+        -- Only locals are saved before publication; good reads build nothing.
+        local first = not C.fault and fault_observation == nil
+        local prev_w, prev_m, prev_w64, prev_m64 = last_wall, last_mono, last_wall64, last_mono64
+        local epoch, high, created_wall = C.epoch, C.high, policy and policy.created_wall or nil
+        local rejected = C.fault_now(reason)
+        if first then
+            pcall(capture_fault, reason, kind, w, m, w64, m64, raw_w, raw_m, q,
+                  prev_w, prev_m, prev_w64, prev_m64, epoch, high, created_wall)
+        end
+        return rejected
+    end
+    local function fault_status()
+        if fault_observation == nil then return nil end
+        local out = {}
+        for k, v in pairs(fault_observation) do out[k] = v end
+        return out
     end
     -- No space reads/writes, yields, or transaction ownership changes.
     function C.observe()
@@ -116,12 +167,21 @@ function M.new(c)
         local q = cfg()
         if not q then return C.fault_now('invalid timing configuration') end
         if policy and not matches(policy, q) then return C.fault_now('timing policy changed') end
-        local w, m, w64, m64 = sample()
-        if not finite(w) or not finite(m) then return C.fault_now('invalid clock reading') end
+        local w, m, w64, m64, raw_w, raw_m = sample()
+        if not finite(w) or not finite(m) then
+            return sample_fault('invalid clock reading', 'invalid_reading', w, m, w64, m64, raw_w, raw_m, q)
+        end
         if last_mono ~= nil then
             local dm, dw = m - last_mono, w - last_wall
-            if dm < 0 or dw < 0 then return C.fault_now('clock moved backward') end
-            if math.abs(dw - dm) > q.max_drift then return C.fault_now('wall/monotonic drift exceeded') end
+            if dm < 0 or dw < 0 then
+                local kind = dm < 0 and (dw < 0 and 'wall_and_monotonic_backward' or 'monotonic_backward')
+                             or 'wall_backward'
+                return sample_fault('clock moved backward', kind, w, m, w64, m64, raw_w, raw_m, q)
+            end
+            if math.abs(dw - dm) > q.max_drift then
+                return sample_fault('wall/monotonic drift exceeded', 'wall_monotonic_drift',
+                                    w, m, w64, m64, raw_w, raw_m, q)
+            end
             if dm > q.max_gap then
                 -- An ordinary process pause is uncertainty, not proof of a
                 -- wall-clock fault. Drop every certificate and reset the
@@ -137,7 +197,8 @@ function M.new(c)
         -- A valid slower leader still uses H for admission; its local
         -- discontinuity detector must not misclassify inter-node skew.
         if policy and w + q.skew + q.max_drift < math.max(C.high, policy.created_wall) then
-            return C.fault_now('clock precedes persisted high-water mark')
+            return sample_fault('clock precedes persisted high-water mark', 'persisted_floor',
+                                w, m, w64, m64, raw_w, raw_m, q)
         end
         last_wall, last_mono, last_wall64, last_mono64 = w, m, w64, m64
         if C.fault then return unavailable(C.fault) end
@@ -235,7 +296,7 @@ function M.new(c)
                 max_age = policy and policy.max_age or nil, skew = policy and policy.skew or nil,
                 -- Peer.state=healthy would circularly deadlock bootstrap.
                 local_ok = e == nil and C.loaded and not C.fault,
-                fault = C.fault, state = C.state}
+                fault = C.fault, fault_observation = fault_status(), state = C.state}
     end
     -- Each interval bounds remote_wall - local_wall at the trusted sampler's
     -- bounded request/response observation. Coverage of ALL required peers,
@@ -434,6 +495,7 @@ function M.new(c)
             if p.epoch == C.epoch and last_mono ~= nil and last_mono <= p.until_mono then covered_n = covered_n + 1 end
         end
         return {state = C.state, reason = C.reason, fault = C.fault, fault_pending = C.fault_pending,
+                fault_observation = fault_status(),
                 epoch = C.epoch, high = C.high, loaded = C.loaded, pending = C.pending,
                 read_ready = C.loaded and C.local_ready and not C.fault or false,
                 wall = last_wall, mono = last_mono, policy = policy and clone(policy) or nil,

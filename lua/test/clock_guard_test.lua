@@ -129,12 +129,56 @@ check('restart/good clock samples cannot automatically clear durable fault', not
 
 local b = new(); assert(b.load()); b.test_time(1001, 100)
 check('wall step while monotonic is unchanged latches unsafe', status(b.check(), 'clock_unknown') and b.fault ~= nil)
+local diagnostic = b.status().fault_observation
+check('drift diagnostic retains exact samples and the unchanged detector operands',
+      b.fault == 'wall/monotonic drift exceeded' and diagnostic.kind == 'wall_monotonic_drift'
+      and diagnostic.previous_wall_ns == '1000000000000' and diagnostic.observed_wall_ns == '1001000000000'
+      and diagnostic.previous_mono_ns == '100000000000' and diagnostic.observed_mono_ns == '100000000000'
+      and diagnostic.wall_delta_ns == '1000000000' and diagnostic.mono_delta_ns == '0'
+      and diagnostic.wall_delta_seconds == 1 and diagnostic.mono_delta_seconds == 0
+      and diagnostic.wall_minus_mono_delta_seconds == 1 and diagnostic.max_drift_seconds == .25)
 local d = new(); assert(d.load()); d.test_time(999, 101)
 check('backward wall time latches unsafe', status(d.check(), 'clock_unknown') and d.fault ~= nil)
+diagnostic = d.status().fault_observation
+check('backward diagnostic identifies the clock and exact signed displacement',
+      d.fault == 'clock moved backward' and diagnostic.kind == 'wall_backward'
+      and diagnostic.observed_wall_ns == '999000000000' and diagnostic.observed_mono_ns == '101000000000'
+      and diagnostic.wall_delta_ns == '-1000000000' and diagnostic.mono_delta_ns == '1000000000')
+local first_epoch = diagnostic.observation_epoch
+diagnostic.observed_wall_ns = 'caller mutation'
+d.test_time(998, 102)
+local first = d.probe().fault_observation
+check('later samples and diagnostic callers cannot overwrite the first rejected observation',
+      first.observed_wall_ns == '999000000000' and first.observed_mono_ns == '101000000000'
+      and first.observation_epoch == first_epoch and d.fault == 'clock moved backward')
+local backwards_mono = new(); assert(backwards_mono.load()); backwards_mono.test_time(1000, 99)
+backwards_mono.check()
+check('diagnostic distinguishes monotonic-only and simultaneous backward movement',
+      backwards_mono.status().fault_observation.kind == 'monotonic_backward' and (function()
+          local both = new(); assert(both.load()); both.test_time(999, 99); both.check()
+          return both.status().fault_observation.kind == 'wall_and_monotonic_backward'
+      end)())
+local large = new(); large.test_time(2000000000, 100); assert(large.load())
+large.test_time(1999999999, 101); large.check()
+check('nanosecond diagnostic strings retain integers beyond double exact-integer range',
+      large.status().fault_observation.previous_wall_ns == '2000000000000000000'
+      and large.status().fault_observation.observed_wall_ns == '1999999999000000000'
+      and large.status().fault_observation.wall_delta_ns == '-1000000000')
+local diagnostic_failure = new(); assert(diagnostic_failure.load()); diagnostic_failure.test_time(999, 101)
+local original_gsub = string.gsub
+string.gsub = function() error('injected diagnostic formatting failure') end
+local guarded, rejected = pcall(diagnostic_failure.check)
+string.gsub = original_gsub
+check('diagnostic formatting failure cannot prevent the original fault latch and rejection',
+      guarded and status(rejected, 'clock_unknown') and diagnostic_failure.fault == 'clock moved backward'
+      and diagnostic_failure.status().fault_observation == nil
+      and status(diagnostic_failure.check(), 'clock_unknown') and not diagnostic_failure.read_native_state())
 local e = new(); assert(e.load()); e.test_time(1006, 106)
 local raw = e.probe()
 check('raw probe remains available and checks a resumed peer before its worker', raw.wall == 1006
       and raw.local_ok == false and raw.fault == nil)
+check('healthy and ordinary-gap observations do not create fault diagnostics',
+      g.status().fault_observation == nil and raw.fault_observation == nil and e.status().fault_observation == nil)
 check('a resumed process must detect the monitor gap at request entry', status(e.check(), 'clock_unknown')
       and e.fault == nil and not e.native_state())
 check('normal pause uncertainty can regain local health before full peer certification', e.read_check() == nil

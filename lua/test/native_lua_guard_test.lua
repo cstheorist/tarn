@@ -39,6 +39,7 @@ local c = net.connect('tarn:tarn@127.0.0.1:3897', {wait_connected = 5})
 assert(c:is_connected())
 local idle, stream, committed = c:new_stream(), nil, nil
 local saved = {controls = F.native_controls, space = F.native_space, mark = F.native_mark, ok = F.native_ok}
+local hooks = {commit = box.on_commit, rollback = box.on_rollback}
 local sid = 96601
 local args = {sid, 0, {{1}}, 1, true, false, box.NULL, 1}
 local first = {sid, 0, {1}, 0, 1, box.NULL, true, false, box.NULL, true, box.NULL, 1}
@@ -110,6 +111,36 @@ local ok, err = xpcall(function()
     F.native_controls = saved.controls
     served('restoring the guard restores actual native service', idle, args, 10)
 
+    for _, case in ipairs({
+        {name = 'before the first hook', hook = 'commit', after = false},
+        {name = 'after the first hook', hook = 'commit', after = true},
+        {name = 'before the second hook', hook = 'rollback', after = false},
+        {name = 'after the second hook', hook = 'rollback', after = true},
+    }) do
+        local injected, register = 0, hooks[case.hook]
+        local function registration(fn, ...)
+            -- Only this fixture's freshness hook is refused. Background
+            -- workers keep their ordinary registration behavior.
+            local source = type(fn) == 'function' and debug.getinfo(fn, 'S').source or ''
+            if source:match('tarn_fresh%.lua$') then
+                injected = injected + 1
+                if case.after then register(fn, ...) end
+                error('ordinary hook registration refusal')
+            end
+            return register(fn, ...)
+        end
+        if case.hook == 'commit' then box.on_commit = registration else box.on_rollback = registration end
+        before = census(idle)
+        local r = native_read(idle, first)
+        box.on_commit, box.on_rollback = hooks.commit, hooks.rollback
+        after = census(idle)
+        check(injected == 1 and #r == 1 and r[1] == 'lua' and unchanged(before, after) and not after.txn
+              and after.certificates == 0 and after.entries == 0
+              and after.native.served == before.native.served and after.native.to_lua == before.native.to_lua + 1,
+              'registration error ' .. case.name .. ' leaves no token, transaction or effects', r)
+    end
+    served('restoring hook registration restores actual native service', idle, args, 10)
+
     local marked
     F.native_mark = function(id) marked = tostring(ffi.cast('uint64_t', id)); return saved.mark(id) end
     stream = c:new_stream()
@@ -146,6 +177,7 @@ local ok, err = xpcall(function()
     check(tarn_info().stats.lock_copy_errors == 0, 'native lock mirrors remain exact')
 end, debug.traceback)
 F.native_controls, F.native_space, F.native_mark, F.native_ok = saved.controls, saved.space, saved.mark, saved.ok
+box.on_commit, box.on_rollback = hooks.commit, hooks.rollback
 for _, s in pairs({idle, stream, committed}) do
     pcall(s.eval, s, 'if box.is_in_txn() then box.rollback() end', {}, {timeout = 5})
 end

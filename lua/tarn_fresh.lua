@@ -128,30 +128,58 @@ function M.new(c)
         local k = key(id)
         if F.streams[k] then return 1 end
         if F.count >= MAX_STREAMS then return 0 end
-        F.streams[k], F.count = true, F.count + 1
+        -- Allocate every closure before publishing the token. A protected
+        -- native entry can turn a later allocation error into handback,
+        -- but cannot reclaim a token whose terminal hooks never existed.
         local function clear()
-            if F.streams[k] then F.streams[k], F.count = nil, F.count - 1 end
+            if F.streams[k] then
+                F.streams[k] = nil
+                F.count = F.count - 1
+            end
         end
-        local function rolled_back()
+        local rollback_diag
+        local function restore_diag()
+            if rollback_diag ~= nil then box.error.set(rollback_diag) else box.error.clear() end
+        end
+        local function rollback_probe()
             -- Legacy rollback hooks also run for savepoints, including a
             -- savepoint that undoes every write. The public savepoint API
             -- refuses a completed rollback with TXN_ROLLBACK, but remains
-            -- usable during a partial rollback. It never reads data or
-            -- yields. Preserve the original error of native handback.
-            local old = box.error.last()
-            local ok, terminal = pcall(function()
-                local sp = ffi.C.box_txn_savepoint()
-                local err = box.error.last()
-                return sp == nil and err ~= nil and err.code == box.error.TXN_ROLLBACK
-            end)
-            if old ~= nil then box.error.set(old) else box.error.clear() end
-            if ok and terminal then clear() end
+            -- usable during a partial rollback. It never reads data or yields.
+            local sp = ffi.C.box_txn_savepoint()
+            local err = box.error.last()
+            return sp == nil and err ~= nil and err.code == box.error.TXN_ROLLBACK
         end
-        local ok = pcall(function()
-            box.on_commit(function() pcall(clear) end)
-            box.on_rollback(function() pcall(rolled_back) end)
-        end)
-        if not ok then clear(); return 0 end
+        local function rolled_back()
+            rollback_diag = box.error.last()
+            local ok, terminal = pcall(rollback_probe)
+            local restored = pcall(restore_diag)
+            -- An uncertain classification must refuse future use of this
+            -- stream, rather than retain an unowned certificate.
+            if not ok or not restored or terminal then clear() end
+        end
+        local function rollback_hook()
+            local ok = pcall(rolled_back)
+            rollback_diag = nil
+            if not ok then clear() end
+        end
+        local function install()
+            -- Registration is nonyielding and cannot complete this TX.
+            -- A partially registered hook is harmless without a token.
+            box.on_commit(clear)
+            box.on_rollback(rollback_hook)
+            F.streams[k] = true
+            F.count = F.count + 1
+        end
+        if not pcall(install) then
+            if F.streams[k] then
+                F.streams[k] = nil
+                F.count = F.count - 1
+            end
+            return 0
+        end
+        -- Reclamation still requires Tarantool to execute the registered
+        -- terminal hook; the headroom check is not an allocator reservation.
         return 1
     end
     function F.ok(id)

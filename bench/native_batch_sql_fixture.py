@@ -103,6 +103,42 @@ def check_labels(info, root):
     assert labels.get("task") == TASK and labels.get("fixture") == root.name
 
 
+def _capture_clock_status(root, node, unavailable):
+    rel = "logs/"+node["alias"]+"-clock-status.json"
+    record = {"checkpoint": "cleanup_before_container_stop", "timeout_seconds": 3,
+              "endpoint": node["endpoint"], "available": False}
+    try:
+        if unavailable is not None:
+            record["failure"] = unavailable
+        else:
+            result = call([str(root/"bin/native_batch"), "--addr", node["endpoint"], "--eval",
+                           "return require('json').encode(tarn_clock_status())"], timeout=3)
+            state = json.loads(result.stdout)
+            assert isinstance(state, dict), "clock status did not return a JSON object"
+            record.update(available=True, status=state)
+    except BaseException as error:
+        record["failure"] = type(error).__name__+": "+str(error)[:4096]
+    node["clock_diagnostic"] = {"path": rel, "available": record["available"]}
+    if "failure" in record:
+        node["clock_diagnostic"]["failure"] = record["failure"]
+    try:
+        (root/rel).write_text(json.dumps(record, indent=2, allow_nan=False)+"\n")
+    except BaseException as error:
+        node["clock_diagnostic"]["write_failure"] = type(error).__name__+": "+str(error)[:4096]
+
+
+def capture_clock_status(root, node, unavailable=None):
+    """Best-effort raw diagnostic after child drain, before container stop.
+
+    This EVAL has no freshness barrier, clock sample or mutation. Each node
+    gets one bounded attempt; even diagnostic bookkeeping cannot block cleanup.
+    """
+    try:
+        _capture_clock_status(root, node, unavailable)
+    except BaseException:
+        pass  # Allocation/path failures here must not skip the exact stop.
+
+
 def cleanup(root, m, processes):
     errors = []
     for p, record in reversed(processes):
@@ -115,6 +151,7 @@ def cleanup(root, m, processes):
             result = call(["docker", "inspect", node["name"]], check=False)
             if result.returncode:
                 assert "No such" in result.stderr, result.stderr
+                capture_clock_status(root, node, "owned container already absent")
                 continue
             info = json.loads(result.stdout)[0]
             assert info["Name"] == "/"+node["name"]
@@ -122,6 +159,7 @@ def cleanup(root, m, processes):
             if node.get("id"):
                 assert info["Id"] == node["id"]
             node["id"] = info["Id"]
+            capture_clock_status(root, node, None if info["State"]["Running"] else "owned container is not running")
             if info["State"]["Running"]:
                 memory = call(["docker", "exec", info["Id"], "sh", "-c",
                                "cat /sys/fs/cgroup/memory.events; cat /sys/fs/cgroup/memory.peak"], check=False)

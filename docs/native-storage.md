@@ -57,6 +57,10 @@ its memtx get/check interval remains non-yielding. A first stream read keeps
 the same transaction and installs a certificate for its exact native
 transaction ID before reading data. The registry is bounded to 4096 active
 entries and uses public terminal commit/rollback callbacks for cleanup.
+Both preallocated terminal hooks are registered before publishing a token.
+A failed registration leaves no token, and an uncertain rollback
+classification drops the token so later use fails closed. Reclamation
+still trusts Tarantool to execute the registered hook.
 A savepoint rollback preserves the original stream certificate and read
 set. Later reads, local commit and validation require the existing
 certificate; they never install a late barrier in an arbitrary older ambient

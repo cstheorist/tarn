@@ -1020,6 +1020,12 @@ local eligibility, not full relevant-writer coverage or a data quorum.
 `tarn_clock_probe()` remains a raw diagnostic while UNKNOWN; the sampler's
 separate `tarn_clock_certify(timeout)` endpoint proves a fresh quorum before
 reporting role/time. A cached status or raw probe is not a new certificate.
+For a locally detected clock fault, `fault_observation` retains the first
+rejected sample, exact wall/monotonic nanosecond strings and deltas, and
+the detector's operands and limits. This best-effort, volatile diagnostic
+is captured after fault latching; it cannot relax rejection or clear a
+fault. It may be absent after restart or when the fault arrived from a
+replica. Benchmark cleanup records raw status before stopping owned nodes.
 
 * `SHOW TARN STATUS` (or `SHOW STATUS LIKE 'Tarn%'`) on any SQL connection:
   statements, local / read-only / two-phase commits, conflicts, internal
