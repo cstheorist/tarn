@@ -142,7 +142,7 @@ impl Budget {
         s.deadline_retirements = s.deadline_retirements.saturating_add(1);
     }
 
-    fn charge(&self, bytes: usize, class: Class) -> Result<Charge, Error> {
+    fn charge(&self, bytes: usize, class: Class) -> Result<(), Error> {
         let mut s = self.0.state.lock();
         let l = self.0.limits;
         let fits = s.pending < l.requests
@@ -162,50 +162,71 @@ impl Budget {
         }
         s.peak_pending = s.peak_pending.max(s.pending);
         s.peak_bytes = s.peak_bytes.max(s.bytes);
-        Ok(Charge {
-            budget: self.clone(),
-            bytes,
-            class,
-        })
+        Ok(())
     }
-}
 
-struct Charge {
-    budget: Budget,
-    bytes: usize,
-    class: Class,
-}
-
-impl Drop for Charge {
-    fn drop(&mut self) {
-        let mut s = self.budget.0.state.lock();
+    fn refund(&self, bytes: usize, class: Class) {
+        let mut s = self.0.state.lock();
         s.pending -= 1;
-        s.bytes -= self.bytes;
-        if self.class == Class::Normal {
+        s.bytes -= bytes;
+        if class == Class::Normal {
             s.normal_pending -= 1;
-            s.normal_bytes -= self.bytes;
+            s.normal_bytes -= bytes;
         }
     }
 }
 
-/// Connection + at most two enclosing scopes; fixed-size storage avoids
-/// allocating a separate collection for each admitted request.
-pub(crate) struct Permit {
-    _charges: [Option<Charge>; 3],
+/// The immutable scope set belongs to one physical connection. A request
+/// retains this one reference, rather than cloning global/shard Arcs on
+/// every enqueue and reply (which would contend across connections).
+pub(crate) struct Scopes {
+    budgets: Vec<Budget>,
 }
 
-impl Permit {
-    pub(crate) fn acquire(connection: &Budget, parents: &[Budget], bytes: usize, class: Class) -> Result<Self, Error> {
+impl Scopes {
+    pub(crate) fn new(connection: &Budget, parents: &[Budget]) -> Result<Arc<Self>, Error> {
         if parents.len() > 2 {
             return Err(Error::Protocol("at most two enclosing RPC scopes".into()));
         }
-        let mut p = Self {
-            _charges: std::array::from_fn(|_| None),
+        Ok(Arc::new(Self {
+            budgets: std::iter::once(connection).chain(parents).cloned().collect(),
+        }))
+    }
+
+    pub(crate) fn acquire(self: &Arc<Self>, bytes: usize, class: Class) -> Result<Permit, Error> {
+        let mut permit = Permit {
+            scopes: self.clone(),
+            bytes,
+            class,
+            charged: 0,
         };
-        for (slot, budget) in p._charges.iter_mut().zip(std::iter::once(connection).chain(parents)) {
-            *slot = Some(budget.charge(bytes, class)?);
+        for budget in &self.budgets {
+            budget.charge(bytes, class)?;
+            permit.charged += 1;
         }
-        Ok(p)
+        Ok(permit)
+    }
+}
+
+pub(crate) struct Permit {
+    scopes: Arc<Scopes>,
+    bytes: usize,
+    class: Class,
+    charged: u8,
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        for budget in self.scopes.budgets.iter().take(self.charged as usize) {
+            budget.refund(self.bytes, self.class);
+        }
+    }
+}
+
+#[cfg(test)]
+impl Permit {
+    pub(crate) fn acquire(connection: &Budget, parents: &[Budget], bytes: usize, class: Class) -> Result<Self, Error> {
+        Scopes::new(connection, parents)?.acquire(bytes, class)
     }
 }
 

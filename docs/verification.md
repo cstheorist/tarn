@@ -1248,10 +1248,10 @@ tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 
 ### Configuration counts
 
-The default list contains 187 configurations, including 136 expected
-broken/trade-off outcomes. The 198 generated configurations reproduce from
+The default list contains 195 configurations, including 143 expected
+broken/trade-off outcomes. The 206 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 200 total. Explicit check arguments override the default
+directly, for 208 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs

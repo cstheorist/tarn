@@ -17,7 +17,7 @@
 //!   lock that guards waiter registration, all waiters are dropped (their
 //!   callers observe [`Error::Closed`]) and later calls fail immediately.
 
-use crate::admission::{Class, Permit};
+use crate::admission::{Class, Permit, Scopes};
 use crate::{AdmissionStats, Budget};
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
@@ -315,6 +315,7 @@ pub(crate) struct Shared {
     request_timeout: Duration,
     budget: Budget,
     parents: Vec<Budget>,
+    scopes: Arc<Scopes>,
     physical: Arc<Physical>,
     closed: AtomicBool,
     /// The server answered a request with ER_READONLY: it is no longer the
@@ -920,6 +921,8 @@ impl Client {
         let physical = Arc::new(Physical {
             state: Mutex::new((2, Vec::new())),
         });
+        let budget = Budget::new("connection", opts.request_limits)?;
+        let scopes = Scopes::new(&budget, &opts.admission)?;
         let shared = Arc::new(Shared {
             id: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
             owner: opts.observation_scope,
@@ -934,7 +937,8 @@ impl Client {
             write_ready: Notify::new(),
             deadline_ready: Notify::new(),
             request_timeout: opts.request_timeout,
-            budget: Budget::new("connection", opts.request_limits)?,
+            budget,
+            scopes,
             parents: opts.admission.clone(),
             physical: physical.clone(),
             closed: AtomicBool::new(false),
@@ -1045,7 +1049,7 @@ impl Client {
             if st.closed {
                 return Err(Error::Closed);
             }
-            let permit = Permit::acquire(&shared.budget, &shared.parents, charge, class).inspect_err(|_| {
+            let permit = shared.scopes.acquire(charge, class).inspect_err(|_| {
                 shared.budget.refused();
                 for b in &shared.parents {
                     b.refused();
