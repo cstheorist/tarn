@@ -91,6 +91,26 @@ def main():
         assert b._read_packet().is_eof_packet()
         assert binary["plan"]["join_estimate"]["reordered"] is True
         b._execute_command(COMMAND.COM_STMT_CLOSE, struct.pack("<I", statement))
+        def storage_rows():
+            with b.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute("SHOW TARN QUERIES")
+                return sum(r["Storage_rows"] for r in cur.fetchall() if r["Database"] == db)
+        prepared, columns, params = prepare(b, "SELECT a.id,b.id FROM a JOIN b ON a.id=b.a_id WHERE b.id=?")
+        assert (columns,params) == (2,1)
+        before_rows = storage_rows()
+        for key in (7,8):
+            payload = struct.pack("<IBI",prepared,0,1)+b"\x00\x01\x08\x00"+struct.pack("<q",key)
+            b._execute_command(COMMAND.COM_STMT_EXECUTE,payload)
+            assert b._read_packet().read_length_encoded_integer() == 2
+            for _ in range(2):
+                b._read_packet().check_error()
+            assert b._read_packet().is_eof_packet()
+            row = b._read_packet()
+            assert row.read(2) == b"\x00\x00"
+            assert struct.unpack("<ii",row.read(8)) == (777,key)
+            assert b._read_packet().is_eof_packet()
+        assert storage_rows()-before_rows <= 10, "bound binary joins did not use the selective order"
+        b._execute_command(COMMAND.COM_STMT_CLOSE,struct.pack("<I",prepared))
         assert not [s for s in stats(a) if s["Table"].startswith(db + ".")]
         samples = [s for s in stats(b) if s["Table"].startswith(db + ".")]
         assert samples and all(s["Sample_rows"] <= 512 for s in samples)

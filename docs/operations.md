@@ -701,7 +701,9 @@ not a latency prediction and excludes validation/retries and batch-key
 deduplication. Tuple work includes repeated logical join candidates; it is
 not the decoded storage-tuple counter. Parameter values
 never specialize selectivity in a shared normalized plan. Unbound parameter
-predicates conservatively retain written order. Compare these hints with
+diagnostic plans conservatively retain written order. Eligible binary
+executions with bound integer parameters use a type-keyed plan with unchanged
+projection metadata; different parameter values share that plan. Compare these hints with
 `SHOW TARN QUERIES`' actual `Storage_rows` and `Read_attempts`, whose distinct
 coverage is documented below. A stale hint may choose a slower valid plan;
 it cannot replace SQL predicates, reads or transaction validation.

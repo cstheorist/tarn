@@ -1048,6 +1048,27 @@ impl Session {
                 let template = self.prepared[&id].template.clone();
                 self.plan_cached(&template, params)?
             }
+            Some(Stmt::Select(p))
+                if !params.is_empty()
+                    && p.source.tables().len() == 2
+                    && p.project.iter().all(|e| matches!(e, Expr::Col(_) | Expr::Lit(_)))
+                    && p.agg.is_none()
+                    && p.limit.is_none()
+                    && !p.distinct
+                    && p.source.tables().iter().all(|a| {
+                        self.cluster
+                            .statistics
+                            .snapshot(self.cluster.catalog().version)
+                            .tables
+                            .contains_key(&a.table.space_id)
+                    }) =>
+            {
+                // The projection's metadata is independent of parameters.
+                // Use the shared type-keyed cache so bound integer predicates
+                // can use hints, while unbound/noninteger plans stay conservative.
+                let template = self.prepared[&id].template.clone();
+                self.plan_cached(&template, params)?
+            }
             Some(s) => s,
             None => {
                 // catalog changed since PREPARE: re-plan
