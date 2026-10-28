@@ -400,7 +400,20 @@ function M.new(c)
     function C.policy_ok()
         -- Native pre-borrow callback: no sampling, State publication or I/O.
         if c.can_run and not c.can_run() then return false end
-        return C.loaded and not C.fault and matches(policy, cfg()) and true or false
+        if not C.loaded or C.fault or policy == nil then return false end
+        -- The private policy was fully validated at load. Compare current
+        -- scalar settings without cfg()'s per-call table/closure; only nil
+        -- takes a default, and numeric cdata/string equality is insufficient.
+        local age, skew = c.cfg.max_txn_age, c.cfg.clock_skew
+        local gap, drift = c.cfg.clock_max_gap, c.cfg.clock_max_drift
+        if age == nil then age = 120 end
+        if skew == nil then skew = 60 end
+        if gap == nil then gap = 2 end
+        if drift == nil then drift = .25 end
+        return type(age) == 'number' and type(skew) == 'number'
+            and type(gap) == 'number' and type(drift) == 'number'
+            and age == policy.max_age and skew == policy.skew
+            and gap == policy.max_gap and drift == policy.max_drift
     end
     function C.status()
         local covered_n = 0

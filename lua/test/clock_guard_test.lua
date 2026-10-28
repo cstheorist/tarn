@@ -198,11 +198,45 @@ check('a skipped monitor leaves the elapsed-gap guard to fail closed on resumpti
       status(heap.read_check(), 'clock_unknown') and heap.fault == nil)
 local real_meta = box.schema.space.create('clock_meta_real', {format = {{'key', 'string'}, {'value', 'map'}}})
 real_meta:create_index('pk')
-local real = guard.new{cfg = {test_hooks = false}, meta = real_meta}
+local real_cfg = {test_hooks = false}
+local real = guard.new{cfg = real_cfg, meta = real_meta}
 assert(real.load())
 local ready, actual_mono, actual_wall = real.read_native_state()
 check('actual public signed clock64 values publish exact nonnegative unsigned native mirrors', ready
       and ffi.istype('uint64_t', actual_mono) and ffi.istype('uint64_t', actual_wall)
       and actual_mono > 0 and actual_wall > 0)
+-- Differential compatibility with the former cfg()+matches() eligibility:
+-- loaded defaults, exact boundaries, false/string and equal numeric cdata.
+-- No observe() is called while testing mutations, so no unsafe policy can
+-- get installed or a sticky fault obscure the comparison.
+local defaults = {max_txn_age = 120, clock_skew = 60, clock_max_gap = 2, clock_max_drift = .25}
+local function previous(settings)
+    local function value(k) return settings[k] == nil and defaults[k] or settings[k] end
+    local p = {max_age = value('max_txn_age'), skew = value('clock_skew'),
+        max_gap = value('clock_max_gap'), max_drift = value('clock_max_drift')}
+    local function valid(x) return type(x) == 'number' and x == x and x >= 0 and x <= 9007199254 end
+    return valid(p.max_age) and p.max_age > 0 and valid(p.skew)
+        and valid(p.max_gap) and p.max_gap > 0 and valid(p.max_drift) and p.max_drift < p.max_gap
+        and p.max_age + 2 * p.skew <= 9007199254
+        and p.max_age == 120 and p.skew == 60 and p.max_gap == 2 and p.max_drift == .25
+end
+local matrix = {{}, defaults}
+for key, original in pairs(defaults) do
+    for _, x in ipairs({0, -1, original, original + 1, 0 / 0, math.huge, -math.huge,
+                       9007199254, 9007199255, false, tostring(original), ffi.new('int64_t', original),
+                       ffi.new('uint64_t', original), {}}) do
+        local s = {}; for k,v in pairs(defaults) do s[k] = v end
+        s[key] = x; matrix[#matrix+1] = s
+    end
+    local s = {}; for k,v in pairs(defaults) do s[k] = v end
+    s[key] = nil; matrix[#matrix+1] = s
+end
+for _, settings in ipairs(matrix) do
+    for k in pairs(defaults) do real_cfg[k] = settings[k] end
+    assert(real.policy_ok() == previous(settings), 'scalar eligibility differs from validated policy contract')
+end
+for k in pairs(defaults) do real_cfg[k] = nil end
+check('scalar native policy check preserves all 62 default/type/boundary eligibility cases',
+      #matrix == 62 and real.policy_ok())
 print(string.format('%d passed, 0 failed', passed))
 os.exit(0)
