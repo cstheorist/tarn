@@ -487,54 +487,70 @@ about half of which it serves.
   machine and several SQL servers.
 
 
-## Cardinality-guided inner join component (issue #136)
+## Cardinality-guided inner join components (issue #136)
 
-The [complete record](results_join_statistics.json) retains all ten timed
-samples, every query latency, correctness assertions, observed foreground
+Complete [unique-key](results_join_statistics.json) and
+[nonunique-prefix](results_join_statistics_prefix.json) records retain all
+20 final timed samples, every query latency, exact results, foreground
 counter deltas, both plans, exact source/build/binary/driver/fixture settings
-and environment. Both gateways run source
-`3e21e6edd7906a2ae2187459f518c3252ad3f36c` and the **same** Rust 1.98.1
-macOS aarch64 release binary (thin LTO, four codegen units, debug 1), with
-two threads and a two-connection pool per shard. The difference is explicit
-ANALYZE hints on one gateway; the fresh control has none. No old/new binary
-or consistency-setting difference is used for this comparison.
+and environment. Both gateways use source
+`61cf087` and the **same** Rust 1.98.1 macOS aarch64 release binary
+(thin LTO, four codegen units, debug 1), with two threads and a
+two-connection pool per shard. Only one gateway receives explicit ANALYZE
+hints. There is no old/new binary or consistency-setting difference within
+these paired comparisons.
 
-The generic fixture has 8,192 unique outer primary keys and 20 inner rows;
-an inner unique key fixes one row which refers to one outer key. The
-written order scans the outer table; the selected order reads the inner
-key then its outer key. Both use the normal checked reads and read-only
-transaction validation and return exactly `(777,7)` on every measured
-query. Ten warmup queries per gateway precede five four-second pairs,
-alternating which gateway runs first. Setup, ANALYZE and warmup are outside
-the timed phase. It is a single-client, closed-loop SELECT component test.
+The generic fixture has 8,192 unique outer primary keys and 20 inner rows
+referring to one outer key. The unique-key query fixes one inner primary
+key and returns exactly `(777,7)`. The nonunique-prefix query fixes that
+shared foreign-key value and returns exactly 20 `(777, inner_id)` rows.
+The selected order reads the inner key/prefix before its outer lookup;
+the control scans the outer table. Both retain normal checked reads and
+read-only transaction validation. Each study has ten warmup queries per
+gateway and five alternating-order, four-second pairs. Setup, ANALYZE and
+warmup are outside the timed phase. These are single-client, closed-loop
+SELECT component experiments.
 
-| Observation | Hints absent | Hints present |
+| Observation | Unique: absent / present hints | Prefix: absent / present hints |
 |---|---:|---:|
-| Decoded storage tuples/query, including attempts | 8,224 | 3 |
-| Encoded data read attempts/query | 35 | 3 |
-| Median queries/s across five repetitions | 43.94 | 659.83 |
-| Queries/s range, all repetitions | 43.21–51.18 | 599.11–710.21 |
-| Per-repetition median latency range, ms | 18.82–23.36 | 1.35–1.49 |
-| Per-repetition p99 latency range, ms | 27.36–32.39 | 2.57–5.30 |
-| Successful measured queries; errors | 916; 0 | 13,220; 0 |
+| Decoded storage tuples/query, including attempts | 8,224 / 3 | 8,212 / 21 |
+| Encoded data read attempts/query | 35 / 3 | 67 / 3 |
+| Median queries/s across five repetitions | 57.54 / 778.73 | 22.61 / 759.07 |
+| Queries/s range, absent hints | 53.90–60.08 | 19.73–22.93 |
+| Queries/s range, present hints | 679.48–787.68 | 730.24–910.34 |
+| Per-repetition median latency range, absent hints, ms | 15.98–17.30 | 45.11–49.77 |
+| Per-repetition median latency range, present hints, ms | 1.21–1.36 | 1.05–1.17 |
+| Per-repetition p99 latency range, absent hints, ms | 27.50–31.76 | 53.59–74.04 |
+| Per-repetition p99 latency range, present hints, ms | 2.41–3.75 | 2.20–4.89 |
+| Successful queries, absent / present hints | 1,149 / 15,105 | 438 / 16,110 |
+| Query errors, either gateway | 0 | 0 |
 
-This is about 15 times the median closed-loop query rate for this shape,
-with a directly observed reduction in returned tuples and read attempts.
-Attempts exclude validation/metadata RPCs and include the candidate's
-initial autocommit probe before its implicit transaction. They are not
-index entries examined, response bytes or complete protocol RPC totals.
-The heuristic planner's tuple-work costs also include repeated logical
-join candidates and exclude batch-key deduplication; they are not these
+The median closed-loop rates are about 13.5 and 33.6 times the controls
+for these shapes, supported by directly observed reductions in returned
+tuples and read attempts. Attempts exclude validation/metadata RPCs and
+include the unique-key candidate's initial autocommit probe before its
+implicit transaction. They are not index entries examined, response bytes
+or complete protocol RPC totals. Planner tuple-work costs include repeated
+logical join candidates and exclude batch-key deduplication; they are not
 observed storage-tuple counts or latency predictions.
+
+The [initial unique](results_join_statistics_unique_initial.json) and
+[initial prefix](results_join_statistics_prefix_initial.json) studies retain
+all 20 earlier samples at gateway source `3e21e6e`. The later revision keeps
+statistics checks and generation churn off unrelated point-plan cache hits;
+a live cache-miss regression fails on the earlier binary and passes on the
+final one. No cross-revision point-read throughput gain is inferred from
+these join studies. Controls drift between studies; the comparisons above
+are within the same-binary final pairs.
 
 Two RF1 Tarantool 3.9.0 memtx shards run in one Linux aarch64 Docker
 container (two CPUs, 768 MiB limit; 128 MiB memtx configured per shard),
 with MVCC, WAL `write`, native procedures and test lock/yield guards. The
 Apple M4 Max host gateways reach them through Docker-forwarded local TCP;
 there is no TLS. The timed workload is read-only and fits in memory. This
-task's other builds/checks and reference database were stopped during the
+task's other builds/checks and reference database were stopped during each
 measurement; other host/VM workloads remained uncontrolled. All samples
-are retained, without replacement or exclusion. These results establish a
-component improvement under these settings, not production capacity,
-RF3/durable-write, SSD/steady-state, arbitrary-skew or competitor results.
-Biased/stale samples may still pick a slower valid order on other data.
+are retained, without replacement or exclusion. These establish component
+improvements under these settings, not production capacity, RF3/durable
+writes, SSD/steady-state, arbitrary-skew or competitor results. Biased or
+stale samples can still choose a slower valid order on other data.

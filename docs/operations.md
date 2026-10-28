@@ -658,8 +658,10 @@ over Unix sockets. Storage instance *j* of shard *i* listens on
 
 `ANALYZE TABLE db.t` collects optional planning hints on this gateway and
 returns the MariaDB four-column analyze status. It commits the open
-transaction first. This version supports one table without options; column,
+transaction first. This version supports one existing table without options; column,
 partition, multi-table and persistent-statistics variants are rejected.
+Missing tables and collection failures return SQL errors; MariaDB
+failure/status-row compatibility is outside this initial scope.
 Each gateway has a non-queued collector and at most 32 cached tables.
 Statistics expire after five monotonic minutes, a restart or any catalog
 generation change. Collection/publication/expiry changes the generation of
@@ -670,7 +672,8 @@ Collection visits at most 512 live shards sequentially and samples at most
 512 tuples in total from their first primary-index pages (at most 256 per
 shard). It projects at most 16 integer fields, considering up to eight
 visible non-lazy indexes and their first three integer prefix columns.
-Each reply is capped at 128 KiB; retained statistics contain counts, not
+Replies above 128 KiB are rejected before sample decoding; this is not a
+transport-frame or gateway-RSS bound. Retained hints contain counts, not
 row values. Publication follows successful collection and a catalog-version
 recheck. A concurrent collector gets 1205/HY000; failure or cancellation
 publishes no partial hints. Older storage without `tarn_analyze` can still
@@ -700,7 +703,10 @@ costs and the selected order. Cost is estimated nested-loop tuple work plus 256
 per read RPC, with average prefix selectivity and batched probes. It is
 not a latency prediction and excludes validation/retries and batch-key
 deduplication. Tuple work includes repeated logical join candidates; it is
-not the decoded storage-tuple counter. Parameter values
+not the decoded storage-tuple counter. The [paired component
+measurements](../bench/RESULTS.md#cardinality-guided-inner-join-components-issue-136)
+record actual reductions in decoded tuples/read attempts and their timing
+limits. Parameter values
 never specialize selectivity in a shared normalized plan. Unbound parameter
 diagnostic plans conservatively retain written order. Eligible binary
 executions with bound integer parameters use a type-keyed plan with unchanged
@@ -781,7 +787,8 @@ attempted. Explicit transactions attribute their commit to COMMIT rather
 than a preceding statement. `Total_us` sums observed wall-clock duration.
 `Storage_rows` counts successfully decoded tuples returned by ordinary,
 multi-key and grouped SELECT requests, including repeated attempts. It is
-not index entries examined, COUNT work, bytes, or final result rows.
+not index entries examined, lock-acquisition response tuples, COUNT work,
+bytes, or final result rows.
 
 The registry holds at most 256 digests with least-recently-completed eviction;
 SHOW uses only in-memory observations and does not clear them. Status exposes
