@@ -49,6 +49,7 @@ local M = {
         peers = {},              -- shard_id -> {uri, uri, ...} (all replicas)
         user = 'tarn', password = 'tarn',
         sync = false,            -- create spaces with is_sync (replicated shards)
+        read_freshness_timeout = 5, -- quorum wait before a strong autocommit read
         recovery_interval = 0.5, -- seconds between recovery scans
         recovery_after = 2.0,    -- age before an undecided txn is recovered
         lock_wait = 1.0,         -- max wait for a conflicting lock (autocommit)
@@ -369,6 +370,7 @@ end
 local function writable()
     if box.info.ro then box.error(box.error.READONLY) end
 end
+M.fresh = require('tarn_fresh').new{cfg = M.cfg, writable = writable}
 
 -- All lock records visible under one isolation level (no yields: memtx
 -- scans and a read-only commit do not yield).
@@ -938,8 +940,8 @@ end
 -- state.rs), which this module keeps current: BK.ns_sync() after every
 -- change of what it holds. A request it cannot decide as the Lua procedure
 -- would, it hands to it: its reply ["lua"] makes the SQL server call the
--- Lua procedure. Both run in this thread, one at a time, and it does not
--- yield: it reads one state, as a Lua step that does not yield does.
+-- Lua procedure. Native reads establish their yielding freshness barrier
+-- before borrowing this state, then reacquire and check it without yielding.
 ffi.cdef[[
 struct tarn_ns {
     uint32_t layout;
@@ -974,9 +976,14 @@ struct tarn_ns {
     void (*locks_sizes)(uint32_t *);
     void (*locks_range)(uint32_t, uint32_t, const char *, size_t, const char *, size_t, uint32_t *);
     size_t (*fallbacks)(char *, size_t);
+    uint8_t fresh_mode, fresh_clock_ok, fresh_reserved[6];
+    double read_timeout;
+    uint64_t clock_mono, clock_wall, clock_max_gap, clock_max_drift;
+    uint8_t (*fresh_mark)(uint64_t);
+    uint8_t (*fresh_ok)(uint64_t);
 };
 ]]
-BK.NS_LAYOUT = 11
+BK.NS_LAYOUT = 12
 M.NS_LAYOUT = BK.NS_LAYOUT   -- (tests: the layout this module declares)
 BK.NS_SPACES = 65536
 BK.ns = nil         -- the state (struct tarn_ns *), once the module is loaded
@@ -1303,6 +1310,14 @@ function BK.ns_sync()
     ns.epoch, ns.mver = BK.epoch, BK.mver
     ns.page_rows, ns.page_bytes = M.cfg.scan_page_rows, M.cfg.scan_page_bytes
     ns.scan_chunk = BK.scan_chunk
+    local supported, mode = pcall(M.fresh.controls)
+    ns.fresh_mode = supported and mode or 3
+    local healthy, mono, wall, gap, drift = M.fresh.native_state()
+    ns.fresh_clock_ok = healthy and 1 or 0
+    ns.clock_mono, ns.clock_wall = mono, wall
+    ns.clock_max_gap, ns.clock_max_drift = gap, drift
+    ns.read_timeout = M.cfg.read_freshness_timeout
+    ns.fresh_mark, ns.fresh_ok = M.fresh.mark_callback, M.fresh.ok_callback
     ns.load_until = BK.load.t0 + M.cfg.load_window
     ns.pl_n = PL_N
     ns.held = BK.held
@@ -2319,6 +2334,7 @@ end
 -- The start of tarn_lock and tarn_lock_range: an error status, or nil and
 -- the deadline of the request.
 local function pl_begin(txid, opts)
+    M.fresh.barrier()
     writable()
     lk_fresh()
     pl_fresh()
@@ -2327,7 +2343,7 @@ local function pl_begin(txid, opts)
     local timeout = opts.timeout
     if timeout == nil or timeout == box.NULL then timeout = 50 end
     pl_register_session(txid)
-    return nil, clock.monotonic() + timeout
+    return nil, clock.monotonic() + timeout, pl_session_gen()
 end
 
 -- Take one row lock of tarn_lock: false (skipped), true (granted; with
@@ -2366,6 +2382,7 @@ local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline, bucket)
     if box.space[sid] == nil then   -- dropped while it waited (the lock is held)
         return pl_failed(txid, (M.engine.missing_space(sid) or {'error', 1146, 'no such space ' .. tostring(sid)}))
     end
+    M.fresh.space(box.space[sid])
     if not opts.read then return true end
     local t = box.space[sid].index[iid]:get(key)
     return (t == nil) and box.NULL or t
@@ -2373,7 +2390,7 @@ end
 
 function tarn_lock(txid, keys, mode, opts)
     opts = opts or {}
-    local err, deadline = pl_begin(txid, opts)
+    local err, deadline, gen = pl_begin(txid, opts)
     if err then return err end
     local results = {}
     for i, k in ipairs(keys) do
@@ -2383,7 +2400,10 @@ function tarn_lock(txid, keys, mode, opts)
         if type(r) == 'table' then return r end
         results[i] = r
     end
-    return {OK, pl_session_gen(), results}
+    yield_point('lock_reply') -- tests: an election after rows were locked/read
+    writable()
+    if not pl_intact(txid, gen) then return pl_failed(txid, {'error', 1213, BROKEN_MSG}) end
+    return {OK, gen, results}
 end
 
 -- The scans of tarn_select and their pages (below, with tarn_select; one
@@ -2416,7 +2436,7 @@ local PG = {OOM = {}}   -- PG.OOM: raised by a scan that stops for want of heap
 -- (their latest committed versions). Errors as tarn_lock's.
 function tarn_lock_range(txid, ranges, mode, opts)
     opts = opts or {}
-    local err, deadline = pl_begin(txid, opts)
+    local err, deadline, gen = pl_begin(txid, opts)
     if err then return err end
     local read = {timeout = opts.timeout, nowait = opts.nowait, skip = opts.skip, read = true, held = opts.held}
     local out = {}
@@ -2428,6 +2448,7 @@ function tarn_lock_range(txid, ranges, mode, opts)
         if type(bucket) == 'number' and BK.count > 0 and BK.bad(bucket, true) then
             return pl_failed(txid, BK.moved(bucket))
         end
+        M.fresh.space(space)
         local idx = space.index[0]
         local kd = index_key_def(sid, 0)
         local skip = {}
@@ -2474,7 +2495,10 @@ function tarn_lock_range(txid, ranges, mode, opts)
         out[i] = rows
         fiber.yield()   -- and between ranges
     end
-    return {OK, pl_session_gen(), out}
+    yield_point('lock_reply') -- tests: an election after rows were locked/read
+    writable()
+    if not pl_intact(txid, gen) then return pl_failed(txid, {'error', 1213, BROKEN_MSG}) end
+    return {OK, gen, out}
 end
 
 -- tarn_unlock(txid[, keys]): release some row locks of txid ({{space_id,
@@ -2830,6 +2854,7 @@ end
 -- predate them, which name none). mver: the membership version a
 -- transaction that read every shard was routed with (see "Membership").
 function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, mver)
+    if box.is_in_txn() then M.fresh.stream() end
     writable()
     local seq = inflight_begin()
     local ok, res = pcall(function()
@@ -2888,6 +2913,9 @@ end
 -- the probe write below goes to a data-temporary space, which Tarantool
 -- accepts even on read-only instances.
 function tarn_validate(txid, rpoints, rranges, cross, lock_gen, mver)
+    if box.is_in_txn() then M.fresh.stream() end
+    M.fresh.clock_check()
+    M.fresh.controls()
     writable()
     if not pl_intact(txid, lock_gen) then
         if box.is_in_txn() then box.rollback() end
@@ -2956,7 +2984,6 @@ local ITER = {[0] = 'EQ', [1] = 'REQ', [2] = 'ALL', [3] = 'LT', [4] = 'LE', [5] 
 -- check run without a yield in between, so they observe one state (vinyl:
 -- checked_read). Returns {'ok', tuples[, position]}: one page (see
 -- "Pages").
-local BEGIN_STREAM = {txn_isolation = 'read-confirmed', timeout = 60}
 -- Scans longer than this many tuples yield inside stream transactions.
 local SCAN_CHUNK = 1000
 BK.scan_chunk = SCAN_CHUNK   -- (for the native procedures: BK.ns_sync)
@@ -3242,15 +3269,13 @@ end
 -- or {e = epoch} (see "Buckets").
 function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl, lock_check, offset, begin, after,
                      route)
+    M.fresh.read(begin, lock_check)
     local mv = BK.check_read(route)
     if mv then return mv end
-    -- First request of a stream: start the stream's transaction here (it
-    -- stays open after the call because the request carries a stream id).
-    if begin == true and not box.is_in_txn() then
-        box.begin(BEGIN_STREAM)
-    end
+    -- A first stream request retains the fresh transaction; an autocommit
+    -- barrier left none, so the existing memtx scan remains nonyielding.
     if lock_check == true then
-        -- An autocommit read is only linearizable on the current leader.
+        -- Refresh claims only after the request's quorum wait.
         lk_fresh()
         -- (and the tables held by a TRUNCATE or DROP TABLE, which the
         -- check below consults, are current: also for ts_select)
@@ -3258,6 +3283,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
     end
     local space = box.space[space_id]
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
+    M.fresh.space(space)
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
@@ -3339,17 +3365,16 @@ local function keys_locked(space_id, index_id, idx, kd, keys, since)
 end
 
 function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin, after, route)
+    M.fresh.read(begin, lock_check)
     local mv = BK.check_read(route)
     if mv then return mv end
-    if begin == true and not box.is_in_txn() then
-        box.begin(BEGIN_STREAM)
-    end
     if lock_check == true then
         lk_fresh()
         fence_fresh()   -- (the tables held by a TRUNCATE or DROP TABLE)
     end
     local space = box.space[space_id]
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
+    M.fresh.space(space)
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     if lock_check ~= true then return {OK, keys_scan(idx, keys, limit, after)} end
@@ -3395,6 +3420,7 @@ function PG.join_plan(reads)
            or type(r[3]) ~= 'table' or #r[3] == 0 then return nil, bad end
         local sp = box.space[r[1]]
         if sp == nil then return nil, (M.engine.missing_space(r[1]) or {'error', 1146, 'no such space ' .. tostring(r[1])}) end
+        M.fresh.space(sp)
         local idx = sp.index[0]
         if idx == nil then return nil, {'error', 1412, STALE_DEF_MSG} end
         if #r[3] > #idx.parts then return nil, bad end
@@ -3464,11 +3490,12 @@ function PG.join_scan(plan)
 end
 
 function tarn_select_join(reads, lock_check, begin, route)
-    local mv = BK.check_read(route)
-    if mv then return mv end
     if type(lock_check) ~= 'boolean' or type(begin) ~= 'boolean' or (lock_check and begin) then
         return {'error', 1210, 'Incorrect arguments to tarn_select_join'}
     end
+    M.fresh.read(begin, lock_check)
+    local mv = BK.check_read(route)
+    if mv then return mv end
     if lock_check then
         lk_fresh()
         -- A restart or new leader may know no cached DDL holds yet.
@@ -3477,9 +3504,6 @@ function tarn_select_join(reads, lock_check, begin, route)
     end
     local plan, bad = PG.join_plan(reads)
     if bad then return bad end
-    if begin and not box.is_in_txn() then
-        box.begin(BEGIN_STREAM)
-    end
     if not lock_check then
         if not box.is_in_txn() then return {'error', 1210, 'tarn_select_join needs a stream transaction'} end
         return {OK, PG.join_scan(plan)}
@@ -3613,17 +3637,16 @@ local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse
 end
 
 function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin, route)
+    M.fresh.read(begin, lock_check)
     local mv = BK.check_read(route)
     if mv then return mv end
-    if begin == true and not box.is_in_txn() then
-        box.begin(BEGIN_STREAM)
-    end
     if lock_check == true then
         lk_fresh()
         fence_fresh()   -- (the tables held by a TRUNCATE or DROP TABLE)
     end
     local space = box.space[space_id]
     if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
+    M.fresh.space(space)
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
@@ -4019,6 +4042,7 @@ end
 -- wb: the bucket of each write (see "Buckets"); a PREPARE refused for a
 -- bucket answers 'moved' (a NO vote, with a tombstone like any).
 function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen, fence, wb, mver)
+    if box.is_in_txn() then M.fresh.stream() end
     writable()
     rpoints, rranges = rpoints or {}, rranges or {}
     local function vote_no(code, msg, status)
@@ -4356,6 +4380,7 @@ end
 
 -- Status reads for recovery run on the leader only: a replica may lag.
 function tarn_part_status(txid)
+    M.fresh.barrier(nil, true)
     writable()
     local p = box.space._tarn_part:get{txid}
     return p and p.state or 'none'
@@ -4363,6 +4388,7 @@ end
 
 -- Batched form for garbage collection: statuses in the order of txids.
 function tarn_part_statuses(txids)
+    M.fresh.barrier(nil, true)
     writable()
     local out = {}
     for i, id in ipairs(txids) do
@@ -4374,12 +4400,14 @@ end
 
 -- Decision-shard record operations (TarnCommit: rec[t]).
 function tarn_txn_status(txid)
+    M.fresh.barrier(nil, true)
     writable()
     local r = box.space._tarn_txn:get{txid}
     return r and r.status or 'none', r and r.parts or nil
 end
 
 function tarn_txn_statuses(txids)
+    M.fresh.barrier(nil, true)
     writable()
     local out = {}
     for i, id in ipairs(txids) do
@@ -5842,6 +5870,7 @@ end
 
 -- The jobs in progress: {{owner, age, kind, space, phase, ver, a, names}, ...}
 function tarn_jobs()
+    M.fresh.barrier()
     local out, seen = {}, {}
     for _, t in box.space._tarn_meta:pairs({JOB}, {iterator = 'GE'}) do
         if t.key:sub(1, #JOB) ~= JOB then break end
@@ -5895,6 +5924,7 @@ function tarn_truncate(name)
 end
 
 function BK.catalog_snapshot()
+    M.fresh.barrier()
     box.begin{txn_isolation = 'read-confirmed'}
     local ok, out = pcall(function()
         local rows = {}
@@ -5909,6 +5939,7 @@ function BK.catalog_snapshot()
                 s = box.space[t.name] -- legacy entries without an explicit ID
                 sid = s and s.id or 0
             end
+            if s ~= nil then M.fresh.space(s) end
             local bix = s and s.index.bucket_id and s.index.bucket_id.id or box.NULL
             rows[#rows + 1] = {t.name, sid, t.def.json or '', bix}
         end
@@ -5961,6 +5992,7 @@ function tarn_db_drop(name)
 end
 
 function tarn_db_list()
+    M.fresh.barrier()
     local out = {}
     for _, t in box.space._tarn_meta:pairs({'db:'}, {iterator = 'GE'}) do
         if t.key:sub(1, 3) ~= 'db:' then break end
@@ -5970,6 +6002,7 @@ function tarn_db_list()
 end
 
 function tarn_catalog_version()
+    M.fresh.barrier()
     local r = box.space._tarn_meta:get{'ctr:catalog_version'}
     return r and r.value or 0
 end
@@ -6223,6 +6256,7 @@ end
 -- report once per change: reading 15,000 buckets from _tarn_buckets takes
 -- about 11 ms, and SQL servers read the map after every move.
 function tarn_buckets()
+    M.fresh.barrier()
     writable()
     BK.fresh()
     if BK.count == 0 then return {OK, 0, #BK.spaces(false)} end
@@ -6302,6 +6336,7 @@ end
 -- the page before): {'ok', {{space_id, tuple}, ...}, next} (next: nil at
 -- the end). Read-confirmed: only rows a quorum has.
 function tarn_bucket_rows(b, after)
+    M.fresh.barrier()
     writable()
     yield_point('bucket_rows')   -- (tests: a move held while it copies)
     local start, pos
@@ -6311,6 +6346,7 @@ function tarn_bucket_rows(b, after)
     local ok, nxt = pcall(function()
         for _, sid in ipairs(BK.spaces()) do
             if start == nil or sid >= start then
+                M.fresh.space(box.space[sid])
                 local idx = box.space[sid].index.bucket_id
                 local opts = {iterator = 'EQ'}
                 if sid == start and pos ~= nil and pos ~= box.NULL then opts.after = pos end
@@ -6460,6 +6496,7 @@ end
 -- {'lost'} when the notes are not that generation's (a leader change):
 -- the move copies the bucket again.
 function tarn_bucket_delta(b, move, gen, from)
+    M.fresh.barrier()
     writable()
     BK.fresh()
     local s = BK.state[b]
@@ -6473,6 +6510,7 @@ function tarn_bucket_delta(b, move, gen, from)
         while i <= #tr.list and not PG.full(n, bytes) do
             local k = tr.list[i]
             local sp = box.space[k[1]]
+            if sp ~= nil then M.fresh.space(sp) end
             local t = sp ~= nil and sp:get(k[2]) or nil
             n = n + 1
             if t ~= nil then
@@ -6603,6 +6641,7 @@ end
 
 -- {'ok', ver, shards}: this shard's record of the cluster's shards.
 function tarn_members()
+    M.fresh.barrier()
     writable()
     BK.fresh()
     return {OK, BK.members.ver or 0, BK.members.shards or {}}
@@ -6634,6 +6673,7 @@ end
 -- itself its decision records in progress. A shard leaves the cluster once
 -- every shard reports 0 after it began to leave (see BK.prep).
 function tarn_shard_records(id)
+    M.fresh.barrier()
     writable()
     local n = BK.prep[id] or 0
     for _, p in box.space._tarn_part.index.state:pairs({'prepared'}, {iterator = 'EQ'}) do
@@ -6708,6 +6748,7 @@ end
 -- the SQL servers keep its fields; `at` is when it was last written, by
 -- this shard's clock): {'ok', record, age in seconds} or {'ok', nil}.
 function tarn_rebalance_get()
+    M.fresh.barrier()
     writable()
     local t = box.space._tarn_meta:get{'rebalance'}
     if t == nil then return {OK, box.NULL} end
@@ -6746,8 +6787,10 @@ end
 -- its catalog entry and its space as it is (id, engine, format, indexes),
 -- and the same of its global index spaces.
 function tarn_schema_export()
+    M.fresh.barrier()
     writable()
     local function space_of(sp)
+        M.fresh.space(sp)
         local idx = {}
         for id, x in pairs(sp.index) do
             if type(id) == 'number' then
@@ -7012,6 +7055,7 @@ tarn_lock_range = M.engine.rpc_errors(tarn_lock_range, pl_failed)
 tarn_estimate = M.engine.rpc_errors(tarn_estimate)
 function tarn_engine_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
+    M.fresh.barrier()
     return M.engine.decision(name, old_id, new_id, ver, gen)
 end
 function tarn_engine_counter_alias(old_id, new_id) return M.engine.counter_alias(old_id, new_id) end
@@ -7020,7 +7064,10 @@ function tarn_lazy_bootstrap(name, a, gen)
     if type(a.engine_change) == 'table' then return M.engine.run('bootstrap', name, a, gen) end
     return UIX.alter_serial(M.lazy.bootstrap, 'bootstrap', name, a, gen)
 end
-function tarn_lazy_bootstrap_status(name, a, gen) return M.lazy.bootstrap_status(name, a, gen) end
+function tarn_lazy_bootstrap_status(name, a, gen)
+    M.fresh.barrier()
+    return M.lazy.bootstrap_status(name, a, gen)
+end
 function tarn_lazy_ready(name, a, gen)
     a.ver = a.ver or a.def.ver or 0
     if type(a.engine_change) == 'table' then return M.engine.run('ready', name, a, gen) end
@@ -7028,7 +7075,10 @@ function tarn_lazy_ready(name, a, gen)
 end
 function tarn_lazy_capabilities() return M.lazy.capabilities() end
 function tarn_lazy_apply(assignments, route) return M.lazy.apply(assignments, route) end
-function tarn_lazy_frontiers(buckets, route) return M.lazy.frontiers(buckets, route) end
+function tarn_lazy_frontiers(buckets, route)
+    M.fresh.barrier()
+    return M.lazy.frontiers(buckets, route)
+end
 function tarn_lazy_select(gen, key, iterator, limit, after, route)
     return M.lazy.select(gen, key, iterator, limit, after, route)
 end
