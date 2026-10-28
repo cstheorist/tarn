@@ -74,6 +74,7 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
+| `NativeKeyBatch` | a bounded native full-primary-key batch returns the complete ordered filter-map of one memtx image, checking write claims even on missing keys, or hands the whole request back |
 | `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
@@ -980,6 +981,50 @@ tla/check.sh Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAf
 The model is small on purpose: it is the contract every native procedure
 that writes must keep, whatever it checks before.
 
+### Bounded native primary-key batches (issue #141)
+
+`NativeKeyBatch.tla` checks a local read refinement, not a new commit
+protocol. The request `a, b, a` includes a duplicate and an initially
+missing key. A writer can insert the missing key or atomically change
+both keys, with a prepared write-claim interval before publication.
+A completed batch must preserve request order and duplicates, omit only
+missing rows, inspect every requested key, and equal the filter-map of
+one confirmed image. A commit acknowledged before the batch starts must
+be visible. Both admission and final validation include write claims on
+**all requested keys**, including misses; read-only range claims do not
+block snapshot reads.
+
+The native subset is memtx, autocommit with no ambient transaction,
+index 0 and full primary keys, with a complete first page under bounded
+work, row and stored-tuple-byte caps. Every inspected key consumes work,
+even a miss. Before each key, all three budgets must still have room;
+a present tuple is checked against the byte cap before appending it.
+Equality after the final key can complete, but a clipped batch hands
+back the whole request rather than certifying a partial result. The
+model includes both complete and clipped budgets. Streams, Vinyl,
+prefixes and continuations retain the existing Lua path.
+Capability negotiation only selects a dispatch path; its constant reply
+does not certify data, readiness, leadership, or any read guard.
+
+The one-image argument assumes the native memtx get/check interval does
+not yield, as in `TarnCommit`'s `SnapshotRead`/`DirectReadAtomic` premise.
+Actual C lookup/MessagePack correspondence, parser arity, no-yield CAPI
+behavior and the freshness of routing, readiness, lock and DDL mirrors
+remain runtime refinement obligations. This model does not prove those
+primitives, arbitrary predicates, or full distributed serializability.
+
+```sh
+tla/check.sh NativeKeyBatch Bug_KeyBatchMissingClaim \
+  Bug_KeyBatchMixedSnapshots Bug_KeyBatchTruncatedComplete
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `NativeKeyBatch` | 105 | 9 | passes |
+| `Bug_KeyBatchMissingClaim` | 101 | 7 | violates `NoMissingClaim` |
+| `Bug_KeyBatchMixedSnapshots` | 174 | 9 | violates `OneSnapshot` |
+| `Bug_KeyBatchTruncatedComplete` | 46 | 4 | violates `FullBatch` |
+
 ### Online engine copying and publication (issue #57)
 
 `EngineCopy.tla` checks a local copy certificate, composed with
@@ -1296,13 +1341,48 @@ deletions and WAL. The shorter retention and zero clock-skew allowance are
 confined to these owned single-host fixtures. This is a placement workload;
 it does not establish an RF3 performance or operational advantage.
 
+### Recovery and garbage collection move on (issue #129)
+
+Recovery and garbage collection go through records in order: undecided
+transactions oldest first, expired records by expiry. Some of them cannot
+be acted on while a shard is down: a transaction that needs it cannot be
+resolved, and some records cannot be collected. `RecoveryFairness.tla`
+models the order of the passes (`lua/tarn.lua`, "Scheduling"), not what
+they do with a record, which `TarnCommit.tla` models:
+- a pass looks at no more than `Scan` records, and acts on no more than
+  `Batch` of those it may act on now (`recovery_batch`, and five times as
+  many; `gc_batch * 4`, and `gc_batch * 40`);
+- it continues after the last record the previous pass looked at, and a
+  pass that reaches the last record starts the next lap from the first;
+- a record it could not act on waits `Backoff` passes.
+
+The stuck records are any set of them: TLC tries each. `BoundedWait`:
+within ceil(N / Batch) + 1 passes, every record that is not stuck has been
+acted on. `BugPrefix` starts every pass from the first record, as both did
+before: TLC finds stuck records first that keep the others from being acted
+on (as many as a pass looks at, and no pass looks past them).
+
+```sh
+tla/check.sh Fairness Bug_FairnessPrefix
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `Fairness` | 2048 | 8 | passes |
+| `Bug_FairnessPrefix` | 1281 | 6 | violates `BoundedWait` |
+
+Both have eight records, `Batch` = 2, `Scan` = 3 and `Backoff` = 2.
+`lua/test/recovery_faults.sh` checks the same on three shards, one of them
+stopped, with 250 transactions that need it on each of the other two
+(`recovery_batch` is 200) and more records than a garbage-collection pass
+looks at.
+
 ### Configuration counts
 
-The default list contains 196 configurations, including 141 expected
-broken/trade-off outcomes. The 203 generated configurations reproduce from
-`gen_cfgs.sh`; six additional grouped-read and decision-placement
-configurations are maintained directly, for 209 total. Explicit check
-arguments override the default list.
+The default list contains 202 configurations, including 145 expected
+broken/trade-off outcomes. The 209 generated configurations reproduce from
+`gen_cfgs.sh`; six grouped-read and decision-placement configurations are
+maintained directly, for 215 total. Explicit check arguments override the default list.
 
 ## Verus proofs
 
@@ -1310,6 +1390,13 @@ arguments override the default list.
 builds it with the specifications and proofs erased, and the server uses the
 result. Verus proves:
 
+* **Native batch budgets** (`batch.rs`): `can_step` permits the next lookup
+  exactly while work, rows and bytes each have room. `step` either rejects
+  the whole native attempt or charges one work unit, one row for a present
+  tuple and exactly its stored size, without overflow or exceeding any
+  cap. Missing keys still charge work; a final tuple may exactly exhaust
+  a cap, while another key must hand back. This proves budget arithmetic,
+  not native tuple lookup, MessagePack framing or snapshot isolation.
 * **Routing** (`route.rs`): the CRC-32C used for bucket hashing equals a
   bitwise specification for every input; bucket and shard numbers are in
   range; the bucket-to-shard map of a new cluster is monotone and onto; the
@@ -1368,7 +1455,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 134 verified, 0 errors
+# verification results:: 137 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with
@@ -1381,7 +1468,7 @@ cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for; the lock checks of each, key by key, with the keys in ranges and the ranges' bounds compared as the Lua checks compare them (collations, prefixes, NULLs; `native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures. The shards run with `TARN_CHECK_LOCKS`: after each change of the lock index, the Lua module compares the native module's copy of it with it, and a difference fails the run |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection (also past transactions that need a stopped shard: `recovery_faults.sh`), refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for; the lock checks of each, key by key, with the keys in ranges and the ranges' bounds compared as the Lua checks compare them (collations, prefixes, NULLs; `native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures. The shards run with `TARN_CHECK_LOCKS`: after each change of the lock index, the Lua module compares the native module's copy of it with it, and a difference fails the run |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 967 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |

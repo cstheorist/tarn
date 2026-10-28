@@ -2,10 +2,81 @@
 //! proofs cover the source; these check the compiled artifact on the
 //! boundary cases the proofs are about.
 
+use tarn_verified::batch::{self, Budget};
 use tarn_verified::coord::{self, Decision, PartState, RecStatus, Step, Vote};
 use tarn_verified::mp;
 use tarn_verified::route;
 use tarn_verified::wire;
+
+#[test]
+fn batch_budget_preserves_misses_and_exact_last_tuple() {
+    let mut b = Budget {
+        work: 0,
+        rows: 0,
+        bytes: 0,
+    };
+    // The input represents A, missing B, A: count both duplicates and the
+    // missing lookup, but no row or bytes for B.
+    for (present, size) in [(true, 7), (false, u64::MAX), (true, 7)] {
+        assert!(batch::can_step(b, 3, 2, 14));
+        b = batch::step(b, present, size, 3, 2, 14).unwrap();
+    }
+    assert_eq!(
+        b,
+        Budget {
+            work: 3,
+            rows: 2,
+            bytes: 14
+        }
+    );
+    assert!(!batch::can_step(b, 3, 2, 14));
+    assert_eq!(batch::step(b, false, 0, 3, 2, 14), None);
+}
+
+#[test]
+fn batch_budget_refuses_each_exhausted_resource_before_a_miss() {
+    for (work, rows, bytes) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+        let b = Budget { work, rows, bytes };
+        assert!(!batch::can_step(b, 1, 1, 1));
+        assert_eq!(batch::step(b, false, 0, 1, 1, 1), None);
+    }
+    let empty = Budget {
+        work: 0,
+        rows: 0,
+        bytes: 0,
+    };
+    for (w, r, b) in [(0, 1, 1), (1, 0, 1), (1, 1, 0)] {
+        assert!(!batch::can_step(empty, w, r, b));
+        assert_eq!(batch::step(empty, true, 0, w, r, b), None);
+    }
+}
+
+#[test]
+fn batch_budget_checks_large_sizes_without_overflow_or_partial_charge() {
+    let b = Budget {
+        work: u64::MAX - 1,
+        rows: u64::MAX - 1,
+        bytes: u64::MAX - 1,
+    };
+    assert_eq!(batch::step(b, true, 2, u64::MAX, u64::MAX, u64::MAX), None);
+    assert_eq!(batch::step(b, true, u64::MAX, u64::MAX, u64::MAX, u64::MAX), None);
+    assert_eq!(
+        batch::step(b, true, 1, u64::MAX, u64::MAX, u64::MAX),
+        Some(Budget {
+            work: u64::MAX,
+            rows: u64::MAX,
+            bytes: u64::MAX
+        }),
+    );
+    assert_eq!(
+        batch::step(b, false, u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+        Some(Budget {
+            work: u64::MAX,
+            rows: u64::MAX - 1,
+            bytes: u64::MAX - 1
+        }),
+    );
+}
 
 #[test]
 fn lenenc_boundaries_round_trip() {

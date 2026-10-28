@@ -163,6 +163,7 @@ async fn keys_pages(
     pages: Pages,
     reads: &std::sync::atomic::AtomicU64,
     route: &Route,
+    native_batch: bool,
 ) -> SqlResult<Vec<Row>> {
     let mut out = Vec::new();
     let mut after: Option<Vec<u8>> = None;
@@ -179,6 +180,7 @@ async fn keys_pages(
             begin,
             after.as_deref(),
             route,
+            native_batch,
         )
         .await?;
         begin = false;
@@ -485,6 +487,7 @@ pub(crate) async fn fetch_keys(
     let pages = mode.pages();
     let reads = &cluster.stats.storage_reads;
     let in_stream = matches!(mode, ReadMode::Txn(_));
+    let native_batch = cluster.cfg.native_batch_reads;
     let mut routes = BTreeMap::new();
     for (s, (_, bs)) in &per_shard {
         routes.insert(*s, read_route(&map, in_stream, *s, bs)?);
@@ -497,7 +500,23 @@ pub(crate) async fn fetch_keys(
             }
             for (s, (ks, _)) in &per_shard {
                 let client = cluster.shards[*s].client(cluster).await?;
-                rows.extend(keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, reads, &routes[s]).await?);
+                rows.extend(
+                    keys_pages(
+                        &client,
+                        0,
+                        false,
+                        t,
+                        idx.id,
+                        ks,
+                        limit,
+                        true,
+                        pages,
+                        reads,
+                        &routes[s],
+                        native_batch,
+                    )
+                    .await?,
+                );
             }
         }
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
@@ -506,7 +525,21 @@ pub(crate) async fn fetch_keys(
                 let client = cluster.shards[*s].client(cluster).await?;
                 let route = &routes[s];
                 futs.push(async move {
-                    keys_pages(&client, 0, false, t, idx.id, ks, limit, true, pages, reads, route).await
+                    keys_pages(
+                        &client,
+                        0,
+                        false,
+                        t,
+                        idx.id,
+                        ks,
+                        limit,
+                        true,
+                        pages,
+                        reads,
+                        route,
+                        native_batch,
+                    )
+                    .await
                 });
             }
             for r in futures::future::join_all(futs).await {
@@ -520,7 +553,7 @@ pub(crate) async fn fetch_keys(
                 let route = &routes[s];
                 futs.push(async move {
                     keys_pages(
-                        &st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages, reads, route,
+                        &st.client, st.id, st.begin, t, idx.id, ks, limit, false, pages, reads, route, false,
                     )
                     .await
                 });

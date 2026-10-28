@@ -1,0 +1,127 @@
+{
+  "fixture": "[TMP]/tarn-native-batch-2par5_uu",
+  "kind": "prepared",
+  "production_source": "90e174a8bf0687c7b374bfacbb522bee5a626a9d",
+  "harness_commit": "2641f69",
+  "actual_harness_sha256": "40aaca8f0f24f1a62706c02009700ec635443f7d5499a783425dd8fca518f932",
+  "module_sha256": "8b9700a9e91328dffb1e70af4d889ef9964d715c04d61b46abfe59b25632887b",
+  "client_sha256": "b6d0665bf6a9796aa8133cd08ffb8bd8c1308028333f72b8f3ba702c23b71564",
+  "accepted_phases": 10,
+  "operations": 91043,
+  "native_served": 47893,
+  "handbacks": 0,
+  "cleanup": {
+    "errors": [],
+    "owned_services_absent": true,
+    "data_removed": true,
+    "archive_sha256": "6a04ca1300693d43501a9c538dcfc993a603e08341dc68af1e160c85ec76b831",
+    "files": 3,
+    "frozen_files_unchanged": 126
+  },
+  "oom_killed": false,
+  "manifest_sha256": "f391cc8c691f66ea51bb3046c6cd95aa8593f9c05e23c77cbc6e65cd5a905d1a",
+  "label": "disjoint prepared-W / busy lock index, not overlapping contention throughput",
+  "rows": 100000,
+  "payload_bytes": 64,
+  "batch": 32,
+  "workers": 1,
+  "trials": 5,
+  "seconds": 3,
+  "warmup": 0.5,
+  "CPU_native_over_lua": [
+    0.5546288982311023,
+    0.5953119493200257,
+    0.5988979212980309,
+    0.536106727991444,
+    0.5699912609569427
+  ],
+  "CPU_ratio_median": 0.5699912609569427,
+  "pair_order": [
+    [
+      "lua",
+      "native"
+    ],
+    [
+      "native",
+      "lua"
+    ],
+    [
+      "lua",
+      "native"
+    ],
+    [
+      "native",
+      "lua"
+    ],
+    [
+      "lua",
+      "native"
+    ]
+  ],
+  "claim_witness": "genuine public PREPARE dshard1/parts{1}, insertion2*rows+1 outsidehit/missdomain; RC before/after EACHphase prepared/staging,2Wlocks+baseabsent; binary key bytes retained base64",
+  "refusals": [
+    {
+      "key": "existing",
+      "mode": "lua",
+      "receipt": {
+        "mode": "lua",
+        "reply": [
+          "conflict",
+          1213,
+          "row locked by prepared transaction tarn-native-batch-2par5_uu-existing"
+        ],
+        "total_ns": 1002617584
+      }
+    },
+    {
+      "key": "existing",
+      "mode": "native",
+      "receipt": {
+        "first_ns": 97541,
+        "mode": "native",
+        "native": [
+          "lua"
+        ],
+        "reply": [
+          "conflict",
+          1213,
+          "row locked by prepared transaction tarn-native-batch-2par5_uu-existing"
+        ],
+        "total_ns": 1001261917
+      }
+    },
+    {
+      "key": "missing",
+      "mode": "lua",
+      "receipt": {
+        "mode": "lua",
+        "reply": [
+          "conflict",
+          1213,
+          "row locked by prepared transaction tarn-native-batch-2par5_uu-missing"
+        ],
+        "total_ns": 1002795417
+      }
+    },
+    {
+      "key": "missing",
+      "mode": "native",
+      "receipt": {
+        "first_ns": 128084,
+        "mode": "native",
+        "native": [
+          "lua"
+        ],
+        "reply": [
+          "conflict",
+          1213,
+          "row locked by prepared transaction tarn-native-batch-2par5_uu-missing"
+        ],
+        "total_ns": 1006332751
+      }
+    }
+  ],
+  "refusal_scope": "public net.box loopback CALL within EVAL; monotonic ns excludes external observer roundtrip, single diagnostic per shape/path; not external-tail/capacity claim",
+  "no_effects": "existing/missing committed base image unchanged, preparedclaim remains through eachrefusal; CASownstaging->aborted+ownabort on all3promises,finalclaims0; saved/recovery_after2 restored from90, maxage120/lockwait1unchanged",
+  "adapter_negative": "separate2q9yowl6 setup-only invalidUTF8 lock key JSON failure beforeANYtiming; retainedofflineWAL/logs, correctedexactkeybase64witness; no productfailure claim"
+}
