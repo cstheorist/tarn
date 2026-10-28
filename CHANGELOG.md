@@ -500,6 +500,24 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Recovery and garbage collection could be held up by what they cannot
+  resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
+  shard was down, 200 undecided transactions that needed it, the first ones
+  each recovery pass took, kept every newer one from being resolved; and
+  records that could not be collected could fill garbage collection's scan
+  window. Each pass now continues where the previous one stopped,
+  `recovery_workers` fibers resolve transactions at once, and a
+  transaction or a shard that failed waits before it is tried again (up to
+  `recovery_backoff_max`). Garbage collection runs on its own fiber, with
+  its own budget (`gc_interval`, `gc_time_budget`). What recovery does
+  with a transaction, and what garbage collection may delete, are
+  unchanged. `tarn_info().recovery` reports the backlog, the age of its
+  oldest transaction, the shards in backoff and garbage collection's laps;
+  `stats.recovered` counts the participants recovery resolved (it counted
+  the attempts that did not raise). `tla/RecoveryFairness.tla` models the
+  order of the passes, and `lua/test/recovery_faults.sh` stops one of
+  three shards.
+
 - Database administration matches MariaDB affected-row counts and result
   metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
   CREATE DATABASE reports one row for a new database and zero for an
