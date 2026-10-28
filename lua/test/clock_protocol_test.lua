@@ -183,6 +183,18 @@ local success, failure = xpcall(function()
         local writer=c:eval('local sid=...;box.space[sid]:replace{3,8,1};return true',{sid},{is_async=true})
         await('actual synchronous pending write',function()return ev(leader,'return box.info.synchro.queue.len')>0 end,1)
         local id='clock-borrowed-timeout-'..engine
+        local validated,validation=pcall(st.call,st,'tarn_validate',
+            {id,{{sid,0,{1},1}},{},true},{timeout=2})
+        check(engine..' final validation prefix failure retains exact marked transaction',
+            not validated and type(validation)=='cdata' and validation.code~=0
+            and st:eval("return tostring(require('ffi').C.box_txn_id())")==original,
+            {error=tostring(validation),before=original})
+        local local_ok,local_error=pcall(st.call,st,'tarn_commit_local',
+            {id,{},{{sid,0,{1},1}},{}},{timeout=2})
+        check(engine..' zero-write local completion cannot bypass a failed final prefix',
+            not local_ok and type(local_error)=='cdata' and local_error.code~=0
+            and st:eval("return tostring(require('ffi').C.box_txn_id())")==original,
+            {error=tostring(local_error),before=original})
         local r=st:call('tarn_prepare',{id,1,{1},{},{{sid,0,{1},1}},{},clock.realtime()},{timeout=2})
         local same=st:eval("return box.is_in_txn() and tostring(require('ffi').C.box_txn_id())")
         check(engine..' failed child receipt barrier preserves borrowed transaction and creates no vote',

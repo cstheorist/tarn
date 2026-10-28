@@ -6,6 +6,7 @@
 -- shard 3 is a new one.
 local net = require('net.box')
 local json = require('json')
+local fiber = require('fiber')
 
 local S1, S2, S3 = os.getenv('S1'), os.getenv('S2'), os.getenv('S3')
 local opts = {user = 'tarn', password = 'tarn', wait_connected = 5}
@@ -44,8 +45,19 @@ local map = c[1]:call('tarn_buckets')
 local b = map[4][1][1]   -- the first bucket shard 1 owns
 for id = 1, 3 do c[1].space['test.mb']:replace{id, id, b} end
 local epoch = map[3]
+local function read_ready(i, required)
+    local deadline = fiber.clock() + 5
+    repeat
+        if c[i or 1]:eval([[local ids = ...
+            return tarn.clock.status().read_ready and (ids == nil or tarn.clock.check(ids) == nil)
+        ]], {required}) then return end
+        fiber.sleep(.01)
+    until fiber.clock() >= deadline
+    error('local read policy did not become ready after membership/role change')
+end
 
 print('the membership')
+read_ready(3)
 local r = c[3]:call('tarn_members')
 check('a shard without a membership record has version 0 and no shards',
       r[1] == 'ok' and r[2] == 0 and next(r[3]) == nil, r)
@@ -56,17 +68,20 @@ r = c[1]:call('tarn_members_set', {m1})
 check('a newer membership is recorded', r[1] == 'ok' and r[2] == 1, r)
 r = c[1]:call('tarn_members_set', {{ver = 0, shards = {}}})
 check('an older one is not', r[1] == 'ok' and r[2] == 1, r)
+read_ready()
 r = c[1]:call('tarn_members')
 check('... it reads back as recorded', r[1] == 'ok' and r[2] == 1 and #r[3] == 3 and r[3][3].id == 3
       and r[3][3].replicas[1] == S3 and r[3][3].state == 'active', r)
 r = c[1]:call('tarn_buckets')
 check("the shard's part of the bucket map names the version", r[1] == 'ok' and r[6] == 1, r)
 c[1]:eval('box.cfg{read_only = true} box.cfg{read_only = false}')   -- (a leader change: read again)
+read_ready()
 r = c[1]:call('tarn_buckets')
 check('... also after the shard read its state again', r[1] == 'ok' and r[6] == 1, r)
 
 print('requests routed with an older membership')
 local function sel(route)
+    read_ready()
     return c[1]:call('tarn_select', {sid, 0, {1}, 'EQ', 1, box.NULL, true, true, box.NULL, false, box.NULL, route})
 end
 r = sel({e = epoch, m = 0})
@@ -81,6 +96,7 @@ check('a read routed by its bucket is served', r[1] == 'ok' and #r[2] == 1, r)
 -- A stream that read row 1 as a read of every shard (rpoint without a
 -- bucket), then commits in one of the ways a transaction does.
 local function stream()
+    read_ready()
     local s = c[1]:new_stream()
     s:eval('tarn.fresh.begin_stream()')
     s:call('tarn_select', {sid, 0, {1}, 'EQ', 1, box.NULL, true, true, box.NULL, false, box.NULL, box.NULL})
@@ -164,6 +180,7 @@ check('... it owns none and moves none', r[1] == 'ok' and r[2] == map[2] and #r[
 r = c[3]:call('tarn_bucket_init', {map[2] + 1, {}})
 check('... and a second map is not made', r[1] == 'exists' and r[2] == map[2], r)
 r = c[3]:call('tarn_members_set', {m1})
+read_ready(3)
 check('it learns the membership', r[1] == 'ok' and r[2] == 1 and c[3]:call('tarn_buckets')[6] == 1, r)
 
 print('a shard that leaves')
@@ -172,6 +189,7 @@ local m2 = {ver = 2, shards = {{id = 1, replicas = {S1}, state = 'active'},
                                {id = 3, replicas = {S3}, state = 'draining'}}}
 r = c[1]:call('tarn_members_set', {m2})
 check('shard 3 is draining', r[1] == 'ok' and r[2] == 2, r)
+read_ready(1, {1, 2})
 local function prep(txid, dshard, id)
     return c[1]:call('tarn_prepare', {txid, dshard, {1, dshard}, {{'replace', sid, {id, id, b}}}, {}, {},
                                       require('fiber').time(), box.NULL, box.NULL, {b}, box.NULL})
@@ -189,6 +207,7 @@ local m3 = {ver = 3, shards = {{id = 1, replicas = {S1}, state = 'active'},
                                {id = 2, replicas = {S2}, state = 'active'},
                                {id = 3, replicas = {S3}, state = 'removed'}}}
 r = c[1]:call('tarn_members_set', {m3})
+read_ready()
 check('shard 3 is removed', r[1] == 'ok' and r[2] == 3 and c[1]:call('tarn_members')[3][3].state == 'removed', r)
 
 check('no locks or row locks left', c[1]:call('tarn_info').locks == 0 and c[1]:call('tarn_info').row_locks == 0)

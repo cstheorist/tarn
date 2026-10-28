@@ -64,7 +64,7 @@ if not native or native == '0' then
 end
 local info = c:call('tarn_info'); assert(info.native and info.native.ready == 1)
 local ns = require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-assert(ns.layout == 12 and require('ffi').sizeof('struct tarn_ns') == 392)
+assert(ns.layout == 13 and require('ffi').sizeof('struct tarn_ns') == 392)
 print('IDENTITY ' .. json.encode{version = box.info.version, layout = tonumber(ns.layout), native = info.native})
 local function census()
     return c:eval([[local f=require('ffi');local n=f.cast('struct tarn_ns *',box.func['tarn_storage.ts_state']:call())
@@ -211,9 +211,9 @@ local yes, err = xpcall(function()
             canon(allocs) == '["lua"]' and after_allocs.served == before_allocs.served
             and after_allocs.to_lua == before_allocs.to_lua + 1)
     end
-    c:eval("box.func['tarn_storage.ts_state']:call({13})")
+    c:eval("box.func['tarn_storage.ts_state']:call({14})")
     local compatible = pcall(native_read, {})
-    c:eval("box.func['tarn_storage.ts_state']:call({12})")
+    c:eval("box.func['tarn_storage.ts_state']:call({13})")
     check('capability discovery does not bypass the existing module-layout guard', not compatible)
 end, debug.traceback)
 -- Restore only this fixture's state; no shared services or hooks are used.

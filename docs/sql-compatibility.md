@@ -274,10 +274,19 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   through the plan cache, as a text query would be.
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
   VARIABLES | STATUS | WARNINGS | ERRORS | ENGINES | COLLATION | CHARACTER SET |
-  PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
+  PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters) and `SHOW TARN RPCS`
+  (cached bounded storage-request admission and connection observations).
   `SHOW WARNINGS` lists the last statement's warnings and notes, whose number
   the OK packet and `@@warning_count` report; the only ones Tarn raises are
   those of the [table tree](#table-trees) checks.
+* `EXPLAIN FORMAT=JSON` for physical SELECT/INSERT/UPDATE/DELETE plans,
+  including binary prepared statements. The one-column MySQL result contains
+  Tarn routing constraints, colocation reasons and potential global-index
+  participants; its JSON fields are engine-specific. `SHOW TARN PLAN FOR`
+  diagnoses unbound prepared statements and `SHOW TARN QUERIES` reports
+  bounded completed-query observations. Neither executes the diagnosed
+  query. ANALYZE, other plan formats and unsupported complex shapes fail
+  explicitly. See [query plans and fanout](operations.md#query-plans-and-fanout).
 * `information_schema.TABLES`, with MySQL 8's columns: one row per table
   (`TABLE_TYPE` `BASE TABLE`, `ENGINE` memtx or vinyl, `TABLE_COMMENT`) and
   one for itself (`SYSTEM VIEW`). Sizes, row counts and times are NULL. It

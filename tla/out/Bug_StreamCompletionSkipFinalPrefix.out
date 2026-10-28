@@ -1,0 +1,183 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 117 and seed -7252345283926871638 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 63859] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue130-completion-22ept4zn/registered/StrongStreamCompletion.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2115876325883304844/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module StrongStreamCompletion
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module StrongStreamCompletion
+Starting... (2026-10-28 16:59:39)
+Computing initial states...
+Computed 2 initial states...
+Finished computing initial states: 4 distinct states generated at 2026-10-28 16:59:39.
+Error: Invariant NoFracturedCommit is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ wal = [A |-> 0, B |-> 0, C |-> 0]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "idle", replies |-> {}, max |-> 0, ackAtStart |-> FALSE]
+/\ healed = FALSE
+/\ r = [ phase |-> "start",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> FALSE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 2,
+  gotY |-> 2,
+  outcome |-> "none" ]
+/\ y = 0
+/\ confirmed = 0
+/\ acked = FALSE
+
+State 2: <ReadX line 45, col 5 to line 48, col 61 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 0, C |-> 0]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "idle", replies |-> {}, max |-> 0, ackAtStart |-> FALSE]
+/\ healed = FALSE
+/\ r = [ phase |-> "first",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 2,
+  outcome |-> "none" ]
+/\ y = 0
+/\ confirmed = 0
+/\ acked = FALSE
+
+State 3: <Store("B") line 51, col 5 to line 53, col 59 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 1, C |-> 0]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "idle", replies |-> {}, max |-> 0, ackAtStart |-> FALSE]
+/\ healed = FALSE
+/\ r = [ phase |-> "first",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 2,
+  outcome |-> "none" ]
+/\ y = 0
+/\ confirmed = 0
+/\ acked = FALSE
+
+State 4: <Store("C") line 51, col 5 to line 53, col 59 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 1, C |-> 1]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "idle", replies |-> {}, max |-> 0, ackAtStart |-> FALSE]
+/\ healed = FALSE
+/\ r = [ phase |-> "first",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 2,
+  outcome |-> "none" ]
+/\ y = 0
+/\ confirmed = 0
+/\ acked = FALSE
+
+State 5: <AckWriter line 56, col 5 to line 58, col 54 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 1, C |-> 1]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "idle", replies |-> {}, max |-> 0, ackAtStart |-> FALSE]
+/\ healed = FALSE
+/\ r = [ phase |-> "first",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 2,
+  outcome |-> "none" ]
+/\ y = 1
+/\ confirmed = 0
+/\ acked = TRUE
+
+State 6: <ReadY line 61, col 5 to line 63, col 61 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 1, C |-> 1]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "idle", replies |-> {}, max |-> 0, ackAtStart |-> FALSE]
+/\ healed = FALSE
+/\ r = [ phase |-> "final",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 1,
+  outcome |-> "none" ]
+/\ y = 1
+/\ confirmed = 0
+/\ acked = TRUE
+
+State 7: <StartFence line 70, col 5 to line 74, col 58 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 1, C |-> 1]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "skipped", replies |-> {}, max |-> 0, ackAtStart |-> TRUE]
+/\ healed = FALSE
+/\ r = [ phase |-> "validate",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 1,
+  outcome |-> "none" ]
+/\ y = 1
+/\ confirmed = 0
+/\ acked = TRUE
+
+State 8: <Validate line 109, col 5 to line 113, col 61 of module StrongStreamCompletion>
+/\ wal = [A |-> 0, B |-> 1, C |-> 1]
+/\ net = {<<"A", "A">>, <<"B", "B">>, <<"B", "C">>, <<"C", "B">>, <<"C", "C">>}
+/\ b = [phase |-> "skipped", replies |-> {}, max |-> 0, ackAtStart |-> TRUE]
+/\ healed = FALSE
+/\ r = [ phase |-> "done",
+  tx |-> 1,
+  entryTerm |-> 1,
+  observedTerm |-> 1,
+  hasRead |-> TRUE,
+  trackX |-> 0,
+  invalid |-> FALSE,
+  gotX |-> 0,
+  gotY |-> 1,
+  outcome |-> "commit" ]
+/\ y = 1
+/\ confirmed = 0
+/\ acked = TRUE
+
+372 states generated, 196 distinct states found, 66 states left on queue.
+The depth of the complete state graph search is 8.
+Finished in 00s at (2026-10-28 16:59:39)
+Trace exploration spec path: ./StrongStreamCompletion_TTrace_1793221179.tla

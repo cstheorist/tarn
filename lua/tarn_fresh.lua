@@ -3,6 +3,7 @@
 -- and settles synchronous transactions. We then use confirmed visibility
 -- for either engine; direct LINEARIZABLE Vinyl access is unsupported.
 local ffi = require('ffi')
+local fiber = require('fiber')
 ffi.cdef[[
 int box_txn_set_isolation(uint32_t level);
 int64_t box_txn_id(void);
@@ -208,6 +209,27 @@ function M.new(c)
         elseif first == true then F.begin_stream()
         elseif checked == true then F.barrier()
         else unavailable('stream transaction no longer exists') end
+    end
+    -- Final validation needs a current prefix, independently of the first
+    -- snapshot's proof: an isolated former leader may not yet know a newer
+    -- term or the writes ACKed by its successor. Never refresh this caller's
+    -- isolation/read view. A separate fiber owns only an empty barrier.
+    function F.fence_stream()
+        F.stream()
+        F.clock_check()
+        local mode, original = F.controls(), current()
+        if mode ~= 2 then return end
+        local child = fiber.new(function() F.barrier(); return true end)
+        child:set_joinable(true)
+        local ok, result = child:join()
+        if not ok then error(result) end
+        c.writable()
+        if current() ~= original or F.ok(original) ~= 1 then
+            unavailable('final prefix lost the original stream transaction')
+        end
+        F.clock_check()
+        F.controls()
+        c.writable()
     end
     return F
 end

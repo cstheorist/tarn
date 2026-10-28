@@ -331,7 +331,20 @@ function M.new(c)
     -- Finishing an already decided operation must never be gated on health.
     function C.now()
         local w = sample()
-        return math.max(finite(w) and w or (last_wall or 0), C.high)
+        return math.max(finite(w) and w or 0, last_wall or 0,
+                        policy and policy.created_wall or 0, C.high)
+    end
+    -- One timestamp/horizon sample, including history carried by another
+    -- leader. Decided completion must preserve that receipt even when this
+    -- node's clock is unhealthy and its local floors predate the receipt.
+    -- No health check, yield or caller transaction ownership is involved.
+    function C.record_time(previous)
+        local p = policy or cfg() or {max_age = 120, skew = 60}
+        local t = C.now()
+        if previous ~= nil then t = math.max(t, previous.ts) end
+        local expires = t + p.max_age + 2 * p.skew
+        if previous ~= nil then expires = math.max(expires, previous.expires) end
+        return t, expires
     end
     function C.expiry()
         local p = policy or cfg() or {max_age = 120, skew = 60}

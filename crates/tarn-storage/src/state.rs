@@ -10,7 +10,7 @@
 use crate::locks;
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 12;
+pub const LAYOUT: u32 = 13;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;

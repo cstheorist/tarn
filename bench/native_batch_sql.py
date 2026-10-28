@@ -114,7 +114,7 @@ def phase(args, root, number, trial, mode, batch, shape, workers, pymysql):
         assert not errors, errors
         b,a = record["before"],record["after"]
         assert b["uuid"]==a["uuid"] and b["pid"]==a["pid"], "storage restarted"
-        assert b["native_layout"]==a["native_layout"]==12 and b["native_size"]==a["native_size"]==392
+        assert b["native_layout"]==a["native_layout"]==13 and b["native_size"]==a["native_size"]==392
         assert b["test_hooks"] is False and a["test_hooks"] is False
         assert b["jit_on"] and a["jit_on"]
         assert b["gc_running"] is not False and a["gc_running"] is not False

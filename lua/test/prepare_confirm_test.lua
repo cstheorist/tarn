@@ -27,7 +27,9 @@ wait('schema/quota/native ready', function()
         and (native == nil or native == '0' or (tarn_info().native or {}).ready == 1)
 end)
 local function ok(r) assert(r[1] == 'ok', json.encode(r)); return r end
-ok(tarn_bucket_init(16, {{1, 16}})); ok(tarn_autocommit({}, {}))
+ok(tarn_bucket_init(16, {{1, 16}}))
+wait('clock policy after initial membership discovery', function() return tarn.clock.status().read_ready end)
+ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then
     layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)

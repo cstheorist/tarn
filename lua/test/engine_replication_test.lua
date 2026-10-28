@@ -71,22 +71,39 @@ local function state(i)
 end
 local function mode_ok(s)
     return s.check_locks == true and s.lock_copy_errors == 0 and
-        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 12 and s.state_size == 392
+        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 13 and s.state_size == 392
             and s.fallback_offset == 304
         or mode == 'lua' and s.native == false)
 end
 local function leader()
-    return await('confirmed writable leader', function()
-        local found
+    local snapshots, first = {}, true
+    local started = fiber.clock()
+    local good, result = pcall(await, 'confirmed writable leader', function()
+        local found, eligible = nil, 0
         for i = 1, 3 do
             local yes, s = pcall(state, i)
+            snapshots[i] = {connected = conns[i]:is_connected(), response = yes and s or false,
+                error = not yes and tostring(s) or (s == false and tostring(conns[i].error) or false)}
             if yes and s and not s.ro and s.quota_ready and s.clock.read_ready and s.queue.len == 0
                and not s.queue.busy and s.queue.owner == s.id and mode_ok(s) then
-                assert(found == nil, 'multiple writable leaders'); found = i
+                eligible = eligible + 1; found = i
             end
         end
+        if first then event('leader readiness first observation', snapshots); first = false end
+        assert(eligible <= 1, 'multiple writable leaders')
         return found
     end)
+    if not good then
+        -- Capture every node's last response/error before the shell's
+        -- finally cleanup. In particular a durable clock fault must stay
+        -- closed; cache warming or a longer wait must not hide it.
+        local data = {error = tostring(result), elapsed = fiber.clock() - started, nodes = snapshots}
+        event('leader readiness timeout', data)
+        io.stderr:write('ENGINE_RF3_LEADER_DIAGNOSTIC ', json.encode(data), '\n')
+        error(result)
+    end
+    event('leader readiness accepted', {index = result, elapsed = fiber.clock() - started, nodes = snapshots})
+    return result
 end
 local function args(i)
     return ev(i, "return assert(box.space._tarn_meta:get{'test:engine_rf3'}).value.a")

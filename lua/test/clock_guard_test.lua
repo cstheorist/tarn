@@ -238,5 +238,29 @@ end
 for k in pairs(defaults) do real_cfg[k] = nil end
 check('scalar native policy check preserves all 62 default/type/boundary eligibility cases',
       #matrix == 62 and real.policy_ok())
+local completion, completion_cfg, completion_meta = new(); assert(completion.load())
+local ct, ce = completion.record_time()
+check('a new receipt samples one timestamp and its two-skew horizon', ct == 1000 and ce == 1014)
+completion.test_time(900, 101); completion.check()
+check('decided completion keeps the last valid and policy-created wall floor on a backward fault',
+      completion.fault ~= nil and completion.now() == 1000)
+local prior = {ts = 1100, expires = 1200}
+ct, ce = completion.record_time(prior)
+check('a prior leader receipt preserves its own later timestamp and longer expiry independently',
+      ct == 1100 and ce == 1200 and completion.status().state == 'fault')
+local real_now, sampled = completion.now, 0
+completion.now = function() sampled = sampled + 1; return sampled == 1 and 1105 or 900 end
+ct, ce = completion.record_time{ts = 1100, expires = 1114}
+completion.now = real_now
+check('completion timestamp and expiry use the same one clock sample',
+      sampled == 1 and ct == 1105 and ce == 1119)
+ct, ce = completion.record_time{ts = 1100, expires = 1114}
+completion_meta:replace{'terminal', {ts = ct, expires = ce, state = 'applied'}}
+local successor = guard.new{cfg = completion_cfg, meta = completion_meta}
+assert(successor.test_time(1101, 200)[1] == 'ok' and successor.load())
+local terminal = completion_meta:get{'terminal'}.value
+check('loss of only volatile fault state cannot make the preserved terminal receipt collectable',
+      completion_meta:get{'clock:policy:1'}.value.fault == nil and successor.fault == nil
+      and successor.retained_until(terminal) > successor.now() and successor.admit(1100) == nil)
 print(string.format('%d passed, 0 failed', passed))
 os.exit(0)

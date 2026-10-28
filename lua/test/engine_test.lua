@@ -502,9 +502,9 @@ local yes, err = xpcall(function()
     if native ~= nil and native ~= '0' then
         local ffi = require('ffi')
         layout = tonumber(ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-        assert(ni and ni.ready == 1 and layout == tarn.NS_LAYOUT and layout == 12
+        assert(ni and ni.ready == 1 and layout == tarn.NS_LAYOUT and layout == 13
                and ffi.sizeof('struct tarn_ns') == 392 and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304,
-               'actual native ABI12/size392/fallbacks304 required')
+               'actual native ABI13/size392/fallbacks304 required')
     else assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode required') end
     print('IDENTITY ' .. json.encode{version = box.info.version, native = ni, layout = layout,
         sync = tarn.cfg.sync, wal = box.cfg.wal_mode})

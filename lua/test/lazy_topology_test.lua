@@ -4,7 +4,7 @@ local opts = {user = 'tarn', password = 'tarn', wait_connected = 5}
 local c = {net.connect(assert(os.getenv('S1')), opts), net.connect(assert(os.getenv('S2')), opts),
            net.connect(assert(os.getenv('S3')), opts)}
 local pass, fail = 0, 0
-local function ok(r) assert(r[1] == 'ok', json.encode(r)); return r end
+local function ok(r) assert(r[1] == 'ok', debug.traceback(json.encode(r), 2)); return r end
 local function check(name, yes, extra)
     if yes then pass = pass + 1; print('  ok   ' .. name)
     else fail = fail + 1; print('  FAIL ' .. name .. ' ' .. json.encode(extra)) end

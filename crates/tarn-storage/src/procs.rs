@@ -694,9 +694,13 @@ fn read_clock_ready() -> bool {
 
 /// Copy callbacks out of State before invoking them. They are protected,
 /// nonyielding Lua callbacks, but no Rust State reference may span them.
-fn fresh_controls_ok() -> bool {
+fn fresh_controls_mode() -> Option<u8> {
     let callback = state().and_then(|s| s.fresh_controls);
-    callback.is_some_and(|f| matches!(unsafe { f() }, 1 | 2))
+    callback.map(|f| unsafe { f() }).filter(|mode| matches!(mode, 1 | 2))
+}
+
+fn fresh_controls_ok() -> bool {
+    fresh_controls_mode().is_some()
 }
 
 fn fresh_space_ok(space: u32) -> bool {
@@ -1883,7 +1887,8 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if c.locks {
         return back(Why::OwnRowLocks);
     }
-    if unsafe { box_txn() } {
+    let in_txn = unsafe { box_txn() };
+    if in_txn {
         if !fresh_stream_ok() {
             return back(Why::Freshness);
         }
@@ -1895,7 +1900,13 @@ fn commit_local(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     } else {
         return back(Why::Stream);
     }
-    if !fresh_controls_ok()
+    let mode = fresh_controls_mode();
+    // A replicated retained view needs a CURRENT prefix before its final
+    // read-set check, including a commit that changes no tuples/WAL. Lua
+    // proves that prefix in a separate owned fiber, preserving this stream.
+    // Never certify an old first-read token from the local role bit alone.
+    if mode.is_none()
+        || (in_txn && mode != Some(1))
         || !read_clock_ready()
         || c.writes.iter().any(|w| !fresh_space_ok(w.space_id))
         || c.reads.iter().any(|r| !fresh_space_ok(r.space_id))
@@ -1991,7 +2002,10 @@ fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     if !fresh_stream_ok() {
         return back(Why::Freshness);
     }
-    if !fresh_controls_ok() || !read_clock_ready() || v.reads.iter().any(|r| !fresh_space_ok(r.space_id)) {
+    // The native kernel cannot run the separate yielding prefix fence in
+    // an ambient transaction. Hand it back before touching any data; RF1
+    // has no remote acknowledged prefix missing from this process.
+    if fresh_controls_mode() != Some(1) || !read_clock_ready() || v.reads.iter().any(|r| !fresh_space_ok(r.space_id)) {
         return back(Why::Freshness);
     }
     let s = ready_state()?;

@@ -77,8 +77,13 @@ of workload, fault budget and options. The names say what is checked:
 | `NativeKeyBatch` | a bounded native full-primary-key batch returns the complete ordered filter-map of one memtx image, checking write claims even on missing keys, or hands the whole request back |
 | `StrongReadFreshness` | a request-specific quorum observation, local WAL catch-up and synchronous-queue settlement precede the first strong snapshot |
 | `StrongStreamCertificate` | an owned empty transaction is certified after its first barrier and before any read; later reads require that exact native transaction ID |
+| `StrongStreamCompletion` | a separate final quorum prefix precedes validation of the original caller transaction/read set; neither skipping the prefix nor replacing the read set may commit a fractured view |
 | `LockReplyOwnership` | a yielding locking RPC returns rows only under its original observed role/generation and live session |
 | `RecordExpiryClock` / `RecordExpiryPolicy` | a two-skew retention margin under varying bounded clock offsets, plus local persisted-policy/high-water admission after GC |
+| `CompletionRetention` | decided finishing preserves inherited receipt timestamps/horizons despite an unknown clock, preventing GC and a contradictory fresh abort after reboot |
+| `Fairness` | bounded pass ordering reaches eligible records beyond a fixed stuck set; it does not change record lifecycle or timing guards |
+| `DecisionPlacement` / `Placement_*` | stable decision identity among frozen writers, plus commit/GC checks with another transaction-specific placement |
+| `PipelineAdmission` | connection/shard/gateway resource charges and uncertainty survive cancellation and physical retirement |
 | `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
@@ -890,6 +895,15 @@ change the cache of holds is anything until read from storage again.
 term it committed them in, of the table as it still was then, with no
 hold on it.
 
+These are local observed-term/DDL marking premises. They do not establish
+that an old leader has observed a replacement before final validation.
+Current ABI 13/392 replicated-stream native validation/local commit hands
+back before effects for Lua's separate final-prefix fence; RF1 kernels
+remain native. `StrongStreamCompletion` below supplies the additional
+prefix/original-read-set composition check without a yielding native
+callback. Historical ABI 11/experimental ABI 12 measurements retain their
+original scope.
+
 Each protection has a switch, and TLC finds each `Bug_StreamMarks*`
 configuration violating `CommittedReadsCurrent` within seconds:
 
@@ -984,6 +998,21 @@ tla/check.sh Handback Handback_Autocommit Bug_HandbackKeepsWrites Bug_HandbackAf
 
 The model is small on purpose: it is the contract every native procedure
 that writes must keep, whatever it checks before.
+
+The gateway also retains the selected physical connection for autocommit
+Lua fallback, including cached native unavailability (#155). Only an
+explicit read-only refusal permits leader rediscovery. The model abstracts
+pool selection; it does not prove connection distribution or capacity use.
+`cluster::fallback_tests` runs real Session SQL and storage procedures,
+records physical session IDs, and holds concurrent writes before effect.
+With warmed missing/blanket-handback native procedures, pools of two and
+four use every connection, with one held data call per connection and
+exactly one increment per statement. Separate controls cover ordinary
+handbacks, native success and native/Lua read-only refusals. The existing
+lost-reply faults check unknown outcomes without replay. A real socket-loss
+control after a committed native-call effect checks `1180/40003`, separately
+from a refused native conflict's `1213/40001`; neither calls Lua. Pool
+utilization is not evidence of a latency or throughput improvement.
 
 ### Bounded native primary-key batches (issue #141)
 
@@ -1341,6 +1370,36 @@ transaction's certificate, missing cleanup and ignored capacity. Native ID
 uniqueness, callback execution and ordering, the actual 4096-entry bound,
 FFI layout and non-yielding callback/read admission remain runtime duties.
 
+`StrongStreamCompletion.tla` checks a different boundary: the first-read
+certificate alone does not certify final validation while a former leader
+has not observed its successor's writes or term. A reader observes `X=0`,
+a replacement writer stores WAL on a write quorum and acknowledges its
+`X=1, Y=1` transaction, and a healthy logical shard can return `Y=1`. The
+old X leader's writable flag and observed term may still look unchanged.
+
+A separate owned child transaction obtains fresh replies from two of
+three X replicas. Its reply quorum intersects the writer's two-replica WAL
+quorum; `CollectedCoversStartAck` follows from those observations. Local
+catch-up and queue settlement apply that history before the original
+caller's MVCC probe/observed-term validation. The caller retains its exact
+transaction and read set. Applying the replacement write invalidates that
+old read view, so `NoFracturedCommit` follows without replacing the values
+the reader already returned. A healthy `X=0, Y=0` transaction can still
+commit before the writer. An unavailable final quorum supplies no progress
+guarantee.
+
+The two controls reach actual commits of `X=0, Y=1`. Skipping the final
+prefix leaves the isolated former leader's old view writable. Dropping the
+caller's read set after a successful prefix creates a new transaction that
+passes its probe while retaining the already-returned old X observation.
+Neither control stops at an early identity assertion. The bounded fixture
+has one writer and one reader, two logical shards, RF3 only for X, four
+representative link patterns and one heal. First-read certification, native
+MVCC invalidation/probe semantics, confirmed replication and current
+clock/configuration eligibility remain trusted premises. It does not prove
+the child-fiber API, native handback implementation, clock certification or
+safe administrative reconfiguration.
+
 `LockReplyOwnership.tla` checks the first point/range locking-RPC reply,
 where the gateway has no earlier generation to compare. Capture the role
 epoch and `PL_GEN` after the barrier and `pl_begin`; retain them across
@@ -1422,26 +1481,58 @@ propagation or native atomic replication. The old-clock/future-input
 controls explain why those premises cannot be inferred from a role check,
 fresh read, local elapsed-time sample or per-call future-timestamp check.
 
-The five positive outcomes are:
+`CompletionRetention.tla` checks a separate terminal-update obligation.
+Finishing decided work remains allowed while clock health is unknown, but
+its receipt may have been written by a later good-clock leader. A floor
+from this node's finite raw sample, last valid observation, policy creation
+time and persisted high-water mark can still be below that inherited row.
+The terminal helper samples that floor once, uses
+`t = max(sampled_floor, existing.ts)` and
+`expires = max(existing.expires, t + A + 2*S)`. It never shortens either
+retained field.
+
+The fixture uses `A=10`, `S=2`, an immutable coordinator timestamp 1100,
+inherited receipt timestamps 1100–1102, two local raw-clock samples and two
+persisted high-water choices. It allows a crash before the volatile clock
+fault is persisted, then healthy-successor GC, another reboot retaining H,
+and a late conflicting PREPARE. The positive reaches 672 states, depth 25.
+Its control keeps all local clock floors but forgets both existing receipt
+fields. TLC reaches an actual contradictory reopen in 56 states, depth 6:
+1100/1114 becomes 1000/1014; a healthy successor at 1101 collects it and
+persists H=1101; after reboot, coordinator timestamp 1100 is still fresh,
+so a new abort/NO receipt is created over committed data. The control fails
+`NoContradictoryReopen`, rather than an early timestamp inequality. Keeping
+either an adequate old horizon or its timestamp would block this shortening;
+the implemented contract retains both.
+
+This refinement assumes the inherited receipt and coordinator timestamp
+were valid, the successor's clock/eligibility evidence is sound, and GC/H
+and user/protocol writes are atomically durable. It does not establish
+initial clock history, health certification, fault persistence before a
+crash, or native WAL semantics.
+
+The seven positive outcomes are:
 
 | Configuration | Distinct states | Depth | Principal invariant |
 |---|---:|---:|---|
 | `StrongReadFreshness` | 2,443,260 | 31 | `StrongReadsSeePriorAcks` |
 | `StrongStreamCertificate` | 24,180 | 19 | certificate provenance, exact ID, lifetime and capacity |
+| `StrongStreamCompletion` | 3,369 | 19 | `NoFracturedCommit`, `CollectedCoversStartAck` |
 | `LockReplyOwnership` | 184 | 12 | `ReturnedRowsLocked`, `ReplyKeepsEntryGeneration` |
 | `RecordExpiryClock` | 1,092 | 9 | `NoResurrectedPrepare` |
 | `RecordExpiryPolicy` | 1,368 | 23 | `NoUnsafeAdmission` |
+| `CompletionRetention` | 672 | 25 | `NoContradictoryReopen` |
 
-All 28 focused configurations (five positive and 23 expected controls) are
+All 33 focused configurations (seven positive and 26 expected controls) are
 generated and included in the default list. Their recorded outcomes are
-focused checks, not a claim that the entire default CI suite was rerun for
-this revision. The complete per-control states and violated invariants are
+included in the validated 243-case TLC union below; that evidence is not a
+claim that the entire runtime CI suite passed. Per-control states and violated invariants are
 in the generated [design results table](design.md#51-model-checking).
 Run only these checks with the same outcome checker as CI:
 
 ```sh
-configs=(StrongReadFreshness StrongStreamCertificate LockReplyOwnership RecordExpiryClock RecordExpiryPolicy)
-for family in StrongRead StrongStream LockReply RecordExpiry RecordPolicy; do
+configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention)
+for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention; do
   for cfg in tla/Bug_${family}*.cfg; do
     name=${cfg#tla/}
     configs+=("${name%.cfg}")
@@ -1450,13 +1541,133 @@ done
 tla/check.sh "${configs[@]}"
 ```
 
+### Recovery and garbage collection move on (issue #129)
+
+Recovery and garbage collection go through records in order: undecided
+transactions oldest first, expired records by expiry. Some of them cannot
+be acted on while a shard is down: a transaction that needs it cannot be
+resolved, and some records cannot be collected. `RecoveryFairness.tla`
+models the order of the passes (`lua/tarn.lua`, "Scheduling"), not what
+they do with a record, which `TarnCommit.tla` models:
+
+- a pass looks at no more than `Scan` records, and acts on no more than
+  `Batch` of those it may act on now (`recovery_batch`, and five times as
+  many; `gc_batch * 4`, and `gc_batch * 40`);
+- it continues after the last record the previous pass looked at, and a
+  pass that reaches the last record starts the next lap from the first;
+- a record it could not act on waits `Backoff` passes.
+
+The stuck records are any set of them: TLC tries each. `BoundedWait`:
+within ceil(N / Batch) + 1 passes, every record that is not stuck has been
+acted on. `BugPrefix` starts every pass from the first record, as both did
+before: TLC finds stuck records first that keep the others from being acted
+on (as many as a pass looks at, and no pass looks past them).
+
+The bound counts scheduled passes with a fixed stuck set, rather than wall
+time or arbitrary changes in availability. It does not establish clock
+certification, quorum availability or scheduler fairness. The freshness,
+expiry and persisted-policy refinements above still supply those separate
+admission and deletion obligations.
+
+Runtime GC also filters each record by its relevant writer-clock evidence
+before forming a batch's required-writer union. An unknown record remains
+retained without poisoning an unrelated eligible record in the same scan
+window. After remote status checks, the deletion transaction still rechecks
+current coverage, epoch and supported controls, and advances the persisted
+high-water mark atomically with deletion. Coverage lost after a status proof
+cannot authorize that deletion. These eligibility and final-guard premises
+compose with cursor ordering; `RecoveryFairness` does not prove their clock
+soundness. The recovery fault fixture exercises both the small mixed-health
+batch and coverage expiration after the status proof, followed by recovery
+once the missing writer resumes.
+
+```sh
+tla/check.sh Fairness Bug_FairnessPrefix
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `Fairness` | 2048 | 8 | passes |
+| `Bug_FairnessPrefix` | 1281 | 6 | violates `BoundedWait` |
+
+Both have eight records, `Batch` = 2, `Scan` = 3 and `Backoff` = 2.
+`lua/test/recovery_faults.sh` checks the same on three shards, one of them
+stopped, with 250 transactions that need it on each of the other two
+(`recovery_batch` is 200) and more records than a garbage-collection pass
+looks at.
+
+### Decision-record placement (issue #132)
+
+`TarnCommit!DecisionParticipant` abstracts a stable choice from frozen writing
+participants. `Placement_Recov`, `Placement_Failover` and `Placement_RC`
+override it with a transaction-specific choice that places the common
+two-shard writer's record on B. They check the existing commit invariants
+with coordinator crashes/message loss and GC, leader failure, and READ
+COMMITTED locks, respectively. The tombstone and expiry-fence controls are
+also checked with that placement. This checks another placement of the
+record without changing the commit or GC guards.
+
+`DecisionPlacement.tla` checks separate local premises on three shards:
+every nonempty writing set, read-only participants, every active membership,
+and a membership change before or after PREPARE. Selection prefers an
+active writer, falls back to a writer when none is active, and keeps that
+identity in durable records and recovery lookups. A leaving candidate is
+refused rather than redirected. With hashing abstracted by any eligible
+choice, the positive configuration has 1,970 states; allowing a read-only
+decision, ignoring active writers, and selecting again during recovery
+violate their invariants in 162, 252 and 1,142 states, respectively.
+
+These are bounded protocol/identity checks. They do not prove uniform hash
+distribution, the membership service, Lua serialization, clocks, storage
+durability, or behavior for arbitrary cluster sizes. Rust tests check
+canonical durable-ID ordering, gateway position changes, active preference
+and realistic transaction-ID spread. `tests/decision.sh` checks actual
+participant/decision records on three shards, excludes read-only decision
+participants, keeps the local path free of distributed records, drops a
+PREPARE reply through a TCP proxy, and kills its owned coordinator after
+all participants prepared at a non-first decision writer. Recovery must
+apply exactly once using the persisted identity. CI runs this with native
+memtx, Lua-only memtx and vinyl tables.
+
+```sh
+tla/check.sh DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect \
+  Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry
+tests/decision.sh
+TARN_NATIVE=0 tests/decision.sh
+ENGINE=vinyl tests/decision.sh
+```
+
+The recorded `bench/decision_placement.py` results use repeated, matched placement measurements:
+new RF1/fsync clusters for each build/sample, disjoint rows per client and
+one write per shard per transaction. It checks all committed tuples and
+recorded identities, captures per-shard participant/decision records and
+WAL rows/file growth, then waits for the eligible records' GC and counts its
+deletions and WAL. Their shorter retention and zero clock-skew allowance
+were confined to owned single-host fixtures before the persisted timing
+policy. The current driver supplies matching timing environment variables
+before cluster startup and requires a matching gateway age limit. Adapting
+that setup does not rerun the historical measurements. This is a placement workload;
+it does not establish an RF3 performance or operational advantage.
+
 ### Configuration counts
 
-The default list contains 219 configurations, including 162 expected
-broken/trade-off outcomes. The 230 generated configurations reproduce from
-`gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 232 total. Explicit check arguments override the default
-list.
+The merged default list contains 243 unique configurations: 65 positive
+outcomes and 178 expected broken/trade-off outcomes. The 250 generated
+configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
+placement configurations are maintained directly, for 256 total. Explicit
+check arguments override the default list.
+
+The premerge issue #130 list completed all 219 expected outcomes (57
+positive, 162 controls). A separate frozen merged 238-case run completed
+63 positive outcomes and 175 expected violations after the `MC` and
+decision-placement changes. The three additional stream-completion cases
+then passed the registered checker with one positive and two expected
+violations. The original 238 model/config inputs and module dispatch were
+checked unchanged, forming a validated 241-case union. Two completion-
+retention cases then passed separately with those 241 model/config inputs
+and dispatch unchanged. Their exact argument union is the current
+243-case default list. This validates the merged TLC inputs without
+treating the premerge run as evidence for changed models.
 
 ## Verus proofs
 
@@ -1549,7 +1760,7 @@ cases).
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
-| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection, refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for; the lock checks of each, key by key, with the keys in ranges and the ranges' bounds compared as the Lua checks compare them (collations, prefixes, NULLs; `native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures. The shards run with `TARN_CHECK_LOCKS`: after each change of the lock index, the Lua module compares the native module's copy of it with it, and a difference fails the run |
+| Storage protocol | `lua/test/run.sh` | Tarantool | every participant procedure on two real shards, recovery, record lifecycle and garbage collection (also past transactions that need a stopped shard: `recovery_faults.sh`), refusal on demoted nodes, lock-index rebuild while a PREPARE waits for a quorum, row locks, schema-change steps and definition fences; bucket moves step by step, and the refusals of requests for buckets a shard does not own (`bucket_test.lua`); the native read procedure against `tarn_select`, read by read, autocommit and in transactions, to end keys of plain, nullable and collated indexes, and the native autocommit writes, one-shard commits and validations against `tarn_autocommit`, `tarn_commit_local` and `tarn_validate` on twin tables and streams: the same replies, and rows of the same bytes, for what they serve, every other kind handed back having changed nothing, and the commits in flight waited for; the lock checks of each, key by key, with the keys in ranges and the ranges' bounds compared as the Lua checks compare them (collations, prefixes, NULLs; `native_test.lua`). `TARN_NATIVE=0` runs them without the native procedures. The shards run with `TARN_CHECK_LOCKS`: after each change of the lock index, the Lua module compares the native module's copy of it with it, and a difference fails the run |
 | SQL differential | `python3 tests/sql/difftest.py --tarn HOST:PORT --ref HOST:PORT` | a Tarn cluster and MariaDB 10.11, PyMySQL | 967 statements compared exactly with MariaDB: column names, rows, error codes, affected rows, final table contents and indexes (also after `ALTER TABLE`), including collations and their weight strings |
 | SQL fuzzing | `python3 tests/sql/fuzzdiff.py --tarn ... --ref ... -n 2000` | same | randomly generated queries compared with MariaDB |
 | Transactions | `python3 tests/sql/txntest.py --tarn HOST:PORT --kv SHARD1,SHARD2` | a Tarn cluster | rollback, visibility, write skew, lost update, phantoms, fractured reads, real-time order, cross-shard atomicity, direct KV reads, concurrent inserts of case variants of a case-insensitive key, and a concurrent bank workload with a ledger that exposes lost or duplicated commits |
@@ -1597,3 +1808,49 @@ Lua heap limit.
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.
+
+
+Query routing diagnostics (`observe.rs`, `exec/diagnostics.rs`, issue #133)
+are outside the TLA+ safety state: they neither change protocol messages nor
+read/write user tuples. Coordinator hooks observe existing events only,
+without an observer borrow across await. EXPLAIN shares the executor's
+colocation guards and routing coercions; it supplies no values to execution.
+Unit tests bound cardinality and cancellation/concurrent scopes. The public
+MySQL suite `tests/sql/explaintest.py` checks prepared and text plans,
+unknown parameters, no IDs/implicit commits/read effects, literal redaction,
+eviction, and an exact-result join whose aligned shard keys reduce observed
+fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
+storage protocols, SQL, transaction and live-fault suites remain required;
+these models do not prove observer accuracy or performance.
+
+### IPROTO admission and retirement (issue #127)
+
+`PipelineAdmission.tla` models three connections, two shard scopes and a
+shared gateway scope, with independent count/byte limits and completion
+reserves. Caller cancellation retains identity/charges. A terminal response
+or both physical I/O owners dropping releases them; a logical close alone
+does not. Timer ticks include abandoned requests. Before-enqueue refusal
+certifies no RPC effect; closing an enqueued request reports uncertainty.
+It checks resource/uncertainty contracts outside TarnCommit's state, rather
+than changing commit/locking/recovery actions. Existing Handback and commit
+models remain required for no replay and transaction safety.
+
+The positive model checks 730,752 distinct states (depth 26). Removing any
+of cancellation retention, physical retirement retention, shard/global
+admission, ordinary completion reserves, abandoned deadlines or the
+before-enqueue boundary gives the corresponding `Bug_Pipeline*` witness.
+Config generation and the default check job include all eight profiles.
+This bounded safety model assumes its timer action is serviced. It does not
+prove wall-clock fairness, allocator bounds, query memory, wire correlation
+(which has separate frame tests), arbitrary topology sizes or performance.
+
+Executable tests cover 4097 refused admissions behind retained cancelled
+callers, byte saturation before encoding, slow-peer blocked writes,
+continued other replies behind an abandoned oldest request, out-of-order
+queue compaction, shared scope refund, reserved control CALLs and physical
+I/O drop ordering. `tests/rpcs.sh` checks real MySQL outcomes/effects under
+24-session pressure at each scope; `rpc_reserve` checks cold completion
+routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
+malformed/lost-reply faults and failover preserve the existing uncertainty
+and matched fencing behavior. Resource budgets do not certify whole-query
+memory bounds or benchmark speedups.

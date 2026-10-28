@@ -14,6 +14,7 @@ if [ -z "${TEST:-}" ]; then
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
   for test in clock_guard_test clock_initialization_test read_freshness_test native_key_batch_test engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
+    echo "storage test $test" | tee -a "$WORK/test.out"
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
@@ -22,6 +23,9 @@ if [ -z "${TEST:-}" ]; then
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/clock_protocol.sh" "$WORK/clock-protocol" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/clock_completion.sh" "$WORK/clock-completion" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
   freshness_native=${TARN_NATIVE:-$DIR/../target/release/libtarn_storage.so}
@@ -50,6 +54,9 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/alter_backfill_faults.sh" "$WORK/backfill" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/recovery_faults.sh" "$WORK/recovery-faults" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
 fi
 P1=${P1:-3511}; P2=${P2:-3512}; P3=${P3:-3513}
 PEERS="{\"1\":[\"tarn:tarn@127.0.0.1:$P1\"],\"2\":[\"tarn:tarn@127.0.0.1:$P2\"]}"
@@ -76,6 +83,7 @@ for p in $P1 $P2 $P3; do
 done
 # The files run in turn on the same shards (each uses its own tables).
 for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/alter_backfill_test.lua $DIR/test/join_test.lua $DIR/test/bucket_test.lua $DIR/test/member_test.lua $DIR/test/rebalance_test.lua $DIR/test/native_test.lua}; do
+  echo "storage test $(basename "$f")" | tee -a "$WORK/test.out"
   S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 S3=127.0.0.1:$P3 timeout 120 $T "$f" < /dev/null 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

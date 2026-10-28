@@ -6,6 +6,40 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Recovery and garbage collection could be held up by what they cannot
+  resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
+  shard was down, 200 undecided transactions that needed it, the first ones
+  each recovery pass took, kept every newer one from being resolved; and
+  records that could not be collected could fill garbage collection's scan
+  window. Each pass now continues where the previous one stopped,
+  `recovery_workers` fibers resolve transactions at once, and a
+  transaction or a shard that failed waits before it is tried again (up to
+  `recovery_backoff_max`). Garbage collection runs on its own fiber, with
+  its own budget (`gc_interval`, `gc_time_budget`). What recovery does
+  with a transaction, and what garbage collection may delete, are
+  unchanged. `tarn_info().recovery` reports the backlog, the age of its
+  oldest transaction, the shards in backoff and garbage collection's laps;
+  `stats.recovered` counts the participants recovery resolved (it counted
+  the attempts that did not raise). `tla/RecoveryFairness.tla` models the
+  order of the passes, and `lua/test/recovery_faults.sh` stops one of
+  three shards.
+
+- Native-to-Lua autocommit fallback reuses the selected physical connection
+  after a matched handback or cached native unavailability. It no longer
+  advances an even-sized pool twice per write, leaving half its connections
+  unused. Explicit read-only refusals still discover a leader; lost replies
+  remain unknown outcomes and are never replayed
+  ([#155](https://github.com/cstheorist/tarn/issues/155)).
+
+- IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
+  malformed frames, unsupported response types and unknown/duplicate SYNCs
+  retire the connection instead of certifying a result. Every length-prefix
+  width is bounded before payload allocation. Pushes retain the pending
+  request's identity, including after caller cancellation. A sent mutation
+  whose reply is invalid remains 1180/40003 and is never replayed.
+
 ### Added
 
 - Request-specific quorum freshness for default SQL and strong storage
@@ -15,9 +49,28 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unmarked ambient transactions are refused without a late refresh.
   Both engines use the pinned empty-barrier/confirmed-view composition;
   raw native reads retain local visibility and lazy indexes retain their
-  documented eventual semantics. New gateways require the storage
+  documented eventual semantics. Replicated transaction completion proves
+  another current prefix before validating the original read set. Immutable
+  clock bounds fence uncertain new votes and garbage collection; decided
+  completion preserves every receipt's timestamp and retention horizon.
+  New gateways require the storage
   `strong_reads` V1 capability. See [the rollout and trusted
   configuration boundary](docs/operations.md#strong-reads-and-storage-rollout).
+
+- Distributed transactions spread decision records across active writing
+  participants using a stable hash of the transaction ID
+  ([#132](https://github.com/cstheorist/tarn/issues/132)). Durable shard IDs
+  determine the candidate order; every PREPARE and recovery operation uses
+  the one selected identity. Atomic local commits keep their existing path.
+  Placement models, lost-reply/coordinator-crash tests and a repeated
+  record/WAL/GC benchmark cover the change.
+
+- Query routing diagnostics ([#133](https://github.com/cstheorist/tarn/issues/133)):
+  `EXPLAIN FORMAT=JSON` reports physical access paths, shard/bucket bounds,
+  colocation eligibility and possible global-index participants without
+  executing the query. `SHOW TARN PLAN FOR` diagnoses unbound prepared
+  statements, and bounded `SHOW TARN QUERIES` observations distinguish
+  completed runtime fanout from compile-time constraints.
 
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
@@ -27,6 +80,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checks missing-key locks, snapshot consistency and complete results;
   the executed budget checks are verified with Verus. See the
   [native storage inventory](docs/native-storage.md).
+
+- Bounded storage RPCs ([#127](https://github.com/cstheorist/tarn/issues/127)):
+  connection/shard/gateway count and byte admission, reserved completion
+  capacity, and deadlines that retire stalled physical connections while
+  preserving cancelled identities and 40001 versus 40003. `SHOW TARN RPCS`
+  and cached status counters expose charges, age, refusals and retirements.
 
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
@@ -503,7 +562,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Native storage procedures retain their CALL arguments across the yielding
-  freshness barrier. ABI 12 adds current policy, space, clock and exact
+  freshness barrier. ABI 13 adds current policy, space, clock and exact
   transaction checks; older modules use the guarded Lua implementation.
 - Clock policy and the GC rejection floor persist with the receipt
   transitions they protect. Retention uses two skew margins, timing policy
@@ -513,6 +572,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Uncertain PREPARE receipt checks return no vote and preserve a borrowed
   stream. Fresh refusal and GC boundaries recheck current durability
   eligibility; a concurrent confirmed YES cannot become a contradictory NO.
+
+- Database administration matches MariaDB affected-row counts and result
+  metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
+  CREATE DATABASE reports one row for a new database and zero for an
+  existing IF NOT EXISTS target. SHOW DATABASES LIKE filters
+  `information_schema` too, and includes the pattern in its column name.
+
+- Quoted administrative SQL tokens preserve UTF-8
+  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
+  savepoints and quoted variable names retain multibyte characters.
+  Doubled quotes and string backslash escapes are decoded without changing
+  the original byte offsets used for SET expressions. Unterminated quoted
+  tokens return syntax error 1064.
 
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original

@@ -80,7 +80,7 @@ local read_args = {sid,0,{1,token},0,1,box.NULL,true,true,box.NULL,false,box.NUL
 ok(c:call('tarn_select', read_args))
 local n = ev(leader, [[local ffi=require('ffi');local n=ffi.cast('struct tarn_ns*',box.func['tarn_storage.ts_state']:call())
     return {layout=tonumber(n.layout),size=ffi.sizeof('struct tarn_ns'),clock=tonumber(n.fresh_clock_ok),hooks=tonumber(n.hooks)}]])
-check('actual ABI12 and production native clock mirror are ready', n.layout == 12 and n.size == 392 and n.clock == 1 and n.hooks == 0, n)
+check('actual ABI13 and production native clock mirror are ready', n.layout == 13 and n.size == 392 and n.clock == 1 and n.hooks == 0, n)
 check('RF3 fsync synchronous majority-compatible configuration', state(leader).sync and state(leader).wal == 'fsync', state(leader))
 local round = 0
 local function blocked(proc, args, via)
@@ -117,6 +117,14 @@ local stream = c:new_stream(); local first = table.deepcopy(read_args); first[8]
 r = blocked('tarn_storage.ts_select', first, stream)
 check('first native stream read retains its owned transaction and key', r.reply[1][1] == 'ok' and r.reply[1][2][1][2] == token
     and r.after.served == r.before.served+1, r.after)
+local stream_id = stream:eval("return tostring(require('ffi').C.box_txn_id())")
+local validation_before = c:call('tarn_info').native
+local handback = stream:call('tarn_storage.ts_validate', {'native-final-prefix',{{sid,0,{1,token},1}},{}})
+local validation_after = c:call('tarn_info').native
+check('replicated native validation hands back without consuming the stream or its read set', handback[1] == 'lua'
+    and stream:eval("return tostring(require('ffi').C.box_txn_id())") == stream_id
+    and validation_after.validations == validation_before.validations
+    and validation_after.validations_to_lua == validation_before.validations_to_lua + 1, handback)
 ev(leader, 'local sid,key=...;box.space[sid]:replace{1,key,100,1}', {sid,token})
 local v = stream:call('tarn_validate', {'native-input-readset',{{sid,0,{1,token},1}},{}})
 check('a later overwrite conflicts with the original yielded native stream read set', v[1] == 'conflict' and v[2] == 1213, v)
@@ -129,6 +137,18 @@ r = blocked('tarn_storage.ts_commit_local', {'native-input-local',{{'replace',si
 row = ev(leader, 'return box.space[...]:get{3,select(2,...)}', {sid,payload})
 check('native write-only local commit retains its payload after the pre-data yield', r.reply[1][1] == 'ok' and row[2] == payload
     and row[3] == 300 and r.after.commits == r.before.commits+1, r.after)
+local no_op = c:new_stream(); ok(no_op:call('tarn_storage.ts_select', first))
+local no_op_id = no_op:eval("return tostring(require('ffi').C.box_txn_id())")
+local no_op_args = {'native-final-no-op',{{'delete',sid,{999,token}}},{{sid,0,{1,token},1}},{},box.NULL,{sid,0},{1},box.NULL}
+local commit_before = c:call('tarn_info').native
+handback = no_op:call('tarn_storage.ts_commit_local', no_op_args)
+local commit_after = c:call('tarn_info').native
+check('replicated native stream commit hands back before a possible zero-WAL result', handback[1] == 'lua'
+    and no_op:eval("return tostring(require('ffi').C.box_txn_id())") == no_op_id
+    and commit_after.commits == commit_before.commits
+    and commit_after.commits_to_lua == commit_before.commits_to_lua + 1, handback)
+local completed = no_op:call('tarn_commit_local', no_op_args)
+check('Lua final-prefix fence completes an unchanged zero-row stream commit', completed[1] == 'ok' and completed[2] == 0, completed)
 local ambient = c:new_stream(); ambient:begin()
 local old_id = ambient:eval([[local ffi=require('ffi');box.space[...]:get{1,select(2,...)}
     return tostring(ffi.C.box_txn_id())]], {sid,token})

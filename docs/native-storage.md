@@ -30,8 +30,8 @@ retains an unknown outcome and must not trigger mutation replay.
 |---|---|
 | Ordinary reads | `ts_select` serves eligible memtx points and bounded ranges, including supported stream reads/begins. Continuations, Vinyl and requests requiring refresh/waiting retain their Lua path. Existing in-stream IPROTO SELECTs already bypass Lua for suitable reads. |
 | Full-primary-key batches | The optional eight-argument `ts_select` form performs up to 128 memtx index gets and copies their tuples directly. Its narrower contract is below. Other `tarn_select_keys` shapes remain Lua. |
-| Autocommit and one-shard commit | `ts_autocommit` and `ts_commit_local` serve their supported memtx writes. Checks cover routes, definitions, claims, read sets and native exclusions. The Lua procedures retain unsupported shapes and operations with lazy capture, online-copy capture or row-lock ownership requirements. |
-| Read-only validation | `ts_validate` checks eligible transactions. Stream identity, term/DDL watermarks and membership remain part of its contract; it is not a replacement for all transaction coordination. |
+| Autocommit and one-shard commit | `ts_autocommit` and `ts_commit_local` serve their supported memtx writes. Existing replicated streams hand back before effects for Lua's final-prefix fence; RF1 stream kernels remain native. Lua also retains unsupported shapes and lazy capture, online-copy capture or row-lock ownership requirements. |
+| Read-only validation | `ts_validate` retains its RF1 kernel. Existing replicated streams hand back unchanged before the probe/commit for Lua's separate final quorum prefix and original read-set validation. |
 | Counts and predicates | `tarn_count` remains a Lua wrapper. A predicate-free equality/whole-index count already calls Tarantool's `idx:count`; predicates, exclusions for own writes and end bounds can require Lua tuple iteration. Porting the wrapper alone need not improve the underlying count. |
 | Co-located joins | `tarn_select_join` gathers dependent primary-prefix rowsets under one checked read. Rust reconstructs joins and overlays eligible own writes. Union read sets, empty-prefix phantoms, DDL history and incomplete-result fallback remain relevant. |
 | READ COMMITTED ownership | `tarn_lock`/`tarn_lock_range`, waiter queues, lock upgrades, session cleanup, deadlock handling and lock-generation checks remain Lua. The native lock copy stores counts/ranges used to decide eligibility; it does not replace ownership or the waiter protocol. `tarn_commit_rc` remains Lua. |
@@ -60,8 +60,15 @@ entries and uses public terminal commit/rollback callbacks for cleanup.
 A savepoint rollback preserves the original stream certificate and read
 set. Later reads, local commit and validation require the existing
 certificate; they never install a late barrier in an arbitrary older ambient
-transaction. Term/DDL watermarks, lock checks and the read-view probe remain
-separate commit obligations. An unsupported first native read drops only
+transaction. Before final validation/local commit of a replicated stream,
+Lua obtains a new quorum prefix in a separate owned child transaction, then
+validates the original caller's transaction ID, read set and view. Catch-up
+can invalidate that old view; starting a replacement caller transaction
+would incorrectly forget the observations already returned. The native
+replicated-stream kernels therefore hand back before effects, leaving this
+yielding fence to Lua. RF1 kernels remain native; no yielding native-to-Lua
+callback is added. Term/DDL watermarks, lock checks and the read-view probe
+remain separate commit obligations. An unsupported first native read drops only
 its newly owned transaction before whole-request Lua handback; a borrowed
 existing stream is retained. A barrier error retains its native code/message
 and propagates directly, without a second attempt in Lua.
@@ -80,8 +87,9 @@ collection. Configuration checks still assume the
 for in-flight commits; they cannot revoke a commit confirmed after an
 unsafe privileged quorum reduction.
 
-The current `State` layout is **ABI 12, 392 bytes**, checked by Rust/Lua
-layout compatibility. The new tail is:
+The current `State` layout is **ABI 13, 392 bytes**, checked by Rust/Lua
+layout compatibility. The version bump rejects experimental ABI 12 and
+older ABI 11 modules despite unchanged offsets from ABI 12. The current tail is:
 
 | Field | Byte offset | Meaning |
 |---|---:|---|
@@ -148,7 +156,7 @@ all rows and claims therefore refer to one memtx state under the existing
 native-read premises.
 
 The twelve-argument `ts_select` shape is retained; current deployments use
-the ABI 12/392 freshness boundary above. An empty argument list returns only the versioned
+the ABI 13/392 freshness boundary above. An empty argument list returns only the versioned
 `['native_batch_keys', 1]` capability; it certifies code support, not
 leadership, readiness or data. Older modules hand that shape back. The
 gateway caches support or absence per connection, preserves existing

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own a matched SQL batch-read fixture, optionally with RF3/fsync storage.
+"""Own matched SQL or direct batch reads, optionally with RF3/fsync storage.
 
 Requires already-built binaries, Docker and PyMySQL. Only this fixture's exact
 labelled containers/network and identity-checked child processes are stopped.
@@ -213,7 +213,7 @@ def wait_cluster(root, m, expected):
                 leaders = [i for i, s in enumerate(states) if not s["ro"]]
                 if len(leaders) == 1:
                     for s in states:
-                        assert s["layout"] == 12 and s["size"] == 392
+                        assert s["layout"] == 13 and s["size"] == 392
                         assert s["test_hooks"] is False and s["check_locks"] is True
                         assert s["wal"] == ("fsync" if expected == 3 else "write")
                         assert s["sync"] == (expected == 3)
@@ -277,6 +277,30 @@ def confirm_corpus(root, m, database, args, leader, label):
     m[label] = results
     save(root, m)
     return wanted
+
+
+def measurement_command(root, m, args, database):
+    common = ["--client", str(root/"bin/native_batch"), "--shard", m["leader_endpoint"],
+              "--rows", str(args.rows), "--payload", str(args.payload), "--tenant", str(args.tenant),
+              "--trials", str(args.trials), "--seconds", str(args.seconds), "--warmup", str(args.warmup),
+              "--batches", args.batches, "--shapes", args.shapes, "--workers", args.workers,
+              "--output", str(root/"measurements"), "--clk-tck", str(m["clk_tck"])]
+    if args.direct_storage:
+        route = m["direct_route"]
+        command = [sys.executable, str(root/"harness/native_batch.py"), *common,
+                   "--space", str(route["space"]), "--epoch", str(route["epoch"]),
+                   "--membership", str(route["membership"]), "--buckets", str(route["count"]),
+                   "--bucket", str(route["physical_bucket"]), "--route-modes", "buckets",
+                   "--modes", "lua,native", "--conns", "1", "--native-allocs"]
+        if args.cases_json:
+            command += ["--cases-json", str(root/"harness/case-plan.json")]
+        return command
+    command = [sys.executable, str(root/"harness/native_batch_sql.py"), *common,
+               "--lua-gateway", m["gateways"]["lua"]["endpoint"],
+               "--native-gateway", m["gateways"]["native"]["endpoint"], "--database", database]
+    if args.python_path:
+        command += ["--python-path", str(args.python_path.resolve())]
+    return command
 
 
 def run(args):
@@ -393,15 +417,19 @@ def run(args):
                                  "load_before": os.getloadavg(), "per_replica_cpus": args.cpus,
                                  "per_replica_memory": args.memory, "gateway_threads": 2, "gateway_pool": 4,
                                  "read_claim": "matched end-to-end SQL; RF3 is a fsync read control, not a failover/write benchmark"}
-        command = [sys.executable, str(root/"harness/native_batch_sql.py"), "--client", str(root/"bin/native_batch"),
-                   "--shard", m["leader_endpoint"], "--lua-gateway", gateways["lua"]["endpoint"],
-                   "--native-gateway", gateways["native"]["endpoint"], "--database", database,
-                   "--rows", str(args.rows), "--payload", str(args.payload), "--tenant", str(args.tenant),
-                   "--trials", str(args.trials), "--seconds", str(args.seconds), "--warmup", str(args.warmup),
-                   "--batches", args.batches, "--shapes", args.shapes, "--workers", args.workers,
-                   "--output", str(root/"measurements"), "--clk-tck", str(m["clk_tck"])]
-        if args.python_path:
-            command += ["--python-path", str(args.python_path.resolve())]
+        if args.direct_storage:
+            code = r"""
+local b=tarn_buckets();local s=assert(box.space[__TABLE__])
+local bucket=require('digest').crc32(require('msgpack').encode(__TENANT__))%b[2]+1
+return require('json').encode{space=s.id,epoch=b[3],membership=b[6],count=b[2],physical_bucket=bucket}
+""".replace("__TABLE__", json.dumps(database+".t")).replace("__TENANT__", str(args.tenant))
+            m["direct_route"] = observer(root, m["leader_endpoint"], code)
+            assert m["direct_route"]["space"] == m["dataset"]["space"]
+            m["resource_context"]["read_claim"] = (
+                "matched strong Lua/native storage RPCs; RF3 fsync read control; no failover/write-throughput claim")
+            m["resource_context"]["direct_client_connections"] = 1
+            m["resource_context"]["idle_gateway_processes"] = 2
+        command = measurement_command(root, m, args, database)
         m["measure_command"] = command
         m["stage"] = "measuring"
         save(root, m)
@@ -439,6 +467,8 @@ def main():
         p.add_argument("--"+name, type=Path, required=True)
     p.add_argument("--client-source", type=Path)
     p.add_argument("--python-path", type=Path)
+    p.add_argument("--direct-storage", action="store_true", help="measure strong Lua/native storage RPCs on the same owned replica set")
+    p.add_argument("--cases-json", type=Path, help="direct-storage case list for native_batch.py; avoids a Cartesian matrix")
     p.add_argument("--parent", default=tempfile.gettempdir())
     p.add_argument("--replicas", type=int, choices=(1, 3), default=1)
     p.add_argument("--rows", type=int, default=100_000)
@@ -455,10 +485,10 @@ def main():
     p.add_argument("--memory", default="1g")
     p.add_argument("--prepare-only", action="store_true", help="freeze and verify inputs without starting services")
     args = p.parse_args()
-    args.cases_json = None  # shared packaging helper's optional direct matrix
+    assert args.direct_storage or args.cases_json is None, "--cases-json requires --direct-storage"
     assert 0 < args.rows <= 1_000_000 and 0 < args.payload <= 4096 and args.tenant >= 0
     assert args.trials > 0 and args.seconds > 0 and args.warmup > 0 and args.deadline > 0
-    for path in (args.gateway, args.native, args.native_manifest, args.client, args.client_source):
+    for path in (args.gateway, args.native, args.native_manifest, args.client, args.client_source, args.cases_json):
         if path is not None:
             assert path.is_file() and os.access(path, os.R_OK), "missing readable input: "+str(path)
     assert os.access(args.gateway, os.X_OK) and os.access(args.client, os.X_OK)

@@ -21,13 +21,13 @@ local function healthy()
     F.set_clock{check = function() return nil end,
                 native_state = function() return true, 1ULL, 2ULL, 3ULL, 4ULL end}
 end
-check(ffi.sizeof('struct tarn_ns') == 392 and ffi.offsetof('struct tarn_ns', 'fresh_mode') == 312
+check(tarn.NS_LAYOUT == 13 and ffi.sizeof('struct tarn_ns') == 392 and ffi.offsetof('struct tarn_ns', 'fresh_mode') == 312
       and ffi.offsetof('struct tarn_ns', 'read_timeout') == 320
       and ffi.offsetof('struct tarn_ns', 'clock_mono') == 328
       and ffi.offsetof('struct tarn_ns', 'fresh_mark') == 360
       and ffi.offsetof('struct tarn_ns', 'fresh_ok') == 368
       and ffi.offsetof('struct tarn_ns', 'fresh_controls') == 376
-      and ffi.offsetof('struct tarn_ns', 'fresh_space') == 384, 'native ABI12 layout')
+      and ffi.offsetof('struct tarn_ns', 'fresh_space') == 384, 'native ABI13 layout')
 check(not pcall(F.barrier) and not box.is_in_txn(), 'unknown clock fails before owning a transaction')
 check(tarn_txn_status('missing') == 'none' and tarn_part_status('missing') == 'none',
       'fresh recovery status does not require clock health')
@@ -77,6 +77,8 @@ for _, engine in ipairs({'memtx', 'vinyl'}) do
     check(r[1] == 'ok' and F.ok(stream) == 1 and F.count == 1, engine .. ' first stream read is certified')
     r = tarn_select(sid, 0, {2}, 'EQ', 1, nil, true, false, nil, false)
     check(r[1] == 'ok' and id() == stream, engine .. ' subsequent read retains exact transaction')
+    F.fence_stream()
+    check(id() == stream and F.ok(stream) == 1, engine .. ' RF1 final fence preserves original transaction')
     local savepoint = box.savepoint()
     sp:replace{3, 30}; box.rollback_to_savepoint(savepoint)
     check(F.ok(stream) == 1 and sp:get{3} == nil, engine .. ' savepoint handback retains certificate')

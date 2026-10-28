@@ -21,6 +21,10 @@ tests/ddlfaults.sh                         # CREATE / DROP / TRUNCATE when a sha
 tla/check.sh                               # needs tla/tla2tools.jar
 ```
 
+The formal registry has 243 default configurations, including 178 expected
+broken/tradeoff outcomes, and 256 total configurations (250 generated and
+six maintained directly). Explicit check arguments override the default.
+
 ## Rules of the road
 
 - The commit protocol lives in `lua/tarn.lua` (participants, recovery,

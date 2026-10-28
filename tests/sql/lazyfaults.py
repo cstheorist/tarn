@@ -31,7 +31,16 @@ import uuid
 import pymysql
 
 from lazytest import ev, q, rpc, stat
-from movetest import bucket_of
+from movetest import bucket_of, crc32c
+
+
+def decision_node(nodes, identities, state):
+    """Verify placement and locate the one recorded decision writer."""
+    ids = sorted(x["id"] for x in identities)
+    assert state["txid"] and sorted(state["parts"]) == ids, state
+    expected = ids[crc32c(state["txid"].encode()) % len(ids)]
+    assert state["dshard"] == expected, (state, expected)
+    return next(node for node, identity in zip(nodes, identities) if identity["id"] == expected)
 
 
 INSTALL = r"""
@@ -406,7 +415,7 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
         state = lease.snapshot()
         self.record("pending_witness", state=state)
         assert state["state"] == "prepared" and state["row"] is None, state
-        assert state["dshard"] == self.identities[0]["id"], "--shards must follow gateway participant order"
+        decision_node(self.nodes, self.identities, state)
         assert state["apply_calls"] == 4, "normal ACK must follow exactly four returned-error APPLY rounds"
         assert stat(c, "Tarn_lazy_session_pending_apply") > 0
         assert stat(c, "Tarn_lazy_session_touched_buckets") > 0
@@ -446,15 +455,15 @@ return {id = tarn.cfg.shard_id, uuid = tostring(box.info.uuid), version = box.in
                         commit = Worker(lambda: q(c, "COMMIT"))
                         state = wait_for(lambda: (s if (s := lease.snapshot())["prepared"] else None),
                                          5, "durable target YES")
-                        assert state["dshard"] == self.identities[0]["id"], state
+                        decision_node_ = decision_node(self.nodes, self.identities, state)
                         txid = state["txid"]
                         for node in self.nodes:
                             wait_for(lambda n=node: ev(n, "local p=box.space._tarn_part:get{...}; "
                                                       "return p and p.state or 'none'", [txid]) == "prepared",
                                      5, f"durable YES on {node}")
-                        decision = rpc(self.nodes[0], "tarn_txn_cas", [txid, "staging", "committed"])
+                        decision = rpc(decision_node_, "tarn_txn_cas", [txid, "staging", "committed"])
                         # Verify durable state, not merely a successful CALL.
-                        assert ev(self.nodes[0], "local r=box.space._tarn_txn:get{...}; return r and r.status", [txid]) == "committed", decision
+                        assert ev(decision_node_, "local r=box.space._tarn_txn:get{...}; return r and r.status", [txid]) == "committed", decision
                         lease.known_committed = True
                         lease.release_prepare()
                         commit.finish()
