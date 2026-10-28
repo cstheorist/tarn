@@ -360,6 +360,7 @@ options:
   "bucket_count": 30000,
   "user": "tarn", "password": "tarn",
   "pool_size": 4,
+  "native_batch_reads": false,
   "node_id": 1,
   "ack_on_prepare": false,
   "max_txn_age": 120,
@@ -371,6 +372,13 @@ options:
   "default_collation": "utf8mb4_bin"
 }
 ```
+
+`native_batch_reads` opts into the bounded native primary-key batch prototype
+(default `false`). It serves complete autocommit batches of up to 128 full
+primary keys on memtx; unsupported requests use the existing Lua procedure.
+Each connection negotiates support, so older native modules retain their
+ordinary read paths. Turning this option off keeps other native procedures
+enabled. See [the native storage inventory and contract](native-storage.md).
 
 `default_collation` (`--default-collation`) is the collation of text
 columns in tables that declare none (`@@collation_server`); MySQL's own

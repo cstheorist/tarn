@@ -2,6 +2,7 @@
 //! {language = 'C'})`), and the part of Tarantool's module API they use
 //! (module.h).
 
+use crate::batch;
 use crate::fallback::{self, back, note, Proc, Why};
 use crate::locks::{self, KeyIndex};
 use crate::mp::{Rd, Wr};
@@ -583,6 +584,7 @@ unsafe fn reply(ctx: *mut BoxFunctionCtx, mp: &[u8]) -> c_int {
 }
 
 const TO_LUA: &[u8] = &[0x91, 0xa3, b'l', b'u', b'a'];
+const BATCH_CAPABILITY: &[u8] = b"\x92\xb1native_batch_keys\x01";
 
 /// `ts_state([layout])`: the address of the state, which the Lua module
 /// keeps current (lua/tarn.lua, "Native procedures"). `layout` is the one
@@ -630,8 +632,25 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
     }
     let len = (args_end as usize).saturating_sub(args as usize);
     let buf = std::slice::from_raw_parts(args as *const u8, len);
+    // Pure discovery, including on an unready node: no state or read
+    // counters are touched. Old modules leave this arity to Lua instead.
+    if batch::capability(buf) {
+        return reply(ctx, BATCH_CAPABILITY);
+    }
+    #[cfg(feature = "alloc-metrics")]
+    if batch::allocation_query(buf) {
+        let (data, len) = crate::alloc_metrics::reply();
+        return reply(ctx, &data[..len]);
+    }
     fallback::begin();
-    let out = std::panic::catch_unwind(|| select_page(buf)).unwrap_or_else(|_| back(Why::Panic));
+    let out = std::panic::catch_unwind(|| {
+        if Rd::new(buf).array() == Some(8) {
+            select_batch(buf)
+        } else {
+            select_page(buf)
+        }
+    })
+    .unwrap_or_else(|_| back(Why::Panic));
     match out {
         Some(page) => {
             if let Some(s) = state() {
@@ -647,6 +666,106 @@ pub unsafe extern "C" fn ts_select(ctx: *mut BoxFunctionCtx, args: *const c_char
             reply(ctx, TO_LUA)
         }
     }
+}
+
+/// Full primary-key autocommit batches (the eight-argument form of
+/// tarn_select_keys). Every read is memtx and none yields: the state and
+/// all requested keys' W claims describe the same snapshot, including
+/// missing rows. Anything needing a continuation is handed back whole.
+fn select_batch(buf: &[u8]) -> Option<Vec<u8>> {
+    note(Why::Shape);
+    let a = batch::parse(buf)?;
+    note(Why::Other);
+    let s = ready_state()?;
+    if s.page_rows == 0 || s.page_bytes == 0 {
+        return back(Why::NotReady);
+    }
+    // SAFETY: plain module API calls in the transaction thread. A batch
+    // never starts or borrows a transaction, so handback leaves no stream
+    // reads or callbacks to undo.
+    unsafe {
+        if box_is_ro() {
+            return back(Why::ReadOnly);
+        }
+        if box_txn() {
+            return back(Why::Stream);
+        }
+        if select::counted(&a.route) && fiber_clock() >= s.load_until {
+            return back(Why::LoadWindow);
+        }
+    }
+    if !select::route_ok(s, &a.route) {
+        return back(Why::Bucket);
+    }
+    if s.ddl_n != 0 {
+        return back(Why::HeldTable);
+    }
+    let Some(info) = index_info(a.space_id, 0) else {
+        return back(Why::Schema);
+    };
+    if !info.memtx {
+        return back(Why::Vinyl);
+    }
+    if !info.unique || info.parts == 0 || a.keys.iter().any(|k| k.parts != info.parts) {
+        return back(Why::Shape);
+    }
+    if s.space_locked(a.space_id) {
+        // Check the whole input, never just keys which return tuples: a
+        // prepared insert can own a currently missing primary key.
+        for key in &a.keys {
+            if let Some(why) = locks::point_read_met(a.space_id, 0, key.raw) {
+                return back(why);
+            }
+        }
+    }
+    let mut budget = batch::Budget {
+        work: 0,
+        rows: 0,
+        bytes: 0,
+    };
+    let max_rows = u64::from(s.page_rows);
+    let max_bytes = s.page_bytes;
+    let mut out = Wr::with_capacity(256);
+    out.array(2).str("ok");
+    let at = out.array_slot();
+    for key in &a.keys {
+        if !batch::can_step(budget, batch::MAX_KEYS, max_rows, max_bytes) {
+            return back(Why::Page);
+        }
+        // SAFETY: key.raw is a complete MessagePack key in this call's
+        // buffer; the schema is stable and memtx lookups do not yield.
+        unsafe {
+            let p = key.raw.as_ptr().cast::<c_char>();
+            let mut t = std::ptr::null_mut();
+            if box_index_get(a.space_id, 0, p, p.add(key.raw.len()), &mut t) != 0 {
+                box_error_clear();
+                return None;
+            }
+            let (data, size) = if t.is_null() {
+                (std::ptr::null(), 0)
+            } else {
+                let mut size = 0;
+                let data = box_tuple_data(t, &mut size);
+                if data.is_null() {
+                    return None;
+                }
+                (data, size)
+            };
+            let Some(next) = batch::step(budget, !t.is_null(), size as u64, batch::MAX_KEYS, max_rows, max_bytes)
+            else {
+                return back(Why::Page);
+            };
+            budget = next;
+            if !t.is_null() {
+                // Copy the native tuple directly, in request order. There
+                // is no deduplication; misses append no row.
+                out.raw(std::slice::from_raw_parts(data.cast::<u8>(), size));
+            }
+        }
+    }
+    out.patch_array(at, budget.rows as u32); // no more than MAX_KEYS
+    select::count_reads(s, &a.route);
+    Some(out.0)
 }
 
 /// The reply to a read ts_select serves (["ok", rows]), or None for one it

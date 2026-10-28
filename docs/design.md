@@ -2070,6 +2070,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
 | Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
 | Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_KeyBatchMissingClaim | violates NoMissingClaim | 101 | 110 | 7 | 00s | 7 |
+| Bug_KeyBatchMixedSnapshots | violates OneSnapshot | 174 | 298 | 9 | 00s | 9 |
+| Bug_KeyBatchTruncatedComplete | violates FullBatch | 46 | 53 | 4 | 00s | 4 |
 | Bug_LazyBarrierForgetUnresolved | violates OwnWritesCovered | 126 | 274 | 8 | 00s | 8 |
 | Bug_LazyBarrierLastOnly | violates OwnWritesCovered | 72 | 145 | 9 | 00s | 9 |
 | Bug_LazyBarrierMaxAck | violates OwnWritesCovered | 81 | 171 | 12 | 00s | 12 |
@@ -2188,6 +2191,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
+| NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |

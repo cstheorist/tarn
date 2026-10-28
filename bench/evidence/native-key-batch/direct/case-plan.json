@@ -1,0 +1,74 @@
+[
+  {
+    "workers": 1,
+    "batch": 8,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 16,
+    "batch": 8,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 64,
+    "batch": 8,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 1,
+    "batch": 32,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 16,
+    "batch": 32,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 64,
+    "batch": 32,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 1,
+    "batch": 128,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 16,
+    "batch": 128,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 64,
+    "batch": 128,
+    "shape": "hits",
+    "route": "buckets"
+  },
+  {
+    "workers": 16,
+    "batch": 128,
+    "shape": "duplicates",
+    "route": "buckets"
+  },
+  {
+    "workers": 16,
+    "batch": 128,
+    "shape": "miss",
+    "route": "buckets"
+  },
+  {
+    "workers": 16,
+    "batch": 128,
+    "shape": "hits",
+    "route": "epoch"
+  }
+]

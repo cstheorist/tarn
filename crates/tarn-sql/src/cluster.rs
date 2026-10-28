@@ -56,6 +56,10 @@ pub struct ClusterConfig {
     /// Connections per shard leader (streams are multiplexed on them).
     #[serde(default = "default_pool")]
     pub pool_size: usize,
+    /// Opt into bounded native primary-key batches. Other native paths
+    /// remain enabled when this is false, for isolated profiling.
+    #[serde(default)]
+    pub native_batch_reads: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
     pub node_id: u32,
