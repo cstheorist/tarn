@@ -1985,7 +1985,10 @@ fn validate(buf: &[u8], committed: &Cell<bool>) -> Option<Served> {
     }
     // Never certify an arbitrary older ambient view with a late barrier.
     // The first read must have installed this exact transaction's token.
-    if !unsafe { box_txn() } || !fresh_stream_ok() {
+    if !unsafe { box_txn() } {
+        return back(Why::Stream);
+    }
+    if !fresh_stream_ok() {
         return back(Why::Freshness);
     }
     if !fresh_controls_ok() || !read_clock_ready() || v.reads.iter().any(|r| !fresh_space_ok(r.space_id)) {
