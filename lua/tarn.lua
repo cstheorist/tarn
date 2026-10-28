@@ -3612,7 +3612,68 @@ local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse
     return n
 end
 
-function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin, route)
+-- Typed partials preserve SQL NULLs and exact signed/unsigned integers.
+-- DECIMAL/DOUBLE expressions and collation-sensitive extrema stay in Rust.
+-- A guard below 38 decimal digits refuses a partial before arithmetic could
+-- round; the caller discards every partial and repeats only read-only work.
+do
+local SUM_GUARD = decimal.new('1000000000000000000000000000000000000') -- 10^36
+local EXACT = 2 ^ 52
+local function add(a, b)
+    if type(a) == 'number' and type(b) == 'number' and math.abs(a) < EXACT and math.abs(b) < EXACT then
+        return a + b
+    end
+    return decimal.new(a) + decimal.new(b)
+end
+function PG.reduce_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude, aggs)
+    local in_txn = box.is_in_txn()
+    if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end
+    local pk, omitted = box.space[space_id].index[0], {}
+    local pkd = index_key_def(space_id, 0)
+    for _, k in ipairs(exclude) do
+        local t = pk:get(k)
+        if t ~= nil then omitted[msgpack.encode(pkd:extract_key(t))] = true end
+    end
+    local out = {}
+    for i, a in ipairs(aggs) do out[i] = (a[1] == 'count' or a[1] == 'countstar') and 0ULL or box.NULL end
+    local seen = 0
+    for _, t in idx:pairs(key, {iterator = it}) do
+        seen = seen + 1
+        if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
+        if end_key ~= nil then
+            local c = kd:compare_with_key(t, end_key)
+            if (reverse and (c < 0 or (c == 0 and not end_incl)))
+                or (not reverse and (c > 0 or (c == 0 and not end_incl))) then break end
+        end
+        if (next(omitted) == nil or not omitted[msgpack.encode(pkd:extract_key(t))]) and preds_match(t, preds) then
+            for i, a in ipairs(aggs) do
+                local op, field = a[1], a[2]
+                local v
+                if field <= #t then v = t[field] else v = a[3] end
+                if op == 'countstar' or (op == 'count' and v ~= nil) then out[i] = out[i] + 1ULL
+                elseif v ~= nil and op ~= 'count' then
+                    if op == 'sum' then
+                        local s = out[i] == nil and 0 or out[i]
+                        if s > SUM_GUARD or s < -SUM_GUARD then return {}, false end
+                        out[i] = add(s, v)
+                    elseif out[i] == nil or (op == 'min' and int_lt(v, out[i])) or (op == 'max' and int_lt(out[i], v)) then
+                        out[i] = v
+                    end
+                end
+            end
+        end
+    end
+    yield_point('reduce_scan')
+    for i, a in ipairs(aggs) do
+        if a[1] == 'sum' and out[i] ~= nil then
+            out[i] = tostring(decimal.new(out[i]))
+        end
+    end
+    return out, true
+end
+end
+
+function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin, route, aggs)
     local mv = BK.check_read(route)
     if mv then return mv end
     if begin == true and not box.is_in_txn() then
@@ -3634,6 +3695,9 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
     local kd = index_key_def(space_id, index_id)
     local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
     local function scan()
+        if aggs ~= nil then
+            return PG.reduce_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude, aggs)
+        end
         return count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude)
     end
     if lock_check ~= true then return {OK, scan()} end
@@ -3645,10 +3709,10 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
     -- memtx: count and check without a yield in between observe one state.
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
-        local n = scan()
-        if NLOCK == 0 and DDL_N == 0 then return {OK, n} end
+        local n, complete = scan()
+        if NLOCK == 0 and DDL_N == 0 then return aggs and {OK, n, complete} or {OK, n} end
         local h = select_locked(space_id, index_id, idx, kd, it, key, nil, end_key, reverse, nil, nil)
-        if h == nil then return {OK, n} end
+        if h == nil then return aggs and {OK, n, complete} or {OK, n} end
         if clock.monotonic() > deadline then
             return conflict('row locked by prepared transaction ' .. h)
         end
@@ -3660,6 +3724,35 @@ end
 -- (A count holds no rows; it fails with 1041 like a read if the heap runs
 -- out anyway.)
 tarn_count = PG.bounded(BK.recheck(tarn_count, 11))
+
+-- Optional procedure names let old storage refuse before beginning a stream.
+-- Reuse the count scan's exact MVCC/lock-history/DDL/routing boundary.
+tarn_reduce = tarn_count
+
+-- A page is captured and checked by the ordinary SELECT before immutable
+-- tuples are filtered/projected. Its continuation and coverage describe the
+-- original page, including rows the residual predicate rejected. This keeps
+-- empty qualifying pages from truncating the scan or weakening validation.
+function tarn_select_projected(space_id, index_id, key, iterator, limit, end_key, end_incl,
+                               lock_check, offset, begin, after, route, fields, preds, boundary)
+    local r = tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl,
+                          lock_check, offset, begin, after, route)
+    if r[1] ~= OK then return r end
+    local function project(t, fs)
+        local row = {}
+        for i, f in ipairs(fs) do
+            if f[1] <= #t then row[i] = t[f[1]] else row[i] = f[2] end
+        end
+        return row
+    end
+    local rows, out = r[2], {}
+    for _, t in ipairs(rows) do
+        if preds_match(t, preds) then out[#out + 1] = project(t, fields) end
+    end
+    return {OK, out, r[3] or box.NULL, #rows, #rows > 0 and project(rows[#rows], boundary) or box.NULL}
+end
+
+tarn_select_projected = PG.bounded(BK.recheck(tarn_select_projected, 12))
 
 -- tarn_estimate: row counts that choose the access path of an ordered read
 -- with LIMIT (issue #81). Range A, the equality prefix `a_key` of index

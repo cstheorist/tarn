@@ -27,6 +27,7 @@ for cfg in "$@"; do
     EngineSourceDrain|Bug_EngineSourceDrain*) module=EngineSourceDrain.tla ;;
     EngineAlias|EngineAlias_Existing|Bug_EngineAlias*) module=EngineAlias.tla ;;
     NativeKeyBatch|Bug_KeyBatch*) module=NativeKeyBatch.tla ;;
+    TypedRead|Bug_TypedRead*) module=TypedRead.tla ;;
     LockCopy|Bug_Lock*) module=NativeLockCopy.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;

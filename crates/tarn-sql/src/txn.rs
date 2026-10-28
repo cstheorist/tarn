@@ -42,6 +42,9 @@ use tarn_verified::coord::{self, Decision, Vote};
 
 pub type Row = Vec<Value>;
 
+mod pushdown;
+pub(crate) use pushdown::{project_rows, reduce_rows, Projection, Reduced, StorageAgg};
+
 /// A known-committed transaction whose physical APPLY is not yet confirmed
 /// everywhere. Participant identifiers are stable shard IDs, not positions
 /// in a gateway's current routing map. This is never an unknown decision.

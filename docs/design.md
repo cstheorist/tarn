@@ -112,6 +112,44 @@ the stored versions of the rows it has written, and the SQL server adds
 those of its buffered rows that match; the counted ranges are recorded for
 validation exactly as reading the rows would record them.
 
+**Typed scans and partial aggregates** (#135). An ungrouped range scan can
+compute integer-column `SUM`, `MIN` and `MAX`, mixed with independent
+`COUNT(*)`/`COUNT(column)`, in `tarn_reduce`. It reuses the count path's
+snapshot, full-range lock/DDL checks and routing guards. NULLs are ignored;
+empty/all-NULL inputs return NULL for SUM/MIN/MAX. Signed and unsigned
+64-bit sums use exact integer arithmetic, then guarded decimal arithmetic
+at storage and an integer string partial merged into Rust's i128 sum.
+The guard refuses a fold before decimal precision can be lost. No partial
+from any shard is usable when one fold is incomplete. Stored versions of
+buffered writes are excluded before aggregation; Rust adds qualifying own
+rows. Every scanned range remains recorded for validation.
+Multi-shard READ COMMITTED reductions use the existing validated statement
+snapshot, as ordinary aggregates over multiple pages do; partials are not
+independent committed views that can fracture the aggregate.
+
+Plain column projections over a range scan, without aggregation, ordering,
+DISTINCT or LIMIT, use `tarn_select_projected` when they omit at least one
+column and retain at most 256 columns. A reduction has at most 256 aggregate
+slots. The ordinary checked SELECT captures one bounded page first;
+storage then filters its immutable tuples and returns only needed columns
+(including predicate, primary and index key columns). Page positions and
+read coverage describe the original page even when no row qualifies. The
+boundary tuple contains only key columns. ALTER defaults and physical field
+positions are carried in descriptors, as in COUNT. The existing scan's
+page/heap bounds still apply; this is not a whole-query memory bound.
+
+Both paths require every WHERE conjunct to be an exact supported COUNT
+predicate: integer comparisons/IN, byte string comparisons/IN, and NULL
+tests, with index-covered conditions omitted where exact. Joins,
+DISTINCT aggregates, GROUP BY, aggregate expressions, DECIMAL/float sums
+and extrema, boolean sums/extrema, and collation-sensitive comparisons or
+extrema keep the ordinary executor. An absent optional procedure permits
+complete read-only fallback; malformed or other errored responses fail.
+The existing COUNT and ordered-page algorithms remain in use. Numeric
+predicates ignore the connection's fallback text collation; text predicates
+still require byte comparison. Set
+`query_pushdown: false` in a gateway's config for a matched control.
+
 **Autocommit single-shard DML** (`UPDATE ... WHERE pk = ?`, single-shard
 `INSERT`, `DELETE ... WHERE pk = ?`): one call to `tarn_autocommit`, which runs
 one local Tarantool transaction (lock check + apply + commit). On a memtx
@@ -2102,6 +2140,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_StreamMarksRoAfterTermChange | violates CommittedReadsCurrent | 165 | 202 | 5 | 00s | 4 |
 | Bug_StreamMarksValidateNoFenceFresh | violates CommittedReadsCurrent | 70994 | 178466 | 11 | 02s | 9 |
 | Bug_StreamMarksWritableBeforeTrigger | violates CommittedReadsCurrent | 462 | 706 | 6 | 00s | 5 |
+| Bug_TypedReadCoverage | violates FullCoverage | 52255 | 315679 | 5 | 00s | 5 |
+| Bug_TypedReadEmptyPage | violates ExactFold | 23455 | 55439 | 4 | 00s | 4 |
+| Bug_TypedReadMixedSnapshots | violates ExactProjection | 115726 | 701474 | 6 | 00s | 6 |
+| Bug_TypedReadOverlay | violates ExactFold | 56285 | 352989 | 5 | 00s | 5 |
+| Bug_TypedReadPartial | violates CompleteOnly | 2065 | 2066 | 3 | 00s | 3 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
 | Bug_UnconfirmedPrepare | violates CertifiedYesDurable | 6 | 6 | 4 | 00s | 4 |
@@ -2173,6 +2216,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | StreamMarks_TwoTables | no errors | 27772812 | 122862175 | 23 | 06min 23s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
+| TypedRead | no errors | 99328 | 870400 | 6 | 00s |  |
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
 | UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
 | Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |

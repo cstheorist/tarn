@@ -62,6 +62,7 @@ DEFAULT="$DEFAULT EngineSourceDrain Bug_EngineSourceDrainCallerOnly"
 DEFAULT="$DEFAULT EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex"
 DEFAULT="$DEFAULT NativeKeyBatch Bug_KeyBatchMissingClaim Bug_KeyBatchMixedSnapshots Bug_KeyBatchTruncatedComplete"
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
+DEFAULT="$DEFAULT TypedRead Bug_TypedReadOverlay Bug_TypedReadCoverage Bug_TypedReadEmptyPage Bug_TypedReadPartial Bug_TypedReadMixedSnapshots"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

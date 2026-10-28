@@ -8,6 +8,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Exact integer SUM/MIN/MAX partials and filtered column projections over
+  eligible range scans ([#135](https://github.com/cstheorist/tarn/issues/135)).
+  Preserve NULLs, buffered writes, physical-layout defaults, full scanned
+  ranges and the existing snapshot/lock/routing checks. Unsupported SQL
+  shapes and missing optional storage procedures retain ordinary execution.
+  `query_pushdown: false` supplies an executor control; new status counters
+  expose reduction RPCs and projected scan attempts.
+
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
   lookup loop for complete memtx autocommit batches of up to 128 keys.

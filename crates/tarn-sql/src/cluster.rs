@@ -60,6 +60,10 @@ pub struct ClusterConfig {
     /// remain enabled when this is false, for isolated profiling.
     #[serde(default)]
     pub native_batch_reads: bool,
+    /// Exact projected scans and integer partial aggregates. Disable for
+    /// matched executor controls; this does not change isolation.
+    #[serde(default = "default_query_pushdown")]
+    pub query_pushdown: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
     pub node_id: u32,
@@ -107,6 +111,10 @@ pub struct ClusterConfig {
 
 fn default_move_timeout() -> f64 {
     10.0
+}
+
+fn default_query_pushdown() -> bool {
+    true
 }
 
 fn default_ddl_job_stale() -> f64 {
@@ -488,6 +496,8 @@ pub struct Stats {
     pub deadlock_calls: AtomicU64,
     /// COUNTs the shards computed without returning rows (issue #52).
     pub storage_counts: AtomicU64,
+    pub storage_reductions: AtomicU64,
+    pub storage_projections: AtomicU64,
     /// Rows read from storage by SELECT, UPDATE and DELETE.
     pub rows_read: AtomicU64,
     /// Storage reads (pages) of index scans and multi-key lookups that

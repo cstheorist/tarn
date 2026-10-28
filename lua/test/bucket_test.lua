@@ -119,6 +119,11 @@ r = c[1]:call('tarn_select_keys', {sid, 0, {{1}, {2}}, box.NULL, true, false, bo
 check('... naming its own: served', r[1] == 'ok' and #r[2] == 2, r)
 r = c[1]:call('tarn_count', {sid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false, 12})
 check('count: refused', r[1] == 'moved', r)
+r = c[1]:call('tarn_reduce', {sid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false, 12, {{'sum', 1, box.NULL}}})
+check('typed reduction: refused on the wrong owner', r[1] == 'moved', r)
+r = c[1]:call('tarn_select_projected', {sid, 0, {}, 'ALL', box.NULL, box.NULL, true,
+    true, box.NULL, false, box.NULL, 12, {{1, box.NULL}}, {}, {{1, box.NULL}}})
+check('typed projection: refused on the wrong owner', r[1] == 'moved', r)
 r = c[1]:call('tarn_count', {sid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false, {e = 1}})
 check('... at the epoch: served', r[1] == 'ok', r)
 local st = c[1]:new_stream(); st:begin()

@@ -356,6 +356,7 @@ options:
   "user": "tarn", "password": "tarn",
   "pool_size": 4,
   "native_batch_reads": false,
+  "query_pushdown": true,
   "node_id": 1,
   "ack_on_prepare": false,
   "max_txn_age": 120,
@@ -374,6 +375,13 @@ primary keys on memtx; unsupported requests use the existing Lua procedure.
 Each connection negotiates support, so older native modules retain their
 ordinary read paths. Turning this option off keeps other native procedures
 enabled. See [the native storage inventory and contract](native-storage.md).
+
+`query_pushdown` (default `true`) enables exact integer partial aggregates
+and filtered column projections over eligible range scans. Disable it to
+compare with ordinary execution under the same isolation and storage
+settings. Unsupported shapes and missing optional storage procedures fall
+back completely; this setting does not change the existing COUNT or ordered
+page paths. See [request paths](design.md#12-request-paths).
 
 `default_collation` (`--default-collation`) is the collation of text
 columns in tables that declare none (`@@collation_server`); MySQL's own
@@ -677,8 +685,11 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
   retries, plan-cache hits and misses, deadlocks across shards broken by
   this server, storage calls its deadlock detector made
   (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), `COUNT`s
-  the shards computed without returning rows (`Tarn_storage_counts`), rows
-  read from storage (`Tarn_rows_read`), attempted storage reads (`Tarn_storage_reads`,
+  the shards computed without returning rows (`Tarn_storage_counts`),
+  successful reduction RPCs (`Tarn_storage_reductions`,
+  including explicit incomplete folds), completed projected scan attempts
+  (`Tarn_storage_projections`: logical scans, including old-storage fallback),
+  rows read from storage (`Tarn_rows_read`), attempted storage reads (`Tarn_storage_reads`,
   one per index-scan or multi-key page or co-located join request, including
   failed or discarded attempts), row counts taken to choose between
   an ordered page and a longer index prefix (`Tarn_path_estimates`), buckets
