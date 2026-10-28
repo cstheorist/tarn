@@ -27,6 +27,9 @@
 (* Writes are counted, not valued.  AtMostOnce: W were committed at most   *)
 (* once.  ReplyHolds: the client's ok means once, its error never; only an *)
 (* unknown outcome leaves both open.                                       *)
+(* Autocommit Lua fallback retains its selected physical connection; only *)
+(* an explicit read-only refusal permits leader rediscovery. Pool choice  *)
+(* and distribution are outside this model (real Session tests, #155).    *)
 (***************************************************************************)
 EXTENDS Naturals
 

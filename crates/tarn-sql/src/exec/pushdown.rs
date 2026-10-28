@@ -160,7 +160,7 @@ pub(super) async fn reduce(
                 let st = txn.stream(cluster, c.shard).await?;
                 (st.client, st.id, st.begin)
             }
-            _ => (cluster.shards[c.shard].client(cluster).await?, 0, false),
+            _ => (read_client(cluster, c.shard).await?, 0, false),
         };
         requests.push((client, id, begin));
     }

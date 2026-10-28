@@ -197,6 +197,49 @@ pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Stmt> {
     };
     let stmt = parse_one(&sql)?;
     match stmt {
+        A::Statement::Explain {
+            analyze,
+            verbose,
+            query_plan,
+            estimate,
+            statement,
+            format,
+            options,
+            ..
+        } => {
+            if analyze
+                || verbose
+                || query_plan
+                || estimate
+                || options.is_some()
+                || !matches!(
+                    format,
+                    Some(
+                        A::AnalyzeFormatKind::Assignment(A::AnalyzeFormat::JSON)
+                            | A::AnalyzeFormatKind::Keyword(A::AnalyzeFormat::JSON)
+                    )
+                )
+            {
+                return Err(SqlError::unsupported(
+                    "use EXPLAIN FORMAT=JSON without ANALYZE or execution options",
+                ));
+            }
+            let statement = match *statement {
+                A::Statement::Query(q) => Stmt::Select(Arc::new(plan_query(&q, ctx)?)),
+                A::Statement::Insert(i) => Stmt::Insert(Arc::new(plan_insert(&i, ctx)?)),
+                A::Statement::Update(u) => Stmt::Update(Arc::new(plan_update(&u, ctx)?)),
+                A::Statement::Delete(d) => Stmt::Delete(Arc::new(plan_delete(&d, ctx)?)),
+                _ => {
+                    return Err(SqlError::unsupported(
+                        "EXPLAIN supports physical SELECT, INSERT, UPDATE and DELETE plans",
+                    ))
+                }
+            };
+            Ok(Stmt::Explain {
+                statement: Box::new(statement),
+                catalog_version: ctx.catalog.version,
+            })
+        }
         A::Statement::Query(q) => Ok(Stmt::Select(Arc::new(plan_query(&q, ctx)?))),
         A::Statement::Insert(ins) => Ok(Stmt::Insert(Arc::new(plan_insert(&ins, ctx)?))),
         A::Statement::Update(u) => Ok(Stmt::Update(Arc::new(plan_update(&u, ctx)?))),

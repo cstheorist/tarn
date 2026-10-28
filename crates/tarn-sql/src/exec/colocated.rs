@@ -148,22 +148,35 @@ pub(super) fn plan<'a>(
     steps: &[(&'a TableAccess, JoinKind, Option<&'a Expr>)],
     cx: &EvalCtx<'_>,
 ) -> SqlResult<Option<Plan<'a>>> {
+    Ok(analyze(steps, cx)?.ok())
+}
+
+/// The executor and EXPLAIN use the same eligibility guards. Reasons are
+/// static labels; this adds no storage work or SQL expression evaluation.
+pub(super) fn analyze<'a>(
+    steps: &[(&'a TableAccess, JoinKind, Option<&'a Expr>)],
+    cx: &EvalCtx<'_>,
+) -> SqlResult<Result<Plan<'a>, &'static str>> {
     // Storage bounds the number of slots; larger joins keep their existing
     // executor rather than turning the optimization's cap into a SQL error.
     if !(2..=16).contains(&steps.len()) || steps[0].1 != JoinKind::Inner || steps[0].2.is_some() {
-        return Ok(None);
+        return Ok(Err("requires two to sixteen tables in a left-deep join"));
     }
     let root = &steps[0].0.table;
     let n = root.shard_key.len();
     if n == 0 {
-        return Ok(None);
+        return Ok(Err("the root has no shard key"));
     }
     let mut reads = Vec::with_capacity(steps.len());
     let mut shard_key = Vec::new();
     let mut offset = 0;
     for (alias, (access, _, on)) in steps.iter().enumerate() {
         let t = &access.table;
-        let Some(exprs) = prefix(access) else { return Ok(None) };
+        let Some(exprs) = prefix(access) else {
+            return Ok(Err(
+                "each access must be one unlimited primary-key point or equality prefix",
+            ));
+        };
         if access.offset != offset
             || t.shard_key.len() != n
             || exprs.len() < n
@@ -171,14 +184,16 @@ pub(super) fn plan<'a>(
             || !t.pk().cols[..exprs.len()].iter().all(|&c| exact_part(t, c))
             || !(0..n).all(|i| same_part(root, root.shard_key[i], t, t.shard_key[i]))
         {
-            return Ok(None);
+            return Ok(Err(
+                "ordered shard keys must match in type/collation and prefix each primary key",
+            ));
         }
         let Some(next_offset) = offset.checked_add(t.columns.len()) else {
-            return Ok(None);
+            return Ok(Err("the combined native tuple layout exceeds supported bounds"));
         };
         offset = next_offset;
         if alias > 0 && !(0..n).all(|i| on.is_some_and(|on| equated(on, alias, i, steps))) {
-            return Ok(None);
+            return Ok(Err("ON must equate every shard-key component to an earlier alias"));
         }
         let mut parent = None;
         let mut bindings = Vec::with_capacity(exprs.len());
@@ -197,20 +212,24 @@ pub(super) fn plan<'a>(
                     || !same_part(t, col, source, f.col)
                     || (position < n && f.col != source.shard_key[position])
                 {
-                    return Ok(None);
+                    return Ok(Err(
+                        "dependent key fields must come from one earlier primary key with identical representation",
+                    ));
                 }
                 parent = Some(f.alias);
                 let native = source.layout.col_weight[f.col].unwrap_or(source.layout.col_field[f.col]);
                 let Some(native) = native.checked_add(1).and_then(|f| u32::try_from(f).ok()) else {
-                    return Ok(None);
+                    return Ok(Err("a native field position exceeds supported bounds"));
                 };
                 bindings.push(Binding::Field(native));
             } else {
                 let Some(value) = constant(expr, t, col, cx)? else {
-                    return Ok(None);
+                    return Ok(Err(
+                        "constant key bindings must be non-NULL, representable literals or bound parameters",
+                    ));
                 };
                 if alias > 0 && position < n && value != shard_key[position] {
-                    return Ok(None);
+                    return Ok(Err("bound shard-key inputs differ between aliases"));
                 }
                 bindings.push(Binding::Const(value));
             }
@@ -230,7 +249,7 @@ pub(super) fn plan<'a>(
             bindings,
         });
     }
-    Ok(Some(Plan { shard_key, reads }))
+    Ok(Ok(Plan { shard_key, reads }))
 }
 
 #[cfg(test)]

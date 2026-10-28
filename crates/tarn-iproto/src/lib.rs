@@ -14,10 +14,12 @@
 //! [`tarn_common::Value`], including Tarantool's `MP_DECIMAL` and
 //! `MP_DATETIME` extensions.
 
+mod admission;
 mod client;
 pub mod iproto;
 pub mod mp;
 
+pub use admission::{AdmissionStats, Budget, Limits};
 pub use client::{Client, Response, ServerInfo, Stats};
 pub use errcode::*;
 
@@ -35,6 +37,15 @@ pub struct Opts {
     /// Bound on TCP connect + greeting + `IPROTO_ID` + `IPROTO_AUTH`.
     /// `Duration::ZERO` means no limit.
     pub connect_timeout: Duration,
+    /// Hard limits for this physical connection, including abandoned callers.
+    pub request_limits: Limits,
+    /// Lifetime from enqueue to exact terminal reply or physical retirement.
+    /// Must be nonzero; independent of the waiting caller's cancellation.
+    pub request_timeout: Duration,
+    /// Shared shard/global scopes, in that order (at most two).
+    pub admission: Vec<Budget>,
+    /// Application-defined scope ID for cached connection observations.
+    pub observation_scope: Option<u32>,
 }
 
 impl Opts {
@@ -45,6 +56,10 @@ impl Opts {
             user: None,
             password: None,
             connect_timeout: Duration::from_secs(5),
+            request_limits: Limits::default(),
+            request_timeout: Duration::from_secs(120),
+            admission: Vec::new(),
+            observation_scope: None,
         }
     }
 }
@@ -56,6 +71,10 @@ impl std::fmt::Debug for Opts {
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("connect_timeout", &self.connect_timeout)
+            .field("request_limits", &self.request_limits)
+            .field("request_timeout", &self.request_timeout)
+            .field("admission", &self.admission)
+            .field("observation_scope", &self.observation_scope)
             .finish()
     }
 }
@@ -108,6 +127,11 @@ pub enum Error {
     /// The connection is gone (failed, closed, or the server went away).
     #[error("tarantool connection closed")]
     Closed,
+    /// Admission refused before encoding/enqueueing: this request has no
+    /// storage effect and owns no request identity. Never confused with a
+    /// connection retirement after enqueue.
+    #[error("storage RPC admission refused before enqueue ({scope} limit)")]
+    Admission { scope: &'static str },
     /// `connect_timeout` elapsed.
     #[error("tarantool operation timed out")]
     Timeout,

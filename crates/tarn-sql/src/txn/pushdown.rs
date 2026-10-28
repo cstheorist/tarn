@@ -57,6 +57,7 @@ pub async fn reduce_rows(
     route: &Route,
     aggs: &[StorageAgg],
 ) -> SqlResult<Reduced> {
+    crate::observe::read(route);
     let mut m = Mp::new();
     m.arr(12)
         .uint(t.space_id as u64)
@@ -151,6 +152,7 @@ pub(crate) async fn project_rows(
     route: &Route,
     project: &Projection,
 ) -> SqlResult<Option<ProjectedPage>> {
+    crate::observe::read(route);
     let mut m = Mp::new();
     m.arr(15)
         .uint(t.space_id as u64)
