@@ -3130,6 +3130,31 @@ impl Session {
                 let stmt = self.plan_cached(&normalized.template, &[])?;
                 self.explain(&stmt, self.cluster.catalog().version, &[])
             }
+            Admin::ShowTarnRpcs => {
+                let mut columns = cols(&[
+                    ("Scope", ColumnType::VarString),
+                    ("Shard", ColumnType::LongLong),
+                    ("Connection", ColumnType::LongLong),
+                    ("Closed", ColumnType::LongLong),
+                ])
+                .to_vec();
+                for name in [
+                    "Pending",
+                    "Charged_bytes",
+                    "Wire_bytes",
+                    "Normal_pending",
+                    "Abandoned",
+                    "Oldest_ms",
+                    "Refusals",
+                    "Deadline_retirements",
+                    "Peak_pending",
+                    "Peak_bytes",
+                    "Observation_drops",
+                ] {
+                    columns.push(Column::new(name, ColumnType::LongLong));
+                }
+                rows_out(columns.into(), crate::rpcs::rows(&self.cluster))
+            }
             Admin::ShowTarnBuckets => {
                 let rows = self
                     .cluster
@@ -3511,6 +3536,7 @@ impl Session {
             ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
         stats.extend(s.query_digests.counters());
+        stats.extend(crate::rpcs::counters(&self.cluster));
         stats.retain(|(n, _)| like_ci(n, like));
         let mut rows: Vec<Row> = stats
             .into_iter()

@@ -42,12 +42,17 @@ async fn request_sync(peer: &mut DuplexStream) -> u64 {
 }
 
 async fn connecting(auth: bool) -> (tokio::task::JoinHandle<Result<Client, Error>>, DuplexStream) {
-    let (socket, mut peer) = tokio::io::duplex(4096);
-    let (rd, wr) = tokio::io::split(socket);
     let mut opts = Opts::new("in-memory");
     if auth {
         opts.user = Some("tarn".into());
     }
+    connecting_options(opts).await
+}
+
+async fn connecting_options(opts: Opts) -> (tokio::task::JoinHandle<Result<Client, Error>>, DuplexStream) {
+    let (socket, mut peer) = tokio::io::duplex(4096);
+    let (rd, wr) = tokio::io::split(socket);
+    let auth = opts.user.is_some();
     let task = tokio::spawn(async move { Client::start(&opts, rd, wr).await });
     let mut greeting = [b' '; 128];
     let version = b"Tarantool 3.9.0 (Binary)";
@@ -71,7 +76,9 @@ async fn connected() -> (Client, DuplexStream) {
 }
 
 async fn pending(c: &Client, peer: &mut DuplexStream) -> (u64, oneshot::Receiver<Reply>) {
-    let rx = c.enqueue(iproto::PING, 0, |o| o.push(0x80)).unwrap();
+    let rx = c
+        .enqueue(iproto::PING, 0, 128, Class::Normal, |o| o.push(0x80))
+        .unwrap();
     (request_sync(peer).await, rx)
 }
 
@@ -264,4 +271,218 @@ async fn handshake_requires_unique_owned_terminal_replies() {
     packets.extend(response(0, SYNC_ID, &[0x80]));
     peer.write_all(&packets).await.unwrap();
     assert!(matches!(bounded(task).await.unwrap(), Err(Error::Protocol(_))));
+}
+
+async fn connected_options(opts: Opts) -> (Client, DuplexStream) {
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    (bounded(task).await.unwrap().unwrap(), peer)
+}
+
+fn small_options() -> Opts {
+    let mut opts = Opts::new("in-memory");
+    opts.request_limits = crate::Limits {
+        requests: 8,
+        bytes: 4096,
+        reserved_requests: 2,
+        reserved_bytes: 512,
+    };
+    opts.request_timeout = Duration::from_millis(500);
+    opts
+}
+
+async fn charges_gone(c: &Client) {
+    bounded(async {
+        while c.stats().admission.pending != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn cancelled_requests_keep_both_limits_and_completion_reserve() {
+    let (c, mut peer) = connected_options(small_options()).await;
+    let mut ids = Vec::new();
+    for _ in 0..6 {
+        let (id, rx) = pending(&c, &mut peer).await;
+        ids.push(id);
+        drop(rx);
+    }
+    for _ in 0..4097 {
+        assert!(matches!(
+            c.enqueue(iproto::PING, 0, 128, Class::Normal, |_| {}),
+            Err(Error::Admission { scope: "connection" })
+        ));
+    }
+    assert_eq!(
+        (
+            c.stats().admission.pending,
+            c.stats().admission.bytes,
+            c.stats().abandoned
+        ),
+        (6, 768, 6)
+    );
+    assert_eq!(c.stats().requests, 6); // refused requests own no identity
+    for _ in 0..2 {
+        drop(c.enqueue(iproto::PING, 0, 128, Class::Completion, |_| {}).unwrap());
+        request_sync(&mut peer).await;
+    }
+    assert_eq!(c.stats().admission.pending, 8);
+    assert!(c.enqueue(iproto::PING, 0, 128, Class::Completion, |_| {}).is_err());
+    peer.write_all(&response(iproto::CHUNK, ids[0], &[0x80])).await.unwrap();
+    tokio::task::yield_now().await;
+    assert_eq!(c.stats().admission.pending, 8);
+    peer.write_all(&response(iproto::OK, ids[0], &[0x80])).await.unwrap();
+    bounded(async {
+        while c.stats().admission.pending == 8 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(c.stats().admission.pending, 7);
+    drop(c.enqueue(iproto::PING, 0, 128, Class::Normal, |_| {}).unwrap());
+    c.close();
+    charges_gone(&c).await;
+}
+
+#[tokio::test]
+async fn old_cancelled_head_expires_despite_other_replies_and_compacts_order() {
+    let (c, mut peer) = connected_options(small_options()).await;
+    let (_, rx) = pending(&c, &mut peer).await;
+    drop(rx);
+    for _ in 0..100 {
+        let (id, rx) = pending(&c, &mut peer).await;
+        peer.write_all(&response(iproto::OK, id, &[0x80])).await.unwrap();
+        bounded(rx).await.unwrap();
+    }
+    assert_eq!(c.stats().admission.pending, 1);
+    assert!(c.inner.shared.state.lock().order.len() <= 16);
+    assert_eq!(
+        bounded(peer.read_u8()).await.unwrap_err().kind(),
+        std::io::ErrorKind::UnexpectedEof
+    );
+    assert!(c.is_closed());
+    charges_gone(&c).await;
+    assert_eq!(c.stats().admission.deadline_retirements, 1);
+    assert_eq!(c.stats().requests, 101);
+}
+
+#[tokio::test]
+async fn slow_peer_bounds_encoded_bytes_and_retires_a_blocked_writer() {
+    let mut opts = small_options();
+    opts.request_limits.bytes = 64 << 10;
+    opts.request_limits.reserved_bytes = 16 << 10;
+    let (c, mut peer) = connected_options(opts).await;
+    let body = vec![0x80; 16 << 10];
+    for _ in 0..2 {
+        drop(
+            c.enqueue(iproto::EVAL, 0, body.len() + 128, Class::Normal, |out| {
+                out.extend_from_slice(&body)
+            })
+            .unwrap(),
+        );
+    }
+    for _ in 0..1000 {
+        assert!(matches!(
+            c.enqueue(iproto::EVAL, 0, body.len() + 128, Class::Normal, |_| panic!(
+                "encoded refused request"
+            )),
+            Err(Error::Admission { .. })
+        ));
+    }
+    let s = c.stats();
+    assert_eq!((s.admission.pending, s.requests, s.abandoned), (2, 2, 2));
+    assert!(s.pending_wire_bytes <= s.admission.bytes && s.admission.peak_bytes <= 64 << 10);
+    // Do not read while waiting for the watchdog: the physical writer is
+    // blocked by the duplex buffer, rather than just a silent response.
+    bounded(async {
+        while !c.is_closed() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    charges_gone(&c).await;
+    let mut drained = Vec::new();
+    bounded(peer.read_to_end(&mut drained)).await.unwrap();
+    assert!(drained.len() <= 4096);
+    assert_eq!(c.stats().admission.deadline_retirements, 1);
+}
+
+#[test]
+fn retirement_does_not_refund_until_both_physical_owners_drop() {
+    let budget = Budget::new("test", crate::Limits::default()).unwrap();
+    let permit = Permit::acquire(&budget, &[], 128, Class::Normal).unwrap();
+    let physical = Arc::new(Physical {
+        state: Mutex::new((2, Vec::new())),
+    });
+    let a = IoGuard(physical.clone());
+    let b = IoGuard(physical.clone());
+    physical.retire(std::iter::once(permit));
+    assert_eq!(budget.stats().pending, 1);
+    drop(a);
+    assert_eq!(budget.stats().pending, 1);
+    drop(b);
+    assert_eq!(budget.stats().pending, 0);
+}
+
+#[tokio::test]
+async fn shared_scopes_cover_multiple_connections_and_reserved_calls() {
+    let mut opts = small_options();
+    let shard = Budget::new(
+        "shard",
+        crate::Limits {
+            requests: 4,
+            bytes: 4096,
+            reserved_requests: 1,
+            reserved_bytes: 512,
+        },
+    )
+    .unwrap();
+    let global = Budget::new(
+        "global",
+        crate::Limits {
+            requests: 3,
+            bytes: 4096,
+            reserved_requests: 1,
+            reserved_bytes: 512,
+        },
+    )
+    .unwrap();
+    opts.admission = vec![shard.clone(), global.clone()];
+    opts.observation_scope = Some(7);
+    let (a, mut pa) = connected_options(opts.clone()).await;
+    let (b, mut pb) = connected_options(opts).await;
+    let (_, ra) = pending(&a, &mut pa).await;
+    let (_, rb) = pending(&b, &mut pb).await;
+    drop((ra, rb));
+    assert_eq!(global.stats().pending, 2);
+    assert!(matches!(b.ping().await, Err(Error::Admission { scope: "global" })));
+    assert_eq!(
+        (b.stats().requests, b.stats().admission.pending, shard.stats().pending),
+        (1, 1, 2)
+    );
+    assert_eq!(global.stats().request_refusals, 1);
+    let ac = a.clone();
+    let done = tokio::spawn(async move { ac.call_control(0, "tarn_apply", &[0x90]).await });
+    let id = request_sync(&mut pa).await;
+    assert_eq!(global.stats().pending, 3);
+    peer_reply(&mut pa, id).await;
+    bounded(done).await.unwrap().unwrap();
+    let watches = global.connections();
+    assert_eq!(watches.len(), 2);
+    assert!(watches.iter().all(|c| c.owner == Some(7)));
+    assert_eq!(watches.iter().map(|c| c.abandoned).sum::<usize>(), 2);
+    a.close();
+    charges_gone(&a).await;
+    assert_eq!(global.stats().pending, 1);
+    assert_eq!(global.connections().len(), 1); // closed client refs are not a watch leak
+    b.close();
+    charges_gone(&b).await;
+    assert_eq!((shard.stats().pending, global.stats().pending), (0, 0));
+    assert!(global.connections().is_empty());
+}
+
+async fn peer_reply(peer: &mut DuplexStream, id: u64) {
+    peer.write_all(&response(iproto::OK, id, &[0x80])).await.unwrap();
 }

@@ -65,6 +65,9 @@ DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_L
 DEFAULT="$DEFAULT Fairness Bug_FairnessPrefix"
 DEFAULT="$DEFAULT DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect
 Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry"
+DEFAULT="$DEFAULT PipelineAdmission Bug_PipelineFreeOnCancel Bug_PipelineEarlyRetireRelease
+Bug_PipelineBypassShard Bug_PipelineBypassGlobal Bug_PipelineNormalUsesReserve
+Bug_PipelineForgetCancelledDeadline Bug_PipelineRefuseAfterEnqueue"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

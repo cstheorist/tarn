@@ -66,6 +66,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the executed budget checks are verified with Verus. See the
   [native storage inventory](docs/native-storage.md).
 
+- Bounded storage RPCs ([#127](https://github.com/cstheorist/tarn/issues/127)):
+  connection/shard/gateway count and byte admission, reserved completion
+  capacity, and deadlines that retire stalled physical connections while
+  preserving cancelled identities and 40001 versus 40003. `SHOW TARN RPCS`
+  and cached status counters expose charges, age, refusals and retirements.
+
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
   writes continue, then fences writes for catch-up and secondary-index

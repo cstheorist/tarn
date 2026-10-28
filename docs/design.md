@@ -2143,6 +2143,13 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
 | Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
+| Bug_PipelineBypassGlobal | violates ScopeBound | 69 | 157 | 4 | 00s | 4 |
+| Bug_PipelineBypassShard | violates ScopeBound | 65 | 150 | 4 | 00s | 4 |
+| Bug_PipelineEarlyRetireRelease | violates OutstandingCharged | 15 | 23 | 3 | 00s | 3 |
+| Bug_PipelineForgetCancelledDeadline | violates ExpiryVisible | 272 | 593 | 5 | 00s | 5 |
+| Bug_PipelineFreeOnCancel | violates OutstandingCharged | 10 | 17 | 3 | 00s | 3 |
+| Bug_PipelineNormalUsesReserve | violates CompletionReserve | 11 | 58 | 3 | 00s | 3 |
+| Bug_PipelineRefuseAfterEnqueue | violates NoEffectBeforeEnqueue | 9 | 16 | 3 | 00s | 3 |
 | Bug_PlacementFenceAfterExpiry | violates NoAbortAfterCommit | 113729 | 570826 | 14 | 13s | 14 |
 | Bug_PlacementNoTombstone | violates AppliedOnlyIfCommitted | 6621 | 18469 | 9 | 02s | 9 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
@@ -2212,6 +2219,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
+| PipelineAdmission | no errors | 730752 | 2650849 | 26 | 21s |  |
 | Placement_Failover | no errors | 516733 | 2823296 | 21 | 01min 37s |  |
 | Placement_RC | no errors | 1153174 | 8224685 | 26 | 03min 23s |  |
 | Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
