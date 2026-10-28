@@ -34,6 +34,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Placement models, lost-reply/coordinator-crash tests and a repeated
   record/WAL/GC benchmark cover the change.
 
+- Query routing diagnostics ([#133](https://github.com/cstheorist/tarn/issues/133)):
+  `EXPLAIN FORMAT=JSON` reports physical access paths, shard/bucket bounds,
+  colocation eligibility and possible global-index participants without
+  executing the query. `SHOW TARN PLAN FOR` diagnoses unbound prepared
+  statements, and bounded `SHOW TARN QUERIES` observations distinguish
+  completed runtime fanout from compile-time constraints.
+
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
   writes continue, then fences writes for catch-up and secondary-index
