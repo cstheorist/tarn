@@ -104,3 +104,26 @@ partials; malformed replies fail. The existing lock-history, DDL/routing
 and MVCC-validation contracts remain prerequisites. See
 [verification](../docs/verification.md#typed-range-reads-issue-135) for the
 bounded model, sensitivity controls and actual SQL/storage tests.
+
+## Live validation and unresolved variability
+
+The [validation receipt](pushdown-validation/summary.json) records the final
+integrated source and test results: 262 Rust tests; 1,073 differential cases,
+47 exact pushdown controls, 27 transaction tests and 30 READ COMMITTED tests
+in each of native memtx, Lua-only memtx and uncached Vinyl; 1,000 randomized
+queries; and six lost/invalid-reply mutation faults. The complete native/Lua
+storage suites used byte-identical Lua and native modules. RF3 memtx passed.
+
+RF3 Vinyl was variable on this shared three-CPU container. An initial short
+run missed bucket-move progress. A later 45-second run suffered prolonged
+leader unavailability and the moving-bank finalization failed; its
+[full output is retained](pushdown-validation/integrated-failover-vinyl.log).
+The subsequent [unmodified-main control](pushdown-validation/main-control-vinyl.log)
+and [candidate repeat](pushdown-validation/candidate-vinyl-repeat.log) both
+passed the same 45-second-interval test, including all bank/counter/ordered
+read, moving-bucket, lock-copy and direct native totals. The task's idle
+MariaDB was stopped before both of those runs; runtime CPU/memory limits
+were unchanged. The control's release build used one LLVM thread after a
+VM-memory kill. The exact cause of the earlier failures was not isolated;
+the passing repetitions do not erase them or establish an availability or
+RF3 performance guarantee.

@@ -1,0 +1,65 @@
+cluster up: 2 shard(s) x 3 replica(s); SQL on 127.0.0.1:4100..4100; dir /tmp/tarn-issue135-failover-vinyl
+19:55:57 box.ctl.promote() on s1.2 (port 3512), attempt 1; the leader on 3511 will be demoted with its connections open
+The term is outdated: old - 3, new - 4
+19:55:58 shard 1 leader is now 3512; 3511 still running: yes
+19:56:07 killing shard 1 leader on port 3512 (s1.2)
+19:56:10 shard 1 new leader on 3511 after 3.620 s
+19:56:14 killing shard 2 leader on port 3521 (s2.1)
+20:00:15 shard 2 new leader on 3523 after 240.373 s
+    bank: 3128 commits, 830 conflicts, 43 audits, 338 other errors (3 commits with unknown outcome, 2 of them committed), final sum 64000
+    counters: 4388 acknowledged increments, 74 with unknown outcome
+      error: (1180, 'Lost connection to shard 1 during commit (tarantool connection closed); the statement may or may not have been applied')
+      error: (1180, 'Lost connection to shard 1 during commit (2003 (HY000): shard 1 has no reachable leader (127.0.0.1:3513 is read-only); recovery will finish transaction 1-1975d387-10880); the statement may or may not have been applied')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+      error: (1180, 'Lost connection to shard 1 during commit (2003 (HY000): shard 1 has no reachable leader (127.0.0.1:3513 is read-only); recovery will finish transaction 1-1975d387-10882); the statement may or may not have been applied')
+      error: audit: (2003, 'shard 1 has no reachable leader (127.0.0.1:3513 is read-only)')
+    commits per 3 s: 96 360 469 415 216 438 221 369 463 81 0 0 0 0 0 0
+ok   test_bank (268.4s)
+1 tests, 0 failures
+    bank (READ COMMITTED): 2731 commits, 33 deadlocks, 0 lock timeouts, 3 unknown outcomes, 0 other errors
+ok   test_zz_bank (268.4s)
+1 tests, 0 failures
+1 SQL server(s), shards [1, 2], 30000 buckets; moving the 24 buckets of the rows for 45 s
+Traceback (most recent call last):
+  File "/work/tests/sql/movetest.py", line 374, in <module>
+    main()
+  File "/work/tests/sql/movetest.py", line 368, in main
+    failures = Test(args).run()
+               ^^^^^^^^^^^^^^^^
+  File "/work/tests/sql/movetest.py", line 294, in run
+    return self.finish()
+           ^^^^^^^^^^^^^
+  File "/work/tests/sql/movetest.py", line 305, in finish
+    bal = dict(q(c, "SELECT id, bal FROM bank"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/tests/sql/movetest.py", line 42, in q
+    cur.execute(sql, args)
+  File "/usr/lib/python3/dist-packages/pymysql/cursors.py", line 148, in execute
+    result = self._query(query)
+             ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/pymysql/cursors.py", line 310, in _query
+    conn.query(q)
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 548, in query
+    self._affected_rows = self._read_query_result(unbuffered=unbuffered)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 775, in _read_query_result
+    result.read()
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 1156, in read
+    first_packet = self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/pymysql/connections.py", line 725, in _read_packet
+    packet.raise_for_error()
+  File "/usr/lib/python3/dist-packages/pymysql/protocol.py", line 221, in raise_for_error
+    err.raise_mysql_exception(self._data)
+  File "/usr/lib/python3/dist-packages/pymysql/err.py", line 143, in raise_mysql_exception
+    raise errorclass(errno, errval)
+pymysql.err.OperationalError: (2003, 'shard 2 has no reachable leader (127.0.0.1:3523 is read-only)')
+direct KV sum on new leaders: 64000
+shard 1 leader, native procedures:	{"validations_to_lua":1038,"commits_to_lua":0,"served":0,"to_lua":0,"validations":451,"commits":0,"ready":1,"fallbacks":{"validate":{"stale_buckets":2,"bucket":51,"w_lock":984,"stale_locks":1}},"writes":0,"writes_to_lua":0}
+shard 2 leader, native procedures:	{"validations_to_lua":1,"commits_to_lua":0,"served":0,"to_lua":0,"validations":4,"commits":0,"ready":1,"fallbacks":{"validate":{"stale_buckets":1}},"writes":0,"writes_to_lua":0}
+2026-10-28 20:00:15.032 [31509] main/122/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-1975d387-16063 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:00:15.035 [31509] main/122/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-1975d387-16087 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:00:15.037 [31509] main/122/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-1975d387-16093 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:00:15.039 [31509] main/122/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-1975d387-16230 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+2026-10-28 20:00:15.041 [31509] main/122/tarn_recovery/tarn tarn.lua:4725 W> tarn recovery of 1-1975d387-16292 failed: /work/lua/tarn.lua:4540: no writable node for shard 2
+FAILOVER TEST FAILED (bank rc=0 rc-bank rc=0 moves rc=1 kv=0 lock copy=0 move_failed=0); logs kept in /tmp/tarn-issue135-failover-vinyl
