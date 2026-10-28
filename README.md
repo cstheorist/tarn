@@ -32,9 +32,12 @@ read them as **key/value**.
   recheck their predicates; they may miss recent matches. A session can
   wait for its own writes. Transactions retain the strong local index.
   See [the consistency and operational contract](docs/lazy-indexes.md).
-* **Schema changes.** `ALTER TABLE` retains existing tuple layouts.
-  Native index builds run online; indexed instant defaults and lazy-index
+* **Schema changes.** Ordinary `ALTER TABLE` changes retain existing tuple layouts.
+  Vinyl index builds run online; indexed instant defaults and lazy-index
   bootstrap use bounded write fences while reads remain available.
+  [Online engine changes](docs/operations.md#online-engine-changes) copy a
+  table between memtx and vinyl while writes continue, then fence it for
+  the final tail, index builds and publication.
 * **Tarantool storage.** Each shard is a Tarantool replica set with
   synchronous replication and automatic leader election. Tables are hash
   sharded with vshard's bucket function and live in RAM (memtx) or, with
@@ -54,7 +57,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (153 default configurations, including 108
+  and model-checked with TLC (191 default configurations, including 139
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -163,7 +166,7 @@ shard's CPU per statement
   moves between shards. TLC found a real design flaw early on: single-shard
   reads could break strict serializability. It later caught a flaw in a fix
   too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 134 verified
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 137 verified
   functions and lemmas for routing, coordinator decisions, global index
   maintenance, the MySQL wire codec, and the native procedures' MessagePack
   and lock checks.

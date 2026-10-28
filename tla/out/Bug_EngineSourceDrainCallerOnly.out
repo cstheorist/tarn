@@ -1,0 +1,102 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 28 and seed 4643336039652102126 with 1 worker on 1 cores with 228MB heap and 64MB offheap memory [pid: 53] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/tla/EngineSourceDrain.tla
+Parsing file /tmp/tlc-7138574753138480674/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-7138574753138480674/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-7138574753138480674/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-7138574753138480674/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-7138574753138480674/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-7138574753138480674/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-7138574753138480674/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EngineSourceDrain
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EngineSourceDrain
+Starting... (2026-10-27 21:10:34)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 21:10:34.
+Error: Invariant PreparedImage is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = FALSE
+/\ source = FALSE
+/\ caller = FALSE
+/\ phase = "new"
+/\ admitted = FALSE
+/\ shadow = FALSE
+
+State 2: <BeginFence line 20, col 15 to line 21, col 72 of module EngineSourceDrain>
+/\ pending = FALSE
+/\ source = FALSE
+/\ caller = FALSE
+/\ phase = "fencePending"
+/\ admitted = FALSE
+/\ shadow = FALSE
+
+State 3: <AdmitSource line 25, col 16 to line 27, col 53 of module EngineSourceDrain>
+/\ pending = TRUE
+/\ source = FALSE
+/\ caller = TRUE
+/\ phase = "fencePending"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+State 4: <ConfirmFence line 29, col 17 to line 30, col 74 of module EngineSourceDrain>
+/\ pending = TRUE
+/\ source = FALSE
+/\ caller = TRUE
+/\ phase = "fenced"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+State 5: <DetachCaller line 32, col 17 to line 33, col 73 of module EngineSourceDrain>
+/\ pending = TRUE
+/\ source = FALSE
+/\ caller = FALSE
+/\ phase = "fenced"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+State 6: <Tail line 40, col 9 to line 43, col 58 of module EngineSourceDrain>
+/\ pending = TRUE
+/\ source = FALSE
+/\ caller = FALSE
+/\ phase = "tail"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+State 7: <ResolveSource(TRUE) line 36, col 5 to line 38, col 44 of module EngineSourceDrain>
+/\ pending = FALSE
+/\ source = TRUE
+/\ caller = FALSE
+/\ phase = "tail"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+State 8: <PostTailCut line 45, col 16 to line 46, col 73 of module EngineSourceDrain>
+/\ pending = FALSE
+/\ source = TRUE
+/\ caller = FALSE
+/\ phase = "cut"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+State 9: <Prepare line 48, col 12 to line 49, col 69 of module EngineSourceDrain>
+/\ pending = FALSE
+/\ source = TRUE
+/\ caller = FALSE
+/\ phase = "prepared"
+/\ admitted = TRUE
+/\ shadow = FALSE
+
+29 states generated, 22 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-27 21:10:34)
+Trace exploration spec path: ./EngineSourceDrain_TTrace_1793135434.tla

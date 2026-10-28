@@ -56,6 +56,10 @@ pub struct ClusterConfig {
     /// Connections per shard leader (streams are multiplexed on them).
     #[serde(default = "default_pool")]
     pub pool_size: usize,
+    /// Opt into bounded native primary-key batches. Other native paths
+    /// remain enabled when this is false, for isolated profiling.
+    #[serde(default)]
+    pub native_batch_reads: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
     pub node_id: u32,
@@ -1614,6 +1618,24 @@ impl Cluster {
             if !ch.changed {
                 return self.alter_auto_inc(&def, &ch).await;
             }
+            if ch.engine_change.is_some() {
+                // A replica must be able to resume this job after promotion.
+                // Check before allocating identities or publishing any job.
+                self.require_engine_capabilities().await?;
+                ch.def.counter_id = Some(def.counter_space_id());
+                ch.def.space_id = self.alloc_space_ids(1).await?;
+                for ix in &mut ch.def.indexes {
+                    if let Some(old) = ix.global {
+                        ch.uix_drop.push(old);
+                        ix.global = Some(0);
+                    }
+                    if let Some(lazy) = &mut ix.lazy {
+                        ch.lazy_drop.push(lazy.space_id);
+                        lazy.space_id = 0;
+                        lazy.ready = false;
+                    }
+                }
+            }
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
             if def.has_lazy() || ch.def.indexes.iter().any(|i| i.lazy.is_some()) {
@@ -1657,6 +1679,46 @@ impl Cluster {
             self.run_job(&job).await?;
             return self.alter_auto_inc(&ch.def, &ch).await;
         }
+    }
+
+    /// Engine replacement changes physical identities. Every potential
+    /// leader must understand the owned-copy protocol before it can start.
+    async fn require_engine_capabilities(&self) -> SqlResult<()> {
+        for shard in self.live_shards() {
+            for addr in self.shards[shard].replicas() {
+                let client = tarn_iproto::Client::connect(&self.opts(addr))
+                    .await
+                    .map_err(|e| SqlError::unsupported(format!("engine-copy storage capability unavailable: {e}")))?;
+                let response = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    client.call(0, "tarn_engine_capabilities", &[0x90]),
+                )
+                .await
+                .map_err(|_| SqlError::unsupported("engine-copy storage capability check timed out"))?
+                .map_err(|e| {
+                    SqlError::unsupported(format!(
+                        "online engine changes require engine-copy protocol V1 on every replica ({e})"
+                    ))
+                })?;
+                let valid = response.data().is_some_and(|data| {
+                    let mut rd = Rd::new(&data);
+                    (|| -> SqlResult<bool> {
+                        Ok(rd.array()? == 1
+                            && rd.array()? == 2
+                            && rd.string()? == "ok"
+                            && matches!(rd.value()?, Value::Int(1) | Value::UInt(1))
+                            && rd.buf.is_empty())
+                    })()
+                    .unwrap_or(false)
+                });
+                if !valid {
+                    return Err(SqlError::unsupported(
+                        "online engine changes require engine-copy protocol V1 on every replica",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     // ---- schema change jobs (lua/tarn.lua "Jobs") ---------------------------
@@ -2211,13 +2273,13 @@ impl Cluster {
     /// Next AUTO_INCREMENT value(s) for a table; allocated from a counter on
     /// shard 1 in batches so most inserts never leave this server.
     pub async fn next_auto_inc(&self, t: &TableDef, n: u64) -> SqlResult<u64> {
-        self.next_counter(format!("ai:{}", t.space_id), n).await
+        self.next_counter(format!("ai:{}", t.counter_space_id()), n).await
     }
 
     /// Next hidden row id(s) of a table without a primary key, from its own
     /// counter: InnoDB's DB_ROW_ID, never reused.
     pub async fn next_row_id(&self, t: &TableDef, n: u64) -> SqlResult<u64> {
-        self.next_counter(format!("rid:{}", t.space_id), n).await
+        self.next_counter(format!("rid:{}", t.counter_space_id()), n).await
     }
 
     async fn next_counter(&self, name: String, n: u64) -> SqlResult<u64> {
@@ -2246,7 +2308,7 @@ impl Cluster {
     /// An explicit value was inserted into an AUTO_INCREMENT column: make
     /// sure future generated values are larger.
     pub async fn note_auto_inc(&self, t: &TableDef, v: u64) -> SqlResult<()> {
-        let name = format!("ai:{}", t.space_id);
+        let name = format!("ai:{}", t.counter_space_id());
         {
             let mut m = self.auto_inc.lock();
             if let Some((next, end)) = m.get_mut(&name) {

@@ -1,0 +1,985 @@
+{
+  "status": "accepted",
+  "phase_count": 60,
+  "pair_count": 30,
+  "parameters": {
+    "rows": 100000,
+    "payload_bytes": 64,
+    "tenant": 7,
+    "sql_primary_key": [
+      "tenant_id",
+      "id"
+    ],
+    "partition_key": [
+      "tenant_id"
+    ],
+    "workers": 1,
+    "trials": 5,
+    "seconds_per_phase": 5,
+    "warmup_seconds": 1,
+    "jit": "enabled",
+    "gc": "normal enabled",
+    "module_features": [
+      "alloc-metrics"
+    ],
+    "native_abi": 11,
+    "native_state_bytes": 312,
+    "test_hooks": false,
+    "check_locks": true
+  },
+  "scope": [
+    "End-to-end SQL, including PyMySQL/GIL/network/gateway/result decoding and exact row validation. Not storage capacity evidence.",
+    "Only leader TX/process CPU is measured, not total RF3 replica CPU. RF3 is a fsync/quorum read control, not failover/write-throughput evidence.",
+    "Lua GC allocation and native Rust requested-capacity allocation are separate categories. Neither includes Tarantool C/tuple memory or RSS; B128 Rust requested bytes can exceed the Lua-GC category.",
+    "No idle CPU subtraction. Observer/background overhead is retained. Each mode uses the same featureON module.",
+    "Five paired trials percase, strict trial parity LuaFirst/NativeFirst/LuaFirst/NativeFirst/LuaFirst. Individual ratios/min/max are retained; no confidence interval or uniform latency/rate win is claimed.",
+    "Routine load_window handbacks remain included and reconcile exact per-query served+handback counters. No other fallback accepted.",
+    "SQL IN semantics deduplicate duplicate inputs and ORDER BY id; batch denotes IN-list length, not distinct returned rows.",
+    "All raw latency u64le samples and original phase JSON remain separate data artifacts with hashes."
+  ],
+  "cases": [
+    {
+      "cohort": "rf1-hits",
+      "batch": 8,
+      "shape": "hits",
+      "pairs": 5,
+      "order": [
+        "lua",
+        "native",
+        "lua",
+        "native",
+        "lua"
+      ],
+      "ratios": {
+        "native_over_lua_cpu": {
+          "values": [
+            0.5402607101642685,
+            0.711508961190002,
+            0.5964165209866835,
+            0.7715815073828687,
+            0.6492943572037913
+          ],
+          "median": 0.6492943572037913,
+          "minimum": 0.5402607101642685,
+          "maximum": 0.7715815073828687,
+          "native_regressions": 0
+        },
+        "native_over_lua_rate": {
+          "values": [
+            1.4273001968264234,
+            0.9773274934714776,
+            1.2173786948089353,
+            1.0296985814629203,
+            1.106212744053282
+          ],
+          "median": 1.106212744053282,
+          "minimum": 0.9773274934714776,
+          "maximum": 1.4273001968264234,
+          "native_regressions": 1
+        },
+        "native_over_lua_p50": {
+          "values": [
+            0.8051552157760419,
+            0.9994251221615407,
+            0.9448912246660387,
+            0.9826573426573426,
+            0.963899489318563
+          ],
+          "median": 0.963899489318563,
+          "minimum": 0.8051552157760419,
+          "maximum": 0.9994251221615407,
+          "native_regressions": 0
+        },
+        "native_over_lua_p99": {
+          "values": [
+            0.6280959373470386,
+            1.0850275896249792,
+            0.6786418400876232,
+            1.1646770392653467,
+            0.8144644522968197
+          ],
+          "median": 0.8144644522968197,
+          "minimum": 0.6280959373470386,
+          "maximum": 1.1646770392653467,
+          "native_regressions": 2
+        }
+      },
+      "native_median_regressions": [],
+      "modes": {
+        "lua": {
+          "median_cpu_ns_per_query": 31315.32606210707,
+          "median_queries_per_second": 2074.7669593361675,
+          "median_lua_bytes_per_query": 3364.253268828452,
+          "median_rust_requested_bytes_per_query": 0.0,
+          "median_tx_cpu_cores": 0.06368053308751043,
+          "median_client_cpu_cores": 0.2526847759949416,
+          "median_p50_ns": 447833,
+          "median_p99_ns": 884375,
+          "served": 0,
+          "handed_back": 0,
+          "fallback_reasons": []
+        },
+        "native": {
+          "median_cpu_ns_per_query": 20746.48039574936,
+          "median_queries_per_second": 2205.465356339997,
+          "median_lua_bytes_per_query": 7.782681099084097,
+          "median_rust_requested_bytes_per_query": 1984.0,
+          "median_tx_cpu_cores": 0.04573903275774529,
+          "median_client_cpu_cores": 0.2431791982131368,
+          "median_p50_ns": 434625,
+          "median_p99_ns": 802000,
+          "served": 55281,
+          "handed_back": 0,
+          "fallback_reasons": []
+        }
+      }
+    },
+    {
+      "cohort": "rf1-hits",
+      "batch": 32,
+      "shape": "hits",
+      "pairs": 5,
+      "order": [
+        "lua",
+        "native",
+        "lua",
+        "native",
+        "lua"
+      ],
+      "ratios": {
+        "native_over_lua_cpu": {
+          "values": [
+            0.5022399920461449,
+            0.4987792289637222,
+            0.5054539809019691,
+            0.5540158202341677,
+            0.6825752329166643
+          ],
+          "median": 0.5054539809019691,
+          "minimum": 0.4987792289637222,
+          "maximum": 0.6825752329166643,
+          "native_regressions": 0
+        },
+        "native_over_lua_rate": {
+          "values": [
+            1.1932885786104959,
+            1.1849665854877964,
+            1.0853124091881312,
+            1.2692163805064272,
+            0.817773810992589
+          ],
+          "median": 1.1849665854877964,
+          "minimum": 0.817773810992589,
+          "maximum": 1.2692163805064272,
+          "native_regressions": 1
+        },
+        "native_over_lua_p50": {
+          "values": [
+            0.7822662088466976,
+            0.7684511997214155,
+            0.9252391925870489,
+            0.6750729165045617,
+            1.25194353396366
+          ],
+          "median": 0.7822662088466976,
+          "minimum": 0.6750729165045617,
+          "maximum": 1.25194353396366,
+          "native_regressions": 1
+        },
+        "native_over_lua_p99": {
+          "values": [
+            0.9146680700699196,
+            0.9366002078437529,
+            0.910108807734121,
+            0.932601913337085,
+            1.0955950559152443
+          ],
+          "median": 0.932601913337085,
+          "minimum": 0.910108807734121,
+          "maximum": 1.0955950559152443,
+          "native_regressions": 1
+        }
+      },
+      "native_median_regressions": [],
+      "modes": {
+        "lua": {
+          "median_cpu_ns_per_query": 74421.62778060792,
+          "median_queries_per_second": 1113.966160011176,
+          "median_lua_bytes_per_query": 8721.358125318391,
+          "median_rust_requested_bytes_per_query": 0.0,
+          "median_tx_cpu_cores": 0.08219949878621238,
+          "median_client_cpu_cores": 0.3773384245319045,
+          "median_p50_ns": 835334,
+          "median_p99_ns": 1714584,
+          "served": 0,
+          "handed_back": 0,
+          "fallback_reasons": []
+        },
+        "native": {
+          "median_cpu_ns_per_query": 38333.841881016255,
+          "median_queries_per_second": 1267.3637640422046,
+          "median_lua_bytes_per_query": 14.67295355401591,
+          "median_rust_requested_bytes_per_query": 8704.0,
+          "median_tx_cpu_cores": 0.04858292213652347,
+          "median_client_cpu_cores": 0.37294098301373324,
+          "median_p50_ns": 688500,
+          "median_p99_ns": 1634875,
+          "served": 30381,
+          "handed_back": 1,
+          "fallback_reasons": [
+            {
+              "load_window": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "cohort": "rf1-hits",
+      "batch": 128,
+      "shape": "hits",
+      "pairs": 5,
+      "order": [
+        "lua",
+        "native",
+        "lua",
+        "native",
+        "lua"
+      ],
+      "ratios": {
+        "native_over_lua_cpu": {
+          "values": [
+            0.5713839611458477,
+            0.5368121201383208,
+            0.4885396942759379,
+            0.38153595960669906,
+            0.5904442538729192
+          ],
+          "median": 0.5368121201383208,
+          "minimum": 0.38153595960669906,
+          "maximum": 0.5904442538729192,
+          "native_regressions": 0
+        },
+        "native_over_lua_rate": {
+          "values": [
+            0.8319066000264135,
+            0.8954342600943453,
+            1.0056434450784086,
+            1.2443514625562624,
+            0.8288267106790468
+          ],
+          "median": 0.8954342600943453,
+          "minimum": 0.8288267106790468,
+          "maximum": 1.2443514625562624,
+          "native_regressions": 3
+        },
+        "native_over_lua_p50": {
+          "values": [
+            1.1775031633508652,
+            1.0581924780140959,
+            0.9703538647909007,
+            0.8570372870143143,
+            1.1280889994110332
+          ],
+          "median": 1.0581924780140959,
+          "minimum": 0.8570372870143143,
+          "maximum": 1.1775031633508652,
+          "native_regressions": 3
+        },
+        "native_over_lua_p99": {
+          "values": [
+            1.1344795680240616,
+            0.914215272109954,
+            0.8812559425006629,
+            0.7858931079321935,
+            0.9906646525679759
+          ],
+          "median": 0.914215272109954,
+          "minimum": 0.7858931079321935,
+          "maximum": 1.1344795680240616,
+          "native_regressions": 1
+        }
+      },
+      "native_median_regressions": [
+        "native_over_lua_rate",
+        "native_over_lua_p50"
+      ],
+      "modes": {
+        "lua": {
+          "median_cpu_ns_per_query": 250010.7004063539,
+          "median_queries_per_second": 507.8521938849286,
+          "median_lua_bytes_per_query": 28048.08241940844,
+          "median_rust_requested_bytes_per_query": 0.0,
+          "median_tx_cpu_cores": 0.12987222703466744,
+          "median_client_cpu_cores": 0.44932302830692494,
+          "median_p50_ns": 2004125,
+          "median_p99_ns": 3926167,
+          "served": 0,
+          "handed_back": 0,
+          "fallback_reasons": []
+        },
+        "native": {
+          "median_cpu_ns_per_query": 124277.56372353176,
+          "median_queries_per_second": 481.0905679642129,
+          "median_lua_bytes_per_query": 34.903990024937656,
+          "median_rust_requested_bytes_per_query": 35584.0,
+          "median_tx_cpu_cores": 0.06165876570599019,
+          "median_client_cpu_cores": 0.4950129372714784,
+          "median_p50_ns": 2049792,
+          "median_p99_ns": 3500416,
+          "served": 12303,
+          "handed_back": 0,
+          "fallback_reasons": []
+        }
+      }
+    },
+    {
+      "cohort": "rf1-duplicates-misses",
+      "batch": 128,
+      "shape": "duplicates",
+      "pairs": 5,
+      "order": [
+        "lua",
+        "native",
+        "lua",
+        "native",
+        "lua"
+      ],
+      "ratios": {
+        "native_over_lua_cpu": {
+          "values": [
+            0.5609353698907533,
+            0.3238988901003156,
+            0.28357790766815216,
+            0.3694396070941811,
+            0.5738605752087184
+          ],
+          "median": 0.3694396070941811,
+          "minimum": 0.28357790766815216,
+          "maximum": 0.5738605752087184,
+          "native_regressions": 0
+        },
+        "native_over_lua_rate": {
+          "values": [
+            0.9891983065474956,
+            1.460688741599287,
+            2.115782664307135,
+            1.0564505032593126,
+            0.805004474095898
+          ],
+          "median": 1.0564505032593126,
+          "minimum": 0.805004474095898,
+          "maximum": 2.115782664307135,
+          "native_regressions": 2
+        },
+        "native_over_lua_p50": {
+          "values": [
+            0.9711383185285544,
+            0.6509857400566962,
+            0.42005971153567023,
+            0.9309821369387246,
+            1.4447278411964413
+          ],
+          "median": 0.9309821369387246,
+          "minimum": 0.42005971153567023,
+          "maximum": 1.4447278411964413,
+          "native_regressions": 1
+        },
+        "native_over_lua_p99": {
+          "values": [
+            0.9508086480667444,
+            0.6692793470609533,
+            0.6105850185950298,
+            0.895834495894763,
+            0.9317416725726435
+          ],
+          "median": 0.895834495894763,
+          "minimum": 0.6105850185950298,
+          "maximum": 0.9508086480667444,
+          "native_regressions": 0
+        }
+      },
+      "native_median_regressions": [],
+      "modes": {
+        "lua": {
+          "median_cpu_ns_per_query": 123169.5358783008,
+          "median_queries_per_second": 707.8886079228571,
+          "median_lua_bytes_per_query": 11953.467126535892,
+          "median_rust_requested_bytes_per_query": 0.0,
+          "median_tx_cpu_cores": 0.09386904439516658,
+          "median_client_cpu_cores": 0.4142020332005815,
+          "median_p50_ns": 1343459,
+          "median_p99_ns": 2869584,
+          "served": 0,
+          "handed_back": 0,
+          "fallback_reasons": []
+        },
+        "native": {
+          "median_cpu_ns_per_query": 55524.42806635844,
+          "median_queries_per_second": 746.7177593549073,
+          "median_lua_bytes_per_query": 21.31057927658417,
+          "median_rust_requested_bytes_per_query": 8704.0,
+          "median_tx_cpu_cores": 0.045041196918372405,
+          "median_client_cpu_cores": 0.4405415313670043,
+          "median_p50_ns": 1254083,
+          "median_p99_ns": 2629375,
+          "served": 23492,
+          "handed_back": 0,
+          "fallback_reasons": []
+        }
+      }
+    },
+    {
+      "cohort": "rf1-duplicates-misses",
+      "batch": 128,
+      "shape": "miss",
+      "pairs": 5,
+      "order": [
+        "lua",
+        "native",
+        "lua",
+        "native",
+        "lua"
+      ],
+      "ratios": {
+        "native_over_lua_cpu": {
+          "values": [
+            0.7697207368124478,
+            0.6665348591297179,
+            0.9031147530873996,
+            0.8919667827521178,
+            0.6152288002280937
+          ],
+          "median": 0.7697207368124478,
+          "minimum": 0.6152288002280937,
+          "maximum": 0.9031147530873996,
+          "native_regressions": 0
+        },
+        "native_over_lua_rate": {
+          "values": [
+            0.9940157999357584,
+            1.2994722634361475,
+            0.7489732802130653,
+            0.8337259596200689,
+            1.3113442369025596
+          ],
+          "median": 0.9940157999357584,
+          "minimum": 0.7489732802130653,
+          "maximum": 1.3113442369025596,
+          "native_regressions": 3
+        },
+        "native_over_lua_p50": {
+          "values": [
+            0.9943805452163229,
+            0.7173172209219152,
+            1.7292022796751099,
+            1.2191825270147585,
+            0.6264595798854233
+          ],
+          "median": 0.9943805452163229,
+          "minimum": 0.6264595798854233,
+          "maximum": 1.7292022796751099,
+          "native_regressions": 2
+        },
+        "native_over_lua_p99": {
+          "values": [
+            1.1221801059446734,
+            1.1466032505452755,
+            1.0540466257546635,
+            1.0754234497666826,
+            0.8293367898034133
+          ],
+          "median": 1.0754234497666826,
+          "minimum": 0.8293367898034133,
+          "maximum": 1.1466032505452755,
+          "native_regressions": 4
+        }
+      },
+      "native_median_regressions": [
+        "native_over_lua_rate",
+        "native_over_lua_p99"
+      ],
+      "modes": {
+        "lua": {
+          "median_cpu_ns_per_query": 90899.7706947524,
+          "median_queries_per_second": 1134.3687212751265,
+          "median_lua_bytes_per_query": 13862.94992609017,
+          "median_rust_requested_bytes_per_query": 0.0,
+          "median_tx_cpu_cores": 0.10366219509521632,
+          "median_client_cpu_cores": 0.324469233101508,
+          "median_p50_ns": 882292,
+          "median_p99_ns": 1735875,
+          "served": 0,
+          "handed_back": 0,
+          "fallback_reasons": []
+        },
+        "native": {
+          "median_cpu_ns_per_query": 72280.20867978098,
+          "median_queries_per_second": 1127.5804319003983,
+          "median_lua_bytes_per_query": 18.77903883667317,
+          "median_rust_requested_bytes_per_query": 3328.0,
+          "median_tx_cpu_cores": 0.07997212665335032,
+          "median_client_cpu_cores": 0.3434884802400746,
+          "median_p50_ns": 877334,
+          "median_p99_ns": 1884500,
+          "served": 28353,
+          "handed_back": 2,
+          "fallback_reasons": [
+            {
+              "load_window": 1
+            },
+            {
+              "load_window": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "cohort": "rf3-fsync-hits",
+      "batch": 128,
+      "shape": "hits",
+      "pairs": 5,
+      "order": [
+        "lua",
+        "native",
+        "lua",
+        "native",
+        "lua"
+      ],
+      "ratios": {
+        "native_over_lua_cpu": {
+          "values": [
+            0.4368953393529533,
+            0.46079289933561224,
+            0.5677923554489134,
+            0.3048841506752872,
+            0.4453078448936762
+          ],
+          "median": 0.4453078448936762,
+          "minimum": 0.3048841506752872,
+          "maximum": 0.5677923554489134,
+          "native_regressions": 0
+        },
+        "native_over_lua_rate": {
+          "values": [
+            1.037485052689883,
+            1.1520310894106867,
+            0.9566940007071176,
+            1.4992959719779726,
+            1.1836101328238369
+          ],
+          "median": 1.1520310894106867,
+          "minimum": 0.9566940007071176,
+          "maximum": 1.4992959719779726,
+          "native_regressions": 1
+        },
+        "native_over_lua_p50": {
+          "values": [
+            0.937854158119737,
+            0.8953681185054168,
+            1.216693049979842,
+            0.7017097164840926,
+            0.8807657958291821
+          ],
+          "median": 0.8953681185054168,
+          "minimum": 0.7017097164840926,
+          "maximum": 1.216693049979842,
+          "native_regressions": 1
+        },
+        "native_over_lua_p99": {
+          "values": [
+            0.7640664611355141,
+            0.8577458361576157,
+            0.7547761036183122,
+            0.7027141008510642,
+            0.7904715580688662
+          ],
+          "median": 0.7640664611355141,
+          "minimum": 0.7027141008510642,
+          "maximum": 0.8577458361576157,
+          "native_regressions": 0
+        }
+      },
+      "native_median_regressions": [],
+      "modes": {
+        "lua": {
+          "median_cpu_ns_per_query": 299749.0411449016,
+          "median_queries_per_second": 447.15779948267385,
+          "median_lua_bytes_per_query": 28904.937835420395,
+          "median_rust_requested_bytes_per_query": 0.0,
+          "median_tx_cpu_cores": 0.1352805804254988,
+          "median_client_cpu_cores": 0.4483590152487096,
+          "median_p50_ns": 2220583,
+          "median_p99_ns": 4354416,
+          "served": 0,
+          "handed_back": 0,
+          "fallback_reasons": []
+        },
+        "native": {
+          "median_cpu_ns_per_query": 125739.80476190476,
+          "median_queries_per_second": 503.94041317845307,
+          "median_lua_bytes_per_query": 42.08095238095238,
+          "median_rust_requested_bytes_per_query": 35584.0,
+          "median_tx_cpu_cores": 0.06663155005648289,
+          "median_client_cpu_cores": 0.46097498060359393,
+          "median_p50_ns": 2013834,
+          "median_p99_ns": 3442042,
+          "served": 14242,
+          "handed_back": 1,
+          "fallback_reasons": [
+            {
+              "load_window": 1
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "cohort": "rf1-hits",
+      "fixture": "tarn-native-sql-rf1-anqzd71v",
+      "source_commit": "2614131646d62dfaff333d7b2749ca3f69177484",
+      "manifest_sha256": "eb8bde9be183fdc0619edb5537d8f4096074c7150c2124ae243f10d7b5859ba2",
+      "report_sha256": "7b12f7838763fbd0dd9eea9a0930cecb88eec2f47a97697ad85c75b4aaf1b3b7",
+      "archive": {
+        "sha256": "20d8cdf0f92bb3b0e30f4dd442e2cd136ee7eb1ffa8bf40ab3cfd0d9f6dbdbd0",
+        "files": 4,
+        "verified_offline": true
+      },
+      "frozen_files_unchanged": 128,
+      "owned_services_absent": true,
+      "data_removed": true,
+      "replicas": 1,
+      "corpus_before": [
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 0,
+              "size": 0,
+              "confirm_lag": 0,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 1
+            },
+            "quorum": 1
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "1": 100558
+          },
+          "is_sync": false,
+          "sum": 5000050000,
+          "id": 1,
+          "uuid": "dfec1214-a140-4887-871c-be73d464a50b",
+          "space": 10001,
+          "engine": "memtx"
+        }
+      ],
+      "corpus_after": [
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 0,
+              "size": 0,
+              "confirm_lag": 0,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 1
+            },
+            "quorum": 1
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "1": 100558
+          },
+          "is_sync": false,
+          "sum": 5000050000,
+          "id": 1,
+          "uuid": "dfec1214-a140-4887-871c-be73d464a50b",
+          "space": 10001,
+          "engine": "memtx"
+        }
+      ],
+      "binary_sha256": {
+        "tarn-server": "f5dd498aebaf71298473cc31d9635d095201d25d5611588610eeac759f0c4e84",
+        "native_batch": "b6d0665bf6a9796aa8133cd08ffb8bd8c1308028333f72b8f3ba702c23b71564",
+        "libtarn_storage.so": "8b9700a9e91328dffb1e70af4d889ef9964d715c04d61b46abfe59b25632887b"
+      },
+      "sql_runner_sha256": "b25fde50dc391ae861c9d8f110de230a8de92748cad55def70c99d44e6106798",
+      "fixture_sha256": "94dbcde5b77dba5946e9f29e0e6adde36fe557cc4514e1747ed412acd12a9e8c"
+    },
+    {
+      "cohort": "rf1-duplicates-misses",
+      "fixture": "tarn-native-sql-rf1-9d1wy513",
+      "source_commit": "2614131646d62dfaff333d7b2749ca3f69177484",
+      "manifest_sha256": "c441da157edbf5bf9c9aae6b47589e843cd7073a81029dfd6d609ab16f82906e",
+      "report_sha256": "5b1fb63197fe084028e00b55ca1371a3f1ddf87fa2c206fdbb2c42b10fcf6dc0",
+      "archive": {
+        "sha256": "01f971a5802903f9f20d704da3bab0ec041174cb17447676e3f4da05347bb862",
+        "files": 4,
+        "verified_offline": true
+      },
+      "frozen_files_unchanged": 128,
+      "owned_services_absent": true,
+      "data_removed": true,
+      "replicas": 1,
+      "corpus_before": [
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 0,
+              "size": 0,
+              "confirm_lag": 0,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 1
+            },
+            "quorum": 1
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "1": 100558
+          },
+          "is_sync": false,
+          "sum": 5000050000,
+          "id": 1,
+          "uuid": "a0de82b4-86e9-4806-bf68-c3bea0687910",
+          "space": 10001,
+          "engine": "memtx"
+        }
+      ],
+      "corpus_after": [
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 0,
+              "size": 0,
+              "confirm_lag": 0,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 1
+            },
+            "quorum": 1
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "1": 100558
+          },
+          "is_sync": false,
+          "sum": 5000050000,
+          "id": 1,
+          "uuid": "a0de82b4-86e9-4806-bf68-c3bea0687910",
+          "space": 10001,
+          "engine": "memtx"
+        }
+      ],
+      "binary_sha256": {
+        "tarn-server": "f5dd498aebaf71298473cc31d9635d095201d25d5611588610eeac759f0c4e84",
+        "native_batch": "b6d0665bf6a9796aa8133cd08ffb8bd8c1308028333f72b8f3ba702c23b71564",
+        "libtarn_storage.so": "8b9700a9e91328dffb1e70af4d889ef9964d715c04d61b46abfe59b25632887b"
+      },
+      "sql_runner_sha256": "b25fde50dc391ae861c9d8f110de230a8de92748cad55def70c99d44e6106798",
+      "fixture_sha256": "94dbcde5b77dba5946e9f29e0e6adde36fe557cc4514e1747ed412acd12a9e8c"
+    },
+    {
+      "cohort": "rf3-fsync-hits",
+      "fixture": "tarn-native-sql-rf3-g8kl0don",
+      "source_commit": "2614131646d62dfaff333d7b2749ca3f69177484",
+      "manifest_sha256": "a52b25074a01aa827ba48ca4b0db6405094e991b570dfa4fcdd720f9f80afc42",
+      "report_sha256": "2ba69370339f4b09d455d59d2f39ed57271798b4a07ab65bde6a4ae4c3f16459",
+      "archive": {
+        "sha256": "3764bc8e0ce7287d7a19fc2c6ce06236d9a0bf560dd294cc638232c7266b6a33",
+        "files": 12,
+        "verified_offline": true
+      },
+      "frozen_files_unchanged": 128,
+      "owned_services_absent": true,
+      "data_removed": true,
+      "replicas": 3,
+      "corpus_before": [
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 1,
+              "size": 0,
+              "confirm_lag": 0.0031929999822751,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 2
+            },
+            "quorum": 2
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "0": 7,
+            "1": 100671
+          },
+          "is_sync": true,
+          "sum": 5000050000,
+          "id": 1,
+          "uuid": "e708d7d5-1aea-41f7-82f8-eb61cf934b0f",
+          "space": 10001,
+          "engine": "memtx"
+        },
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 1,
+              "size": 0,
+              "confirm_lag": 0.0017837089835666,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 2
+            },
+            "quorum": 2
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "0": 2,
+            "1": 100671
+          },
+          "is_sync": true,
+          "sum": 5000050000,
+          "id": 2,
+          "uuid": "7e4126b5-16f4-4bf0-adee-baa2af100469",
+          "space": 10001,
+          "engine": "memtx"
+        },
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 1,
+              "size": 0,
+              "confirm_lag": 0.0017860420048237,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 2
+            },
+            "quorum": 2
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "0": 2,
+            "1": 100671
+          },
+          "is_sync": true,
+          "sum": 5000050000,
+          "id": 3,
+          "uuid": "44f781a3-b002-4dfb-bcf4-e4137a3bf9b4",
+          "space": 10001,
+          "engine": "memtx"
+        }
+      ],
+      "corpus_after": [
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 1,
+              "size": 0,
+              "confirm_lag": 0.0031929999822751,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 2
+            },
+            "quorum": 2
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "0": 7,
+            "1": 100671
+          },
+          "is_sync": true,
+          "sum": 5000050000,
+          "id": 1,
+          "uuid": "e708d7d5-1aea-41f7-82f8-eb61cf934b0f",
+          "space": 10001,
+          "engine": "memtx"
+        },
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 1,
+              "size": 0,
+              "confirm_lag": 0.0017837089835666,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 2
+            },
+            "quorum": 2
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "0": 2,
+            "1": 100671
+          },
+          "is_sync": true,
+          "sum": 5000050000,
+          "id": 2,
+          "uuid": "7e4126b5-16f4-4bf0-adee-baa2af100469",
+          "space": 10001,
+          "engine": "memtx"
+        },
+        {
+          "rows": 100000,
+          "synchro": {
+            "queue": {
+              "owner": 1,
+              "size": 0,
+              "confirm_lag": 0.0017860420048237,
+              "busy": false,
+              "age": 0,
+              "len": 0,
+              "term": 2
+            },
+            "quorum": 2
+          },
+          "hash": "ac677ea627e1fa80fa7c3fa10af946a09be317b8fc7450f4bcefdd43f22a657d",
+          "vclock": {
+            "0": 2,
+            "1": 100671
+          },
+          "is_sync": true,
+          "sum": 5000050000,
+          "id": 3,
+          "uuid": "44f781a3-b002-4dfb-bcf4-e4137a3bf9b4",
+          "space": 10001,
+          "engine": "memtx"
+        }
+      ],
+      "binary_sha256": {
+        "tarn-server": "f5dd498aebaf71298473cc31d9635d095201d25d5611588610eeac759f0c4e84",
+        "native_batch": "b6d0665bf6a9796aa8133cd08ffb8bd8c1308028333f72b8f3ba702c23b71564",
+        "libtarn_storage.so": "8b9700a9e91328dffb1e70af4d889ef9964d715c04d61b46abfe59b25632887b"
+      },
+      "sql_runner_sha256": "b25fde50dc391ae861c9d8f110de230a8de92748cad55def70c99d44e6106798",
+      "fixture_sha256": "94dbcde5b77dba5946e9f29e0e6adde36fe557cc4514e1747ed412acd12a9e8c"
+    }
+  ],
+  "historical_exploratory": {
+    "fixture": "tarn-native-sql-rf1-ukifi6co",
+    "label": "order-imbalanced exploratory; retained, not the qualifying balanced cohort",
+    "manifest_sha256": "de757c68cef565ea9b7806a4f95eede067b94efa2088ab9e282e36c087ad5a73",
+    "method_note_sha256": "42a89e11aeaa464260ed4f85504dcf44b9673030fee8c8931a202c19d0ec7f68"
+  },
+  "cleanup_audit_sha256": "a0ef7b31eb82e38f6374a93ea274feca839f6da565b84617dc5115a515755c33"
+}

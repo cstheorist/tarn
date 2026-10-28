@@ -6,7 +6,36 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
+  malformed frames, unsupported response types and unknown/duplicate SYNCs
+  retire the connection instead of certifying a result. Every length-prefix
+  width is bounded before payload allocation. Pushes retain the pending
+  request's identity, including after caller cancellation. A sent mutation
+  whose reply is invalid remains 1180/40003 and is never replayed.
+
 ### Added
+
+- An opt-in native primary-key batch prototype
+  ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
+  lookup loop for complete memtx autocommit batches of up to 128 keys.
+  `native_batch_reads` in the gateway configuration enables it; older
+  modules and unsupported requests use the existing Lua path. The model
+  checks missing-key locks, snapshot consistency and complete results;
+  the executed budget checks are verified with Verus. See the
+  [native storage inventory](docs/native-storage.md).
+
+- Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
+  `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
+  writes continue, then fences writes for catch-up and secondary-index
+  builds. The final pause depends on the table and indexes. The replacement
+  preserves native index IDs, frozen defaults and counter identities, with
+  fresh global and lazy index generations. Confirmed publication rolls
+  forward after a failure; a predecision abort retains the original table.
+  Request engine changes separately from other schema alterations; the
+  existing engine remains a no-op. See
+  [the operational procedure](docs/operations.md#online-engine-changes).
 
 - Why the native storage procedures hand requests to Lua
   ([#131](https://github.com/cstheorist/tarn/issues/131)):
@@ -476,6 +505,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CREATE DATABASE reports one row for a new database and zero for an
   existing IF NOT EXISTS target. SHOW DATABASES LIKE filters
   `information_schema` too, and includes the pattern in its column name.
+
+- Quoted administrative SQL tokens preserve UTF-8
+  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
+  savepoints and quoted variable names retain multibyte characters.
+  Doubled quotes and string backslash escapes are decoded without changing
+  the original byte offsets used for SET expressions. Unterminated quoted
+  tokens return syntax error 1064.
 
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original

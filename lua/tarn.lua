@@ -504,7 +504,8 @@ local function fence_rebuild()
     for _, t in box.space._tarn_meta:pairs({'fence:'}, {iterator = 'GE'}) do
         if t.key:sub(1, 6) ~= 'fence:' then break end
         local sid, v = tonumber(t.key:sub(7)), t.value
-        if sid ~= nil and box.space[sid] ~= nil and type(v) == 'table' and not v.aborted
+        if sid ~= nil and (box.space[sid] ~= nil or (type(v) == 'table' and v.engine_retired))
+           and type(v) == 'table' and not v.aborted
            and (f[sid] or 0) < v.ver then f[sid] = v.ver end
     end
     DDL_GEN = {}
@@ -519,6 +520,7 @@ end
 function M.stale_fences()
     FENCE_STALE = true
     if M.lazy then M.lazy.invalidate() end
+    if M.engine then M.engine.invalidate(false) end
     BK.ns_sync()
 end
 
@@ -527,6 +529,7 @@ end
 local function fence_fresh()
     if not FENCE_STALE then
         if M.lazy then M.lazy.fresh() end
+        if M.engine then M.engine.fresh() end
         return
     end
     local f = fiber.new(fence_rebuild)
@@ -534,6 +537,7 @@ local function fence_fresh()
     local ok, err = f:join()
     if not ok then error(err) end
     if M.lazy then M.lazy.fresh() end
+    if M.engine then M.engine.fresh() end
 end
 
 local STALE_DEF_MSG = 'Table definition has changed, please retry transaction'
@@ -1011,13 +1015,13 @@ function BK.ns_fence(sid)
         ffi.fill(a, ffi.sizeof('uint64_t') * spaces)
         for s, v in pairs(FENCE) do
             local k = s % spaces
-            if v > a[k] then a[k] = v end
+            if box.space[s] ~= nil and v > a[k] then a[k] = v end
         end
         return
     end
     local k, m = sid % spaces, 0
     for s, v in pairs(FENCE) do
-        if s % spaces == k and v > m then m = v end
+        if box.space[s] ~= nil and s % spaces == k and v > m then m = v end
     end
     a[k] = m
 end
@@ -1313,19 +1317,30 @@ function M.ns_sync() BK.ns_sync() end
 -- An unknown capture registry excludes every native write. Slots
 -- collide conservatively; a false positive only hands a write back to Lua.
 BK.lazy_stale, BK.lazy_excluded, BK.ns_write_excluded = true, {}, nil
-function BK.ns_lazy(excluded, stale)
-    if stale then
-        BK.lazy_stale = true
+BK.engine_stale, BK.engine_excluded = true, {}
+function BK.ns_capture_sync()
+    if BK.lazy_stale or BK.engine_stale then
         if BK.ns ~= nil then BK.ns.capture_stale = 1 end
         return
     end
     local a = ffi.new('uint8_t[?]', BK.NS_SPACES)
-    for sid in pairs(excluded) do a[sid % BK.NS_SPACES] = 1 end
-    BK.lazy_stale, BK.lazy_excluded, BK.ns_write_excluded = false, excluded, a
+    for sid in pairs(BK.lazy_excluded) do a[sid % BK.NS_SPACES] = 1 end
+    for sid in pairs(BK.engine_excluded) do a[sid % BK.NS_SPACES] = 1 end
+    BK.ns_write_excluded = a
     if BK.ns ~= nil then
         BK.ns.write_excluded = a
         BK.ns.capture_stale = 0
     end
+end
+function BK.ns_lazy(excluded, stale)
+    BK.lazy_stale = stale == true
+    if not stale then BK.lazy_excluded = excluded end
+    BK.ns_capture_sync()
+end
+function BK.ns_engine(excluded, stale)
+    BK.engine_stale = stale == true
+    if not stale then BK.engine_excluded = excluded end
+    BK.ns_capture_sync()
 end
 -- (tests: a native commit in flight, or none)
 function M.ns_inflight(on)
@@ -1678,6 +1693,10 @@ function UIX.spaces(sid)
 end
 
 local function failure(e)
+    if M.engine then
+        local changed = M.engine.translate_error(e)
+        if changed then return changed end
+    end
     if type(e) == 'cdata' or type(e) == 'table' then
         local code = e.code or 0
         if code == box.error.TRANSACTION_CONFLICT then return conflict(tostring(e.message)) end
@@ -2345,7 +2364,7 @@ local function pl_take(txid, sid, iid, key, kb, mode, opts, deadline, bucket)
         end
     end
     if box.space[sid] == nil then   -- dropped while it waited (the lock is held)
-        return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)})
+        return pl_failed(txid, (M.engine.missing_space(sid) or {'error', 1146, 'no such space ' .. tostring(sid)}))
     end
     if not opts.read then return true end
     local t = box.space[sid].index[iid]:get(key)
@@ -2359,7 +2378,7 @@ function tarn_lock(txid, keys, mode, opts)
     local results = {}
     for i, k in ipairs(keys) do
         local sid, iid, key = k[1], k[2], k[3]
-        if box.space[sid] == nil then return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)}) end
+        if box.space[sid] == nil then return pl_failed(txid, (M.engine.missing_space(sid) or {'error', 1146, 'no such space ' .. tostring(sid)})) end
         local r = pl_take(txid, sid, iid, key, kbin(key), mode, opts, deadline, k[4])
         if type(r) == 'table' then return r end
         results[i] = r
@@ -2404,7 +2423,7 @@ function tarn_lock_range(txid, ranges, mode, opts)
     for i, rg in ipairs(ranges) do
         local sid, prefix, n, skip_keys, bucket = rg[1], rg[2], rg[3], rg[4], rg[5]
         local space = box.space[sid]
-        if space == nil then return pl_failed(txid, {'error', 1146, 'no such space ' .. tostring(sid)}) end
+        if space == nil then return pl_failed(txid, (M.engine.missing_space(sid) or {'error', 1146, 'no such space ' .. tostring(sid)})) end
         -- (the prefix fixes the shard key: one bucket)
         if type(bucket) == 'number' and BK.count > 0 and BK.bad(bucket, true) then
             return pl_failed(txid, BK.moved(bucket))
@@ -2513,7 +2532,11 @@ end
 --   update  payload = primary key, ops = Tarantool update ops (autocommit only)
 local function apply_write(w)
     local op, space = w[1], box.space[w[2]]
-    if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
+    if space == nil then
+        local gone = M.engine.missing_space(w[2])
+        if gone then error(box.error.new{code = gone[2], reason = gone[3]}) end
+        error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2])))
+    end
     if op == 'insert' then return space:insert(w[3])
     elseif op == 'replace' then return space:replace(w[3])
     elseif op == 'delete' then return space:delete(w[3])
@@ -2643,7 +2666,11 @@ local write_steps
 do
 local function write_step(w, deadline)
     local space = box.space[w[2]]
-    if space == nil then error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2]))) end
+    if space == nil then
+        local gone = M.engine.missing_space(w[2])
+        if gone then error(box.error.new{code = gone[2], reason = gone[3]}) end
+        error(box.error.new(box.error.NO_SUCH_SPACE, tostring(w[2])))
+    end
     local pk, new = write_target(space, w)
     local old = space:get(pk)
     yield_point('write')
@@ -2788,7 +2815,7 @@ local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plan
     -- Rows the transaction locked (FOR UPDATE / FOR SHARE) were read under
     -- those locks, outside its stream: the locks must have survived.
     if not pl_intact(txid, lock_gen) then return {'error', 1213, BROKEN_MSG} end
-    local stale = stale_definition(fence) or M.lazy.guard(plans, fence, true)
+    local stale = stale_definition(fence) or M.lazy.guard(plans, fence, true) or M.engine.check(plans, true)
     if stale then return stale end
     local h = reads_w_locked(txid, rpoints, rranges)
     if h then return conflict('read row locked by prepared transaction ' .. h) end
@@ -2819,6 +2846,8 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
             if BK.has_reads(rpoints, rranges) then return conflict(BK.GONE_MSG) end
             box.begin(RW)
         end
+        local engine = M.engine.guard(writes)
+        if engine then box.rollback(); return engine end
         local throttle, write_deadline = M.vinyl.guard(writes)
         if throttle then return throttle end
         local plans, n = write_steps(writes, write_deadline), 0
@@ -3006,6 +3035,10 @@ function PG.read(read, ...)
     if r == PG.OOM or tostring(r):find('not enough memory', 1, true) then
         M.stats.read_oom = M.stats.read_oom + 1
         return {'error', 1041, 'Out of memory: the storage node is short of Lua memory for this read'}
+    end
+    if M.engine then
+        local changed = M.engine.translate_error(r)
+        if changed then return changed end
     end
     error(r)
 end
@@ -3224,7 +3257,7 @@ function tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl
         fence_fresh()
     end
     local space = box.space[space_id]
-    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
@@ -3316,7 +3349,7 @@ function tarn_select_keys(space_id, index_id, keys, limit, lock_check, begin, af
         fence_fresh()   -- (the tables held by a TRUNCATE or DROP TABLE)
     end
     local space = box.space[space_id]
-    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     if lock_check ~= true then return {OK, keys_scan(idx, keys, limit, after)} end
@@ -3361,7 +3394,7 @@ function PG.join_plan(reads)
            or r[1] <= 0 or type(r[2]) ~= 'number' or r[2] % 1 ~= 0 or r[2] < 0 or r[2] >= i
            or type(r[3]) ~= 'table' or #r[3] == 0 then return nil, bad end
         local sp = box.space[r[1]]
-        if sp == nil then return nil, {'error', 1146, 'no such space ' .. tostring(r[1])} end
+        if sp == nil then return nil, (M.engine.missing_space(r[1]) or {'error', 1146, 'no such space ' .. tostring(r[1])}) end
         local idx = sp.index[0]
         if idx == nil then return nil, {'error', 1412, STALE_DEF_MSG} end
         if #r[3] > #idx.parts then return nil, bad end
@@ -3590,7 +3623,7 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
         fence_fresh()   -- (the tables held by a TRUNCATE or DROP TABLE)
     end
     local space = box.space[space_id]
-    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     local idx = space.index[index_id]
     if idx == nil then return {'error', 1412, STALE_DEF_MSG} end   -- dropped by ALTER TABLE
     local it = type(iterator) == 'number' and ITER[iterator] or string.upper(tostring(iterator or 'EQ'))
@@ -3653,7 +3686,7 @@ tarn_count = PG.bounded(BK.recheck(tarn_count, 11))
 -- paths to the same rows.
 function tarn_estimate(space_id, a_index, a_key, b_index, b_key, budget, b_iter)
     local space = box.space[space_id]
-    if space == nil then return {'error', 1146, 'no such space ' .. tostring(space_id)} end
+    if space == nil then return (M.engine.missing_space(space_id) or {'error', 1146, 'no such space ' .. tostring(space_id)}) end
     local a, b = space.index[a_index], space.index[b_index]
     if a == nil or b == nil then return {'error', 1412, STALE_DEF_MSG} end
     if space.engine ~= 'vinyl' then
@@ -3710,7 +3743,7 @@ end
 -- the way (wait for it); 'locked': a prepared transaction's lock.
 local function autocommit_checks(fence, plans, wb)
     if not still_fresh() then return conflict(FRESH_MSG) end
-    local st = stale_definition(fence) or M.lazy.guard(plans, fence, true)
+    local st = stale_definition(fence) or M.lazy.guard(plans, fence, true) or M.engine.check(plans, true)
                or BK.commit_check(wb, nil, nil, false, plans)
     if st then return st end
     if PL_N > 0 then
@@ -3750,6 +3783,8 @@ function tarn_autocommit(writes, opts)
             local stale = stale_definition(fence) or BK.commit_check(wb, nil, nil, false)
             if stale then return stale end
             box.begin(RW)
+            local engine = M.engine.guard(writes)
+            if engine then box.rollback(); return engine end
             local throttle, write_deadline = M.vinyl.guard(writes)
             if throttle then box.rollback(); return throttle end
             local plans, n, last = write_steps(writes, write_deadline), 0, nil
@@ -3798,7 +3833,7 @@ end
 local function commit_rc_checks(txid, gen, fence, plans, wb)
     if not still_fresh() then return conflict(FRESH_MSG) end
     if not pl_intact(txid, gen) then return {'error', 1213, BROKEN_MSG} end
-    local st = stale_definition(fence) or M.lazy.guard(plans, fence, true)
+    local st = stale_definition(fence) or M.lazy.guard(plans, fence, true) or M.engine.check(plans, true)
                or BK.commit_check(wb, nil, nil, false, plans)
     if st then return st end
     local h = writes_locked(txid, plans)
@@ -3833,6 +3868,8 @@ function tarn_commit_rc(txid, writes, gen, fence, wb)
             end
             seq = inflight_begin()
             box.begin(RW)
+            local engine = M.engine.guard(writes)
+            if engine then box.rollback(); pl_release_all(txid); return engine end
             local throttle, write_deadline = M.vinyl.guard(writes)
             if throttle then box.rollback(); pl_release_all(txid); return throttle end
             local plans, n = write_steps(writes, write_deadline), 0
@@ -3907,7 +3944,7 @@ local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock
     if BK.has_reads(rpoints, rranges) and BK.stream_lost() then return {1213, BK.LOST_MSG} end
     if not pl_intact(txid, lock_gen) then return {1213, BROKEN_MSG} end
     if stale_definition(fence) then return {1412, STALE_DEF_MSG} end
-    local capture = M.lazy.guard(plans, fence, true)
+    local capture = M.lazy.guard(plans, fence, true) or M.engine.check(plans, true)
     if capture then return {capture[2], capture[3]} end
     capture = M.lazy.reserve(txid, plans)
     if capture then return capture end
@@ -4034,6 +4071,8 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         if stale_definition(fence) then return vote_no(1412, STALE_DEF_MSG) end
         local mv = BK.commit_check(wb, rpoints, rranges, true, nil, mver)
         if mv then return vote_no(mv[2], mv[3], mv[1]) end
+        local engine = M.engine.guard(writes)
+        if engine then return vote_no(engine[2], engine[3]) end
         local throttle = M.vinyl.guard(writes)
         if throttle then return vote_no(throttle[2], throttle[3]) end
         -- Reads (may yield, see "Yields"): the rows the writes replace and the
@@ -4059,7 +4098,10 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         end
         for i, w in ipairs(writes) do
             local space = box.space[w[2]]
-            if space == nil then return vote_no(1146, 'no such space ' .. tostring(w[2])) end
+            if space == nil then
+                local gone = M.engine.missing_space(w[2])
+                return vote_no(gone and gone[2] or 1146, gone and gone[3] or ('no such space ' .. tostring(w[2])))
+            end
             local pk, new = write_target(space, w)
             local old = space:get(pk)
             yield_point('prepare')
@@ -4144,6 +4186,7 @@ function tarn_apply(txid, retries)
     local refused   -- {space id, index id} of an index under construction that refused a row
     -- In flight from before its first write (until the commit ends): a move
     -- that starts noting the writes to a bucket waits for it (see "Buckets").
+    M.engine.fresh()
     local seq = inflight_begin()
     local ok, res = pcall(function()
         -- A duplicate must not acknowledge another APPLY's unconfirmed
@@ -5340,11 +5383,9 @@ function UIX.alter_admit(fn, op, name, a, gen, sid)
     if op == 'abort' and result[1] == OK and result[2] ~= 'applied' then M.lazy.abort(a.def) end
     return result
 end
-function UIX.alter_serial(fn, op, name, a, gen)
-    local sp = alter_space(name, a)
-    if sp == nil then return fn(name, a, gen) end
-    local sid, me = sp.id, fiber.self()
-    local deadline = clock.monotonic() + (a.timeout or 50)
+function UIX.serial_sid(sid, timeout, body, ...)
+    local me = fiber.self()
+    local deadline = clock.monotonic() + timeout
     while UIX.alter_locks[sid] ~= nil and UIX.alter_locks[sid].owner ~= me do
         local left = deadline - clock.monotonic()
         if left <= 0 then return {'timeout', 1205, LOCK_TIMEOUT_MSG} end
@@ -5357,7 +5398,7 @@ function UIX.alter_serial(fn, op, name, a, gen)
     end
     lock.depth = lock.depth + 1
     -- A named protected body avoids allocating a closure after acquisition.
-    local ok, res = pcall(UIX.alter_admit, fn, op, name, a, gen, sid)
+    local ok, res = pcall(body, ...)
     local rollback_ok, rollback_error = true, nil
     if box.is_in_txn() then rollback_ok, rollback_error = pcall(box.rollback) end
     -- No result-table allocation between the protected call and release:
@@ -5368,12 +5409,29 @@ function UIX.alter_serial(fn, op, name, a, gen)
     if not ok then error(res) end
     return res
 end
+function UIX.alter_serial(fn, op, name, a, gen)
+    local sp = alter_space(name, a)
+    if sp == nil then return fn(name, a, gen) end
+    return UIX.serial_sid(sp.id, a.timeout or 50, UIX.alter_admit, fn, op, name, a, gen, sp.id)
+end
 UIX.alter_build, UIX.alter_prepare = tarn_alter_build, tarn_alter_prepare
 UIX.alter_apply, UIX.alter_abort = tarn_alter_apply, tarn_alter_abort
-function tarn_alter_build(name, a, gen) return UIX.alter_serial(UIX.alter_build, 'build', name, a, gen) end
-function tarn_alter_prepare(name, a, gen) return UIX.alter_serial(UIX.alter_prepare, 'prepare', name, a, gen) end
-function tarn_alter_apply(name, a, gen) return UIX.alter_serial(UIX.alter_apply, 'apply', name, a, gen) end
-function tarn_alter_abort(name, a, gen) return UIX.alter_serial(UIX.alter_abort, 'abort', name, a, gen) end
+function tarn_alter_build(name, a, gen)
+    if type(a.engine_change) == 'table' then return M.engine.run('build', name, a, gen) end
+    return UIX.alter_serial(UIX.alter_build, 'build', name, a, gen)
+end
+function tarn_alter_prepare(name, a, gen)
+    if type(a.engine_change) == 'table' then return M.engine.run('prepare', name, a, gen) end
+    return UIX.alter_serial(UIX.alter_prepare, 'prepare', name, a, gen)
+end
+function tarn_alter_apply(name, a, gen)
+    if type(a.engine_change) == 'table' then return M.engine.run('apply', name, a, gen) end
+    return UIX.alter_serial(UIX.alter_apply, 'apply', name, a, gen)
+end
+function tarn_alter_abort(name, a, gen)
+    if type(a.engine_change) == 'table' then return M.engine.run('abort', name, a, gen) end
+    return UIX.alter_serial(UIX.alter_abort, 'abort', name, a, gen)
+end
 
 -------------------------------------------------------------------------------
 -- CREATE TABLE, DROP TABLE and TRUNCATE (issue #30)
@@ -5655,11 +5713,16 @@ end
 -- over the same abandoned job, one finds it gone or fails on the conflict.
 -- Field updates, so that the owner's keep-alive and its phase change do not
 -- undo each other.
-local function job_change(owner, ops)
+local function job_change(owner, ops, phase)
     local ok, res = pcall(function()
         box.begin(RW)
         local keys = job_keys(owner)
         for _, k in ipairs(keys) do
+            local v = phase and job_value(k)
+            if v and type(v.a) == 'table' and type(v.a.engine_change) == 'table'
+               and (v.phase == 'apply' or v.phase == 'abort') and phase ~= v.phase then
+                error(box.error.new{code = 1412, reason = 'Engine job decision is immutable'})
+            end
             if ops == nil then box.space._tarn_meta:delete{k} else box.space._tarn_meta:update(k, ops) end
         end
         box.commit()
@@ -5740,7 +5803,7 @@ end
 -- Change the phase of the job (and keep it alive).
 function tarn_job_phase(owner, phase)
     writable()
-    return job_change(owner, {{'=', '[2].phase', phase}, {'=', '[2].ts', clock.realtime()}})
+    return job_change(owner, {{'=', '[2].phase', phase}, {'=', '[2].ts', clock.realtime()}}, phase)
 end
 -- The job's arguments (a bucket move learns them once it holds its bucket).
 function tarn_job_args(owner, a)
@@ -5831,19 +5894,45 @@ function tarn_truncate(name)
     return {OK}
 end
 
-function tarn_catalog()
-    local out = {}
-    for _, t in box.space._tarn_catalog:pairs() do
-        local s = box.space[t.name]
-        local bix = s and s.index.bucket_id and s.index.bucket_id.id or box.NULL
-        out[#out + 1] = {t.name, s and s.id or 0, t.def.json or '', bix}
-    end
+function BK.catalog_snapshot()
+    box.begin{txn_isolation = 'read-confirmed'}
+    local ok, out = pcall(function()
+        local rows = {}
+        for _, t in box.space._tarn_catalog:pairs() do
+            -- Native RENAME and catalog publication are separate durable
+            -- steps. The confirmed definition binds the physical ID even
+            -- while its canonical name temporarily names neither space,
+            -- or already names the replacement with a newer definition.
+            local sid = t.def.id
+            local s = sid ~= nil and sid ~= box.NULL and box.space[sid] or nil
+            if sid == nil or sid == box.NULL then
+                s = box.space[t.name] -- legacy entries without an explicit ID
+                sid = s and s.id or 0
+            end
+            local bix = s and s.index.bucket_id and s.index.bucket_id.id or box.NULL
+            rows[#rows + 1] = {t.name, sid, t.def.json or '', bix}
+        end
+        return rows
+    end)
+    if box.is_in_txn() then box.rollback() end
+    if not ok then error(out) end
     return out
+end
+function tarn_catalog()
+    if not box.is_in_txn() then return BK.catalog_snapshot() end
+    -- Administrative callers in a stream do not lend its old/unconfirmed
+    -- read view to a schema lookup, or lose its existing read trackers.
+    local f = fiber.new(BK.catalog_snapshot)
+    f:set_joinable(true)
+    local ok, result = f:join()
+    if not ok then error(result) end
+    return result
 end
 
 -- Allocate `n` consecutive values of counter `name` (AUTO_INCREMENT batches).
 function tarn_counter_alloc(name, n)
     box.begin(RW)
+    name = M.engine.counter_name(name)
     local r = box.space._tarn_meta:get{'ctr:' .. name}
     local start = (r and r.value or 0) + 1
     box.space._tarn_meta:replace{'ctr:' .. name, start + n - 1}
@@ -5854,6 +5943,7 @@ end
 -- Make sure a counter is at least `v` (explicit ids inserted by clients).
 function tarn_counter_bump(name, v)
     box.begin(RW)
+    name = M.engine.counter_name(name)
     local r = box.space._tarn_meta:get{'ctr:' .. name}
     if r == nil or r.value < v then box.space._tarn_meta:replace{'ctr:' .. name, v} end
     box.commit()
@@ -6822,6 +6912,7 @@ local function setup_schema()
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
     end
     migrate_legacy_job()
+    M.engine.fresh()
     BK.ns_init()
 end
 
@@ -6846,6 +6937,7 @@ local function setup_when_writable()
 end
 
 function M.init(cfg)
+    M.engine.invalidate(true)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
@@ -6861,6 +6953,7 @@ function M.init(cfg)
     box.ctl.on_election(function()
         LK_STALE = true; FENCE_STALE = true
         M.vinyl.reset()
+        M.engine.invalidate(true)
         pcall(BK.term_mark)   -- (else lk_reload makes it)
         M.lazy.invalidate()
         M.lazy.quota_invalidate()
@@ -6869,6 +6962,7 @@ function M.init(cfg)
     box.watch('box.status', function()   -- read-only changes
         LK_STALE = true; FENCE_STALE = true
         M.vinyl.reset()
+        M.engine.invalidate(true)
         M.lazy.invalidate()
         M.lazy.quota_invalidate()
         pl_fresh(); BK.reset()
@@ -6901,13 +6995,35 @@ M.lazy = require('tarn_lazy').new{
         return mark == nil or BK.ns == nil or BK.ns.oldest_inflight > mark
     end,
 }
+M.engine = require('tarn_engine').new{
+    cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
+    key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,
+    lazy = M.lazy, create_space = create_space, call = on_shard, hook = yield_point,
+    doom = doom_readers, exclude = BK.ns_engine, invalidate_defs = invalidate_key_defs,
+    refresh = function() M.stale_fences(); fence_fresh() end,
+    mark = function() return {lua = INFLIGHT_SEQ, native = BK.ns ~= nil and BK.ns.commit_seq or nil} end,
+    cut = function(mark)
+        for seq in pairs(INFLIGHT) do if seq <= mark.lua then return false end end
+        return mark.native == nil or BK.ns == nil or BK.ns.oldest_inflight > mark.native
+    end,
+}
+tarn_lock = M.engine.rpc_errors(tarn_lock, pl_failed)
+tarn_lock_range = M.engine.rpc_errors(tarn_lock_range, pl_failed)
+tarn_estimate = M.engine.rpc_errors(tarn_estimate)
+function tarn_engine_capabilities() return {'ok', 1} end
+function tarn_engine_decision(name, old_id, new_id, ver, gen)
+    return M.engine.decision(name, old_id, new_id, ver, gen)
+end
+function tarn_engine_counter_alias(old_id, new_id) return M.engine.counter_alias(old_id, new_id) end
 function tarn_lazy_bootstrap(name, a, gen)
     a.ver = a.ver or a.def.ver or 0
+    if type(a.engine_change) == 'table' then return M.engine.run('bootstrap', name, a, gen) end
     return UIX.alter_serial(M.lazy.bootstrap, 'bootstrap', name, a, gen)
 end
 function tarn_lazy_bootstrap_status(name, a, gen) return M.lazy.bootstrap_status(name, a, gen) end
 function tarn_lazy_ready(name, a, gen)
     a.ver = a.ver or a.def.ver or 0
+    if type(a.engine_change) == 'table' then return M.engine.run('ready', name, a, gen) end
     return UIX.alter_serial(M.lazy.ready, 'ready', name, a, gen)
 end
 function tarn_lazy_capabilities() return M.lazy.capabilities() end
