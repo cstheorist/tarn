@@ -470,6 +470,7 @@ impl Shard {
 
 #[derive(Default)]
 pub struct Stats {
+    pub(crate) query_digests: crate::observe::Metrics,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
     pub commits_2pc: AtomicU64,
@@ -501,6 +502,7 @@ pub struct Stats {
 pub struct CachedPlan {
     pub version: u64,
     pub stmt: crate::plan::Stmt,
+    pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
@@ -1123,6 +1125,7 @@ impl Cluster {
     /// a shard of an earlier version, whose native writes left synchronous
     /// tables to Lua) is noted with `mark` too.
     pub async fn call_native_once(&self, shard: usize, func: &str, args: &[u8], mark: u32) -> SqlResult<Option<Bytes>> {
+        crate::observe::shard(shard);
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
@@ -1162,6 +1165,12 @@ impl Cluster {
     }
 
     async fn call_inner(&self, shard: usize, func: &str, args: &[u8], idempotent: bool) -> SqlResult<Bytes> {
+        if matches!(
+            func,
+            "tarn_autocommit" | "tarn_apply" | "tarn_abort" | "tarn_fence" | "tarn_txn_cas"
+        ) {
+            crate::observe::shard(shard);
+        }
         let s = &self.shards[shard];
         let mut tries = 0;
         loop {

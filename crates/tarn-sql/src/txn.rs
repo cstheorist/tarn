@@ -25,6 +25,11 @@
 //! shard (see [`ShardLocks`]) so that a write is never applied after its
 //! lock was lost (TarnCommit: CommitRC, Prepare for t \in RC).
 //!
+//! Query diagnostics only observe routed targets and commit cardinality.
+//! They do not change TarnCommit state, messages, retry decisions, or locks;
+//! no observer borrow is held across an await. They are outside the TLA+
+//! safety state and are bounded and tested separately (observe.rs).
+//!
 //! The pure decision logic (what to do with a set of votes, when it is safe
 //! to apply/abort) is `tarn_verified::coord`, proven in Verus to only decide
 //! COMMIT on unanimous YES and never to decide both ways.
@@ -620,6 +625,7 @@ impl Txn {
     /// The connection for this transaction's requests to `shard`: the one
     /// its stream or row locks there use (see [`ShardLocks`]), else any.
     async fn conn(&self, cluster: &Cluster, shard: usize) -> SqlResult<Client> {
+        crate::observe::shard(shard);
         if let Some(s) = self.streams.get(&shard) {
             return Ok(s.client.clone());
         }
@@ -633,6 +639,7 @@ impl Txn {
     /// request sent on it must begin one (see [`StreamRef::begin`]); requests
     /// on a stream are processed in order, so later ones run inside it.
     pub async fn stream(&mut self, cluster: &Cluster, shard: usize) -> SqlResult<StreamRef> {
+        crate::observe::shard(shard);
         if let Some(s) = self.streams.get(&shard) {
             // Until a beginning request has succeeded, keep asking requests
             // to begin (idempotent: tarn_select begins only outside a txn).
@@ -676,6 +683,8 @@ impl Txn {
 
     pub fn buffer(&mut self, w: BufWrite) -> SqlResult<()> {
         self.check_def(&w.table)?;
+        crate::observe::shard(w.shard);
+        crate::observe::bucket(None);
         self.defs.insert(w.table.space_id, w.table.ver);
         let k = (w.table.space_id, key_bytes(&w.pk));
         if w.table.base.is_some() {
@@ -876,6 +885,10 @@ impl Txn {
             return Err(e);
         }
         let parts = self.participants();
+        crate::observe::commit(parts.len());
+        for &part in &parts {
+            crate::observe::shard(part);
+        }
         if parts.is_empty() {
             // (lock requests that granted nothing, if any)
             let shards = self.take_lock_shards();
@@ -1489,6 +1502,7 @@ pub async fn select_join(
     begin: bool,
     route: &Route,
 ) -> SqlResult<JoinedRead> {
+    crate::observe::read(route);
     let mut m = Mp::new();
     m.arr(4).arr(reads.len());
     for r in reads {
@@ -1613,6 +1627,7 @@ pub async fn select_keys(
     after: Option<&[u8]>,
     route: &Route,
 ) -> SqlResult<Page> {
+    crate::observe::read(route);
     let mut m = Mp::new();
     m.arr(8).uint(t.space_id as u64).uint(index as u64).arr(keys.len());
     for k in keys {
@@ -1672,6 +1687,7 @@ pub async fn count_rows(
     begin: bool,
     route: &Route,
 ) -> SqlResult<u64> {
+    crate::observe::read(route);
     let mut m = Mp::new();
     m.arr(11)
         .uint(t.space_id as u64)
@@ -1730,6 +1746,7 @@ pub async fn select_rows(
     after: Option<&[u8]>,
     route: &Route,
 ) -> SqlResult<Page> {
+    crate::observe::read(route);
     // Unbounded point/prefix lookups inside a running stream transaction use
     // plain IPROTO SELECT; a full page goes on after its last tuple (which
     // tarn_select takes as a position too). (Nothing checks their bucket

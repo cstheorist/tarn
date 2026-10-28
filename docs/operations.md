@@ -654,6 +654,95 @@ scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints 
 over Unix sockets. Storage instance *j* of shard *i* listens on
 `BASE + 10·i + j` (default base 3300); SQL server *k* on `SQL_PORT + k − 1`.
 
+## Query plans and fanout
+
+`EXPLAIN FORMAT=JSON SELECT ...` returns one MySQL result column named
+`EXPLAIN`, containing a `tarn-plan-v1` JSON object. Physical SELECT, INSERT,
+UPDATE and DELETE plans are supported. Plain EXPLAIN query plans, ANALYZE,
+other formats, execution options and complex queries outside the physical
+planner are rejected explicitly. Existing `EXPLAIN table` remains DESCRIBE.
+
+Planning uses the gateway's cached catalog and bucket map. It makes no
+user-data reads, allocates no AUTO_INCREMENT values, takes no row locks and
+does not start or commit a transaction. `planned_catalog_version` and each
+table's `definition_version` identify the metadata. Counts are routing
+constraints or upper bounds, not observed rows or transaction participants.
+Unknown counts are JSON `null`, with a reason; a broadcast names every
+current live shard and bucket. Dependent join keys, global-index base-row
+lookups, defaults and unbound parameters can leave routes unknown. Eligible
+lazy-index queries report an unknown alternative and the strong path:
+actual lazy routing depends on session barriers and runtime base rows.
+
+Each access reports its chosen index, columns, shard key and the existing
+schema-linter findings (up to 32). Colocation eligibility uses the same
+ordered hash-input proof as grouped execution, including types, collations,
+primary prefixes and ON equalities. An eligible join reports a conditional
+one-bucket route plus its fallback bounds: storage capability, buffered
+writes and runtime conditions still determine actual execution. LIMIT plans
+may choose the reported alternative index using runtime row-count samples.
+DML also reports potential global-index participants; old/new entries,
+REPLACE conflicts and shard-key relocation may depend on affected rows.
+Diagnostics stop at 64 accesses, 256 keys per access and path depth 16;
+over-budget details remain unknown.
+
+For prepared statements whose parameters are not bound:
+
+```sql
+PREPARE p FROM 'SELECT * FROM t WHERE id=?';
+SHOW TARN PLAN FOR p;          -- unknown parameter-dependent routes
+-- SHOW TARN PLAN FOR 1;       -- binary prepared statement ID on this connection
+```
+
+Binary-prepared `EXPLAIN FORMAT=JSON ... WHERE id=?` binds parameters at
+execution and retains the single EXPLAIN column. `SHOW TARN PLAN` never
+executes the prepared statement.
+
+`SHOW TARN QUERIES` reports completed foreground physical SELECT/DML and
+COMMIT observations on this SQL server. `Query` is a normalized, literal-
+redacted sample (at most 512 UTF-8 bytes), `Digest` a SHA-1 identifier over
+the full normalized text and default database, and `Database` at most 64
+bytes. Text and prepared executions share a digest. Identifiers remain
+visible; these diagnostics have the same administrative visibility as
+existing server status. Comments and literal values are omitted. Complex
+queries, DDL, other administration, planning failures and detached recovery
+are untracked; `Tarn_query_digest_untracked` makes that coverage visible.
+
+`Calls` includes successes and errors; `Errors` counts the latter.
+`No_data`, `Local` and `Distributed` partition calls by zero, one or multiple
+observed shard targets. Targets include data read attempts, buffered write
+destinations and foreground protocol calls, including failed attempts and
+retries. They do not assert physical effects or committed participants.
+`Max_shards` is the maximum distinct targets in one call; `Shard_targets`
+is their sum. `Known_bucket_targets` sums distinct explicitly routed
+buckets, capped at 4096 per call; `Unknown_bucket_calls` counts calls with
+broadcast, buffered-write, unknown or over-cap bucket details. It is not a
+complete bucket total; zero unknown signals does not establish completeness.
+`Read_attempts` counts encoded scan, multi-key, count, grouped and lazy
+read/page requests (not separate row-lock RPCs), with native-to-Lua fallback
+as one attempt; `Grouped_reads` counts successful grouped responses. `Local_commits` and `Distributed_commits`
+count successful coordinator outcomes with one or multiple commit
+participants, while `Commit_errors` counts errors after commit was
+attempted. Explicit transactions attribute their commit to COMMIT rather
+than a preceding statement. `Total_us` sums observed wall-clock duration.
+
+The registry holds at most 256 digests with least-recently-completed eviction;
+SHOW uses only in-memory observations and does not clear them. Status exposes
+`Tarn_query_digest_capacity`, `entries`, `evictions`, `tracked`, `untracked`
+and `cancelled`. Cancelled calls are excluded from completed digest totals.
+No histograms, bindings, row contents or unbounded per-query histories are
+retained. These observations do not change query results, commit decisions,
+retry eligibility or MySQL errors, including 40001 versus 40003.
+
+For example, a parent with `PRIMARY KEY(tenant_id,id)` and child with
+`PRIMARY KEY(tenant_id,parent_id,id)` default to different full-key hash
+inputs. A child prefix lookup can broadcast. Declaring both with
+`PARTITION BY KEY(tenant_id)` and joining on tenant and parent ID allows
+a primary-prefix join under a bound parent to use one bucket. Compare
+EXPLAIN's eligibility/reasons, then the two digests' `Max_shards` and
+`Grouped_reads`. `tests/sql/explaintest.py` verifies equal 16-row results and
+the observed fanout change on two shards. This is a routing demonstration,
+not a latency or throughput benchmark.
+
 ## Monitoring
 
 For lazy indexes, `SHOW STATUS LIKE 'Tarn_lazy%'` includes completed lazy

@@ -58,6 +58,10 @@ pub enum Admin {
         like: Option<String>,
     },
     ShowTarnStatus,
+    /// SHOW TARN QUERIES: bounded, redacted digest/routing observations.
+    ShowTarnQueries,
+    /// SHOW TARN PLAN FOR a named SQL PREPARE or binary statement ID.
+    ShowTarnPlan(String),
     /// SHOW TARN BUCKETS: which shard owns which buckets, and the moves in
     /// progress.
     ShowTarnBuckets,
@@ -1071,6 +1075,23 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         "COLLATION" => Admin::ShowCollation,
         "CHARSET" | "CHARACTER" => Admin::ShowCharset,
         "PROCESSLIST" => Admin::ShowProcesslist,
+        "TARN" if t.is("QUERIES") => {
+            if !t.done() {
+                return Err(SqlError::parse("unexpected text after SHOW TARN QUERIES"));
+            }
+            Admin::ShowTarnQueries
+        }
+        "TARN" if t.is("PLAN") => {
+            if !t.is("FOR") {
+                return Err(SqlError::parse("expected SHOW TARN PLAN FOR statement"));
+            }
+            let name =
+                unquote(&t.next().ok_or_else(|| SqlError::parse("expected prepared statement"))?).to_ascii_lowercase();
+            if !t.done() {
+                return Err(SqlError::parse("unexpected text after SHOW TARN PLAN"));
+            }
+            Admin::ShowTarnPlan(name)
+        }
         "TARN" if t.is("BUCKETS") => Admin::ShowTarnBuckets,
         "TARN" if t.is("SHARDS") => Admin::ShowTarnShards,
         "TARN" if t.is("REBALANCE") => Admin::ShowTarnRebalance,

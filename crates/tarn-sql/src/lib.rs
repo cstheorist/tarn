@@ -22,6 +22,7 @@ pub mod lazy;
 pub mod lint;
 pub mod mpw;
 pub mod normalize;
+mod observe;
 pub mod plan;
 pub mod planner;
 pub mod prep;

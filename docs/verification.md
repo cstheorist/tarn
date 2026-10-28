@@ -1375,3 +1375,17 @@ Lua heap limit.
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.
+
+
+Query routing diagnostics (`observe.rs`, `exec/diagnostics.rs`, issue #133)
+are outside the TLA+ safety state: they neither change protocol messages nor
+read/write user tuples. Coordinator hooks observe existing events only,
+without an observer borrow across await. EXPLAIN shares the executor's
+colocation guards and routing coercions; it supplies no values to execution.
+Unit tests bound cardinality and cancellation/concurrent scopes. The public
+MySQL suite `tests/sql/explaintest.py` checks prepared and text plans,
+unknown parameters, no IDs/implicit commits/read effects, literal redaction,
+eviction, and an exact-result join whose aligned shard keys reduce observed
+fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
+storage protocols, SQL, transaction and live-fault suites remain required;
+these models do not prove observer accuracy or performance.
