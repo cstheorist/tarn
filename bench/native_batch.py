@@ -329,6 +329,161 @@ def run(args):
     write(root/"final.json", observe(args,after=True))
 
 
+
+def control_call(args, name, arguments):
+    """A genuine public CALL on the same owned node, never a synthetic lock."""
+    code = """
+local c=require('net.box').connect(__ADDR__,{user='tarn',password='tarn',wait_connected=3})
+local ok,r=pcall(c.call,c,__NAME__,__ARGS__,{timeout=3});c:close()
+if not ok then error(r) end
+return require('json').encode(r)
+""".replace('__ADDR__',json.dumps(args.shard)).replace('__NAME__',json.dumps(name)).replace('__ARGS__',arguments)
+    return evaluate(args,code)
+
+
+def claim_witness(args, tx, key):
+    pk = '{'+','.join(str(n) for n in ([args.tenant,key] if args.tenant is not None else [key]))+'}'
+    code = """
+box.begin{txn_isolation='read-confirmed'}
+local ok,r=pcall(function()
+ local p=box.space._tarn_part:get{__TX__};local d=box.space._tarn_txn:get{__TX__}
+ local row=box.space[__SID__]:get(__PK__);local locks={}
+ for _,l in box.space._tarn_locks.index.txid:pairs{__TX__} do
+  local image=l:totable();image[3]=require('digest').base64_encode(l.key);locks[#locks+1]=image
+ end
+ return {participant=p and p.state or 'none',decision=d and d.status or 'none',
+         row=row and row:totable() or box.NULL,locks=locks,lock_key_encoding='base64',total_locks=box.space._tarn_locks:len(),
+         total_prepared=box.space._tarn_part.index.state:count{'prepared'}}
+end)
+box.rollback();if not ok then error(r) end
+return require('json').encode(r)
+""".replace('__TX__',json.dumps(tx)).replace('__SID__',str(args.space)).replace('__PK__',pk)
+    return evaluate(args,code)
+
+
+def assert_claim(witness, expected_row):
+    assert witness['participant']=='prepared' and witness['decision']=='staging',witness
+    assert witness['row']==expected_row,witness
+    assert len(witness['locks'])==witness['total_locks'] and witness['total_locks']>0,witness
+    assert witness['total_prepared']==1 and all(l[4]=='W' for l in witness['locks']),witness
+
+
+def prepare_claim(args, tx, key, operation):
+    row = '{'+','.join(str(n) for n in ([args.tenant,key] if args.tenant is not None else [key]))+",string.rep('y',"+str(args.payload)+"),"+str(args.bucket)+'}'
+    arguments='{'+json.dumps(tx)+',1,{1},{{'+json.dumps(operation)+','+str(args.space)+','+row+'}},{},{},require("clock").realtime(),box.NULL,{'+str(args.space)+',0},{'+str(args.bucket)+'}}'
+    return control_call(args,'tarn_prepare',arguments)
+
+
+def abort_claim(args, tx, key):
+    before=claim_witness(args,tx,key)
+    if before['decision']=='staging':
+        assert control_call(args,'tarn_txn_cas','{'+json.dumps(tx)+',"staging","aborted",{1}}')=='aborted'
+    elif before['decision'] not in ('aborted','none'):
+        raise AssertionError('owned control has unexpected decision: '+str(before))
+    # Do not replay uncertain PREPARE or change any other transaction.
+    result=control_call(args,'tarn_abort','{'+json.dumps(tx)+',1,{1}}')
+    assert result==['ok','aborted'],result
+    after=claim_witness(args,tx,key)
+    assert after['participant']=='aborted' and after['decision'] in ('aborted','none'),after
+    assert not after['locks'] and after['total_locks']==after['total_prepared']==0,after
+    return {'before':before,'abort':result,'after':after}
+
+
+def refusal_call(args, key, mode):
+    pk='{'+','.join(str(n) for n in ([args.tenant,key] if args.tenant is not None else [key]))+'}'
+    code="""
+local c=require('net.box').connect(__ADDR__,{user='tarn',password='tarn',wait_connected=3})
+local a={__SID__,0,{__PK__},box.NULL,true,false,box.NULL,{__BUCKET__}}
+local clock=require('clock');local out={mode=__MODE__}
+local t=clock.monotonic64()
+if out.mode=='native' then
+ out.native=c:call('tarn_storage.ts_select',a,{timeout=3});out.first_ns=tonumber(clock.monotonic64()-t)
+ assert(out.native[1]=='lua' and #out.native==1)
+end
+out.reply=c:call('tarn_select_keys',a,{timeout=3});out.total_ns=tonumber(clock.monotonic64()-t)
+c:close();return require('json').encode(out)
+""".replace('__ADDR__',json.dumps(args.shard)).replace('__SID__',str(args.space)).replace('__PK__',pk).replace('__BUCKET__',str(args.bucket)).replace('__MODE__',json.dumps(mode))
+    return evaluate(args,code)
+
+
+def run_prepared_controls(args):
+    """A disjoint-claim timing control plus separate overlapping refusals.
+
+    Core success acceptance is unchanged. Refusal timings use public loopback
+    net.box CALLs inside EVAL, not external-client/network latency samples.
+    """
+    root=args.output.resolve();root.mkdir(mode=0o700,parents=False,exist_ok=False)
+    assert args.tenant is not None and args.bucket>0 and args.modes==['lua','native']
+    assert args.trials*2*(args.warmup+args.seconds)<=40,'prepared control must finish within60s'
+    initial=observe(args);write(root/'initial.json',initial)
+    assert initial['native_layout']==11 and initial['native_size']==312 and initial['info']['native']['ready']==1
+    assert initial['test_hooks'] is False and initial['active_native_hooks']==0 and initial['jit_on'] and initial['gc_running'] is not False
+    assert initial['info']['locks']==initial['info']['prepared']==initial['info']['ddl_held']==0
+    write(root/'manifest.json',{'script_sha256':digest(__file__),'client_sha256':digest(args.client),
+          'arguments':{k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
+          'positive_label':'disjoint prepared-W / busy lock index',
+          'refusal_latency_scope':'public net.box loopback CALL inside EVAL, excluding external observer roundtrip; not core client tails',
+          'cpu_scope':'TX/process CPU includes observer/background interval; not idle-subtracted',
+          'allocation_scope':'Lua managed bytes and module-wide Rust requested bytes separate; excludes C/tuples/RSS'})
+    cfg=evaluate(args,"return require('json').encode({recovery_after=tarn.cfg.recovery_after,max_txn_age=tarn.cfg.max_txn_age,lock_wait=tarn.cfg.lock_wait})")
+    write(root/'saved-config.json',cfg)
+    started=time.monotonic();active=None;results=[];clean=[]
+    try:
+        assert cfg['max_txn_age']==120
+        assert evaluate(args,"tarn.cfg.recovery_after=90;return require('json').encode(tarn.cfg.recovery_after)")==90
+        # Beyond both random hit and miss domains, so every read is disjoint.
+        key=2*args.rows+1;tx=root.parent.name+'-disjoint';active=(tx,key)
+        reply=prepare_claim(args,tx,key,'insert');write(root/'disjoint-prepare.json',reply);assert reply==['yes'],reply
+        for trial in range(args.trials):
+            for mode in (args.modes if trial%2==0 else list(reversed(args.modes))):
+                assert time.monotonic()-started<60,'prepared control lifetime exceeded'
+                before=claim_witness(args,tx,key);assert_claim(before,None)
+                r=measure(args,root,len(results),trial,mode,'hits',32,1,args.seed+trial*1000000,'buckets')
+                after=claim_witness(args,tx,key);r['prepared_w_before']=before;r['prepared_w_after']=after
+                write(root/(r['prefix']+'.json'),r);results.append(r);write(root/'results.json',results)
+                assert_claim(after,None);assert r['accepted'],r.get('error')
+        clean.append(abort_claim(args,tx,key));active=None;write(root/'claim-cleanup.json',clean)
+        assert clean[-1]['after']['row'] is None,'disjoint insert became visible'
+        refusals=[]
+        for label,key,operation in [('existing',1,'replace'),('missing',args.rows+1,'insert')]:
+            tx=root.parent.name+'-'+label;active=(tx,key)
+            expected=[args.tenant,key,'x'*args.payload,args.bucket] if label=='existing' else None
+            reply=prepare_claim(args,tx,key,operation);write(root/(label+'-prepare.json'),reply);assert reply==['yes'],reply
+            for mode in args.modes:
+                assert time.monotonic()-started<60,'prepared control lifetime exceeded'
+                before=claim_witness(args,tx,key);assert_claim(before,expected)
+                census0=observe(args);receipt=refusal_call(args,key,mode);census1=observe(args,after=True)
+                after=claim_witness(args,tx,key)
+                record={'label':label,'mode':mode,'before':before,'after':after,'receipt':receipt,'census_before':census0,'census_after':census1}
+                refusals.append(record);write(root/'refusals.json',refusals)
+                # Full typed reply remains in evidence; no retry or generic error accepted.
+                assert receipt['reply'][0]=='conflict' and receipt['reply'][1]==1213,receipt
+                assert_claim(after,expected)
+                nb,na=census0['info']['native'],census1['info']['native']
+                assert na['served']==nb['served'] and na['to_lua']-nb['to_lua']==int(mode=='native')
+                rb=nb.get('fallbacks',{}).get('read',{});ra=na.get('fallbacks',{}).get('read',{})
+                assert ra.get('w_lock',0)-rb.get('w_lock',0)==int(mode=='native')
+                assert all(ra.get(k,0)==rb.get(k,0) for k in set(rb)|set(ra) if k!='w_lock')
+            clean.append(abort_claim(args,tx,key));active=None;write(root/'claim-cleanup.json',clean)
+            assert clean[-1]['after']['row']==expected,'abort changed committed data'
+        pairs=[]
+        for trial in range(args.trials):
+            pair=[r for r in results if r['trial']==trial];l=next(r for r in pair if r['mode']=='lua');n=next(r for r in pair if r['mode']=='native')
+            pairs.append({'trial':trial,'order':[r['mode'] for r in pair],
+                'native_over_lua_cpu':n['cpu_ns_per_key']/l['cpu_ns_per_key'],
+                'native_over_lua_rate':n['batches_per_second']/l['batches_per_second'],
+                'native_over_lua_p99':n['client']['p99_ns']/l['client']['p99_ns']})
+        write(root/'pairs.json',pairs)
+    finally:
+        try:
+            if active is not None:
+                clean.append(abort_claim(args,*active));write(root/'claim-cleanup.json',clean)
+        finally:
+            restored=evaluate(args,'tarn.cfg.recovery_after='+str(cfg['recovery_after'])+';return require("json").encode({recovery_after=tarn.cfg.recovery_after,max_txn_age=tarn.cfg.max_txn_age,lock_wait=tarn.cfg.lock_wait})')
+            write(root/'restored-config.json',restored);assert restored==cfg
+            write(root/'final.json',observe(args,after=True))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--client", type=Path, required=True)
@@ -341,6 +496,7 @@ def main():
     p.add_argument("--route-modes",default="epoch")
     p.add_argument("--cases-json",type=Path)
     p.add_argument("--native-allocs",action="store_true")
+    p.add_argument("--prepared-w-controls",action="store_true",help="bounded genuine PREPARE disjoint timing plus typed overlapping refusal controls")
     p.add_argument("--allow-concurrent-native",action="store_true",help="label intentionally mixed workloads; do not attribute module-wide counters to reads alone")
     p.add_argument("--allowed-fallback-reasons",default="load_window")
     p.add_argument("--allow-all-fallback",action="store_true",help="explicit Vinyl/unsupported control, never native performance evidence")
@@ -368,7 +524,10 @@ def main():
     args.allowed_fallback_reasons=args.allowed_fallback_reasons.split(",")
     assert args.trials > 0 and all(1 <= n <= 256 for n in args.batches)
     assert set(args.modes) <= {"lua","native"} and set(args.shapes) <= {"hits","duplicates","miss","mixed"}
-    run(args)
+    if args.prepared_w_controls:
+        run_prepared_controls(args)
+    else:
+        run(args)
 
 
 if __name__ == "__main__":

@@ -337,6 +337,9 @@ return require('json').encode(result)
             measure += ["--cases-json",str(root/"harness/case-plan.json")]
         if args.native_allocs:
             measure += ["--native-allocs"]
+        if args.prepared_w_controls:
+            assert args.engine=="memtx" and args.tenant is not None
+            measure += ["--prepared-w-controls"]
         if args.engine=="vinyl":
             measure += ["--allow-all-fallback","--allowed-fallback-reasons","vinyl,load_window"]
         m["measure_command"] = measure
@@ -346,7 +349,7 @@ return require('json').encode(result)
             m["measure_process"]={"pid":measured.pid,"argv":measure}
             save(root,m)
             try:
-                status=measured.wait(timeout=args.deadline)
+                status=measured.wait(timeout=min(args.deadline,60) if args.prepared_w_controls else args.deadline)
             except subprocess.TimeoutExpired:
                 stop_measurement(root,m)
                 measured.wait(timeout=5)
@@ -389,6 +392,7 @@ def main():
     p.add_argument("--route-modes",default="epoch")
     p.add_argument("--cases-json",type=Path)
     p.add_argument("--native-allocs",action="store_true")
+    p.add_argument("--prepared-w-controls",action="store_true",help="genuine disjoint prepared-W timing and separate expected1213 controls")
     p.add_argument("--check-locks",action="store_true",help="enable identical optional lock-copy audit; default off for normal performance")
     p.add_argument("--native-batch-reads",action="store_true",help="candidate-only gateway flag; direct modes still choose endpoints independently")
     p.add_argument("--dump-before-measure",action="store_true",help="Vinyl control: create persistent runs first; does not drop OS page cache")
