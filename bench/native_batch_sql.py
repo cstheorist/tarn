@@ -189,8 +189,10 @@ def run(args):
     cases=[(b,s,w) for b in args.batches for s in args.shapes for w in args.workers]
     for trial in range(args.trials):
         order=cases.copy();random.Random(args.seed+trial).shuffle(order)
-        for index,(batch,shape,workers) in enumerate(order):
-            modes=['lua','native'] if (trial+index)%2==0 else ['native','lua']
+        for batch,shape,workers in order:
+            # Case shuffling must not change paired order balance: every case
+            # gets three Lua/native and two native/Lua pairs in five trials.
+            modes=['lua','native'] if trial%2==0 else ['native','lua']
             for mode in modes:
                 row=phase(args,root,len(results),trial,mode,batch,shape,workers,pymysql)
                 results.append(row);write(root/'results.json',results)
