@@ -196,5 +196,13 @@ check('heap preflight skips all monitor/certificate renewal without clearing pol
 hcfg.monitor_allowed = true
 check('a skipped monitor leaves the elapsed-gap guard to fail closed on resumption',
       status(heap.read_check(), 'clock_unknown') and heap.fault == nil)
+local real_meta = box.schema.space.create('clock_meta_real', {format = {{'key', 'string'}, {'value', 'map'}}})
+real_meta:create_index('pk')
+local real = guard.new{cfg = {test_hooks = false}, meta = real_meta}
+assert(real.load())
+local ready, actual_mono, actual_wall = real.read_native_state()
+check('actual public signed clock64 values publish exact nonnegative unsigned native mirrors', ready
+      and ffi.istype('uint64_t', actual_mono) and ffi.istype('uint64_t', actual_wall)
+      and actual_mono > 0 and actual_wall > 0)
 print(string.format('%d passed, 0 failed', passed))
 os.exit(0)

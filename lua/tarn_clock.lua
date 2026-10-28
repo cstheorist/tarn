@@ -12,6 +12,13 @@ local MAX = 9007199254
 local function finite(n)
     return type(n) == 'number' and n == n and n >= 0 and n <= MAX
 end
+local function unsigned_clock(v)
+    if ffi.istype('uint64_t', v) then return v end
+    -- Tarantool3.9 public clock.*64 returns signed nanoseconds. Validate
+    -- before casting; never reinterpret a negative clock as a huge uint64.
+    if ffi.istype('int64_t', v) and v >= 0 then return ffi.cast('uint64_t', v) end
+    return nil
+end
 local function unavailable(reason)
     -- Neither YES nor NO: in particular, never create a refusal tombstone.
     return {'clock_unknown', 1213, 'Clock safety unavailable: ' .. reason}
@@ -99,7 +106,8 @@ function M.new(c)
             return fake.wall, fake.mono, ffi.new('uint64_t', math.floor(fake.wall * BILLION)),
                    ffi.new('uint64_t', math.floor(fake.mono * BILLION))
         end
-        local m, w = clock.monotonic64(), clock.realtime64()
+        local m, w = unsigned_clock(clock.monotonic64()), unsigned_clock(clock.realtime64())
+        if m == nil or w == nil then return -1, -1, 0ULL, 0ULL end
         return tonumber(w) / BILLION, tonumber(m) / BILLION, w, m
     end
     -- No space reads/writes, yields, or transaction ownership changes.
