@@ -556,11 +556,15 @@ Complete [unique-key](results_join_statistics.json) and
 20 final timed samples, every query latency, exact results, foreground
 counter deltas, both plans, exact source/build/binary/driver/fixture settings
 and environment. Both gateways use source
-`61cf087` and the **same** Rust 1.98.1 macOS aarch64 release binary
+`3fbbd8c` and the **same** Rust 1.98.1 macOS aarch64 release binary
 (thin LTO, four codegen units, debug 1), with two threads and a
 two-connection pool per shard. Only one gateway receives explicit ANALYZE
 hints. There is no old/new binary or consistency-setting difference within
-these paired comparisons.
+these paired comparisons. Storage Lua and the driver use integrated tree
+`4d851d2`, including the owner-hint invalidation prerequisite (#163); the
+records include every Lua module hash and confirm unchanged compiled Rust
+inputs. Both gateways disable the optional native-batch read flag and use
+the same default bounded RPC admission settings.
 
 The generic fixture has 8,192 unique outer primary keys and 20 inner rows
 referring to one outer key. The unique-key query fixes one inner primary
@@ -577,17 +581,17 @@ SELECT component experiments.
 |---|---:|---:|
 | Decoded storage tuples/query, including attempts | 8,224 / 3 | 8,212 / 21 |
 | Encoded data read attempts/query | 35 / 3 | 67 / 3 |
-| Median queries/s across five repetitions | 57.54 / 778.73 | 22.61 / 759.07 |
-| Queries/s range, absent hints | 53.90–60.08 | 19.73–22.93 |
-| Queries/s range, present hints | 679.48–787.68 | 730.24–910.34 |
-| Per-repetition median latency range, absent hints, ms | 15.98–17.30 | 45.11–49.77 |
-| Per-repetition median latency range, present hints, ms | 1.21–1.36 | 1.05–1.17 |
-| Per-repetition p99 latency range, absent hints, ms | 27.50–31.76 | 53.59–74.04 |
-| Per-repetition p99 latency range, present hints, ms | 2.41–3.75 | 2.20–4.89 |
-| Successful queries, absent / present hints | 1,149 / 15,105 | 438 / 16,110 |
+| Median queries/s across five repetitions | 54.96 / 704.41 | 20.00 / 765.29 |
+| Queries/s range, absent hints | 47.93–60.71 | 18.91–20.50 |
+| Queries/s range, present hints | 670.18–784.75 | 555.86–793.87 |
+| Per-repetition median latency range, absent hints, ms | 14.85–19.87 | 49.52–53.31 |
+| Per-repetition median latency range, present hints, ms | 1.21–1.32 | 1.20–1.69 |
+| Per-repetition p99 latency range, absent hints, ms | 26.75–36.85 | 63.97–69.25 |
+| Per-repetition p99 latency range, present hints, ms | 3.62–4.85 | 2.41–3.09 |
+| Successful queries, absent / present hints | 1,094 / 14,302 | 399 / 14,208 |
 | Query errors, either gateway | 0 | 0 |
 
-The median closed-loop rates are about 13.5 and 33.6 times the controls
+The median closed-loop rates are about 12.8 and 38.3 times the controls
 for these shapes, supported by directly observed reductions in returned
 tuples and read attempts. Attempts exclude validation/metadata RPCs and
 include the unique-key candidate's initial autocommit probe before its
@@ -598,11 +602,14 @@ observed storage-tuple counts or latency predictions.
 
 The [initial unique](results_join_statistics_unique_initial.json) and
 [initial prefix](results_join_statistics_prefix_initial.json) studies retain
-all 20 earlier samples at gateway source `3e21e6e`. The later revision keeps
-statistics checks and generation churn off unrelated point-plan cache hits;
-a live cache-miss regression fails on the earlier binary and passes on the
-final one. No cross-revision point-read throughput gain is inferred from
-these join studies. Controls drift between studies; the comparisons above
+all 20 earlier samples at gateway source `3e21e6e`. The
+[preintegration unique](results_join_statistics_unique_preintegration.json)
+and [preintegration prefix](results_join_statistics_prefix_preintegration.json)
+studies retain all 20 samples at `61cf087`. The cache fix keeps statistics
+checks and generation churn off unrelated point-plan cache hits; a live
+cache-miss regression fails on the initial binary and passes on the fixed
+source and integrated binary. No cross-revision point-read throughput gain
+is inferred from these join studies. Controls drift between studies; the comparisons above
 are within the same-binary final pairs.
 
 Two RF1 Tarantool 3.9.0 memtx shards run in one Linux aarch64 Docker
