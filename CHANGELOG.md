@@ -482,6 +482,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Native-to-Lua autocommit fallback reuses the selected physical connection
+  after a matched handback or cached native unavailability. It no longer
+  advances an even-sized pool twice per write, leaving half its connections
+  unused. Explicit read-only refusals still discover a leader; lost replies
+  remain unknown outcomes and are never replayed
+  ([#155](https://github.com/cstheorist/tarn/issues/155)).
+
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original
   PREPARE rolled back. It now reads confirmed participant state while

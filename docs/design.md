@@ -570,6 +570,13 @@ after a hand-back, in the same stream, and no call sent again whose
 outcome is unknown
 ([verification](verification.md#the-hand-back-contract-of-the-native-procedures)).
 
+An autocommit handback, including cached native unavailability, keeps the
+selected physical connection for its Lua call. Selecting again would stride
+through only half an even-sized connection pool. An explicit `ER_READONLY`
+refusal invalidates the selection and discovers a leader; transport loss
+never authorizes fallback or replay. This does not change stream commits,
+whose native and Lua steps retain the same stream.
+
 **One-shard commits.** The third procedure, `tarn_storage.ts_commit_local`,
 takes `tarn_commit_local`'s arguments and commits a transaction that wrote
 on this shard only: its writes are rows (inserts, replaces and deletes; the
