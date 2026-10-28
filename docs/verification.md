@@ -74,6 +74,7 @@ of workload, fault budget and options. The names say what is checked:
 | `GroupedDDL` | a separate checked-read premise: a yielding read cannot accept a snapshot that existed only while a DDL hold covered its table |
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
+| `NativeKeyBatch` | a bounded native full-primary-key batch returns the complete ordered filter-map of one memtx image, checking write claims even on missing keys, or hands the whole request back |
 | `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
@@ -995,6 +996,50 @@ control after a committed native-call effect checks `1180/40003`, separately
 from a refused native conflict's `1213/40001`; neither calls Lua. Pool
 utilization is not evidence of a latency or throughput improvement.
 
+### Bounded native primary-key batches (issue #141)
+
+`NativeKeyBatch.tla` checks a local read refinement, not a new commit
+protocol. The request `a, b, a` includes a duplicate and an initially
+missing key. A writer can insert the missing key or atomically change
+both keys, with a prepared write-claim interval before publication.
+A completed batch must preserve request order and duplicates, omit only
+missing rows, inspect every requested key, and equal the filter-map of
+one confirmed image. A commit acknowledged before the batch starts must
+be visible. Both admission and final validation include write claims on
+**all requested keys**, including misses; read-only range claims do not
+block snapshot reads.
+
+The native subset is memtx, autocommit with no ambient transaction,
+index 0 and full primary keys, with a complete first page under bounded
+work, row and stored-tuple-byte caps. Every inspected key consumes work,
+even a miss. Before each key, all three budgets must still have room;
+a present tuple is checked against the byte cap before appending it.
+Equality after the final key can complete, but a clipped batch hands
+back the whole request rather than certifying a partial result. The
+model includes both complete and clipped budgets. Streams, Vinyl,
+prefixes and continuations retain the existing Lua path.
+Capability negotiation only selects a dispatch path; its constant reply
+does not certify data, readiness, leadership, or any read guard.
+
+The one-image argument assumes the native memtx get/check interval does
+not yield, as in `TarnCommit`'s `SnapshotRead`/`DirectReadAtomic` premise.
+Actual C lookup/MessagePack correspondence, parser arity, no-yield CAPI
+behavior and the freshness of routing, readiness, lock and DDL mirrors
+remain runtime refinement obligations. This model does not prove those
+primitives, arbitrary predicates, or full distributed serializability.
+
+```sh
+tla/check.sh NativeKeyBatch Bug_KeyBatchMissingClaim \
+  Bug_KeyBatchMixedSnapshots Bug_KeyBatchTruncatedComplete
+```
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `NativeKeyBatch` | 105 | 9 | passes |
+| `Bug_KeyBatchMissingClaim` | 101 | 7 | violates `NoMissingClaim` |
+| `Bug_KeyBatchMixedSnapshots` | 174 | 9 | violates `OneSnapshot` |
+| `Bug_KeyBatchTruncatedComplete` | 46 | 4 | violates `FullBatch` |
+
 ### Online engine copying and publication (issue #57)
 
 `EngineCopy.tla` checks a local copy certificate, composed with
@@ -1263,10 +1308,10 @@ tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 
 ### Configuration counts
 
-The default list contains 187 configurations, including 136 expected
-broken/trade-off outcomes. The 198 generated configurations reproduce from
+The default list contains 191 configurations, including 139 expected
+broken/trade-off outcomes. The 202 generated configurations reproduce from
 `gen_cfgs.sh`; two additional grouped-read configurations are maintained
-directly, for 200 total. Explicit check arguments override the default
+directly, for 204 total. Explicit check arguments override the default
 list.
 
 ## Verus proofs
@@ -1275,6 +1320,13 @@ list.
 builds it with the specifications and proofs erased, and the server uses the
 result. Verus proves:
 
+* **Native batch budgets** (`batch.rs`): `can_step` permits the next lookup
+  exactly while work, rows and bytes each have room. `step` either rejects
+  the whole native attempt or charges one work unit, one row for a present
+  tuple and exactly its stored size, without overflow or exceeding any
+  cap. Missing keys still charge work; a final tuple may exactly exhaust
+  a cap, while another key must hand back. This proves budget arithmetic,
+  not native tuple lookup, MessagePack framing or snapshot isolation.
 * **Routing** (`route.rs`): the CRC-32C used for bucket hashing equals a
   bitwise specification for every input; bucket and shard numbers are in
   range; the bucket-to-shard map of a new cluster is monotone and onto; the
@@ -1333,7 +1385,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 134 verified, 0 errors
+# verification results:: 137 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with
