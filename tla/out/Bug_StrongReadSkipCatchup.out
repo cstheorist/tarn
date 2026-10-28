@@ -1,0 +1,299 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 23 and seed 8171015293124998461 with 4 workers on 16 cores with 1472MB heap and 64MB offheap memory [pid: 27712] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/StrongReadFreshness.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-462140251511824835/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-462140251511824835/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-462140251511824835/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module StrongReadFreshness
+Linting of module StrongReadFreshness
+Starting... (2026-10-28 13:06:50)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-28 13:06:50.
+Error: Invariant StrongReadsSeePriorAcks is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "idle"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 0
+/\ writable = {"A"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 1, C |-> 1]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 1
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 2: <Elect({"B", "C"}) line 93, col 5 to line 100, col 56 of module StrongReadFreshness>
+/\ phase = "idle"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 0
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {}, C |-> {}]
+/\ replied = {}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {}
+/\ wal = [A |-> {}, B |-> {}, C |-> {}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 3: <AckWrite(1,{"B", "C"}) line 78, col 5 to line 89, col 38 of module StrongReadFreshness>
+/\ phase = "idle"
+/\ need = {}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 0
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 4: <BeginRead("A") line 154, col 5 to line 164, col 66 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {1}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 5: <Send("B") line 167, col 5 to line 172, col 81 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {1}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 6: <Reply("B") line 175, col 5 to line 181, col 70 of module StrongReadFreshness>
+/\ phase = "collect"
+/\ need = {1}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {1}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 7: <Collected line 184, col 5 to line 188, col 77 of module StrongReadFreshness>
+/\ phase = "catchup"
+/\ need = {1}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {1}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 8: <CaughtUp line 191, col 5 to line 196, col 77 of module StrongReadFreshness>
+/\ phase = "settle"
+/\ need = {1}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {1}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 9: <Barrier line 199, col 5 to line 204, col 69 of module StrongReadFreshness>
+/\ phase = "read"
+/\ need = {1}
+/\ completed = {}
+/\ paused = {}
+/\ sample = {1}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {1}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+State 10: <FirstRead line 207, col 5 to line 215, col 66 of module StrongReadFreshness>
+/\ phase = "idle"
+/\ need = {1}
+/\ completed = {[required |-> {1}, seen |-> {}]}
+/\ paused = {}
+/\ sample = {1}
+/\ readId = 1
+/\ writable = {"A", "B"}
+/\ pauseStep = 0
+/\ observed = [A |-> 1, B |-> 2, C |-> 2]
+/\ settled = [A |-> {}, B |-> {1}, C |-> {}]
+/\ replied = {"A", "B"}
+/\ links = { <<"A", "B">>,
+  <<"A", "C">>,
+  <<"B", "A">>,
+  <<"B", "C">>,
+  <<"C", "A">>,
+  <<"C", "B">> }
+/\ target = "A"
+/\ netStep = 0
+/\ sent = {"A", "B"}
+/\ wal = [A |-> {}, B |-> {1}, C |-> {1}]
+/\ cached = {1}
+/\ term = 2
+/\ acked = {1}
+/\ snapshot = {}
+/\ readTerm = 1
+
+118402 states generated, 35475 distinct states found, 18516 states left on queue.
+The depth of the complete state graph search is 11.
+Finished in 00s at (2026-10-28 13:06:51)
