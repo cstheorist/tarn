@@ -1442,7 +1442,9 @@ prepared/applied write. The public SQL test `tests/sql/pushdowntest.py`
 compares exact MariaDB results, including aggregates above 2^53/64-bit
 sums, parameter changes, unsupported shapes, overlays at both isolation
 levels, absent procedures, incomplete/malformed partials, and OCC conflicts
-after a rejected row changes. The ordinary differential suite adds 30
+after a rejected row changes. Small multi-shard READ COMMITTED statements
+retain ordinary reads without new validation; their reduction counter must
+stay unchanged. The ordinary differential suite adds 30
 cases. Bucket tests reject both new procedures on the wrong owner.
 
 ## Continuous integration

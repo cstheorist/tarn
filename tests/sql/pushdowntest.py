@@ -115,8 +115,13 @@ def main():
 
     for c in (a, b):
         query(c, 'SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED')
+        query(c, 'CREATE TABLE small135 (id INT PRIMARY KEY, n INT)')
+        query(c, 'INSERT INTO small135 VALUES (1,1),(2,2),(3,3),(4,4)')
         query(c, 'BEGIN')
         query(c, 'UPDATE p SET n = 123 WHERE tenant = 1 AND id = 1')
+    before = status('Tarn_storage_reductions')
+    same('SELECT SUM(n), MIN(n), MAX(n), COUNT(n) FROM small135')
+    assert status('Tarn_storage_reductions') == before, 'small RC read acquired a new validated snapshot'
     same(f'SELECT {aggregate} FROM p')
     same('SELECT tenant,id,n,filled FROM p WHERE tag = 1')
     for c in (a, b):

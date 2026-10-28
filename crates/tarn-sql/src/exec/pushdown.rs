@@ -136,11 +136,12 @@ pub(super) async fn reduce(
         None,
         None,
     )?;
-    // A reduction hides page boundaries. Keep multi-shard RC statements in
-    // the same validated snapshot used by paginated ordinary aggregates,
-    // rather than allowing independently captured partials to fracture it.
+    // A reduction hides page boundaries. Retain ordinary RC statement
+    // reads here: small scans must not acquire new validation/conflicts.
+    // When ordinary paging needs a validated statement snapshot, its Txn
+    // attempt can reduce safely instead of mixing independent partials.
     if calls.len() > 1 && matches!(mode, ReadMode::Statement(_)) {
-        return Err(need_snapshot());
+        return Ok(None);
     }
     let in_stream = matches!(mode, ReadMode::Txn(_));
     let routes = calls

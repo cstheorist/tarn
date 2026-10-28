@@ -123,9 +123,11 @@ The guard refuses a fold before decimal precision can be lost. No partial
 from any shard is usable when one fold is incomplete. Stored versions of
 buffered writes are excluded before aggregation; Rust adds qualifying own
 rows. Every scanned range remains recorded for validation.
-Multi-shard READ COMMITTED reductions use the existing validated statement
-snapshot, as ordinary aggregates over multiple pages do; partials are not
-independent committed views that can fracture the aggregate.
+Multi-shard READ COMMITTED statements first retain ordinary paging. Small
+scans acquire no new validation or conflicts; when paging needs the existing
+validated statement snapshot, that snapshot's transaction may reduce.
+Partials do not introduce independently captured views that fracture an
+aggregate which ordinary paging would have validated.
 
 Plain column projections over a range scan, without aggregation, ordering,
 DISTINCT or LIMIT, use `tarn_select_projected` when they omit at least one
