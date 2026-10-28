@@ -1565,20 +1565,19 @@ impl Session {
             // Lazy sources require Lua capture. Avoid a predictable extra
             // native call; the shard also enforces capture exclusions for
             // stale gateways that do not yet know this metadata.
-            let result = async {
-                let native = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
-                    self.cluster
-                        .call_native_once(shard, "tarn_storage.ts_autocommit", &writes.0, MARK_NO_NATIVE_WRITE)
-                        .await?
-                } else {
-                    None
-                };
-                match native {
-                    Some(d) if !crate::mpw::status_is(&d, "lua") => Ok(d),
-                    _ => self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await,
-                }
-            }
-            .await;
+            let result = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
+                self.cluster
+                    .call_native_or_lua_once(
+                        shard,
+                        "tarn_storage.ts_autocommit",
+                        "tarn_autocommit",
+                        &writes.0,
+                        MARK_NO_NATIVE_WRITE,
+                    )
+                    .await
+            } else {
+                self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await
+            };
             let d = match result {
                 Ok(d) => d,
                 Err(e) => {

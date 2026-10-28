@@ -1111,64 +1111,78 @@ impl Cluster {
     /// not run) and once after a lost connection (it may have run: callers
     /// guarantee that running it twice is harmless).
     pub async fn call(&self, shard: usize, func: &str, args: &[u8]) -> SqlResult<Bytes> {
-        self.call_inner(shard, func, args, true).await
+        self.call_inner(shard, func, args, true, None).await
     }
 
     /// CALL a procedure that must not run twice (autocommit DML). Retried
     /// only after ER_READONLY; a connection lost while the request was in
     /// flight leaves the outcome unknown, reported as such.
     pub async fn call_once(&self, shard: usize, func: &str, args: &[u8]) -> SqlResult<Bytes> {
-        self.call_inner(shard, func, args, false).await
+        self.call_inner(shard, func, args, false, None).await
     }
 
-    /// CALL the shard's native procedure `func` once, as `call_once`: its
-    /// reply, or None where it is not there -- an older version, a shard
-    /// without the module, or one whose module did not load, which the
-    /// connection notes with `mark` -- or after a leader change. A reply
-    /// ["lua", "all"] (the procedure hands back every call of this shard:
-    /// a shard of an earlier version, whose native writes left synchronous
-    /// tables to Lua) is noted with `mark` too.
-    pub async fn call_native_once(&self, shard: usize, func: &str, args: &[u8], mark: u32) -> SqlResult<Option<Bytes>> {
+    /// CALL a native autocommit procedure, or its Lua fallback, as
+    /// `call_once`. An unavailable native procedure or a matched ["lua"]
+    /// handback leaves the operation unwritten: use the selected physical
+    /// client for Lua too, without advancing the pool again. Only an
+    /// explicit ER_READONLY discards that selection and discovers a leader.
+    /// Native unavailability and ["lua", "all"] are cached with `mark`.
+    pub async fn call_native_or_lua_once(
+        &self,
+        shard: usize,
+        func: &str,
+        lua: &str,
+        args: &[u8],
+        mark: u32,
+    ) -> SqlResult<Bytes> {
         crate::observe::shard(shard);
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
         let s = &self.shards[shard];
         let c = s.client(self).await?;
-        if c.marked(mark) {
-            return Ok(None);
-        }
-        match c.call(0, func, args).await {
-            Ok(r) => {
-                let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
-                if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
-                    tracing::debug!(shard = s.id, "{} hands back every call", func);
+        if !c.marked(mark) {
+            match c.call(0, func, args).await {
+                Ok(r) => {
+                    let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
+                    if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
+                        tracing::debug!(shard = s.id, "{} hands back every call", func);
+                        c.mark(mark);
+                    }
+                    if !crate::mpw::status_is(&d, "lua") {
+                        return Ok(d);
+                    }
+                }
+                Err(tarn_iproto::Error::Server {
+                    code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
+                    message,
+                }) => {
+                    tracing::debug!(shard = s.id, "{} unavailable: {}", func, message);
                     c.mark(mark);
                 }
-                Ok(Some(d))
+                // A matched before-effect refusal permits Lua on a new leader.
+                Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::ER_READONLY => {
+                    s.invalidate();
+                    return self.call_once(shard, lua, args).await;
+                }
+                Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) => {
+                    s.invalidate();
+                    return Err(crate::mpw::ambiguous(s.id, &e));
+                }
+                Err(e) => return Err(from_iproto(e)),
             }
-            Err(tarn_iproto::Error::Server {
-                code: ER_NO_SUCH_PROC | ER_NO_SUCH_FUNCTION | ER_LOAD_FUNCTION | ER_LOAD_MODULE | ER_ACCESS_DENIED,
-                message,
-            }) => {
-                tracing::debug!(shard = s.id, "{} unavailable: {}", func, message);
-                c.mark(mark);
-                Ok(None)
-            }
-            // (the Lua procedure sees the leader change too, and follows it)
-            Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::ER_READONLY => {
-                s.invalidate();
-                Ok(None)
-            }
-            Err(e @ (tarn_iproto::Error::Closed | tarn_iproto::Error::Io(_))) => {
-                s.invalidate();
-                Err(crate::mpw::ambiguous(s.id, &e))
-            }
-            Err(e) => Err(from_iproto(e)),
         }
+        self.call_inner(shard, lua, args, false, Some(c)).await
     }
 
-    async fn call_inner(&self, shard: usize, func: &str, args: &[u8], idempotent: bool) -> SqlResult<Bytes> {
+    async fn call_inner(
+        &self,
+        shard: usize,
+        func: &str,
+        args: &[u8],
+        idempotent: bool,
+        mut selected: Option<Client>,
+    ) -> SqlResult<Bytes> {
         if matches!(
             func,
             "tarn_autocommit" | "tarn_apply" | "tarn_abort" | "tarn_fence" | "tarn_txn_cas"
@@ -1178,7 +1192,10 @@ impl Cluster {
         let s = &self.shards[shard];
         let mut tries = 0;
         loop {
-            let c = s.client(self).await?;
+            let c = match selected.take() {
+                Some(c) => c,
+                None => s.client(self).await?,
+            };
             match c.call(0, func, args).await {
                 Ok(r) => return r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data")),
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
@@ -2339,6 +2356,10 @@ impl Cluster {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "cluster_fallback_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 mod tests {

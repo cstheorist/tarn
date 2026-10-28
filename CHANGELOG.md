@@ -8,6 +8,31 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Recovery and garbage collection could be held up by what they cannot
+  resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
+  shard was down, 200 undecided transactions that needed it, the first ones
+  each recovery pass took, kept every newer one from being resolved; and
+  records that could not be collected could fill garbage collection's scan
+  window. Each pass now continues where the previous one stopped,
+  `recovery_workers` fibers resolve transactions at once, and a
+  transaction or a shard that failed waits before it is tried again (up to
+  `recovery_backoff_max`). Garbage collection runs on its own fiber, with
+  its own budget (`gc_interval`, `gc_time_budget`). What recovery does
+  with a transaction, and what garbage collection may delete, are
+  unchanged. `tarn_info().recovery` reports the backlog, the age of its
+  oldest transaction, the shards in backoff and garbage collection's laps;
+  `stats.recovered` counts the participants recovery resolved (it counted
+  the attempts that did not raise). `tla/RecoveryFairness.tla` models the
+  order of the passes, and `lua/test/recovery_faults.sh` stops one of
+  three shards.
+
+- Native-to-Lua autocommit fallback reuses the selected physical connection
+  after a matched handback or cached native unavailability. It no longer
+  advances an even-sized pool twice per write, leaving half its connections
+  unused. Explicit read-only refusals still discover a leader; lost replies
+  remain unknown outcomes and are never replayed
+  ([#155](https://github.com/cstheorist/tarn/issues/155)).
+
 - IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
   malformed frames, unsupported response types and unknown/duplicate SYNCs
   retire the connection instead of certifying a result. Every length-prefix
@@ -16,15 +41,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose reply is invalid remains 1180/40003 and is never replayed.
 
 ### Added
-
-- An opt-in native primary-key batch prototype
-  ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
-  lookup loop for complete memtx autocommit batches of up to 128 keys.
-  `native_batch_reads` in the gateway configuration enables it; older
-  modules and unsupported requests use the existing Lua path. The model
-  checks missing-key locks, snapshot consistency and complete results;
-  the executed budget checks are verified with Verus. See the
-  [native storage inventory](docs/native-storage.md).
 
 - Distributed transactions spread decision records across active writing
   participants using a stable hash of the transaction ID
@@ -40,6 +56,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   executing the query. `SHOW TARN PLAN FOR` diagnoses unbound prepared
   statements, and bounded `SHOW TARN QUERIES` observations distinguish
   completed runtime fanout from compile-time constraints.
+
+- An opt-in native primary-key batch prototype
+  ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
+  lookup loop for complete memtx autocommit batches of up to 128 keys.
+  `native_batch_reads` in the gateway configuration enables it; older
+  modules and unsupported requests use the existing Lua path. The model
+  checks missing-key locks, snapshot consistency and complete results;
+  the executed budget checks are verified with Verus. See the
+  [native storage inventory](docs/native-storage.md).
 
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
@@ -515,21 +540,257 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Database administration matches MariaDB affected-row counts and result
+  metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
+  CREATE DATABASE reports one row for a new database and zero for an
+  existing IF NOT EXISTS target. SHOW DATABASES LIKE filters
+  `information_schema` too, and includes the pattern in its column name.
 
-- Recovery and garbage collection could be held up by what they cannot
-  resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
-  shard was down, 200 undecided transactions that needed it, the first ones
-  each recovery pass took, kept every newer one from being resolved; and
-  records that could not be collected could fill garbage collection's scan
-  window. Each pass now continues where the previous one stopped,
-  `recovery_workers` fibers resolve transactions at once, and a
-  transaction or a shard that failed waits before it is tried again (up to
-  `recovery_backoff_max`). Garbage collection runs on its own fiber, with
-  its own budget (`gc_interval`, `gc_time_budget`). What recovery does
-  with a transaction, and what garbage collection may delete, are
-  unchanged. `tarn_info().recovery` reports the backlog, the age of its
-  oldest transaction, the shards in backoff and garbage collection's laps;
-  `stats.recovered` counts the participants recovery resolved (it counted
-  the attempts that did not raise). `tla/RecoveryFairness.tla` models the
-  order of the passes, and `lua/test/recovery_faults.sh` stops one of
-  three shards.
+- Quoted administrative SQL tokens preserve UTF-8
+  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
+  savepoints and quoted variable names retain multibyte characters.
+  Doubled quotes and string backslash escapes are decoded without changing
+  the original byte offsets used for SET expressions. Unterminated quoted
+  tokens return syntax error 1064.
+
+- A duplicate PREPARE on a participant without an open stream could vote
+  YES from an unconfirmed record, then lose that promise when the original
+  PREPARE rolled back. It now reads confirmed participant state while
+  retaining the read set of an existing stream. Quorum-overlap and stream
+  continuity controls cover both engines and both native modes.
+
+- An expired PREPARE whose stream is gone is rejected before a fresh
+  NO/tombstone can be created. After a committed transaction's records
+  were collected, that earlier refusal could resurrect an aborted decision
+  over committed history. Runtime controls retain the committed row and
+  verify both the absent-history and collected-history cases.
+- Hexadecimal literals (`X'4142'`, the form in which PyMySQL 1.2.3 sends
+  bytes), strings with the `_binary` or a UTF-8 introducer (`_binary 'ab'`,
+  `_binary X'4142'`, `_utf8mb4 'ab'`) and national strings (`N'ab'`) failed
+  in text queries with 1064 or 1235. They are binary strings, or text ones,
+  as in MariaDB: typed as such, compared as such, and named by their text
+  (`SELECT X'41'` is a column `X'41'`). An odd number of digits, or another
+  character, is 1064, as in MariaDB. A binary string is coercible: a column's
+  collation, or an explicit one, wins over it, so a case-insensitive column
+  compared with `X'41'` compares as text; between two literals the binary
+  one wins, also in `LIKE` and `LOCATE`. A prepared statement executed with
+  a binary parameter is planned for it. `0x123` is `0x0123`
+  ([#122](https://github.com/cstheorist/tarn/issues/122)).
+- A cached plan served statements whose literals were of another kind: after
+  `SELECT 1`, `SELECT 'abc'` came back as an integer column, which PyMySQL
+  could not convert. Plans are cached per kind of each parameter too
+  ([#122](https://github.com/cstheorist/tarn/issues/122)).
+- A local commit or PREPARE of the reads of a stream that began before the
+  shard's leader was demoted and elected again is refused, as a validation
+  is: the stream may have missed writes of the leader in between. They
+  relied on MVCC there, and on Tarantool electing no node that misses a
+  confirmed write. Both also refuse reads whose stream's transaction no
+  longer exists, which they committed in a new transaction
+  ([#120](https://github.com/cstheorist/tarn/issues/120)).
+- `tarn_validate` checks that the node has been the leader since the
+  stream began right before its probe write. It checked before reading the
+  lock index again, which may yield: a node demoted meanwhile could still
+  validate ([#28](https://github.com/cstheorist/tarn/issues/28)).
+- A transaction whose row lock request a shard refused without granting
+  anything (`NOWAIT`, a lock wait timeout) left row-lock state there when
+  it then rolled back, or committed without that shard: the SQL server now
+  releases the row locks of every shard its lock requests went to
+  ([#28](https://github.com/cstheorist/tarn/issues/28)).
+- An `UPDATE` in a transaction that set a `FLOAT` or `DOUBLE` column to the
+  value it held counted the row as changed when that value was an integer.
+  The shards store such values as integers, which the SQL server now reads
+  as doubles ([#28](https://github.com/cstheorist/tarn/issues/28)).
+- An autocommit read on a shard's new leader (of a range, of several keys,
+  or a count) now reads the tables held by a `TRUNCATE` or `DROP TABLE`
+  from storage first, as writes do, and so does a validation. Until a write
+  read them, such a read could return rows of a table that a prepared
+  `TRUNCATE` or `DROP TABLE` held, instead of waiting for it, and a
+  validation could accept reads of that table
+  ([#28](https://github.com/cstheorist/tarn/issues/28)).
+- A `DROP TABLE` whose APPLY failed on a shard after dropping the table, and
+  ran again, did not fail the open transactions that had read the table
+  there (vinyl, which keeps them open): now it does
+  ([#28](https://github.com/cstheorist/tarn/issues/28)).
+- An OK packet's info string, such as `PREPARE`'s "Statement prepared",
+  is length-encoded, as MySQL and MariaDB write it. MariaDB's client
+  checked the length and failed every `PREPARE` with 2027 (malformed
+  packet) ([#61](https://github.com/cstheorist/tarn/issues/61)).
+- Indexes on instant-added non-NULL fills now include existing rows
+  ([#70](https://github.com/cstheorist/tarn/issues/70)). PREPARE appends missing
+  suffixes behind a persistent write fence, preserving present values,
+  explicit NULLs and older frozen fills. Durable original-length undo
+  restores failed changes before releasing the fence, including duplicate
+  UNIQUE builds; a later ALTER cannot inherit an aborted default. Recovery
+  and generation checks protect retries and takeover, and serialized ALTER
+  RPCs prevent late native index builds from escaping cleanup. The existing
+  row-count limit and unweighted CI-column retrofit restriction remain.
+- A large scan no longer kills a storage node. A read returned its whole
+  range in one reply, held in the node's Lua heap, so reads of millions of
+  rows (an unindexed `WHERE` over a big table) took the heap to Tarantool's
+  Lua memory limit, and the node then exited with a Lua panic. Reads now
+  return at most 4096 rows or 4 MiB per call and the SQL server continues
+  after the last one, applying a single-table `WHERE` page by page; a read
+  that finds the node's Lua heap nearly full fails with 1041 and the node
+  stays up ([#77](https://github.com/cstheorist/tarn/issues/77)).
+  Autocommit reads that need more than one page run as implicit read-only
+  transactions, and a READ COMMITTED `SELECT` that does reads in one
+  read-only snapshot overlaid with its transaction's writes, so that rows
+  moved within an index meanwhile are neither missed nor returned twice.
+  Both may therefore fail with 1213 (after 20 retries) when writes keep
+  changing what they read, which rolls back the READ COMMITTED transaction
+  as any 1213 does; short reads are unchanged.
+- `SET @var = literal` after a leading `--`, `#` or `/* ... */` comment
+  failed with 1064 because literal normalization turned the value into an
+  unbound placeholder ([#71](https://github.com/cstheorist/tarn/issues/71)).
+  Administrative recognition now skips comments while preserving the
+  original assignment expressions and quoted values.
+- `col <=> NULL` (and `col <=> ?` bound to NULL) on an indexed nullable
+  column found no rows: the index lookup it became drops a NULL key part.
+  It now matches the rows whose column is NULL in `SELECT`, `UPDATE` and
+  `DELETE` ([#72](https://github.com/cstheorist/tarn/issues/72)).
+- `SELECT ... HAVING <condition> LIMIT n` without aggregation pushed the
+  `LIMIT` down to storage before `HAVING` filtered, and returned too few
+  rows, often none ([#38](https://github.com/cstheorist/tarn/issues/38)).
+- `DATETIME` and `TIMESTAMP` values compared by their spelling: a stored
+  `'2025-01-01 00:00:01.000000'` did not equal `'2025-01-01 00:00:01'`, so
+  keyset pagination repeated rows ([#37](https://github.com/cstheorist/tarn/issues/37)).
+  Values are now stored in one form, with exactly the column's fractional
+  digits (`DATETIME(6)` keeps its precision, which the catalog used to drop),
+  and constants compared with date and datetime columns, in `WHERE`, `IN`,
+  `BETWEEN` and index lookups, compare by value. Rows written before this
+  change keep their old spelling.
+- `CLIENT_FOUND_ROWS` was ignored: an `UPDATE` that matched a row without
+  changing it reported 0 affected rows to drivers that ask for matched rows
+  (Rails, Go's `clientFoundRows=true`), which read it as a missing row. It now
+  reports matched rows, in every `UPDATE` path, and 1 for an upsert that
+  changes nothing ([#39](https://github.com/cstheorist/tarn/issues/39)).
+- A READ COMMITTED lock request that failed (1205, 3572 or 1213) after some
+  of its rows were locked kept those locks after its transaction ended when
+  it was the transaction's first lock request on that shard: they were
+  released only when the SQL server's connection to the shard closed or the
+  leader changed, and until then other transactions waited for those rows
+  and timed out. The failed request now reports the locks' generation and
+  the transaction releases them when it ends.
+- `CREATE TABLE`, `DROP TABLE` and `TRUNCATE` were sent to every shard at
+  once: a shard that failed left the table on some shards only, a
+  `TRUNCATE` between a cross-shard transaction's PREPARE and its APPLY left
+  that transaction's rows, and a transaction that had read the table could
+  still commit after it. They now run in steps like `ALTER TABLE` and take
+  effect on every shard or on none. A `DROP TABLE` or `TRUNCATE` first waits
+  for the prepared transactions holding locks on the table; until it is
+  applied, reads of the table wait and transactions that read it fail
+  validation; `TRUNCATE` refuses writes encoded before it (1412)
+  ([#30](https://github.com/cstheorist/tarn/issues/30)).
+  `tests/ddlfaults.sh` interrupts each with a shard failure.
+- Bootstrapping a replicated shard could stop storage instances: the new
+  leader's first synchronous write, made while its replicas were still
+  joining, timed out (stopping the leader), or reached a joining replica,
+  whose first checkpoint then timed out waiting for its confirmation
+  (stopping the replica). The leader now waits for its replicas before that
+  write, and creates the schema in the background, retrying, so that a
+  leadership change or a timeout during bootstrap no longer stops it.
+  `scripts/cluster.sh start` returns once every replica has joined.
+- `DROP TABLE` between a cross-shard transaction's PREPARE and its APPLY left
+  the transaction unfinished for good: APPLY failed on the missing table at
+  every attempt, so the transaction's writes to other tables never landed
+  and their row locks stayed. APPLY now skips the dropped table's writes. A
+  write that meets a table dropped through another SQL server fails with
+  1146 instead of "storage error 36".
+- A cross-shard transaction that wrote a row with NULL in a nullable unique
+  key failed its PREPARE ("Supplied key type of part 0 does not match index
+  part type"), and two of them conflicted on the NULL value; NULLs now take
+  no unique value, as in MySQL.
+- `DECIMAL(p, s)` values with more than p - s digits before the point were
+  stored; they now fail with 1264, as in MySQL.
+- A statement on one SQL server right after another server created or
+  recreated a table, a column or a database failed until the next catalog
+  poll (up to 0.3 s) with "doesn't exist" errors; it is now re-planned with
+  the newer catalog, also while other schema changes reload the catalog at
+  the same moment, and `SHOW TABLES`, `SHOW CREATE TABLE`, `SHOW INDEX`,
+  `SHOW COLUMNS` and `DESCRIBE` check for a newer catalog first.
+- `REPLACE` into a table with a unique key besides the primary key failed
+  with 1062 when the new row collided with another row on that key; it now
+  deletes that row, as MySQL does. Commits apply deletes before inserts, so
+  a new row can take over a deleted row's unique value.
+- `UPDATE ... SET c = c - 1` failed with 1264 when a signed `BIGINT` result
+  was negative. Arithmetic on an unsigned integer now fails with 1690 below
+  zero and BIGINT overflow with 1690, as in MySQL
+  ([#11](https://github.com/cstheorist/tarn/issues/11)).
+
+- An index's `COMMENT` (in `CREATE TABLE`, `ALTER TABLE ... ADD INDEX` and
+  `CREATE INDEX`) is stored, kept by `ALTER TABLE`, and shown by
+  `SHOW CREATE TABLE` and `SHOW INDEX`, so dump/reload preserves it
+  ([#80](https://github.com/cstheorist/tarn/issues/80)). `CREATE INDEX`
+  decodes MySQL string escapes; `SHOW CREATE TABLE` escapes quotes,
+  backslashes, NUL, newline and carriage return as MariaDB does.
+
+- A storage node whose Lua heap was left full of garbage near the limit
+  failed every call, its recovery fiber's too, with "not enough memory"
+  until a manual `collectgarbage()`: LuaJIT starts a collection cycle only
+  when the heap reaches twice what the last cycle left, which was above the
+  limit. A fiber now checks the heap every 100 ms and collects it when less
+  than the read reserve (1/16 of the limit, at least 16 MiB) is free, at
+  most once a second; `tarn_info` counts these in `heap_collects`
+  ([#73](https://github.com/cstheorist/tarn/issues/73)).
+
+## [0.1.0] - 2026-10-25
+
+First public release: a research prototype.
+
+### Added
+
+- `tarn-server`: MySQL protocol front end (handshake, `mysql_native_password`,
+  text and binary protocol, prepared statements) over Tarantool shards.
+- SQL: sysbench-level statements plus joins, aggregates, `GROUP_CONCAT`,
+  subqueries without outer references, `UNION [ALL]`, `INSERT ... SELECT`,
+  `ON DUPLICATE KEY UPDATE`, `REPLACE`, `AUTO_INCREMENT`, `SHOW` and `SET`
+  statements; checked against MariaDB 10.11 by differential and randomized
+  tests.
+- Storage: every table is a plain Tarantool space, hash-sharded with vshard's
+  bucket function, readable directly as key/value. Replicated shards use
+  synchronous replication and Raft leader election.
+- Transactions: strictly serializable across shards. Autocommit reads wait
+  for W-locks of committed but not yet applied transactions. Single-shard
+  commits are validated by memtx MVCC. Read-only commits validate. Cross-shard
+  commits use a parallel-commit two-phase commit with recovery, an
+  optional `--ack-on-prepare` mode, and expiry-based garbage collection of
+  protocol records.
+- `tarn-iproto`: an async, pipelined Tarantool IPROTO client with streams,
+  `MP_DECIMAL` and zero-copy decoding.
+- TLA+ specification `tla/TarnCommit.tla` with 33 TLC configurations,
+  including 10 protection switches that TLC must catch.
+- Verus proofs for shard routing, coordinator decisions and recovery steps,
+  and the MySQL wire codec (59 verified).
+- Tests: storage protocol (74), IPROTO integration, SQL differential and
+  fuzzing against MariaDB, transaction anomalies, a ledger-checked bank
+  workload, failover (live leader change and leader kills), fault injection.
+- sysbench harness and results against MariaDB 10.11 and MySQL 9.7.
+
+### Fixed during development
+
+Found by TLC, by tests, by benchmarking, and by an independent code review
+before the release; see [docs/design.md](docs/design.md) §2.3–§2.8.
+
+- Single-shard reads ignored W-locks of committed but unapplied cross-shard
+  transactions, breaking strict serializability (found by TLC).
+- Cross-shard read-only commits could validate stale reads that memtx had
+  moved into a read view (found by a targeted test).
+- Lock checks read the lock spaces through MVCC, so unrelated PREPAREs
+  conflicted and `oltp_read_write` collapsed under concurrency (found by
+  benchmarking).
+- Recovery could abort a committed transaction already applied on one shard
+  after a participant record was garbage-collected (critical; found by the
+  review).
+- Read-only commits could validate on a demoted leader whose connection
+  survived (found by the review).
+- Autocommit DML could be applied twice after a lost connection; such
+  outcomes are now reported as unknown (1180 / SQLSTATE 40003) (found by the
+  review).
+- The in-memory lock index could keep locks after a failed PREPARE, and lost
+  the locks of PREPAREs waiting for a quorum when rebuilt (found by the
+  review).
+- An expired PREPARE could vote NO and contradict a commit whose records were
+  already collected (found by TLC while modelling the fix above).
+
+[Unreleased]: https://github.com/cstheorist/tarn/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/cstheorist/tarn/releases/tag/v0.1.0
