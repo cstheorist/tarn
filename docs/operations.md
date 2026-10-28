@@ -662,8 +662,9 @@ transaction first. This version supports one table without options; column,
 partition, multi-table and persistent-statistics variants are rejected.
 Each gateway has a non-queued collector and at most 32 cached tables.
 Statistics expire after five monotonic minutes, a restart or any catalog
-generation change. Collection/publication/expiry changes the plan-cache and
-binary-prepared plan generation. No background analysis is performed.
+generation change. Collection/publication/expiry changes the generation of
+dependent join plans, including binary prepared plans. Single-table cache
+hits do not inspect statistics and survive unrelated ANALYZE publication. No background analysis is performed.
 
 Collection visits at most 512 live shards sequentially and samples at most
 512 tuples in total from their first primary-index pages (at most 256 per

@@ -64,6 +64,12 @@ def main():
         # the binary prepared EXPLAIN re-plan without changing its metadata.
         statement, columns, params = prepare(b, "EXPLAIN FORMAT=JSON " + sql)
         assert (columns, params) == (1, 0)
+        point, point_cols, point_params = prepare(b,"SELECT k FROM a WHERE id=1")
+        assert (point_cols,point_params) == (1,0)
+        assert q(b,"SELECT k FROM a WHERE id=1") == ((1,),)
+        def misses():
+            return int(dict(q(b,"SHOW TARN STATUS"))["Tarn_plan_cache_misses"])
+        before_misses = misses()
         analyze, ncols, nparams = prepare(b, "ANALYZE TABLE b")
         assert (ncols, nparams) == (4, 0)
         b._execute_command(COMMAND.COM_STMT_EXECUTE, struct.pack("<IBI", analyze, 0, 1))
@@ -76,6 +82,16 @@ def main():
         assert [row.read_length_coded_string().decode() for _ in range(4)] == [db + ".b", "analyze", "status", "OK"]
         assert b._read_packet().is_eof_packet()
         b._execute_command(COMMAND.COM_STMT_CLOSE, struct.pack("<I", analyze))
+        assert q(b,"SELECT k FROM a WHERE id=1") == ((1,),)
+        b._execute_command(COMMAND.COM_STMT_EXECUTE,struct.pack("<IBI",point,0,1))
+        assert b._read_packet().read_length_encoded_integer() == 1
+        b._read_packet().check_error()
+        assert b._read_packet().is_eof_packet()
+        row = b._read_packet()
+        assert row.read(2) == b"\x00\x00" and struct.unpack("<i",row.read(4)) == (1,)
+        assert b._read_packet().is_eof_packet()
+        b._execute_command(COMMAND.COM_STMT_CLOSE,struct.pack("<I",point))
+        assert misses() == before_misses, "ANALYZE unnecessarily discarded point plans"
         p = plan(b, sql)["plan"]
         assert p["accesses"][0]["alias"] == "b" and p["join_estimate"]["reordered"] is True, p
         assert all(x["cardinality"]["sample_rows"] <= 512 for x in p["accesses"])

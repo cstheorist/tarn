@@ -98,7 +98,7 @@ pub struct Prepared {
     diagnostic: Option<crate::observe::Descriptor>,
     pub n_params: usize,
     pub columns: Arc<[Column]>,
-    plan: Option<((u64, u64), Stmt)>,
+    plan: Option<((u64, Option<u64>), Stmt)>,
     admin: Option<Admin>,
     /// Statement with subqueries/UNION: the parsed template (placeholders
     /// ?1..?N), bound and run through `run_complex` at execute time.
@@ -953,7 +953,7 @@ impl Session {
             Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),
         };
-        let version = self.plan_version();
+        let version = self.plan_version(&stmt);
         let diagnostic = if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
@@ -1031,9 +1031,8 @@ impl Session {
                     "Incorrect arguments to mysqld_stmt_execute",
                 ));
             }
-            let version = self.plan_version();
             let stmt = match &p.plan {
-                Some((v, s)) if *v == version => Some(s.clone()),
+                Some((v, s)) if *v == self.plan_version(s) => Some(s.clone()),
                 _ => None,
             };
             (p.admin.clone(), stmt)
@@ -1050,7 +1049,7 @@ impl Session {
             }
             Some(Stmt::Select(p))
                 if !params.is_empty()
-                    && p.source.tables().len() == 2
+                    && matches!(&p.source,Source::Join { left, .. } if matches!(left.as_ref(),Source::Table(_)))
                     && p.project.iter().all(|e| matches!(e, Expr::Col(_) | Expr::Lit(_)))
                     && p.agg.is_none()
                     && p.limit.is_none()
@@ -1074,7 +1073,7 @@ impl Session {
                 // catalog changed since PREPARE: re-plan
                 let template = self.prepared[&id].template.clone();
                 let s = self.plan_cached(&template, &[])?;
-                let version = self.plan_version();
+                let version = self.plan_version(&s);
                 self.prepared.get_mut(&id).unwrap().plan = Some((version, s.clone()));
                 s
             }
@@ -1105,13 +1104,11 @@ impl Session {
 
     pub(crate) fn plan_cached(&self, template: &str, params: &[Value]) -> SqlResult<Stmt> {
         let db = self.db.clone().unwrap_or_default();
-        let catalog = self.cluster.catalog();
-        let statistics = self.cluster.statistics.snapshot(catalog.version);
         // Plans depend on collation_connection (literals compare under it),
         // and on the kinds of the parameters' values, by which their
         // expressions are typed: a binary string compares by bytes, and
         // `SELECT ?1` is an integer column for 1 but a string one for 'abc'.
-        let mut key = format!("{}\0{}\0{}", statistics.generation, self.collation_connection, template);
+        let mut key = format!("{}\0{}", self.collation_connection, template);
         if !params.is_empty() {
             key.push('\0');
             key.extend(params.iter().map(|v| match v {
@@ -1130,6 +1127,8 @@ impl Session {
             }
             return Ok(p.stmt.clone());
         }
+        let catalog = self.cluster.catalog();
+        let statistics = self.cluster.statistics.snapshot(catalog.version);
         let ctx = PlanCtx {
             statistics: Some(&statistics),
             catalog: &catalog,
@@ -1151,6 +1150,7 @@ impl Session {
                 &db,
                 &key,
                 Arc::new(CachedPlan {
+                    statistics_generation: stmt.uses_statistics().then_some(statistics.generation),
                     version: catalog.version,
                     stmt: stmt.clone(),
                     diagnostic,
@@ -1160,9 +1160,13 @@ impl Session {
         Ok(stmt)
     }
 
-    fn plan_version(&self) -> (u64, u64) {
+    fn plan_version(&self, stmt: &Stmt) -> (u64, Option<u64>) {
         let v = self.cluster.catalog().version;
-        (v, self.cluster.statistics.snapshot(v).generation)
+        (
+            v,
+            stmt.uses_statistics()
+                .then(|| self.cluster.statistics.snapshot(v).generation),
+        )
     }
 
     // ---- dispatch -------------------------------------------------------------
