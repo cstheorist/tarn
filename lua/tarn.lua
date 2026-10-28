@@ -55,6 +55,8 @@ local M = {
         lock_wait = 1.0,         -- max wait for a conflicting lock (autocommit)
         max_txn_age = 120.0,     -- PREPAREs of transactions older than this are refused
         clock_skew = 60.0,       -- assumed bound on clock differences between nodes
+        clock_max_gap = 2.0,    -- local monitor stall / peer certificate lifetime
+        clock_max_drift = .25,  -- wall-minus-monotonic change per observation
         gc_batch = 500,          -- records deleted per GC transaction
         lazy_outbox_entries = 65536, -- committed plus PREPARE-promised assignments
         lazy_outbox_bytes = 64 * 1024 * 1024,
@@ -715,9 +717,11 @@ end
 -- the SQL servers' configuration.
 BK.members, BK.mver = {ver = 0, shards = {}}, 0
 function BK.load_members()
+    local old = BK.mver
     local m = box.space._tarn_meta:get{'members'}
     BK.members = m ~= nil and m.value or {ver = 0, shards = {}}
     BK.mver = BK.members.ver or 0
+    if old ~= BK.mver and M.clock then M.clock.invalidate('storage membership changed') end
     BK.ns_sync()
 end
 
@@ -981,6 +985,8 @@ struct tarn_ns {
     uint64_t clock_mono, clock_wall, clock_max_gap, clock_max_drift;
     uint8_t (*fresh_mark)(uint64_t);
     uint8_t (*fresh_ok)(uint64_t);
+    uint8_t (*fresh_controls)(void);
+    uint8_t (*fresh_space)(uint32_t);
 };
 ]]
 BK.NS_LAYOUT = 12
@@ -1318,6 +1324,7 @@ function BK.ns_sync()
     ns.clock_max_gap, ns.clock_max_drift = gap, drift
     ns.read_timeout = M.cfg.read_freshness_timeout
     ns.fresh_mark, ns.fresh_ok = M.fresh.mark_callback, M.fresh.ok_callback
+    ns.fresh_controls, ns.fresh_space = M.fresh.controls_callback, M.fresh.space_callback
     ns.load_until = BK.load.t0 + M.cfg.load_window
     ns.pl_n = PL_N
     ns.held = BK.held
@@ -2784,6 +2791,29 @@ local function still_fresh()
     writable()
     return not LK_STALE and not FENCE_STALE and not BK.stale
 end
+function BK.fresh_spaces(writes, points, ranges)
+    for _, w in ipairs(writes or {}) do
+        local sp = box.space[w[2]]; if sp then M.fresh.space(sp) end
+    end
+    for _, reads in ipairs({points or {}, ranges or {}}) do
+        for _, r in ipairs(reads) do local sp = box.space[r[1]]; if sp then M.fresh.space(sp) end end
+    end
+end
+function BK.fresh_plans(plans)
+    M.fresh.clock_check(); M.fresh.controls(); writable()
+    for _, p in ipairs(plans) do M.fresh.space(p[P_SPACE]) end
+end
+function BK.clock_ids(parts, dshard)
+    if type(parts) ~= 'table' then return nil end -- legacy unknown scope: conservative full coverage
+    local ids, seen = {M.cfg.shard_id}, {[M.cfg.shard_id] = true}
+    local function add(id)
+        if type(id) == 'number' and id > 0 and not seen[id] and BK.member_state(id) ~= 'removed' then
+            ids[#ids + 1], seen[id] = id, true
+        end
+    end
+    add(dshard); for _, id in ipairs(parts) do add(id) end
+    return ids
+end
 local FRESH_MSG = 'shard leadership changed during the commit'
 
 -- A step that commits the reads of a stream (TarnCommit!ValidateRO,
@@ -2833,6 +2863,7 @@ end
 -- is prepared in.
 local function commit_local_checks(txid, lock_gen, fence, rpoints, rranges, plans, wb, mver)
     if not still_fresh() then return conflict(FRESH_MSG) end
+    BK.fresh_plans(plans)
     if BK.has_reads(rpoints, rranges) and BK.stream_lost() then return conflict(BK.LOST_MSG) end
     local mv = BK.commit_check(wb, rpoints, rranges, false, plans, mver)
     if mv then return mv end
@@ -2854,7 +2885,9 @@ end
 -- predate them, which name none). mver: the membership version a
 -- transaction that read every shard was routed with (see "Membership").
 function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, mver)
-    if box.is_in_txn() then M.fresh.stream() end
+    writable()
+    if box.is_in_txn() then M.fresh.read(false, false) else M.fresh.barrier() end
+    BK.fresh_spaces(writes, rpoints, rranges)
     writable()
     local seq = inflight_begin()
     local ok, res = pcall(function()
@@ -2913,9 +2946,11 @@ end
 -- the probe write below goes to a data-temporary space, which Tarantool
 -- accepts even on read-only instances.
 function tarn_validate(txid, rpoints, rranges, cross, lock_gen, mver)
+    writable()
     if box.is_in_txn() then M.fresh.stream() end
     M.fresh.clock_check()
     M.fresh.controls()
+    BK.fresh_spaces(nil, rpoints, rranges)
     writable()
     if not pl_intact(txid, lock_gen) then
         if box.is_in_txn() then box.rollback() end
@@ -2935,6 +2970,7 @@ function tarn_validate(txid, rpoints, rranges, cross, lock_gen, mver)
         box.rollback()
         return conflict(BK.LOST_MSG)
     end
+    M.fresh.clock_check(); M.fresh.controls(); BK.fresh_spaces(nil, rpoints, rranges)
     if not box.is_in_txn() and BK.has_reads(rpoints, rranges) then return conflict(BK.GONE_MSG) end
     if box.is_in_txn() then
         -- "The reads are unchanged": memtx MVCC moves a read-only transaction
@@ -3766,6 +3802,7 @@ end
 -- the way (wait for it); 'locked': a prepared transaction's lock.
 local function autocommit_checks(fence, plans, wb)
     if not still_fresh() then return conflict(FRESH_MSG) end
+    BK.fresh_plans(plans)
     local st = stale_definition(fence) or M.lazy.guard(plans, fence, true) or M.engine.check(plans, true)
                or BK.commit_check(wb, nil, nil, false, plans)
     if st then return st end
@@ -3786,6 +3823,11 @@ end
 -- Returns {'ok', affected_rows, last_tuple}.
 -- opts.wb: the bucket of each write (see "Buckets").
 function tarn_autocommit(writes, opts)
+    writable()
+    -- Even a conditional no-op observes data without emitting synchronous
+    -- WAL. Establish freshness before any cache/lock/data-dependent result.
+    M.fresh.barrier()
+    BK.fresh_spaces(writes)
     lk_fresh()   -- raises ER_READONLY before anything is written
     pl_fresh()
     local fence = opts and opts.fence
@@ -3855,6 +3897,7 @@ end
 -- Step 2 of CommitRC (see "Yields").
 local function commit_rc_checks(txid, gen, fence, plans, wb)
     if not still_fresh() then return conflict(FRESH_MSG) end
+    BK.fresh_plans(plans)
     if not pl_intact(txid, gen) then return {'error', 1213, BROKEN_MSG} end
     local st = stale_definition(fence) or M.lazy.guard(plans, fence, true) or M.engine.check(plans, true)
                or BK.commit_check(wb, nil, nil, false, plans)
@@ -3938,13 +3981,13 @@ end
 -- Cross-shard commit: participant side
 -------------------------------------------------------------------------------
 
-local function now() return clock.realtime() end
+local function now() return M.clock.now() end
 
 -- Expiry of a record written now: no PREPARE of its transaction can be
 -- accepted after this time (the transaction started before now, by at most
--- clock_skew on another node's clock, and PREPAREs older than max_txn_age
--- are refused).
-local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
+-- TWO skew margins cover changing offsets between issuance, record creation
+-- and collection. The immutable policy and GC high-water survive promotion.
+local function expiry() return M.clock.expiry() end
 
 -- TarnCommit!Prepare. Runs inside the transaction's stream on this shard.
 --   txid, dshard, parts : transaction id, decision shard, participant shards
@@ -3962,8 +4005,12 @@ local function expiry() return now() + M.cfg.max_txn_age + M.cfg.clock_skew end
 -- the PREPARE is prepared in, then the locks and the records. Returns
 -- {code, message} for a NO vote, or nil.
 local P_KEYS = 7
-local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock_gen, fence, plans, wb, mver)
+local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock_gen, fence, plans, wb, mver,
+                             txn_ts, clock_epoch)
+    local ce = M.clock.admit(txn_ts, clock_epoch, BK.clock_ids(parts, dshard))
+    if ce then return {ce[2], ce[3], ce[1]} end
     if not still_fresh() then return {1213, FRESH_MSG} end
+    BK.fresh_plans(plans)
     if BK.has_reads(rpoints, rranges) and BK.stream_lost() then return {1213, BK.LOST_MSG} end
     if not pl_intact(txid, lock_gen) then return {1213, BROKEN_MSG} end
     if stale_definition(fence) then return {1412, STALE_DEF_MSG} end
@@ -4042,14 +4089,23 @@ end
 -- wb: the bucket of each write (see "Buckets"); a PREPARE refused for a
 -- bucket answers 'moved' (a NO vote, with a tombstone like any).
 function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, lock_gen, fence, wb, mver)
-    if box.is_in_txn() then M.fresh.stream() end
     writable()
     rpoints, rranges = rpoints or {}, rranges or {}
+    local metadata_current, clock_epoch = false, nil
     local function vote_no(code, msg, status)
+        -- An entry check cannot authorize a NO after yielded planning.
+        -- Expired/unknown history gives no vote and creates no new record.
+        if not metadata_current then
+            return {'clock_unknown', 1213, 'participant receipt freshness unavailable'}
+        end
         if box.is_in_txn() then box.rollback() end
+        local ce = M.clock.admit(txn_ts, clock_epoch, BK.clock_ids(parts, dshard))
+        if ce then pl_release_all(txid); return ce end
         -- Tombstone: a late duplicate of this PREPARE must also fail.
-        pcall(function()
+        local durable = pcall(function()
             box.begin(RW)
+            ce = M.clock.admit(txn_ts, clock_epoch, BK.clock_ids(parts, dshard))
+            if ce then box.rollback(); return end
             if box.space._tarn_part:get{txid} == nil then
                 box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now(), expiry()}
             end
@@ -4059,6 +4115,11 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
             box.commit()
         end)
         if box.is_in_txn() then box.rollback() end
+        if ce then pl_release_all(txid); return ce end
+        if not durable then
+            pl_release_all(txid)
+            return {'clock_unknown', 1213, 'participant refusal could not be confirmed'}
+        end
         pl_release_all(txid)   -- the transaction aborts: its row locks here can go
         M.stats.prepare_no = M.stats.prepare_no + 1
         return {status == 'moved' and 'moved' or 'no', code, msg}
@@ -4068,21 +4129,48 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         -- whose synchronous commit can still roll back. Existing streams
         -- retain their transaction and its original read trackers.
         local in_stream = box.is_in_txn()
-        if not in_stream then box.begin({txn_isolation = 'read-confirmed'}) end
-        local existing = box.space._tarn_part:get{txid}
-        if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
+        -- The stream's older MVCC image must not certify protocol metadata.
+        -- This separate fiber proves the current prefix, then reads a fresh
+        -- confirmed receipt without replacing or marking the caller stream.
+        local f = fiber.new(function()
+            M.fresh.barrier(nil, true)
+            box.begin{txn_isolation = 'read-confirmed'}
+            local p = box.space._tarn_part:get{txid}
             box.rollback()
+            return p
+        end)
+        f:set_joinable(true)
+        local good, existing = f:join()
+        if not good then error(existing) end
+        metadata_current = true
+        if existing ~= nil then   -- idempotent re-delivery (TarnCommit!Revote)
+            if box.is_in_txn() then box.rollback() end
             if existing.state == 'aborted' then return {'no', 1213, 'transaction was aborted'} end
             return {'yes'}
         end
+        if in_stream and BK.has_reads(rpoints, rranges) then
+            local certified = pcall(M.fresh.stream)
+            if not certified then
+                -- Unsupported external context: no late proof, rollback,
+                -- user effects or protocol refusal on the borrowed stream.
+                return {'clock_unknown', 1213, 'ambient reads have no first-read freshness proof'}
+            end
+        end
+        local borrowed = in_stream and box.is_in_txn()
+        if not box.is_in_txn() then box.begin({txn_isolation = 'read-confirmed'}) end
         -- Every fresh NO/tombstone follows expiry: a missing participant
         -- record can belong to an old committed transaction after GC.
-        if txn_ts ~= nil and now() - txn_ts > M.cfg.max_txn_age then
-            box.rollback()
+        local ce; ce, clock_epoch = M.clock.admit(txn_ts, nil, BK.clock_ids(parts, dshard))
+        if ce then
+            if ce[1] ~= 'clock_unknown' or not borrowed then box.rollback() end
             M.stats.prepare_no = M.stats.prepare_no + 1
-            return {'expired', 1213, 'transaction too old'}
+            return ce
         end
+        -- Known durable receipts above do not need a fresh stream proof.
+        -- New read-bearing admissions must retain their first-read proof;
+        -- write-only calls do not certify arbitrary ambient read contexts.
         if not in_stream and BK.has_reads(rpoints, rranges) then return vote_no(1213, BK.GONE_MSG) end
+        BK.fresh_spaces(writes, rpoints, rranges)
         lk_fresh()
         fence_fresh()
         BK.fresh()
@@ -4153,8 +4241,14 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         -- TarnCommit!Prepare: the checks and the locks, then the commit, with
         -- no yield in between.
         local no = atomic('Prepare', prepare_locks, txid, dshard, parts, writes, rpoints, rranges,
-                          lock_gen, fence, plans, wb, mver)
-        if no ~= nil then return vote_no(no[1], no[2], no[3]) end
+                          lock_gen, fence, plans, wb, mver, txn_ts, clock_epoch)
+        if no ~= nil then
+            if no[3] == 'clock_unknown' or no[3] == 'expired' then
+                box.rollback(); pl_release_all(txid)
+                return {no[3], no[1], no[2]}
+            end
+            return vote_no(no[1], no[2], no[3])
+        end
         -- MVCC validates every read this stream made; may raise conflict.
         -- Tracked: an ALTER TABLE waits for PREPAREs that passed its fence.
         tracked_commit()
@@ -4179,6 +4273,10 @@ do
         local ok, res = pcall(prepare, txid, dshard, ...)
         BK.prep[d] = BK.prep[d] - 1
         if not ok then error(res) end
+        -- Legacy gateways already understand expired as neither YES nor NO.
+        -- Keep that wire tag for clock/freshness uncertainty as well; the
+        -- message preserves the reason and no refusal record was created.
+        if type(res) == 'table' and res[1] == 'clock_unknown' then res[1] = 'expired' end
         return res
     end
 end
@@ -4358,11 +4456,14 @@ end
 
 -- TarnCommit!RecoverFenceParticipant: tombstone if never prepared.
 function tarn_fence(txid, dshard, parts)
+    M.fresh.barrier(nil, true)
     writable()
     local ok, res = pcall(function()
-        box.begin(RW)
+        box.begin{txn_isolation = 'read-confirmed'}
         local p = box.space._tarn_part:get{txid}
         if p == nil then
+            local ce = M.clock.check(BK.clock_ids(parts, dshard))
+            if ce then error(box.error.new{code = box.error.TRANSACTION_CONFLICT, reason = ce[3]}) end
             box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now(), expiry()}
             box.commit()
             return 'aborted'
@@ -4373,7 +4474,7 @@ function tarn_fence(txid, dshard, parts)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        return nil, tostring(res)
+        error(res)
     end
     return res
 end
@@ -4419,12 +4520,17 @@ end
 
 -- Compare-and-set of the record status; 'none' -> X creates it.
 function tarn_txn_cas(txid, from, to, parts)
+    M.fresh.barrier(nil, true)
     writable()
     local ok, res = pcall(function()
-        box.begin(RW)
+        box.begin{txn_isolation = 'read-confirmed'}
         local r = box.space._tarn_txn:get{txid}
         local cur = r and r.status or 'none'
         if cur ~= from then box.rollback(); return cur end
+        if cur == 'none' then
+            local ce = M.clock.check(BK.clock_ids(parts, M.cfg.shard_id))
+            if ce then error(box.error.new{code = box.error.TRANSACTION_CONFLICT, reason = ce[3]}) end
+        end
         box.space._tarn_txn:replace{txid, to, parts or (r and r.parts) or {}, now(), expiry()}
         box.commit()
         return to
@@ -4432,7 +4538,7 @@ function tarn_txn_cas(txid, from, to, parts)
     if not ok then
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
-        return nil, tostring(res)
+        error(res)
     end
     return res
 end
@@ -4537,12 +4643,37 @@ M.resolve = resolve
 
 -- Delete records by primary key, gc_batch per local transaction.
 local function gc_delete(space, ids)
-    local i = 1
+    local i, deleted = 1, 0
     while i <= #ids do
+        local required, seen = {M.cfg.shard_id}, {[M.cfg.shard_id] = true}
+        for j = i, math.min(i + M.cfg.gc_batch - 1, #ids) do
+            local row = space:get{ids[j]}
+            for _, id in ipairs(row and BK.clock_ids(row.parts, row.dshard) or {}) do
+                if not seen[id] then required[#required + 1], seen[id] = id, true end
+            end
+        end
+        local ticket = M.clock.gc_enter(required)
+        if ticket == nil then return deleted end
         local ok, err = pcall(function()
-            box.begin()
-            for j = i, math.min(i + M.cfg.gc_batch - 1, #ids) do space:delete{ids[j]} end
+            box.begin{txn_isolation = 'read-confirmed'}
+            local ce = M.clock.gc_commit(ticket)
+            if ce then box.rollback(); return false end
+            local n = 0
+            for j = i, math.min(i + M.cfg.gc_batch - 1, #ids) do
+                local row = space:get{ids[j]}
+                if row ~= nil and M.clock.check(BK.clock_ids(row.parts, row.dshard)) then
+                    box.rollback(); return false
+                end
+                -- Recheck current receipt after the yielding remote probes.
+                if row ~= nil and M.clock.retained_until(row) < ticket.high
+                   and ((space == box.space._tarn_part and (row.state == 'applied' or row.state == 'aborted'))
+                        or (space == box.space._tarn_txn and (row.status == 'committed' or row.status == 'aborted'))) then
+                    space:delete{ids[j]}; n = n + 1
+                end
+            end
             box.commit()
+            deleted = deleted + n
+            return true
         end)
         if not ok then
             -- e.g. ER_READONLY after a leader change: never leave this
@@ -4550,8 +4681,10 @@ local function gc_delete(space, ids)
             if box.is_in_txn() then box.rollback() end
             error(err)
         end
+        if err == false then return deleted end
         i = i + M.cfg.gc_batch
     end
+    return deleted
 end
 
 -- Statuses of txids on `shard` via fn (tarn_txn_statuses/tarn_part_statuses);
@@ -4572,6 +4705,7 @@ end
 
 -- Garbage collection of expired records (see "Record lifecycle").
 local function gc_pass(t)
+    if M.clock.read_check() ~= nil then return end
     -- Forget broken transactions whose commits can no longer arrive.
     local mono = clock.monotonic()
     for txid, until_t in pairs(PL_BROKEN) do
@@ -4583,7 +4717,8 @@ local function gc_pass(t)
     for _, p in box.space._tarn_part.index.exp:pairs() do   -- ascending expiry
         n = n + 1
         if p.expires >= t or n > scan or #victims >= limit then break end
-        if p.state == 'aborted' then
+        if M.clock.retained_until(p) >= t then -- legacy rows used only one skew margin
+        elseif p.state == 'aborted' then
             victims[#victims + 1] = p.txid
         elseif p.state == 'applied' then
             local w = waiting[p.dshard]
@@ -4603,15 +4738,14 @@ local function gc_pass(t)
             end
         end
     end
-    gc_delete(box.space._tarn_part, victims)
-    M.stats.gc_part = M.stats.gc_part + #victims
+    M.stats.gc_part = M.stats.gc_part + gc_delete(box.space._tarn_part, victims)
     -- Decision records: final ones, once no participant is still prepared.
     local cands, ask = {}, {}   -- ask[shard] = {txid, ...}
     n = 0
     for _, r in box.space._tarn_txn.index.exp:pairs() do
         n = n + 1
         if r.expires >= t or n > scan or #cands >= limit then break end
-        if r.status == 'committed' or r.status == 'aborted' then
+        if M.clock.retained_until(r) < t and (r.status == 'committed' or r.status == 'aborted') then
             cands[#cands + 1] = r
             for _, p in ipairs(r.parts) do
                 local a = ask[p]
@@ -4631,8 +4765,7 @@ local function gc_pass(t)
     for _, r in ipairs(cands) do
         if not prepared[r.txid] then victims[#victims + 1] = r.txid end
     end
-    gc_delete(box.space._tarn_txn, victims)
-    M.stats.gc_txn = M.stats.gc_txn + #victims
+    M.stats.gc_txn = M.stats.gc_txn + gc_delete(box.space._tarn_txn, victims)
 end
 
 -- Candidates first, then the (yielding) resolution of each.
@@ -6901,7 +7034,7 @@ function tarn_info()
             locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, plock_txns = ptx,
             ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
-            schema_version = box.info.schema_version or 0, vinyl = M.vinyl.stats(),
+            schema_version = box.info.schema_version or 0, vinyl = M.vinyl.stats(), clock = M.clock.status(),
             native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
                                        to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
                                        writes_to_lua = tonumber(BK.ns.w_to_lua),
@@ -6980,6 +7113,9 @@ local function setup_when_writable()
 end
 
 function M.init(cfg)
+    M.clock.stop()
+    M.clock_sampler_close()
+    M.clock.invalidate('configuration reload')
     M.engine.invalidate(true)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
@@ -6994,6 +7130,7 @@ function M.init(cfg)
     -- The lock index is maintained only while this instance is the leader;
     -- any election state change makes it stale (rebuilt before next use).
     box.ctl.on_election(function()
+        M.clock.invalidate('election changed')
         LK_STALE = true; FENCE_STALE = true
         M.vinyl.reset()
         M.engine.invalidate(true)
@@ -7003,6 +7140,7 @@ function M.init(cfg)
         pl_fresh(); BK.reset()
     end)
     box.watch('box.status', function()   -- read-only changes
+        M.clock.invalidate('read-only state changed')
         LK_STALE = true; FENCE_STALE = true
         M.vinyl.reset()
         M.engine.invalidate(true)
@@ -7013,12 +7151,83 @@ function M.init(cfg)
     end)
     box.space._index:on_replace(function() invalidate_key_defs() end)
     box.session.on_disconnect(pl_on_disconnect)
+    M.clock.load()
+    M.clock.start()
     M.start_recovery()
     M.lazy.start()
     PG.watch_heap()
     rawset(_G, 'tarn', M)
     return M
 end
+
+-- Clock samples cover configured logical shards, current joined shards and
+-- every configured local replica. Refusing an unreachable required peer is
+-- deliberately conservative; agreement is not proof of common-mode time.
+function BK.clock_peers()
+    local groups, by_id = {}, {}
+    local function add(shard, uri)
+        if type(shard) ~= 'number' or type(uri) ~= 'string' or uri == '' then return end
+        local g = by_id[shard]
+        if not g then
+            g = {id = 'shard:' .. shard, shard = shard, uris = {}, seen = {}}
+            by_id[shard], groups[#groups + 1] = g, g
+        end
+        if not g.seen[uri] then g.uris[#g.uris + 1], g.seen[uri] = uri, true end
+    end
+    for shard, uris in pairs(M.cfg.peers) do
+        shard = tonumber(shard)
+        if shard and BK.member_state(shard) ~= 'removed' then
+            for _, uri in ipairs(uris) do add(shard, uri) end
+        end
+    end
+    for _, member in ipairs(BK.members.shards or {}) do
+        if member.state ~= 'removed' then for _, uri in ipairs(member.replicas or {}) do add(member.id, uri) end end
+    end
+    local replicas = box.cfg.replication
+    if type(replicas) == 'table' then for _, uri in ipairs(replicas) do add(M.cfg.shard_id, uri) end
+    elseif type(replicas) == 'string' then add(M.cfg.shard_id, replicas) end
+    local listen = box.cfg.listen
+    if type(listen) == 'table' then for _, uri in ipairs(listen) do add(M.cfg.shard_id, uri) end
+    elseif type(listen) == 'string' then add(M.cfg.shard_id, listen) end
+    table.sort(groups, function(x, y) return x.shard < y.shard end)
+    return groups
+end
+function BK.clock_required()
+    local ids = {}; for _, g in ipairs(BK.clock_peers()) do ids[#ids + 1] = g.id end
+    return ids
+end
+
+-- Raw diagnostics stay callable while health is UNKNOWN. A sampler uses the
+-- separate role-certified endpoint; ro=false alone is never a certificate.
+function tarn_clock_probe()
+    local p = M.clock.probe()
+    if PG.heap_low() then p.local_ok, p.ro = false, true; p.shard_id = M.cfg.shard_id; return p end
+    p.shard_id, p.ro, p.term, p.uuid = M.cfg.shard_id, box.info.ro, box.info.election.term, tostring(box.info.uuid)
+    return p
+end
+function tarn_clock_certify(timeout)
+    if PG.heap_low() then error(box.error.new{code = 1041, reason = 'Clock certification unavailable under heap pressure'}) end
+    if type(timeout) ~= 'number' or timeout ~= timeout or timeout <= 0 or timeout > 1 then
+        error(box.error.new{code = 1210, reason = 'Invalid clock certificate timeout'})
+    end
+    M.fresh.barrier(timeout, true)
+    writable()
+    local p = tarn_clock_probe(); p.role_proved = true
+    return p
+end
+function tarn_clock_status() return M.clock.status() end
+function tarn_clock_test_time(wall, mono) return M.clock.test_time(wall, mono) end
+-- Code capability only: never a leader/clock/data freshness certificate.
+function tarn_read_contract() return {'strong_reads', 1} end
+
+M.clock_sampler, M.clock_sampler_close = require('tarn_clock').sampler{
+    cfg = M.cfg, peers = BK.clock_peers, probe = function() return M.clock.probe() end,
+}
+M.clock = require('tarn_clock').new{
+    cfg = M.cfg, required_peers = BK.clock_required, certifier = M.clock_sampler, publish = BK.ns_sync,
+    can_run = function() return not PG.heap_low() end,
+}
+M.fresh.set_clock(M.clock)
 
 M.vinyl = require('tarn_vinyl').new{cfg = M.cfg, key_def = index_key_def}
 M.lazy = require('tarn_lazy').new{

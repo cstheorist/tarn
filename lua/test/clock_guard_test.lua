@@ -23,7 +23,9 @@ local function new(sync)
     meta:create_index('pk')
     local cfg = {max_txn_age = 10, clock_skew = 2, clock_max_gap = 5,
                  clock_max_drift = .25, test_hooks = true, sync = sync or false}
-    local g = guard.new{cfg = cfg, meta = meta, required_peers = function() return {'p1', 'p2'} end}
+    local g = guard.new{cfg = cfg, meta = meta,
+        required_peers = function() return sync and {'p1', 'p2'} or {} end,
+        can_run = function() return cfg.monitor_allowed ~= false end}
     assert(g.test_time(1000, 100)[1] == 'ok')
     return g, cfg, meta
 end
@@ -74,12 +76,15 @@ assert(g.gc_commit(ticket) == nil); rows:delete{2}; box.commit()
 check('GC deletion and durable high-water commit together', rows:get{2} == nil
       and meta:get{'clock:policy:1'}.value.high == 1000 and g.pending == 0)
 local restart = guard.new{cfg = cfg, meta = meta}
-restart.test_time(999, 101)
+restart.test_time(997, 101)
 check('restart cannot reset a persisted rejection floor after clock rollback', not restart.load()
       and status(restart.admit(990), 'clock_unknown'))
 local tolerance = guard.new{cfg = cfg, meta = meta}; tolerance.test_time(999.9, 101)
 check('persisted floor rejects old admission even inside bootstrap drift tolerance', tolerance.load()
       and status(tolerance.admit(989.95), 'expired'))
+local slower = guard.new{cfg = cfg, meta = meta}; slower.test_time(998.5, 101)
+check('a valid slower replacement clock uses persisted H without a spurious clock fault', slower.load()
+      and slower.fault == nil and status(slower.admit(989.95), 'expired'))
 
 local a, acfg, ameta = new()
 assert(a.load()); rows:insert{3, 3}
@@ -106,6 +111,8 @@ err = a.gc_commit(ticket); box.rollback()
 check('a GC plan cannot cross a role/health epoch even after recertification', status(err, 'clock_unknown'))
 check('a paused PREPARE cannot reuse its earlier healthy epoch', status(a.admit(1000, ticket.epoch), 'clock_unknown'))
 acfg.max_txn_age = 11
+check('pure native policy eligibility sees configuration mutation before monitor publication',
+      not a.policy_ok() and not a.read_native_state())
 check('raising age cannot resurrect expired admission or authorize GC', status(a.admit(995), 'clock_unknown')
       and a.gc_enter() == nil and a.fault ~= nil)
 check('decided completion can still compute expiry on a clock fault', a.expiry() == 1014)
@@ -127,9 +134,11 @@ check('backward wall time latches unsafe', status(d.check(), 'clock_unknown') an
 local e = new(); assert(e.load()); e.test_time(1006, 106)
 local raw = e.probe()
 check('raw probe remains available and checks a resumed peer before its worker', raw.wall == 1006
-      and raw.local_ok == false and raw.fault ~= nil)
+      and raw.local_ok == false and raw.fault == nil)
 check('a resumed process must detect the monitor gap at request entry', status(e.check(), 'clock_unknown')
-      and e.fault ~= nil and not e.native_state())
+      and e.fault == nil and not e.native_state())
+check('normal pause uncertainty can regain local health before full peer certification', e.read_check() == nil
+      and e.read_native_state() and status(e.check(), 'clock_unknown'))
 local f = new(); assert(f.load()); ticket = assert(f.gc_enter()); f.test_time(1001, 100)
 box.begin(); err = f.gc_commit(ticket); box.rollback()
 check('GC rechecks health after a yielded status/plan phase', status(err, 'clock_unknown'))
@@ -159,10 +168,33 @@ check('observed peer bound violation latches unsafe', status(r.certify(bad), 'cl
       and r.fault ~= nil and status(r.certify(cert(r)), 'clock_unknown'))
 local no_hooks = guard.new{cfg = {test_hooks = false}}
 check('clock injection requires actual enabled test_hooks', status(no_hooks.test_time(1, 1), 'error'))
+local partial = new(true); assert(partial.load()); assert(partial.certify(cert(partial)) == nil)
+local relevant, irrelevant = assert(partial.gc_enter({'p1'})), assert(partial.gc_enter({'p2'}))
+local original_epoch = partial.epoch
+partial.test_time(1003, 103); assert(partial.observe() == nil)
+assert(partial.certify(cert(partial, {'p1'})) == nil)
+partial.test_time(1005.1, 105.1); assert(partial.observe() == nil)
+check('unrelated expired coverage is globally UNKNOWN without invalidating current relevant evidence',
+      status(partial.certify(cert(partial, {'p1'})), 'clock_unknown')
+      and partial.epoch == original_epoch and partial.status().state == 'unknown'
+      and partial.check({'p1'}) == nil and partial.read_check() == nil and partial.read_native_state())
+check('wrong stable writer identity and expired relevant interval fail closed',
+      status(partial.check({'wrong'}), 'clock_unknown') and status(partial.check({'p2'}), 'clock_unknown'))
+box.begin(); local relevant_ok = partial.gc_commit(relevant); box.rollback()
+check('unrelated peer loss does not invalidate an otherwise-current relevant GC ticket', relevant_ok == nil)
+box.begin(); local irrelevant_no = partial.gc_commit(irrelevant); box.rollback()
+check('GC rechecks relevant coverage after a yielded plan', status(irrelevant_no, 'clock_unknown'))
 local ro = new(); assert(ro.load())
 box.cfg{read_only = true}
 local refused_ro = status(ro.check(), 'clock_unknown') and not ro.native_state()
 box.cfg{read_only = false}
 check('read-only role closes the clock provider without latching a clock fault', refused_ro and ro.fault == nil)
+local heap, hcfg = new(); assert(heap.load()); local observed = heap.status().mono
+hcfg.monitor_allowed = false; heap.test_time(1006, 106)
+check('heap preflight skips all monitor/certificate renewal without clearing policy or faults',
+      heap.tick() == false and heap.status().mono == observed and not heap.policy_ok() and heap.fault == nil)
+hcfg.monitor_allowed = true
+check('a skipped monitor leaves the elapsed-gap guard to fail closed on resumption',
+      status(heap.read_check(), 'clock_unknown') and heap.fault == nil)
 print(string.format('%d passed, 0 failed', passed))
 os.exit(0)
