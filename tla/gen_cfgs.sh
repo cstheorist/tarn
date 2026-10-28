@@ -6,9 +6,13 @@ mk ()
     local RCS=NoRC LS=NoLSet RNL=FALSE RIW=FALSE RRB=FALSE IPL=FALSE RIF=FALSE IK=NoIKeys INE=FALSE;
     local SS=NoSSet MK=NoMKeys MND=FALSE MNH=FALSE MSS=FALSE;
     local SH=MCShards KY=MCKeys OW=MCOwner JN=FALSE OLD=NoOld BJN=FALSE;
+    local DP="";
     for b in "$@";
     do
         case $b in 
+            ROTATE)
+                DP=RotatedDecision
+            ;;
             GROUPED)
                 KY=MCKeysGrouped; OW=MCOwnerGrouped
             ;;
@@ -174,11 +178,20 @@ CONSTANTS
   MJoin = $JN
   OldTxns <- $OLD
   BugJoinNoCheck = $BJN
+EOF
+    if [ -n "$DP" ]; then echo "  DecisionParticipant <- $DP" >> $name.cfg; fi
+    cat >> $name.cfg <<EOF
 INVARIANTS $INV
 CHECK_DEADLOCK FALSE
 EOF
 
 }
+# Transaction-specific decision placement, with the same protocol guards.
+mk Placement_Recov RSetRecov WSetRecov 0 1 1 NORD ROTATE GC
+mk Placement_Failover RSetFrac WSetFrac 1 0 0 ROTATE ROV AMC
+mk Placement_RC RSetCounter WSetCounter 1 0 0 NORD RCC ROTATE ROV AMC
+mk Bug_PlacementNoTombstone RSetRecov WSetRecov 0 1 1 ROTATE NTS
+mk Bug_PlacementFenceAfterExpiry RSetRecov WSetRecov 0 1 1 NORD ROTATE GC BFE
 # The protocol as designed: every invariant must hold.
 # Commit-phase faults (coordinator crash, message loss, recovery racing a
 # live coordinator) on each workload:
