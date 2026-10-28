@@ -17,9 +17,10 @@ import time
 LP, UP = int(sys.argv[1]), int(sys.argv[2])
 MATCH = [m.encode() for m in (sys.argv[3:] or ["tarn_autocommit", "update"])]
 REPLY = os.environ.get("TARN_FAULT_REPLY", "drop")
-if REPLY not in ("drop", "invalid-type"):
-    raise ValueError("TARN_FAULT_REPLY must be drop or invalid-type")
-state = {"left": 1}
+if REPLY not in ("drop", "invalid-type", "stall"):
+    raise ValueError("TARN_FAULT_REPLY must be drop, invalid-type or stall")
+ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
+state = {"left": int(os.environ.get("TARN_FAULT_COUNT", "1"))}
 lock = threading.Lock()
 
 
@@ -60,19 +61,47 @@ def invalid_reply(sync):
     return b'\xce' + len(payload).to_bytes(4, "big") + payload
 
 
+def client_packet(src):
+    # Tarn emits the canonical u32 length prefix. Frame requests here so a
+    # fragmented/coalesced TCP read cannot bypass a pressure-test trigger.
+    def exact(n):
+        out = bytearray()
+        while len(out) < n:
+            chunk = src.recv(n - len(out))
+            if not chunk:
+                if not out:
+                    return b""
+                raise OSError("truncated request")
+            out.extend(chunk)
+        return bytes(out)
+    prefix = exact(5)
+    if not prefix:
+        return b""
+    if len(prefix) != 5 or prefix[0] != 0xce:
+        raise OSError("unexpected request prefix")
+    size = int.from_bytes(prefix[1:], "big")
+    if size > 128 * 1024 * 1024:
+        raise OSError("oversized proxy request")
+    return prefix + exact(size)
+
+
 def pump(src, dst, conn, c2s):
     try:
         while True:
-            data = src.recv(65536)
+            data = client_packet(src) if c2s else src.recv(65536)
             if not data:
                 break
             if c2s:
                 with lock:
-                    trig = state["left"] > 0 and all(m in data for m in MATCH)
+                    trig = (state["left"] > 0 and (not ARM_FILE or os.path.exists(ARM_FILE))
+                            and all(m in data for m in MATCH))
                     if trig:
                         state["left"] -= 1
                         conn["drop"] = True
                 dst.sendall(data)
+                if trig and REPLY == "stall":
+                    print("proxy: withholding replies on an open connection", flush=True)
+                    continue
                 if trig:
                     time.sleep(0.5)  # the storage node executes and commits meanwhile
                     if REPLY == "invalid-type":

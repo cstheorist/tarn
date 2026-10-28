@@ -27,6 +27,8 @@ pub mod planner;
 pub mod prep;
 pub mod rebalance;
 pub mod route;
+mod rpcs;
+pub use rpcs::RpcConfig;
 pub mod session;
 pub mod txn;
 pub mod types;

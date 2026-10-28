@@ -614,7 +614,11 @@ async fn dropping_the_client_rolls_back_its_streams() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipelining_20k_concurrent_requests() {
     let t = Tarantool::start();
-    let c = t.client().await;
+    // This test explicitly opts into a large finite pipeline. Default
+    // saturation/refusal and cancellation retention have separate tests.
+    let mut opts = t.opts();
+    opts.request_limits.requests = 20_000 + opts.request_limits.reserved_requests;
+    let c = Client::connect(&opts).await.unwrap();
     let t0 = Instant::now();
     let mut set = JoinSet::new();
     for i in 0..20_000i64 {

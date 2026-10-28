@@ -703,6 +703,7 @@ dependencies = [
  "bytes",
  "libc",
  "parking_lot",
+ "serde",
  "sha1",
  "tarn-common",
  "thiserror",

@@ -1375,3 +1375,36 @@ Lua heap limit.
 * **tla**: `tla/check.sh` (every `Bug_*` and `Tradeoff_*` configuration must
   fail, the fast correct configurations must pass);
 * **verus**: the Verus proofs.
+
+
+### IPROTO admission and retirement (issue #127)
+
+`PipelineAdmission.tla` models three connections, two shard scopes and a
+shared gateway scope, with independent count/byte limits and completion
+reserves. Caller cancellation retains identity/charges. A terminal response
+or both physical I/O owners dropping releases them; a logical close alone
+does not. Timer ticks include abandoned requests. Before-enqueue refusal
+certifies no RPC effect; closing an enqueued request reports uncertainty.
+It checks resource/uncertainty contracts outside TarnCommit's state, rather
+than changing commit/locking/recovery actions. Existing Handback and commit
+models remain required for no replay and transaction safety.
+
+The positive model checks 730,752 distinct states (depth 26). Removing any
+of cancellation retention, physical retirement retention, shard/global
+admission, ordinary completion reserves, abandoned deadlines or the
+before-enqueue boundary gives the corresponding `Bug_Pipeline*` witness.
+Config generation and the default check job include all eight profiles.
+This bounded safety model assumes its timer action is serviced. It does not
+prove wall-clock fairness, allocator bounds, query memory, wire correlation
+(which has separate frame tests), arbitrary topology sizes or performance.
+
+Executable tests cover 4097 refused admissions behind retained cancelled
+callers, byte saturation before encoding, slow-peer blocked writes,
+continued other replies behind an abandoned oldest request, out-of-order
+queue compaction, shared scope refund, reserved control CALLs and physical
+I/O drop ordering. `tests/rpcs.sh` checks real MySQL outcomes/effects under
+24-session pressure at each scope; `rpc_reserve` checks cold completion
+routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
+malformed/lost-reply faults and failover preserve the existing uncertainty
+and matched fencing behavior. Resource budgets do not certify whole-query
+memory bounds or benchmark speedups.

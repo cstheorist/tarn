@@ -211,6 +211,11 @@ fn duplicate_message(m: &str) -> String {
 /// and its retry goes to the new leader.
 pub fn from_iproto(e: tarn_iproto::Error) -> SqlError {
     match e {
+        tarn_iproto::Error::Admission { scope } => SqlError::new(
+            1205,
+            "HY000",
+            format!("Storage RPC admission refused before enqueue ({scope} limit); this RPC took no effect"),
+        ),
         tarn_iproto::Error::Server { code, message } => {
             if code == tarn_iproto::ER_TRANSACTION_CONFLICT {
                 SqlError::conflict(message)

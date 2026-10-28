@@ -99,6 +99,9 @@ pub struct ClusterConfig {
     /// longer is given up.
     #[serde(default = "default_move_timeout")]
     pub move_timeout: f64,
+    /// Bounded IPROTO admission and physical connection lifetimes.
+    #[serde(default)]
+    pub rpc: crate::RpcConfig,
 }
 
 fn default_move_timeout() -> f64 {
@@ -287,6 +290,7 @@ pub struct Shard {
     replicas: Vec<String>,
     leader: RwLock<Option<Arc<Pool>>>,
     discover: tokio::sync::Mutex<()>,
+    rpc_budget: std::sync::OnceLock<tarn_iproto::Budget>,
     /// The shard left the cluster: it owns no bucket, and fan-outs and
     /// schema changes skip it.
     removed: std::sync::atomic::AtomicBool,
@@ -363,6 +367,14 @@ impl<'a> IntoIterator for &'a ShardList {
 }
 
 impl Shard {
+    pub(crate) fn rpc_budget(&self, cluster: &Cluster) -> tarn_iproto::Budget {
+        self.rpc_budget
+            .get_or_init(|| {
+                tarn_iproto::Budget::new("shard", cluster.cfg.rpc.shard)
+                    .expect("RPC configuration validated before connect")
+            })
+            .clone()
+    }
     pub(crate) fn replicas(&self) -> &[String] {
         &self.replicas
     }
@@ -372,6 +384,7 @@ impl Shard {
             replicas,
             leader: RwLock::new(None),
             discover: tokio::sync::Mutex::new(()),
+            rpc_budget: std::sync::OnceLock::new(),
             removed: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -386,12 +399,20 @@ impl Shard {
     }
 
     pub async fn client(&self, cluster: &Cluster) -> SqlResult<Client> {
+        self.client_for(cluster, false).await
+    }
+
+    pub(crate) async fn client_control(&self, cluster: &Cluster) -> SqlResult<Client> {
+        self.client_for(cluster, true).await
+    }
+
+    async fn client_for(&self, cluster: &Cluster, completion: bool) -> SqlResult<Client> {
         if let Some(p) = self.leader.read().clone() {
             if let Some(c) = p.pick() {
                 return Ok(c);
             }
         }
-        self.discover(cluster).await
+        self.discover(cluster, completion).await
     }
 
     pub fn invalidate(&self) {
@@ -402,7 +423,7 @@ impl Shard {
         self.leader.read().as_ref().map(|p| p.addr.clone())
     }
 
-    async fn discover(&self, cluster: &Cluster) -> SqlResult<Client> {
+    async fn discover(&self, cluster: &Cluster, completion: bool) -> SqlResult<Client> {
         let _g = self.discover.lock().await;
         if let Some(p) = self.leader.read().clone() {
             if let Some(c) = p.pick() {
@@ -411,7 +432,7 @@ impl Shard {
         }
         let mut last_err = String::from("no replicas configured");
         for addr in &self.replicas {
-            let opts = cluster.opts(addr);
+            let opts = cluster.opts_for_shard(self, addr);
             let c = match Client::connect(&opts).await {
                 Ok(c) => c,
                 Err(e) => {
@@ -419,7 +440,14 @@ impl Shard {
                     continue;
                 }
             };
-            let ro = match c.eval(0, "return box.info.ro", &[0x90]).await {
+            // Routing a completion must not first spend ordinary capacity
+            // on its leader probe, or normal overload could strand it.
+            let probe = if completion {
+                c.eval_control(0, "return box.info.ro", &[0x90]).await
+            } else {
+                c.eval(0, "return box.info.ro", &[0x90]).await
+            };
+            let ro = match probe {
                 // DATA = [ro]; Tarantool may use any array header width.
                 Ok(r) => r
                     .data()
@@ -504,6 +532,7 @@ pub struct CachedPlan {
 }
 
 pub struct Cluster {
+    pub(crate) rpc_global: tarn_iproto::Budget,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
     catalog: RwLock<Arc<Catalog>>,
@@ -836,6 +865,9 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
 
 impl Cluster {
     pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+        cfg.rpc.validate()?;
+        let rpc_global =
+            tarn_iproto::Budget::new("global", cfg.rpc.global).map_err(|e| SqlError::internal(e.to_string()))?;
         if cfg.shards.is_empty() {
             return Err(SqlError::internal("cluster config has no shards"));
         }
@@ -866,6 +898,7 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            rpc_global,
             cfg,
             shards,
             globals,
@@ -967,11 +1000,29 @@ impl Cluster {
     }
 
     pub fn opts(&self, addr: &str) -> Opts {
+        let shard = self.shards.iter().find(|s| s.replicas.iter().any(|a| a == addr));
+        self.rpc_opts(shard, addr)
+    }
+
+    fn opts_for_shard(&self, shard: &Shard, addr: &str) -> Opts {
+        self.rpc_opts(Some(shard), addr)
+    }
+
+    fn rpc_opts(&self, shard: Option<&Shard>, addr: &str) -> Opts {
+        let mut admission = Vec::with_capacity(2);
+        if let Some(s) = shard {
+            admission.push(s.rpc_budget(self));
+        }
+        admission.push(self.rpc_global.clone());
         Opts {
             addr: addr.to_string(),
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
+            request_limits: self.cfg.rpc.connection,
+            request_timeout: Duration::from_secs_f64(self.cfg.rpc.timeout_secs),
+            admission,
+            observation_scope: shard.map(|s| s.id),
         }
     }
 
@@ -1165,8 +1216,29 @@ impl Cluster {
         let s = &self.shards[shard];
         let mut tries = 0;
         loop {
-            let c = s.client(self).await?;
-            match c.call(0, func, args).await {
+            let completion = matches!(
+                func,
+                "tarn_apply"
+                    | "tarn_abort"
+                    | "tarn_fence"
+                    | "tarn_txn_cas"
+                    | "tarn_txn_status"
+                    | "tarn_part_status"
+                    | "tarn_unlock"
+                    | "tarn_lock_waits"
+                    | "tarn_lock_victim"
+            );
+            let c = if completion {
+                s.client_control(self).await?
+            } else {
+                s.client(self).await?
+            };
+            let reply = if completion {
+                c.call_control(0, func, args).await
+            } else {
+                c.call(0, func, args).await
+            };
+            match reply {
                 Ok(r) => return r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data")),
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
                     tracing::warn!(shard = s.id, "leader changed: {}", message);

@@ -654,6 +654,96 @@ scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints 
 over Unix sockets. Storage instance *j* of shard *i* listens on
 `BASE + 10·i + j` (default base 3300); SQL server *k* on `SQL_PORT + k − 1`.
 
+## Storage RPC admission
+
+Every SQL server bounds storage RPCs at three scopes: each physical IPROTO
+connection, each stable shard ID across connection pools, and the whole
+SQL server across shards. Refusal happens before encoding/enqueue and
+allocates no request identity. It returns 1205/HY000: this RPC took no
+effect. It does not certify that earlier RPCs of a transaction took no
+effect. Existing coordinator resolution/rollback rules still apply.
+
+These are the defaults, in the gateway JSON configuration:
+
+```json
+"rpc": {
+  "timeout_secs": 120.0,
+  "connection": {"requests": 256, "bytes": 67108864,
+                 "reserved_requests": 16, "reserved_bytes": 8388608},
+  "shard": {"requests": 512, "bytes": 134217728,
+            "reserved_requests": 32, "reserved_bytes": 16777216},
+  "global": {"requests": 1024, "bytes": 268435456,
+             "reserved_requests": 64, "reserved_bytes": 33554432}
+}
+```
+
+Ordinary requests fit both the total caps and the caps left after reserving
+count/bytes for completion. The byte charge is the caller's encoded input
+lengths plus 128 bytes of framing/encoding headroom, reserved before the
+encoder runs; exact pending wire bytes never exceed charged bytes. This
+bounds queued/sent/abandoned request metadata and encoded request bytes.
+It does not bound the SQL server's full RSS, returned rows, decoded query
+state or allocator/read/write buffer capacity. Query/transaction memory
+limits are tracked separately in #134.
+
+APPLY, ABORT, fences, transaction/participant status, unlock, deadlock
+inspection/victim handling and raw stream COMMIT/ROLLBACK use the reserved
+class. A new connection's leader probe also uses that class when it is
+needed to route completion work. New writes/PREPAREs remain ordinary.
+All classes obey the same total hard limits. Other completion traffic or
+an unavailable server can still exhaust/delay the reserved class: this is
+admission headroom, not an availability or scheduling guarantee. Each
+configured scope requires nonzero count reserves and at least 8192 reserved
+bytes, enough for a terminal fence with the maximum 1024 participant IDs.
+
+The request lifetime starts at enqueue. Cancellation drops the caller's
+receiver but keeps the request identity, charge and original deadline.
+CHUNK/push replies release nothing. An exact owned terminal reply drains
+its charge. The oldest unresolved request reaching `timeout_secs` retires
+the entire physical connection, including a writer blocked on a slow peer;
+capacity remains charged until both actual socket halves have dropped.
+Other replies/new requests cannot extend an abandoned request's deadline.
+A deadline monitor does not wake/reset on every successful reply.
+
+Every unresolved mutation on a retired connection remains 1180/40003
+(outcome unknown); it is never automatically resent. A lost read remains
+retryable 1213/40001. A matched pre-execution fencing error keeps its
+existing retry rules. Retirement can affect other requests multiplexed on
+that connection. Choose the deadline above intended row-lock waits and
+storage operations: the default is 120 seconds versus the default 50-second
+lock wait. The gateway accepts finite values from 0.001 to 86400 seconds,
+and rejects zero/invalid limits at startup. Time bounds assume a scheduled
+runtime; process/VM pauses can delay timers.
+
+`SHOW TARN RPCS` reads cached memory only. Global/shard rows show charged
+pending count/bytes, normal count, peaks, refusals and deadline retirements.
+Connection rows additionally show a process-local connection ID, owning
+shard, closed state, exact pending wire bytes, abandoned receivers and the
+oldest unresolved request's age in milliseconds. Pending charges include
+short encoding reservations and physical retirement, so they can exceed
+the count of wire waiters. Old pool connections retain their shared budgets
+and observations until retirement. Scope refusals count requests refused
+at any enclosing level and must not be summed across rows.
+
+Connection observation uses weak references, capped at 4096 per scope;
+`Observation_drops` reports incomplete detail. Every request is still
+enforced and counted in aggregate budgets, even when its connection is not
+in the detail view. `Tarn_rpc_oldest_ms` is the maximum observed age and is
+partial when observation drops are nonzero. `SHOW TARN STATUS` also exposes
+`Tarn_rpc_pending`, `charged_bytes`, `peak_pending`, `peak_bytes`, `refusals`,
+`deadline_retirements` and `observation_drops`. Counters persist across pool
+replacement in the same SQL server; restart resets them. Views are snapshots
+of independently locked scopes, not a cross-scope atomic inventory.
+
+`cargo build --release -p tarn-sql --example rpc_reserve` followed by
+`tests/rpcs.sh` checks each scope with 24 simultaneous MySQL sessions and a
+real storage peer withholding replies on open TCP connections. It checks
+before-enqueue refusals, 40003 for enqueued mutations, at-most-once physical
+increments and deadline release. Its live reserve probe discovers a fresh
+connection and reads transaction status while ordinary capacity stays full.
+`TARN_NATIVE=0` and `ENGINE=vinyl` exercise the storage alternatives. These
+are bounded-resource/fault witnesses, not throughput benchmarks.
+
 ## Monitoring
 
 For lazy indexes, `SHOW STATUS LIKE 'Tarn_lazy%'` includes completed lazy
