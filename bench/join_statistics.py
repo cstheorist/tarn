@@ -43,6 +43,8 @@ def main():
     ap.add_argument("--binary", required=True, help="the exact binary used by BOTH gateways")
     ap.add_argument("--environment", required=True, help="JSON with compiler/build/storage/resources/settings evidence")
     ap.add_argument("--output", required=True)
+    ap.add_argument("--shape", choices=["inner_unique", "inner_prefix"], default="inner_unique")
+    ap.add_argument("--binary-source-revision", help="defaults to HEAD; compiled Rust/Cargo inputs must match it")
     ap.add_argument("--rows", type=int, default=8192)
     ap.add_argument("--seconds", type=float, default=4)
     ap.add_argument("--repetitions", type=int, default=5)
@@ -52,8 +54,10 @@ def main():
     root = pathlib.Path(__file__).resolve().parents[1]
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root).strip(), "commit measured source first"
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    binary_revision = args.binary_source_revision or revision
+    subprocess.run(["git","diff","--exit-code",binary_revision,revision,"--","Cargo.toml","Cargo.lock","rust-toolchain.toml","crates"],cwd=root,check=True,stdout=subprocess.DEVNULL)
     record = {"format": "tarn-join-statistics-v1", "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-              "source_revision": revision, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+              "source_revision": binary_revision, "driver_source_revision": revision, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
               "driver_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
               "host": platform.platform(), "command": sys.argv, "environment": json.loads(pathlib.Path(args.environment).read_text()),
               "settings": vars(args), "samples": [],
@@ -80,8 +84,11 @@ def main():
             q(control, "INSERT INTO a VALUES" + ",".join(f"({i},{i%20})" for i in range(start, min(start+256,args.rows+1))))
         q(control, "INSERT INTO b VALUES" + ",".join(f"({i},777)" for i in range(1,21)))
         sql = "SELECT a.id,b.id FROM a JOIN b ON a.id=b.a_id WHERE b.id=7 ORDER BY a.id,b.id"
+        if args.shape == "inner_prefix":
+            sql = sql.replace("b.id=7", "b.a_id=777")
+        expected = ((777,7),) if args.shape == "inner_unique" else tuple((777,i) for i in range(1,21))
         record["workload"] = {"schema": schema, "rows_a": args.rows, "rows_b":20, "query":sql,
-                              "result": [[777,7]], "distribution":"unique outer PKs, 20 repeating integer prefix values; inner unique key fixes one row"}
+                              "result": expected, "distribution":"unique outer PKs, 20 repeating outer integer prefix values; 20 inner rows refer to the same outer key"}
         q(candidate, "ANALYZE TABLE a")
         q(candidate, "ANALYZE TABLE b")
         record["plans"] = {"control":plan(control,sql), "candidate":plan(candidate,sql)}
@@ -89,7 +96,7 @@ def main():
         assert record["plans"]["candidate"]["plan"]["join_estimate"]["reordered"] is True
         for c in connections:
             for _ in range(10):
-                assert q(c,sql) == ((777,7),)
+                assert q(c,sql) == expected
         save()
         for rep in range(args.repetitions):
             order = [("control",control),("candidate",candidate)]
@@ -101,7 +108,7 @@ def main():
                 start = time.perf_counter()
                 while time.perf_counter()-start < args.seconds:
                     begin = time.perf_counter_ns()
-                    assert q(c,sql) == ((777,7),)
+                    assert q(c,sql) == expected
                     times.append((time.perf_counter_ns()-begin)/1e6)
                 elapsed = time.perf_counter()-start
                 after = counters(c,db)

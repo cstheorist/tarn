@@ -485,3 +485,56 @@ about half of which it serves.
 * **More cores per process**: Tarantool's transaction thread is single
   threaded per instance; on real hardware one would run several shards per
   machine and several SQL servers.
+
+
+## Cardinality-guided inner join component (issue #136)
+
+The [complete record](results_join_statistics.json) retains all ten timed
+samples, every query latency, correctness assertions, observed foreground
+counter deltas, both plans, exact source/build/binary/driver/fixture settings
+and environment. Both gateways run source
+`3e21e6edd7906a2ae2187459f518c3252ad3f36c` and the **same** Rust 1.98.1
+macOS aarch64 release binary (thin LTO, four codegen units, debug 1), with
+two threads and a two-connection pool per shard. The difference is explicit
+ANALYZE hints on one gateway; the fresh control has none. No old/new binary
+or consistency-setting difference is used for this comparison.
+
+The generic fixture has 8,192 unique outer primary keys and 20 inner rows;
+an inner unique key fixes one row which refers to one outer key. The
+written order scans the outer table; the selected order reads the inner
+key then its outer key. Both use the normal checked reads and read-only
+transaction validation and return exactly `(777,7)` on every measured
+query. Ten warmup queries per gateway precede five four-second pairs,
+alternating which gateway runs first. Setup, ANALYZE and warmup are outside
+the timed phase. It is a single-client, closed-loop SELECT component test.
+
+| Observation | Hints absent | Hints present |
+|---|---:|---:|
+| Decoded storage tuples/query, including attempts | 8,224 | 3 |
+| Encoded data read attempts/query | 35 | 3 |
+| Median queries/s across five repetitions | 43.94 | 659.83 |
+| Queries/s range, all repetitions | 43.21–51.18 | 599.11–710.21 |
+| Per-repetition median latency range, ms | 18.82–23.36 | 1.35–1.49 |
+| Per-repetition p99 latency range, ms | 27.36–32.39 | 2.57–5.30 |
+| Successful measured queries; errors | 916; 0 | 13,220; 0 |
+
+This is about 15 times the median closed-loop query rate for this shape,
+with a directly observed reduction in returned tuples and read attempts.
+Attempts exclude validation/metadata RPCs and include the candidate's
+initial autocommit probe before its implicit transaction. They are not
+index entries examined, response bytes or complete protocol RPC totals.
+The heuristic planner's tuple-work costs also include repeated logical
+join candidates and exclude batch-key deduplication; they are not these
+observed storage-tuple counts or latency predictions.
+
+Two RF1 Tarantool 3.9.0 memtx shards run in one Linux aarch64 Docker
+container (two CPUs, 768 MiB limit; 128 MiB memtx configured per shard),
+with MVCC, WAL `write`, native procedures and test lock/yield guards. The
+Apple M4 Max host gateways reach them through Docker-forwarded local TCP;
+there is no TLS. The timed workload is read-only and fits in memory. This
+task's other builds/checks and reference database were stopped during the
+measurement; other host/VM workloads remained uncontrolled. All samples
+are retained, without replacement or exclusion. These results establish a
+component improvement under these settings, not production capacity,
+RF3/durable-write, SSD/steady-state, arbitrary-skew or competitor results.
+Biased/stale samples may still pick a slower valid order on other data.

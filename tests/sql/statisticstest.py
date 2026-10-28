@@ -115,6 +115,9 @@ def main():
         samples = [s for s in stats(b) if s["Table"].startswith(db + ".")]
         assert samples and all(s["Sample_rows"] <= 512 for s in samples)
         assert {s["Estimated_table_rows"] for s in samples} == {2048, 20}
+        prefix = sql.replace("b.id=7", "b.a_id=777")
+        assert plan(b,prefix)["plan"]["join_estimate"]["reordered"] is True
+        assert len(q(b,prefix)) == 8 and q(a,prefix) == q(b,prefix)
         for query in (sql.replace("a.*,b.*", "*"), sql.replace("a.*,b.*", "b.*,a.*"),
                       sql.replace("b.id=7", "b.id=8"), sql.replace("b.id=7", "b.id=9"),
                       sql.replace("b.id=7", "b.id=999")):
