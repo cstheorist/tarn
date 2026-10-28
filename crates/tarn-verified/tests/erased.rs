@@ -3,10 +3,38 @@
 //! boundary cases the proofs are about.
 
 use tarn_verified::batch::{self, Budget};
+use tarn_verified::clock;
 use tarn_verified::coord::{self, Decision, PartState, RecStatus, Step, Vote};
 use tarn_verified::mp;
 use tarn_verified::route;
 use tarn_verified::wire;
+
+#[test]
+fn clock_observations_refuse_pause_steps_and_backwards_time() {
+    assert!(clock::observation_ok(100, 20, 105, 25, 5, 0));
+    // A resumed process can have agreeing clocks and still miss its
+    // required observation interval.
+    assert!(!clock::observation_ok(100, 20, 106, 26, 5, 0));
+    assert!(!clock::observation_ok(100, 20, 200, 25, 5, 2));
+    assert!(!clock::observation_ok(100, 20, 99, 25, 5, 200));
+    assert!(!clock::observation_ok(100, 20, 105, 19, 5, 200));
+}
+
+#[test]
+fn clock_observations_check_both_drift_directions_at_the_boundary() {
+    assert!(clock::observation_ok(100, 20, 107, 25, 5, 2));
+    assert!(!clock::observation_ok(100, 20, 108, 25, 5, 2));
+    assert!(clock::observation_ok(100, 20, 103, 25, 5, 2));
+    assert!(!clock::observation_ok(100, 20, 102, 25, 5, 2));
+}
+
+#[test]
+fn clock_observations_do_not_overflow_at_integer_limits() {
+    assert!(clock::observation_ok(0, 0, u64::MAX, u64::MAX, u64::MAX, 0));
+    assert!(clock::observation_ok(u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0));
+    assert!(clock::observation_ok(0, u64::MAX, u64::MAX, u64::MAX, 0, u64::MAX));
+    assert!(!clock::observation_ok(0, u64::MAX, u64::MAX, u64::MAX, 0, u64::MAX - 1));
+}
 
 #[test]
 fn batch_budget_preserves_misses_and_exact_last_tuple() {
