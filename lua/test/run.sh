@@ -21,6 +21,9 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/clock_integration.sh" "$WORK/clock-integration" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/clock_protocol.sh" "$WORK/clock-protocol" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   freshness_native=${TARN_NATIVE:-$DIR/../target/release/libtarn_storage.so}
   if [ "$freshness_native" != 0 ] && [ -f "$freshness_native" ]; then
     TARN_NATIVE="$freshness_native" TARANTOOL="$T" bash "$DIR/test/native_freshness.sh" "$WORK/native-freshness" 2>&1 | tee -a "$WORK/test.out"

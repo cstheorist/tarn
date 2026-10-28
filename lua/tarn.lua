@@ -3065,6 +3065,11 @@ do
         collect(0.1)
         return alloc.unused() < reserve()
     end
+    -- Native eligibility callbacks cannot run a collector/finalizer while
+    -- preparing to borrow State. The watchdog owns pressure recovery.
+    function PG.heap_available()
+        return not alloc_ok or alloc.unused() >= reserve()
+    end
     -- Check the heap every 100 ms (with no allocation while it is fine) and
     -- collect it when less than the reserve is free, at most every second
     -- (a heap that is full of live data is collected for nothing).
@@ -4099,19 +4104,32 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
             return {'clock_unknown', 1213, 'participant receipt freshness unavailable'}
         end
         if box.is_in_txn() then box.rollback() end
+        if not pcall(M.fresh.controls) then
+            pl_release_all(txid)
+            return {'clock_unknown', 1213, 'participant refusal durability unavailable'}
+        end
         local ce = M.clock.admit(txn_ts, clock_epoch, BK.clock_ids(parts, dshard))
         if ce then pl_release_all(txid); return ce end
         -- Tombstone: a late duplicate of this PREPARE must also fail.
         local durable = pcall(function()
-            box.begin(RW)
+            box.begin{txn_isolation = 'read-confirmed'}
+            M.fresh.controls()
             ce = M.clock.admit(txn_ts, clock_epoch, BK.clock_ids(parts, dshard))
             if ce then box.rollback(); return end
-            if box.space._tarn_part:get{txid} == nil then
+            local existing = box.space._tarn_part:get{txid}
+            if existing ~= nil and existing.state ~= 'aborted' then
+                -- Another identical call may have promised since the
+                -- initial MISS. Never contradict its confirmed YES with NO.
+                ce = {'clock_unknown', 1213, 'participant receipt changed during preparation'}
+                box.rollback(); return
+            end
+            if existing == nil then
                 box.space._tarn_part:insert{txid, 'aborted', dshard, parts, now(), expiry()}
             end
             if dshard == M.cfg.shard_id and box.space._tarn_txn:get{txid} == nil then
                 box.space._tarn_txn:insert{txid, 'aborted', parts, now(), expiry()}
             end
+            M.fresh.controls()
             box.commit()
         end)
         if box.is_in_txn() then box.rollback() end
@@ -4256,6 +4274,12 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
         return {'yes'}
     end)
     if not ok then
+        if not metadata_current then
+            -- The separate receipt lookup never owns the caller's stream.
+            -- A failed prefix proof cannot consume its original read set.
+            reraise_readonly(res)
+            return {'clock_unknown', 1213, 'participant receipt freshness unavailable'}
+        end
         if box.is_in_txn() then box.rollback() end
         reraise_readonly(res)
         local f = commit_failure(res)
@@ -4656,6 +4680,7 @@ local function gc_delete(space, ids)
         if ticket == nil then return deleted end
         local ok, err = pcall(function()
             box.begin{txn_isolation = 'read-confirmed'}
+            M.fresh.controls()
             local ce = M.clock.gc_commit(ticket)
             if ce then box.rollback(); return false end
             local n = 0
@@ -4671,6 +4696,7 @@ local function gc_delete(space, ids)
                     space:delete{ids[j]}; n = n + 1
                 end
             end
+            M.fresh.controls()
             box.commit()
             deleted = deleted + n
             return true
@@ -4706,6 +4732,7 @@ end
 -- Garbage collection of expired records (see "Record lifecycle").
 local function gc_pass(t)
     if M.clock.read_check() ~= nil then return end
+    if not pcall(M.fresh.controls) then return end
     -- Forget broken transactions whose commits can no longer arrive.
     local mono = clock.monotonic()
     for txid, until_t in pairs(PL_BROKEN) do
@@ -7209,12 +7236,12 @@ end
 -- separate role-certified endpoint; ro=false alone is never a certificate.
 function tarn_clock_probe()
     local p = M.clock.probe()
-    if PG.heap_low() then p.local_ok, p.ro = false, true; p.shard_id = M.cfg.shard_id; return p end
+    if not PG.heap_available() then p.local_ok, p.ro = false, true; p.shard_id = M.cfg.shard_id; return p end
     p.shard_id, p.ro, p.term, p.uuid = M.cfg.shard_id, box.info.ro, box.info.election.term, tostring(box.info.uuid)
     return p
 end
 function tarn_clock_certify(timeout)
-    if PG.heap_low() then error(box.error.new{code = 1041, reason = 'Clock certification unavailable under heap pressure'}) end
+    if not PG.heap_available() then error(box.error.new{code = 1041, reason = 'Clock certification unavailable under heap pressure'}) end
     if type(timeout) ~= 'number' or timeout ~= timeout or timeout <= 0 or timeout > 1 then
         error(box.error.new{code = 1210, reason = 'Invalid clock certificate timeout'})
     end
@@ -7233,7 +7260,7 @@ M.clock_sampler, M.clock_sampler_close = require('tarn_clock').sampler{
 }
 M.clock = require('tarn_clock').new{
     cfg = M.cfg, required_peers = BK.clock_required, certifier = M.clock_sampler, publish = BK.ns_sync,
-    can_run = function() return not PG.heap_low() end,
+    can_run = PG.heap_available,
 }
 M.fresh.set_clock(M.clock)
 
