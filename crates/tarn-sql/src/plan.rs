@@ -208,6 +208,10 @@ pub struct DeletePlan {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    Explain {
+        statement: Box<Stmt>,
+        catalog_version: u64,
+    },
     Select(Arc<SelectPlan>),
     Insert(Arc<InsertPlan>),
     Update(Arc<UpdatePlan>),
@@ -243,6 +247,6 @@ pub enum Stmt {
 
 impl Stmt {
     pub fn is_read_only(&self) -> bool {
-        matches!(self, Stmt::Select(_))
+        matches!(self, Stmt::Select(_) | Stmt::Explain { .. })
     }
 }

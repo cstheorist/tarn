@@ -119,7 +119,25 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
     if !r.nil() {
         return back(Why::NextPage); // after
     }
-    let route = match r.peek()? {
+    let route = parse_route(&mut r)?;
+    Some(Args {
+        space_id,
+        index_id,
+        key,
+        key_nil,
+        iterator,
+        limit,
+        end_key,
+        end_incl,
+        lock_check,
+        begin,
+        route,
+    })
+}
+
+/// The route encoding shared by ordinary and batched reads.
+pub fn parse_route<'a>(r: &mut Rd<'a>) -> Option<Route<'a>> {
+    Some(match r.peek()? {
         0xc0 => {
             r.nil();
             Route::None
@@ -142,19 +160,6 @@ pub fn parse(buf: &[u8]) -> Option<Args<'_>> {
             Route::Map { e, m }
         }
         _ => Route::Bucket(r.uint()?),
-    };
-    Some(Args {
-        space_id,
-        index_id,
-        key,
-        key_nil,
-        iterator,
-        limit,
-        end_key,
-        end_incl,
-        lock_check,
-        begin,
-        route,
     })
 }
 

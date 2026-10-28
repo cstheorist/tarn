@@ -19,9 +19,9 @@ MATCH = [m.encode() for m in (sys.argv[3:] or ["tarn_autocommit", "update"])]
 REPLY = os.environ.get("TARN_FAULT_REPLY", "drop")
 if REPLY not in ("drop", "invalid-type", "stall"):
     raise ValueError("TARN_FAULT_REPLY must be drop, invalid-type or stall")
-ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
 state = {"left": int(os.environ.get("TARN_FAULT_COUNT", "1"))}
 lock = threading.Lock()
+ARM_FILE = os.environ.get("TARN_PROXY_ARM_FILE")
 
 
 def matching_sync(data):
@@ -93,7 +93,7 @@ def pump(src, dst, conn, c2s):
                 break
             if c2s:
                 with lock:
-                    trig = (state["left"] > 0 and (not ARM_FILE or os.path.exists(ARM_FILE))
+                    trig = (state["left"] > 0 and (not ARM_FILE or os.path.isfile(ARM_FILE))
                             and all(m in data for m in MATCH))
                     if trig:
                         state["left"] -= 1

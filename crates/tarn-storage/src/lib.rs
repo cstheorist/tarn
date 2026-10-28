@@ -9,6 +9,9 @@
 //! lua/tarn.lua loads it ("Native procedures"); SQL servers call
 //! `tarn_storage.ts_select` instead of `tarn_select` where it is.
 
+#[cfg(feature = "alloc-metrics")]
+mod alloc_metrics;
+pub mod batch;
 pub mod fallback;
 pub mod locks;
 pub mod mp;

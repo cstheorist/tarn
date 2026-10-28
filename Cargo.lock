@@ -748,6 +748,7 @@ dependencies = [
  "rmp",
  "serde",
  "serde_json",
+ "sha1",
  "sqlparser",
  "tarn-common",
  "tarn-iproto",
