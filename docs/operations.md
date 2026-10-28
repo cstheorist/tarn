@@ -34,7 +34,10 @@ flowchart LR
   and buckets move between shards online ([Buckets](#buckets)).
 * **`tarn-server`** is stateless. Run as many as you like (each with a
   distinct `--node-id`); each one finds every shard's leader by itself.
-* **Key/value clients** read the spaces directly from any shard leader.
+* **Key/value clients** can read the spaces directly. Such raw reads have no
+  Tarn freshness barrier: even with `read-confirmed` visibility a follower
+  or former leader can return old committed tuples. Use the strong storage
+  procedures or SQL when freshness and protocol lock checks are required.
 
 On real hardware, give each shard leader its own machine (Tarantool runs
 transactions on one thread per instance) and put `tarn-server` next to the
@@ -83,13 +86,18 @@ leader of a new shard waits (up to a minute) for its replicas to join
 before its first synchronous write, and `scripts/cluster.sh start` returns
 only once every replica has joined.
 
-Protocol tunables live in `lua/tarn.lua` (`tarn.cfg`), and can be changed
-at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
+Protocol tunables live in `lua/tarn.lua` (`tarn.cfg`). Ordinary settings such
+as `tarn.cfg.lock_wait = 2` can be changed at runtime. The clock-policy
+settings below are persisted and immutable once installed; changing their
+configured values makes admission fail closed rather than rewriting history.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `max_txn_age` | 120 s | PREPAREs of older transactions are refused; must match `max_txn_age` in `cluster.json` |
-| `clock_skew` | 60 s | assumed bound on clock differences between nodes |
+| `max_txn_age` | 120 s | immutable policy: age limit for fresh PREPARE; must match `max_txn_age` in `cluster.json` |
+| `clock_skew` | 60 s | immutable policy: assumed cross-node/issuer bound `S`; record retention uses two margins |
+| `clock_max_gap` | 2 s | immutable policy: local observation-gap bound and clock-certificate lifetime |
+| `clock_max_drift` | 0.25 s | immutable policy: allowed difference between wall and monotonic elapsed time per observation |
+| `read_freshness_timeout` | 5 s | fresh autocommit quorum-barrier wait; not a whole-query deadline; first streams retain their 60 s transaction timeout |
 | `recovery_after` | 2 s | age at which an undecided cross-shard transaction is resolved by the recovery fiber |
 | `recovery_interval` | 0.5 s | recovery and garbage-collection period |
 | `lock_wait` | 1 s | how long an autocommit read or write waits for a conflicting prepared transaction before failing with 1213 |
@@ -99,14 +107,109 @@ at runtime from the Tarantool console (`tarn.cfg.lock_wait = 2`):
 | `lazy_outbox_bytes` | 64 MiB | corresponding encoded assignment and promise bytes; this is not a reservation of native allocator memory |
 
 Protocol records (participant and decision records of cross-shard
-transactions) are kept for about `max_txn_age + clock_skew` after their last
-change. At several thousand cross-shard commits per second that is on the
-order of 100 MB of memtx memory per shard; size `TARN_MEMORY_MB` with it.
+transactions) have a retention horizon of at least
+`max_txn_age + 2*clock_skew` after their last change: four minutes at the
+defaults. Prepared/unresolved work can be retained longer. Size
+`TARN_MEMORY_MB` for the commit rate and retained metadata; the new horizon
+is not a new measured memory-cost result.
 
 The storage user is `tarn` with password `tarn`, created by the module with
 full privileges. Change it (`tarn.init{user=..., password=...}` in
 `storage.lua`, and `user`/`password` in `cluster.json`) for anything but
 local experiments.
+
+### Strong reads and storage rollout
+
+Default SQL reads and strong storage procedures obtain a new quorum proof
+before their first data snapshot. The proof collects fresh peer vclocks,
+catches up local WAL and settles the synchronous queue; `box.info.ro == false`
+or an earlier successful proof is insufficient. Conditional local DML needs
+the same admission even when it returns no rows and emits no synchronous
+WAL. A failed barrier returns an error, never stale SQL data. Known demotion
+returns `ER_READONLY` first so gateways retire the old connection.
+
+Replicated strong paths require memtx MVCC, synchronous control/auxiliary
+and actual user spaces, a majority write quorum `Q`, and a read quorum `R`
+with `Q + R > N` (`N - Q + 1` by default). Unsupported asynchronous or
+partially converted spaces fail closed; `if_not_exists` does not repair
+their synchronization flags. The scratch space remains data-temporary.
+These checks do not strengthen raw GET/SELECT visibility or lazy-index
+completeness. An eligible lazy lookup can still miss recent matches; its
+session catch-up option covers only its recorded own-write obligations.
+
+The first managed stream begins empty, completes its barrier, then records
+the exact native transaction ID before reading. Later reads retain that
+view and existing commit/term/read-set validation. An arbitrary older
+unmarked ambient transaction is rejected, never refreshed late. The pinned
+Tarantool 3.9 implementation switches an empty `LINEARIZABLE` transaction
+to `READ_CONFIRMED` before data access, including Vinyl; direct Vinyl
+`LINEARIZABLE` access remains unsupported. See the
+[native API trust boundary](native-storage.md#freshness-and-transaction-ownership).
+
+Deploy the updated storage Lua code on **every replica eligible for
+promotion before upgrading gateways**. With native procedures enabled,
+deploy its matching ABI 12/392 module as well, or explicitly disable native
+execution. Each new gateway storage connection requires the exact
+`tarn_read_contract()` capability `{'strong_reads', 1}`. Old/missing or
+future unsupported versions are refused; the gateway never silently
+downgrades to writable-role-only reads. This capability certifies code,
+not current leadership, clock health or a reusable data barrier. Mixed
+deployments and promotion to an old replica can therefore make that shard
+unavailable to a new gateway. Existing unmarked streams cannot be adopted
+across the rollout.
+
+### Clock health and record retention
+
+The persisted `_tarn_meta['clock:policy:1']` record holds the immutable age,
+skew, monitor-gap and drift settings, creation time, GC wall high-water mark
+`H`, and any persisted fault. Reads and local DML require a confirmed policy,
+current local clock observation and no sticky fault; data freshness still
+comes from their separate quorum barrier. They do not require all physical
+replicas or unrelated shard writers to be reachable.
+
+Fresh PREPARE decisions/refusals and GC additionally require unexpired,
+current-epoch clock evidence for the relevant transaction participants and
+decision shard, or the union needed by a GC chunk. These are logical shard
+IDs, not votes from every physical replica. A sampler tries that shard's
+candidate URIs; its writable leader must complete a fresh quorum barrier
+before returning role/time evidence. A cached `ro=false` reply is not
+enough. The current sampler bounds coverage to 64 logical writer IDs and
+256 candidate URIs; exceeding a bound or missing required coverage refuses
+new protocol work instead of omitting a writer. Unrelated missing coverage
+does not invalidate evidence still valid for another required set.
+
+New record expiry uses `max(local_wall, H) + A + 2*S`. Every destructive GC
+chunk rechecks the relevant clock coverage and record lifecycle rules, then
+advances `H` atomically with deletion. Fresh admission uses `max(local_wall,H)`
+too, so a local rollback/restart cannot make a locally collected transaction
+young again. Legacy rows retain at least `row.ts + A + 2*S`, even if their
+stored expiry used one margin. Retaining rows still present cannot recover
+history an earlier deployment already discarded. Initial/common-mode clock
+bounds, historical rates and immutable past-issued timestamps from every
+coordinator remain explicit trusted prerequisites; neither policy adoption
+nor peer agreement proves them.
+
+A matched wall/monotonic monitor gap becomes UNKNOWN: it invalidates the
+epoch/evidence and resets the observation baseline. A request that first
+detects the gap fails; a subsequent valid local observation plus a fresh data quorum
+can restore read eligibility. Fresh protocol work still waits for its
+required writer coverage. A proven backward clock, excessive wall/monotonic
+drift, invalid reading or immutable-policy mismatch is sticky and persisted
+when possible. A confirmed fault survives restart. There is no supported
+fault-clear or policy-reset API: diagnose the clocks and re-establish trusted
+history; never delete the policy, lower `H` or increase the age limit to
+force work through.
+
+Expired or uncertain fresh PREPARE admission creates no new participant,
+decision or refusal tombstone and sends **no YES/NO vote**. For wire
+compatibility this includes the legacy `{'expired',1213,...}` response for
+clock/freshness uncertainty. Only an explicit complete durable NO can justify
+an abort. Confirmed existing receipts are inspected through a separate
+fresh-barrier/read-confirmed fiber, never through or by late-refreshing the
+caller's older snapshot. Already-decided APPLY/ABORT and terminal recovery
+remain finishable without new clock certification. No completion bound is
+promised during quorum loss or unavailable relevant writers; transport
+uncertainty during a mutation remains `40003` and never permits replay.
 
 ### Lazy secondary indexes
 
@@ -672,6 +775,14 @@ cached samples. Their `sample` field is `current`, `stale` (older than five
 seconds) or `unavailable`; unavailable values are `NULL`. SHOW adds no
 storage RPC. A cached depth of zero is not a read-your-writes barrier.
 
+`tarn_clock_status()` and `tarn_info().clock` expose local `read_ready`,
+overall `state`/`reason`, epoch, policy/high-water, sticky/pending fault,
+covered logical-peer count and certificate expiry. `read_ready` describes
+local eligibility, not full relevant-writer coverage or a data quorum.
+`tarn_clock_probe()` remains a raw diagnostic while UNKNOWN; the sampler's
+separate `tarn_clock_certify(timeout)` endpoint proves a fresh quorum before
+reporting role/time. A cached status or raw probe is not a new certificate.
+
 * `SHOW TARN STATUS` (or `SHOW STATUS LIKE 'Tarn%'`) on any SQL connection:
   statements, local / read-only / two-phase commits, conflicts, internal
   retries, plan-cache hits and misses, deadlocks across shards broken by
@@ -744,13 +855,14 @@ storage RPC. A cached depth of zero is not a read-your-writes barrier.
 | A shard fails during `CREATE TABLE`, `DROP TABLE`, `TRUNCATE` or `ALTER TABLE` | Before every shard prepared: the statement fails and the change is undone on every shard (once the shard is back, for that shard). After: the statement reports 1180 and the change is completed on every shard once the shard is back. Either way a SQL server finishes the job by itself (`ddl_job_stale`); until then, other schema changes of the same table wait. |
 | A bucket moves | Statements that meet it run again with the new map; a transaction that used its rows while it moved is rolled back with 1213. Writes to its rows wait from the move's fence to its switch. |
 | A move's SQL server stops, or a shard leader dies during a move | Another SQL server finishes the move after `ddl_job_stale`: back if the old shard had not sent the bucket, forward otherwise; a leader change alone does not stop a move. |
-| Partitioned old leader | It steps down after the election timeout (`election_fencing_mode = 'strict'`); until then it may still answer autocommit reads from its own data (the usual leader-lease assumption). |
+| Partitioned old leader | A strong request must obtain its fresh quorum proof or fail; it cannot serve stale SQL data from its writable flag or reuse an old proof. Raw native reads can still return old confirmed tuples. |
+| Paused clock monitor or unavailable writer-clock evidence | A monitor gap first makes admission UNKNOWN; local reads can recover with a valid observation and fresh data quorum. New protocol votes/GC wait for their relevant writer evidence. Proven clock/policy faults stay closed, including across restart when persisted. |
 
 ## Error codes
 
 | Code | SQLSTATE | Meaning | Client action |
 |---|---|---|---|
-| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, a bucket the transaction used moved, or connection lost before anything was written; the transaction was rolled back | retry the transaction |
+| 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, moved bucket, unavailable clock/stream freshness proof, or connection lost before anything was written | retry the transaction after the cause is resolved; investigate sticky clock/policy faults |
 | 1205 | HY000 | lock wait timeout (`innodb_lock_wait_timeout`); only the statement was rolled back | retry the statement or roll back |
 | 1205 | HY000 | lazy-index own-write catch-up exceeded `tarn_lazy_wait_timeout`; session obligations retained | retry the read after delivery recovers |
 | 1205 | HY000 | vinyl admission refused a new write, a fresh write attempt exceeded its deadline, or its native quota wait rolled back; COMMIT failure aborts the transaction | retry the transaction after pressure subsides; split a batch that exceeds the pressure burst or fresh attempt budget |

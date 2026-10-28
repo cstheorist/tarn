@@ -492,8 +492,10 @@ and the fences are stale, how many tables are held, the page limits, how
 many locks prepared transactions hold on each table, and a copy of the lock
 index (below). The Lua code updates it where it changes that state, in the
 same step. A native procedure runs in the same thread as the Lua code,
-between two of its steps, and does not yield, so it sees the state of one
-moment, as a Lua procedure's step that does not yield does. A read it serves is the one
+between two of its steps. Freshness admission may yield before any data,
+schema-cache pointer or native State borrow is retained; the subsequent
+memtx get/check interval does not yield, so it sees one state. Native CALL
+arguments are copied into Rust-owned memory before that wait. A read it serves is the one
 `tarn_select` would make in that state, with the same rows: in the model it
 is `SnapshotRead` with nothing to wait for (§2.2), so the model does not
 change. Its reads count for their bucket's load (§2.13) as the Lua
@@ -504,10 +506,15 @@ procedure serves, as it takes none.
 The SQL server calls `ts_select` for the reads it serves, and `tarn_select`
 for the others and after a `["lua"]`: those of vinyl tables, and the pages
 after a page. The first read of a stream begins its transaction, as
-`tarn_select`'s does (read-confirmed, rolled back after 60 s); a read the
-native procedure hands back takes that transaction back, so that
-`tarn_select` begins it. (Inside a transaction, a read without an
-end key needs neither: it is an IPROTO SELECT, which runs no Lua.) A shard without the module (an older
+`tarn_select`'s does (a fresh empty-transaction barrier, then read-confirmed,
+with a 60 s transaction timeout). Its exact native transaction ID is marked
+before the first data read. A read handed back rolls back only a newly
+owned transaction; an existing stream and its prior reads remain intact.
+The gateway can use IPROTO SELECT for later suitable reads of that stream;
+its eventual commit still validates the stream. An arbitrary unmarked
+ambient transaction is refused, never refreshed after it already read.
+[Native storage](native-storage.md#freshness-and-transaction-ownership)
+describes the ABI and input-lifetime boundary. A shard without the module (an older
 version, or `TARN_NATIVE=0`) answers that the procedure does not exist, one
 whose module did not load or is of another build than its `lua/tarn.lua`
 (the layout of the state differs) that it failed to load, and the SQL
@@ -731,6 +738,10 @@ what it touches (and of which kind), state being read again, a held table,
 a vinyl table, a read of more than a page, and so on
 (`tarn_info().native.fallbacks`, [operations](operations.md)).
 
+The profiling and throughput results below describe their recorded builds,
+before the request-specific barriers and owned CALL-input copy of #130.
+They do not measure the current freshness contract's cost.
+
 On two shards under `oltp_write_only` (16 threads, three runs of each
 build, `bench/sysbench.sh`), the native procedure handed 93% of the
 one-shard commits to Lua (15,534 of 16,638), as cross-shard transactions
@@ -798,15 +809,20 @@ still runs in Lua.
   **strictly serializable** by default: there is a serial order consistent
   with real time.
 * Sessions may choose **READ COMMITTED** instead, with InnoDB's semantics
-  (§2.9): plain reads see the latest committed data per statement and never
-  abort; writes and locking reads take pessimistic row locks; no update is
+  (§2.9): plain reads use a committed view per statement; writes and locking
+  reads take pessimistic row locks; no update is
   lost. Commits stay atomic across shards, durable on a quorum and visible in
   real time, and the writes of READ COMMITTED transactions are ordered as
   under strict two-phase locking, also against serializable transactions.
-* Direct Key/Value readers see only committed data (`read-confirmed`
-  isolation: in replicated shards, only data acknowledged by a quorum), and a
-  direct read issued after an SQL COMMIT returned sees that commit (except
-  when an APPLY failed and the commit was acknowledged without it, see §1.2).
+* Strong SQL/storage read procedures establish a request-specific quorum
+  barrier before their first snapshot. A writable-role flag alone is not
+  evidence that a former leader is current. A failed freshness or clock
+  admission returns an error rather than stale SQL results (§2.6).
+* Raw native Key/Value reads use the configured Tarantool visibility
+  (`read-confirmed` by default), but have no Tarn freshness barrier. A
+  follower or former leader can return old confirmed tuples, including
+  after an SQL COMMIT returned. Raw reads also do not wait for a pending
+  cross-shard APPLY; the stronger SQL procedures check its write locks.
 * Documented trade-offs (checked by TLC as *expected* violations): a direct
   reader that reads two rows of a cross-shard transaction on two different
   shards may see one applied and the other not yet (`Tradeoff_DirectReadAtomic`;
@@ -849,6 +865,12 @@ Invariants checked in every configuration:
 `StrictSerializable` is checked constructively: the spec records the order in
 which writes reached each key and the real-time predecessors of each
 transaction, and the invariant searches for a witness order.
+
+The core model's direct reader observes a current authoritative shard state
+and leader replacement is atomic. `DirectReadYourWrites` therefore does
+not establish freshness for a raw request sent to a partitioned former
+leader. `StrongReadFreshness` checks the additional premise for strong
+procedures; unbarriered raw native reads retain the weaker contract (§2.1).
 
 Each workload (`MC.tla`) is three transactions over two shards: *Skew* (two
 cross-shard read-modify-writes that read each other's write target, plus a
@@ -954,12 +976,15 @@ so "reads unchanged" plus "no W lock now" together give the model's atomic
 
 ### 2.6 Record lifecycle and timing assumptions
 
-Every protocol record carries an expiry time: `max_txn_age` (120 s) plus a
-clock-skew allowance (60 s) after it was written. A participant refuses a
-PREPARE whose transaction started more than `max_txn_age` ago (by the
-coordinator's timestamp, on the participant's clock), so after a record's
-expiry no PREPARE of its transaction can be accepted any more. Records are
-garbage-collected only after expiry, and
+Every protocol record carries an expiry time: `max_txn_age` (`A`, 120 s)
+plus **two** `clock_skew` margins (`2*S`, 120 s by default) after its write.
+The immutable coordinator timestamp must have been issued before that
+write. Two margins cover an issuer ahead of the record holder at the write
+and a receiving participant behind the holder at GC, even as bounded
+offsets change. Fresh PREPARE admission checks age again after yielding
+planning, using `max(local_wall, persisted_high_water)`; its YES or fresh
+NO/tombstone needs current clock coverage for the transaction's relevant
+logical writer shards. Records are garbage-collected only after expiry, and
 
 * a *prepared* participant record never (recovery resolves it first);
 * an *applied* participant record only once the decision record is final
@@ -975,18 +1000,49 @@ not expired or some participant is still prepared (either rules out "the
 record was collected"); otherwise it reports the outcome as unknown. An
 expired PREPARE is refused without writing anything and without a vote: a
 NO could contradict a commit whose records are already gone (TLC found this,
-§2.8). The `*_GC` configurations check all of this.
+§2.8). A current receipt is inspected in a separate fresh-barrier,
+read-confirmed transaction, rather than through an older caller snapshot.
+A confirmed existing promise can be reissued without creating a new
+clock-dependent vote. Missing/expired/uncertain history is not a NO vote
+and must not justify aborting a transaction that may already be committed.
+The `*_GC` configurations and the focused
+[expiry refinements](verification.md#record-expiry-clocks-and-persisted-admission-policy-issue-130)
+check these separate lifecycle and timing premises.
 
-Timing assumptions remain in two places. The expiry rules assume that clocks
-differ by less than the 60 s allowance. And a leader that is partitioned
-away but does not yet know it has been replaced can still answer autocommit
-reads from its (possibly stale) data until Tarantool's
-`election_fencing_mode = 'strict'` makes it step down, which bounds the
-window by the election timeout; this is the usual leader-lease assumption
-and is not part of the TLA+ model, which treats leader changes as atomic.
-A leader that knows it was demoted refuses every lock check, validation and
-commit with ER_READONLY (it may still serve plain reads of an open stream,
-whose commit then fails). A step that commits the reads of a stream (a
+The timing policy (`A`, `S`, monitor gap and drift bounds) and GC high-water
+mark live in `_tarn_meta['clock:policy:1']`. Each destructive GC chunk
+advances that mark in the same transaction as its deletions; restart and
+promotion cannot lower it. Old records also retain at least
+`record.ts + A + 2*S`, even if their stored expiry used one margin. Policy
+changes and proven clock discontinuities fail closed. Initial/common-mode
+clock bounds, historical rates and all timestamp issuers remain external
+premises: local monitoring and peer agreement cannot prove those facts.
+Installing a policy does not reconstruct protocol history already lost by
+an older deployment. [Operations](operations.md#clock-health-and-record-retention)
+describes the failure states and rollout limits.
+
+Read freshness no longer relies on an old leader's election-timeout lease.
+Before the first strong snapshot, a request obtains fresh quorum vclock
+replies, waits for local WAL catch-up and settles its synchronous queue.
+An isolated former leader cannot substitute its writable flag or an older
+successful barrier. A barrier failure refuses the observation, including a
+conditional DML result that writes no WAL. The native/Lua implementation
+uses the pinned Tarantool 3.9 empty `LINEARIZABLE` → `READ_CONFIRMED`
+composition before any data read; direct `LINEARIZABLE` Vinyl access remains
+unsupported. The native replication/API mapping is a trust boundary,
+separate from the bounded [quorum model](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130).
+
+Reads and local DML require a ready local clock policy and a current local
+observation, independently of their data-freshness quorum. They do not wait
+for every physical replica's clock. Fresh protocol admission and GC need
+additional expiring coverage of the relevant logical shard leaders,
+whose clock replies themselves follow a fresh quorum proof. Already-decided
+APPLY/ABORT and terminal recovery remain finishable without new clock
+certification. No progress or latency bound follows when quorum, relevant
+writers or clock health are unavailable.
+
+A known demotion produces ER_READONLY before the clock/freshness checks so
+the gateway retires its old connection. A step that commits the reads of a stream (a
 validation, a local commit, a PREPARE) is refused when the stream began
 under an earlier election term (its transaction's number is below that of
 one begun once the node saw the current term, §1.5), as when the node was
@@ -1825,9 +1881,14 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **134 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **138 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
+* **Native clock arithmetic** (`clock.rs`). The shared executable
+  `observation_ok` body exactly checks nondecreasing wall/monotonic inputs,
+  the elapsed observation-gap bound and absolute elapsed-time drift, without
+  integer overflow/underflow. It does not certify clock sources, remote
+  offsets, persisted policy, quorum availability or record-GC safety.
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
   specification (`crc_bytes`) for any input; `bucket_from_crc` returns a
   bucket in `1..=bucket_count`; `shard_of_bucket` returns a shard in
@@ -2280,15 +2341,17 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * Serializable transactions must commit within `max_txn_age` (120 s) of
   their first statement (stream transactions already time out after 60 s;
   READ COMMITTED transactions have no limit); protocol
-  records are kept for about 3 minutes, which at several thousand
-  cross-shard commits per second costs on the order of 100 MB of memtx
-  memory per shard.
+  records have a retention horizon of at least `max_txn_age + 2*clock_skew`
+  (four minutes at the defaults), and unresolved prepared work is retained
+  longer. Size metadata memory for the commit rate and retained records.
 * A commit or autocommit write interrupted by a lost connection is reported
   as "outcome unknown" (1180/40003), as in other distributed databases; the
   client has to check.
-* Timing assumptions (§2.6): clocks within 60 s of each other, and a leader
-  lease bounded by Tarantool's election timeout for autocommit reads on a
-  partitioned old leader.
+* Clock safety (§2.6): the configured cross-node/issuer bound and historical
+  timestamp assumptions remain trusted. Uncertain local health or relevant
+  writer coverage can refuse new work and delay GC. Raw native reads have
+  no request-specific quorum barrier and may return stale confirmed data;
+  opted-in lazy indexes may miss recent matches even with fresh base rows.
 * Write paths read in `read-committed` isolation, so in a replicated shard a
   write can fail with a duplicate key (1062) because of an insert that is
   not yet confirmed by the quorum and is later rolled back by a failover (a

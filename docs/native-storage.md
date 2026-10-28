@@ -38,6 +38,71 @@ retains an unknown outcome and must not trigger mutation replay.
 | Distributed writes | PREPARE/APPLY/ABORT, durable receipts, decision recovery and record GC remain Lua, with Rust coordinating participants. A duplicate terminal receipt must certify confirmed state. |
 | Lifecycle and control work | Catalog/DDL jobs, materialization/undo, engine copies, bucket moves, membership/JOIN, lazy-index shipping/GC/capacity and startup/role refresh remain Lua. They supply state that native operations must trust only while current. |
 
+## Freshness and transaction ownership
+
+Default strong reads establish a new quorum barrier before their first data
+snapshot. This also covers local DML that can return a no-op without writing
+synchronous WAL. On the pinned Tarantool 3.9 source, an empty transaction's
+public `LINEARIZABLE` isolation setter collects fresh quorum vclocks, waits
+for local WAL catch-up and settles the synchronous queue. Tarn then switches
+the still-empty transaction to `READ_CONFIRMED` before any statement.
+Direct `LINEARIZABLE` access to Vinyl remains unsupported; the empty-barrier
+composition is the explicit native API premise, not a proof of Tarantool's
+implementation. See the pinned
+[setter and Vinyl restriction](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L1494)
+and [catch-up/queue wait](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/box.cc#L3027).
+
+Autocommit rolls back only that empty barrier and takes a later fresh view;
+its memtx get/check interval remains non-yielding. A first stream read keeps
+the same transaction and installs a certificate for its exact native
+transaction ID before reading data. The registry is bounded to 4096 active
+entries and uses public terminal commit/rollback callbacks for cleanup.
+A savepoint rollback preserves the original stream certificate and read
+set. Later reads, local commit and validation require the existing
+certificate; they never install a late barrier in an arbitrary older ambient
+transaction. Term/DDL watermarks, lock checks and the read-view probe remain
+separate commit obligations. An unsupported first native read drops only
+its newly owned transaction before whole-request Lua handback; a borrowed
+existing stream is retained. A barrier error retains its native code/message
+and propagates directly, without a second attempt in Lua.
+
+The yielding barrier changes the C input-lifetime boundary. IPROTO
+[discards CALL input on its first yield](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/iproto.cc#L2959),
+and its [raw argument port does not copy the request bytes](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/call.c#L57).
+Native read and shared write-procedure entries therefore copy CALL input
+into an owned Rust buffer before parsing slices that survive the barrier.
+No native State reference, schema-cache pointer or cache borrow crosses
+that wait. Callback pointers are copied before invocation; the protected
+Lua callbacks do not yield, publish/access native State or perform I/O.
+
+The current `State` layout is **ABI 12, 392 bytes**, checked by Rust/Lua
+layout compatibility. The new tail is:
+
+| Field | Byte offset | Meaning |
+|---|---:|---|
+| `fresh_mode`, `fresh_clock_ok` | 312, 313 | published configuration/local-clock eligibility, not a quorum proof |
+| `read_timeout` | 320 | final autocommit barrier timeout |
+| `clock_mono`, `clock_wall` | 328, 336 | integer nanosecond observation |
+| `clock_max_gap`, `clock_max_drift` | 344, 352 | observation bounds |
+| `fresh_mark`, `fresh_ok` | 360, 368 | exact-current-transaction certificate callbacks |
+| `fresh_controls`, `fresh_space` | 376, 384 | current policy/configuration and actual-space eligibility callbacks |
+
+The final timeout is set before the first wait; first streams retain their
+60-second transaction timeout. Native admission checks actual control/user
+space synchronization and current policy again after waiting. Cached mode
+or clock fields alone never establish quorum freshness. The shared
+Verus-verified clock arithmetic checks actual wall/monotonic observations;
+local read health is distinct from the relevant-writer clock coverage used
+for fresh protocol records and GC. [Operations](operations.md#clock-health-and-record-retention)
+describes those states and immutable policy.
+
+Raw native GET/SELECT calls have no Tarn barrier and can return old confirmed
+data on a follower or former leader. Lazy-index candidates may still omit
+recent matches even when their base rows are fetched through a fresh view.
+The [focused models](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
+state the bounded proof and native trust boundaries; they establish no
+availability guarantee or new runtime cost measurement.
+
 The Lua entry points and shared read/commit checks are in
 [`tarn.lua`](../lua/tarn.lua). The lifecycle modules are
 [`tarn_engine.lua`](../lua/tarn_engine.lua),
@@ -77,8 +142,8 @@ windows must also permit serving. The get/check interval does not yield;
 all rows and claims therefore refer to one memtx state under the existing
 native-read premises.
 
-The existing twelve-argument `ts_select` operation and State ABI 11/312 are
-unchanged. An empty argument list returns only the versioned
+The twelve-argument `ts_select` shape is retained; current deployments use
+the ABI 12/392 freshness boundary above. An empty argument list returns only the versioned
 `['native_batch_keys', 1]` capability; it certifies code support, not
 leadership, readiness or data. Older modules hand that shape back. The
 gateway caches support or absence per connection, preserves existing
@@ -115,6 +180,8 @@ The [batch runner](../bench/native_batch.py) retains this experiment
 separately from earlier native-procedure results. The [completed paired experiment](../bench/NATIVE_BATCH.md) publishes
 CPU, allocation, latency and rate results, including SQL regressions,
 all raw trials and immutable build receipts.
+Those historical builds predate the new freshness barrier and owned CALL
+input copy; their measurements are not costs of the current read contract.
 
 The optional `tarn-storage` Cargo feature `alloc-metrics` defaults off.
 The one-argument `ts_select(["native_batch_allocs"])` diagnostic reports
