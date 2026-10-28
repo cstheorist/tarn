@@ -283,7 +283,10 @@ def run(args):
         order = cases.copy()
         random.Random(args.seed+trial).shuffle(order)
         for index, (workers, batch, shape, route) in enumerate(order):
-            modes = args.modes if (trial+index)%2 == 0 else list(reversed(args.modes))
+            # Alternate by stable case identity, not its shuffled position:
+            # each case gets AB/BA/AB/BA/AB across five paired trials.
+            stable_index=cases.index((workers,batch,shape,route))
+            modes = args.modes if (trial+stable_index)%2 == 0 else list(reversed(args.modes))
             for mode in modes:
                 # A matching seed on both dispatch paths reproduces the same
                 # key stream; sample counts can differ with completed work.
