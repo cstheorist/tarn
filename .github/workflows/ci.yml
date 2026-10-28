@@ -37,6 +37,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Native allocation instrumentation clippy
+        run: cargo clippy -p tarn-storage --features alloc-metrics --all-targets -- -D warnings
 
   test:
     name: Tests
@@ -87,6 +89,8 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Native allocation instrumentation units
+        run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
