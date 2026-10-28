@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Lazy-index owner hints now expire immediately when the local bucket map
+  changes. A completed handoff can no longer leave immediate garbage
+  collection contacting the old source owner until the cache TTL expires;
+  frontier and floor proof checks remain unchanged
+  ([#163](https://github.com/cstheorist/tarn/issues/163)).
+
 - Recovery and garbage collection could be held up by what they cannot
   resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
   shard was down, 200 undecided transactions that needed it, the first ones
