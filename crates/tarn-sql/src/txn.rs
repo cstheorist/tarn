@@ -38,7 +38,7 @@ use crate::catalog::TableDef;
 use crate::cluster::Cluster;
 use crate::mpw::{ambiguous, from_iproto, from_iproto_read, lua_status, Mp, Rd};
 use bytes::Bytes;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tarn_common::{SqlError, SqlResult, Value};
@@ -1143,15 +1143,35 @@ impl Txn {
                 "transaction too old (max_txn_age exceeded); retry it",
             ));
         }
-        // Decision shard: the lowest participant that writes and is not
-        // leaving the cluster (participants refuse one that is: lua/tarn.lua
-        // BK.prep).
+        // Freeze one decision writer using the transaction identity and a
+        // single membership snapshot. Canonical durable IDs spread records
+        // across a common writer set independently of gateway shard order.
+        // PREPARE still fences membership/leaving changes (lua BK.prep), and
+        // every durable record and recovery call uses this same `did`.
         let writers: BTreeSet<usize> = self.writes.values().map(|w| w.shard).collect();
-        let dshard = writers
-            .iter()
-            .copied()
-            .find(|&p| cluster.shard_active(p))
-            .unwrap_or_else(|| *writers.iter().next().unwrap());
+        let dshard = {
+            let members = cluster.members.read();
+            let inactive: HashSet<u32> = members
+                .shards
+                .iter()
+                .filter(|s| s.state != "active")
+                .map(|s| s.id)
+                .collect();
+            let candidates = writers
+                .iter()
+                .map(|&position| {
+                    let id = cluster.shards[position].id;
+                    crate::placement::Writer {
+                        id,
+                        position,
+                        active: !inactive.contains(&id),
+                    }
+                })
+                .collect();
+            crate::placement::decision_writer(&self.id, candidates)
+                .expect("a writing transaction has a writer")
+                .position
+        };
         let did = cluster.shards[dshard].id;
         let part_ids: Vec<u32> = parts.iter().map(|&p| cluster.shards[p].id).collect();
         // Write-only participants have no stream: their PREPARE runs as its

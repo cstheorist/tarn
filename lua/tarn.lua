@@ -51,6 +51,11 @@ local M = {
         sync = false,            -- create spaces with is_sync (replicated shards)
         recovery_interval = 0.5, -- seconds between recovery scans
         recovery_after = 2.0,    -- age before an undecided txn is recovered
+        recovery_batch = 200,    -- transactions a recovery pass tries, of each kind
+        recovery_workers = 4,    -- transactions resolved at once
+        recovery_backoff_max = 5, -- longest wait before a failed transaction, or shard, is tried again
+        gc_interval = 0.5,       -- seconds between garbage-collection passes
+        gc_time_budget = 0.5,    -- a GC pass makes no more status calls after this many seconds
         lock_wait = 1.0,         -- max wait for a conflicting lock (autocommit)
         max_txn_age = 120.0,     -- PREPAREs of transactions older than this are refused
         clock_skew = 60.0,       -- assumed bound on clock differences between nodes
@@ -74,7 +79,8 @@ local M = {
         check_locks = false,     -- tests: the native module's copy of the lock index is checked (BK.ns_check_locks)
     },
     stats = {commit_local = 0, prepare_yes = 0, prepare_no = 0, apply = 0,
-             abort = 0, conflicts = 0, recovered = 0, lock_waits = 0,
+             abort = 0, conflicts = 0, recovered = 0, recovery_attempts = 0, recovery_failures = 0,
+             recovery_shard_backoffs = 0, lock_waits = 0,
              gc_part = 0, gc_txn = 0, validate_changed = 0, protocol_errors = 0,
              plock_waits = 0, deadlocks = 0, lock_timeouts = 0, commit_rc = 0, commit_waits = 0,
              stale_defs = 0, alters = 0, vy_rereads = 0, apply_dropped = 0, alter_conflicts = 0,
@@ -4413,9 +4419,39 @@ end
 -- Recovery (TarnCommit: Timeout, RecoverFenceRecord, RecoverFenceParticipant,
 -- RecoverDecide). Runs on every writable node; idempotent and safe to run
 -- concurrently with a live coordinator and with other recovery agents.
+--
+-- Scheduling (issue #129): transactions that cannot be resolved -- one of
+-- their shards is down -- must not keep the others from being resolved, nor
+-- records that cannot be collected the others from being collected.
+--   * A recovery pass looks at the undecided transactions from where the
+--     previous one stopped (RV.pos: a position in the index of prepared
+--     participants, 'part', and in that of STAGING records, 'txn'), at most
+--     recovery_batch of them and five times as many records; one that
+--     reaches the end, or the transactions younger than recovery_after,
+--     ends a lap, and the next pass starts from the oldest again.
+--   * A transaction whose resolution failed waits before it is tried again
+--     (RV.wait, RV.tries), a shard that a call failed on before it is called
+--     again (RV.down, RV.downs; RV.call: the other modules' calls are not
+--     held back): recovery_interval, doubled with each failure in a row, up
+--     to recovery_backoff_max. Once a shard's wait is over, one transaction
+--     of the pass that needs it tries it. A transaction that meets a shard
+--     waiting out a backoff is not made to wait itself: the shard's wait
+--     says when it is tried again.
+--   * recovery_workers fibers resolve the candidates of a pass, each a
+--     different transaction.
+--   * Garbage collection runs on its own fiber (tarn_gc), with its own work
+--     and time budget, and continues where the previous pass stopped too
+--     (RV.gc.pos); which records it may delete, and when, is unchanged.
 -------------------------------------------------------------------------------
 
 local conns = {}
+local RV = {pos = {}, laps = {part = 0, txn = 0}, seen = {part = 0, txn = 0}, backlog = {part = 0, txn = 0},
+            wait = {}, tries = {}, down = {}, downs = {}, conn_lock = {},
+            gc = {pos = {}, laps = {part = 0, txn = 0}, scanned = 0, lap_at = {}}}
+
+-- Raised by a call to a shard that waits out a backoff: the call was not
+-- made.
+RV.BACKOFF = setmetatable({}, {__tostring = function() return 'the shard waits out a backoff' end})
 
 -- The replicas of shard `shard`: from the configuration, else from the
 -- membership (a shard that joined since).
@@ -4428,30 +4464,69 @@ local function shard_uris(shard)
     return {}
 end
 
-local function shard_conn(shard)
+-- The wait after n failures in a row (RV.wait, RV.down).
+function RV.backoff(n)
+    return math.min(M.cfg.recovery_backoff_max, M.cfg.recovery_interval * 2 ^ math.min(n - 1, 30))
+end
+
+function RV.in_backoff(shard)
+    local d = RV.down[shard]
+    return d ~= nil and d > clock.monotonic()
+end
+
+function RV.shard_failed(shard)
+    local n = (RV.downs[shard] or 0) + 1
+    RV.downs[shard] = n
+    RV.down[shard] = clock.monotonic() + RV.backoff(n)
+    M.stats.recovery_shard_backoffs = M.stats.recovery_shard_backoffs + 1
+end
+
+function RV.shard_ok(shard)
+    RV.down[shard] = nil
+    RV.downs[shard] = nil
+end
+
+-- (one fiber connects to a shard at a time: recovery's workers, the GC
+-- fiber and the other modules share the connections)
+local function shard_conn(shard, recovery)
     if shard == M.cfg.shard_id then return nil end  -- local calls
     local c = conns[shard]
     if c ~= nil and c:is_connected() then return c end
-    for _, uri in ipairs(shard_uris(shard)) do
-        local ok, cand = pcall(net_box.connect, uri, {user = M.cfg.user, password = M.cfg.password,
-                                                      wait_connected = 1, connect_timeout = 1})
-        if ok and cand:is_connected() then
-            local ok2, ro = pcall(cand.eval, cand, 'return box.info.ro', {}, {timeout = 1})
-            if ok2 and ro == false then
-                conns[shard] = cand
-                return cand
-            end
-            cand:close()
-        end
+    local lock = RV.conn_lock[shard]
+    if lock == nil then
+        lock = fiber.channel(1)
+        RV.conn_lock[shard] = lock
     end
-    error('no writable node for shard ' .. tostring(shard))
+    lock:put(true)
+    local ok, res = pcall(function()
+        local c2 = conns[shard]
+        if c2 ~= nil and c2:is_connected() then return c2 end
+        -- (recovery: another fiber failed to connect meanwhile)
+        if recovery and RV.in_backoff(shard) then error(RV.BACKOFF) end
+        for _, uri in ipairs(shard_uris(shard)) do
+            local ok1, cand = pcall(net_box.connect, uri, {user = M.cfg.user, password = M.cfg.password,
+                                                           wait_connected = 1, connect_timeout = 1})
+            if ok1 and cand:is_connected() then
+                local ok2, ro = pcall(cand.eval, cand, 'return box.info.ro', {}, {timeout = 1})
+                if ok2 and ro == false then
+                    conns[shard] = cand
+                    return cand
+                end
+                cand:close()
+            end
+        end
+        error('no writable node for shard ' .. tostring(shard))
+    end)
+    lock:get()
+    if not ok then error(res, 0) end
+    return res
 end
 
 -- Call fn on the leader of `shard` (locally for this shard). A leader that
 -- was demoted while the connection survived answers ER_READONLY: drop the
 -- connection, find the new leader and retry once.
-local function on_shard(shard, fn, ...)
-    local c = shard_conn(shard)
+local function call_shard(recovery, shard, fn, ...)
+    local c = shard_conn(shard, recovery)
     if c == nil then return _G[fn](...) end
     local args = {...}
     local ok, a, b = pcall(c.call, c, fn, args, {timeout = 2})
@@ -4459,11 +4534,31 @@ local function on_shard(shard, fn, ...)
     if type(a) == 'cdata' and a.code == box.error.READONLY then
         conns[shard] = nil
         c:close()
-        c = shard_conn(shard)
+        c = shard_conn(shard, recovery)
         if c == nil then return _G[fn](unpack(args)) end
         return c:call(fn, args, {timeout = 2})
     end
     error(a)
+end
+
+-- (the lazy-index and engine modules' calls)
+local function on_shard(shard, fn, ...)
+    return call_shard(false, shard, fn, ...)
+end
+
+-- Recovery's and garbage collection's calls: a shard that cannot be reached,
+-- or fails the call, waits out a backoff before they call it again
+-- (RV.down); until then their calls to it fail at once, with RV.BACKOFF.
+function RV.call(shard, fn, ...)
+    if shard == M.cfg.shard_id then return _G[fn](...) end
+    if RV.in_backoff(shard) then error(RV.BACKOFF) end
+    local ok, a, b = pcall(call_shard, true, shard, fn, ...)
+    if ok then
+        RV.shard_ok(shard)
+        return a, b
+    end
+    if not RV.in_backoff(shard) then RV.shard_failed(shard) end
+    error(a, 0)
 end
 
 -- One recovery agent's attempt to finish txid. Returns 'committed',
@@ -4471,17 +4566,17 @@ end
 -- to do) or 'unresolved'.
 local function resolve(txid, dshard, parts)
     for _ = 1, 4 do
-        local status = on_shard(dshard, 'tarn_txn_status', txid)
+        local status = RV.call(dshard, 'tarn_txn_status', txid)
         if status == 'committed' then
-            for _, p in ipairs(parts) do on_shard(p, 'tarn_apply', txid) end
+            for _, p in ipairs(parts) do RV.call(p, 'tarn_apply', txid) end
             return 'committed'
         elseif status == 'aborted' then
-            for _, p in ipairs(parts) do on_shard(p, 'tarn_abort', txid, dshard, parts) end
+            for _, p in ipairs(parts) do RV.call(p, 'tarn_abort', txid, dshard, parts) end
             return 'aborted'
         end
         local all_prepared, any_aborted, any_prepared, missing = true, false, false, {}
         for _, p in ipairs(parts) do
-            local st = on_shard(p, 'tarn_part_status', txid)
+            local st = RV.call(p, 'tarn_part_status', txid)
             if st == 'aborted' then any_aborted = true; all_prepared = false
             elseif st == 'none' then all_prepared = false; missing[#missing + 1] = p
             elseif st == 'prepared' then any_prepared = true end
@@ -4492,15 +4587,15 @@ local function resolve(txid, dshard, parts)
             -- have been garbage-collected (TarnCommit: GCRec), so "no record"
             -- means D never prepared.
             if not any_prepared then return 'gone' end
-            on_shard(dshard, 'tarn_txn_cas', txid, 'none', 'aborted', parts)
+            RV.call(dshard, 'tarn_txn_cas', txid, 'none', 'aborted', parts)
         elseif all_prepared then
-            on_shard(dshard, 'tarn_txn_cas', txid, 'staging', 'committed')
+            RV.call(dshard, 'tarn_txn_cas', txid, 'staging', 'committed')
         elseif any_aborted then
-            on_shard(dshard, 'tarn_txn_cas', txid, 'staging', 'aborted')
+            RV.call(dshard, 'tarn_txn_cas', txid, 'staging', 'aborted')
         else
             -- STAGING: a participant without a record never prepared (applied
             -- records are kept until the record is final), so fence it.
-            for _, p in ipairs(missing) do on_shard(p, 'tarn_fence', txid, dshard, parts) end
+            for _, p in ipairs(missing) do RV.call(p, 'tarn_fence', txid, dshard, parts) end
         end
     end
     return 'unresolved'
@@ -4527,7 +4622,8 @@ local function gc_delete(space, ids)
 end
 
 -- Statuses of txids on `shard` via fn (tarn_txn_statuses/tarn_part_statuses);
--- nil if the shard cannot be asked right now.
+-- nil if the shard cannot be asked right now (also while it waits out a
+-- backoff: its records wait for the next lap).
 local function statuses_on(shard, fn, ids)
     -- A shard that left the cluster was needed by no transaction when it
     -- left (see BK.prep), and may be gone: none of its records count.
@@ -4536,13 +4632,52 @@ local function statuses_on(shard, fn, ids)
         for i = 1, #ids do out[i] = 'none' end
         return out
     end
-    local ok, res = pcall(on_shard, shard, fn, ids)
+    if RV.in_backoff(shard) then return nil end
+    local ok, res = pcall(RV.call, shard, fn, ids)
     if ok then return res end
-    log.warn('tarn gc: %s on shard %s failed: %s', fn, tostring(shard), tostring(res))
+    if res ~= RV.BACKOFF then
+        log.warn('tarn gc: %s on shard %s failed: %s', fn, tostring(shard), tostring(res))
+    end
     return nil
 end
 
--- Garbage collection of expired records (see "Record lifecycle").
+-- Hand take(r) the expired records of `space` from where the previous pass
+-- stopped (RV.gc.pos[which]): at most `scan` of them, until take returns
+-- false. At the unexpired ones, or the end, the next pass starts from the
+-- first again. (take must not yield.)
+function RV.gc_expired(which, space, t, scan, take)
+    local g, n = RV.gc, 0
+    local exp = space.index.exp
+    local lap = true
+    local ok, err = pcall(function()
+        for _, r in exp:pairs({}, {iterator = 'GE', after = g.pos[which]}) do
+            if r.expires >= t then break end
+            if n >= scan then
+                lap = false
+                break
+            end
+            n = n + 1
+            g.pos[which] = exp:tuple_pos(r)
+            if not take(r) then
+                lap = false
+                break
+            end
+        end
+    end)
+    g.scanned = g.scanned + n
+    if not ok then
+        g.pos[which] = nil
+        log.warn('tarn gc: the expired records in %s: %s', which, tostring(err))
+    elseif lap then
+        g.pos[which] = nil
+        g.laps[which] = g.laps[which] + 1
+        g.lap_at[which] = clock.monotonic()
+    end
+end
+
+-- Garbage collection of expired records (see "Record lifecycle"): at most
+-- gc_batch * 40 records looked at, gc_batch * 4 deleted, of each space, and
+-- no more status calls once gc_time_budget seconds have passed.
 local function gc_pass(t)
     -- Forget broken transactions whose commits can no longer arrive.
     local mono = clock.monotonic()
@@ -4550,11 +4685,11 @@ local function gc_pass(t)
         if until_t < mono then PL_BROKEN[txid] = nil end
     end
     local limit, scan = M.cfg.gc_batch * 4, M.cfg.gc_batch * 40
+    local deadline = mono + M.cfg.gc_time_budget
+    local function in_time() return clock.monotonic() < deadline end
     -- Participant records.
-    local victims, waiting, n = {}, {}, 0   -- waiting[dshard] = {txid, ...}
-    for _, p in box.space._tarn_part.index.exp:pairs() do   -- ascending expiry
-        n = n + 1
-        if p.expires >= t or n > scan or #victims >= limit then break end
+    local victims, waiting = {}, {}   -- waiting[dshard] = {txid, ...}
+    RV.gc_expired('part', box.space._tarn_part, t, scan, function(p)
         if p.state == 'aborted' then
             victims[#victims + 1] = p.txid
         elseif p.state == 'applied' then
@@ -4562,9 +4697,10 @@ local function gc_pass(t)
             if w == nil then w = {}; waiting[p.dshard] = w end
             w[#w + 1] = p.txid
         end   -- prepared: never collected
-    end
+        return #victims < limit
+    end)
     for dshard, ids in pairs(waiting) do
-        local st = statuses_on(dshard, 'tarn_txn_statuses', ids)
+        local st = in_time() and statuses_on(dshard, 'tarn_txn_statuses', ids) or nil
         for i, id in ipairs(st and ids or {}) do
             -- Applied => committed: delete once the record is final or gone.
             if st[i] == 'committed' or st[i] == 'none' then
@@ -4579,10 +4715,7 @@ local function gc_pass(t)
     M.stats.gc_part = M.stats.gc_part + #victims
     -- Decision records: final ones, once no participant is still prepared.
     local cands, ask = {}, {}   -- ask[shard] = {txid, ...}
-    n = 0
-    for _, r in box.space._tarn_txn.index.exp:pairs() do
-        n = n + 1
-        if r.expires >= t or n > scan or #cands >= limit then break end
+    RV.gc_expired('txn', box.space._tarn_txn, t, scan, function(r)
         if r.status == 'committed' or r.status == 'aborted' then
             cands[#cands + 1] = r
             for _, p in ipairs(r.parts) do
@@ -4591,10 +4724,11 @@ local function gc_pass(t)
                 a[#a + 1] = r.txid
             end
         end
-    end
+        return #cands < limit
+    end)
     local prepared = {}   -- txid -> true if prepared (or unknown) somewhere
     for shard, ids in pairs(ask) do
-        local st = statuses_on(shard, 'tarn_part_statuses', ids)
+        local st = in_time() and statuses_on(shard, 'tarn_part_statuses', ids) or nil
         for i, id in ipairs(ids) do
             if st == nil or st[i] == 'prepared' then prepared[id] = true end
         end
@@ -4607,42 +4741,161 @@ local function gc_pass(t)
     M.stats.gc_txn = M.stats.gc_txn + #victims
 end
 
--- Candidates first, then the (yielding) resolution of each.
-local function stuck(index, key, t)
-    local out = {}
-    for _, x in index:pairs({key}, {iterator = 'EQ'}) do
-        if t - x.ts < M.cfg.recovery_after or #out >= 200 then break end
-        out[#out + 1] = x
+-- Whether recovery tries `x` (a prepared participant record, or a STAGING
+-- record of this decision shard: dshard) in this pass: not waiting out a
+-- backoff, nor needing a shard that waits one out -- or whose wait is over,
+-- and no other candidate of the pass tries it (`probing`).
+function RV.eligible(x, dshard, mono, probing)
+    local w = RV.wait[x.txid]
+    if w ~= nil and w > mono then return false end
+    local shards = {dshard}
+    for _, p in ipairs(x.parts) do shards[#shards + 1] = p end
+    for _, s in ipairs(shards) do
+        local d = RV.down[s]
+        if d ~= nil and (d > mono or probing[s]) then return false end
     end
-    return out
+    for _, s in ipairs(shards) do
+        if RV.down[s] ~= nil then probing[s] = true end
+    end
+    return true
+end
+
+-- The candidates of a pass in index `index` of records in state `key`, from
+-- RV.pos[which] on (see "Scheduling").
+function RV.candidates(which, index, key, t, mono, probing, out, have)
+    local seen, max_seen, max_out = 0, M.cfg.recovery_batch * 5, #out + M.cfg.recovery_batch
+    local ok, err = pcall(function()
+        for _, x in index:pairs({key}, {iterator = 'EQ', after = RV.pos[which]}) do
+            if t - x.ts < M.cfg.recovery_after then break end
+            RV.pos[which] = index:tuple_pos(x)
+            RV.seen[which] = RV.seen[which] + 1
+            seen = seen + 1
+            local dshard = which == 'part' and x.dshard or M.cfg.shard_id
+            if not have[x.txid] and RV.eligible(x, dshard, mono, probing) then
+                have[x.txid] = true
+                out[#out + 1] = {txid = x.txid, dshard = dshard, parts = x.parts, part = which == 'part'}
+            end
+            if #out >= max_out or seen >= max_seen then return end
+        end
+        -- (the end of the lap: the next pass starts from the oldest)
+        RV.pos[which] = nil
+        RV.laps[which] = RV.laps[which] + 1
+        RV.backlog[which] = RV.seen[which]
+        RV.seen[which] = 0
+    end)
+    if not ok then
+        RV.pos[which] = nil
+        log.warn('tarn recovery: the candidates in %s: %s', which, tostring(err))
+    end
+end
+
+-- One attempt to resolve candidate c; a failure makes it wait (RV.wait),
+-- unless a shard it needs waits out a backoff (then that shard's wait says
+-- when it is tried again).
+function RV.attempt(c)
+    M.stats.recovery_attempts = M.stats.recovery_attempts + 1
+    local ok, res = pcall(resolve, c.txid, c.dshard, c.parts)
+    if ok and res ~= 'unresolved' then
+        RV.wait[c.txid] = nil
+        RV.tries[c.txid] = nil
+        if c.part then M.stats.recovered = M.stats.recovered + 1 end
+        return
+    end
+    M.stats.recovery_failures = M.stats.recovery_failures + 1
+    if not ok and res == RV.BACKOFF then return end
+    local n = (RV.tries[c.txid] or 0) + 1
+    RV.tries[c.txid] = n
+    RV.wait[c.txid] = clock.monotonic() + RV.backoff(n)
+    -- (the first failure, then every tenth)
+    if n % 10 == 1 then
+        log.warn('tarn recovery of %s failed (%d times): %s', c.txid, n, tostring(res))
+    end
 end
 
 local function recovery_pass()
     if box.info.ro or box.space._tarn_txn == nil then return end   -- (schema not made yet)
-    local t = now()
-    -- Participants stuck in 'prepared'.
-    for _, p in ipairs(stuck(box.space._tarn_part.index.state, 'prepared', t)) do
-        local ok, err = pcall(resolve, p.txid, p.dshard, p.parts)
-        if ok then M.stats.recovered = M.stats.recovered + 1
-        else log.warn('tarn recovery of %s failed: %s', p.txid, tostring(err)) end
+    local t, mono = now(), clock.monotonic()
+    local cands, have, probing = {}, {}, {}
+    -- Participants stuck in 'prepared'; records stuck in 'staging' on this
+    -- decision shard.
+    RV.candidates('part', box.space._tarn_part.index.state, 'prepared', t, mono, probing, cands, have)
+    RV.candidates('txn', box.space._tarn_txn.index.status, 'staging', t, mono, probing, cands, have)
+    -- recovery_workers fibers, each taking the next candidate
+    local next_c, n = 0, math.min(math.max(M.cfg.recovery_workers, 1), #cands)
+    local done = fiber.channel(math.max(n, 1))
+    for _ = 1, n do
+        fiber.create(function()
+            fiber.name('tarn_recovery_w')
+            while true do
+                next_c = next_c + 1
+                local c = cands[next_c]
+                if c == nil then break end
+                -- (the pass waits for every worker: none may end early)
+                local ok, err = pcall(RV.attempt, c)
+                if not ok then log.warn('tarn recovery of %s: %s', c.txid, tostring(err)) end
+            end
+            done:put(true)
+        end)
     end
-    -- Records stuck in 'staging' on this decision shard.
-    for _, r in ipairs(stuck(box.space._tarn_txn.index.status, 'staging', t)) do
-        local ok, err = pcall(resolve, r.txid, M.cfg.shard_id, r.parts)
-        if not ok then log.warn('tarn recovery of %s failed: %s', r.txid, tostring(err)) end
+    for _ = 1, n do done:get() end
+    -- (forget the waits that ended long ago: their transactions may be gone)
+    for txid, w in pairs(RV.wait) do
+        if w < mono - M.cfg.recovery_backoff_max then
+            RV.wait[txid] = nil
+            RV.tries[txid] = nil
+        end
     end
-    gc_pass(t)
 end
 
-local recovery_fiber
+-- Recovery's progress, for tarn_info().recovery: the undecided transactions
+-- old enough to resolve (prepared participants, STAGING records) as the last
+-- full lap found them, and the age of the oldest of each now; the
+-- transactions waiting out a backoff; the shards whose last call failed
+-- (they wait out a backoff, or one transaction tries them again); the laps,
+-- and how many records garbage collection looked at, in how many laps, and
+-- how long ago each space's last lap ended.
+function RV.info()
+    if box.space._tarn_txn == nil then return {} end
+    local t, mono = now(), clock.monotonic()
+    local function oldest(index, key)
+        local x = index:min({key})
+        return x and math.max(0, t - x.ts) or 0
+    end
+    local waiting, down = 0, {}
+    for _, w in pairs(RV.wait) do
+        if w > mono then waiting = waiting + 1 end
+    end
+    for s in pairs(RV.down) do down[#down + 1] = s end
+    table.sort(down)
+    local g = RV.gc
+    local function ago(which) return g.lap_at[which] and (mono - g.lap_at[which]) or box.NULL end
+    return {prepared = RV.backlog.part, staging = RV.backlog.txn,
+            oldest_prepared = oldest(box.space._tarn_part.index.state, 'prepared'),
+            oldest_staging = oldest(box.space._tarn_txn.index.status, 'staging'),
+            waiting = waiting, shards_down = down, laps = {part = RV.laps.part, txn = RV.laps.txn},
+            gc = {scanned = g.scanned, laps = {part = g.laps.part, txn = g.laps.txn},
+                  lap_ago = {part = ago('part'), txn = ago('txn')}}}
+end
+M.recovery_info = RV.info
+
 function M.start_recovery()
-    if recovery_fiber ~= nil then return end
-    recovery_fiber = fiber.create(function()
+    if RV.fiber ~= nil then return end
+    RV.fiber = fiber.create(function()
         fiber.name('tarn_recovery')
         while true do
             fiber.sleep(M.cfg.recovery_interval)
             local ok, err = pcall(recovery_pass)
             if not ok then log.warn('tarn recovery pass: %s', tostring(err)) end
+        end
+    end)
+    RV.gc_fiber = fiber.create(function()
+        fiber.name('tarn_gc')
+        while true do
+            fiber.sleep(M.cfg.gc_interval)
+            if not box.info.ro and box.space._tarn_txn ~= nil then
+                local ok, err = pcall(gc_pass, now())
+                if not ok then log.warn('tarn gc pass: %s', tostring(err)) end
+            end
         end
     end)
 end
@@ -6889,6 +7142,7 @@ function tarn_info()
             ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0, vinyl = M.vinyl.stats(),
+            recovery = M.recovery_info(),
             native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
                                        to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
                                        writes_to_lua = tonumber(BK.ns.w_to_lua),

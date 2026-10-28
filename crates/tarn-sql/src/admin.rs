@@ -64,6 +64,7 @@ pub enum Admin {
     ShowTarnPlan(String),
     Analyze(String),
     ShowTarnStatistics,
+    ShowTarnRpcs,
     /// SHOW TARN BUCKETS: which shard owns which buckets, and the moves in
     /// progress.
     ShowTarnBuckets,
@@ -1129,6 +1130,12 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
                 return Err(SqlError::parse("unexpected text after SHOW TARN PLAN"));
             }
             Admin::ShowTarnPlan(name)
+        }
+        "TARN" if t.is("RPCS") => {
+            if !t.done() {
+                return Err(SqlError::parse("unexpected text after SHOW TARN RPCS"));
+            }
+            Admin::ShowTarnRpcs
         }
         "TARN" if t.is("BUCKETS") => Admin::ShowTarnBuckets,
         "TARN" if t.is("SHARDS") => Admin::ShowTarnShards,

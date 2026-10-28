@@ -467,6 +467,63 @@ about half of which it serves.
   APPLY. The transaction thread then spends 38% to 53% of its samples in
   Lua and its garbage collector.
 
+## Decision-record placement
+
+Issue [#132](https://github.com/cstheorist/tarn/issues/132) replaces the first
+active writing participant with a stable transaction-ID hash over writers
+ordered by durable shard ID. This distributes the extra decision record and
+its cleanup when transactions share a broad writer set.
+
+The complete matched evidence is
+[`results_decision_placement.json`](results_decision_placement.json), produced
+by [`decision_placement.py`](decision_placement.py): control `12ef447be1c3d236d987755dacfa45b88d9c3324`,
+candidate `4d495692f9e63144bc1f7cabb96b2e6ef4273ce5`, Rust 1.98.1 release builds,
+identical native-module SHA-256, Tarantool 3.9.0, three RF1 memtx shards with
+fsync WAL, one two-thread gateway with pool 2, and four PyMySQL clients.
+The Docker quota was three CPUs and 1.5 GiB on a shared arm64 development
+machine; other services were not stopped. Each sample uses a fresh cluster,
+600 transactions and disjoint rows per client, with one write on every
+shard. The run order alternates before/after across three repetitions.
+Only these owned single-clock fixtures shorten retention to 15 seconds and
+set clock-skew allowance to zero; the gateway and storage age limits match.
+
+| Repetition | Before decision records, shards 1/2/3 | After decision records, shards 1/2/3 | Before txn/s | After txn/s |
+|---|---|---|---:|---:|
+| 1 | 600 / 0 / 0 | 200 / 199 / 201 | 1,096.5 | 1,110.6 |
+| 2 | 600 / 0 / 0 | 203 / 193 / 204 | 1,041.7 | 1,044.9 |
+| 3 | 600 / 0 / 0 | 212 / 190 / 198 | 1,067.9 | 942.4 |
+
+Every sample has exactly 600 participant records on each shard. Every
+recorded decision matches the selector, every participant records that same
+ID, and every committed tuple has the expected value. The busiest shard's
+decision records fall at least 64%, from 600 to at most 212. Workload WAL
+rows change from `6000 / 4800 / 4800` to at most 5,224 on any shard: 13%
+less work on the busiest writer, with the same 15,600 rows in total.
+The busiest shard's measured WAL-file growth is 394–395 kB before and
+336–337 kB after; the JSON retains every shard's bytes and WAL rows.
+
+After expiry, all 600 decisions and 1,800 participant records are collected,
+with their original eligibility checks. Decision deletions have the same
+per-shard distribution as the table above; participant deletions stay at
+600 per shard. GC's WAL rows change from `1200 / 600 / 600` to at most 812
+on any shard, with the same 2,400 rows in total. WAL-file growth during GC
+varies with batching/compression and is reported without a byte-saving claim.
+
+The throughput medians are 1,067.9 and 1,044.9 txn/s; the ranges are
+1,041.7–1,096.5 and 942.4–1,110.6. These short shared-host samples do not
+establish a throughput or latency improvement. This demonstrates placement and peak
+per-shard record/WAL/GC work; it is not a sustained RF3 result or a comparison
+with TiDB or YugabyteDB.
+
+```sh
+python3 bench/decision_placement.py \
+  --before-bin /path/to/control/tarn-server --after-bin /path/to/candidate/tarn-server \
+  --native /path/to/libtarn_storage.so \
+  --before-ref 12ef447be1c3d236d987755dacfa45b88d9c3324 \
+  --after-ref 4d495692f9e63144bc1f7cabb96b2e6ef4273ce5 \
+  --out decision-placement-results.json
+```
+
 ## What would make Tarn faster
 
 * **Native procedures for the other hot paths**
@@ -559,3 +616,39 @@ are retained, without replacement or exclusion. These establish component
 improvements under these settings, not production capacity, RF3/durable
 writes, SSD/steady-state, arbitrary-skew or competitor results. Biased or
 stale samples can still choose a slower valid order on other data.
+
+## Storage RPC admission component measurements (issue #127)
+
+The complete [initial](results_rpc_admission_initial.json) and
+[scope-sharing revision](results_rpc_admission_optimized.json) records retain
+all paired samples, raw output, CPU and latency measurements, exact source
+revisions, binary hashes, fixture/workload hashes and environment. The
+control is `a0faf804372f911e5122317889aaf2cc1dc6ab83`; initial candidate
+`75f53e2404c123c2b34f8426495152d6063e27e4`; revised candidate
+`b944dcb39061d1ab1d10fc29891ca51f5b50afc5`. Both drivers use the exact same
+phase and `init.lua` fixture. `bench/rpc_admission.py` alternates order
+across five repetitions of eight seconds per build, with 64 tasks/four
+connections reading one of 1000 memtx tuples over local TCP. The revised
+candidate uses one per-connection scope-set reference per request instead
+of cloning shared shard/global budget references.
+
+This measures the IPROTO component on one RF1 Tarantool 3.9 process with
+MVCC, no TLS and no timed writes. It is not a MySQL, RF3, durable-write or
+competitor comparison. The fixture uses Tarantool's default WAL mode;
+initialization is outside the timed read phase. Rust 1.98.1 release builds
+use matched thin LTO/codegen settings. The shared Docker VM grants the
+fixture/driver three CPUs and 3 GiB; other task-owned validation/builds were
+stopped during measurements. Other host workloads remained uncontrolled.
+
+| Candidate | Control median (range), ops/s | Candidate median (range), ops/s |
+|---|---:|---:|
+| Initial | 572,629 (109,582–626,623) | 554,509 (527,902–566,400) |
+| Shared scope ownership | 360,729 (335,516–569,769) | 426,295 (289,026–552,590) |
+
+The initial run exposed a cost in several pairs and motivated removing
+avoidable reference churn and waiter metadata. The broad, shifting control
+and candidate ranges prevent a reliable cost estimate or throughput/latency
+improvement claim. No samples were discarded or replaced. An isolated
+machine is required to quantify the remaining overhead. These observations
+do not establish production performance; separate unit, SQL and live-fault
+tests establish the resource/outcome contracts, not this timing probe.

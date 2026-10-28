@@ -1447,6 +1447,35 @@ CASES += [
 ]
 
 
+# Database DDL affected rows and complete LIKE filtering (issue #149).
+# The ASCII pattern prefix also matches a UTF-8 database name. Double the
+# backslash in SQL to leave one escape for LIKE's literal underscore.
+CASES += [
+    ("SHOW DATABASES LIKE 'information_schema'", "rows"),
+    ("SHOW SCHEMAS LIKE 'information%'", "rows"),
+    ("SHOW DATABASES LIKE 'no_such_database149'", "rows"),
+    ("CREATE DATABASE db149_ascii", "q"),
+    ("CREATE DATABASE IF NOT EXISTS db149_ascii", "q"),
+    ("CREATE DATABASE db149_ascii", "err"),
+    ("CREATE DATABASE IF NOT EXISTS `db149_雪`", "q"),
+    ("CREATE DATABASE IF NOT EXISTS `db149_雪`", "q"),
+    ("CREATE DATABASE `db149_雪`", "err"),
+    ("CREATE SCHEMA db149xother", "q"),
+    ("CREATE SCHEMA IF NOT EXISTS db149xother", "q"),
+    ("SHOW DATABASES LIKE 'db149%'", "rows"),
+    (r"SHOW DATABASES LIKE 'db149\\_%'", "rows"),
+    ("SHOW SCHEMAS LIKE 'db149_ascii'", "rows"),
+    ("SHOW DATABASES LIKE 'db149_missing'", "rows"),
+    ("DROP DATABASE db149_ascii", "q"),
+    ("CREATE DATABASE IF NOT EXISTS db149_ascii", "q"),
+    ("DROP DATABASE db149_ascii", "q"),
+    ("DROP DATABASE IF EXISTS db149_ascii", "q"),
+    ("DROP DATABASE `db149_雪`", "q"),
+    ("DROP SCHEMA db149xother", "q"),
+    ("SHOW DATABASES LIKE 'db149%'", "rows"),
+]
+
+
 # Run on connections with CLIENT_FOUND_ROWS (issue #39): UPDATE reports the
 # rows it matched, and an upsert that changes nothing reports 1.
 FOUND_ROWS_CASES = [
@@ -1563,7 +1592,10 @@ def main():
         ra, rb = run(a, sql), run(b, sql)
         ok = True
         msg = ""
-        if kind == "plan":
+        if kind == "admin_names":
+            ok = (ra[0] == rb[0] == "rows"
+                  and rows_equal([(r[0],) for r in ra[1]], [(r[0],) for r in rb[1]], False))
+        elif kind == "plan":
             def json_plan(r):
                 if r[0] != "rows" or r[2] != ["EXPLAIN"] or len(r[1]) != 1 or len(r[1][0]) != 1:
                     return False
@@ -1572,9 +1604,6 @@ def main():
                 except (TypeError, ValueError):
                     return False
             ok = json_plan(ra) and json_plan(rb)
-        elif kind == "admin_names":
-            ok = (ra[0] == rb[0] == "rows"
-                  and rows_equal([(r[0],) for r in ra[1]], [(r[0],) for r in rb[1]], False))
         elif kind == "err":
             # both must fail, with the same MySQL error code
             ok = ra[0] == "err" and rb[0] == "err" and ra[1] == rb[1]

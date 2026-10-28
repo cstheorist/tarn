@@ -274,7 +274,8 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   through the plan cache, as a text query would be.
 * `SHOW DATABASES | TABLES | [FULL] COLUMNS | CREATE TABLE | INDEX | TABLE STATUS |
   VARIABLES | STATUS | WARNINGS | ERRORS | ENGINES | COLLATION | CHARACTER SET |
-  PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters).
+  PROCESSLIST`, `DESCRIBE t`, and `SHOW TARN STATUS` (Tarn's own counters) and `SHOW TARN RPCS`
+  (cached bounded storage-request admission and connection observations).
   `SHOW WARNINGS` lists the last statement's warnings and notes, whose number
   the OK packet and `@@warning_count` report; the only ones Tarn raises are
   those of the [table tree](#table-trees) checks.

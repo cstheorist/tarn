@@ -1637,20 +1637,19 @@ impl Session {
             // Lazy sources require Lua capture. Avoid a predictable extra
             // native call; the shard also enforces capture exclusions for
             // stale gateways that do not yet know this metadata.
-            let result = async {
-                let native = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
-                    self.cluster
-                        .call_native_once(shard, "tarn_storage.ts_autocommit", &writes.0, MARK_NO_NATIVE_WRITE)
-                        .await?
-                } else {
-                    None
-                };
-                match native {
-                    Some(d) if !crate::mpw::status_is(&d, "lua") => Ok(d),
-                    _ => self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await,
-                }
-            }
-            .await;
+            let result = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
+                self.cluster
+                    .call_native_or_lua_once(
+                        shard,
+                        "tarn_storage.ts_autocommit",
+                        "tarn_autocommit",
+                        &writes.0,
+                        MARK_NO_NATIVE_WRITE,
+                    )
+                    .await
+            } else {
+                self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await
+            };
             let d = match result {
                 Ok(d) => d,
                 Err(e) => {
@@ -2746,7 +2745,9 @@ impl Session {
                 self.note_tree(found);
             }
             Stmt::Truncate { db, table } => c.truncate(db, table, self.lock_wait_timeout).await?,
-            Stmt::CreateDatabase { name, if_not_exists } => c.create_database(name, *if_not_exists).await?,
+            Stmt::CreateDatabase { name, if_not_exists } => {
+                return Ok(Output::ok(c.create_database(name, *if_not_exists).await?));
+            }
             Stmt::DropDatabase { name, if_exists } => {
                 let n = c.drop_database(name, *if_exists, self.lock_wait_timeout).await?;
                 if self.db.as_deref().is_some_and(|d| d.eq_ignore_ascii_case(name)) {
@@ -3080,13 +3081,20 @@ impl Session {
                 rows_out(columns.into(), vec![row])
             }
             Admin::ShowDatabases { like } => {
-                let mut rows: Vec<Vec<Value>> = vec![vec![Value::str("information_schema")]];
+                let name = match &like {
+                    Some(pattern) => format!("Database ({pattern})"),
+                    None => "Database".into(),
+                };
+                let mut rows = Vec::new();
+                if like_ci("information_schema", &like) {
+                    rows.push(vec![Value::str("information_schema")]);
+                }
                 for d in &catalog.databases {
                     if like_ci(d, &like) {
                         rows.push(vec![Value::str(d)]);
                     }
                 }
-                rows_out(cols(&[("Database", ColumnType::VarString)]), rows)
+                rows_out(cols(&[(&name, ColumnType::VarString)]), rows)
             }
             Admin::ShowTables { db, full, like } => {
                 let db = self.resolve_db(db)?;
@@ -3261,6 +3269,31 @@ impl Session {
                 let normalized = normalize(&template, Mode::Placeholders)?;
                 let stmt = self.plan_cached(&normalized.template, &[])?;
                 self.explain(&stmt, self.cluster.catalog().version, &[])
+            }
+            Admin::ShowTarnRpcs => {
+                let mut columns = cols(&[
+                    ("Scope", ColumnType::VarString),
+                    ("Shard", ColumnType::LongLong),
+                    ("Connection", ColumnType::LongLong),
+                    ("Closed", ColumnType::LongLong),
+                ])
+                .to_vec();
+                for name in [
+                    "Pending",
+                    "Charged_bytes",
+                    "Wire_bytes",
+                    "Normal_pending",
+                    "Abandoned",
+                    "Oldest_ms",
+                    "Refusals",
+                    "Deadline_retirements",
+                    "Peak_pending",
+                    "Peak_bytes",
+                    "Observation_drops",
+                ] {
+                    columns.push(Column::new(name, ColumnType::LongLong));
+                }
+                rows_out(columns.into(), crate::rpcs::rows(&self.cluster))
             }
             Admin::ShowTarnBuckets => {
                 let rows = self
@@ -3643,6 +3676,7 @@ impl Session {
             ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
         stats.extend(s.query_digests.counters());
+        stats.extend(crate::rpcs::counters(&self.cluster));
         stats.retain(|(n, _)| like_ci(n, like));
         let mut rows: Vec<Row> = stats
             .into_iter()
