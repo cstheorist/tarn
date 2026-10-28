@@ -29,8 +29,9 @@ function M.new(c)
     -- Cached-only: native State publication must never call a yielding
     -- certificate refresh. UNKNOWN remains unavailable until wired.
     function F.native_state()
-        if provider == nil or type(provider.native_state) ~= 'function' then return false, 0, 0, 0, 0 end
-        local ok, healthy, mono, wall, gap, drift = pcall(provider.native_state)
+        local read = provider and (provider.read_native_state or provider.native_state)
+        if type(read) ~= 'function' then return false, 0, 0, 0, 0 end
+        local ok, healthy, mono, wall, gap, drift = pcall(read)
         if not ok or healthy ~= true or not ffi.istype('uint64_t', mono) or not ffi.istype('uint64_t', wall)
            or not ffi.istype('uint64_t', gap) or not ffi.istype('uint64_t', drift) then
             return false, 0, 0, 0, 0
@@ -38,8 +39,10 @@ function M.new(c)
         return true, mono, wall, gap, drift
     end
     function F.clock_check()
-        if provider == nil or type(provider.check) ~= 'function' then unavailable('clock health is unknown') end
-        local ok, status = pcall(provider.check)
+        c.writable() -- known demotion must retire the gateway's old connection
+        local read = provider and (provider.read_check or provider.check)
+        if type(read) ~= 'function' then unavailable('clock health is unknown') end
+        local ok, status = pcall(read)
         if not ok then unavailable('clock health check failed') end
         if status ~= nil then
             unavailable(type(status) == 'table' and tostring(status[3] or status[1]) or tostring(status))
@@ -90,6 +93,31 @@ function M.new(c)
             unavailable('space ' .. sp.name .. ' is not synchronous')
         end
     end
+    -- These native guards run before borrowing State and after a quorum
+    -- wait. Read current public configuration/space properties each time,
+    -- including the immutable clock-policy match between sampler ticks.
+    -- No observation, State publication, data access or yield is allowed.
+    local function callback(fn, ...)
+        local old = box.error.last()
+        local ok, result = pcall(fn, ...)
+        local restored = pcall(function()
+            if old ~= nil then box.error.set(old) else box.error.clear() end
+        end)
+        return ok and restored and result or 0
+    end
+    local function controls()
+        if provider ~= nil and type(provider.policy_ok) == 'function' and provider.policy_ok() ~= true then return 0 end
+        local mode = F.controls()
+        return (mode == 1 or mode == 2) and mode or 0
+    end
+    local function space(sid)
+        local sp = box.space[tonumber(sid)]
+        if sp == nil then return 0 end
+        F.space(sp)
+        return 1
+    end
+    F.controls_callback = ffi.cast('uint8_t (*)(void)', function() return callback(controls) end)
+    F.space_callback = ffi.cast('uint8_t (*)(uint32_t)', function(sid) return callback(space, sid) end)
     -- Callbacks used by native procedures. They never yield, touch native
     -- State or refresh clock/membership. Both hooks bound registry lifetime
     -- to the exact transaction, including a raw IPROTO COMMIT/ROLLBACK.
@@ -136,9 +164,11 @@ function M.new(c)
         return ok and result == 1 and 1 or 0
     end)
     function F.stream()
+        c.writable()
         if F.ok(current()) ~= 1 then unavailable('ambient stream has no first-read freshness proof') end
     end
     local function begin(timeout, recovery)
+        c.writable()
         if box.is_in_txn() then unavailable('freshness barrier cannot replace an ambient transaction') end
         F.controls()
         box.begin{txn_isolation = 'linearizable', timeout = timeout}
@@ -154,6 +184,7 @@ function M.new(c)
         end
     end
     function F.barrier(timeout, recovery)
+        c.writable()
         if box.is_in_txn() then unavailable('freshness barrier cannot replace an ambient transaction') end
         if not recovery then F.clock_check() end
         begin(timeout or c.cfg.read_freshness_timeout, recovery)
@@ -161,12 +192,14 @@ function M.new(c)
         box.rollback()
     end
     function F.begin_stream()
+        c.writable()
         if box.is_in_txn() then unavailable('first read cannot replace an ambient transaction') end
         F.clock_check()
         begin(60) -- timeout cannot be extended after the quorum wait yields
         if F.mark(current()) ~= 1 then box.rollback(); unavailable('too many active fresh streams') end
     end
     function F.read(first, checked)
+        c.writable()
         if box.is_in_txn() then
             F.stream()
             F.clock_check()
