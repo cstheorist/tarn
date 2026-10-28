@@ -1668,6 +1668,7 @@ pub async fn select_keys(
             Ok(r) => {
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no native batch data"))?;
                 if let Some(page) = native_batch_reply(&d, t, keys.len())? {
+                    crate::observe::storage_rows(page.0.len());
                     return Ok(page);
                 }
             }
@@ -2086,6 +2087,12 @@ mod tests {
                 let (status, version) = status.unwrap();
                 packet.map(1).uint(0x30).arr(1);
                 match (status, version) {
+                    ("rows", _) => {
+                        packet.arr(2).str("ok").arr(2);
+                        for _ in 0..2 {
+                            packet.vals(&[Value::str("tenant"), Value::Int(7), Value::str("label"), Value::UInt(1)]);
+                        }
+                    }
                     ("bad-page", _) => {
                         packet.arr(4).str("ok").arr(0).nil().bool(false);
                     }
@@ -2232,7 +2239,7 @@ mod tests {
                             names.push("lua");
                             reply(&mut sock, sync, 0, Some(("ok", None))).await;
                         } else {
-                            reply(&mut sock, sync, 0, Some(("ok", None))).await;
+                            reply(&mut sock, sync, 0, Some(("rows", None))).await;
                         }
                     }
                 }
@@ -2253,22 +2260,27 @@ mod tests {
                     }
                 })
                 .collect();
+            let metrics = crate::observe::Metrics::default();
             for _ in 0..2 {
                 let result = timeout(
                     Duration::from_secs(3),
-                    select_keys(
-                        &client,
-                        if case == 6 { 73 } else { 0 },
-                        &table,
-                        0,
-                        &keys,
-                        None,
-                        case != 6,
-                        false,
-                        None,
-                        &Route::Buckets(vec![1, 1, 1]),
-                        case != 4,
-                    ),
+                    crate::observe::track(&metrics, async {
+                        crate::observe::describe(crate::observe::Descriptor::new(None, "SELECT native_batch"));
+                        select_keys(
+                            &client,
+                            if case == 6 { 73 } else { 0 },
+                            &table,
+                            0,
+                            &keys,
+                            None,
+                            case != 6,
+                            false,
+                            None,
+                            &Route::Buckets(vec![1, 1, 1]),
+                            case != 4,
+                        )
+                        .await
+                    }),
                 )
                 .await
                 .unwrap();
@@ -2276,9 +2288,14 @@ mod tests {
                     assert!(result.is_err());
                 } else {
                     let page = result.unwrap();
-                    assert!(page.0.is_empty() && page.1.is_none());
+                    assert_eq!(page.0.len(), if case == 0 { 2 } else { 0 });
+                    assert!(page.1.is_none());
                 }
             }
+            assert_eq!(
+                metrics.rows()[0].last(),
+                Some(&Value::UInt(if case == 0 { 4 } else { 0 }))
+            );
             if case == 1 {
                 assert!(!client.marked(MARK_NO_NATIVE_SELECT));
             }
