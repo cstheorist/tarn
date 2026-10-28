@@ -21,6 +21,17 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/clock_integration.sh" "$WORK/clock-integration" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  freshness_native=${TARN_NATIVE:-$DIR/../target/release/libtarn_storage.so}
+  if [ "$freshness_native" != 0 ] && [ -f "$freshness_native" ]; then
+    TARN_NATIVE="$freshness_native" TARANTOOL="$T" bash "$DIR/test/native_freshness.sh" "$WORK/native-freshness" 2>&1 | tee -a "$WORK/test.out"
+    r=${PIPESTATUS[0]}
+    [ "$r" -ne 0 ] && rc=$r
+  elif [ -n "${TARN_NATIVE:-}" ] && [ "$TARN_NATIVE" != 0 ]; then
+    echo 'FAIL explicitly requested native freshness module is missing' | tee -a "$WORK/test.out"
+    rc=1
+  else
+    echo 'native freshness RF3 skipped: native disabled' | tee -a "$WORK/test.out"
+  fi
   TARANTOOL="$T" bash "$DIR/test/engine_faults.sh" "$WORK/engine-faults" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
