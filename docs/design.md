@@ -148,6 +148,13 @@ is nothing to wait for or refuse, and otherwise hands them, unwritten, to
   PREPARE runs on every participant in parallel and, in one local
   transaction, validates the reads, takes durable R/W locks (W locks carry the
   new tuple as an intent), and on the decision shard writes a STAGING record.
+  The SQL server selects that shard once, by CRC-32C of the transaction ID
+  modulo the number of active writing participants, ordered by durable
+  shard ID. This spreads records for a common writer set independently of
+  gateway configuration order. If none is active, it retains a writing
+  candidate and the existing leaving-shard check refuses its PREPARE.
+  Participants persist the selected ID; recovery never recomputes it after
+  a membership change. The membership and table/bucket fences still apply.
   The transaction is committed exactly when the record is STAGING and every
   participant is prepared, so the decision needs no extra round trip. APPLY
   then moves the intents into the plain spaces and releases the locks; the
@@ -2028,6 +2035,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
 | Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
+| Bug_DecisionIgnoreLeaving | violates ActivePreferred | 252 | 252 | 2 | 00s | 2 |
+| Bug_DecisionReadOnly | violates WritingParticipant | 162 | 162 | 2 | 00s | 2 |
+| Bug_DecisionReselect | violates RecordedRecovery | 1142 | 2570 | 4 | 00s | 4 |
 | Bug_EngineAliasNoMutex | violates BothCallersOK | 25 | 46 | 8 | 00s | 8 |
 | Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
 | Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
@@ -2126,6 +2136,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
 | Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
+| Bug_PlacementFenceAfterExpiry | violates NoAbortAfterCommit | 113729 | 570826 | 14 | 13s | 14 |
+| Bug_PlacementNoTombstone | violates AppliedOnlyIfCommitted | 6621 | 18469 | 9 | 02s | 9 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
@@ -2153,6 +2165,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
@@ -2192,6 +2205,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
+| Placement_Failover | no errors | 516733 | 2823296 | 21 | 01min 37s |  |
+| Placement_RC | no errors | 1153174 | 8224685 | 26 | 03min 23s |  |
+| Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |

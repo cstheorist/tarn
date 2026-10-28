@@ -26,6 +26,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the executed budget checks are verified with Verus. See the
   [native storage inventory](docs/native-storage.md).
 
+- Distributed transactions spread decision records across active writing
+  participants using a stable hash of the transaction ID
+  ([#132](https://github.com/cstheorist/tarn/issues/132)). Durable shard IDs
+  determine the candidate order; every PREPARE and recovery operation uses
+  the one selected identity. Atomic local commits keep their existing path.
+  Placement models, lost-reply/coordinator-crash tests and a repeated
+  record/WAL/GC benchmark cover the change.
+
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
   writes continue, then fences writes for catch-up and secondary-index
