@@ -17,6 +17,10 @@ crate-type = ["cdylib"]
 # process defines: the unit tests cover the parts that do not.)
 doctest = false
 
+[features]
+# Benchmark-only accounting. Both compared modes must use the same build.
+alloc-metrics = []
+
 [dependencies]
 # (its MessagePack codec, verified with Verus)
 tarn-verified.workspace = true
