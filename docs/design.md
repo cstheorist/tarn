@@ -2274,6 +2274,12 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
 | Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
 | Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_KVClippedComplete | violates FullVector | 5 | 5 | 5 | 00s | 5 |
+| Bug_KVFalseAtomic | violates AdvertisedSnapshot | 20 | 20 | 7 | 00s | 7 |
+| Bug_KVIncarnation | violates FrozenObjectData | 20 | 21 | 7 | 00s | 7 |
+| Bug_KVMissingClaim | violates PointMeaning | 33 | 43 | 9 | 00s | 8 |
+| Bug_KVOwnerFence | violates PointMeaning | 17 | 19 | 7 | 00s | 7 |
+| Bug_KVSchemaAsOwner | violates FrozenColumns | 12 | 12 | 9 | 00s | 9 |
 | Bug_KeyBatchMissingClaim | violates NoMissingClaim | 101 | 110 | 7 | 00s | 7 |
 | Bug_KeyBatchMixedSnapshots | violates OneSnapshot | 174 | 298 | 9 | 00s | 9 |
 | Bug_KeyBatchTruncatedComplete | violates FullBatch | 46 | 53 | 4 | 00s | 4 |
@@ -2409,6 +2415,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
+| ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
 | FileBackup | no errors | 356 | 983 | 15 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |

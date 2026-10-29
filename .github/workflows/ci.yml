@@ -106,6 +106,10 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Strong KV example and benchmark codec tests
+        run: |
+          cargo test --release -p tarn-sql --example strong_kv
+          cargo test --release -p tarn-sql --example strong_kv_bench
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Storage protocol tests
@@ -219,6 +223,28 @@ jobs:
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+      - name: Strong KV paired SQL histories and RF3 faults
+        run: |
+          ci/annotate.sh strong-kv tests/kv.sh
+          TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+      - name: Retain strong KV histories and fixture evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: strong-kv-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-kv181-*/source.json
+            /tmp/tarn-kv181-*/owner.json
+            /tmp/tarn-kv181-*/manifest.json
+            /tmp/tarn-kv181-*/processes.jsonl
+            /tmp/tarn-kv181-*/lifecycle.json
+            /tmp/tarn-kv181-*/preflight.json
+            /tmp/tarn-kv181-*/broker-preflight.json
+            /tmp/tarn-kv181-*/*.log
+            /tmp/tarn-kv181-*/functional/*
+            /tmp/tarn-kv181-*/faults/*
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Retain Vinyl pressure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

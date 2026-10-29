@@ -1921,12 +1921,51 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
   Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
 ```
 
+### External strong KV read envelopes (issue #181)
+
+`ExternalStrongKV.tla` checks the supported read-only API's composition
+with existing strong point reads. A request has three positions `<<a,b,a>>`,
+including an initial miss and a duplicate. Owner changes can restart a
+whole vector under the same frozen table handle, with a finite shared work
+budget. Definition/incarnation changes are terminal and discard the whole
+result. Each returned point observes its existing strong-read primitive;
+different positions may observe different committed revisions.
+
+The ownership control returns an actual false absence at a departed owner.
+The incarnation control decodes a new table's values under an old handle.
+Misclassifying a schema change as an ownership refresh returns a complete
+vector with mixed column definitions. The capacity control marks a clipped
+prefix complete. Omitting the prepared-claim check returns a currently
+missing row after an acknowledged insert. The atomicity control advertises
+a snapshot for an actual completed `<<1,2,2>>` vector even though the only
+committed images were `<<1,0,1>>` and `<<2,2,2>>`. That vector is legal under
+`independent_points`; the false guarantee is what the control detects.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `ExternalStrongKV` | 103 | 11 | passes |
+| `Bug_KVOwnerFence` | 17 | 7 | violates `PointMeaning` |
+| `Bug_KVIncarnation` | 20 | 7 | violates `FrozenObjectData` |
+| `Bug_KVSchemaAsOwner` | 12 | 9 | violates `FrozenColumns` |
+| `Bug_KVClippedComplete` | 5 | 5 | violates `FullVector` |
+| `Bug_KVMissingClaim` | 33 | 9 | violates `PointMeaning` |
+| `Bug_KVFalseAtomic` | 20 | 7 | violates `AdvertisedSnapshot` |
+
+These are the registered two-worker results. A negative run stops at its
+first violation, so its explored state count is not a full graph size.
+Profiles bound the faults separately and retain the actual completed-data
+witnesses. The model does not duplicate the quorum algorithm: native
+freshness, confirmed MVCC, ACLs, no-ambient-transaction entry, codecs,
+role/clock checks and DDL/movement implementations remain compositional
+or runtime premises. [The public API contract](strong-kv.md) and paired
+runtime histories define those separate obligations. No Verus body changes.
+
 ### Configuration counts
 
-The default list contains 277 unique configurations: 71 positive
-outcomes and 206 expected broken/trade-off outcomes. The 284 generated
+The default list contains 284 unique configurations: 72 positive
+outcomes and 212 expected broken/trade-off outcomes. The 291 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 290 total. Explicit
+placement configurations are maintained directly, for 297 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1960,17 +1999,20 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-formed the 263-case union. The five file-backup cases then completed
-separately with one positive and four expected violations; the combined
-registry contains all 268 inputs. This is an input union, not a claim that
-a previous CI run executed changed models. The generator reproduces
-without changes. The current proof inventory is 346 files: 330 TLA+
-model/config files, 11 verified-crate source/test/manifest files and five
-formal runner/inspection scripts. Verus bodies are unchanged.
-The two malformed-handback controls brought the registry to 270 inputs;
-[CI 40936508661](https://github.com/cstheorist/tarn/actions/runs/40936508661)
-completed all 270 expected outcomes. The seven cluster-backup cases bring
-the current input union to 277; that union requires its own full CI run.
+formed a 263-case union. The full list subsequently passed in
+[CI 40910653977](https://github.com/cstheorist/tarn/actions/runs/40910653977),
+alongside all four required jobs on the exact #191 source tree. File-backup
+and cluster-backup registrations add twelve configurations, and seven
+external-KV checks passed separately through the registered checker.
+Integration preserves both groups, their model/config bytes and dispatch.
+This is an input union; prior CI runs did not execute the integrated list.
+The current proof inventory is 354 files: 338 TLA+ model/config files,
+11 verified-crate source/test/manifest files and five formal runner/inspection
+scripts. The complete 284-case CI run remains a separate validation gate.
+Verus bodies are unchanged.
+The two malformed-handback controls complete this union. The prior 277-case
+list passed in [CI 40945628982](https://github.com/cstheorist/tarn/actions/runs/40945628982);
+that result does not certify the added KV model or this combined source.
 
 ## Verus proofs
 

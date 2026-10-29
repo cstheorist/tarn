@@ -18,6 +18,7 @@ mod collation_data;
 pub mod complex;
 pub mod exec;
 pub mod expr;
+pub mod kv;
 pub mod lazy;
 pub mod lint;
 pub mod mpw;

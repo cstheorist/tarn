@@ -859,6 +859,29 @@ mk_engine_build Bug_EngineBuildReusePage capture ReusePage
 mk_engine_build Bug_EngineBuildCallerOnlyCut capture CallerOnlyCut
 mk_engine_build Bug_EngineBuildKeepPrefix capture KeepPrefix
 
+# Frozen-handle independent points: errors never certify a partial vector.
+mk_external_kv () {
+    local name=$1 profile=$2 bug=$3 flag value
+    {
+        echo 'SPECIFICATION Spec'
+        echo 'CONSTANTS'
+        echo "  Profile = \"$profile\""
+        for flag in IgnoreOwner IgnoreBinding SchemaAsOwner ClipComplete IgnoreClaim AdvertiseAtomic; do
+            value=FALSE; [ "$flag" = "$bug" ] && value=TRUE
+            echo "  Bug$flag = $value"
+        done
+        echo 'INVARIANTS TypeOK FullVector NoPartialError PointMeaning FrozenColumns FrozenObjectData AdvertisedSnapshot'
+        echo 'CHECK_DEADLOCK FALSE'
+    } > "$name.cfg"
+}
+mk_external_kv ExternalStrongKV all ''
+mk_external_kv Bug_KVOwnerFence owner IgnoreOwner
+mk_external_kv Bug_KVIncarnation incarnation IgnoreBinding
+mk_external_kv Bug_KVSchemaAsOwner schema SchemaAsOwner
+mk_external_kv Bug_KVClippedComplete cap ClipComplete
+mk_external_kv Bug_KVMissingClaim pending IgnoreClaim
+mk_external_kv Bug_KVFalseAtomic atomic AdvertiseAtomic
+
 # File-copy publication/restore and registered seed identity (issue #56).
 mk_file_backup () {
     local name=$1 bug=$2 inv=$3 flag value
