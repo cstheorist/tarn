@@ -31,8 +31,12 @@ Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8m
 | `global_unsupported_refusal` | rejected | Unsupported GLOBAL autocommit/sql_mode assignments fail with 1235/42000 before changing session behavior or committing buffered writes. Only isolation and lock-timeout have mutable gateway defaults. |
 | `warnings_errors` | equivalent | INSERT IGNORE preserves accepted rows and reports warning level/code 1062; unknown columns report 1054/42S22. Error message wording is outside this entry. |
 | `rc_paged_snapshot` | difference | A 10,000-row indexed READ COMMITTED scan overlapping bounded key movement must return every key once. Tarn may explicitly refuse a read with 1213/40001; InnoDB reads its statement snapshot. At least three complete scans and observed overlap are required. |
+| `lock_upgrade` | equivalent | Two READ COMMITTED shared-lock upgrades choose one 1213/40001 victim; only the survivor increment commits. |
+| `local_commit` | equivalent | Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values; Tarn runtime counters prove the local path. |
+| `distributed_commit` | equivalent | Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values across shards; Tarn runtime counters prove two-phase commit. |
+| `bounded_warnings` | equivalent | Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default). |
 
-Both ordinary text and binary prepared executions are required. `CLIENT_FOUND_ROWS` is checked in both modes. A registered equivalent case must match both servers and its explicit expected result. Difference/refusal cases assert each server's stated behavior rather than accepting any mismatch. A failed case remains in the result file and fails the job.
+Each history runs with data statements sent as ordinary text and as binary prepared executions; settings and transaction control use text in both histories. `CLIENT_FOUND_ROWS` is checked in both modes. A registered equivalent case must match both servers and its explicit expected result. Difference/refusal cases assert each server's stated behavior rather than accepting any mismatch. A failed case remains in the result file and fails the job.
 
 The dedicated workflow runs native/Lua storage and memtx/vinyl RF3 clusters. The existing MariaDB differential, transaction, READ COMMITTED, storage, RF3/fault and formal CI remains required independently. No protocol, freshness, commit/locking/recovery action or verified body is changed by this reporting/contract work.
 

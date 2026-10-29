@@ -298,6 +298,59 @@ def case_deadlock_rollback(s):
     return [[None,[1213,"40001"]],final]
 
 
+def case_lock_upgrade(s):
+    a=s.fresh()
+    b=s.connect()
+    for c in (a,b):
+        q(c,"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        q(c,"SET innodb_lock_wait_timeout=15")
+        q(c,"BEGIN")
+        assert s.sql(c,"SELECT v FROM t WHERE id=1 LOCK IN SHARE MODE")==[[10]]
+    results=[]
+    def upgrade(c):
+        e=error(lambda:s.sql(c,"UPDATE t SET v=v+1 WHERE id=1"))
+        q(c,"COMMIT")
+        results.append(e)
+    worker=threading.Thread(target=upgrade,args=(a,),daemon=True)
+    worker.start()
+    upgrade(b)
+    worker.join(20)
+    assert not worker.is_alive() and results.count(None)==1 and results.count([1213,"40001"])==1, results
+    rows=s.sql(s.connect(),"SELECT v FROM t WHERE id=1")
+    assert rows==[[11]], rows
+    return [[None,[1213,"40001"]],rows]
+
+
+def commit_placement(s, second, counter):
+    c=s.fresh()
+    if second!=2:
+        s.sql(c,"DELETE FROM t WHERE id=2")
+        s.sql(c,f"INSERT INTO t VALUES ({second},20,22)")
+    before=int(q(c,f"SHOW STATUS LIKE '{counter}'")[0][1]) if s.kind=="tarn" else None
+    for isolation in ("READ COMMITTED","SERIALIZABLE"):
+        q(c,"SET SESSION TRANSACTION ISOLATION LEVEL "+isolation)
+        q(c,"BEGIN")
+        s.sql(c,"UPDATE t SET v=v+1 WHERE id=1")
+        s.sql(c,f"UPDATE t SET v=v+1 WHERE id={second}")
+        q(c,"COMMIT")
+    if s.kind=="tarn":
+        after=int(q(c,f"SHOW STATUS LIKE '{counter}'")[0][1])
+        assert after-before==2, (counter,before,after)
+    rows=s.sql(c,"SELECT id,v FROM t ORDER BY id")
+    assert rows==[[1,12],[second,22]], rows
+    return rows
+
+
+def case_local_commit(s):
+    return commit_placement(s,2,"Tarn_commits_local")
+
+
+def case_distributed_commit(s):
+    # Fixed fixture: 30,000 buckets, two equal ranges. Runtime counters must
+    # prove the path; these IDs alone are never taken as placement evidence.
+    return commit_placement(s,6,"Tarn_commits_2pc")
+
+
 def case_autocommit_scope(s):
     c = s.fresh()
     q(c, "SET autocommit=0")
@@ -335,6 +388,18 @@ def case_warnings_errors(s):
     assert affected==1 and warnings==[["Warning",1062]] and bad==[1054,"42S22"], (affected,warnings,bad)
     assert final==[[1,10],[2,20],[3,30]], final
     return [affected,warnings,bad,final]
+
+
+def case_bounded_warnings(s):
+    c=s.fresh()
+    affected=s.sql(c,"INSERT IGNORE INTO t VALUES "+",".join("(1,99,99)" for _ in range(70)))
+    total=q(c,"SELECT @@warning_count")
+    messages=q(c,"SHOW WARNINGS")
+    assert affected==0 and total==[[70]] and len(messages)==64, (affected,total,len(messages))
+    assert all(row[:2]==["Warning",1062] for row in messages), messages
+    rows=s.sql(c,"SELECT id,v FROM t ORDER BY id")
+    assert rows==[[1,10],[2,20]], rows
+    return [affected,total,len(messages),rows]
 
 
 def case_rc_paged_snapshot(s):

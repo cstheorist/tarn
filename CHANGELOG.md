@@ -87,6 +87,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   memtx/vinyl release controls for text/binary protocols. Expose effective,
   active and pending isolation, refuse an exact MySQL-isolation mode, and
   report gateway-global isolation/lock timeout independently of session values.
+  Duplicate rows skipped by `INSERT IGNORE` now report 1062 warnings; retain
+  at most 64 messages while preserving the total count, without accumulating
+  diagnostics from aborted autocommit attempts.
 
 - Request-specific quorum freshness for default SQL and strong storage
   reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty

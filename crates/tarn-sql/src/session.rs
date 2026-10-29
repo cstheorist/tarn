@@ -145,6 +145,7 @@ pub struct Session {
     client_collation: String,
     /// Warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
+    omitted_warnings: usize,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
     lazy_wait_timeout: u64,
@@ -156,6 +157,26 @@ pub struct Warning {
     pub level: &'static str,
     pub code: u16,
     pub message: String,
+}
+
+/// Keep diagnostic storage bounded while preserving the full warning count.
+#[derive(Default)]
+struct DmlWarnings {
+    messages: Vec<Warning>,
+    total: usize,
+}
+
+impl DmlWarnings {
+    fn duplicate(&mut self, error: SqlError) {
+        self.total += 1;
+        if self.messages.len() < 64 {
+            self.messages.push(Warning {
+                level: "Warning",
+                code: error.code,
+                message: error.message,
+            });
+        }
+    }
 }
 
 /// A finding of the tree checks as a warning or error message.
@@ -430,6 +451,7 @@ impl Session {
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
+            omitted_warnings: 0,
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
             lazy_wait_timeout: 5,
@@ -440,7 +462,7 @@ impl Session {
     /// Number of warnings and notes of the last statement (the count OK and
     /// EOF packets carry).
     pub fn warning_count(&self) -> u16 {
-        self.warnings.len().min(u16::MAX as usize) as u16
+        (self.warnings.len() + self.omitted_warnings).min(u16::MAX as usize) as u16
     }
 
     pub fn warnings(&self) -> &[Warning] {
@@ -481,7 +503,7 @@ impl Session {
             overrides: Some(&self.sys_vars),
             collation_connection: &self.collation_connection,
             collation_server: &self.cluster.cfg.default_collation,
-            warning_count: self.warnings.len(),
+            warning_count: self.warnings.len() + self.omitted_warnings,
         }
     }
 
@@ -800,6 +822,7 @@ impl Session {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !admin::reads_diagnostics(sql) {
             self.warnings.clear();
+            self.omitted_warnings = 0;
         }
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
@@ -1005,6 +1028,7 @@ impl Session {
             .is_some_and(|p| matches!(p.admin, Some(Admin::ShowWarnings { .. })))
         {
             self.warnings.clear();
+            self.omitted_warnings = 0;
         }
         let rp = self.restart_point();
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
@@ -1403,12 +1427,15 @@ impl Session {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
             let snapshot = txn.writes.clone();
+            let mut warnings = DmlWarnings::default();
             let res = match check_defs(&txn, stmt_tables(stmt)) {
                 Err(e) => Err(e),
-                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None).await,
+                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None, &mut warnings).await,
             };
             if res.is_err() {
                 txn.writes = snapshot; // statement atomicity
+            } else {
+                self.note_dml_warnings(warnings);
             }
             let res = res.map(|(n, id)| self.dml_output(n, id));
             return self.finish_txn_stmt(txn, res);
@@ -1428,7 +1455,11 @@ impl Session {
         let mut attempt = 0;
         loop {
             let mut txn = self.new_txn(false);
-            let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
+            let mut warnings = DmlWarnings::default();
+            let res = match self
+                .dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref(), &mut warnings)
+                .await
+            {
                 Ok(r) => self.commit_tracked(txn).await.map(|_| r),
                 Err(e) => {
                     txn.rollback(&self.cluster);
@@ -1436,7 +1467,10 @@ impl Session {
                 }
             };
             match res {
-                Ok((n, id)) => return Ok(self.dml_output(n, id)),
+                Ok((n, id)) => {
+                    self.note_dml_warnings(warnings);
+                    return Ok(self.dml_output(n, id));
+                }
                 Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
@@ -1457,6 +1491,11 @@ impl Session {
             last_insert_id: insert_id.unwrap_or(0),
             info: String::new(),
         }
+    }
+
+    fn note_dml_warnings(&mut self, warnings: DmlWarnings) {
+        self.omitted_warnings += warnings.total - warnings.messages.len();
+        self.warnings.extend(warnings.messages);
     }
 
     /// Single-shard autocommit DML that needs no read round trip: one call to
@@ -2093,6 +2132,7 @@ impl Session {
         params: &[Value],
         now: &str,
         pre: Option<&(Vec<Row>, Option<u64>)>,
+        warnings: &mut DmlWarnings,
     ) -> SqlResult<(u64, Option<u64>)> {
         let cx = self.cx(params, now);
         match stmt {
@@ -2202,7 +2242,15 @@ impl Session {
                             self.stage(txn, w, pk_row.as_ref()).await?;
                             affected += 1 + deleted + pk_row.is_some() as u64;
                         }
-                        Some(_) if p.ignore => {}
+                        Some(_) if p.ignore => {
+                            let idx = if pk_row.is_some() {
+                                t.pk()
+                            } else {
+                                &t.indexes[uniq[0].0]
+                            };
+                            let shown: Vec<String> = idx.cols.iter().map(|&c| row[c].to_string()).collect();
+                            warnings.duplicate(SqlError::dup_key(&shown.join("-"), &idx.name));
+                        }
                         Some(_) => {
                             return Err(match (&pk_row, uniq.first()) {
                                 (Some(_), _) | (None, None) => {
