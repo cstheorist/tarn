@@ -40,6 +40,7 @@ pub enum Admin {
         table: String,
     },
     ShowVariables {
+        global: bool,
         like: Option<String>,
     },
     ShowStatus {
@@ -264,14 +265,15 @@ pub fn sysvar_name(name: &str) -> String {
 pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
     let (autocommit, db) = (sv.autocommit, sv.db);
     let n = sysvar_name(name);
-    if name.trim_start_matches('@').to_ascii_lowercase().starts_with("global.") {
+    let global = name.trim_start_matches('@').to_ascii_lowercase().starts_with("global.");
+    if global {
         match n.as_str() {
             "tx_isolation" | "transaction_isolation" => return Some(Value::str(sv.global_isolation.name())),
             "innodb_lock_wait_timeout" => return Some(Value::Int(sv.global_lock_wait_timeout.round() as i64)),
             _ => {}
         }
     }
-    if let Some(v) = sv.overrides.and_then(|o| o.get(&n)) {
+    if let Some(v) = sv.overrides.filter(|_| !global).and_then(|o| o.get(&n)) {
         return Some(v.clone());
     }
     Some(match n.as_str() {
@@ -279,7 +281,7 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         "version_comment" => Value::str(SERVER_VERSION_COMMENT),
         "version_compile_os" => Value::str("Linux"),
         "version_compile_machine" => Value::str("x86_64"),
-        "autocommit" => Value::Int(autocommit as i64),
+        "autocommit" => Value::Int((global || autocommit) as i64),
         "tx_isolation" | "transaction_isolation" => Value::str(sv.isolation.name()),
         "tarn_isolation_contract" => Value::str("TARN"),
         "tarn_effective_isolation" => Value::str(sv.isolation.effective_name()),
@@ -298,7 +300,11 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         | "character_set_server"
         | "character_set_database"
         | "character_set_system" => Value::str("utf8mb4"),
-        "collation_connection" => Value::str(sv.collation_connection),
+        "collation_connection" => Value::str(if global {
+            sv.collation_server
+        } else {
+            sv.collation_connection
+        }),
         "collation_server" | "collation_database" => Value::str(sv.collation_server),
         "sql_mode" => Value::str("STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"),
         "time_zone" => Value::str("SYSTEM"),
@@ -1046,6 +1052,11 @@ pub fn typed_item(scope: VarScope, name: &str, val: &Value, bare_sysvar: bool) -
     };
     Ok(Some(match name {
         "autocommit" => {
+            if scope == VarScope::Global {
+                return Err(SqlError::unsupported(
+                    "SET GLOBAL autocommit (only session autocommit is supported)",
+                ));
+            }
             let on = match val {
                 Value::Int(i) => *i != 0,
                 Value::UInt(u) => *u != 0,
@@ -1082,7 +1093,10 @@ pub fn typed_item(scope: VarScope, name: &str, val: &Value, bare_sysvar: bool) -
 
 fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
     let full = t.is("FULL");
-    let _ = t.is("GLOBAL") || t.is("SESSION");
+    let global = t.is("GLOBAL");
+    if !global {
+        t.is("SESSION");
+    }
     let w = t.next().unwrap_or_default().to_ascii_uppercase();
     Ok(match w.as_str() {
         "DATABASES" | "SCHEMAS" => Admin::ShowDatabases { like: like_clause(t) },
@@ -1126,7 +1140,10 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
             }
             Admin::ShowIndex { db, table }
         }
-        "VARIABLES" => Admin::ShowVariables { like: like_clause(t) },
+        "VARIABLES" => Admin::ShowVariables {
+            global,
+            like: like_clause(t),
+        },
         "STATUS" => Admin::ShowStatus { like: like_clause(t) },
         "WARNINGS" => Admin::ShowWarnings { errors: false },
         "ERRORS" => Admin::ShowWarnings { errors: true },
@@ -1230,6 +1247,14 @@ mod tests {
         }
         assert_eq!(Isolation::ReadUncommitted.effective_name(), "READ-COMMITTED");
         assert_eq!(Isolation::Serializable.effective_name(), "STRICT-SERIALIZABLE");
+        assert_eq!(recognize("SET GLOBAL autocommit=1").unwrap_err().code, 1235);
+        assert_eq!(
+            recognize("SHOW GLOBAL VARIABLES LIKE 'transaction_isolation'").unwrap(),
+            Some(Admin::ShowVariables {
+                global: true,
+                like: Some("transaction_isolation".into())
+            })
+        );
     }
 
     #[test]

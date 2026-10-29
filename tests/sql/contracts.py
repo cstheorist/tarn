@@ -89,7 +89,9 @@ def case_session_scope(s):
         b = q(s.connect(), "SELECT @@transaction_isolation, @@innodb_lock_wait_timeout")
         assert a == [["READ-COMMITTED", "SERIALIZABLE", 7, 2]], a
         assert b == [["READ-COMMITTED", 7]], b
-        return [a, b]
+        shown = q(c, "SHOW GLOBAL VARIABLES LIKE 'transaction_isolation'")
+        assert shown == [["transaction_isolation","READ-COMMITTED"]], shown
+        return [a, b, shown]
     finally:
         q(c, "SET GLOBAL transaction_isolation=%s", (old[0],))
         q(c, "SET GLOBAL innodb_lock_wait_timeout=%s", (old[1],))
@@ -109,6 +111,28 @@ def case_rc_visibility(s):
     out = [first, second, own, s.sql(b, "SELECT v FROM t WHERE id=1")]
     assert out == [[[10]], [[30]], [[31]], [[30]]], out
     return out
+
+
+def case_global_unsupported_refusal(s):
+    c=s.fresh()
+    original=q(c,"SELECT @@global.autocommit, @@global.sql_mode")[0]
+    try:
+        q(c,"SET autocommit=0")
+        s.sql(c,"UPDATE t SET v=44 WHERE id=1")
+        ac=error(lambda:q(c,"SET GLOBAL autocommit=1"))
+        sm=error(lambda:q(c,"SET GLOBAL sql_mode='NO_AUTO_VALUE_ON_ZERO'"))
+        expected=[1235,"42000"] if s.kind=="tarn" else None
+        assert ac==expected and sm==expected, (ac,sm)
+        assert q(c,"SELECT @@autocommit, @@session.sql_mode")==[[0,MODE]]
+        q(c,"ROLLBACK")
+        q(c,"SET autocommit=1")
+        final=s.sql(c,"SELECT v FROM t WHERE id=1")
+        assert final==[[10]], final
+        return [ac,sm,final]
+    finally:
+        if s.kind!="tarn":
+            q(c,"SET GLOBAL autocommit=%s",(original[0],))
+            q(c,"SET GLOBAL sql_mode=%s",(original[1],))
 
 
 def case_savepoint_statement_rollback(s):
@@ -193,6 +217,7 @@ def case_nowait_skip_locked(s):
 
 def case_ddl_implicit_commit(s):
     c = s.fresh()
+    q(c, "DROP TABLE IF EXISTS ddl_cut")
     q(c, "BEGIN")
     s.sql(c, "UPDATE t SET v=50 WHERE id=1")
     q(c, "CREATE TABLE ddl_cut (id INT PRIMARY KEY)")
@@ -301,6 +326,70 @@ def case_binary_parameters(s):
     return [out,changed,rows]
 
 
+def case_warnings_errors(s):
+    c=s.fresh()
+    affected=s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99),(3,30,33)")
+    warnings=[row[:2] for row in q(c,"SHOW WARNINGS")]
+    bad=error(lambda:s.sql(c,"SELECT missing_column FROM t"))
+    final=s.sql(c,"SELECT id,v FROM t ORDER BY id")
+    assert affected==1 and warnings==[["Warning",1062]] and bad==[1054,"42S22"], (affected,warnings,bad)
+    assert final==[[1,10],[2,20],[3,30]], final
+    return [affected,warnings,bad,final]
+
+
+def case_rc_paged_snapshot(s):
+    c=s.fresh()
+    q(c,"TRUNCATE TABLE t")
+    q(c,"ALTER TABLE t ADD KEY by_v(v)")
+    n=10000  # More than PAGE_ROWS=4096 on each of two balanced shards.
+    for first in range(1,n+1,500):
+        q(c,"INSERT INTO t VALUES "+",".join(f"({i},{i},NULL)" for i in range(first,first+500)))
+    a,b=s.connect(),s.connect()
+    for x in (a,b):
+        q(x,"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+    q(a,"BEGIN")
+    start,stop=threading.Event(),threading.Event()
+    writes,errors=[],[]
+    def writer():
+        try:
+            assert start.wait(10)
+            for i in range(30):
+                if stop.is_set(): break
+                key=1+(i*997)%n
+                s.sql(b,"UPDATE t SET v=v+20000 WHERE id=%s",(key,))
+                writes.append(time.monotonic())
+                time.sleep(.002)
+        except Exception as e:
+            errors.append(repr(e))
+    thread=threading.Thread(target=writer,daemon=True)
+    thread.start()
+    reads=[]
+    start.set()
+    try:
+        for _ in range(6):
+            began=time.monotonic()
+            try:
+                rows=s.sql(a,"SELECT id FROM t WHERE v>=0 ORDER BY v")
+                ended=time.monotonic()
+                ids=[r[0] for r in rows]
+                assert len(ids)==n and set(ids)==set(range(1,n+1)), "clipped/duplicate/incomplete successful scan"
+                reads.append({"begin":began,"end":ended,"rows":len(ids),"error":None})
+            except mysql.connector.Error as e:
+                ended=time.monotonic()
+                assert s.kind=="tarn" and [e.errno,e.sqlstate]==[1213,"40001"], repr(e)
+                reads.append({"begin":began,"end":ended,"rows":None,"error":[e.errno,e.sqlstate]})
+            if sum(r["error"] is None for r in reads)>=3 and not thread.is_alive(): break
+        q(a,"COMMIT")
+    finally:
+        stop.set()
+        thread.join(15)
+    assert not thread.is_alive() and not errors and len(writes)==30, (errors,len(writes))
+    assert sum(r["error"] is None for r in reads)>=3, reads
+    overlap=sum(any(r["begin"]<=w<=r["end"] for w in writes) for r in reads)
+    assert overlap>0, "no observed write completion during a scan"
+    return {"rows":n,"writes":len(writes),"overlapping_reads":overlap,"reads":reads}
+
+
 def case_rr_validation_difference(s):
     a = s.fresh()
     b = s.connect()
@@ -334,7 +423,9 @@ def case_write_skew_difference(s):
 def case_isolation_reporting(s):
     c = s.connect()
     if s.kind != "tarn":
-        return error(lambda: q(c, "SELECT @@tarn_effective_isolation"))
+        e = error(lambda: q(c, "SELECT @@tarn_effective_isolation"))
+        assert e == [1193, "HY000"], e
+        return e
     q(c, "SET transaction_isolation='REPEATABLE-READ'")
     defaults = q(c, "SELECT @@transaction_isolation, @@tarn_effective_isolation, @@tarn_active_isolation")
     assert defaults == [["REPEATABLE-READ","STRICT-SERIALIZABLE",None]], defaults

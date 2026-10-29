@@ -560,6 +560,20 @@ impl Session {
             self.user_vars.insert(user.to_string(), v);
             return Ok(());
         }
+        // Unsupported GLOBAL assignments must not mutate session behavior
+        // (notably sql_mode) or report an unimplemented server default.
+        if scope == VarScope::Global
+            && !name.starts_with("tarn_")
+            && !matches!(
+                name,
+                "transaction_isolation" | "tx_isolation" | "innodb_lock_wait_timeout"
+            )
+        {
+            return Err(SqlError::unsupported(format!(
+                "SET GLOBAL {} (no mutable server default)",
+                name
+            )));
+        }
         if name == "names" {
             // SET NAMES charset [COLLATE collation]
             let mut words = rhs.split_whitespace();
@@ -729,7 +743,10 @@ impl Session {
         }
         if scope == VarScope::Global {
             // Only the variables typed above have server-wide defaults.
-            return Ok(());
+            return Err(SqlError::unsupported(format!(
+                "SET GLOBAL {} (no mutable server default)",
+                name
+            )));
         }
         match value {
             None => {
@@ -3101,11 +3118,16 @@ impl Session {
                     .collect();
                 rows_out(cols(&c), rows)
             }
-            Admin::ShowVariables { like } => {
+            Admin::ShowVariables { global, like } => {
                 let mut rows = Vec::new();
                 for name in admin::SHOWN_VARIABLES {
-                    if like_ci(name, &like) {
-                        let v = admin::system_var(name, &self.session_vars()).unwrap_or(Value::Null);
+                    if like_ci(name, &like) && !(global && name.starts_with("tarn_")) {
+                        let scoped = if global {
+                            format!("global.{name}")
+                        } else {
+                            name.to_string()
+                        };
+                        let v = admin::system_var(&scoped, &self.session_vars()).unwrap_or(Value::Null);
                         rows.push(vec![Value::str(name), Value::Str(v.to_text().unwrap_or_default())]);
                     }
                 }

@@ -28,6 +28,9 @@ Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8m
 | `rr_phantom_difference` | difference | A REPEATABLE READ predicate invalidated by an insert fails Tarn commit validation; MySQL can commit its snapshot. |
 | `noop_serializable_difference` | difference | An unchanged serializable UPDATE holds no Tarn write lock; InnoDB still locks the matched row. |
 | `deadlock_rollback` | equivalent | A two-row deadlock aborts one entire transaction with 1213/40001; the survivor commits exactly one increment per key. |
+| `global_unsupported_refusal` | rejected | Unsupported GLOBAL autocommit/sql_mode assignments fail with 1235/42000 before changing session behavior or committing buffered writes. Only isolation and lock-timeout have mutable gateway defaults. |
+| `warnings_errors` | equivalent | INSERT IGNORE preserves accepted rows and reports warning level/code 1062; unknown columns report 1054/42S22. Error message wording is outside this entry. |
+| `rc_paged_snapshot` | difference | A 10,000-row indexed READ COMMITTED scan overlapping bounded key movement must return every key once. Tarn may explicitly refuse a read with 1213/40001; InnoDB reads its statement snapshot. At least three complete scans and observed overlap are required. |
 
 Both ordinary text and binary prepared executions are required. `CLIENT_FOUND_ROWS` is checked in both modes. A registered equivalent case must match both servers and its explicit expected result. Difference/refusal cases assert each server's stated behavior rather than accepting any mismatch. A failed case remains in the result file and fails the job.
 
@@ -37,7 +40,7 @@ The dedicated workflow runs native/Lua storage and memtx/vinyl RF3 clusters. The
 
 `@@transaction_isolation` remains the requested session default, including the legacy `REPEATABLE-READ` alias. `@@tarn_effective_isolation` exposes its actual default: `STRICT-SERIALIZABLE` for SERIALIZABLE/REPEATABLE READ, `READ-COMMITTED` for READ COMMITTED/READ UNCOMMITTED. `@@tarn_next_isolation` reports an unconsumed one-shot SET TRANSACTION setting or NULL. `@@tarn_active_isolation` reports the active transaction's effective mode or NULL; changing the session default does not change an active transaction.
 
-These Tarn diagnostics are read-only session variables. `@@global.transaction_isolation` and `@@global.innodb_lock_wait_timeout` report the gateway's defaults, independently of session overrides. Global defaults are gateway-local, not cluster-wide, and affect new connections only.
+These Tarn diagnostics are read-only session variables. `@@global.transaction_isolation`, `@@global.innodb_lock_wait_timeout` and SHOW GLOBAL VARIABLES report gateway defaults independently of session overrides. Global defaults are gateway-local, not cluster-wide, and affect new connections only. Other GLOBAL assignments (including autocommit and sql_mode) are explicitly unsupported with 1235/42000; they do not alter session behavior or commit pending work.
 
 `SET SESSION tarn_isolation_contract='MYSQL'` refuses an exact MySQL-isolation request with 1235/42000, without committing or discarding buffered writes. `TARN` (also DEFAULT) acknowledges the documented contract. Clients migrating from the REPEATABLE READ alias should explicitly select SERIALIZABLE when they want Tarn's strong contract, and handle known 1213/40001 aborts. Applications requiring InnoDB's exact snapshot/current-read behavior cannot select it in this release. 1180/40003 remains outcome unknown and must not trigger automatic mutation replay.
 
