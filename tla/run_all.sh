@@ -43,6 +43,7 @@ for cfg in "$@"; do
     Fairness*|Bug_Fairness*) module=RecoveryFairness.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;
+    EngineBuildReentry|Bug_EngineBuild*) module=EngineBuildReentry.tla ;;
     *) module=MC.tla ;;
   esac
   start=$(date +%s)

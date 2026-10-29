@@ -835,3 +835,24 @@ mk_plain_lazy Bug_PlainLazyPending pending IgnorePending
 mk_plain_lazy Bug_PlainLazyFirstWriteOnly mixed FirstWriteOnly
 mk_plain_lazy Bug_PlainLazyReplaceReadset history ReplaceOriginal
 mk_plain_lazy Bug_PlainLazyGlobalStale unrelated RejectGlobalStale
+
+# One original BUILD discards pre-cut pages and reacquires current evidence.
+mk_engine_build () {
+    local name=$1 profile=$2 bug=$3 flag value
+    {
+        echo 'SPECIFICATION Spec'
+        echo 'CONSTANTS'
+        echo "  Profile = \"$profile\""
+        for flag in ReusePage CallerOnlyCut KeepPrefix; do
+            value=FALSE; [ "$flag" = "$bug" ] && value=TRUE
+            echo "  Bug$flag = $value"
+        done
+        echo 'INVARIANTS TypeOK PreparedImage OwnerCertified CertifiedRetained CutOnlyNoRecopy'
+        [ "$name" != EngineBuildReentry ] || echo 'PROPERTY OriginalBuildCompletes'
+        echo 'CHECK_DEADLOCK FALSE'
+    } > "$name.cfg"
+}
+mk_engine_build EngineBuildReentry all ''
+mk_engine_build Bug_EngineBuildReusePage capture ReusePage
+mk_engine_build Bug_EngineBuildCallerOnlyCut capture CallerOnlyCut
+mk_engine_build Bug_EngineBuildKeepPrefix capture KeepPrefix

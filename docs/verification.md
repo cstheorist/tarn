@@ -1845,12 +1845,58 @@ tla/check.sh PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture \
   Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale
 ```
 
+### Re-entering one engine BUILD after a lost cut (issue #165)
+
+`EngineBuildReentry.tla` starts one original BUILD at a successful-return,
+pre-effect checkpoint. A saved baseline page predates a known native cut
+invalidation. Before further effects, BUILD discards the page, reacquires
+current terminal-ticket and queue evidence, and rereads ownership, phase
+and capture. Cut-only loss keeps the copied prefix and captured dirty keys;
+capture loss resets the incomplete generation and recopies. An uncertified
+`preparing` receipt with an invalid track follows that recopy path.
+Certified `prepared`/`applying`/`published` images are handled before reset.
+A newer cut epoch invalidates a saved page even if readiness has already
+been rebuilt by the time the original request resumes.
+
+The two-key positive model checks `PreparedImage`, `OwnerCertified`,
+`CertifiedRetained` and `CutOnlyNoRecopy`, exploring 1,500 distinct states to
+depth 14. Under one finite invalidation and weak fairness of native
+terminal/queue completion and the original BUILD's successful actions,
+`OriginalBuildCompletes` reaches certification or an ownership refusal.
+Three sensitivity controls reach an actual wrong PREPARED shadow image:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_EngineBuildReusePage` | 747 | 10 | `PreparedImage`: an old payload is relabelled with a current capture/cut lease |
+| `Bug_EngineBuildCallerOnlyCut` | 2,058 | 13 | `PreparedImage`: a submitted old effect outlives its caller and overwrites a new page before final queue settlement |
+| `Bug_EngineBuildKeepPrefix` | 764 | 9 | `PreparedImage`: an incomplete prefix misses a source change during lost capture |
+
+Every control retains the generic owner, current-cut and capture checks.
+Their final states have settled old tickets/queue and current ownership,
+but shadow data differs from the source. Old pending shadow effects and
+their terminal mapping are conservative compositional inputs; the model
+does not claim that the observed CI builder had such an effect or prove
+its full native reachability. Confirmed page effects and final source-tail
+ordering retain the `EngineCopy`/`EngineSourceDrain` premises.
+
+There is no retry action for helper, page-transaction, final-guard or commit
+exceptions, no second RPC, and no replay of an uncertain effect. The runtime
+keeps its original deadline and eight-reset limit; this finite model does
+not establish completion within either bound, under repeated invalidation,
+or after arbitrary mid-helper failures. Native WAL, replication and the
+full runtime remain outside this local contract.
+
+```sh
+tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
+  Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
+```
+
 ### Configuration counts
 
-The default list contains 259 unique configurations: 68 positive
-outcomes and 191 expected broken/trade-off outcomes. The 266 generated
+The default list contains 263 unique configurations: 69 positive
+outcomes and 194 expected broken/trade-off outcomes. The 270 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 272 total. Explicit
+placement configurations are maintained directly, for 276 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1878,11 +1924,17 @@ The final report-head CI/validation attestation is a separate publication
 gate; a previous run is never represented as execution of changed models.
 The seven plain lazy-binding cases subsequently completed the registered
 checker with the outcomes above. The original 252-case prefix, model/config
-bytes and module dispatch remain unchanged. This forms the current 259-case
-union; it is not a claim that a new full 259-case CI run has completed. The
-generator reproduces twice without changes. The current proof inventory is
-325 files: 309 TLA+ model/config files, 11 verified-crate source/test/manifest
-files and five formal runner/inspection scripts. Verus bodies are unchanged.
+bytes and module dispatch remain unchanged. CI run
+[40876376448](https://github.com/cstheorist/tarn/actions/runs/40876376448)
+then completed all 259 cases with 68 positive and 191 expected control
+outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
+The four BUILD re-entry cases subsequently completed separately, preserving
+the original 259-case prefix, model/config bytes and module dispatch. This
+forms the current 263-case union, not execution of a new full 263-case CI
+run. The generator reproduces twice without changes. The current proof
+inventory is 330 files: 314 TLA+ model/config files, 11 verified-crate
+source/test/manifest files and five formal runner/inspection scripts.
+Verus bodies are unchanged.
 
 ## Verus proofs
 
@@ -2091,6 +2143,51 @@ complete lazy DDL protocol. The original RF3 and live-fault suites remain
 required. SQL fresh-table diagnostics retain the failed phase, commit ACK,
 cleanup and independent row observation; an unknown outcome stays unknown.
 These checks establish no benchmark improvement or general DDL liveness.
+
+### Engine BUILD re-entry runtime boundary (reopened issue #165)
+
+A status notification can revoke the engine cut after BUILD's initial
+readiness check, including after a confirmed `copying` receipt and before
+its first shadow page. The engine meter has no background rebuilder. Its
+UNKNOWN state therefore remains a safe refusal until another engine entry
+establishes a cut. BUILD now checks readiness before start and at loop
+re-entry, rereads the owned receipt and capture, and discards local work
+when a successful reset or confirmed page read outlives that evidence.
+It compares the sampled ticket epoch even if another operation has already
+rebuilt readiness. Lost capture resets the incomplete generation; cut-only
+rebuilding retains a valid capture. Certified phases are handled before
+any reset, and the existing uncertified `preparing` recovery remains valid.
+
+This is pre-effect re-entry inside the same original BUILD. Generic
+transaction/cut/invalidation helpers, final epoch/capture/role/ownership
+checks and exception classification are unchanged. Any exception from
+start, reset, refresh, a submitted page transaction or commit still escapes.
+There is no catch-and-retry of a closure or RPC, and no progress promise
+through those errors. The original deadline and eight-reset limit remain
+runtime checks. A same-observed-role notification is not assumed harmless:
+coalesced observations cannot exclude an intervening physical role change.
+
+`engine_cut_test.lua` is an RF1/fsync mechanism witness, separate from RF3
+process loss. It holds a real registered initial `box.status` callback and
+releases it after reset or after the original confirmed source-page read.
+The second schedule identifies the original read frame, descriptor, tuple
+page and PK cursor without replacing its result. Real gap writes change
+the source while capture is invalid. The same one BUILD must recapture
+before writing a fresh page, reconcile later acknowledged mutations and a
+rollback extra, and publish the exact image through PREPARE/APPLY. Its
+wrappers observe only the owned worker and restore original functions.
+Baseline controls retain the exact 1213 refusal and empty copying receipt.
+Existing detached-shadow/terminal, source-drain, engine/cutover and RF3
+leader-loss checks remain required.
+
+The retained CI counters and exact-source call graph single out a
+same-observed-RO status callback as the historical post-track hard loss,
+conditional on the normal one-init fixture and no out-of-band invalidation.
+They do not identify its payload, producer or exact delivery boundary.
+The observation-only RF3 run establishes repeated same-role deliveries;
+the scheduled RF1 witness establishes the refusal mechanism. A later
+successful run is separate evidence, not a retrospective fault diagnosis
+or a benchmark improvement.
 
 ## Continuous integration
 
