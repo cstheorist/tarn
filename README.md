@@ -57,7 +57,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and checked with TLC (246 default configurations, including 180
+  and checked with TLC (252 default configurations, including 185
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -158,7 +158,8 @@ shard's CPU per statement
 ([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
 The [strong-read cost study](bench/STRONG_READ_FRESHNESS.md) compares the
-current Lua and native batch paths with the same freshness guarantee across
+Lua and native batch paths at its pinned checkpoint with the same freshness
+guarantee across
 RF1, RF3 and SQL: 72 accepted phases and 36 balanced pairs. It covers hot
 read components; the older throughput tables retain their original scope.
 

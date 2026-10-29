@@ -1,9 +1,15 @@
 # Strong-read freshness and matched cost (#130)
 
-This study compares the current Lua and native read paths with the same
+This study compares Lua and native read paths at a pinned checkpoint with the same
 strong-read contract. It does not compare against the earlier unbarriered
 Tarn path or establish a TiDB/YugabyteDB advantage. Historical ABI11 results
 in [NATIVE_BATCH.md](NATIVE_BATCH.md) retain their original scope.
+
+The completed measurement below uses `62cf4c6`. A subsequent withdrawal
+dependency fix changes promise admission and removal accounting. Its live
+regressions and model are described below; a fresh complete matched study
+of that updated runtime is pending. The checkpoint measurements do not
+establish the updated revision's performance.
 
 ## Contract and proof boundary
 
@@ -52,10 +58,10 @@ Lua requires the matching exact integer bounds and retains an additional
 conservative seconds check. These are bounded contracts and executable-body
 proofs, not a complete runtime refinement.
 
-The source-equivalent local native run passed 1,738 printed checks across
+The checkpoint's source-equivalent local native run passed 1,738 printed checks across
 58 sections, including 85 exact-clock checks, 12 deterministic membership
 readiness checks and 360 native differential checks. Counts are not unique
-formal properties. Current both-engine RF3 pause, partition, asymmetric-link
+formal properties. That revision's both-engine RF3 pause, partition, asymmetric-link
 and repeated-leadership tests witness raw stale data and strong-path refusal
 after replacement ACKs. Their old leader is known read-only; the model's
 final-prefix controls and positive live fences remain separate evidence.
@@ -170,7 +176,7 @@ The final PR also tightens the native yielding-input test precondition:
 it refreshes the public bucket map before pausing a replica and records
 cache/status changes. The production and benchmark implementations are
 unchanged. The 32-check focused run requires exact payloads and actual native
-service after the forced yield; the combined final local run passed 1,743
+service after the forced yield; the combined pre-withdrawal-fix local run passed 1,743
 printed checks across 58 sections. Its source/log binding is in the separate
 [final validation attestation](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json).
 The measured revision `62cf4c6` ordinary CI test-setup failure preceded this
@@ -190,6 +196,37 @@ These later failures, controls and current source bindings belong to the
 separate final validation evidence, rather than the immutable measured-data
 archive. The control establishes a matching failure mechanism, not the
 unlogged historical writer's identity.
+
+The later `6984b45` CI passed both storage modes and the SQL/recovery/join
+stages, then grow/shrink left a survivor trying to recover through stopped
+shard 2. Its recorded dshard/parts were unavailable. A deterministic
+three-shard baseline on that immutable source independently demonstrates
+the missing contract: both engines retain a PREPARED/STAGING transaction
+on shard 3 with decision shard 3 and participants `{2,3}`, while shard 2
+is aborted and has no locks; the all-shard removal counters return zero.
+The baseline records 14 passing and 15 expected failed assertions, with no
+fixture exception. Three earlier startup/oracle discoveries remain excluded.
+
+The fix fences supported new promises on every draining dependency and
+tracks their full local/decision/participant scope through confirmation.
+Every shard counts unresolved PREPARED and STAGING references before
+withdrawal. Existing receipts and decided completion remain available;
+recovery still obtains an authoritative missing-participant fence. The
+bounded `DepartureDependencies` positive and five sensitivity checks pass;
+the registry now has 252 cases (67 positive, 185 expected controls), with
+317 proof inputs. A complete execution of that new matrix is pending.
+Verus bodies are unchanged from the 140/0 checkpoint.
+
+Both native-enabled and Lua-only focused runs pass 63 checks: setup,
+authoritative recovery, zero-count and removed-membership acknowledgements,
+actual owned-node-2 loss, survivor strong reads/bucket fencing, and decided
+completion after a final latched clock fault. The local harness uses the
+same public removal gates as Rust; actual SQL withdrawal remains an
+integration-CI gate. An entry-hook case isolates in-flight accounting; its
+later refusal also depends on membership/clock fencing. No exact historical
+transaction reconstruction or native PREPARE kernel proof is claimed.
+The full native suite after the reviewed controller changes passes 1,806
+printed checks across 61 sections, with all 67 frozen Lua inputs recorded.
 
 ## Evidence and publication gates
 

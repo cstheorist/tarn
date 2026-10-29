@@ -751,13 +751,52 @@ function BK.member_state(id)
     return nil
 end
 
--- A shard that leaves must not be needed to finish a transaction: a
--- participant prepared with it as its decision shard asks it for the
--- outcome. So participants refuse a PREPARE whose decision shard is leaving
--- (prepare_locks), and the shard leaves once no shard counts one
--- (tarn_shard_records): BK.prep[dshard] counts the PREPAREs in progress by
--- decision shard, from before their checks until their records are written.
+-- Recovery needs both the decision writer and every participant, including
+-- a missing participant it must fence. A shard leaves only after all shards
+-- acknowledge draining, reject new promises depending on it, and count no
+-- remaining in-flight, PREPARED or STAGING dependency (tarn_shard_records).
+-- Cover the whole promise commit wait: its durable row may not be visible
+-- yet when the membership job asks whether the departing shard is needed.
 BK.prep = {}
+function BK.dependencies(parts, dshard)
+    local deps = {[M.cfg.shard_id] = true}
+    if type(dshard) == 'number' then deps[dshard] = true end
+    if type(parts) == 'table' then
+        for _, id in ipairs(parts) do if type(id) == 'number' then deps[id] = true end end
+    end
+    return deps
+end
+function BK.prep_enter(parts, dshard)
+    local deps = BK.dependencies(parts, dshard)
+    for id in pairs(deps) do BK.prep[id] = (BK.prep[id] or 0) + 1 end
+    return deps
+end
+function BK.prep_leave(deps)
+    for id in pairs(deps) do
+        local n = BK.prep[id] - 1
+        BK.prep[id] = n > 0 and n or nil
+    end
+end
+function BK.depends_on(parts, dshard, id)
+    if id == M.cfg.shard_id or id == dshard then return true end
+    if type(parts) == 'table' then for _, p in ipairs(parts) do if p == id then return true end end end
+    return false
+end
+function BK.inactive_dependency(deps, members)
+    for _, m in ipairs(members and members.shards or {}) do
+        if deps[m.id] and (m.state or 'active') ~= 'active' then return m.id end
+    end
+end
+function BK.promise_dependency(parts, dshard)
+    -- This read belongs to the promise's own transaction. It tracks a
+    -- concurrent membership publication until MVCC validates the commit;
+    -- the in-flight counter then covers the WAL/quorum wait. Also inspect
+    -- the current cache, since a borrowed stream can have an older view.
+    local row = box.space._tarn_meta:get{'members'}
+    local deps = BK.dependencies(parts, dshard)
+    return BK.inactive_dependency(deps, BK.members)
+        or BK.inactive_dependency(deps, row ~= nil and row.value or nil)
+end
 
 -- Changes of the state in memory (states, epoch): tarn_buckets builds its
 -- report once per change.
@@ -4031,11 +4070,12 @@ local function prepare_locks(txid, dshard, parts, writes, rpoints, rranges, lock
     -- locks), and no read of every shard missing a moving bucket's rows.
     local mv = BK.commit_check(wb, rpoints, rranges, true, plans, mver)
     if mv then return {mv[2], mv[3], mv[1]} end
-    -- A decision shard that is leaving the cluster (see BK.prep).
-    local ds = BK.member_state(dshard)
-    if ds ~= nil and ds ~= 'active' then
+    -- No new promise may depend on ANY departing participant, even one
+    -- that never prepared or holds no bucket locks (see BK.prep).
+    local departing = BK.promise_dependency(parts, dshard)
+    if departing ~= nil then
         M.stats.moved = M.stats.moved + 1
-        return {1213, string.format('decision shard %d is leaving the cluster', dshard), 'moved'}
+        return {1213, string.format('transaction depends on shard %d, which is leaving the cluster', departing), 'moved'}
     end
     -- readsOK: no W lock of another prepared txn on anything we read.
     local h = reads_w_locked(txid, rpoints, rranges)
@@ -4296,14 +4336,13 @@ function tarn_prepare(txid, dshard, parts, writes, rpoints, rranges, txn_ts, loc
     return res
 end
 
--- (Counted by decision shard while in progress: see BK.prep.)
+-- Count every dependency before the first receipt barrier can yield.
 do
     local prepare = tarn_prepare
-    function tarn_prepare(txid, dshard, ...)
-        local d = dshard or 0
-        BK.prep[d] = (BK.prep[d] or 0) + 1
-        local ok, res = pcall(prepare, txid, dshard, ...)
-        BK.prep[d] = BK.prep[d] - 1
+    function tarn_prepare(txid, dshard, parts, ...)
+        local deps = BK.prep_enter(parts, dshard)
+        local ok, res = pcall(prepare, txid, dshard, parts, ...)
+        BK.prep_leave(deps)
         if not ok then error(res) end
         -- Legacy gateways already understand expired as neither YES nor NO.
         -- Keep that wire tag for clock/freshness uncertainty as well; the
@@ -4566,6 +4605,13 @@ function tarn_txn_cas(txid, from, to, parts)
         if cur == 'none' then
             local ce = M.clock.check(BK.clock_ids(parts, M.cfg.shard_id))
             if ce then error(box.error.new{code = box.error.TRANSACTION_CONFLICT, reason = ce[3]}) end
+            if to == 'staging' then
+                local departing = BK.promise_dependency(parts, M.cfg.shard_id)
+                if departing ~= nil then
+                    error(box.error.new{code = box.error.TRANSACTION_CONFLICT, reason = string.format(
+                        'transaction depends on shard %d, which is leaving the cluster', departing)})
+                end
+            end
         end
         local t, expires = M.clock.record_time(r)
         box.space._tarn_txn:replace{txid, to, parts or (r and r.parts) or {}, t, expires}
@@ -4578,6 +4624,22 @@ function tarn_txn_cas(txid, from, to, parts)
         error(res)
     end
     return res
+end
+
+-- A public NONE -> STAGING creation is a new promise too. Its entry barrier
+-- can yield, so register dependencies outside it and keep them until the
+-- complete call (including commit/rollback) ends. Existing decisions and
+-- recovery's NONE -> ABORT do not acquire a new promise admission fence.
+do
+    local cas = tarn_txn_cas
+    function tarn_txn_cas(txid, from, to, parts)
+        if from ~= 'none' or to ~= 'staging' then return cas(txid, from, to, parts) end
+        local deps = BK.prep_enter(parts, M.cfg.shard_id)
+        local ok, res = pcall(cas, txid, from, to, parts)
+        BK.prep_leave(deps)
+        if not ok then error(res) end
+        return res
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -7103,20 +7165,23 @@ function tarn_members_set(m)
 end
 
 -- Whether shard `id` may still be needed to finish a transaction here:
--- {'ok', n} with n the PREPAREs in progress that name it as their decision
--- shard and the participants prepared with it as theirs, and on shard `id`
--- itself its decision records in progress. A shard leaves the cluster once
--- every shard reports 0 after it began to leave (see BK.prep).
+-- {'ok', n}, conservatively counting in-flight promises and distinct local
+-- PREPARED/STAGING transactions whose local/decision/participant scope names
+-- it. A durable row can overlap its still-returning in-flight call; only
+-- zero versus nonzero matters. Removal asks every shard after draining ACKs.
 function tarn_shard_records(id)
     M.fresh.barrier()
     writable()
     local n = BK.prep[id] or 0
+    local seen = {}
     for _, p in box.space._tarn_part.index.state:pairs({'prepared'}, {iterator = 'EQ'}) do
-        if p.dshard == id then n = n + 1 end
+        if BK.depends_on(p.parts, p.dshard, id) then n = n + 1; seen[p.txid] = true end
+    end
+    for _, r in box.space._tarn_txn.index.status:pairs({'staging'}, {iterator = 'EQ'}) do
+        if not seen[r.txid] and BK.depends_on(r.parts, M.cfg.shard_id, id) then n = n + 1 end
     end
     if id == M.cfg.shard_id then
         n = n + M.lazy.obligations()
-        n = n + box.space._tarn_txn.index.status:count({'staging'})
     end
     return {OK, n}
 end

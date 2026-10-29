@@ -80,6 +80,8 @@ Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_Pla
 DEFAULT="$DEFAULT PipelineAdmission Bug_PipelineFreeOnCancel Bug_PipelineEarlyRetireRelease
 Bug_PipelineBypassShard Bug_PipelineBypassGlobal Bug_PipelineNormalUsesReserve
 Bug_PipelineForgetCancelledDeadline Bug_PipelineRefuseAfterEnqueue"
+DEFAULT="$DEFAULT DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAdmission
+Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

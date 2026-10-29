@@ -8,6 +8,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Shard withdrawal now drains every unresolved participant dependency
+  ([#130](https://github.com/cstheorist/tarn/issues/130)). New promises are
+  fenced when any dependency is draining, and removal counts in-flight,
+  PREPARED and STAGING references across all surviving shards. A participant
+  that released its own locks remains available while another participant
+  still needs it for recovery. Existing receipts and decided completion
+  remain finishable.
+
 - Recovery and garbage collection could be held up by what they cannot
   resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
   shard was down, 200 undecided transactions that needed it, the first ones

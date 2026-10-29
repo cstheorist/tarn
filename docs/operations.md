@@ -774,12 +774,16 @@ To **remove a shard**, run on any SQL server:
 TARN REMOVE SHARD 2;   -- its buckets move to the other shards, then it leaves
 ```
 
-It marks the shard *draining* on every shard: no bucket moves to it from
-then on, and it decides no new transaction (participants refuse it as a
-decision shard, whose outcome they would have to ask it for). Its buckets
-then move to the active shards, eight at a time, each to the one with the
-fewest; it waits until no participant still needs the shard to learn an
-outcome, and marks it *removed* on every shard. From then on the SQL
+It marks the shard *draining* on every shard. New PREPARE and STAGING
+promises refuse any draining member in their local, decision or participant
+scope. Existing receipts, recovery and decided completion remain available.
+Its buckets then move to the active shards, eight at a time, each to the one
+with the fewest. Removal waits for every shard to report zero in-flight,
+PREPARED and STAGING dependencies on the departing member, including a
+participant that has already released its own locks. The counter covers
+promise confirmation before its durable row becomes visible. Only after
+these dependencies drain does the command mark it *removed* everywhere.
+Keep its storage available through that acknowledgement. From then on the SQL
 servers leave it out -- they learn it as they learn of a shard that joins,
 or when the shard cannot be reached -- and its storage can be stopped; a
 server whose configuration still lists it starts without it. The first

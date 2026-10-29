@@ -82,6 +82,7 @@ of workload, fault budget and options. The names say what is checked:
 | `RecordExpiryClock` / `RecordExpiryPolicy` | a two-skew retention margin under varying bounded clock offsets, plus local persisted-policy/high-water admission after GC |
 | `CompletionRetention` | decided finishing preserves inherited receipt timestamps/horizons despite an unknown clock, preventing GC and a contradictory fresh abort after reboot |
 | `LogicalClockExpiry` | bounded raw corrections produce monotone logical clocks under a fixed common reference band, preserving the two-skew expiry/admission contract |
+| `DepartureDependencies` | publish draining everywhere, fence new admissions, and drain all prepared, staging and in-flight dependencies before stopping a shard |
 | `Fairness` | bounded pass ordering reaches eligible records beyond a fixed stuck set; it does not change record lifecycle or timing guards |
 | `DecisionPlacement` / `Placement_*` | stable decision identity among frozen writers, plus commit/GC checks with another transaction-specific placement |
 | `PipelineAdmission` | connection/shard/gateway resource charges and uncertainty survive cancellation and physical retirement |
@@ -1583,7 +1584,7 @@ and user/protocol writes are atomically durable. It does not establish
 initial clock history, health certification, fault persistence before a
 crash, or native WAL semantics.
 
-The eight positive outcomes are:
+The nine positive outcomes are:
 
 | Configuration | Distinct states | Depth | Principal invariant |
 |---|---:|---:|---|
@@ -1595,17 +1596,19 @@ The eight positive outcomes are:
 | `RecordExpiryPolicy` | 1,368 | 23 | `NoUnsafeAdmission` |
 | `CompletionRetention` | 672 | 25 | `NoContradictoryReopen` |
 | `LogicalClockExpiry` | 85,476 | 19 | `LogicalBand`, `NoFalseNO` |
+| `DepartureDependencies` | 564 | 17 | `NoOrphanPrepared`, `NoOrphanStaging`, `NoNewDependencyAfterDrainACK` |
 
-All 36 focused configurations (eight positive and 28 expected controls) are
-generated and included in the default list. Their recorded outcomes are
-included in the validated 246-case TLC union below; that evidence is not a
-claim that the entire runtime CI suite passed. Per-control states and violated invariants are
+All 42 focused configurations (nine positive and 33 expected controls) are
+generated and included in the default list. The first 36 belong to the
+validated 246-case union below; six departure checks passed separately
+through the registered checker with those prior inputs unchanged. This is
+not a claim that the entire runtime CI suite passed. Per-control states and violated invariants are
 in the generated [design results table](design.md#51-model-checking).
 Run only these checks with the same outcome checker as CI:
 
 ```sh
-configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention LogicalClockExpiry)
-for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention LogicalClock; do
+configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention LogicalClockExpiry DepartureDependencies)
+for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention LogicalClock Departure; do
   for cfg in tla/Bug_${family}*.cfg; do
     name=${cfg#tla/}
     configs+=("${name%.cfg}")
@@ -1722,12 +1725,81 @@ before cluster startup and requires a matching gateway age limit. Adapting
 that setup does not rerun the historical measurements. This is a placement workload;
 it does not establish an RF3 performance or operational advantage.
 
+### Drain every dependency before removing a shard (issue #130)
+
+`DepartureDependencies.tla` checks the protocol boundary that permits a
+logical shard's storage to stop. A survivor's PREPARED or STAGING record
+can still name the retiring shard in its participant set even when another
+shard holds the decision. Moving its buckets and counting only records
+whose decision is the retiring shard does not establish that it is unneeded.
+Recovery still needs the absent participant to obtain a safe fence; an
+unreachable or removed peer is not a NO vote or an invented NONE receipt.
+
+The finite model has decision shard 1, retiring participant 2 and survivor 3,
+one delayed operation, and per-node draining publication. The operation
+creates either a survivor PREPARED receipt or a decision STAGING receipt.
+Participant 2 has no receipt. Every node must acknowledge draining before
+any zero-dependency gate is read. The gates count all confirmed PREPARED
+and STAGING references, including non-decision participants, and operation
+dependencies registered before the first yield and held through commit or
+rollback. Counts can conservatively overlap; only zero versus nonzero matters.
+
+New admission checks both current membership and its transaction's member
+read, including commit validation of that read. The network can deliver a
+request after a gate already returned zero. Closing new admission prevents
+that request from creating a dependency. An old already validated promise
+can instead be pending WAL when draining is acknowledged and confirm later;
+its in-flight registration must keep removal blocked until the receipt is
+visible and resolved. `NoNewDependencyAfterDrainACK` concerns first
+admission after all acknowledgements, rather than delayed confirmation or
+YES replies from an earlier admission. It is checked at actual durable
+receipt creation, not merely at an early boolean guard.
+
+The positive checks `NoOrphanPrepared`, `NoOrphanStaging` and that admission
+property in 564 distinct states, depth 17. With weak fairness of publication,
+gate, request and recovery actions, `HealthyDrainCompletes` also checks
+eventual removal when required clock health remains available.
+`DecidedCompletion` checks that an existing decision eventually releases
+its receipts even if the local clock faults. New absence-based fencing
+still requires health; persistent unknown health can intentionally prevent
+removal. Healthy needed peers, sound membership/MVCC/WAL semantics and
+balanced runtime counters remain premises, not conclusions of this model.
+
+The five controls reach these concrete consequences:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_DepartureDecisionOnly` | 301 | 14 | `NoOrphanPrepared`: a non-decision participant reference survives removal |
+| `Bug_DepartureLateAdmission` | 490 | 15 | `NoOrphanPrepared`: a delayed request creates its receipt after the peer stops |
+| `Bug_DepartureIgnoreStaging` | 301 | 14 | `NoOrphanStaging`: the unresolved decision still needs the stopped participant |
+| `Bug_DepartureUntrackedWal` | 341 | 14 | `NoOrphanPrepared`: an old pending promise confirms after an untracked gate passes |
+| `Bug_DepartureNoCommitCheck` | 208 | 9 | `NoNewDependencyAfterDrainACK`: an old transaction image creates a new durable promise after draining acknowledgements |
+
+In the first four traces participant 2 is actually offline, the survivor's
+receipt is durable, the missing participant has no receipt, and no decision
+exists. Recovery cannot fabricate its missing fence. The late-admission
+control omits the earlier admission assertion to reach this actual orphan.
+The commit-validation control creates an actual late durable promise;
+tracking can still prevent its removal, so it does not claim an orphan.
+
+Confirmed-row visibility and pending WAL/RPC lifetime are deliberately
+separate in this model. A runtime fresh-prefix wait may independently
+settle pending WAL; the model does not rely on it as a substitute for
+tracking the request. This conservative boundary is not a native WAL or
+full-runtime refinement proof. It leaves the existing no-vote/expiry,
+immutable decision identity and uncertain-outcome contracts unchanged.
+
+```sh
+tla/check.sh DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAdmission \
+  Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck
+```
+
 ### Configuration counts
 
-The merged default list contains 246 unique configurations: 66 positive
-outcomes and 180 expected broken/trade-off outcomes. The 253 generated
+The default list contains 252 unique configurations: 67 positive
+outcomes and 185 expected broken/trade-off outcomes. The 259 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 259 total. Explicit
+placement configurations are maintained directly, for 265 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1741,8 +1813,12 @@ retention cases then passed separately with those 241 model/config inputs
 and dispatch unchanged, forming 243 cases. Three logical-clock expiry
 cases then passed through the current checker, with all 243 prior model/
 config bytes and dispatch checked unchanged. Their exact argument union
-is the current 246-case default list. This validates the TLC inputs without
-treating the premerge run as evidence for changed models.
+was the 246-case default list. Six departure-dependency checks then passed
+the registered checker with all prior model/config bytes and module
+dispatch unchanged, forming the current 252-case input union. Its generator
+reproduced twice without changes. A complete 252-case CI execution has not
+yet been recorded here. This validates the separate inputs without treating
+the premerge run as evidence for changed models.
 
 ## Verus proofs
 

@@ -1917,8 +1917,12 @@ runs the statement again, or rolls the transaction back. A transaction
 routed with the old membership that scanned the sender before the bucket
 left fails its validation there (MVCC, §2.12); one that scanned it after
 can commit only once every shard has the new version, which then refuses
-it. Removing a shard needs no check: a shard leaves once it owns no bucket
-and receives none, and a scan that still reads it finds nothing there.
+it. An empty departing shard contributes no rows to a scan. Before its
+storage stops, withdrawal also fences new promises that name it and drains
+every in-flight, PREPARED and STAGING dependency across the remaining
+shards. Recovery can still need a participant that has released its own
+bucket locks. `DepartureDependencies` checks this protocol reachability
+obligation separately from JoinScan's row coverage.
 
 **The model.** With `MJoin`, B joins the cluster -- `MemberJoin` raises
 `mver` on each shard, in any order -- and x moves from A to B once every
@@ -2201,6 +2205,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_DecisionIgnoreLeaving | violates ActivePreferred | 252 | 252 | 2 | 00s | 2 |
 | Bug_DecisionReadOnly | violates WritingParticipant | 162 | 162 | 2 | 00s | 2 |
 | Bug_DecisionReselect | violates RecordedRecovery | 1142 | 2570 | 4 | 00s | 4 |
+| Bug_DepartureDecisionOnly | violates NoOrphanPrepared | 301 | 866 | 14 | 00s | 13 |
+| Bug_DepartureIgnoreStaging | violates NoOrphanStaging | 301 | 895 | 14 | 00s | 13 |
+| Bug_DepartureLateAdmission | violates NoOrphanPrepared | 490 | 1374 | 15 | 00s | 13 |
+| Bug_DepartureNoCommitCheck | violates NoNewDependencyAfterDrainACK | 208 | 523 | 9 | 00s | 8 |
+| Bug_DepartureUntrackedWal | violates NoOrphanPrepared | 341 | 1186 | 14 | 00s | 13 |
 | Bug_EngineAliasNoMutex | violates BothCallersOK | 25 | 46 | 8 | 00s | 8 |
 | Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
 | Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
@@ -2364,6 +2373,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
+| DepartureDependencies | no errors | 564 | 1626 | 17 | 00s |  |
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
