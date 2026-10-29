@@ -319,6 +319,27 @@ local success, exception = xpcall(function()
             and #r.slots[1].key == 2 and tuple(r.slots[1].tuple)[3] == 'composite', r)
         error_result(engine .. ' primary prefix is unsupported as an incomplete key',
             public(reader, 'get', request(cm, {7})), 'bad_request')
+        -- Four-part PK makes the sparse inner map's Lua length match the
+        -- declared arity, so an arity-only check cannot reject this case.
+        local hole_def = definition(sid + 7, 'h_' .. engine, engine, 'composite')
+        local hole_doc = json.decode(hole_def.json)
+        hole_doc.columns[3].ty, hole_def.format[3].type = 'BIGINT', 'integer'
+        hole_doc.columns[4] = column('tail', 'BIGINT', false, 4)
+        hole_doc.indexes[1].cols = {0, 1, 2, 3}
+        hole_def.format[5] = {name = 'tail', type = 'integer', is_nullable = false}
+        hole_def.indexes[1].parts[3] = {field = 'payload', type = 'integer', is_nullable = false}
+        hole_def.indexes[1].parts[4] = {field = 'tail', type = 'integer', is_nullable = false}
+        hole_def.json = json.encode(hole_doc)
+        local hole_space = create(hole_def); hole_space:replace{7, 8, 9, 1, 10}
+        local hm = meta(reader, 'h_' .. engine)
+        sparse = request(hm, {7, 8, 9, 10})
+        sparse.key = numeric_hole(engine .. ' inner PK', 7, 8, 10)
+        error_result(engine .. ' sparse numeric-map full-arity PK is bad_request without any slots',
+            public(reader, 'get', sparse), 'bad_request')
+        r = public(reader, 'get', request(hm, {7, 8, 9, 10}))
+        check(engine .. ' complete four-part PK succeeds after sparse inner refusal',
+            r.status == 'ok' and #r.slots == 1 and #r.slots[1].key == 4
+            and r.slots[1].status == 'present' and tuple(r.slots[1].tuple)[5] == 10, r)
         create(definition(sid + 4, 'n_' .. engine, engine, 'number'))
         error_result(engine .. ' floating primary key metadata is explicitly unsupported',
             meta(reader, 'n_' .. engine), 'unsupported')
