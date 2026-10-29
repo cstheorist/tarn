@@ -148,6 +148,7 @@ impl Admin {
 }
 
 pub const SERVER_VERSION_COMMENT: &str = "Tarn: distributed MySQL on Tarantool";
+pub const MAX_ERROR_COUNT: usize = 64;
 
 /// Transaction isolation levels as MySQL names them. READ UNCOMMITTED and
 /// READ COMMITTED run as READ COMMITTED (row locks, plain reads never
@@ -297,6 +298,7 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         },
         "tx_read_only" | "transaction_read_only" | "read_only" | "super_read_only" => Value::Int(0),
         "max_allowed_packet" => Value::Int(67_108_864),
+        "max_error_count" => Value::Int(MAX_ERROR_COUNT as i64),
         "net_buffer_length" => Value::Int(16384),
         "character_set_client"
         | "character_set_connection"
@@ -369,6 +371,7 @@ pub const SHOWN_VARIABLES: &[&str] = &[
     "license",
     "lower_case_table_names",
     "max_allowed_packet",
+    "max_error_count",
     "max_connections",
     "net_buffer_length",
     "net_write_timeout",

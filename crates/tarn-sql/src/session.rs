@@ -169,7 +169,7 @@ struct DmlWarnings {
 impl DmlWarnings {
     fn duplicate(&mut self, error: SqlError) {
         self.total += 1;
-        if self.messages.len() < 64 {
+        if self.messages.len() < admin::MAX_ERROR_COUNT {
             self.messages.push(Warning {
                 level: "Warning",
                 code: error.code,
@@ -646,6 +646,12 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
+            "max_error_count" => {
+                if value.is_none() || value.as_ref().and_then(Value::as_i64) == Some(admin::MAX_ERROR_COUNT as i64) {
+                    return Ok(());
+                }
+                return Err(SqlError::unsupported("max_error_count values other than 64"));
+            }
             "tarn_isolation_contract" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
@@ -1495,7 +1501,17 @@ impl Session {
 
     fn note_dml_warnings(&mut self, warnings: DmlWarnings) {
         self.omitted_warnings += warnings.total - warnings.messages.len();
-        self.warnings.extend(warnings.messages);
+        for warning in warnings.messages {
+            self.note_warning(warning);
+        }
+    }
+
+    fn note_warning(&mut self, warning: Warning) {
+        if self.warnings.len() < admin::MAX_ERROR_COUNT {
+            self.warnings.push(warning);
+        } else {
+            self.omitted_warnings += 1;
+        }
     }
 
     /// Single-shard autocommit DML that needs no read round trip: one call to
@@ -2843,11 +2859,13 @@ impl Session {
     }
 
     fn note_tree(&mut self, found: Vec<lint::Finding>) {
-        self.warnings.extend(found.iter().map(|f| Warning {
-            level: f.level.name(),
-            code: lint::CODE,
-            message: tree_message(f),
-        }));
+        for f in &found {
+            self.note_warning(Warning {
+                level: f.level.name(),
+                code: lint::CODE,
+                message: tree_message(f),
+            });
+        }
     }
 
     // ---- session statements --------------------------------------------------

@@ -156,8 +156,14 @@
     {
       "id": "bounded_warnings",
       "classification": "equivalent",
-      "description": "Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list.",
+      "description": "Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (max_error_count explicitly set to 64 on both servers). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list.",
       "test": "tests/sql/contracts.py::case_bounded_warnings"
+    },
+    {
+      "id": "warning_limit_refusal",
+      "classification": "rejected",
+      "description": "Tarn supports max_error_count=64/DEFAULT and refuses other limits with 1235/42000 without changing the limit; MySQL supports a configurable limit.",
+      "test": "tests/sql/contracts.py::case_warning_limit_refusal"
     }
   ]
 }

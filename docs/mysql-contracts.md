@@ -6,7 +6,7 @@ Only the registered histories/shapes are classified. Existing MariaDB differenti
 
 Primary InnoDB oracle: MySQL **8.4.13**, `mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7`.
 
-Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8mb4_bin` and `+00:00`. Receipts retain the actual version, settings, client capability flags, protocol mode, manifest hash and every result/failure. These fixtures classify their explicit histories; they do not certify all SQL modes, collations or query shapes.
+Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8mb4_bin` `+00:00` and `max_error_count=64`. Receipts retain the actual version, settings, client capability flags, protocol mode, manifest hash and every result/failure. These fixtures classify their explicit histories; they do not certify all SQL modes, collations or query shapes.
 
 | Contract/test ID | Classification | Guaranteed scope / observed difference |
 |---|---|---|
@@ -34,7 +34,8 @@ Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8m
 | `lock_upgrade` | equivalent | Two READ COMMITTED shared-lock upgrades choose one 1213/40001 victim; only the survivor increment commits. |
 | `local_commit` | equivalent | Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values; Tarn runtime counters prove the local path. |
 | `distributed_commit` | equivalent | Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values across shards; Tarn runtime counters prove two-phase commit. |
-| `bounded_warnings` | equivalent | Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list. |
+| `bounded_warnings` | equivalent | Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (max_error_count explicitly set to 64 on both servers). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list. |
+| `warning_limit_refusal` | rejected | Tarn supports max_error_count=64/DEFAULT and refuses other limits with 1235/42000 without changing the limit; MySQL supports a configurable limit. |
 
 Each history runs with data statements sent as ordinary text and as binary prepared executions; settings and transaction control use text in both histories. `CLIENT_FOUND_ROWS` is checked in both modes. A registered equivalent case must match both servers and its explicit expected result. Difference/refusal cases assert each server's stated behavior rather than accepting any mismatch. A failed case remains in the result file and fails the job.
 
@@ -44,7 +45,7 @@ The dedicated workflow runs native/Lua storage and memtx/vinyl RF3 clusters. The
 
 `@@transaction_isolation` remains the requested session default, including the legacy `REPEATABLE-READ` alias. `@@tarn_effective_isolation` exposes its actual default: `STRICT-SERIALIZABLE` for SERIALIZABLE/REPEATABLE READ, `READ-COMMITTED` for READ COMMITTED/READ UNCOMMITTED. `@@tarn_next_isolation` reports an unconsumed one-shot SET TRANSACTION setting or NULL. `@@tarn_active_isolation` reports the active transaction's effective mode or NULL; changing the session default does not change an active transaction.
 
-These Tarn diagnostics are read-only session variables. `@@global.transaction_isolation`, `@@global.innodb_lock_wait_timeout` and SHOW GLOBAL VARIABLES report gateway defaults independently of session overrides. Global defaults are gateway-local, not cluster-wide, and affect new connections only. Other GLOBAL assignments (including autocommit and sql_mode) are explicitly unsupported with 1235/42000; they do not alter session behavior or commit pending work.
+These Tarn diagnostics are read-only session variables. `@@global.transaction_isolation`, `@@global.innodb_lock_wait_timeout` and SHOW GLOBAL VARIABLES report gateway defaults independently of session overrides. Global defaults are gateway-local, not cluster-wide, and affect new connections only. Tarn fixes `max_error_count` at 64; other values fail explicitly with 1235/42000. Other GLOBAL assignments (including autocommit and sql_mode) are explicitly unsupported with 1235/42000; they do not alter session behavior or commit pending work.
 
 `SET SESSION tarn_isolation_contract='MYSQL'` refuses an exact MySQL-isolation request with 1235/42000, without committing or discarding buffered writes. `TARN` (also DEFAULT) acknowledges the documented contract. Clients migrating from the REPEATABLE READ alias should explicitly select SERIALIZABLE when they want Tarn's strong contract, and handle known 1213/40001 aborts. Applications requiring InnoDB's exact snapshot/current-read behavior cannot select it in this release. 1180/40003 remains outcome unknown and must not trigger automatic mutation replay.
 

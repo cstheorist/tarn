@@ -36,6 +36,7 @@ class Server:
         self.connections.append(c)
         q(c, "SET SESSION sql_mode = '" + MODE + "'")
         q(c, "SET SESSION time_zone = '+00:00'")
+        q(c, "SET SESSION max_error_count = 64")
         return c
 
     def fresh(self):
@@ -462,6 +463,19 @@ def case_rc_paged_snapshot(s):
     return {"rows":n,"writes":len(writes),"overlapping_reads":overlap,"reads":reads}
 
 
+def case_warning_limit_refusal(s):
+    c=s.connect()
+    result=error(lambda:q(c,"SET SESSION max_error_count=0"))
+    if s.kind=="tarn":
+        assert result==[1235,"42000"], result
+        assert q(c,"SELECT @@max_error_count")==[[64]]
+    else:
+        assert result is None
+        assert q(c,"SELECT @@max_error_count")==[[0]]
+    q(c,"SET SESSION max_error_count=64")
+    return result
+
+
 def case_rr_validation_difference(s):
     a = s.fresh()
     b = s.connect()
@@ -528,7 +542,7 @@ def case_exact_mysql_refusal(s):
 
 def receipt(s):
     c = s.connect(None)
-    fields = ["version", "sql_mode", "character_set_connection", "collation_connection", "time_zone", "transaction_isolation", "autocommit"]
+    fields = ["version", "sql_mode", "character_set_connection", "collation_connection", "time_zone", "transaction_isolation", "autocommit", "max_error_count"]
     values = q(c, "SELECT " + ",".join("@@"+f for f in fields))[0]
     return dict(zip(fields,values), client_flags=c.client_flags, connector=mysql.connector.__version__, prepared=s.prepared)
 
