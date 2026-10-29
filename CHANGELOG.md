@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The native RF3 freshness fixture distinguishes a controlled native-path
+  witness from a legitimate post-barrier stale-bucket handback (#170).
+  It schedules the actual production status callback without replacing
+  freshness/cache checks, preserves stream/read-set and no-replay assertions,
+  records the real status payload, and exports source/module/process and
+  pre-pause/pending/post-yield evidence from CI on success or failure.
+
 - RF3 storage fixtures refresh volatile lazy capture/quota readiness at an
   ordinary empty entry before comparing exact durable totals
   ([#165](https://github.com/cstheorist/tarn/issues/165)). The UNKNOWN probe
