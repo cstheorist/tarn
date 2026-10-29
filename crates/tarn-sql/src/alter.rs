@@ -2285,6 +2285,7 @@ mod tests {
     fn table(sql: &str) -> (TableDef, Catalog) {
         let c0 = Catalog::new(1, vec!["db".into()], vec![]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("db"),
             params: &[],
@@ -2303,6 +2304,7 @@ mod tests {
 
     fn plan1(sql: &str, cat: &Catalog) -> AlterPlan {
         let ctx = PlanCtx {
+            statistics: None,
             catalog: cat,
             db: Some("db"),
             params: &[],
@@ -2626,6 +2628,7 @@ mod tests {
         assert!(matches!(&p.ops[0], AlterOp::AddColumn { pos: Some(Pos::After(c)), .. } if c == "a"));
         assert!(matches!(&p.ops[8], AlterOp::AddIndex { invisible: true, .. }));
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],
@@ -2663,6 +2666,7 @@ mod tests {
         .unwrap();
         assert_eq!(comments(&ch.def), ["pk", "by a", "it's b", "by b"]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],
@@ -2929,6 +2933,7 @@ mod tests {
             1235,
         );
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],

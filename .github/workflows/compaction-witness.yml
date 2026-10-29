@@ -1,0 +1,124 @@
+name: Bounded compaction witness
+
+on:
+  pull_request:
+    paths:
+      - 'tests/sql/vinylpressure*.py'
+      - '.github/workflows/compaction-witness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compaction-witness-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the unchanged release profile
+        run: |
+          cargo build --release --locked -p tarn-server -p tarn-storage
+          mkdir -p /tmp/compaction-build
+          cp target/release/tarn-server target/release/libtarn_storage.so /tmp/compaction-build/
+          git rev-parse HEAD > /tmp/compaction-build/source.txt
+          rustc -Vv > /tmp/compaction-build/rustc.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/compaction-build/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compaction-build-${{ github.run_id }}
+          path: /tmp/compaction-build
+          retention-days: 30
+
+  study:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        native: [enabled, disabled]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: compaction-build-${{ github.run_id }}
+          path: /tmp/compaction-build
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - run: python3 tests/sql/vinylpressure_phase_test.py
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          chmod +x /tmp/compaction-build/tarn-server
+          test "$(cat /tmp/compaction-build/source.txt)" = "$(git rev-parse HEAD)"
+          mkdir -p target/release /tmp/compaction-results
+          cp /tmp/compaction-build/tarn-server /tmp/compaction-build/libtarn_storage.so target/release/
+          sha256sum -c /tmp/compaction-build/binaries.sha256
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Bounded real pressure, three fresh fixtures
+        env:
+          TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/compaction-build/libtarn_storage.so' || '0' }}
+          TARN_BIN: /tmp/compaction-build/tarn-server
+          TARN_CHECK_LOCKS: '1'
+          TARN_TEST_HOOKS: '1'
+          TARN_VINYL_MEMORY_MB: '8'
+          TARN_VINYL_CACHE_MB: '0'
+          TARN_VINYL_TIMEOUT: '0.25'
+        run: |
+          tarantool --version > /tmp/compaction-results/tarantool.txt
+          failed=0
+          for trial in 1 2 3; do
+            affinity=()
+            if [ "$trial" = 2 ]; then
+              first_cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
+              affinity=(taskset -c "$first_cpu")
+            fi
+            "${affinity[@]}" scripts/cluster.sh start -d /tmp/compaction-cluster -n 2 -r 1 -w fsync -p 4000 -s 2 -m 128
+            native=()
+            if [ '${{ matrix.native }}' = enabled ]; then native=(--require-native); fi
+            if ! python3 tests/sql/vinylpressure.py --tarn 127.0.0.1:4000,127.0.0.1:4001 \
+              --shards 127.0.0.1:3311,127.0.0.1:3321 --real-pressure "${native[@]}" \
+              --evidence "/tmp/compaction-results/trial-$trial" | tee "/tmp/compaction-results/trial-$trial.log"; then failed=1; fi
+            KEEP=1 scripts/cluster.sh stop -d /tmp/compaction-cluster
+            mv /tmp/compaction-cluster "/tmp/compaction-results/cluster-$trial"
+          done
+          exit "$failed"
+      - name: Stop the owned fixture
+        if: always()
+        run: KEEP=1 scripts/cluster.sh stop -d /tmp/compaction-cluster
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compaction-${{ matrix.native }}-${{ github.run_id }}
+          path: |
+            /tmp/compaction-results
+            !/tmp/compaction-results/cluster-*/s*/*
+            /tmp/compaction-cluster/*.log
+            /tmp/compaction-cluster/cluster.json
+            /tmp/compaction-cluster/params
+            /tmp/compaction-build/*.txt
+            /tmp/compaction-build/*.sha256
+          retention-days: 30

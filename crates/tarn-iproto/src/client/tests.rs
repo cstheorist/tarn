@@ -116,6 +116,11 @@ fn every_length_encoding_and_fragmented_prefix() {
 
 #[test]
 fn oversized_headers_refuse_before_reserving_payload_memory() {
+    // The gateway's stricter envelope is checked before any allocation too.
+    let mut limited = BytesMut::from(&[0xce, 0, 0x80, 0, 1][..]);
+    let capacity = limited.capacity();
+    assert!(next_frame_limited(&mut limited, 8 << 20).is_err());
+    assert_eq!(limited.capacity(), capacity);
     for len in [iproto::BODY_LEN_MAX as u64 + 1, u32::MAX as u64] {
         for width in [4, 8] {
             let mut header = vec![if width == 4 { 0xce } else { 0xcf }];
@@ -508,6 +513,28 @@ async fn response_budget_survives_response_slices_and_refuses_before_large_reser
     peer.write_all(&[0xce, 0x01, 0x00, 0x00, 0x00]).await.unwrap();
     assert!(bounded(rx).await.is_err());
     assert!(c.is_closed());
+}
+
+#[tokio::test]
+async fn sql_frame_limit_composes_with_aggregate_response_ownership() {
+    let budget = crate::ResponseBudget::new(4096);
+    let mut opts = Opts::new("in-memory");
+    opts.max_response_bytes = 256;
+    opts.response_frame_bytes = 1024;
+    opts.responses = Some(budget.clone());
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let c = bounded(task).await.unwrap().unwrap();
+    let (_, rx) = pending(&c, &mut peer).await;
+    peer.write_all(&[0xcd, 0x01, 0x01]).await.unwrap();
+    assert!(bounded(rx).await.is_err(), "an enqueued request is uncertain");
+    assert!(c.is_closed());
+    assert!(
+        c.response_limit_exceeded(),
+        "read-only SQL budget classification survives"
+    );
+    assert_eq!(budget.stats().bytes, 0);
+    assert_eq!(budget.stats().peak, 0, "reject before aggregate allocation");
 }
 
 #[tokio::test]

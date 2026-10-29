@@ -53,6 +53,13 @@ Gateway resource lifetimes and scaling bounds are documented in
 | `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads, writes and commits without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec, their lock checks through the Verus-verified counts of a copy of the lock index. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
+Optional [cardinality hints](operations.md#optional-cardinality-statistics)
+can reorder eligible two-table integer-equality inner joins. A bounded,
+explicit ANALYZE samples index prefixes; schema/expiry generations invalidate
+plans. Estimates affect physical order only: predicates, read sets, OCC and
+buffered-write overlays retain their existing contracts. SQL column layout
+and metadata are preserved through the physical permutation.
+
 ### 1.1 Data layout and routing
 
 * Table `db.t` is the Tarantool space `"db.t"` with one field per column (same
@@ -2203,6 +2210,12 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
+| Bug_ClusterBackupDrain | violates NoLostAcknowledgement | 40367 | 182089 | 12 | 00s | 12 |
+| Bug_ClusterBackupEarlyCopy | violates CoherentData | 43988 | 157326 | 9 | 00s | 9 |
+| Bug_ClusterBackupMetadata | violates MetadataRetained | 31165 | 142161 | 11 | 00s | 11 |
+| Bug_ClusterBackupPartialRestore | violates NoPartialActivation | 42283 | 206696 | 13 | 00s | 13 |
+| Bug_ClusterBackupReplica | violates CompleteSet | 15833 | 63832 | 9 | 00s | 9 |
+| Bug_ClusterBackupRestart | violates FrozenCut | 10969 | 38737 | 8 | 00s | 8 |
 | Bug_CompletionRetentionForgetReceipt | violates NoContradictoryReopen | 56 | 76 | 6 | 00s | 6 |
 | Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
 | Bug_DecisionIgnoreLeaving | violates ActivePreferred | 252 | 252 | 2 | 00s | 2 |
@@ -2242,6 +2255,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
+| Bug_FileBackupHash | violates RestoredChecked | 350 | 999 | 10 | 00s | 10 |
+| Bug_FileBackupIdentity | violates SeedDistinct | 244 | 571 | 8 | 00s | 8 |
+| Bug_FileBackupLease | violates PublicationLease | 111 | 227 | 6 | 00s | 6 |
+| Bug_FileBackupPartial | violates PublishedComplete | 12 | 13 | 3 | 00s | 3 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
 | Bug_GatewayEarlyRelease | violates SocketCharged | 8 | 11 | 3 | 00s | 3 |
@@ -2337,6 +2354,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_PlainLazyGlobalStale | violates UnrelatedOneCommit | 15 | 22 | 7 | 00s | 7 |
 | Bug_PlainLazyPending | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
 | Bug_PlainLazyReplaceReadset | violates NoStaleReadCommit | 9 | 12 | 6 | 00s | 6 |
+| Bug_QueryEarlyResultRelease | violates Ownership | 24 | 30 | 5 | 00s | 5 |
+| Bug_QueryEarlyWireRelease | violates Ownership | 5 | 5 | 3 | 00s | 3 |
+| Bug_QueryPostDecisionRefusal | violates NoPartialBudgetDML | 39 | 58 | 6 | 00s | 6 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
@@ -2387,6 +2407,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| ClusterBackup | no errors | 52164 | 255561 | 30 | 00s |  |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
 | DepartureDependencies | no errors | 564 | 1626 | 17 | 00s |  |
@@ -2397,6 +2418,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
+| FileBackup | no errors | 356 | 983 | 15 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
@@ -2439,6 +2461,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
 | PlainLazyBinding | no errors | 115 | 137 | 7 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
+| QueryBudget | no errors | 142 | 249 | 13 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
 | RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 04min 27s |  |

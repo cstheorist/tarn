@@ -42,6 +42,9 @@ pub struct ShardConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClusterConfig {
+    /// Query/transaction and gateway-wide SQL resource budgets.
+    #[serde(default)]
+    pub resources: crate::budget::Limits,
     pub shards: Vec<ShardConfig>,
     /// The number of buckets of a new cluster (default
     /// `buckets::NEW_CLUSTER_BUCKETS`), fixed when the first SQL server
@@ -482,6 +485,14 @@ impl Shard {
         *self.leader.write() = None;
     }
 
+    pub(crate) fn retire_connections(&self) {
+        if let Some(pool) = self.leader.write().take() {
+            for (client, _) in pool.clients.lock().iter() {
+                client.close();
+            }
+        }
+    }
+
     pub fn leader_addr(&self) -> Option<String> {
         self.leader.read().as_ref().map(|p| p.addr.clone())
     }
@@ -593,6 +604,7 @@ impl Shard {
 
 #[derive(Default)]
 pub struct Stats {
+    pub topk_scans: AtomicU64,
     pub(crate) query_digests: crate::observe::Metrics,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
@@ -623,12 +635,16 @@ pub struct Stats {
 }
 
 pub struct CachedPlan {
+    pub resource_guard: tarn_common::ResourceGuard,
+    pub(crate) statistics_generation: Option<u64>,
     pub version: u64,
     pub stmt: crate::plan::Stmt,
     pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
+    pub resources: Arc<crate::budget::Pool>,
+    pub statistics: crate::statistics::Statistics,
     pub(crate) rpc_global: tarn_iproto::Budget,
     pub(crate) connections: tarn_iproto::ConnectionBudget,
     pub(crate) responses: tarn_iproto::ResponseBudget,
@@ -1008,6 +1024,8 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            resources: crate::budget::Pool::new(cfg.resources.clone())?,
+            statistics: crate::statistics::Statistics::default(),
             rpc_global,
             connections,
             responses,
@@ -1136,6 +1154,7 @@ impl Cluster {
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
+            max_response_bytes: crate::budget::STORAGE_REPLY_BYTES,
             request_limits: self.cfg.rpc.connection,
             request_timeout: Duration::from_secs_f64(self.cfg.rpc.timeout_secs),
             admission,
@@ -1603,7 +1622,10 @@ impl Cluster {
             .read()
             .get(&(db.to_string(), template.to_string()))
             .cloned()?;
-        if p.version == v {
+        if p.version == v
+            && p.statistics_generation
+                .is_none_or(|g| self.statistics.snapshot(v).generation == g)
+        {
             self.stats.plan_cache_hits.fetch_add(1, Ordering::Relaxed);
             Some(p)
         } else {

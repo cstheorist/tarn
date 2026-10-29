@@ -70,11 +70,11 @@ ok(c:call('tarn_create_table', {{id=sid,name='test.native_fresh',engine='memtx',
 ev(leader, [[local sid,token=...;box.space[sid]:replace{1,token,0,1}
     tarn.cfg.scan_page_bytes=4*1024*1024;tarn.cfg.scan_page_rows=1024;tarn.ns_sync()
     native_fresh_status_events={sequence=0,events={}}
-    native_fresh_status_watch=box.watch('box.status',function(value)
+    native_fresh_status_watch=box.watch('box.status',function(key,value)
         local s=native_fresh_status_events
         s.sequence=s.sequence+1
         if #s.events==8 then table.remove(s.events,1) end
-        s.events[#s.events+1]={sequence=s.sequence,value=value,ro=box.info.ro,
+        s.events[#s.events+1]={sequence=s.sequence,key=key,value=value,ro=box.info.ro,
             term=box.info.election.term,mono=require('clock').monotonic()}
     end)
     function native_fresh_cache()
@@ -83,7 +83,9 @@ ev(leader, [[local sid,token=...;box.space[sid]:replace{1,token,0,1}
             fence_stale=tonumber(n.fence_stale),hooks=tonumber(n.hooks),count=tonumber(n.count),
             bucket1=n.count>0 and tonumber(n.serves[1]) or 0,
             ro=box.info.ro,term=box.info.election.term,queue=box.info.synchro.queue.len,
-            status=native_fresh_status_events}
+            status=native_fresh_status_events,control=native_fresh_control and {
+                received=native_fresh_control.received,delivered=native_fresh_control.delivered,
+                pending=native_fresh_control.pending,mode=native_fresh_control.mode} or box.NULL}
     end
     function native_fresh_recycle(payload) return #payload end
     box.schema.func.create('native_fresh_recycle',{if_not_exists=true})
@@ -104,6 +106,9 @@ check('actual ABI14 and production native clock mirror are ready', n.layout == 1
     and n.byte_reserved_offset == 314 and n.guard_reserved_offset == 360 and n.guard_reserved_size == 32 and n.guard_reserved_zero, n)
 check('RF3 fsync synchronous majority-compatible configuration', state(leader).sync and state(leader).wal == 'fsync', state(leader))
 local round = 0
+local control_mode=assert(os.getenv('NATIVE_FRESHNESS_CONTROL'))
+check('actual production status callback is held for a controlled native-path witness',
+    ev(leader,[[local c=assert(native_fresh_control);return c.received>0 and c.pending and c.delivered==0]]))
 local function blocked(proc, args, via)
     round = round + 1
     ok(c:call('tarn_select', read_args)) -- refresh ordinary caches before blocking
@@ -115,10 +120,12 @@ local function blocked(proc, args, via)
     -- the synchronous entry below is pending.
     ok(c:call('tarn_buckets'))
     local prepared = ev(leader, 'return native_fresh_cache()')
+    local status=prepared.status.events[#prepared.status.events]
     check(proc .. ' native write/read caches are ready before replica pause',
         prepared.ready==1 and prepared.hooks==0 and prepared.bk_stale==0 and prepared.lk_stale==0
         and prepared.fence_stale==0 and prepared.count==16 and prepared.bucket1==2
-        and not prepared.ro and prepared.queue==0, {after_read=after_read,prepared=prepared})
+        and not prepared.ro and prepared.queue==0
+        and status and status.key=='box.status' and type(status.value)=='table', {after_read=after_read,prepared=prepared})
     signal(follower, 19)
     local yes, result = xpcall(function()
         local writer = c:eval('local sid,key,v=...;box.space[sid]:replace{1,key,v,1};return v', {sid,token,round}, {is_async=true})
@@ -131,14 +138,26 @@ local function blocked(proc, args, via)
         local junk = string.rep('recycled-port-' .. round, 32768)
         for _ = 1, 24 do assert(c:call('native_fresh_recycle', {junk}) == #junk) end
         check(proc .. ' remains blocked while other large CALL ports are recycled', not future:is_ready(), {bytes=#junk*24})
+        local notification
+        if control_mode=='handback' and round==3 then
+            notification=ev(leader,'return assert(native_fresh_control).release()')
+            check('actual status callback invalidates ready buckets while the native stream barrier is pending',
+                notification.key=='box.status' and type(notification.value)=='table'
+                and notification.before.bk_stale==0 and notification.after.bk_stale==1
+                and notification.before.pid==notification.after.pid
+                and not notification.before.ro and not notification.after.ro
+                and notification.before.term==notification.after.term
+                and notification.before.queue>0 and notification.after.queue>0,notification)
+            check('status invalidation does not bypass the pending native freshness barrier',not future:is_ready())
+        end
         signal(follower, 18)
         local wr, we = writer:wait_result(5); assert(wr, tostring(we))
         local r, err = future:wait_result(5); assert(r, tostring(err))
         local cache_after = ev(leader, 'return native_fresh_cache()')
         event('native cache across yielded call', {proc=proc,round=round,prepared=prepared,
-              pending=pending_cache,after=cache_after})
+              pending=pending_cache,after=cache_after,notification=notification})
         return {reply=r, before=before, after=c:call('tarn_info').native,
-                cache={prepared=prepared,pending=pending_cache,after=cache_after}}
+                cache={prepared=prepared,pending=pending_cache,after=cache_after},notification=notification}
     end, debug.traceback)
     if not yes then pcall(signal, follower, 18); error(result) end
     return result
@@ -152,9 +171,24 @@ local exact = r.reply[1][1] == 'ok' and #r.reply[1][2] == 16
 for _, row in ipairs(r.reply[1][2] or {}) do exact = exact and row[1] == 1 and row[2] == token and row[3] == round end
 check('native key batch retains every duplicate key and exact tuple after first yield', exact and r.after.served == r.before.served+1, r.after)
 local stream = c:new_stream(); local first = table.deepcopy(read_args); first[8], first[10] = false, true
+local empty_stream=stream:eval([[return {txn=box.is_in_txn(),id=tostring(require('ffi').C.box_txn_id()),certificates=tarn.fresh.count}]])
+check('first native stream begins without an ambient transaction or certificate',not empty_stream.txn and empty_stream.certificates==0,empty_stream)
 r = blocked('tarn_storage.ts_select', first, stream)
-check('first native stream read retains its owned transaction and key', r.reply[1][1] == 'ok' and r.reply[1][2][1][2] == token
-    and r.after.served == r.before.served+1, r.after)
+if control_mode=='handback' then
+    local tx=stream:eval([[return {txn=box.is_in_txn(),id=tostring(require('ffi').C.box_txn_id()),certificates=tarn.fresh.count}]])
+    check('post-yield stale-bucket handback returns no data and drops only its new owned transaction',
+        r.reply[1][1]=='lua' and #r.reply[1]==1 and r.after.served==r.before.served
+        and r.after.to_lua==r.before.to_lua+1 and r.after.fallbacks.read.stale_buckets==1
+        and not tx.txn and tx.id==empty_stream.id and tx.certificates==empty_stream.certificates,
+        {reply=r.reply,before=empty_stream,tx=tx,native=r.after,cache=r.cache})
+    local lua=stream:call('tarn_select',first)
+    check('explicit Lua read fallback on the same stream returns the exact committed key once',
+        lua[1]=='ok' and #lua[2]==1 and lua[2][1][2]==token and lua[2][1][3]==round,lua[1])
+else
+    check('first native stream read retains its owned transaction and key', r.reply[1][1] == 'ok'
+        and #r.reply[1][2]==1 and r.reply[1][2][1][1]==1 and r.reply[1][2][1][2] == token and r.reply[1][2][1][3]==round
+        and r.after.served == r.before.served+1, {native=r.after,cache=r.cache})
+end
 local stream_id = stream:eval("return tostring(require('ffi').C.box_txn_id())")
 local validation_before = c:call('tarn_info').native
 local handback = stream:call('tarn_storage.ts_validate', {'native-final-prefix',{{sid,0,{1,token},1}},{}})
@@ -237,5 +271,12 @@ local lua_allowed = pcall(c.call, c, 'tarn_select', read_args)
 check('actual asynchronous user spaces fail closed in native and Lua strong reads', asynchronous[1] == 'lua' and not lua_allowed, asynchronous)
 ev(leader, 'box.space[...]:alter{is_sync=true}', {sid})
 check('native lock-copy checks remain exact', ev(leader,'return tarn.stats.lock_copy_errors') == 0)
+if control_mode=='native' then
+    ok(c:call('tarn_buckets')) -- no pending operation remains
+    local notification=ev(leader,'return assert(native_fresh_control).release()')
+    check('native-path witness deferred a real status invalidation without changing role or term',
+        notification.before.bk_stale==0 and notification.after.bk_stale==1
+        and notification.before.ro==notification.after.ro and notification.before.term==notification.after.term,notification)
+end
 for _, conn in ipairs(conns) do conn:close() end
 print(passed .. ' passed, 0 failed')

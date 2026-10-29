@@ -63,7 +63,9 @@ sets through their bounded window. These are resource refusals, not a
 change in the successful read's validation or freshness contract.
 
 `response_frame_bytes` rejects an advertised frame before allocating its
-payload. `response_bytes` is a gateway-wide bound on charged encoded
+payload. The existing SQL transport envelope from #134 independently limits
+the frame payload to 8 MiB; the stricter limit wins. Read-only budget helpers
+retain their explicit resource error, while uncertain mutations retain 40003. `response_bytes` is a gateway-wide bound on charged encoded
 frames, including partially received replies and completed bodies retained
 by zero-copy field slices. Completed bodies are copied into an independently
 owned allocation so a tiny field cannot retain an uncharged large reader
@@ -76,7 +78,7 @@ and end-to-end costs must be measured under the same durability contract.
 These limits are not a whole-process memory bound. Reader scratch buffers,
 the temporary body copy, TCP/kernel buffers, handshake buffers, decoded
 scalar row arrays, SQL plans/joins/sorts, transaction buffers and allocator
-overhead are distinct. Query and transaction accounting is tracked in #134.
+overhead are distinct. The separate query and transaction accounting limits from #134 also apply.
 The number of physical scratch buffers is socket-bounded; each frame is
 size-bounded. `control_reply_bytes` separately limits retained bucket-report
 payloads. An over-budget response fails the refresh without publishing an

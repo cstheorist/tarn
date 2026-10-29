@@ -9,6 +9,9 @@ for cfg in "$@"; do
   # premises; other configurations use the commit-protocol MC module.
   case "$cfg" in
     GatewayResources|Bug_Gateway*) module=GatewayResources.tla ;;
+    QueryBudget|Bug_Query*) module=QueryBudget.tla ;;
+    ClusterBackup|Bug_ClusterBackup*) module=ClusterBackup.tla ;;
+    FileBackup|Bug_FileBackup*) module=FileBackup.tla ;;
     PlainLazyBinding|Bug_PlainLazy*) module=PlainLazyBinding.tla ;;
     DepartureDependencies|Bug_Departure*) module=DepartureDependencies.tla ;;
     DecisionPlacement|Bug_Decision*) module=DecisionPlacement.tla ;;

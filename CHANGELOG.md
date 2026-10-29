@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A quiescent whole-cluster backup/restore workflow with durable replica fences,
+  complete membership/routing and transaction/DDL/lazy drain checks, source-bound
+  physical manifests, exact isolated restore audits and guarded activation
+  ([#137](https://github.com/cstheorist/tarn/issues/137)). Interrupted copies and
+  restores remain unavailable; source release requires explicit process restart.
+  See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
+
 ### Fixed
 
 - Gateway sockets now grow on demand and share a hard physical-connection
@@ -17,6 +26,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unknown mutation outcomes ([#188](https://github.com/cstheorist/tarn/issues/188)).
   See [configuration and limits](docs/gateway-resources.md).
 
+- Lazy-index owner hints now expire immediately when the local bucket map
+  changes. A completed handoff can no longer leave immediate garbage
+  collection contacting the old source owner until the cache TTL expires;
+  frontier and floor proof checks remain unchanged
+  ([#163](https://github.com/cstheorist/tarn/issues/163)).
+- The native RF3 freshness fixture distinguishes a controlled native-path
+  witness from a legitimate post-barrier stale-bucket handback (#170).
+  It schedules the actual production status callback without replacing
+  freshness/cache checks, preserves stream/read-set and no-replay assertions,
+  records the real status payload, and exports source/module/process and
+  pre-pause/pending/post-yield evidence from CI on success or failure.
 - The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
   across the warmup, limited-I/O and release windows, so fast writers cannot
   consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).
@@ -91,6 +111,33 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose reply is invalid remains 1180/40003 and is never replayed.
 
 ### Added
+
+- Bounded SQL execution ([#134](https://github.com/cstheorist/tarn/issues/134)):
+  configurable query, transaction and gateway allocation/work envelopes refuse
+  oversized operations with 1041/HY000 before commit. Eligible unindexed
+  `ORDER BY ... LIMIT` scans retain bounded top-K candidates. Pending reads,
+  results awaiting socket delivery, prepared state and transaction buffers
+  retain their charges until released. See [resource limits](docs/resources.md)
+  for defaults, cleanup, supported shapes and proof boundaries.
+- Optional bounded cardinality hints and conservative two-table inner-join
+  reordering ([#136](https://github.com/cstheorist/tarn/issues/136)).
+  `ANALYZE TABLE` now collects gateway-local integer-prefix statistics,
+  invalidates plans by generation and reports MariaDB analyze status.
+  `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
+  count actual decoded storage tuples separately from RPCs.
+- Physical per-shard file backups and verified restores with bounded copy
+  rates, owned expiring GC leases and incomplete-directory refusal
+  ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a
+  separately registered replica identity; the seed starts as a voter until
+  an operator verifies WAL catch-up. The agent preserves SQL tuples and
+  protocol metadata, with native/Lua RF3 recovery tests and opt-in scale
+  evidence. This does not provide a coordinated cross-shard SQL snapshot.
+- Source-bound RF3 native-GC crash investigation controls
+  ([#160](https://github.com/cstheorist/tarn/issues/160)), with historical,
+  Lua-only, JIT-off and current-source trials, retained successful/failed
+  logs and crash cores. The original fault remains unexplained; no
+  production fix or successful-repeat-as-fix claim is made. See
+  [the investigation boundary](docs/native-gc-investigation.md).
 
 - Request-specific quorum freshness for default SQL and strong storage
   reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty

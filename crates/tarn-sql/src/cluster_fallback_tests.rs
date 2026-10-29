@@ -109,8 +109,9 @@ async fn warmed_unavailable_autocommit_uses_every_connection() {
             )
             .await;
 
-            // Poll all statements to their first IO wait without yielding to
-            // maintenance tasks. The held calls charge real physical clients.
+            // Start each statement's owned RPC worker. Observe actual held
+            // Lua calls below: the SQL future may first wait on its worker,
+            // before that worker selects the physical connection.
             let mut sessions: Vec<_> = (0..n).map(|i| Session::new(c.clone(), i as u32 + 10)).collect();
             for s in &mut sessions {
                 s.use_db("f").unwrap();
@@ -120,9 +121,7 @@ async fn warmed_unavailable_autocommit_uses_every_connection() {
                 .map(|s| Box::pin(s.query("UPDATE t SET v = v + 1 WHERE id = 1")))
                 .collect();
             for call in &mut calls {
-                let before = p.next.load(Ordering::Relaxed);
                 assert!(futures::poll!(call.as_mut()).is_pending());
-                assert_eq!(p.next.load(Ordering::Relaxed) - before, 1, "one pool selection per DML");
             }
             let got = tokio::time::timeout(Duration::from_secs(5), async {
                 loop {

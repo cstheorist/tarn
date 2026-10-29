@@ -549,6 +549,81 @@ python3 bench/decision_placement.py \
   machine and several SQL servers.
 
 
+## Cardinality-guided inner join components (issue #136)
+
+Complete [unique-key](results_join_statistics.json) and
+[nonunique-prefix](results_join_statistics_prefix.json) records retain all
+20 final timed samples, every query latency, exact results, foreground
+counter deltas, both plans, exact source/build/binary/driver/fixture settings
+and environment. Both gateways use source
+`3fbbd8c` and the **same** Rust 1.98.1 macOS aarch64 release binary
+(thin LTO, four codegen units, debug 1), with two threads and a
+two-connection pool per shard. Only one gateway receives explicit ANALYZE
+hints. There is no old/new binary or consistency-setting difference within
+these paired comparisons. Storage Lua and the driver use integrated tree
+`4d851d2`, including the owner-hint invalidation prerequisite (#163); the
+records include every Lua module hash and confirm unchanged compiled Rust
+inputs. Both gateways disable the optional native-batch read flag and use
+the same default bounded RPC admission settings.
+
+The generic fixture has 8,192 unique outer primary keys and 20 inner rows
+referring to one outer key. The unique-key query fixes one inner primary
+key and returns exactly `(777,7)`. The nonunique-prefix query fixes that
+shared foreign-key value and returns exactly 20 `(777, inner_id)` rows.
+The selected order reads the inner key/prefix before its outer lookup;
+the control scans the outer table. Both retain normal checked reads and
+read-only transaction validation. Each study has ten warmup queries per
+gateway and five alternating-order, four-second pairs. Setup, ANALYZE and
+warmup are outside the timed phase. These are single-client, closed-loop
+SELECT component experiments.
+
+| Observation | Unique: absent / present hints | Prefix: absent / present hints |
+|---|---:|---:|
+| Decoded storage tuples/query, including attempts | 8,224 / 3 | 8,212 / 21 |
+| Encoded data read attempts/query | 35 / 3 | 67 / 3 |
+| Median queries/s across five repetitions | 54.96 / 704.41 | 20.00 / 765.29 |
+| Queries/s range, absent hints | 47.93–60.71 | 18.91–20.50 |
+| Queries/s range, present hints | 670.18–784.75 | 555.86–793.87 |
+| Per-repetition median latency range, absent hints, ms | 14.85–19.87 | 49.52–53.31 |
+| Per-repetition median latency range, present hints, ms | 1.21–1.32 | 1.20–1.69 |
+| Per-repetition p99 latency range, absent hints, ms | 26.75–36.85 | 63.97–69.25 |
+| Per-repetition p99 latency range, present hints, ms | 3.62–4.85 | 2.41–3.09 |
+| Successful queries, absent / present hints | 1,094 / 14,302 | 399 / 14,208 |
+| Query errors, either gateway | 0 | 0 |
+
+The median closed-loop rates are about 12.8 and 38.3 times the controls
+for these shapes, supported by directly observed reductions in returned
+tuples and read attempts. Attempts exclude validation/metadata RPCs and
+include the unique-key candidate's initial autocommit probe before its
+implicit transaction. They are not index entries examined, response bytes
+or complete protocol RPC totals. Planner tuple-work costs include repeated
+logical join candidates and exclude batch-key deduplication; they are not
+observed storage-tuple counts or latency predictions.
+
+The [initial unique](results_join_statistics_unique_initial.json) and
+[initial prefix](results_join_statistics_prefix_initial.json) studies retain
+all 20 earlier samples at gateway source `3e21e6e`. The
+[preintegration unique](results_join_statistics_unique_preintegration.json)
+and [preintegration prefix](results_join_statistics_prefix_preintegration.json)
+studies retain all 20 samples at `61cf087`. The cache fix keeps statistics
+checks and generation churn off unrelated point-plan cache hits; a live
+cache-miss regression fails on the initial binary and passes on the fixed
+source and integrated binary. No cross-revision point-read throughput gain
+is inferred from these join studies. Controls drift between studies; the comparisons above
+are within the same-binary final pairs.
+
+Two RF1 Tarantool 3.9.0 memtx shards run in one Linux aarch64 Docker
+container (two CPUs, 768 MiB limit; 128 MiB memtx configured per shard),
+with MVCC, WAL `write`, native procedures and test lock/yield guards. The
+Apple M4 Max host gateways reach them through Docker-forwarded local TCP;
+there is no TLS. The timed workload is read-only and fits in memory. This
+task's other builds/checks and reference database were stopped during each
+measurement; other host/VM workloads remained uncontrolled. All samples
+are retained, without replacement or exclusion. These establish component
+improvements under these settings, not production capacity, RF3/durable
+writes, SSD/steady-state, arbitrary-skew or competitor results. Biased or
+stale samples can still choose a slower valid order on other data.
+
 ## Storage RPC admission component measurements (issue #127)
 
 The complete [initial](results_rpc_admission_initial.json) and
@@ -601,3 +676,112 @@ For RF3 batches of 128 keys at 64 workers, the median native/Lua ratio was
 raw observations, source/build identities, proof boundaries and failure
 history. These instrumented hot-corpus read results retain their component
 scope; they do not establish a TiDB/YugabyteDB or production-capacity ranking.
+
+
+## Physical file backup and replica seeding (#56)
+
+The completed reference acceptance uses **10 GiB of random row payload**
+(163,840 rows × 65,536 bytes), with 20,480,274,298 bytes of selected physical
+files per backup. Three complete copies, an isolated original-UUID restore,
+and three alternating full-join/seed pairs all reproduce every tuple's
+SHA-256. Seeded candidates use a distinct, pre-registered voter UUID and
+recover a committed marker created after the backup through WAL. All
+foreground point-read probes complete with zero errors.
+
+These are per-shard physical recovery measurements, separate from the
+historical SQL benchmarks above. The reference runs in one Docker ARM64
+container on Apple M4 Max, limited to two CPUs and 1.5 GiB RAM, with three
+synchronous source replicas, `wal_mode=fsync`, memtx 128 MiB, vinyl memory
+64 MiB and vinyl cache zero. The data and selected physical files exceed
+the container memory limit. CI runs on Ubuntu 24.04 x86_64 with its normal
+release native build; its CPU/memory cgroup values are recorded as
+unavailable. Both use Tarantool 3.9.0; exact build/source/native hashes and
+settings are in the linked JSON.
+
+| Completed study | Payload / selected files | File-copy cap | Backup wall, median (range), s | Full join, median (range), s | Seed, median (range), s |
+|---|---|---|---:|---:|---:|
+| [Reference](results_file_backup_reference.json) | 10 GiB / 20,480,274,298 B | uncapped | 26.654 (26.286–27.090) | 124.100 (113.174–125.164) | 26.583 (26.374–26.625) |
+| [CI 40897427899](results_file_backup_ci.json) | 2 GiB / 4,083,396,802 B | 128 MiB/s | 31.623 (31.582–31.708) | 77.246 (65.772–79.182) | 31.759 (31.716–32.313) |
+
+Each table cell contains three measurements. Within the reference profile,
+median seeding is 4.67× faster than full join. Backup creation is a separate
+cost; the seed timer includes local copy, hash verification, fixed-width
+header rewrite, file/directory fsync, process start and WAL catch-up, plus
+controller/RPC overhead. Readiness checks process/role, the committed WAL
+prefix and the post-backup marker. Exact count/full SHA scans follow once
+outside that timer. The cap applies to aggregate agent file-copy bytes,
+not native full-join traffic or later WAL follow.
+
+The physical files include indexes and retained LSM files, so the agent
+copies about 1.9 times the row payload. A capped seed can be slower than a
+logical full join: the earlier [CI 40888068812](results_file_backup_ci_ordered.json)
+measured full-join median 25.407 s versus seed 31.555 s at 128 MiB/s; the
+[512 MiB read rehearsal](results_file_backup_read_rehearsal.json) measured
+5.713 s versus 8.346 s. Other completed CI samples are
+[40885381400](results_file_backup_ci_initial.json) and
+[40891371139](results_file_backup_ci_serial.json). Those earlier controllers
+included an exact count in timed readiness. Different revisions, runner
+conditions and timing boundaries prevent a controlled comparison between
+these studies. All retained outcomes remain part of the evidence.
+
+The foreground probe repeatedly reads key 1 through the local native
+read-confirmed vinyl path with one client and 20 ms think time. It excludes
+SQL, network and the strong-read quorum freshness barrier. Nearest-rank
+p99 below is shown per phase (range across three phases), with raw sample
+arrays retained. Baseline lasts only three seconds and is noisy.
+
+| Study | Baseline p99, ms | During backup p99 range, ms | During full join p99 range, ms | During seed p99 range, ms | Probe errors |
+|---|---:|---:|---:|---:|---:|
+| Reference | 1.180 | 0.272–0.286 | 20.870–26.247 | 0.247–0.279 | 0 |
+| CI 40897427899 | 0.194 | 0.212–0.274 | 0.239–0.287 | 0.174–0.201 | 0 |
+
+No OS/backend cache flush is attempted. All replicas, candidate, source and
+file copies share one host; the random data does not establish cold device
+behavior. Three pairs show observed variability, not a production latency
+SLO, network-transfer result, failover-capacity result or write-active
+bootstrap limit. The fixture pins one leader and keeps the other original
+replicas as voters. Its repeated candidate identity is used only inside
+this fixed-leader fixture with all three sources retained; it is not a
+recipe for production membership rollback or origin-ID reuse.
+
+`seconds_per_100GB_payload_linear_normalization` is elapsed seconds ×
+100,000,000,000 / actual payload bytes. It is a linear throughput display,
+not an observed 100 GB run or evidence that performance scales linearly.
+For reference backup/full-join/seed medians this yields 248.236 / 1,155.771 /
+247.571 s per 100 GB payload; for CI 40897427899 it yields 1,472.558 /
+3,597.027 / 1,478.872 s. These two profiles have different hardware, sizes
+and copy caps; their normalized rates are not a hardware comparison.
+
+The [evidence index](../tests/evidence/file-backup/index.json) records hashes,
+scope and workflow links for every retained study, including failures:
+
+- The [write-active rehearsal](results_file_backup_write_failure.json)
+  backed up/restored 512 MiB but the full-join candidate timed out creating
+  its first checkpoint. The controller was interrupted after that candidate
+  died. The matched final studies use read probes; they do not resolve
+  write-active bootstrap capacity. Bounded node log excerpts are retained.
+- The [first 10 GiB load attempt](results_file_backup_load_failure_initial.json)
+  failed before population completed: registering the dormant fourth member
+  first raised synchronous quorum to all three live replicas. The fixture
+  now fills RF3 before registration, preserving quorum/durability settings.
+- The [next load attempt](results_file_backup_load_failure_clock.json)
+  failed on a transient clock-policy-readiness serialization refusal. The
+  loader now bounds retries for matched no-effect refusals and aborts on
+  unknown outcomes or transport failure; no clock fence is bypassed.
+- The [controller failure](results_file_backup_controller_failure.json)
+  completed all 163,840 inserts, then mistakenly polled a 10 GiB count with
+  a two-second RPC deadline. The final reference reuses only that confirmed
+  pre-registration fixture, with unchanged storage code and saved UUIDs,
+  verifies its committed WAL prefix, and rehashes every tuple. Inserts were
+  never replayed. Load provenance (revision `900e71f`) is retained separately
+  from the completed controller/measurement revision (`ec1401e`).
+
+The [native](../tests/evidence/file-backup/safety_native.json) and
+[Lua-only](../tests/evidence/file-backup/safety_lua.json) live safety controls
+cover original restore, seed identity/WAL follow, incomplete/corrupt/path
+refusal, lease ownership/expiry, killed copier and startup role guards.
+The bounded FileBackup model checks publication, integrity, identity and
+lease obligations with four deliberately broken controls. Tarantool's
+coherent backup set, filesystem durability, SHA/header interpretation,
+registration and operator catch-up verification remain trusted boundaries.
+This does not prove a coordinated multi-shard SQL backup protocol.

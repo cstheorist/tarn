@@ -9,6 +9,7 @@
 pub mod admin;
 pub mod alter;
 pub mod buckets;
+pub mod budget;
 pub mod catalog;
 pub mod cluster;
 pub mod collation;
@@ -34,6 +35,7 @@ pub use rpcs::RpcConfig;
 mod topology;
 pub use topology::TopologyConfig;
 pub mod session;
+pub mod statistics;
 pub mod txn;
 pub mod types;
 pub mod vinyl;

@@ -7,10 +7,81 @@ The old global-cap adapter is a source-derived policy control, not execution
 of the complete historical driver or a claim about its original CI failure.
 """
 import collections
+import copy
+from contextlib import nullcontext
 import json
 import unittest
+from unittest.mock import patch
 
 import vinylpressure as pressure
+
+
+class CompactionControls(unittest.TestCase):
+    def setUp(self):
+        def index(queue, count, input_bytes):
+            return {'disk': {'compaction': {'queue': {'bytes': queue}, 'count': count,
+                                             'input': {'bytes': input_bytes}}}}
+        self.control = {'before': index(0, 2, 100), 'after': index(4096, 2, 100)}
+        self.samples = [{'snap_io_rate_limit': .5, 'compaction_fixture': index(4096, 2, 100)}]
+        self.audit = {'status': 'complete', 'matches': True, 'index': index(0, 3, 4196)}
+
+    def test_queue_and_completed_seed_work_are_required(self):
+        pressure.compaction_witness(self.control, self.samples, self.audit)
+        for field, value in [('count', 2), ('input', {'bytes': 100})]:
+            audit = copy.deepcopy(self.audit)
+            audit['index']['disk']['compaction'][field] = value
+            with self.assertRaises(AssertionError):
+                pressure.compaction_witness(self.control, self.samples, audit)
+
+    def test_historical_completed_work_without_sampled_queue_is_rejected(self):
+        samples = copy.deepcopy(self.samples)
+        samples[0]['compaction_fixture']['disk']['compaction']['queue']['bytes'] = 0
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, samples, self.audit)
+
+    def test_unlimited_or_missing_control_cannot_certify_pressure(self):
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(None, self.samples, self.audit)
+        samples = copy.deepcopy(self.samples)
+        samples[0]['snap_io_rate_limit'] = 0
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, samples, self.audit)
+
+    def test_corrupt_seed_readback_fails_even_with_real_native_work(self):
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, self.samples, dict(self.audit, matches=False))
+
+    def test_unknown_seed_remains_unsettled_whether_observed_or_absent(self):
+        test = pressure.Test.__new__(pressure.Test)
+        test.compaction_expected, test.compaction_unknown_ids = {1: b'a'}, {2}
+        test.nodes, test.compaction_fixture = ['source'], 'unit.c'
+        test.connect = lambda: nullcontext(None)
+        for rows in [((1, b'a'),), ((1, b'a'), (2, b'b'))]:
+            with patch.object(pressure, 'q', return_value=rows), patch.object(pressure, 'ev', return_value={}):
+                result = test.audit_compaction_fixture(77)
+            self.assertEqual(result['status'], 'incomplete')
+            self.assertEqual(result['unknown_ids'], [2])
+            self.assertIsNone(result['matches'])
+
+    def test_failed_seed_retains_readback_and_original_error_without_replay(self):
+        test = pressure.Test.__new__(pressure.Test)
+        test.db = 'unit'
+        events = []
+        failure = RuntimeError('lost seed reply')
+        def seed(tenant):
+            events.append('submit once')
+            test.compaction_unknown_ids.add(8)
+            raise failure
+        test._seed_compaction_fixture = seed
+        test.audit_compaction_fixture = lambda tenant: {'status': 'incomplete', 'unknown_ids': [8]}
+        test.record = lambda event, **data: events.append((event, data))
+        with self.assertRaises(RuntimeError) as caught:
+            test.prepare_compaction_fixture(77)
+        self.assertIs(caught.exception, failure)
+        self.assertTrue(test.pressure_preserve_database)
+        self.assertEqual(events[0], 'submit once')
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[1][0], 'compaction_seed_failed_readback')
 
 
 class VirtualWriters:
@@ -225,13 +296,15 @@ class ReadbackControls(unittest.TestCase):
 
         def query(connection, sql, args):
             self.assertIsInstance(connection, Connection)
-            self.assertEqual(' '.join(sql.split()),
-                             'SELECT id FROM p WHERE tenant_id=%s ORDER BY id LIMIT 20001')
-            self.assertEqual(args, (77,))
+            limit = int(sql.rsplit(' LIMIT ', 1)[1])
+            self.assertLessEqual(limit, 128)
+            self.assertEqual(args[0], 77)
+            self.assertNotIn('OFFSET', sql)
             events.append('bounded readback')
             if query_error:
                 raise query_error
-            return tuple((key,) for key in actual)
+            after = args[1] if len(args) == 2 else None
+            return tuple((key,) for key in actual if after is None or key > after)[:limit]
 
         def persist(summary):
             events.append('persist')
@@ -252,7 +325,9 @@ class ReadbackControls(unittest.TestCase):
                 audit=lambda: pressure.audit_pressure_keys(Connection, 77,
                     self.records if records is None else records, inflight, list(workers_live), query=query),
                 persist=persist, check=check)
-        self.assertEqual(events, ['bounded readback', 'persist', 'witness check', 'persist'])
+        self.assertEqual(events[-3:], ['persist', 'witness check', 'persist'])
+        self.assertTrue(events[:-3])
+        self.assertTrue(all(event == 'bounded readback' for event in events[:-3]))
         self.assertIn('no actual queued compaction input', saved[-1]['check_failure']['message'])
         return saved[-1]
 
@@ -300,6 +375,24 @@ class ReadbackControls(unittest.TestCase):
         self.assertEqual(audit['status'], 'incomplete')
         self.assertIsNone(summary['stored_ids_match_acknowledgements'])
         self.assertIsNone(audit['acknowledged_ids_missing'])
+
+    def test_complete_large_keyset_uses_small_queries_and_checks_the_final_empty_page(self):
+        keys = list(range(-128, 128))
+        records = [{'id': key, 'result': 'ok'} for key in keys]
+        audit = self.run_finalizer(keys, records)['readback']
+        self.assertEqual(audit['status'], 'complete')
+        self.assertTrue(audit['stored_ids_match_acknowledgements'])
+        self.assertEqual(audit['queries'], 3)
+        self.assertEqual(audit['observed_ids'], keys)
+
+    def test_duplicate_page_cannot_certify_a_complete_readback(self):
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+        audit = pressure.audit_pressure_keys(Connection, 77, [], [], [],
+                                             query=lambda *args: ((1,), (1,)))
+        self.assertEqual(audit['status'], 'failed')
+        self.assertIn('cursor did not advance', audit['error'])
 
     def test_persist_errors_do_not_mask_original_witness_or_stage_exception(self):
         for failure_at in (1, 2):

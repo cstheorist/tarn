@@ -5,6 +5,9 @@
 --   TARN_LISTEN        IPROTO listen address, e.g. 127.0.0.1:3301
 --   TARN_WORKDIR       data directory (WAL, snapshots)
 --   TARN_REPLICAS      JSON list of all replica URIs of this shard ("" = single node)
+--   TARN_INSTANCE_UUID optional registered UUID when starting a backup-seeded replica
+--   TARN_INSTANCE_NAME optional stable name (default: shard ID and listen address)
+--   TARN_ELECTION_MODE candidate (default with replicas), voter, or off
 --   TARN_PEERS         JSON map shard_id -> [replica URIs] of every shard (for recovery)
 --   TARN_MEMORY_MB     memtx memory (default 1024)
 --   TARN_VINYL_MEMORY_MB  vinyl in-memory level of the LSM trees (default 128)
@@ -64,7 +67,24 @@ local max_drift = timing('TARN_CLOCK_MAX_DRIFT', .25)
 if max_age <= 0 or max_gap <= 0 or max_drift >= max_gap or max_age + 2 * skew > 9007199254 then
     error('timing policy requires positive age/gap, drift < gap and age + 2*skew within the clock bounds')
 end
+assert(not fio.path.exists(fio.pathjoin(workdir, 'INCOMPLETE')),
+       'refusing an incomplete backup/restore directory')
 fio.mktree(workdir)
+local maintenance = require('tarn_backup').read_marker(workdir)
+local restore_parent = fio.dirname(fio.abspath(workdir))
+local activation_uuid
+if fio.path.exists(fio.pathjoin(restore_parent, 'cluster-source.json')) and not maintenance then
+    local f = assert(io.open(fio.pathjoin(restore_parent, 'activated.json')),
+                     'cluster restore activation is incomplete')
+    local text = f:read(262145); f:close()
+    assert(#text <= 262144, 'oversized cluster activation receipt')
+    local activation = json.decode(text)
+    assert(activation.format == require('tarn_backup').format and type(activation.instances) == 'table',
+           'invalid cluster activation receipt')
+    activation_uuid = activation.instances[fio.basename(fio.abspath(workdir))]
+    assert(type(activation_uuid) == 'string' and require('uuid').fromstr(activation_uuid),
+           'cluster activation receipt omits this replica')
+end
 
 -- Vinyl reads a page that misses its cache on one of vinyl_read_threads,
 -- in turn; Tarantool's default of one thread queues every such read behind
@@ -80,6 +100,28 @@ local function default_read_threads()
 end
 
 local replicated = #replicas > 1
+local election_mode = env('TARN_ELECTION_MODE', replicated and 'candidate' or 'off')
+assert(election_mode == 'candidate' or election_mode == 'voter' or election_mode == 'off',
+       'TARN_ELECTION_MODE must be candidate, voter or off')
+assert(maintenance or not replicated or election_mode ~= 'off',
+       'replicated Tarn requires candidate or voter election mode')
+local instance_uuid = env('TARN_INSTANCE_UUID', '')
+if activation_uuid then
+    assert(instance_uuid == '' or instance_uuid == activation_uuid, 'cluster activation identity mismatch')
+    instance_uuid = activation_uuid
+end
+if instance_uuid ~= '' then
+    assert(require('uuid').fromstr(instance_uuid) ~= nil, 'TARN_INSTANCE_UUID must be a UUID')
+end
+local seed_path = fio.pathjoin(workdir, 'seed.json')
+if fio.path.exists(seed_path) then
+    local f = assert(io.open(seed_path))
+    local text = f:read(4097); f:close()
+    assert(#text <= 4096, 'oversized seed identity marker')
+    local seed = json.decode(text)
+    assert(replicated and election_mode == 'voter' and seed.instance_uuid == instance_uuid,
+           'backup seed requires its registered TARN_INSTANCE_UUID and TARN_ELECTION_MODE=voter')
+end
 local vinyl_timeout = tonumber(env('TARN_VINYL_TIMEOUT', '.25'))
 if vinyl_timeout == nil or vinyl_timeout ~= vinyl_timeout or vinyl_timeout < 0 or vinyl_timeout > 60 then
     error('TARN_VINYL_TIMEOUT must be a finite number from 0 through 60')
@@ -113,17 +155,27 @@ box.cfg{
     log_level = tonumber(env('TARN_LOG_LEVEL', '5')),
     checkpoint_interval = 3600,
     feedback_enabled = false,
-    replication = replicated and replicas or nil,
+    -- Restores are inspected in quarantine with no replication or elections.
+    -- A source fence survives restart while retaining catch-up connectivity.
+    replication = maintenance and maintenance.kind == 'restore' and {} or (replicated and replicas or nil),
+    read_only = maintenance ~= nil,
     replication_synchro_quorum = replicated and 'N / 2 + 1' or nil,
     replication_synchro_timeout = 5,
-    election_mode = replicated and 'candidate' or 'off',
+    election_mode = maintenance and 'off' or election_mode,
     election_fencing_mode = replicated and 'strict' or nil,
     replication_timeout = 0.5,
     bootstrap_strategy = replicated and 'config' or 'auto',
     bootstrap_leader = replicated and replicas[1] or nil,
-    instance_name = 'shard' .. shard_id .. '_' .. (listen:gsub('[^%w]', '_')),
+    instance_name = env('TARN_INSTANCE_NAME', 'shard' .. shard_id .. '_' .. (listen:gsub('[^%w]', '_'))),
+    instance_uuid = instance_uuid ~= '' and instance_uuid or nil,
     replicaset_name = 'shard' .. shard_id,
 }
+
+if maintenance then
+    assert(maintenance.uuid == tostring(box.info.uuid), 'maintenance identity mismatch')
+    log.warn('tarn: maintenance fence %s; application initialization disabled', maintenance.token)
+    return
+end
 
 -- The first instance bootstraps users; replicas receive them via replication.
 if not replicated then

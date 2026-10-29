@@ -47,6 +47,7 @@ FIELDS = (
 )
 PRESSURE_ATTEMPT_CAP = 20000
 PRESSURE_PHASES = ("native_io_uncapped", "native_io_limited", "native_io_released")
+COMPACTION_SEED_ROWS = 528
 
 
 class PressureSchedule:
@@ -251,8 +252,35 @@ def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lam
     return result
 
 
+def keyset_readback(connection, table, projection, tenant, row_limit, *, query=q, progress=None):
+    """Fixed fixture shapes with bounded server pages and total client rows."""
+    assert table in ("p", "c") and projection in ("id", "id,v")
+    progress = {} if progress is None else progress
+    rows, last = [], None
+    progress.update(page_size=128, queries=0, observed_ids=[], row_count=0)
+    while len(rows) < row_limit:
+        limit = min(128, row_limit - len(rows))
+        sql = f"SELECT {projection} FROM {table} WHERE tenant_id=%s"
+        args = (tenant,)
+        if last is not None:
+            sql += " AND id>%s"
+            args += (last,)
+        progress["queries"] += 1
+        page = query(connection, sql + " ORDER BY id LIMIT " + str(limit), args)
+        assert len(page) <= limit, "oversized pressure readback page"
+        for row in page:
+            assert len(row) == (2 if projection == "id,v" else 1) and type(row[0]) is int, "invalid pressure key"
+            assert last is None or row[0] > last, "pressure readback cursor did not advance"
+            last = row[0]
+            rows.append(row)
+        progress.update(observed_ids=[row[0] for row in rows], row_count=len(rows))
+        if len(page) < limit:
+            break
+    return rows
+
+
 def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=q):
-    """One bounded read-only observation; it never settles/replays unknown work."""
+    """Bounded keyset pages after drain; never settle/replay unknown work."""
     success = {row["id"] for row in records if row["result"] == "ok"}
     refused = {row["id"] for row in records if row["result"] == "error" and row.get("error", [None])[0] == 1205}
     unknown = {row["id"] for row in records if row["id"] not in success | refused}
@@ -263,7 +291,8 @@ def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=
               "workers_live": workers_live, "stored_ids_match_acknowledgements": None, "refused_ids_absent": None}
     try:
         with connect() as connection:
-            rows = query(connection, "SELECT id FROM p WHERE tenant_id=%s ORDER BY id LIMIT 20001", (tenant,))
+            rows = keyset_readback(connection, "p", "id", tenant, PRESSURE_ATTEMPT_CAP + 1,
+                                   query=query, progress=result)
         actual = {row[0] for row in rows}
         clipped = len(rows) > PRESSURE_ATTEMPT_CAP
         unsettled = bool(workers_live or pending or unknown or clipped)
@@ -354,6 +383,20 @@ def native_limit_witness(source_limit, samples):
     return control, periodic
 
 
+def compaction_witness(control, samples, audit):
+    """Require the same real seed's queue and completed on-disk work."""
+    assert audit['status'] == 'complete' and audit['matches'], audit
+    assert control and control['after']['disk']['compaction']['queue']['bytes'] > 0, \
+        'public compaction request did not observe real queued input'
+    initial = control['before']['disk']['compaction']
+    final = audit['index']['disk']['compaction']
+    assert final['count'] > initial['count'] and final['input']['bytes'] > initial['input']['bytes'], \
+        'seed compaction did not complete real disk work'
+    assert any(row['snap_io_rate_limit'] == .5
+               and row['compaction_fixture']['disk']['compaction']['queue']['bytes'] > 0 for row in samples), \
+        'seed queue was not independently sampled during limited I/O'
+
+
 INSTALL = r"""
 local owner, seconds = ...
 assert(tarn.cfg.test_hooks == true and not box.info.ro, 'dedicated writable test_hooks shard required')
@@ -411,15 +454,29 @@ class Controls:
         receipts = []
         for node in self.test.nodes:
             result = ev(node, """
-local owner,limit=...
+local owner,limit,fixture=...
 local s=assert(rawget(_G,'__tarn_vinylpressure'));assert(s.owner==owner)
 box.cfg{snap_io_rate_limit=limit};s.io_set=limit
+local compaction
+if limit==.5 and fixture~=nil then
+    assert(not s.compaction_requested,'compaction control must be submitted once')
+    local space=assert(box.space[fixture]);assert(space.engine=='vinyl')
+    local index=space.index[0]
+    local before=index:stat()
+    assert(before.run_count>before.range_count,'compaction seed lacks multiple runs')
+    s.compaction_requested=true
+    index:compact()
+    -- The public API marks real on-disk runs for compaction. Observe its
+    -- native queue in this same non-yielding entry, before a fast worker
+    -- can complete it. Periodic observations remain independently required.
+    compaction={space=fixture,before=before,after=index:stat(),api='index:compact()'}
+end
 -- Record the real regulator in this same call: a completed dump may
 -- recalculate it before the independent periodic sampler next runs.
 local native=box.stat.vinyl()
-return {limit=box.cfg.snap_io_rate_limit,vinyl_timeout=box.cfg.vinyl_timeout,
+return {limit=box.cfg.snap_io_rate_limit,vinyl_timeout=box.cfg.vinyl_timeout,compaction=compaction,
     native=native,realtime=require('clock').realtime(),stats=tarn_vinyl_stats()}
-""", [self.owner, limit])
+""", [self.owner, limit, getattr(self.test, 'compaction_fixture', None) if node == self.test.nodes[0] else None])
             self.test.record("native_io_control", node=node, result=result)
             receipts.append({"node": node, "result": result})
         return receipts
@@ -713,12 +770,87 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
                     assert rows == tuple((key, 42) for key in sorted(keys)), rows
                     self.record("known_committed_apply_under_forced_admission", txid=state["txid"], result=result, rows=rows)
 
+    def prepare_compaction_fixture(self, tenant):
+        self.compaction_fixture = self.db + '.c'
+        self.compaction_expected = {}
+        self.compaction_unknown_ids = set()
+        try:
+            self._seed_compaction_fixture(tenant)
+        except BaseException:
+            # A failed seed never starts timed writers. Retain its bounded
+            # readback without resolving an uncertain INSERT from presence
+            # or absence, and keep its owned database for investigation.
+            self.pressure_preserve_database = bool(self.compaction_unknown_ids)
+            try:
+                self.record('compaction_seed_failed_readback', result=self.audit_compaction_fixture(tenant))
+            except BaseException:
+                traceback.print_exc()
+            raise
+
+    def _seed_compaction_fixture(self, tenant):
+        """Two unequal immutable runs, bounded at 528 x 8 KiB, on the source.
+
+        This is a separate native-work seed, not part of the 20,000 pressure
+        attempts. SQL establishes it; no raw tuple or classifier mutation.
+        Public checkpoints finish the two dumps before timed writer windows.
+        """
+        with self.connect() as c:
+            q(c, 'CREATE TABLE c (tenant_id INT NOT NULL,id INT NOT NULL,v VARBINARY(8192),'
+                 'PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id) ENGINE=vinyl')
+            for first, last in ((1, 512), (513, COMPACTION_SEED_ROWS)):
+                for start in range(first, last + 1, 8):
+                    values = [(tenant, key, base64.b64encode(os.urandom(6144)).decode('ascii'))
+                              for key in range(start, min(start + 8, last + 1))]
+                    # Preserve attempted identities before submission. No
+                    # client exception causes these INSERTs to be replayed.
+                    self.record('compaction_seed_submit', ids=[v[1] for v in values])
+                    self.compaction_unknown_ids.update(v[1] for v in values)
+                    with c.cursor() as cur:
+                        cur.executemany('INSERT INTO c VALUES (%s,%s,%s)', values)
+                    self.compaction_expected.update((key, value.encode('ascii')) for _, key, value in values)
+                    self.compaction_unknown_ids.difference_update(v[1] for v in values)
+                    self.record('compaction_seed_ack', ids=[v[1] for v in values])
+                receipt = ev(self.nodes[0], """
+local name=...
+box.snapshot()
+local fiber=require('fiber');local deadline=fiber.time()+5
+while box.stat.vinyl().scheduler.tasks_inprogress>0 and fiber.time()<deadline do fiber.sleep(.01) end
+assert(box.stat.vinyl().scheduler.tasks_inprogress==0,'seed dump/compaction did not drain')
+local s=assert(box.space[name]);return {engine=s.engine,index=s.index[0]:stat(),native=box.stat.vinyl()}
+""", [self.compaction_fixture])
+                self.record('compaction_seed_dump', last_id=last, result=receipt)
+            assert receipt['engine'] == 'vinyl'
+            assert receipt['index']['run_count'] > receipt['index']['range_count'] > 0, receipt
+        audit = self.audit_compaction_fixture(tenant)
+        self.record('compaction_seed_readback', result=audit)
+        assert audit['status'] == 'complete' and audit['matches'], audit
+
+    def audit_compaction_fixture(self, tenant):
+        unknown = sorted(self.compaction_unknown_ids)
+        result = {'status': 'failed', 'matches': False, 'row_limit': COMPACTION_SEED_ROWS + 1,
+                  'unknown_ids': unknown}
+        try:
+            with self.connect() as c:
+                rows = keyset_readback(c, "c", "id,v", tenant, COMPACTION_SEED_ROWS + 1, query=q, progress=result)
+            actual = dict(rows)
+            result.update(status='incomplete' if unknown else 'complete',
+                          matches=actual == self.compaction_expected if not unknown else None,
+                          rows=len(rows), expected_rows=len(self.compaction_expected),
+                          observed_sha256=hashlib.sha256(b''.join(str(key).encode()+b':'+value
+                                                                 for key,value in rows)).hexdigest())
+            result['index'] = ev(self.nodes[0], 'local s=assert(box.space[...]);return s.index[0]:stat()',
+                                 [self.compaction_fixture])
+        except BaseException as error:
+            result['status'], result['error'] = 'failed', repr(error)
+        return result
+
     def test_real_native_pressure(self):
         identity = self.identities[0]
         assert 1024 * 1024 <= identity["vinyl_memory"] <= 32 * 1024 * 1024, identity
         assert identity["vinyl_cache"] == 0, "real-pressure fixture requires cache zero"
         assert 0 < identity["vinyl_timeout"] <= .5, "real-pressure fixture requires the short native quota wait"
         tenant = self.keys[0][0]
+        self.prepare_compaction_fixture(tenant)
         live_records, live_samples, live_errors = [], [], []
         inflight = {}
         lock = threading.Lock()
@@ -731,15 +863,17 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
             while not sampling_stop.is_set():
                 try:
                     value = ev(self.nodes[0], """
-local space=assert(box.space[...]);local indices={}
+local name,fixture=...
+local space=assert(box.space[name]);local indices={}
 for iid,index in pairs(space.index) do if type(iid)=='number' then
     local s=index:stat();indices[#indices+1]={id=iid,run_count=s.run_count,range_count=s.range_count,
         run_avg=s.run_avg,run_histogram=s.run_histogram,compaction=s.disk.compaction} end end
 return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
     public=tarn_vinyl_stats(),indices=indices,vinyl_timeout=box.cfg.vinyl_timeout,
     vinyl_memory=box.cfg.vinyl_memory,vinyl_cache=box.cfg.vinyl_cache,
-    snap_io_rate_limit=box.cfg.snap_io_rate_limit or 0,engine=space.engine}
-""", [self.db + ".p"])
+    snap_io_rate_limit=box.cfg.snap_io_rate_limit or 0,engine=space.engine,
+    compaction_fixture=box.space[fixture].index[0]:stat()}
+""", [self.db + ".p", self.compaction_fixture])
                     with lock:
                         live_samples.append(value)
                 except Exception as error:
@@ -899,6 +1033,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
         receipts = phase_result["receipts"] if phase_result else {}
         source_limit = next((row["result"] for row in receipts.get(PRESSURE_PHASES[1], [])
                              if row["node"] == self.nodes[0]), None)
+        compaction_control = source_limit.get('compaction') if source_limit else None
         rates = [metric(row, "native", "regulator", "rate_limit") for row in samples]
         rates = [value for value in rates if isinstance(value, (int, float))]
         control_rate = metric(source_limit, "native", "regulator", "rate_limit")
@@ -917,6 +1052,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                    "stored_ids_match_acknowledgements": None, "refused_ids_absent": None,
                    "by_outcome": outcomes, "worker_errors": errors,
                    "compaction_queue_max_bytes": queue, "blocked_writers_max": blocked,
+                   "compaction_control": compaction_control,
                    "memory_level0_max_bytes": level0, "unexpected_errors": unexpected,
                    "rate_limit_witness": {"control_node": self.nodes[0], "control_realtime": metric(source_limit, "realtime"),
                                           "configured_mib_per_second": metric(source_limit, "limit"),
@@ -960,6 +1096,8 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
             assert value["readback"]["status"] == "complete", value["readback"]
             assert (value["stored_ids_match_acknowledgements"] and value["refused_ids_absent"]), \
                 "acknowledged/refused key identities differ from stored rows"
+            seed = value['readback']['compaction_fixture']
+            assert seed['status'] == 'complete' and seed['matches'], seed
             value["check_stage"] = "native pressure witness"
             assert metric_error is None, metric_error
             assert all(row["engine"] == "vinyl" and row["vinyl_memory"] == identity["vinyl_memory"]
@@ -970,6 +1108,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
             # the periodic sampler; either genuine observation can witness it.
             assert control_limit or periodic_limit, "real regulator limit was not observed"
             assert queue is not None and queue > 0, "no actual queued compaction input; pressure fixture did not exercise compaction"
+            compaction_witness(compaction_control, samples, seed)
             assert (blocked is not None and blocked > 0 or level0 is not None and level0 >= .75 * identity["vinyl_memory"]
                     or queue >= identity["vinyl_memory"]), "no actual native pressure witness"
             assert any(index["run_count"] > index["range_count"] > 0 for row in samples for index in row["indices"]), "no real run amplification"
@@ -977,8 +1116,12 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
             for result in ("ok", "error"):
                 assert outcomes[result]["max_ms"] < self.args.max_latency_ms, (result, outcomes[result])
             value["check_stage"] = "complete"
+        def audit():
+            result = audit_pressure_keys(self.connect, tenant, records, pending, workers_live)
+            result['compaction_fixture'] = self.audit_compaction_fixture(tenant)
+            return result
         finalize_pressure(summary,
-                          audit=lambda: audit_pressure_keys(self.connect, tenant, records, pending, workers_live),
+                          audit=audit,
                           persist=persist, check=check)
         self.record("real_pressure_completed", summary=summary)
         print("  pressure " + json.dumps({
@@ -993,7 +1136,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
         if (getattr(self, "pressure_preserve_database", False)
                 or any(thread.is_alive() for thread in getattr(self, "pressure_threads", []))):
             # Never DROP underneath a client whose outcome is still live.
-            self.record("cleanup", errors=[], preserved_database=self.db, reason="pressure writers still live")
+            self.record("cleanup", errors=[], preserved_database=self.db, reason="pressure or seed work remains unsettled")
             self.events.close()
             return
         if self.created:
