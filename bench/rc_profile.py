@@ -105,7 +105,12 @@ def sample(args, number, shape, profiled, endpoints, output, evidence):
             assert (isinstance(n, dict) and n.get('ready') == 1) if args.native == 'enabled' else n is False
     pids = [r['result']['pid'] for r in before]
     if profiled:
-        evaluate(leaders, "assert(require('misc').sysprof.start({mode='D',interval=1})); return true")
+        profile_files = evaluate(leaders,
+            "local p=box.cfg.work_dir..'/rc-sample-" + str(number) + ".sysprof'; "
+            "local ok,err=require('misc').sysprof.start({mode='C',interval=1,path=p}); "
+            "assert(ok,err); return p")
+    else:
+        profile_files = []
     cpus_before = {str(pid): cpu(pid) for pid in pids}
     records, failures = [], []
     clients = 1 if shape == 'uncontended' else 8
@@ -174,7 +179,8 @@ def sample(args, number, shape, profiled, endpoints, output, evidence):
     record = dict(number=number, shape=shape, profiled=profiled, clients=clients,
                   scheduled_seconds=args.seconds, elapsed_seconds=elapsed,
                   before=before, after=after, cpu_before=cpus_before, cpu_after=cpus_after,
-                  profile=profile, errors=failures, workers_live=any(t.is_alive() for t in threads),
+                  profile=profile, profile_files=profile_files,
+                  errors=failures, workers_live=any(t.is_alive() for t in threads),
                   attempts_file=attempt_path.name, attempts_sha256=sha(attempt_path), complete=False)
     evidence['samples'].append(record)
     output.write_text(json.dumps(evidence, indent=2) + '\n')

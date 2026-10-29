@@ -89,6 +89,9 @@ jobs:
         run: |
           scripts/cluster.sh start -d /tmp/rc-cluster -n 2 -r 3 -w fsync -p 4000 -s 1 -m 256 -e '${{ matrix.engine }}'
           tarantool --version > /tmp/rc-results/tarantool.txt
+          sha256sum "$(command -v tarantool)" > /tmp/rc-results/tarantool.sha256
+          cp "$(command -v tarantool)" /tmp/rc-results/tarantool
+          lscpu > /tmp/rc-results/cpu.txt
           python3 bench/rc_profile.py --cluster-dir /tmp/rc-cluster --bin /tmp/rc-build/tarn-server \
             --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
             --repeats 5 --seconds 5 --out /tmp/rc-results/baseline.json
@@ -111,5 +114,6 @@ jobs:
             /tmp/rc-cluster/*.sh
             /tmp/rc-cluster/cluster.json
             /tmp/rc-cluster/params
+            /tmp/rc-cluster/s*/*.sysprof
           retention-days: 30
           if-no-files-found: error
