@@ -195,6 +195,12 @@ impl Isolation {
             Isolation::RepeatableRead | Isolation::Serializable => crate::txn::Mode::Serializable,
         }
     }
+    pub fn effective_name(self) -> &'static str {
+        match self.mode() {
+            crate::txn::Mode::ReadCommitted => "READ-COMMITTED",
+            crate::txn::Mode::Serializable => "STRICT-SERIALIZABLE",
+        }
+    }
 }
 
 /// Scope of a SET: the session, the server default for new sessions
@@ -228,6 +234,10 @@ pub struct SessionVars<'a> {
     pub autocommit: bool,
     pub db: Option<&'a str>,
     pub isolation: Isolation,
+    pub global_isolation: Isolation,
+    pub global_lock_wait_timeout: f64,
+    pub next_isolation: Option<Isolation>,
+    pub active_mode: Option<crate::txn::Mode>,
     pub lock_wait_timeout: f64,
     /// Values the session SET for variables Tarn reports but does not act
     /// on (character sets, sql_mode, time_zone, foreign_key_checks, ...).
@@ -254,6 +264,13 @@ pub fn sysvar_name(name: &str) -> String {
 pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
     let (autocommit, db) = (sv.autocommit, sv.db);
     let n = sysvar_name(name);
+    if name.trim_start_matches('@').to_ascii_lowercase().starts_with("global.") {
+        match n.as_str() {
+            "tx_isolation" | "transaction_isolation" => return Some(Value::str(sv.global_isolation.name())),
+            "innodb_lock_wait_timeout" => return Some(Value::Int(sv.global_lock_wait_timeout.round() as i64)),
+            _ => {}
+        }
+    }
     if let Some(v) = sv.overrides.and_then(|o| o.get(&n)) {
         return Some(v.clone());
     }
@@ -264,6 +281,14 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         "version_compile_machine" => Value::str("x86_64"),
         "autocommit" => Value::Int(autocommit as i64),
         "tx_isolation" | "transaction_isolation" => Value::str(sv.isolation.name()),
+        "tarn_isolation_contract" => Value::str("TARN"),
+        "tarn_effective_isolation" => Value::str(sv.isolation.effective_name()),
+        "tarn_next_isolation" => sv.next_isolation.map(|i| Value::str(i.name())).unwrap_or(Value::Null),
+        "tarn_active_isolation" => match sv.active_mode {
+            Some(crate::txn::Mode::ReadCommitted) => Value::str("READ-COMMITTED"),
+            Some(crate::txn::Mode::Serializable) => Value::str("STRICT-SERIALIZABLE"),
+            None => Value::Null,
+        },
         "tx_read_only" | "transaction_read_only" | "read_only" | "super_read_only" => Value::Int(0),
         "max_allowed_packet" => Value::Int(67_108_864),
         "net_buffer_length" => Value::Int(16384),
@@ -343,6 +368,10 @@ pub const SHOWN_VARIABLES: &[&str] = &[
     "tarn_tree_checks",
     "tarn_lazy_read_your_writes",
     "tarn_lazy_wait_timeout",
+    "tarn_isolation_contract",
+    "tarn_effective_isolation",
+    "tarn_next_isolation",
+    "tarn_active_isolation",
     "time_zone",
     "transaction_isolation",
     "transaction_read_only",
@@ -1170,6 +1199,38 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolation_contract_preserves_scope_and_reports_active_mode() {
+        let sv = SessionVars {
+            autocommit: true,
+            db: None,
+            isolation: Isolation::RepeatableRead,
+            global_isolation: Isolation::ReadCommitted,
+            global_lock_wait_timeout: 7.0,
+            next_isolation: Some(Isolation::Serializable),
+            active_mode: Some(crate::txn::Mode::ReadCommitted),
+            lock_wait_timeout: 2.0,
+            overrides: None,
+            collation_connection: "utf8mb4_bin",
+            collation_server: "utf8mb4_bin",
+            warning_count: 0,
+        };
+        for (name, value) in [
+            ("@@GLOBAL.transaction_isolation", Value::str("READ-COMMITTED")),
+            ("@@session.transaction_isolation", Value::str("REPEATABLE-READ")),
+            ("@@global.innodb_lock_wait_timeout", Value::Int(7)),
+            ("@@innodb_lock_wait_timeout", Value::Int(2)),
+            ("@@tarn_effective_isolation", Value::str("STRICT-SERIALIZABLE")),
+            ("@@tarn_active_isolation", Value::str("READ-COMMITTED")),
+            ("@@tarn_next_isolation", Value::str("SERIALIZABLE")),
+            ("@@tarn_isolation_contract", Value::str("TARN")),
+        ] {
+            assert_eq!(system_var(name, &sv), Some(value), "{name}");
+        }
+        assert_eq!(Isolation::ReadUncommitted.effective_name(), "READ-COMMITTED");
+        assert_eq!(Isolation::Serializable.effective_name(), "STRICT-SERIALIZABLE");
+    }
 
     #[test]
     fn quoted_admin_tokens_preserve_utf8_and_escapes() {

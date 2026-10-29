@@ -83,6 +83,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add a pinned MySQL 8.4 executable compatibility manifest and RF3 native/Lua,
+  memtx/vinyl release controls for text/binary protocols. Expose effective,
+  active and pending isolation, refuse an exact MySQL-isolation mode, and
+  report gateway-global isolation/lock timeout independently of session values.
+
 - Request-specific quorum freshness for default SQL and strong storage
   reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty
   transaction establishes the confirmed prefix before data access; a first

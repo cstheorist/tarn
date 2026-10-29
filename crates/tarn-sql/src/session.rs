@@ -468,10 +468,15 @@ impl Session {
     }
 
     fn session_vars(&self) -> admin::SessionVars<'_> {
+        let globals = self.cluster.globals.lock();
         admin::SessionVars {
             autocommit: self.autocommit,
             db: self.db.as_deref(),
             isolation: self.isolation,
+            global_isolation: globals.isolation,
+            global_lock_wait_timeout: globals.lock_wait_timeout,
+            next_isolation: self.next_isolation,
+            active_mode: self.txn.as_ref().map(|t| t.mode),
             lock_wait_timeout: self.lock_wait_timeout,
             overrides: Some(&self.sys_vars),
             collation_connection: &self.collation_connection,
@@ -605,6 +610,35 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
+            "tarn_isolation_contract" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "tarn_isolation_contract is a SESSION variable",
+                    ));
+                }
+                if text.eq_ignore_ascii_case("MYSQL") {
+                    return Err(SqlError::unsupported(
+                        "exact MySQL isolation; use Tarn's documented isolation contract (REPEATABLE READ is strictly serializable)",
+                    ));
+                }
+                if value.is_none() || text.eq_ignore_ascii_case("TARN") {
+                    return Ok(());
+                }
+                return Err(SqlError::new(
+                    1231,
+                    "42000",
+                    "tarn_isolation_contract accepts TARN; exact MYSQL is unsupported",
+                ));
+            }
+            "tarn_effective_isolation" | "tarn_next_isolation" | "tarn_active_isolation" => {
+                return Err(SqlError::new(
+                    1238,
+                    "HY000",
+                    format!("Variable '{}' is a read only variable", name),
+                ));
+            }
             "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(

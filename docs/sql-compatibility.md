@@ -443,6 +443,12 @@ characters their tables weigh differently. An unknown name fails with 1273.
 
 ## Differences from MySQL
 
+The [executable MySQL release contracts](mysql-contracts.md) pin the exact
+MySQL 8.4 InnoDB oracle and classify tested histories as equivalent,
+intentional differences or explicit refusals. Their generated manifest is
+checked in CI alongside the existing MariaDB suites. Read its scope before
+interpreting general compatibility statements as exact equivalence.
+
 * **Isolation:** the default is strict serializability (MySQL's default is
   REPEATABLE READ, which Tarn runs strictly serializable). Conflicting
   serializable transactions abort with 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE
