@@ -112,6 +112,8 @@ def decimal_keys(s):
     for key in ["9007199254740992.0100", "9007199254740992.02", "9007199254740993", "18446744073709551615.000", "9007199254740992.011"]:
         s.q(f"SELECT id,v FROM decimal_keys WHERE id={key} ORDER BY id", record=True)
     s.q("SELECT id FROM decimal_keys WHERE id>9007199254740992.011 ORDER BY id LIMIT 2", record=True)
+    s.q("SELECT id FROM decimal_keys WHERE id=100000000000000000000000000000000000000000 ORDER BY id", record=True)
+    s.q("SELECT id FROM decimal_keys WHERE id<100000000000000000000000000000000000000000 ORDER BY id", record=True)
     s.q("SELECT a.id,b.v FROM decimal_keys a JOIN decimal_keys b ON a.id=b.id ORDER BY a.id", record=True)
     assert s.error("INSERT INTO decimal_keys(id,v) VALUES (9007199254740992.010,9)") == 1062
     s.fresh("integer_keys", "id BIGINT UNSIGNED PRIMARY KEY, v BIGINT")

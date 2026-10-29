@@ -1077,6 +1077,11 @@ mod tests {
         let key = crate::exec::coerce_key_part(&decimal, &d("9007199254740992.0100")).unwrap();
         assert_eq!(key, d("9007199254740992.01"));
         assert!(crate::exec::coerce_key_part(&decimal, &d("9007199254740992.011")).is_none());
+        assert!(crate::exec::coerce_key_part(&decimal, &d("100000000000000000000000000000000000000000")).is_none());
+        assert_eq!(
+            crate::exec::coerce_key_part(&decimal, &Value::str("7tail")),
+            Some(d("7.00"))
+        );
         assert_eq!(
             crate::route::bucket_of(&[key], 30000),
             crate::route::bucket_of(&[d("9007199254740992.01")], 30000)

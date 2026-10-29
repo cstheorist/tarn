@@ -409,14 +409,24 @@ pub fn coerce_key_part(ty: &SqlType, v: &Value) -> Option<Value> {
     match ty.base {
         BaseType::Float | BaseType::Double => to_num(v).map(Value::Float),
         BaseType::Decimal => {
-            let text = v.to_string();
+            let text = match v {
+                Value::Decimal(_) | Value::Int(_) | Value::UInt(_) => v.to_string(),
+                // Preserve the legacy mixed-type numeric-prefix conversion.
+                // MYSQL key mode refuses these string/float comparisons.
+                other => to_num(other)?.to_string(),
+            };
             let original = crate::decimal::Decimal::parse(&text)?;
             let scaled = original.rescale(ty.scale.unwrap_or(0))?;
             let candidate = crate::decimal::Decimal::parse(&scaled)?;
             // Hash the declared scale, exactly as an inserted row does.
             // Rounding a probe would select a different key; range callers
             // drop an inexact bound and retain their residual predicate.
-            (original.compare(&candidate) == std::cmp::Ordering::Equal).then_some(Value::Decimal(scaled))
+            if original.compare(&candidate) != std::cmp::Ordering::Equal {
+                return None;
+            }
+            // An out-of-domain equality cannot match; a range caller keeps
+            // its residual predicate. Never encode a >38-digit native key.
+            ty.coerce(Value::Decimal(scaled), "key").ok()
         }
         BaseType::Binary | BaseType::VarBinary | BaseType::Blob => Some(Value::Bin(v.to_text().unwrap_or_default())),
         _ => Some(match v {
