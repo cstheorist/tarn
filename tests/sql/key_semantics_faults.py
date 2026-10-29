@@ -167,12 +167,14 @@ def main():
                 raise AssertionError(("unexpected write outcome", a))
         assert len(actual) == sum((a["r"], a["id"]) in actual for a in report["attempts"])
         report["after_failover"] = rows
+        report["postflight_trace"] = c.trace
 
         # Recovered global uniqueness must distinguish adjacent values that
         # the original f64 comparator collapsed, while rejecting duplicates.
         for i, key in [(9001, "9007199254740992.01"), (9002, "9007199254740992.02")]:
             c.q(f"INSERT INTO fault_keys VALUES (1,{i},{key},'é')")
-            assert c.error(f"INSERT INTO fault_keys VALUES (2,{i},{key},'e')") == 1062
+            code = c.error(f"INSERT INTO fault_keys VALUES (2,{i},{key},'e')")
+            assert code == 1062, (key, code)
         expected = read_all()
         count = config.get("bucket_count", 30000)
         bucket = bucket_of(1, count)
@@ -208,7 +210,14 @@ def main():
             time.sleep(.1)
         report["restarted_replica"] = recovered
         if args.native == "1":
-            assert sum(info["native"]["served"] for _, info in report["final_leaders"]) > 0
+            assert all(info["native"]["ready"] == 1 for _, info in report["final_leaders"])
+            if args.engine == "memtx":
+                assert sum(info["native"]["served"] for _, info in report["final_leaders"]) > 0
+            else:
+                # Vinyl uses the guarded Lua storage path. A loaded native
+                # module must hand validation back; native memtx read counters
+                # are intentionally zero, not evidence of a failed key check.
+                assert sum(info["native"]["validations_to_lua"] for _, info in report["final_leaders"]) > 0
         report["status"] = "passed"
         c.c.close()
     except Exception as exc:

@@ -40,6 +40,9 @@ LIMIT/keyset pagination, DISTINCT/GROUP BY and COUNT/MIN/MAX. DML values
 may be bound or literal exact numbers, strings, binary values or NULL.
 Assignments use the destination type's checked conversion. An approximate
 FLOAT parameter is refused even if this particular value could be exact.
+Malformed decimal or UTF-8 string parameters, binary column defaults and
+computed defaults are refused. Literal defaults are checked for conversion
+before publishing a definition.
 Decimal SQL literals use a decimal point; exponent SQL literals are
 approximate under MySQL's rules and refused by this profile. A decimal
 string assigned to an exact column is parsed without a float intermediate.
@@ -75,7 +78,8 @@ above 2^53 in both modes. Earlier writes that already rounded a value
 cannot be reconstructed by upgrading. Existing application data needs an
 independent source of truth if it may have passed through that old path.
 The original regression equates `9007199254740992.01` and
-`9007199254740992.02`; the retained negative control demonstrates the bug.
+`9007199254740992.02`; the [retained negative control](../contracts/evidence/key-semantics/)
+demonstrates the bug.
 
 ## Protocol and consistency boundaries
 
@@ -115,6 +119,9 @@ memtx/vinyl × native/Lua configurations, then kills an owned RF3 leader
 during writes, observes promotion, restores the killed clock peer, reconciles
 every acknowledged/refused/uncertain attempt and moves a populated bucket. It compares the
 final SQL values with native decoded tuples. Mutations are never retried.
+Vinyl uses its guarded Lua storage path even with the native module loaded;
+the artifacts record readiness and fallback counters, not a claim of native
+Vinyl key execution.
 Artifacts retain traces, build hashes, client versions, fault outcomes and
 cluster logs even on failure; a failing or absent matrix cell is not evidence
 for that configuration.

@@ -39,6 +39,9 @@ pub(crate) fn sql(text: &str) -> SqlResult<()> {
         _ => None,
     };
     for i in 0..tokens.len() {
+        if matches!(tokens.get(i), Some(Token::Number(n, _)) if n.contains(['e', 'E'])) {
+            return Err(unsupported("approximate exponent literal"));
+        }
         if let Some(Token::Word(w)) = tokens.get(i) {
             if matches!(tokens.get(i + 1), Some(Token::LParen))
                 && matches!(tokens.get(i + 2), Some(Token::Number(_, _)))
@@ -116,6 +119,13 @@ fn table(t: &TableDef) -> SqlResult<()> {
             // floating point or invalid-date conversion as exact.
             _ => return Err(unsupported(format!("column '{}.{}' type {}", t.name, c.name, c.ty))),
         }
+        if let Some(default) = &c.default {
+            if ty.base == VarBinary || default == "CURRENT_TIMESTAMP" {
+                return Err(unsupported("binary or computed column default"));
+            }
+            ty.coerce(Value::str(default), &c.name)
+                .map_err(|_| unsupported(format!("default conversion for column '{}'", c.name)))?;
+        }
     }
     Ok(())
 }
@@ -138,6 +148,12 @@ fn numeric(t: &ExprType) -> bool {
 }
 
 fn expression(e: &Expr, cols: &[ExprType], params: Option<&[Value]>) -> SqlResult<()> {
+    let value = |v: &Value| match v {
+        Value::Float(_) => Err(unsupported("floating-point value")),
+        Value::Decimal(d) if crate::decimal::Decimal::parse(d).is_none() => Err(unsupported("invalid decimal value")),
+        Value::Str(s) if std::str::from_utf8(s).is_err() => Err(unsupported("invalid UTF-8 string value")),
+        _ => Ok(()),
+    };
     let pair = |a: &Expr, b: &Expr| -> SqlResult<()> {
         expression(a, cols, params)?;
         expression(b, cols, params)?;
@@ -150,11 +166,9 @@ fn expression(e: &Expr, cols: &[ExprType], params: Option<&[Value]>) -> SqlResul
         Ok(())
     };
     match e {
-        Expr::Lit(Value::Float(_)) => Err(unsupported("floating-point expression")),
-        Expr::Param(i) if params.is_some_and(|p| matches!(p.get(*i), Some(Value::Float(_)))) => {
-            Err(unsupported("floating-point parameter"))
-        }
-        Expr::Col(_) | Expr::Lit(_) | Expr::Param(_) | Expr::Var(_) => Ok(()),
+        Expr::Lit(v) => value(v),
+        Expr::Param(i) => params.and_then(|p| p.get(*i)).map_or(Ok(()), value),
+        Expr::Col(_) | Expr::Var(_) => Ok(()),
         Expr::Cmp(a, _, b, c) => {
             pair(a, b)?;
             if let Some(params) = params {
@@ -377,6 +391,9 @@ mod tests {
             "CREATE TABLE t (id DECIMAL(38,2) PRIMARY KEY)",
             "CREATE TABLE t (id INT PRIMARY KEY,k DECIMAL(65,30))",
             "CREATE TABLE t (id INT PRIMARY KEY,k CHAR(8))",
+            "CREATE TABLE t (id INT PRIMARY KEY,k BIGINT DEFAULT 1e3)",
+            "CREATE TABLE t (id INT PRIMARY KEY,k VARCHAR(32) DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE t (id INT PRIMARY KEY,k VARBINARY(8) DEFAULT X'ff')",
         ] {
             assert!(
                 sql(ddl)
@@ -390,5 +407,12 @@ mod tests {
             crate::collation::Collation::from_name("utf8mb4_0900_ai_ci"),
             Some(crate::collation::Collation::Unicode { pad: false })
         );
+        for v in [
+            Value::Decimal("NaN".into()),
+            Value::Str(bytes::Bytes::from_static(b"\xff")),
+            Value::Float(1.0),
+        ] {
+            assert!(expression(&Expr::Param(0), &[], Some(&[v])).is_err());
+        }
     }
 }
