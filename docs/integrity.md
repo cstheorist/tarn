@@ -13,7 +13,7 @@ keys are also rejected; MySQL's own partition/FK restrictions remain separate.
 | FOREIGN KEY, column REFERENCES, all ON DELETE/UPDATE actions | Rejected on new CREATE/ADD | 1235/42000; no cascade, parent check or distributed referential locking |
 | Column/table CHECK, ENFORCED and NOT ENFORCED | Rejected; ALTER enforcement is rejected too | 1235/42000; no CHECK predicate or NULL/UNKNOWN truth semantics are advertised |
 | ENUM / SET | Rejected on CREATE, ADD, MODIFY and CHANGE | 1235/42000; use an unrestricted text type only when that is the intended contract |
-| NOT NULL | SQL writes reject explicit NULL; ALTER validates old rows before publication | 1048/23000 for a NULL write; failed ALTER retains the old usable schema |
+| NOT NULL | SQL writes reject explicit NULL; ALTER validates old rows before publication | 1048/23000 for a NULL write; existing-NULL ALTER refusal is 1265/HY000 (the legacy Tarn error contract), versus MySQL 1138/22004 and MariaDB 1265/01000; failed ALTER retains the old usable schema |
 | PRIMARY / UNIQUE | SQL local and global indexes enforce non-NULL uniqueness; a nullable unique key permits multiple NULLs | 1062/23000 for duplicates; failed index validation retains the old schema |
 
 The machine-readable [integrity contract](../tests/sql/data/integrity-contract.json)

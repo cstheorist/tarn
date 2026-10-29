@@ -262,7 +262,15 @@ def main():
         report['declarations'] = declarations(a,b,manifest,args.reference)
         first, second = writes(a), writes(b)
         report['tarn_writes'], report['reference_writes'] = first, second
-        assert first == second, [(x,y) for x,y in zip(first,second) if x != y]
+        assert len(first) == len(second)
+        for x,y in zip(first,second):
+            difference = manifest.get('intentional_error_differences',{}).get(x.get('sql'))
+            if difference:
+                assert x['outcome'] == difference['tarn'], x
+                assert y['outcome'] == difference[args.reference], y
+                assert {k:v for k,v in x.items() if k != 'outcome'} == {k:v for k,v in y.items() if k != 'outcome'}
+            else:
+                assert x == y, (x,y)
         report['concurrent'] = {'tarn': concurrent_unique(args.tarn,db), 'reference': concurrent_unique(args.ref,db)}
         if args.kv:
             report['legacy'] = legacy(a,args.kv,db)
