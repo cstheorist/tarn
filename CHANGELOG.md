@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve 1180/40003 for native commit uncertainty, missing write DATA and
+  malformed mutation replies. Require complete error and handback envelopes
+  before retry/fallback so a plausible prefix cannot replay an increment.
+  Register the cross-client outcome contract and RF3/fsync fault histories,
+  including statement/transaction rollback, pending APPLY and operation IDs.
+
 - The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
   across the warmup, limited-I/O and release windows, so fast writers cannot
   consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).

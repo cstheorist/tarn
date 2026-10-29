@@ -1123,9 +1123,9 @@ impl Txn {
             e => from_iproto(e),
         });
         cluster.stats.commits_local.fetch_add(1, Ordering::Relaxed);
-        let r = r.and_then(|r| r.data().ok_or_else(|| crate::mpw::proto("no data")));
+        let r = r.and_then(|r| r.data().ok_or_else(|| ambiguous(shard_id, &"no write reply data")));
         match r {
-            Ok(d) => lua_status(&d).map(|_| ()),
+            Ok(d) => crate::mpw::write_reply(&d, shard_id).map(|_| ()),
             Err(e) => {
                 let _ = client.rollback(id).await;
                 Err(e)
@@ -1158,7 +1158,7 @@ impl Txn {
         }
         match client.call(stream, "tarn_storage.ts_commit_local", args).await {
             Ok(r) => match r.data() {
-                Some(d) if crate::mpw::status_is(&d, "lua") => None,
+                Some(d) if crate::mpw::native_write_handback(&d).is_some() => None,
                 _ => Some(Ok(r)),
             },
             Err(tarn_iproto::Error::Server {
@@ -1203,8 +1203,8 @@ impl Txn {
             e => from_iproto(e),
         });
         cluster.stats.commits_local.fetch_add(1, Ordering::Relaxed);
-        let d = r?.data().ok_or_else(|| crate::mpw::proto("no data"))?;
-        lua_status(&d).map(|_| ())?;
+        let d = r?.data().ok_or_else(|| ambiguous(shard_id, &"no write reply data"))?;
+        crate::mpw::write_reply(&d, shard_id)?;
         self.plocks.remove(&shard); // released by the commit
         Ok(())
     }

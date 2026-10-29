@@ -15,9 +15,17 @@ cleanup() {
 }
 trap cleanup EXIT
 export TARN_CHECK_LOCKS=1 TARN_CHECK_YIELDS=1
-"$ROOT/scripts/cluster.sh" start -d "$W" -n 1 -r 1 -s 0 -b "$BASE" -p "$QP" -m 256 > "$W/start.log" 2>&1
+"$ROOT/scripts/cluster.sh" start -d "$W" -n 1 -r "${R:-1}" -w "${WAL:-write}" -s 0 -b "$BASE" -p "$QP" -m 256 > "$W/start.log" 2>&1
+leader=
+for replica in $(seq "${R:-1}"); do
+  port=$((BASE + 10 + replica))
+  if "${TARANTOOL:-tarantool}" "$ROOT/scripts/probe.lua" "tarn:tarn@127.0.0.1:$port" </dev/null >/dev/null 2>&1; then
+    leader=$port; break
+  fi
+done
+[ -n "$leader" ] || { echo 'no writable RPC fixture leader'; exit 1; }
 TARN_FAULT_REPLY=stall TARN_FAULT_COUNT=1000000 TARN_PROXY_ARM_FILE="$W/armed" \
-  python3 "$ROOT/tests/proxy.py" "$PP" "$((BASE + 11))" autocommit update > "$W/proxy.log" 2>&1 &
+  python3 "$ROOT/tests/proxy.py" "$PP" "$leader" autocommit update > "$W/proxy.log" 2>&1 &
 proxy_pid=$!
 for scope in connection shard global; do
   python3 - "$W/cluster.json" "$PP" "$scope" <<'PY'
@@ -40,7 +48,7 @@ PY
     sleep .1
   done
   [ "$ready" = 1 ] || { cat "$W/tarn-$scope.log"; exit 1; }
-  python3 "$ROOT/tests/sql/rpctest.py" --tarn "127.0.0.1:$QP" --config "$W/cluster.json" --arm "$W/armed" --scope "$scope"
+  python3 "$ROOT/tests/sql/rpctest.py" --tarn "127.0.0.1:$QP" --config "$W/cluster.json" --arm "$W/armed" --scope "$scope" --client "${RPC_CLIENT:-pymysql}"
   kill "$(cat "$W/tarn1.pid")"
   wait "$(cat "$W/tarn1.pid")" 2>/dev/null || true
   rm "$W/tarn1.pid"

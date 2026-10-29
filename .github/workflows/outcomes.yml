@@ -1,0 +1,65 @@
+name: Outcome contracts
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: outcomes-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  outcomes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [memtx, vinyl]
+        native: ['1', '0']
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_TOOLCHAIN: '1.98.1'
+      TARN_BIN: ${{ github.workspace }}/target/release/tarn-server
+      OUTCOME_DIR: /tmp/tarn-outcomes-release
+      ENGINE: ${{ matrix.engine }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0 msgpack==1.1.2
+      - run: python3 scripts/check_outcomes.py
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v5
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - name: Build normal release profile
+        run: cargo build --locked --release --workspace --all-targets
+      - name: Run RF3/fsync outcome histories
+        run: |
+          if [ '${{ matrix.native }}' = 0 ]; then export TARN_NATIVE=0
+          else export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"; fi
+          tests/outcomes.sh
+      - name: Cross-client RPC admission and abandoned replies
+        run: |
+          if [ '${{ matrix.native }}' = 0 ]; then export TARN_NATIVE=0
+          else export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"; fi
+          for client in pymysql connector prepared; do
+            R=3 WAL=fsync RPC_CLIENT="$client" tests/rpcs.sh > "$OUTCOME_DIR/rpcs-$client.log" 2>&1
+          done
+      - name: Retain every history and storage log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ matrix.engine }}-native-${{ matrix.native }}-${{ github.run_id }}
+          path: /tmp/tarn-outcomes-release
+          if-no-files-found: error
+          retention-days: 30

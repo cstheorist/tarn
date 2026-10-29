@@ -12,6 +12,8 @@ import threading
 import time
 
 import pymysql
+import mysql.connector
+from outcome_client import Client
 
 
 def q(c, sql):
@@ -32,6 +34,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--arm", required=True)
     ap.add_argument("--scope", choices=("connection", "shard", "global"), required=True)
+    ap.add_argument("--client", choices=("pymysql", "connector", "prepared"), default="pymysql")
     args = ap.parse_args()
     host, port = args.tarn.split(":")
     config = json.loads(pathlib.Path(args.config).read_text())["rpc"]
@@ -47,7 +50,7 @@ def main():
     q(observer, f"CREATE TABLE {db}.t(id INT PRIMARY KEY,v INT)")
     count = 24
     q(observer, f"INSERT INTO {db}.t VALUES" + ",".join(f"({i},0)" for i in range(count)))
-    clients = [connect() for _ in range(count)]
+    clients = [Client(args.tarn, args.client, timeout=8) for _ in range(count)]
     barrier = threading.Barrier(count + 1)
     capture = threading.local()
     original_error = pymysql.err.raise_mysql_exception
@@ -62,10 +65,12 @@ def main():
         capture.sqlstate = None
         try:
             # Do not retry this statement on any error.
-            q(clients[i], f"UPDATE {db}.t SET v=v+1 WHERE id={i}")
+            clients[i].query(f"UPDATE {db}.t SET v=v+1 WHERE id={i}")
             return i, 0, None, time.monotonic() - start, ""
-        except pymysql.MySQLError as e:
-            return i, e.args[0], capture.sqlstate, time.monotonic() - start, str(e)
+        except (pymysql.MySQLError, mysql.connector.Error) as e:
+            code = e.errno if isinstance(e, mysql.connector.Error) else e.args[0]
+            state = e.sqlstate if isinstance(e, mysql.connector.Error) else capture.sqlstate
+            return i, code, state, time.monotonic() - start, str(e)
 
     samples = []
     arm = pathlib.Path(args.arm)

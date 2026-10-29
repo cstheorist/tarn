@@ -2245,11 +2245,13 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
 | Bug_GroupedTablesNoWLockCheck | violates StrictSerializable | 1194 | 5093 | 13 | 00s | 13 |
-| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 34 | 56 | 8 | 00s | 8 |
-| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 23 | 42 | 7 | 00s | 7 |
-| Bug_HandbackKeepsWrites | violates AtMostOnce | 32 | 52 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss | violates ReplyHolds | 35 | 66 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 29 | 55 | 7 | 00s | 7 |
+| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 57 | 107 | 8 | 00s | 8 |
+| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 34 | 69 | 7 | 00s | 7 |
+| Bug_HandbackKeepsWrites | violates AtMostOnce | 51 | 85 | 7 | 00s | 7 |
+| Bug_HandbackMalformedReply | violates ReplyHolds | 26 | 40 | 5 | 00s | 5 |
+| Bug_HandbackMalformedReply_Autocommit | violates ReplyHolds | 21 | 36 | 5 | 00s | 5 |
+| Bug_HandbackResendAfterLoss | violates ReplyHolds | 51 | 96 | 7 | 00s | 7 |
+| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 38 | 79 | 7 | 00s | 7 |
 | Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
 | Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
@@ -2398,8 +2400,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
-| Handback | no errors | 28 | 48 | 7 | 00s |  |
-| Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
+| Handback | no errors | 46 | 96 | 7 | 00s |  |
+| Handback_Autocommit | no errors | 33 | 78 | 7 | 00s |  |
 | Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |

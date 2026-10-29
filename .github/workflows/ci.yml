@@ -70,7 +70,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python packages
-        run: pip install PyMySQL
+        run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
       # Restore and save separately, so that the (slow) Tarantool build is

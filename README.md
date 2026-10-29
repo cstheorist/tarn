@@ -57,7 +57,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and checked with TLC (263 default configurations, including 194
+  and checked with TLC (265 default configurations, including 196
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -187,6 +187,10 @@ read components; the older throughput tables retain their original scope.
 covers and how to run it.
 
 ## Documentation
+
+[Outcomes and retry rules](docs/outcomes.md) cover known aborts, unknown
+mutations, pending APPLY and durable operation IDs.
+
 
 | | |
 |---|---|

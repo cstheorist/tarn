@@ -271,6 +271,111 @@ pub fn status_is(data: &[u8], status: &str) -> bool {
         && rd.string().is_ok_and(|s| s == status)
 }
 
+/// A native mutation may hand back only with a complete, known no-effect
+/// envelope. A plausible prefix in a malformed reply is not a certificate.
+pub fn native_write_handback(data: &[u8]) -> Option<bool> {
+    let mut rd = Rd::new(data);
+    if rd.array().ok()? != 1 {
+        return None;
+    }
+    let fields = rd.array().ok()?;
+    if !matches!(fields, 1 | 2) || rd.value().ok()? != Value::str("lua") {
+        return None;
+    }
+    let all = fields == 2;
+    if all && rd.value().ok()? != Value::str("all") {
+        return None;
+    }
+    rd.buf.is_empty().then_some(all)
+}
+
+/// Decode an autocommit/local/RC write acknowledgement before allowing
+/// success, a known rollback, or retry. The transport has already sent the
+/// mutation: missing, malformed and future replies remain outcome-unknown.
+/// Admin and read procedures use their own envelopes and `lua_status`.
+pub fn write_reply(data: &[u8], shard: u32) -> SqlResult<u64> {
+    let parsed = (|| -> SqlResult<Option<u64>> {
+        let mut rd = Rd::new(data);
+        if rd.array()? != 1 {
+            return Err(proto("write must return exactly one status"));
+        }
+        let fields = rd.array()?;
+        let Value::Str(tag) = rd.value()? else {
+            return Err(proto("write status must be a string"));
+        };
+        let result = match tag.as_ref() {
+            b"ok" if matches!(fields, 2 | 3) => {
+                let n = match rd.value()? {
+                    Value::UInt(n) => n,
+                    Value::Int(n) if n >= 0 => n as u64,
+                    _ => return Err(proto("invalid write count")),
+                };
+                if fields == 3 {
+                    if !matches!(rd.buf.first(), Some(0x90..=0x9f | 0xdc | 0xdd | 0xc0)) {
+                        return Err(proto("invalid write last tuple"));
+                    }
+                    rd.skip()?;
+                }
+                Some(n)
+            }
+            b"conflict" | b"no" | b"duplicate" | b"error" | b"locked" | b"timeout" | b"deadlock" if fields == 3 => {
+                write_error_fields(&mut rd)?;
+                None
+            }
+            b"moved" if fields == 4 => {
+                if write_error_fields(&mut rd)? != 1213 {
+                    return Err(proto("invalid moved write code"));
+                }
+                if !matches!(
+                    rd.value()?,
+                    Value::Null | Value::UInt(1..=4294967295) | Value::Int(1..=4294967295)
+                ) {
+                    return Err(proto("invalid moved write owner"));
+                }
+                None
+            }
+            b"throttled" if fields == 4 => {
+                if write_error_fields(&mut rd)? != 1205
+                    || !matches!(rd.value()?, Value::UInt(1..=50) | Value::Int(1..=50))
+                {
+                    return Err(proto("invalid write admission refusal"));
+                }
+                None
+            }
+            _ => return Err(proto("unsupported or incomplete write status")),
+        };
+        if !rd.buf.is_empty() {
+            return Err(proto("trailing write reply data"));
+        }
+        Ok(result)
+    })()
+    .map_err(|e| ambiguous(shard, &e))?;
+    match parsed {
+        Some(n) => Ok(n),
+        None => {
+            let mut e = lua_status(data).err().expect("validated error status");
+            // Native outcome_unknown() uses this numeric code. It must
+            // preserve the same SQLSTATE as a lost mutation reply.
+            if e.code == 1180 {
+                e.sqlstate = *b"40003";
+            }
+            Err(e)
+        }
+    }
+}
+
+fn write_error_fields(rd: &mut Rd<'_>) -> SqlResult<u16> {
+    let code = match rd.value()? {
+        Value::UInt(n @ 0..=65535) => n as u16,
+        Value::Int(n @ 0..=65535) => n as u16,
+        _ => return Err(proto("invalid write error code")),
+    };
+    if !matches!(rd.value()?, Value::Str(_)) {
+        return Err(proto("write error message must be a string"));
+    }
+    Ok(code)
+}
+
 /// Whether field `i` (from 0) of the `{status, ...}` table a procedure
 /// returned is the string `want`.
 pub fn status_arg_is(data: &[u8], i: u32, want: &str) -> bool {
@@ -354,6 +459,83 @@ pub fn lua_status<'a>(data: &'a [u8]) -> SqlResult<(String, Rd<'a>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_outcomes_keep_codes_and_sqlstates() {
+        for (tag, code, state) in [
+            ("conflict", 1213, *b"40001"),
+            ("deadlock", 1213, *b"40001"),
+            ("timeout", 1205, *b"HY000"),
+            ("duplicate", 1062, *b"23000"),
+            ("error", 1412, *b"HY000"),
+            ("error", 1180, *b"40003"),
+        ] {
+            let mut m = Mp::new();
+            m.arr(1).arr(3).str(tag).uint(code).str("message");
+            let e = write_reply(&m.0, 1).unwrap_err();
+            assert_eq!((e.code, e.sqlstate), (code as u16, state));
+        }
+    }
+
+    #[test]
+    fn incomplete_write_replies_cannot_certify_rollback_or_success() {
+        for tag in ["error", "conflict", "no", "moved", "throttled", "lua", "ok", "future"] {
+            for outer in [1, 2] {
+                for fields in [1, 2, 3, 4] {
+                    let mut m = Mp::new();
+                    m.arr(outer).arr(fields).str(tag);
+                    if fields > 1 {
+                        m.uint(1213);
+                    }
+                    if fields > 2 {
+                        m.str("message");
+                    }
+                    if fields > 3 {
+                        m.str("extra");
+                    }
+                    if outer == 2 {
+                        m.nil();
+                    }
+                    if outer == 1 && fields == 3 && matches!(tag, "error" | "conflict" | "no") {
+                        continue;
+                    }
+                    if outer == 1 && fields == 2 && tag == "ok" {
+                        assert_eq!(write_reply(&m.0, 1).unwrap(), 1213);
+                        continue;
+                    }
+                    let e = write_reply(&m.0, 1).unwrap_err();
+                    assert_eq!((e.code, e.sqlstate), (1180, *b"40003"), "{tag}/{outer}/{fields}");
+                }
+            }
+        }
+        for code in [
+            Value::Int(-1),
+            Value::UInt(65536 + 1213),
+            Value::str("1213"),
+            Value::Float(1213.0),
+        ] {
+            let mut m = Mp::new();
+            m.arr(1).arr(3).str("error").val(&code).str("message");
+            assert_eq!(write_reply(&m.0, 1).unwrap_err().sqlstate, *b"40003");
+        }
+    }
+
+    #[test]
+    fn only_complete_native_handbacks_authorize_fallback() {
+        let mut m = Mp::new();
+        m.arr(1).arr(1).str("lua");
+        assert_eq!(native_write_handback(&m.0), Some(false));
+        m.nil();
+        assert_eq!(native_write_handback(&m.0), None);
+        let mut m = Mp::new();
+        m.arr(1).arr(2).str("lua").str("all");
+        assert_eq!(native_write_handback(&m.0), Some(true));
+        for second in [Value::str("future"), Value::Null, Value::UInt(0)] {
+            let mut m = Mp::new();
+            m.arr(1).arr(2).str("lua").val(&second);
+            assert_eq!(native_write_handback(&m.0), None);
+        }
+    }
 
     #[test]
     fn status_and_its_fields() {

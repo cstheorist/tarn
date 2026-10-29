@@ -1893,10 +1893,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 263 unique configurations: 69 positive
-outcomes and 194 expected broken/trade-off outcomes. The 270 generated
+The default list contains 265 unique configurations: 69 positive
+outcomes and 196 expected broken/trade-off outcomes. The 272 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 276 total. Explicit
+placement configurations are maintained directly, for 278 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1930,9 +1930,9 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-forms the current 263-case union, not execution of a new full 263-case CI
-run. The generator reproduces twice without changes. The current proof
-inventory is 330 files: 314 TLA+ model/config files, 11 verified-crate
+formed the 263-case union, not execution of a new full 263-case CI
+run. The generator reproduces twice without changes. That proof
+inventory was 330 files: 314 TLA+ model/config files, 11 verified-crate
 source/test/manifest files and five formal runner/inspection scripts.
 Verus bodies are unchanged.
 
@@ -2292,3 +2292,18 @@ routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
 malformed/lost-reply faults and failover preserve the existing uncertainty
 and matched fencing behavior. Resource budgets do not certify whole-query
 memory bounds or benchmark speedups.
+
+## Mutation acknowledgement outcomes (issue #183)
+
+[The outcome contract](outcomes.md) adds complete procedure-envelope checks
+for autocommit, single-shard and READ COMMITTED mutations. This refines the
+gateway's interpretation of a result, without changing `TarnCommit` durable
+transitions, votes, locks, acknowledgement timing or recovery.
+
+`NativeHandback` now permits a matched reply to have a malformed success,
+rollback or handback prefix. Positive stream/autocommit configurations retain
+`AtMostOnce` and `ReplyHolds`; `Bug_HandbackMalformedReply` and its autocommit
+variant trust that prefix and violate `ReplyHolds`. A valid complete but
+dishonest storage reply is outside the model. Exact MessagePack parsing,
+numeric codes/SQLSTATE and two MySQL drivers are executable test obligations,
+not newly verified Rust bodies. The 140 shared Verus functions are unchanged.

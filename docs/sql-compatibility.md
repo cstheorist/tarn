@@ -455,7 +455,10 @@ characters their tables weigh differently. An unknown name fails with 1273.
   nothing (InnoDB still locks the rows it matched).
 * **Outcome unknown:** if the connection to a shard breaks while a commit is
   in flight, the statement fails with 1180 and SQLSTATE 40003: it may or may
-  not have been applied. Tarn never re-sends such a write.
+  not have been applied. Native uncertainty and malformed write replies preserve
+  this same code/state. Tarn never re-sends such a write. See the
+  [outcome/transaction-state contract](outcomes.md), including SQL connection
+  loss and successful COMMIT with pending APPLY.
 * **Collations** ([above](#collations)): the server's default is
   `utf8mb4_bin` (MySQL's is case-insensitive) unless `--default-collation`
   says otherwise; `utf8mb4_bin` counts trailing spaces; collations other

@@ -1167,6 +1167,9 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 
 ## Error codes
 
+[Outcomes and retries](outcomes.md) specifies transaction state, complete
+write replies, pending APPLY, client disconnects and operation-ID recovery.
+
 | Code | SQLSTATE | Meaning | Client action |
 |---|---|---|---|
 | 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, moved bucket, unavailable clock/stream freshness proof, or connection lost before anything was written | retry the transaction after the cause is resolved; investigate sticky clock/policy faults |
@@ -1177,7 +1180,7 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 | 1305 | 42000 | no such savepoint | |
 | 1568 | 25001 | `SET TRANSACTION` inside a transaction | |
 | 1231 / 1232 | 42000 | bad value / type for a system variable | |
-| 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
+| 1180 | 40003 | lost/malformed write acknowledgement or native commit uncertainty: outcome unknown | resolve from durable operation evidence; never blindly replay |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |
 | 1041 | HY000 | lazy-index encoded outbox or PREPARE capacity exhausted, or exact sequence space exhausted | restore delivery or capacity before retrying; draining does not clear sequence exhaustion |

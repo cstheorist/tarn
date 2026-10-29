@@ -515,7 +515,7 @@ SPECIFICATION Spec
 CONSTANTS
   InStream = $stream
 EOF
-    for flag in BugKeepWritesOnHandback BugHandbackAfterCommitBegan BugResendAfterLoss; do
+    for flag in BugKeepWritesOnHandback BugHandbackAfterCommitBegan BugResendAfterLoss BugTrustMalformedReply; do
         value=FALSE
         if [ "$flag" = "$bug" ]; then value=TRUE; fi
         echo "  $flag = $value" >> "$name.cfg"
@@ -532,6 +532,8 @@ mk_handback Bug_HandbackAfterCommitBegan TRUE BugHandbackAfterCommitBegan
 mk_handback Bug_HandbackAfterCommitBegan_Autocommit FALSE BugHandbackAfterCommitBegan
 mk_handback Bug_HandbackResendAfterLoss TRUE BugResendAfterLoss
 mk_handback Bug_HandbackResendAfterLoss_Autocommit FALSE BugResendAfterLoss
+mk_handback Bug_HandbackMalformedReply TRUE BugTrustMalformedReply
+mk_handback Bug_HandbackMalformedReply_Autocommit FALSE BugTrustMalformedReply
 # Online engine migration: local copy certificates and later publication.
 engine_flags () {
     case "$1" in
