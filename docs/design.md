@@ -18,6 +18,9 @@ and recheck current base rows, but may miss recent matches. Explicit
 transactions keep the strong path. [Lazy secondary indexes](lazy-indexes.md)
 specifies capture, delivery, session catch-up, bootstrap and topology rules.
 
+Gateway resource lifetimes and scaling bounds are documented in
+[Gateway resource limits](gateway-resources.md).
+
 ## 1. Architecture
 
 ```

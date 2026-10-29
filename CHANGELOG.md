@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Gateway sockets now grow on demand and share a hard physical-connection
+  budget with completion capacity. Idle eviction preserves transaction and
+  pending-reply owners. Read fanouts have bounded windows and admission;
+  response frames retain byte charges until their last owner drops.
+  Concurrent refreshes coalesce and diagnostic polling rotates through a
+  fixed shard budget. Saturation returns an explicit failure, preserving
+  unknown mutation outcomes ([#188](https://github.com/cstheorist/tarn/issues/188)).
+  See [configuration and limits](docs/gateway-resources.md).
+
 - The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
   across the warmup, limited-I/O and release windows, so fast writers cannot
   consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).

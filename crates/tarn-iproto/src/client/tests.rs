@@ -413,8 +413,10 @@ async fn slow_peer_bounds_encoded_bytes_and_retires_a_blocked_writer() {
 fn retirement_does_not_refund_until_both_physical_owners_drop() {
     let budget = Budget::new("test", crate::Limits::default()).unwrap();
     let permit = Permit::acquire(&budget, &[], 128, Class::Normal).unwrap();
+    let sockets = crate::ConnectionBudget::new(2, 1).unwrap();
     let physical = Arc::new(Physical {
         state: Mutex::new((2, Vec::new())),
+        connection: Mutex::new(Some(sockets.acquire(false).unwrap())),
     });
     let a = IoGuard(physical.clone());
     let b = IoGuard(physical.clone());
@@ -422,8 +424,88 @@ fn retirement_does_not_refund_until_both_physical_owners_drop() {
     assert_eq!(budget.stats().pending, 1);
     drop(a);
     assert_eq!(budget.stats().pending, 1);
+    assert_eq!(sockets.stats().open, 1);
     drop(b);
     assert_eq!(budget.stats().pending, 0);
+    assert_eq!(sockets.stats().open, 0);
+}
+
+#[tokio::test]
+async fn socket_budget_covers_handshake_cancellation_and_pinned_handles() {
+    let sockets = crate::ConnectionBudget::new(2, 1).unwrap();
+    let mut opts = Opts::new("in-memory");
+    opts.connections = Some(sockets.clone());
+    let (task, mut peer) = connecting_options(opts.clone()).await;
+    assert_eq!(sockets.stats().open, 1);
+    assert!(sockets.acquire(false).is_err());
+    // No capability/ID response. Abandon the connecting caller.
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert_eq!(sockets.stats().open, 0);
+    let mut bytes = Vec::new();
+    bounded(peer.read_to_end(&mut bytes)).await.unwrap();
+
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let client = bounded(task).await.unwrap().unwrap();
+    assert!(client.exclusively_idle());
+    let stream_owner = client.clone();
+    assert!(!client.exclusively_idle());
+    drop(stream_owner);
+    let (_, reply) = pending(&client, &mut peer).await;
+    drop(reply);
+    assert!(!client.exclusively_idle(), "cancelled request pins its socket");
+    client.close();
+    // Closed handles can survive physical retirement; they consume no socket.
+    bounded(async {
+        while sockets.stats().open != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(sockets.stats().peak, 1);
+}
+
+#[tokio::test]
+async fn response_budget_survives_response_slices_and_refuses_before_large_reserve() {
+    let budget = crate::ResponseBudget::new(256);
+    let mut opts = Opts::new("in-memory");
+    opts.responses = Some(budget.clone());
+    opts.response_frame_bytes = 256;
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let c = bounded(task).await.unwrap().unwrap();
+    let (sync, rx) = pending(&c, &mut peer).await;
+    let mut body = vec![0x81, key::DATA, 0x91];
+    mp::write_str(&mut body, &[b'x'; 120]);
+    peer.write_all(&response(iproto::OK, sync, &body)).await.unwrap();
+    let reply = bounded(rx).await.unwrap().into_response().unwrap();
+    let slice = reply.data().unwrap().slice(0..1);
+    drop(reply);
+    let charged = budget.stats().bytes;
+    assert!(charged >= body.len());
+    let (sync, rx) = pending(&c, &mut peer).await;
+    peer.write_all(&response(iproto::OK, sync, &body)).await.unwrap();
+    assert!(
+        bounded(rx).await.is_err(),
+        "post-enqueue exhaustion cannot report a successful prefix"
+    );
+    assert!(c.is_closed());
+    assert_eq!(budget.stats().bytes, charged);
+    drop(slice);
+    assert_eq!(budget.stats().bytes, 0);
+    assert_eq!(budget.stats().refusals, 1);
+
+    let mut opts = Opts::new("in-memory");
+    opts.response_frame_bytes = 256;
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let c = bounded(task).await.unwrap().unwrap();
+    let (_, rx) = pending(&c, &mut peer).await;
+    // A length alone must retire; no advertised payload is sent or allocated.
+    peer.write_all(&[0xce, 0x01, 0x00, 0x00, 0x00]).await.unwrap();
+    assert!(bounded(rx).await.is_err());
+    assert!(c.is_closed());
 }
 
 #[tokio::test]

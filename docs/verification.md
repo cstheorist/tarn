@@ -1891,12 +1891,37 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
   Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
 ```
 
+### Gateway resource ownership
+
+`GatewayResources.tla` models connecting, pooled and retiring sockets,
+two physical I/O owners, externally pinned handles, abandoned pending RPCs,
+normal/completion admission, and encoded response slices. It asserts that
+physical owners remain charged, eviction never closes a pinned/pending
+socket, normal discovery leaves the completion reserve, and a response is
+charged through its last slice. The passing finite instance explores 24,388
+distinct states to depth 24. Four controls fail their intended invariants:
+`Bug_GatewayEarlyRelease` / `SocketCharged`, `Bug_GatewayEvictPinned` /
+`EvictionSafe`, `Bug_GatewayReserve` / `CompletionReserve`, and
+`Bug_GatewayResponseRelease` / `ResponseOwned`.
+
+This is an abstract resource safety contract, not a refinement proof of
+Tokio/Bytes or a liveness guarantee. Buffers have unit size in the model;
+Rust tests exercise byte counts, partial frames, cancellation and physical
+retirement. SQL/decoded allocations remain outside this bound. The five
+cases extend the registered suite to 268 configurations; their separate
+run does not certify an execution of the entire expanded suite.
+
+```sh
+tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
+  Bug_GatewayReserve Bug_GatewayResponseRelease
+```
+
 ### Configuration counts
 
-The default list contains 263 unique configurations: 69 positive
-outcomes and 194 expected broken/trade-off outcomes. The 270 generated
+The default list contains 268 unique configurations: 70 positive
+outcomes and 198 expected broken/trade-off outcomes. The 275 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 276 total. Explicit
+placement configurations are maintained directly, for 281 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1930,9 +1955,9 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-forms the current 263-case union, not execution of a new full 263-case CI
-run. The generator reproduces twice without changes. The current proof
-inventory is 330 files: 314 TLA+ model/config files, 11 verified-crate
+forms the 263-case union, not execution of a new full 263-case CI
+run. The generator reproduces twice without changes. That proof
+inventory was 330 files: 314 TLA+ model/config files, 11 verified-crate
 source/test/manifest files and five formal runner/inspection scripts.
 Verus bodies are unchanged.
 

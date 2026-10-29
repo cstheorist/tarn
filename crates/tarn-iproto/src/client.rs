@@ -10,8 +10,9 @@
 //!   `write_all`, so every request queued while the previous write was in
 //!   flight goes out in a single syscall.
 //! * The reader task reads into a large `BytesMut`, splits off each complete
-//!   packet as a frozen `Bytes` (no copy), validates its header and body envelope, and
+//!   packet as a frozen `Bytes`, validates its header and body envelope, and
 //!   completes all waiters of one read under a single lock acquisition.
+//!   With response admission, bodies are detached into charged allocations.
 //!   Error bodies are decoded by the waiting caller, not by the reader.
 //! * When either task fails, the connection is marked closed under the same
 //!   lock that guards waiter registration, all waiters are dropped (their
@@ -90,6 +91,7 @@ struct IoOwner<T> {
 struct IoGuard(Arc<Physical>);
 struct Physical {
     state: Mutex<(usize, Vec<Permit>)>,
+    connection: Mutex<Option<crate::connections::ConnectionPermit>>,
 }
 impl Physical {
     fn retire(&self, permits: impl Iterator<Item = Permit>) {
@@ -106,6 +108,7 @@ impl Drop for IoGuard {
             let mut s = self.0.state.lock();
             s.0 -= 1;
             if s.0 == 0 {
+                self.0.connection.lock().take();
                 std::mem::take(&mut s.1)
             } else {
                 Vec::new()
@@ -204,7 +207,8 @@ pub struct Response {
     /// `IPROTO_SCHEMA_VERSION` from the response header.
     pub schema_version: u64,
     /// The raw response body (a MessagePack map; empty for some replies).
-    /// Shares memory with the connection's read buffer.
+    /// Shares memory with the read buffer unless response admission is enabled;
+    /// then its detached allocation retains the frame's charge.
     pub body: Bytes,
 }
 
@@ -327,6 +331,8 @@ pub(crate) struct Shared {
     marks: AtomicU32,
     tasks: Mutex<Vec<AbortHandle>>,
     counters: Counters,
+    responses: Option<crate::ResponseBudget>,
+    response_frame_bytes: usize,
 }
 
 /// Updated once per read/write batch, not per request.
@@ -497,7 +503,19 @@ fn terminal_type(rtype: u32) -> bool {
 /// Split one complete packet off the front of `buf`, if there is one. When
 /// the packet is incomplete, makes sure `buf` has room for all of it.
 fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
-    let b = &buf[..];
+    let Some((plen, total)) = packet_length(buf)? else {
+        return Ok(None);
+    };
+    if buf.len() < total {
+        if buf.capacity() < total {
+            buf.reserve(total - buf.len());
+        }
+        return Ok(None);
+    }
+    decode_frame(buf, plen, total).map(Some)
+}
+
+fn packet_length(b: &[u8]) -> Result<Option<(usize, usize)>, Error> {
     let Some(&first) = b.first() else { return Ok(None) };
     let (plen, len) = match first {
         0x00..=0x7f => (1usize, first as u64),
@@ -516,12 +534,10 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     let total = plen
         .checked_add(len as usize)
         .ok_or_else(|| Error::Protocol("packet length overflow".into()))?;
-    if b.len() < total {
-        if buf.capacity() < total {
-            buf.reserve(total - buf.len());
-        }
-        return Ok(None);
-    }
+    Ok(Some((plen, total)))
+}
+
+fn decode_frame(buf: &mut BytesMut, plen: usize, total: usize) -> Result<Frame, Error> {
     let mut pkt = buf.split_to(total);
     pkt.advance(plen);
     let pkt = pkt.freeze();
@@ -571,24 +587,56 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     }
     let hdr_len = pkt.len() - p.len();
     let body = pkt.slice(hdr_len..);
-    Ok(Some(Frame {
+    Ok(Frame {
         rtype,
         sync,
         schema_version: schema_version.unwrap_or(0),
         body,
-    }))
+    })
 }
 
 async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: IoOwner<R>, mut buf: BytesMut) {
     let mut done: Vec<Frame> = Vec::with_capacity(64);
     let mut ready: Vec<(Waiter, Frame)> = Vec::with_capacity(64);
+    let mut frame_permit = None;
     let why: Error = 'outer: loop {
         loop {
+            match packet_length(&buf) {
+                Ok(Some((_, total))) => {
+                    if total > shared.response_frame_bytes {
+                        break 'outer Error::Protocol("response frame exceeds configured limit".into());
+                    }
+                    if frame_permit.is_none() {
+                        if let Some(b) = &shared.responses {
+                            frame_permit = match b.acquire(total) {
+                                Ok(p) => Some(p),
+                                Err(e) => break 'outer e,
+                            };
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => break 'outer e,
+            }
             match next_frame(&mut buf) {
-                Ok(Some(f)) => done.push(f),
+                Ok(Some(mut f)) => {
+                    if let Some(p) = frame_permit.take() {
+                        f.body = p.own(&f.body);
+                    }
+                    done.push(f);
+                }
                 Ok(None) => break,
                 Err(e) => break 'outer e,
             }
+        }
+        if shared.responses.is_some()
+            && frame_permit.is_none()
+            && buf.len() < READ_MIN_FREE
+            && buf.capacity() > READ_CHUNK
+        {
+            let mut small = BytesMut::with_capacity(READ_CHUNK);
+            small.extend_from_slice(&buf);
+            buf = small;
         }
         if !done.is_empty() {
             let bad_sync = {
@@ -812,6 +860,12 @@ impl Client {
     }
 
     async fn connect_inner(opts: &Opts) -> Result<Client, Error> {
+        // Charge before allocating a socket, including a cancelled handshake.
+        let connection = opts
+            .connections
+            .as_ref()
+            .map(|b| b.acquire(opts.completion_connection))
+            .transpose()?;
         // "unix/:/path" (Tarantool's notation) or a bare absolute path
         // selects a Unix domain socket; anything else is host:port.
         let unix_path = opts
@@ -820,21 +874,52 @@ impl Client {
             .or_else(|| opts.addr.starts_with('/').then_some(opts.addr.as_str()));
         if let Some(path) = unix_path {
             let (rd, wr) = UnixStream::connect(path).await?.into_split();
-            return Self::start(opts, rd, wr).await;
+            return Self::start_charged(opts, rd, wr, connection).await;
         }
         let stream = TcpStream::connect(opts.addr.as_str()).await?;
         stream.set_nodelay(true)?;
         let (rd, wr) = stream.into_split();
-        Self::start(opts, rd, wr).await
+        Self::start_charged(opts, rd, wr, connection).await
     }
 
-    async fn start<R, W>(opts: &Opts, mut rd: R, mut wr: W) -> Result<Client, Error>
+    #[cfg(test)]
+    async fn start<R, W>(opts: &Opts, rd: R, wr: W) -> Result<Client, Error>
     where
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        let connection = opts
+            .connections
+            .as_ref()
+            .map(|b| b.acquire(opts.completion_connection))
+            .transpose()?;
+        Self::start_charged(opts, rd, wr, connection).await
+    }
+
+    async fn start_charged<R, W>(
+        opts: &Opts,
+        rd: R,
+        wr: W,
+        connection: Option<crate::connections::ConnectionPermit>,
+    ) -> Result<Client, Error>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        let physical = Arc::new(Physical {
+            state: Mutex::new((2, Vec::new())),
+            connection: Mutex::new(connection),
+        });
+        let mut rd = IoOwner {
+            io: rd,
+            _guard: IoGuard(physical.clone()),
+        };
+        let mut wr = IoOwner {
+            io: wr,
+            _guard: IoGuard(physical.clone()),
+        };
         let mut greeting = [0u8; iproto::GREETING_SIZE];
-        rd.read_exact(&mut greeting).await?;
+        rd.io.read_exact(&mut greeting).await?;
         let (version, salt) = parse_greeting(&greeting)?;
 
         let mut out = Vec::with_capacity(256);
@@ -860,13 +945,16 @@ impl Client {
                 mp::write_str(o, &scramble);
             });
         }
-        wr.write_all(&out).await?;
+        wr.io.write_all(&out).await?;
 
         let mut buf = BytesMut::with_capacity(READ_CHUNK);
         let mut id_reply: Option<Frame> = None;
         let mut auth_reply: Option<Frame> = None;
         let want_auth = opts.user.is_some();
         while id_reply.is_none() || (want_auth && auth_reply.is_none()) {
+            if packet_length(&buf)?.is_some_and(|(_, total)| total > opts.response_frame_bytes) {
+                return Err(Error::Protocol("handshake frame exceeds configured limit".into()));
+            }
             match next_frame(&mut buf)? {
                 Some(f) if !terminal_type(f.rtype) => {
                     return Err(Error::Protocol("nonterminal handshake reply".into()));
@@ -875,7 +963,7 @@ impl Client {
                 Some(f) if f.sync == SYNC_AUTH && want_auth && auth_reply.is_none() => auth_reply = Some(f),
                 Some(f) => return Err(Error::Protocol(format!("unexpected handshake SYNC {}", f.sync))),
                 None => {
-                    if rd.read_buf(&mut buf).await? == 0 {
+                    if rd.io.read_buf(&mut buf).await? == 0 {
                         return Err(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
                     }
                 }
@@ -918,9 +1006,6 @@ impl Client {
                 "RPC timeout must be in (0,86400] seconds with at most two enclosing scopes".into(),
             ));
         }
-        let physical = Arc::new(Physical {
-            state: Mutex::new((2, Vec::new())),
-        });
         let budget = Budget::new("connection", opts.request_limits)?;
         let scopes = Scopes::new(&budget, &opts.admission)?;
         let shared = Arc::new(Shared {
@@ -946,6 +1031,8 @@ impl Client {
             marks: AtomicU32::new(0),
             tasks: Mutex::new(Vec::with_capacity(3)),
             counters: Counters::default(),
+            responses: opts.responses.clone(),
+            response_frame_bytes: opts.response_frame_bytes,
         });
         for scope in &shared.parents {
             scope.observe(&shared);
@@ -954,21 +1041,8 @@ impl Client {
             // An immediately failing task must see all abort handles. No
             // lock is held across an await, and close takes state first.
             let mut tasks = shared.tasks.lock();
-            let r = tokio::spawn(reader_task(
-                shared.clone(),
-                IoOwner {
-                    io: rd,
-                    _guard: IoGuard(physical.clone()),
-                },
-                buf,
-            ));
-            let w = tokio::spawn(writer_task(
-                shared.clone(),
-                IoOwner {
-                    io: wr,
-                    _guard: IoGuard(physical),
-                },
-            ));
+            let r = tokio::spawn(reader_task(shared.clone(), rd, buf));
+            let w = tokio::spawn(writer_task(shared.clone(), wr));
             let d = tokio::spawn(deadline_task(shared.clone()));
             tasks.extend([r.abort_handle(), w.abort_handle(), d.abort_handle()]);
         }
@@ -1002,6 +1076,13 @@ impl Client {
     /// closed client fails immediately with [`Error::Closed`].
     pub fn is_closed(&self) -> bool {
         self.inner.shared.closed.load(Ordering::Acquire)
+    }
+
+    /// Safe pool eviction requires the pool's exclusive handle and no pending
+    /// reply (including cancelled callers). The pool must serialize picks
+    /// with this check; an idle transaction holds its own Client clone.
+    pub fn exclusively_idle(&self) -> bool {
+        Arc::strong_count(&self.inner) == 1 && self.inner.shared.budget.stats().pending == 0
     }
 
     /// True once the server answered some request with ER_READONLY (it was

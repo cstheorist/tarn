@@ -43,6 +43,10 @@ On real hardware, give each shard leader its own machine (Tarantool runs
 transactions on one thread per instance) and put `tarn-server` next to the
 clients or on the storage machines.
 
+For gateway socket, fanout, encoded-response and diagnostic polling limits,
+see [Gateway resource limits](gateway-resources.md). `pool_size` is a lazy
+per-leader maximum; the `topology` object supplies gateway-wide caps.
+
 ## Storage nodes
 
 `lua/storage.lua` is configured through environment variables:
