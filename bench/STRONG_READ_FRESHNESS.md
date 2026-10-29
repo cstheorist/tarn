@@ -1,260 +1,220 @@
 # Strong-read freshness and matched cost (#130)
 
-This study compares Lua and native read paths at a pinned checkpoint with the same
-strong-read contract. It does not compare against the earlier unbarriered
-Tarn path or establish a TiDB/YugabyteDB advantage. Historical ABI11 results
-in [NATIVE_BATCH.md](NATIVE_BATCH.md) retain their original scope.
-
-The completed measurement below uses `62cf4c6`. A subsequent withdrawal
-dependency fix changes promise admission and removal accounting. Its live
-regressions and model are described below; a fresh complete matched study
-of that updated runtime is pending. The checkpoint measurements do not
-establish the updated revision's performance.
-
-## Contract and proof boundary
-
-Before first data access, both paths prove a fresh quorum-confirmed prefix
-using an empty transaction and Tarantool's public linearizable isolation
-setter. The setter collects fresh peer vclocks, catches up WAL and settles
-the synchronous queue. Autocommit discards only that empty transaction;
-first stream reads retain the exact transaction and its MVCC read set.
-Replicated stream completion obtains another prefix in a separate fiber
-before validating the original read set. Native RF3 completion hands back
-before effects. Unmarked ambient transactions are refused unchanged.
-
-Memtx and Vinyl use the pinned empty-barrier/confirmed-view composition;
-direct Vinyl LINEARIZABLE access is unsupported. Raw native reads retain
-local visibility. Opt-in lazy indexes can omit recent index matches. The
-[design](../docs/design.md), [operations](../docs/operations.md#strong-reads-and-storage-rollout)
-and [verification](../docs/verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
-describe the engine restrictions and the trusted runtime, WAL, quorum,
-membership-stability and clock premises. Administrative changes must
-preserve guarantees through in-flight synchronous commits.
-
-Persisted immutable timing policy and relevant-writer certification fence
-uncertain new votes and GC. The GC high-water mark and deletions share one
-transaction. Decided completion remains available under clock faults and
-preserves inherited receipt timestamps and expiry horizons. Non-idempotent
-mutations are never automatically replayed after outcome uncertainty;
-idempotent protocol recovery can redeliver requests.
-
-Accepted wall-clock corrections stay within the unchanged elapsed-time drift
-budget. Monotonic reversals still fault; publication retains the maximum of
-the previous logical wall and current raw wall. Raw persisted-floor checks
-precede clipping, and one probe publishes one accepted wall/monotonic pair.
-The expiry argument requires all relevant storage and timestamp issuers to
-stay in one fixed reference band of width configured skew over history;
-current pairwise agreement cannot establish that premise. The model checks
-this sufficient contract and reaches contradictory NO outcomes when its
-floor or reference-band premises are broken. No common-mode clock-quality
-or end-to-end runtime refinement proof is claimed.
-
-The complete registered matrix passed in [CI run 40794098539](https://github.com/cstheorist/tarn/actions/runs/40794098539):
-246 cases, comprising 66 positive checks and 180 expected controls. All
-310 model/verified-source inputs match the actual CI merge tree, which
-is identical to runtime revision `18cd3a9`. Verus reports 140 verified,
-zero errors. The clock arithmetic body is shared with native execution;
-Lua requires the matching exact integer bounds and retains an additional
-conservative seconds check. These are bounded contracts and executable-body
-proofs, not a complete runtime refinement.
-
-The checkpoint's source-equivalent local native run passed 1,738 printed checks across
-58 sections, including 85 exact-clock checks, 12 deterministic membership
-readiness checks and 360 native differential checks. Counts are not unique
-formal properties. That revision's both-engine RF3 pause, partition, asymmetric-link
-and repeated-leadership tests witness raw stale data and strong-path refusal
-after replacement ACKs. Their old leader is known read-only; the model's
-final-prefix controls and positive live fences remain separate evidence.
-No live fractured-commit reproduction is claimed.
-
-Membership ACKs restore confirmed local policy/H outside the bucket latch.
-They retain the invalidated epoch and discard old peer evidence; later
-reads still obtain a fresh data prefix. A post-commit readiness failure
-reports recorded membership with nonretryable 1180/HY000. The regression
-stops the clock worker and checks immediate reads, inherited H and untouched
-ambient transaction identity/read-set conflicts. Durable PREPARE/NO tests
-wait for their actual relevant-writer evidence before their single attempt.
-
-Earlier failed checkpoints remain available. These include a pre-bridge
-LuaJIT SEGV of unproved cause, strict-clock refusals, and a test that attempted
-a fresh NO before peer coverage was renewed. The final local RF1 cohort
-completed 24 phases, but RF3 stopped after eight accepted phases: raw wall
-advanced 712,247,099,861 ns while monotonic advanced 76,999,708 ns. The
-unchanged 0.25-second drift guard correctly latched closed. No platform
-clock cause is inferred. All owned local fixtures were cleaned and WAL
-archives verified. Those incomplete ARM studies are excluded from the final
-Linux results; no fault reset or timing-bound increase was used.
-
-## Matched measurement method
-
-The measured source is `62cf4c68018311f522a44a1dea71ea8362c0f950`
-(native ABI14, 392 bytes); its production/model inputs are unchanged from
-runtime revision `18cd3a9`. A manual Linux x86_64 runner builds the release
-gateway, allocator-instrumented native module and observer from that same
-checkout before timings. Builds use the pinned AMD64 Rust 1.98.1 Bookworm image; Tarantool uses
-the pinned AMD64 sibling of the same 3.9.0 release. That exact image/binary
-pair was exercised by every accepted phase. Runtime version, ELF architecture, artifact hashes,
-source hashes and locked dependencies are retained. All three cohorts are
-rerun together on that platform, without pooling local ARM samples.
-
-The first isolated Linux attempt also remains excluded: all 24 RF1 phases
-were accepted, but removing container-owned data failed under the runner
-user. The corrected workflow runs measurement and cleanup under one recorded
-UID for both paths and all cohorts, then grants uploader read access only
-to retained evidence. Raw data and incomplete archives are excluded from
-upload; verified closed archives are retained separately. The complete study
-starts afresh rather than filling missing cells from earlier runs. That
-first failed Linux run has no uploaded verified WAL export. A second attempt
-completed RF1 and cleanup but failed an assertion that used the ARM build
-version abbreviation for x86; its complete raw scope is retained separately.
-
-Each cell has six paired trials, three in each Lua/native order. Case order
-is shuffled per trial; pair order alternates by trial and stable case index.
-Each phase has a one-second warmup and five
-timed seconds. All phases, raw latencies, outcomes and rejected setups are
-retained. Neither path receives a weaker guarantee or selectively omitted
-trial. CPU covers the queried leader's transaction thread, including common probe
-boundary overhead; idle work is not subtracted. It does not aggregate peer,
-WAL-thread or gateway CPU. Differences include entry guards, codecs,
-allocation and lookup work rather than isolating one loop. Direct results
-retain client CPU and IPROTO bytes; SQL results do not establish gateway CPU
-or SQL wire bandwidth.
-
-Each private fixture uses 100,000 committed rows with composite primary
-key `(tenant_id,id)`, fixed tenant 7, a 64-byte payload and one logical
-shard. Exact tuple hashes and replica catch-up are checked before and
-after. Direct cells use B1/C1 and B128/C64 through one physical Rust client
-connection; SQL RF3 cells use B32/C1 for hits and misses through the same
-release gateway build with only native batch selection changed. Direct
-fixtures retain two idle SQL gateways after loading the corpus.
-
-Both paths load the same `alloc-metrics` module, enable lock-copy auditing,
-leave normal LuaJIT JIT/GC running, and disable test hooks. These are
-instrumented component timings. RF1 uses WAL `write`; RF3 uses synchronous
-quorum 2, RF3 and WAL `fsync`. These are separate cohorts: their difference
-does not isolate replication or barrier overhead. The workload measures
-reads of an established corpus, not durable-write or failover throughput.
-
-The runner's CPU, memory, affinity, kernel and resource receipts accompany
-the raw evidence. Each storage replica is capped at two CPUs and 1 GiB,
-with 256 MiB memtx and 32 MiB Vinyl memory. RF3 plus host clients and two
-gateways can oversubscribe the runner. One job runs all cohorts sequentially;
-no build, model check or test fixture runs on that job during timings.
-Physical-host isolation and production capacity are not established.
+This study compares Lua and native read paths under the same strong-read
+contract at revision `554ef08dee261e7e9a4e109a7fc299e7fa7ce0ed`. All 72 phases
+and 36 balanced pairs completed in one Linux job. The earlier complete `62cf4c6`
+study remains a separate checkpoint; its samples are not pooled here.
 
 ## Results
 
-All 36 paired leader TX CPU ratios were below one. Each entry is the median
-of six native/Lua ratios, followed by its observed range. Lower CPU/p99 and
-higher rate ratios favor native. These are within-cell component results.
+Each cell reports the median of six native/Lua ratios and the observed range.
+Lower CPU/p99 and higher operation rate favor native. Every one of the 36 pairs
+had lower native leader TX CPU and p99, and higher operation rate. These are
+within-cell component comparisons.
 
-| Cell | Leader TX CPU ratio | Operation-rate ratio | p99 ratio |
+| Cell | Leader TX CPU per operation ratio | Operation-rate ratio | p99 ratio |
 | --- | ---: | ---: | ---: |
-| direct-rf1 B1/C1 hits | 0.600 (0.587–0.622) | 1.156 (1.144–1.184) | 0.741 (0.717–0.793) |
-| direct-rf1 B128/C64 hits | 0.437 (0.424–0.460) | 2.289 (2.172–2.360) | 0.402 (0.381–0.429) |
-| direct-rf3 B1/C1 hits | 0.869 (0.865–0.878) | 1.068 (1.043–1.089) | 0.805 (0.790–0.862) |
-| direct-rf3 B128/C64 hits | 0.527 (0.518–0.544) | 1.852 (1.802–1.898) | 0.506 (0.427–0.518) |
-| sql-rf3 B32/C1 hits | 0.720 (0.712–0.731) | 1.100 (1.079–1.120) | 0.830 (0.809–0.914) |
-| sql-rf3 B32/C1 miss | 0.872 (0.865–0.879) | 1.041 (1.013–1.069) | 0.889 (0.867–0.933) |
+| direct-rf1 B1/C1 hits | 0.625 (0.608–0.651) | 1.146 (1.121–1.161) | 0.733 (0.708–0.770) |
+| direct-rf1 B128/C64 hits | 0.387 (0.359–0.398) | 2.586 (2.515–2.783) | 0.350 (0.309–0.383) |
+| direct-rf3 B1/C1 hits | 0.851 (0.844–0.853) | 1.083 (1.076–1.097) | 0.763 (0.759–0.853) |
+| direct-rf3 B128/C64 hits | 0.409 (0.398–0.438) | 2.372 (2.219–2.438) | 0.472 (0.427–0.509) |
+| sql-rf3 B32/C1 hits | 0.725 (0.713–0.735) | 1.098 (1.085–1.120) | 0.821 (0.804–0.877) |
+| sql-rf3 B32/C1 miss | 0.844 (0.839–0.854) | 1.059 (1.018–1.081) | 0.873 (0.822–0.894) |
 
-The corresponding native/Lua leader TX CPU medians, in microseconds per
-operation, are 38.3/62.9, 143.1/325.4, 170.0/195.3, 193.2/366.4,
-199.4/276.7 and 186.3/214.0 in table order. Direct operations are storage
-RPC batches; SQL operations are statements. They are not interchangeable
-capacity units. All observed p99 ratios in these six cells were below one.
+The separate per-mode native/Lua leader TX CPU medians, in microseconds per
+operation, are 24.3/38.8, 107.7/285.5, 114.2/134.0, 142.4/346.8, 143.0/196.9,
+131.5/156.3 in table order. Direct operations are storage RPC batches; SQL
+operations are statements. They are different capacity units.
 
-The runner reported four CPUs/affinity slots and 16,367,524 kB total memory,
-with Linux 7.0.0-1017-azure x86_64/glibc2.39. Per-replica limits still apply;
-this does not establish physical-host isolation or an SSD/network ceiling.
+## Contract and proof boundary
 
-The native path trades Lua-managed allocation for Rust allocator requests.
-These counters have different scopes and exclude C/tuple allocation and
-RSS; their difference is not a total-memory saving. All raw values, fallback
-counters, latency arrays and wire measurements remain available.
+Both paths establish a fresh quorum-confirmed prefix before first data access
+using Tarantool's public linearizable isolation setter on an empty transaction.
+It collects fresh peer vclocks, catches up WAL and settles the synchronous
+queue. Autocommit discards only that empty transaction; a first managed stream
+retains its exact transaction and MVCC read set. Replicated completion obtains
+another prefix in a separate fiber before validating the original view. Unmarked
+ambient transactions are refused unchanged. Native ABI14/392 owns CALL input
+across waits and uses a protected public Lua C API bridge.
 
-The final PR also tightens the native yielding-input test precondition:
-it refreshes the public bucket map before pausing a replica and records
-cache/status changes. The production and benchmark implementations are
-unchanged. The 32-check focused run requires exact payloads and actual native
-service after the forced yield; the combined pre-withdrawal-fix local run passed 1,743
-printed checks across 58 sections. Its source/log binding is in the separate
-[final validation attestation](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json).
-The measured revision `62cf4c6` ordinary CI test-setup failure preceded this
-fixture correction and is retained separately from the successful read study.
+Memtx and Vinyl use the pinned empty-barrier/confirmed-view composition; direct
+Vinyl LINEARIZABLE access is unsupported. Raw native reads retain local
+committed visibility. Opt-in lazy indexes can omit recent matches.
+[Design](../docs/design.md),
+[operations](../docs/operations.md#strong-reads-and-storage-rollout) and
+[verification](../docs/verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
+describe engine restrictions, stable quorum administration and runtime trust
+boundaries. Administrative changes must preserve guarantees through every
+in-flight synchronous acknowledgement.
 
-Another retained Lua-only CI failure at `1640271` saw both identical alias
-replays return `ok` while the global synchronous queue contained one entry.
-Its writer identity was not logged. A deterministic control delayed the real
-clock loader and reproduced that assertion with `clock:policy:1` written by
-the clock worker, while the alias replays performed no replacement. The
-corrected fixture waits for confirmed policy and local read readiness before
-holding quorum, keeps the worker live and both original deadlines, and
-retains the empty-queue assertion with an additional zero-metadata-write
-check. A forced-startup control proves policy installation precedes alias
-creation; ordinary native and Lua-only alias runs each pass all nine checks.
-These later failures, controls and current source bindings belong to the
-separate final validation evidence, rather than the immutable measured-data
-archive. The control establishes a matching failure mechanism, not the
-unlogged historical writer's identity.
+Immutable timing policy and relevant-writer certification fence uncertain new
+votes and GC. High-water updates and deletions share a transaction. Existing
+receipts and decided completion remain finishable, retaining inherited
+timestamps/expiry horizons. Non-idempotent mutations are never automatically
+replayed after outcome uncertainty; idempotent protocol recovery can redeliver
+requests. Lost mutation replies preserve 40003 semantics.
 
-The later `6984b45` CI passed both storage modes and the SQL/recovery/join
-stages, then grow/shrink left a survivor trying to recover through stopped
-shard 2. Its recorded dshard/parts were unavailable. A deterministic
-three-shard baseline on that immutable source independently demonstrates
-the missing contract: both engines retain a PREPARED/STAGING transaction
-on shard 3 with decision shard 3 and participants `{2,3}`, while shard 2
-is aborted and has no locks; the all-shard removal counters return zero.
-The baseline records 14 passing and 15 expected failed assertions, with no
-fixture exception. Three earlier startup/oracle discoveries remain excluded.
+Accepted clock corrections remain inside the unchanged elapsed-time drift
+budget; monotonic reversals fault and logical wall time never decreases. The
+expiry argument requires relevant storage and timestamp issuers to stay within
+one fixed common reference band of width configured skew over history. Current
+pairwise agreement cannot establish that external premise. Neither the models
+nor the shared executable arithmetic prove clock quality, the C/Lua API mapping,
+native MVCC/WAL implementation or complete runtime refinement.
 
-The fix fences supported new promises on every draining dependency and
-tracks their full local/decision/participant scope through confirmation.
-Every shard counts unresolved PREPARED and STAGING references before
-withdrawal. Existing receipts and decided completion remain available;
-recovery still obtains an authoritative missing-participant fence. The
-bounded `DepartureDependencies` positive and five sensitivity checks pass;
-the registry now has 252 cases (67 positive, 185 expected controls), with
-317 proof inputs. A complete execution of that new matrix is pending.
-Verus bodies are unchanged from the 140/0 checkpoint.
+## Method
 
-Both native-enabled and Lua-only focused runs pass 63 checks: setup,
-authoritative recovery, zero-count and removed-membership acknowledgements,
-actual owned-node-2 loss, survivor strong reads/bucket fencing, and decided
-completion after a final latched clock fault. The local harness uses the
-same public removal gates as Rust; actual SQL withdrawal remains an
-integration-CI gate. An entry-hook case isolates in-flight accounting; its
-later refusal also depends on membership/clock fencing. No exact historical
-transaction reconstruction or native PREPARE kernel proof is claimed.
-The full native suite after the reviewed controller changes passes 1,806
-printed checks across 61 sections, with all 67 frozen Lua inputs recorded.
+B is keys per request and C is concurrent workers. Direct C64 uses one physical
+IPROTO connection with concurrent requests. SQL C1 uses one workload client.
+Every cell has six paired trials, three Lua-first and three native-first, with
+case order shuffled per trial and pair order alternating by trial and stable
+case index. Each phase has one warmup second and five timed seconds.
 
-## Evidence and publication gates
+The fixture holds 100,000 committed memtx rows with composite primary key
+`(tenant_id,id)`, tenant 7 and 64-byte payloads on one logical shard. Exact
+tuple/corpus hashes and replica catch-up are checked before and after. Direct
+RF1 uses WAL `write`; RF3 uses quorum 2, synchronous spaces and WAL `fsync`.
+These are separate cohorts; subtracting their results would not isolate
+replication or freshness overhead. SQL modes use the same release gateway with
+only native batch selection changed. Direct fixtures retain two idle gateways.
 
-[Summary](evidence/strong-read-freshness/summary.json),
-[all phases](evidence/strong-read-freshness/phases.csv) and
-[all pairs](evidence/strong-read-freshness/pairs.csv) retain every cell and
-paired ratio. The [data-only archive](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/strong-read-freshness-130-linux-v1.tar.gz)
-contains raw latency/outcome/route observations, source/build/harness hashes,
-scoped functional gates, the whole ABI13 checkpoint, five excluded local
-ABI14 cohorts and both excluded Linux studies. Original code/raw bytes are
-unchanged; metadata path redactions retain original and public hashes.
-Derived bytecode, binaries, vendor trees and WAL are omitted from this
-public bundle. Private Actions artifacts retain verified offline WAL where
-available; the first Linux permission failure is explicitly incomplete.
+Both paths load the same allocator-instrumented native module, enable lock-copy
+auditing, retain normal LuaJIT JIT/GC and disable test hooks. Leader
+transaction-thread CPU includes common observer/probe overhead; idle work is not
+subtracted. It does not aggregate peers, WAL threads or gateway CPU. Direct
+client CPU and IPROTO bytes are retained; SQL results do not establish gateway
+CPU or wire bandwidth. Lua-managed and Rust allocator-request counters have
+different scopes and exclude C/tuple allocation and RSS.
 
-Archive: **48,388,800 bytes**, SHA-256
-`a1aa3e0e8906831596097abc73c0f5da3156e6147c6280aebc96ec6a023e2f82`; 2,551 file members. The successful
-[manual study](https://github.com/cstheorist/tarn/actions/runs/40812839124)
-is separate from the passing source-equivalent functional CI at `18cd3a9`.
-The measured-source ordinary CI failure is retained in the archive. Final
-PR CI is attested separately in
+The runner reports four CPUs, affinity 0–3, 16,367,528 kB total memory and Linux
+7.0.0-1017-azure x86_64/glibc2.39. Each storage replica is capped at two CPUs
+and 1 GiB, with 256 MiB memtx and 32 MiB Vinyl memory. RF3, two gateways and
+clients can oversubscribe that runner. The builder is gone before timings; all
+three cohorts run sequentially. Physical-host isolation and production capacity
+are not established.
+
+## Scope
+
+This short, instrumented hot-corpus read study does not establish sustained
+production capacity, steady-state GC/compaction, overload behavior, SSD-scale
+results, durable-write or distributed-transaction throughput, or a
+TiDB/YugabyteDB ranking. The comparison keeps one freshness guarantee and one
+binary/fixture per cell; it does not isolate the cost of one loop or of
+replication alone.
+
+## Functional and formal evidence
+
+The [measured revision's
+CI](https://github.com/cstheorist/tarn/actions/runs/40827360444) passed all four
+jobs. Its actual checkout `5eeab61b3c6b724ed2c6bc5fe859ecb942a5cbde` has the
+same Git tree as `554ef08`. The full registered matrix executed 252 cases: 67
+positive checks and 185 expected sensitivity/tradeoff outcomes. All 317 proof
+inputs are source-bound; Verus reports 140 verified, zero errors. These are
+bounded contracts/shared executable-body proofs, not unique end-to-end
+properties.
+
+The current local native suite passed 1,806 printed checks across 61 sections,
+with all 67 frozen Lua files matched to the committed source. The yielding-input
+fixture passed 32 checks with exact payload/native-service assertions. Rust
+units cover 38 default / 41 instrumented cases and 18 erased-body checks. The
+Linux CI additionally exercises native/Lua storage, MariaDB differential tests,
+transactions/READ COMMITTED, DDL/lazy delivery, lost replies and coordinator
+crashes, moves, joins, growth/shrink and both-engine RF3 failover.
+
+A withdrawal audit found that decision-only counters could report zero while a
+survivor still needed a departing participant. The fix fences supported new
+promises on every draining dependency, tracks their complete
+local/decision/participant scope through confirmation, and counts all unresolved
+PREPARED/STAGING references. Recovery still obtains authoritative
+missing-participant fences. The `DepartureDependencies` positive and five
+controls cover orphaned receipts, late admission and conservative
+pending-confirmation accounting. Earlier pending promises may confirm after
+draining acknowledgements while their counters keep removal blocked.
+
+The immutable `6984b45` baseline independently reproduces the count gap in both
+engines: shard 3 has a PREPARED/STAGING transaction with decision shard 3 and
+participants `{2,3}`, shard 2 is aborted with no locks, and every removal
+counter reports zero. It records 14 passing / 15 expected failed assertions
+without a fixture exception. The reviewed fixed harness passes 63 checks in both
+native-enabled and Lua-only modes, including actual recovery, zero-count/removed
+acknowledgements, controlled node-2 loss, survivor strong reads/bucket fences
+and decided completion after a final latched clock fault. PREPARE remains Lua
+even with the native module enabled. The local harness uses Rust's public
+removal gates; actual SQL withdrawal also passes in CI. An entry-held final
+refusal combines membership and clock fencing; no forced runtime pending-WAL
+fault witness or exact reconstruction of the historical CI transaction is
+claimed.
+
+Earlier source-bound both-engine RF3 pause/asymmetric-link/repeated-leadership
+witnesses retain their original revisions and scope. They show raw stale values
+after replacement ACKs and strong-path refusal on a known-read-only former
+leader. Modeled pre-fencing controls and positive live fences are separate
+evidence; no live fractured-commit reproduction is claimed.
+
+## Retained checkpoints and failures
+
+The earlier complete `62cf4c6` 72/36 study remains whole and byte-identical
+inside the new archive; its samples are excluded from every current statistic.
+Its scalar files remain under [the earlier
+index](evidence/strong-read-freshness/index.json). Historical ABI11 results in
+[NATIVE_BATCH.md](NATIVE_BATCH.md) retain their original unbarriered scope. The
+whole ABI13 checkpoint also remains historical; the public C API correction is
+not a demonstrated causal fix for the earlier LuaJIT SEGV.
+
+Excluded local ARM studies include strict-clock refusals and incomplete cohorts.
+One later RF3 attempt correctly latched closed after raw wall advanced
+712,247,099,861 ns while monotonic advanced 76,999,708 ns. No platform clock
+cause is inferred, and no timing bound or fault state was relaxed. Two earlier
+Linux attempts remain separate: one completed RF1 but failed
+container-owned-data cleanup with no uploaded verified WAL export; another
+completed RF1/cleanup but used the ARM version abbreviation in an AMD64
+qualification assertion. Neither supplies samples to this study.
+
+Retained correctness failures include missing relevant-writer test readiness, a
+stale native-write cache precondition, an alias replay test observing an
+unlogged synchronous entry, and the `6984b45` withdrawal failure. A
+delayed real clock-loader control reproduces the alias assertion while the
+replays remain read-only; it does not identify the unlogged historical writer.
+Its startup fix retains original deadlines, the live worker and a stricter
+zero-metadata-write assertion. The withdrawal baseline/control source, three
+nonqualifying startup/oracle discoveries and earlier controller versions remain
+separately labelled. Direct balance totals in the failed grow/shrink run did not
+establish settled protocol state. Later validation evidence preserves the alias
+failure/controls separately from the measurement archive.
+
+## Reproducibility and publication
+
+[Summary](evidence/strong-read-freshness-v2/summary.json), [all 72
+phases](evidence/strong-read-freshness-v2/phases.csv), [all 36
+pairs](evidence/strong-read-freshness-v2/pairs.csv) and
+[index](evidence/strong-read-freshness-v2/index.json) bind the current results
+to exact source, hashes and scopes. The [manual
+job](https://github.com/cstheorist/tarn/actions/runs/40827426428) built all
+three release artifacts from the same checkout with pinned AMD64 Rust 1.98.1
+Bookworm and Tarantool 3.9.0 images. Their exact image/binary pair was exercised
+in every phase; no cross-build binary reproducibility is inferred.
+
+The [current data-only
+archive](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/strong-read-freshness-130-linux-v2.tar.gz)
+is **58,955,738 bytes**, SHA-256
+`3a9eb9d6ce65e828e7264386d8637a7f738d485c38898b293522b8fd0197c250`, with **621
+regular outer members**. It contains current raw observations,
+source/build/harness identities, scoped formal/runtime gates and failure
+history, plus the whole earlier **48,388,800-byte** checkpoint archive, SHA-256
+`a1aa3e0e8906831596097abc73c0f5da3156e6147c6280aebc96ec6a023e2f82`. No samples
+are pooled. Original code/raw observations retain bytes; JSON metadata path
+redactions preserve parsed types/numbers and record original/public hashes in
+FILES.csv. Product binaries, vendor trees and WAL contents are omitted. Private
+Actions artifacts retain verified closed WAL where available; the first Linux
+permission failure is explicitly incomplete.
+
+The immutable data packet captured successful Tests/Verus/lint jobs while its
+model job was still running. It therefore preserves an explicitly scoped
+246-CI-plus-6-local formal union and does not assert later all-four-job results.
+The measured source subsequently passed all four jobs as linked above.
+Publication and merge additionally require the final report head's exact tested
+tree and complete all-four-job CI.
 [validation-attestation.json](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json)
-after the final head passes; the measurement archive does not assert that
-later gate. Publication and merge require that separate successful check.
-
-## Interpretation
-
-This short, hot-corpus read experiment does not cover steady-state GC,
-SSD-scale data, compaction, overload arrival rates, distributed writes or
-production capacity. Those require the matched study in #140. No result
-here establishes a general advantage over TiDB or YugabyteDB.
+and [supporting validation
+evidence](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/final-validation-evidence.tar.gz)
+record that later gate; the measurement archive does not invent it.

@@ -1816,9 +1816,15 @@ config bytes and dispatch checked unchanged. Their exact argument union
 was the 246-case default list. Six departure-dependency checks then passed
 the registered checker with all prior model/config bytes and module
 dispatch unchanged, forming the current 252-case input union. Its generator
-reproduced twice without changes. A complete 252-case CI execution has not
-yet been recorded here. This validates the separate inputs without treating
-the premerge run as evidence for changed models.
+reproduced twice without changes. CI run
+[40827360444](https://github.com/cstheorist/tarn/actions/runs/40827360444)
+then executed all 252 cases with expected outcomes, including 67 positive
+checks and 185 sensitivity/tradeoff controls. All four jobs passed; Verus
+verified 140 bodies with zero errors. The actual checkout
+`5eeab61b3c6b724ed2c6bc5fe859ecb942a5cbde` has the same tree as runtime
+revision `554ef08`. The 317 proof inputs retain exact source bindings.
+The final report-head CI/validation attestation is a separate publication
+gate; a previous run is never represented as execution of changed models.
 
 ## Verus proofs
 
