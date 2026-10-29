@@ -1893,11 +1893,20 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 275 unique configurations: 71 positive
-outcomes and 204 expected broken/trade-off outcomes. The 282 generated
+The default list contains 278 unique configurations: 73 positive
+outcomes and 205 expected broken/trade-off outcomes. The 285 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 288 total. Explicit
+placement configurations are maintained directly, for 291 total. Explicit
 check arguments override the default list.
+
+The three waiter-allocation configurations precede the #186 optimization.
+`WaiterAllocation` and its eager control each explore 35 distinct states
+without violating condition-publication and notification invariants.
+`Bug_WaiterLateAllocation` exposes `NoMissedSignal` at depth 3 by allowing a
+release/reset callback before the published waiter's condition exists.
+These local allocation checks preserve the owner-protocol abstraction;
+they do not extend the proof to FIFO, shared upgrades, deadlocks, storage
+freshness, durable commit or liveness. See [the profiling scope](../bench/RC_PROFILE.md).
 
 The premerge issue #130 list completed all 219 expected outcomes (57
 positive, 162 controls). A separate frozen merged 238-case run completed

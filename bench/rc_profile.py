@@ -89,7 +89,7 @@ def reconcile(records, counters, ledger):
                 exact_ledger=True, exact_counters=True)
 
 
-def sample(args, number, shape, profiled, endpoints, output, evidence):
+def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=False):
     admin = connect(args.sql)
     query(admin, 'TRUNCATE TABLE ledger')
     query(admin, 'UPDATE t SET v=0')
@@ -176,7 +176,7 @@ def sample(args, number, shape, profiled, endpoints, output, evidence):
     after = evaluate(endpoints, METRICS)
     attempt_path = output.parent / f'{output.stem}-sample-{number}.jsonl'
     attempt_path.write_text(''.join(json.dumps(r, sort_keys=True) + '\n' for r in sorted(records, key=lambda r: r['token'])))
-    record = dict(number=number, shape=shape, profiled=profiled, clients=clients,
+    record = dict(number=number, shape=shape, profiled=profiled, warmup=warmup, clients=clients,
                   scheduled_seconds=args.seconds, elapsed_seconds=elapsed,
                   before=before, after=after, cpu_before=cpus_before, cpu_after=cpus_after,
                   profile=profile, profile_files=profile_files,
@@ -248,6 +248,11 @@ def main():
             query(admin, 'INSERT INTO t VALUES (1,%s,0,%s)', (k, 'x' * 256))
         admin.close()
         number = 0
+        warmup_args = argparse.Namespace(**vars(args))
+        warmup_args.seconds = min(args.seconds, 3)
+        for shape in ('uncontended', 'unrelated', 'hot'):
+            number += 1
+            sample(warmup_args, number, shape, False, endpoints, output, evidence, warmup=True)
         for profiled in (False, True):
             for repeat in range(args.repeats):
                 shapes = ['uncontended', 'unrelated', 'hot']

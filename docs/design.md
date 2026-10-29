@@ -2390,6 +2390,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| Bug_WaiterLateAllocation | violates NoMissedSignal | 6 | 7 | 3 | 00s | 3 |
 | ClusterBackup | no errors | 52164 | 255561 | 30 | 00s |  |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
@@ -2473,6 +2474,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
 | Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |
 | VinylAdmission | no errors | 67072 | 224657 | 20 | 01s |  |
+| WaiterAllocation | no errors | 35 | 91 | 6 | 00s |  |
+| WaiterAllocationEager | no errors | 35 | 91 | 6 | 00s |  |
 
 ### 5.2 Benchmarks
 
