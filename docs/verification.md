@@ -1794,12 +1794,109 @@ tla/check.sh DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAd
   Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck
 ```
 
+### Plain lazy-source binding in an existing stream (issue #161)
+
+`PlainLazyBinding.tla` checks a narrow negative certificate for an existing
+marked `READ_CONFIRMED` stream. Before any initial source image or physical
+write, the original transaction observes every actual write source's catalog
+identity/version and empty lazy declaration, absent/empty capture point,
+and absence of nonretired pending definitions. These reads remain in the
+same native transaction as its earlier user history. Coverage, transaction
+and source identity must still match through capture and the final guard;
+a mismatch refuses the request rather than rebinding it to a new registry.
+
+The bounded model has two possible written sources, one original user read,
+one metadata/history change and an unrelated nonlazy publisher. Publication
+may still be pending or already complete. That unrelated change can dirty
+the global cache while the original plain write commits its one increment.
+Relevant point/range changes and previous user-history conflicts remain
+sticky and prevent acknowledgement. A full pending-definition scan may
+conservatively conflict with unrelated lazy DDL; progress for that case is
+not promised. Global native exclusion stays unknown throughout the dirty
+interval, and engine, role, fence, clock and lock guards remain mandatory.
+
+The positive check explores 115 distinct states to depth 7. Six controls
+reach data consequences rather than failing only a certificate flag:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_PlainLazyDeclared` | 10 | 7 | `NoMissingMembership`: an acknowledged row lacks required membership after publication/drain |
+| `Bug_PlainLazyCapture` | 10 | 7 | `NoMissingMembership`: an omitted capture-point obligation leaves the same missing membership |
+| `Bug_PlainLazyPending` | 10 | 7 | `NoMissingMembership`: a pending-generation obligation is incorrectly exempted |
+| `Bug_PlainLazyFirstWriteOnly` | 10 | 7 | `NoMissingMembership`: the second actual write source was not proved plain |
+| `Bug_PlainLazyReplaceReadset` | 9 | 6 | `NoStaleReadCommit`: a new transaction overwrites an acknowledged value using the original stale read |
+| `Bug_PlainLazyGlobalStale` | 15 | 7 | `UnrelatedOneCommit`: unrelated nonlazy publication incorrectly prevents the original increment |
+
+Metadata shapes are independent local admission inputs, including partial
+or malformed state; the model does not derive their complete DDL lifecycle.
+Its pending-forward case has already sampled a baseline, so an incorrectly
+exempted write has no outbox obligation to repair the missing membership.
+Native confirmed visibility, point/range tracking, sticky MVCC conflict and
+ordinary commit validation remain runtime refinement premises. This is not
+a proof of native MVCC or all DDL scheduling. It grants no exemption to
+autocommit/RW, `CommitRC`, PREPARE, unmarked streams, active/pending lazy
+sources or mixed packets. Ineligible packets retain the original strict
+guards. In particular, read-committed prepared-delete/retirement visibility
+and rollback coverage are outside this certificate's scope.
+
+```sh
+tla/check.sh PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture \
+  Bug_PlainLazyPending Bug_PlainLazyFirstWriteOnly \
+  Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale
+```
+
+### Re-entering one engine BUILD after a lost cut (issue #165)
+
+`EngineBuildReentry.tla` starts one original BUILD at a successful-return,
+pre-effect checkpoint. A saved baseline page predates a known native cut
+invalidation. Before further effects, BUILD discards the page, reacquires
+current terminal-ticket and queue evidence, and rereads ownership, phase
+and capture. Cut-only loss keeps the copied prefix and captured dirty keys;
+capture loss resets the incomplete generation and recopies. An uncertified
+`preparing` receipt with an invalid track follows that recopy path.
+Certified `prepared`/`applying`/`published` images are handled before reset.
+A newer cut epoch invalidates a saved page even if readiness has already
+been rebuilt by the time the original request resumes.
+
+The two-key positive model checks `PreparedImage`, `OwnerCertified`,
+`CertifiedRetained` and `CutOnlyNoRecopy`, exploring 1,500 distinct states to
+depth 14. Under one finite invalidation and weak fairness of native
+terminal/queue completion and the original BUILD's successful actions,
+`OriginalBuildCompletes` reaches certification or an ownership refusal.
+Three sensitivity controls reach an actual wrong PREPARED shadow image:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_EngineBuildReusePage` | 747 | 10 | `PreparedImage`: an old payload is relabelled with a current capture/cut lease |
+| `Bug_EngineBuildCallerOnlyCut` | 2,058 | 13 | `PreparedImage`: a submitted old effect outlives its caller and overwrites a new page before final queue settlement |
+| `Bug_EngineBuildKeepPrefix` | 764 | 9 | `PreparedImage`: an incomplete prefix misses a source change during lost capture |
+
+Every control retains the generic owner, current-cut and capture checks.
+Their final states have settled old tickets/queue and current ownership,
+but shadow data differs from the source. Old pending shadow effects and
+their terminal mapping are conservative compositional inputs; the model
+does not claim that the observed CI builder had such an effect or prove
+its full native reachability. Confirmed page effects and final source-tail
+ordering retain the `EngineCopy`/`EngineSourceDrain` premises.
+
+There is no retry action for helper, page-transaction, final-guard or commit
+exceptions, no second RPC, and no replay of an uncertain effect. The runtime
+keeps its original deadline and eight-reset limit; this finite model does
+not establish completion within either bound, under repeated invalidation,
+or after arbitrary mid-helper failures. Native WAL, replication and the
+full runtime remain outside this local contract.
+
+```sh
+tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
+  Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
+```
+
 ### Configuration counts
 
-The default list contains 252 unique configurations: 67 positive
-outcomes and 185 expected broken/trade-off outcomes. The 259 generated
+The default list contains 268 unique configurations: 70 positive
+outcomes and 198 expected broken/trade-off outcomes. The 275 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 265 total. Explicit
+placement configurations are maintained directly, for 281 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1815,7 +1912,7 @@ cases then passed through the current checker, with all 243 prior model/
 config bytes and dispatch checked unchanged. Their exact argument union
 was the 246-case default list. Six departure-dependency checks then passed
 the registered checker with all prior model/config bytes and module
-dispatch unchanged, forming the current 252-case input union. Its generator
+dispatch unchanged, forming the then-current 252-case input union. Its generator
 reproduced twice without changes. CI run
 [40827360444](https://github.com/cstheorist/tarn/actions/runs/40827360444)
 then executed all 252 cases with expected outcomes, including 67 positive
@@ -1825,6 +1922,21 @@ verified 140 bodies with zero errors. The actual checkout
 revision `554ef08`. The 317 proof inputs retain exact source bindings.
 The final report-head CI/validation attestation is a separate publication
 gate; a previous run is never represented as execution of changed models.
+The seven plain lazy-binding cases subsequently completed the registered
+checker with the outcomes above. The original 252-case prefix, model/config
+bytes and module dispatch remain unchanged. CI run
+[40876376448](https://github.com/cstheorist/tarn/actions/runs/40876376448)
+then completed all 259 cases with 68 positive and 191 expected control
+outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
+The four BUILD re-entry cases subsequently completed separately, preserving
+the original 259-case prefix, model/config bytes and module dispatch. This
+formed the 263-case union. The five file-backup cases then completed
+separately with one positive and four expected violations; the combined
+registry contains all 268 inputs. This is an input union, not a claim that
+a previous CI run executed changed models. The generator reproduces
+without changes. The current proof inventory is 336 files: 320 TLA+
+model/config files, 11 verified-crate source/test/manifest files and five
+formal runner/inspection scripts. Verus bodies are unchanged.
 
 ## Verus proofs
 
@@ -1997,6 +2109,87 @@ with no general worker liveness claim. Production Lua, native code, protocol and
 inputs are unchanged. The original failed CI execution and every local
 control, including nonqualifying setup failures, are retained separately
 in the [evidence index](../tests/evidence/rf3-fixture-readiness/index.json).
+
+### Plain-table commits during unrelated DDL (issue #161)
+
+An unrelated ALTER can invalidate the global lazy registry while a yielding
+Vinyl write runs in a serializable stream. A definite 1412 rollback is safe
+but unnecessary when every written source has no lazy index. CommitLocal
+now reads each source's catalog identity/version, declared lazy list and
+capture row or absence, plus the pending-definition scan, in the original
+marked READ_CONFIRMED transaction before its first row image. The private
+request-local binding covers the complete write packet and exact native
+transaction ID. Its later checks refuse any identity or coverage mismatch.
+It never refreshes or clears global lazy/native exclusion state.
+
+Applicable metadata publications and earlier user reads remain in that
+transaction's MVCC read set through commit. This relies on Tarantool's
+point-hole and iterator tracking, including conflicts before the first
+write, across memtx and Vinyl. It is a storage-engine premise rather than
+a Verus proof of Tarantool. The full pending-definition scan may conflict
+conservatively with unrelated lazy DDL and has cost proportional to that
+registry. Active or pending lazy sources, unmarked transactions,
+autocommit, READ COMMITTED and PREPARE retain the existing strict path.
+Engine, ownership, source-version, role, clock and lock checks still apply.
+No caller transaction is replaced and no SQL COMMIT is replayed.
+
+`lazy_registry_test.lua` uses real unrelated ALTER publication both before
+and during the original writer's completion. `lazy_metadata_mvcc_test.lua`
+checks the point, hole, pending-phantom and earlier-user-read premises in
+both isolation levels and both engines; its READ COMMITTED primitive
+results do not broaden production eligibility. `lazy_plain_binding_test.lua`
+checks public CommitLocal packet eligibility, relevant metadata conflicts,
+retained earlier reads, source fencing and an owned read-only fault. Direct
+fixture metadata mutations isolate MVCC tracking and do not represent a
+complete lazy DDL protocol. The original RF3 and live-fault suites remain
+required. SQL fresh-table diagnostics retain the failed phase, commit ACK,
+cleanup and independent row observation; an unknown outcome stays unknown.
+These checks establish no benchmark improvement or general DDL liveness.
+
+### Engine BUILD re-entry runtime boundary (reopened issue #165)
+
+A status notification can revoke the engine cut after BUILD's initial
+readiness check, including after a confirmed `copying` receipt and before
+its first shadow page. The engine meter has no background rebuilder. Its
+UNKNOWN state therefore remains a safe refusal until another engine entry
+establishes a cut. BUILD now checks readiness before start and at loop
+re-entry, rereads the owned receipt and capture, and discards local work
+when a successful reset or confirmed page read outlives that evidence.
+It compares the sampled ticket epoch even if another operation has already
+rebuilt readiness. Lost capture resets the incomplete generation; cut-only
+rebuilding retains a valid capture. Certified phases are handled before
+any reset, and the existing uncertified `preparing` recovery remains valid.
+
+This is pre-effect re-entry inside the same original BUILD. Generic
+transaction/cut/invalidation helpers, final epoch/capture/role/ownership
+checks and exception classification are unchanged. Any exception from
+start, reset, refresh, a submitted page transaction or commit still escapes.
+There is no catch-and-retry of a closure or RPC, and no progress promise
+through those errors. The original deadline and eight-reset limit remain
+runtime checks. A same-observed-role notification is not assumed harmless:
+coalesced observations cannot exclude an intervening physical role change.
+
+`engine_cut_test.lua` is an RF1/fsync mechanism witness, separate from RF3
+process loss. It holds a real registered initial `box.status` callback and
+releases it after reset or after the original confirmed source-page read.
+The second schedule identifies the original read frame, descriptor, tuple
+page and PK cursor without replacing its result. Real gap writes change
+the source while capture is invalid. The same one BUILD must recapture
+before writing a fresh page, reconcile later acknowledged mutations and a
+rollback extra, and publish the exact image through PREPARE/APPLY. Its
+wrappers observe only the owned worker and restore original functions.
+Baseline controls retain the exact 1213 refusal and empty copying receipt.
+Existing detached-shadow/terminal, source-drain, engine/cutover and RF3
+leader-loss checks remain required.
+
+The retained CI counters and exact-source call graph single out a
+same-observed-RO status callback as the historical post-track hard loss,
+conditional on the normal one-init fixture and no out-of-band invalidation.
+They do not identify its payload, producer or exact delivery boundary.
+The observation-only RF3 run establishes repeated same-role deliveries;
+the scheduled RF1 witness establishes the refusal mechanism. A later
+successful run is separate evidence, not a retrospective fault diagnosis
+or a benchmark improvement.
 
 ## Continuous integration
 

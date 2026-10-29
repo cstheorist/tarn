@@ -9,6 +9,7 @@ for cfg in "$@"; do
   # premises; other configurations use the commit-protocol MC module.
   case "$cfg" in
     FileBackup|Bug_FileBackup*) module=FileBackup.tla ;;
+    PlainLazyBinding|Bug_PlainLazy*) module=PlainLazyBinding.tla ;;
     DepartureDependencies|Bug_Departure*) module=DepartureDependencies.tla ;;
     DecisionPlacement|Bug_Decision*) module=DecisionPlacement.tla ;;
     PipelineAdmission|Bug_Pipeline*) module=PipelineAdmission.tla ;;
@@ -43,6 +44,7 @@ for cfg in "$@"; do
     Fairness*|Bug_Fairness*) module=RecoveryFairness.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;
+    EngineBuildReentry|Bug_EngineBuild*) module=EngineBuildReentry.tla ;;
     *) module=MC.tla ;;
   esac
   start=$(date +%s)
