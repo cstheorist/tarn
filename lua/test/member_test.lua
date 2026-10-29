@@ -118,6 +118,9 @@ check('a local commit routed with version 0 is refused', r[1] == 'moved' and c[1
 s = stream()
 r = s:call('tarn_commit_local', {'MB5', {{'replace', sid, {2, 21, b}}}, scan, {}, box.NULL, box.NULL, {b}, 1})
 check('... with version 1 it commits', r[1] == 'ok' and c[1].space['test.mb']:get{2}[2] == 21, r)
+-- A membership ACK restores local read health; fresh PREPARE/NO still
+-- needs the current clock evidence for its participant/decision writers.
+read_ready(1, {1, 2})
 s = stream()
 r = s:call('tarn_prepare', {'MB6', 1, {1, 2}, {{'replace', sid, {3, 30, b}}}, scan, {}, require('fiber').time(),
                             box.NULL, box.NULL, {b}, 0})
@@ -189,7 +192,7 @@ local m2 = {ver = 2, shards = {{id = 1, replicas = {S1}, state = 'active'},
                                {id = 3, replicas = {S3}, state = 'draining'}}}
 r = c[1]:call('tarn_members_set', {m2})
 check('shard 3 is draining', r[1] == 'ok' and r[2] == 2, r)
-read_ready(1, {1, 2})
+read_ready(1, {1, 2, 3})
 local function prep(txid, dshard, id)
     return c[1]:call('tarn_prepare', {txid, dshard, {1, dshard}, {{'replace', sid, {id, id, b}}}, {}, {},
                                       require('fiber').time(), box.NULL, box.NULL, {b}, box.NULL})
