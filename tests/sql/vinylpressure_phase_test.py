@@ -273,13 +273,15 @@ class ReadbackControls(unittest.TestCase):
 
         def query(connection, sql, args):
             self.assertIsInstance(connection, Connection)
-            self.assertEqual(' '.join(sql.split()),
-                             'SELECT id FROM p WHERE tenant_id=%s ORDER BY id LIMIT 20001')
-            self.assertEqual(args, (77,))
+            limit = int(sql.rsplit(' LIMIT ', 1)[1])
+            self.assertLessEqual(limit, 128)
+            self.assertEqual(args[0], 77)
+            self.assertNotIn('OFFSET', sql)
             events.append('bounded readback')
             if query_error:
                 raise query_error
-            return tuple((key,) for key in actual)
+            after = args[1] if len(args) == 2 else None
+            return tuple((key,) for key in actual if after is None or key > after)[:limit]
 
         def persist(summary):
             events.append('persist')
@@ -300,7 +302,9 @@ class ReadbackControls(unittest.TestCase):
                 audit=lambda: pressure.audit_pressure_keys(Connection, 77,
                     self.records if records is None else records, inflight, list(workers_live), query=query),
                 persist=persist, check=check)
-        self.assertEqual(events, ['bounded readback', 'persist', 'witness check', 'persist'])
+        self.assertEqual(events[-3:], ['persist', 'witness check', 'persist'])
+        self.assertTrue(events[:-3])
+        self.assertTrue(all(event == 'bounded readback' for event in events[:-3]))
         self.assertIn('no actual queued compaction input', saved[-1]['check_failure']['message'])
         return saved[-1]
 
@@ -348,6 +352,24 @@ class ReadbackControls(unittest.TestCase):
         self.assertEqual(audit['status'], 'incomplete')
         self.assertIsNone(summary['stored_ids_match_acknowledgements'])
         self.assertIsNone(audit['acknowledged_ids_missing'])
+
+    def test_complete_large_keyset_uses_small_queries_and_checks_the_final_empty_page(self):
+        keys = list(range(-128, 128))
+        records = [{'id': key, 'result': 'ok'} for key in keys]
+        audit = self.run_finalizer(keys, records)['readback']
+        self.assertEqual(audit['status'], 'complete')
+        self.assertTrue(audit['stored_ids_match_acknowledgements'])
+        self.assertEqual(audit['queries'], 3)
+        self.assertEqual(audit['observed_ids'], keys)
+
+    def test_duplicate_page_cannot_certify_a_complete_readback(self):
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+        audit = pressure.audit_pressure_keys(Connection, 77, [], [], [],
+                                             query=lambda *args: ((1,), (1,)))
+        self.assertEqual(audit['status'], 'failed')
+        self.assertIn('cursor did not advance', audit['error'])
 
     def test_persist_errors_do_not_mask_original_witness_or_stage_exception(self):
         for failure_at in (1, 2):

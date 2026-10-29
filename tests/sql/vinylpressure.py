@@ -260,7 +260,7 @@ def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lam
 
 
 def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=q):
-    """One bounded read-only observation; it never settles/replays unknown work."""
+    """Bounded keyset pages after drain; never settle/replay unknown work."""
     success = {row["id"] for row in records if row["result"] == "ok"}
     refused = {row["id"] for row in records if row["result"] == "error" and row.get("error", [None])[0] == 1205}
     unknown = {row["id"] for row in records if row["id"] not in success | refused}
@@ -270,8 +270,27 @@ def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=
               "unknown_ids": sorted(unknown), "inflight_ids": sorted(pending),
               "workers_live": workers_live, "stored_ids_match_acknowledgements": None, "refused_ids_absent": None}
     try:
+        rows, last = [], None
+        result.update(page_size=128, queries=0, observed_ids=[], row_count=0)
         with connect() as connection:
-            rows = query(connection, "SELECT id FROM p WHERE tenant_id=%s ORDER BY id LIMIT 20001", (tenant,))
+            while len(rows) <= PRESSURE_ATTEMPT_CAP:
+                limit = min(128, PRESSURE_ATTEMPT_CAP + 1 - len(rows))
+                sql = "SELECT id FROM p WHERE tenant_id=%s"
+                args = (tenant,)
+                if last is not None:
+                    sql += " AND id>%s"
+                    args += (last,)
+                result["queries"] += 1
+                page = query(connection, sql + " ORDER BY id LIMIT " + str(limit), args)
+                assert len(page) <= limit, "oversized pressure readback page"
+                for row in page:
+                    assert len(row) == 1 and type(row[0]) is int, "invalid pressure key"
+                    assert last is None or row[0] > last, "pressure readback cursor did not advance"
+                    last = row[0]
+                    rows.append(row)
+                result.update(observed_ids=[row[0] for row in rows], row_count=len(rows))
+                if len(page) < limit or len(rows) > PRESSURE_ATTEMPT_CAP:
+                    break
         actual = {row[0] for row in rows}
         clipped = len(rows) > PRESSURE_ATTEMPT_CAP
         unsettled = bool(workers_live or pending or unknown or clipped)

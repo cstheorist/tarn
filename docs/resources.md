@@ -152,3 +152,10 @@ data, limits, SQL and OCC, with three measured repetitions each. Treat these
 short, shared-host runs as resource-policy evidence, not capacity or SLA
 claims. Repeated measurements for this change are in
 [bench/resources](../bench/resources/README.md).
+
+The real-pressure release fixture audits all measured keys using at most 128
+IDs per keyset query, with a total 20,001-key sentinel bound. It checks
+strictly increasing cursors and a final short/empty page, keeps unknown and
+in-flight effects unsettled, and records partial progress if a later page
+fails. This preserves exact acknowledgement/refusal accounting under the
+default 64 MiB query cap without increasing it or replaying a mutation.

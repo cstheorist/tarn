@@ -1938,10 +1938,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 268 unique configurations: 70 positive
-outcomes and 198 expected broken/trade-off outcomes. The 275 generated
-configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 281 total. Explicit
+The default list contains 272 unique configurations: 71 positive
+outcomes and 201 expected broken/trade-off outcomes. The 275 generated
+configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
+placement and query-budget configurations are maintained directly, for 285 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1977,9 +1977,10 @@ The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
 formed the 263-case union. The five file-backup cases then completed
 separately with one positive and four expected violations; the combined
-registry contains all 268 inputs. This is an input union, not a claim that
+registry contained all 268 inputs. Four query-budget configurations add one
+positive and three expected ownership/decision violations, yielding 272. This is an input union, not a claim that
 a previous CI run executed changed models. The generator reproduces
-without changes. The current proof inventory is 336 files: 320 TLA+
+without changes. The current proof inventory is 341 files: 325 TLA+
 model/config files, 11 verified-crate source/test/manifest files and five
 formal runner/inspection scripts. Verus bodies are unchanged.
 
