@@ -1352,3 +1352,10 @@ failed during ingestion after replication timeouts/temporary read-only
 fencing: that configuration required all three live replicas for every
 synchronous write. The failure is retained; fixture setup order changed,
 with quorum, durability and failure-detection settings preserved.
+
+Fixture ingestion retries bounded, matched serialization/read-only refusals
+under Tarn's 40001/no-effect contract, alongside pre-effect admission
+refusals. Unknown outcomes and transport failures abort the fixture. An
+earlier 10 GiB setup treated a transient clock-policy-readiness serialization
+refusal as fatal; its failed outcome is retained as well. No clock policy,
+watermark, quorum or failure detector is weakened for ingestion.

@@ -145,20 +145,27 @@ return true
 local digest,fiber=require('digest'),require('fiber')
 local rows,payload=%d,%d
 local batch={}
-local throttled=0
+local throttled,serializations=0,0
 local function publish(writes)
  local deadline=fiber.clock()+60
  repeat
-  local r=tarn_autocommit(writes,{fence={88001,0},wb={1}})
-  if r[1]=='ok' then return end
-  -- This exact refusal certifies that admission precedes every effect.
-  -- Split oversized bursts; never retry any transport/unknown outcome.
-  assert(r[1]=='throttled' and r[2]==1205,require('json').encode(r))
-  throttled=throttled+1
-  if #writes>1 then
-   local left,right={},{}
-   for i,w in ipairs(writes) do if i<=math.floor(#writes/2) then left[#left+1]=w else right[#right+1]=w end end
-   publish(left);publish(right);return
+  local good,r=pcall(tarn_autocommit,writes,{fence={88001,0},wb={1}})
+  if good and r[1]=='ok' then return end
+  local code
+  if not good then local yes,value=pcall(function() return r.code end);if yes then code=tonumber(value) end end
+  if (not good and (code==97 or code==7)) or (good and r[1]=='error' and r[2]==1213) then
+   -- Matched ER_TRANSACTION_CONFLICT / ER_READONLY and 1213 are the
+   -- server's 40001/no-effect contract (mpw::from_iproto). Retry this
+   -- transaction only; unknown outcomes and transport faults fail below.
+   serializations=serializations+1
+  else
+   assert(good and r[1]=='throttled' and r[2]==1205,good and require('json').encode(r) or tostring(r))
+   throttled=throttled+1
+   if #writes>1 then
+    local left,right={},{}
+    for i,w in ipairs(writes) do if i<=math.floor(#writes/2) then left[#left+1]=w else right[#right+1]=w end end
+    publish(left);publish(right);return
+   end
   end
   assert(fiber.clock()<deadline,'fixture write admission did not recover')
   fiber.sleep(.05)
@@ -170,7 +177,7 @@ for i=1,rows do
   publish(batch);batch={};fiber.sleep(.001)
  end
 end
-box.snapshot();return {rows=box.space[88001].index[0]:count(),version=box.info.version,uuid=tostring(box.info.uuid),vclock=box.info.vclock,throttled=throttled}
+box.snapshot();return {rows=box.space[88001].index[0]:count(),version=box.info.version,uuid=tostring(box.info.uuid),vclock=box.info.vclock,throttled=throttled,serialization_refusals=serializations}
 """%(args.rows,args.payload),timeout=1800)
         record['load']=loaded;print('LOADED',loaded,flush=True)
         # Restore normal checkpoint policy after the bulk loader; checkpoint
