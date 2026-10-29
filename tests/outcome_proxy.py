@@ -98,6 +98,7 @@ def main():
                 close()
 
         def responses():
+            held_token = None
             try:
                 client.sendall(exact(backend, 128))
                 while True:
@@ -121,6 +122,7 @@ def main():
                             if fault == 'lost':
                                 break
                             if fault == 'hold':
+                                held_token = p['token']
                                 deadline = time.monotonic() + 12
                                 while time.monotonic() < deadline and plan() == p:
                                     time.sleep(.01)
@@ -139,6 +141,8 @@ def main():
                 pass
             finally:
                 close()
+                if held_token is not None:
+                    record(token=held_token, stage='retired')
 
         threading.Thread(target=requests, daemon=True).start()
         threading.Thread(target=responses, daemon=True).start()

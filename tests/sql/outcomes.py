@@ -70,6 +70,14 @@ class Fixture:
         return [e for line in self.args.proxy_log.read_text().splitlines()
                 if (e := json.loads(line))['token'] == token]
 
+    def rpc_stats(self):
+        # Local gateway diagnostics issue no storage RPC and do not replay
+        # any work. Use text control in every data-protocol mode.
+        with self.observer.conn.cursor() as cursor:
+            cursor.execute('SHOW TARN RPCS')
+            columns = [column[0] for column in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def value(self, key=None):
         deadline = time.monotonic() + 5
         while True:
@@ -296,13 +304,26 @@ def case_client_loss(f):
         error = c.error('UPDATE t SET v=v+1 WHERE id=%s', (f.key,))
         # A lost SQL connection cannot deliver Tarn's ERR packet/SQLSTATE.
         assert error[0] in (2013, 3024), error
+        held = f.rpc_stats()
+        assert any(row['Scope'] == 'global' and row['Pending'] > 0
+                   and row['Charged_bytes'] > 0 for row in held), held
     finally:
         c.close()
         f.disarm()
+    # Removing the plan only requests release. Wait for both the proxy's
+    # physical close and the gateway's terminal ownership/accounting cut
+    # before a later fixture submits its next mutation. Never retry a reset
+    # that raced the close and became 1180/40003.
+    wait_for(lambda: any(e['stage'] == 'retired' for e in f.events(token)), 5, 'held socket retirement')
+    def drained():
+        rows = f.rpc_stats()
+        return rows if any(r['Scope'] == 'global' and r['Pending'] == 0 for r in rows) else None
+    retired = wait_for(drained, 5, 'gateway releases retired RPC ownership')
     assert f.value() == 1
     events = f.events(token)
     assert sum(e.get('committed', False) for e in events) == 1, events
-    return {'client_error': error, 'outcome': 'unknown', 'value': 1, 'proxy_events': events}
+    return {'client_error': error, 'outcome': 'unknown', 'value': 1, 'proxy_events': events,
+            'held_rpc_accounting': held, 'retired_rpc_accounting': retired}
 
 
 def case_pending_apply(f):
