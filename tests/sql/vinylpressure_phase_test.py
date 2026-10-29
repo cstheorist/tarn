@@ -7,10 +7,47 @@ The old global-cap adapter is a source-derived policy control, not execution
 of the complete historical driver or a claim about its original CI failure.
 """
 import collections
+import copy
 import json
 import unittest
 
 import vinylpressure as pressure
+
+
+class CompactionControls(unittest.TestCase):
+    def setUp(self):
+        def index(queue, count, input_bytes):
+            return {'disk': {'compaction': {'queue': {'bytes': queue}, 'count': count,
+                                             'input': {'bytes': input_bytes}}}}
+        self.control = {'before': index(0, 2, 100), 'after': index(4096, 2, 100)}
+        self.samples = [{'snap_io_rate_limit': .5, 'compaction_fixture': index(4096, 2, 100)}]
+        self.audit = {'status': 'complete', 'matches': True, 'index': index(0, 3, 4196)}
+
+    def test_queue_and_completed_seed_work_are_required(self):
+        pressure.compaction_witness(self.control, self.samples, self.audit)
+        for field, value in [('count', 2), ('input', {'bytes': 100})]:
+            audit = copy.deepcopy(self.audit)
+            audit['index']['disk']['compaction'][field] = value
+            with self.assertRaises(AssertionError):
+                pressure.compaction_witness(self.control, self.samples, audit)
+
+    def test_historical_completed_work_without_sampled_queue_is_rejected(self):
+        samples = copy.deepcopy(self.samples)
+        samples[0]['compaction_fixture']['disk']['compaction']['queue']['bytes'] = 0
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, samples, self.audit)
+
+    def test_unlimited_or_missing_control_cannot_certify_pressure(self):
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(None, self.samples, self.audit)
+        samples = copy.deepcopy(self.samples)
+        samples[0]['snap_io_rate_limit'] = 0
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, samples, self.audit)
+
+    def test_corrupt_seed_readback_fails_even_with_real_native_work(self):
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, self.samples, dict(self.audit, matches=False))
 
 
 class VirtualWriters:
