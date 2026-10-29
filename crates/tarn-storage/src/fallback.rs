@@ -92,10 +92,12 @@ pub enum Why {
     Arith,
     /// An update of a row from before an ALTER TABLE added fields.
     Pad,
+    /// Quorum/clock configuration or exact stream provenance is unknown.
+    Freshness,
 }
 
 /// Every reason, in order.
-pub const ALL: [Why; 30] = [
+pub const ALL: [Why; 31] = [
     Why::Other,
     Why::Panic,
     Why::NotReady,
@@ -126,6 +128,7 @@ pub const ALL: [Why; 30] = [
     Why::WriteError,
     Why::Arith,
     Why::Pad,
+    Why::Freshness,
 ];
 
 const N: usize = ALL.len();
@@ -164,6 +167,7 @@ impl Why {
             Why::WriteError => "write_error",
             Why::Arith => "arith",
             Why::Pad => "pad",
+            Why::Freshness => "freshness",
         }
     }
 }

@@ -1,0 +1,36 @@
+{
+  "source_commit": "62cf4c68018311f522a44a1dea71ea8362c0f950",
+  "read_contract": [
+    "strong_reads",
+    1
+  ],
+  "native_layout": 14,
+  "native_size": 392,
+  "phases": 72,
+  "pairs": 36,
+  "cells": 6,
+  "cost_run": 40812839124,
+  "cost_job": 123246963884,
+  "archive": {
+    "url": "https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/strong-read-freshness-130-linux-v1.tar.gz",
+    "bytes": 48388800,
+    "sha256": "a1aa3e0e8906831596097abc73c0f5da3156e6147c6280aebc96ec6a023e2f82",
+    "members": 2551
+  },
+  "functional_ci": {
+    "run": 40794098539,
+    "source_commit": "18cd3a9f457ee0ff8c8d3f1d582f1dc1255ef3db",
+    "source_qualification": "86 source/config inputs, 310 proof inputs and 65 frozen Lua inputs match the measured source; this source comparison does not imply a new proof run"
+  },
+  "final_ci_attestation": {
+    "url": "https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json",
+    "required_before_publication_and_merge": true,
+    "asserted_by_measurement_archive": false
+  },
+  "files": {
+    "summary.json": "69711d30a006127179f30736e882de0a22737d239f999b49e0fad641a7a20b28",
+    "phases.csv": "acc3cb0f90159a768f3bb28a782207b599a44d69501ea5c189031f503a2cd3d0",
+    "pairs.csv": "4b392fca5e68f2aa65a0f3f06d269e1a86e23949a47b68fc48f4f95be124fa07"
+  },
+  "scope": "Instrumented short hot-corpus read components on one4CPU Linuxrunner; no productioncapacity/durablewrite/crossdatabase ranking."
+}

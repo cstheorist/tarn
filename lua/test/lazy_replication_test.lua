@@ -117,8 +117,41 @@ local function leader()
     if not success then event('leader discovery rejected', seen); error(result) end
     return result
 end
+local function durable_image(s)
+    return mp.encode({s.engine, s.target_engine, s.rows, s.counter, s.slots, s.depth, s.bytes,
+        s.reserved, s.reserved_bytes, s.part, s.floor or box.NULL,
+        s.live.old, s.live.prepared, s.live.new})
+end
+local function entry_ready(i, label)
+    local before, last = assert(state(i))
+    local success, result = pcall(await, 'ordinary entry readiness: ' .. label, function()
+        -- A confirmed mutation does not pin volatile caches: a later
+        -- box.status notification invalidates them again. Shipping is
+        -- paused here, so use the ordinary no-write entry to refresh capture
+        -- and let the separate quota worker establish its confirmed cut.
+        local r = call(i, 'tarn_autocommit', {}, {})
+        local s = state(i)
+        last = {response = r, state = s}
+        return r[1] == 'ok' and s and not s.ro and s.quota_ready and s.capture
+           and not s.capture_stale and s.queue.len == 0 and not s.queue.busy
+           and s.queue.owner == s.id and mode_ok(s) and s
+    end)
+    if not success then event('ordinary entry readiness rejected', last); error(result) end
+    assert(durable_image(before) == durable_image(result), 'empty entry changed durable lazy state')
+    event('ordinary entry refreshed caches without durable changes', {label = label, state = result})
+    return result
+end
+local function release_status_notification(i)
+    if os.getenv('LAZY_RF3_STATUS_CONTROL') ~= '1' then return end
+    local notification = ev(i, [[return assert(rawget(_G,'lazy_rf3_status_control'),
+        'status-control preload missing').release()]])
+    assert(notification.callback_ok and notification.epoch_after > notification.epoch_before
+           and notification.capture_stale and notification.ro_before == notification.ro_after,
+           json.encode(notification))
+    event('held initial box.status notification delivered', {index = i, notification = notification})
+end
 local function exact(i, label)
-    local s = state(i)
+    local s = entry_ready(i, label)
     check(label, s.sync and s.wal == 'fsync' and s.engine == engine and s.target_engine == engine
           and s.quota_ready and s.capture and not s.capture_stale and s.queue.len == 0 and s.queue.owner == s.id
           and s.quota.entries == s.depth and s.quota.bytes == s.bytes
@@ -177,6 +210,9 @@ local function main()
         local r=call(l,'tarn_prepare',txid,1,{1},{{'insert',sid,{ids[2],'prepared',bucket}}},{},{},require('clock').realtime(),box.NULL,{sid,0},{bucket})
         assert(r[1]=='yes',json.encode(r))
         assert(call(l,'tarn_txn_cas',txid,'staging','committed',{1})=='committed')
+        -- Release every held observer before any loss, so later real role
+        -- notifications run normally on followers as well as the leader.
+        for i=1,3 do release_status_notification(i) end
         local s=exact(l,'confirmed base/outbox and durable YES retain exact quota')
         check('PREPARE reserves without sequence allocation',s.rows[1] and not s.rows[2] and s.depth==1 and s.reserved==1 and s.slots==1 and s.counter==1 and s.part=='prepared',s)
         for i=1,3 do await('confirmed pending/promise reaches every replica',function() local x=state(i); return x and x.rows[1] and not x.rows[2] and x.depth==1 and x.reserved==1 and x.slots==1 and x.counter==1 end) end
@@ -186,8 +222,39 @@ local function main()
         local l=leader(); local s=exact(l,'first promotion rebuilds capture and exact confirmed quota')
         check('promoted leader retains base/outbox/promise/counter',s.rows[1] and not s.rows[2] and s.depth==1 and s.reserved==1 and s.slots==1 and s.counter==1 and s.part=='prepared',s)
         ok(call(l,'tarn_autocommit',{},{})) -- refresh entry caches before intentional UNKNOWN probe
-        local blocked=ev(l,[[local sid,id,b=...; tarn.lazy.quota_invalidate(); local r=tarn_autocommit({{'insert',sid,{id,'blocked',b}}},{fence={sid,0},wb={b}}); return {r,box.space[sid]:get{id}==nil}]],{sid,ids[3],bucket})
-        check('UNKNOWN rejects new source publication without user tuple',blocked[1][2]==1213 and blocked[2],blocked)
+        local blocked=ev(l,[[
+local sid,id,b=...
+local q=tarn.lazy.quota
+local rebuild,change=q.rebuild,q.change
+local observations,attempts={},0
+local function image()
+    box.begin{txn_isolation='read-confirmed'}
+    local ok,value=pcall(function() return require('msgpack').encode({box.space[sid]:select{},
+        box.space._tarn_lazy_outbox:select{},box.space._tarn_lazy_reservation:select{},
+        box.space._tarn_lazy_counter:select{},box.space._tarn_lazy_slots:select{},
+        box.space._tarn_lazy_floor:select{}}) end)
+    box.rollback(); if not ok then error(value) end
+    return value
+end
+local before=image()
+-- Hold background refresh, not the production admission guard. The
+-- ordinary barrier may yield; UNKNOWN must still exist at q.change.
+q.rebuild=function() attempts=attempts+1; return false end
+q.change=function(...) observations[#observations+1]=q.ready(); return change(...) end
+local good,r=pcall(function()
+    tarn.lazy.quota_invalidate()
+    assert(not q.ready())
+    return tarn_autocommit({{'insert',sid,{id,'blocked',b}}},{fence={sid,0},wb={b}})
+end)
+q.rebuild,q.change=rebuild,change
+if not good then error(r) end
+local all_unknown=#observations>0
+for _,ready in ipairs(observations) do all_unknown=all_unknown and not ready end
+return {r,box.space[sid]:get{id}==nil,all_unknown,before==image(),
+    tarn.lazy.worker~=nil and tarn.lazy.worker:status()~='dead',attempts,observations}
+]],{sid,ids[3],bucket})
+        check('UNKNOWN rejects new source publication without user tuple',blocked[1][2]==1213 and blocked[2]
+              and blocked[3] and blocked[4] and blocked[5],blocked)
         l=leader(); ok(call(l,'tarn_apply',txid)); s=exact(l,'known committed APPLY converts durable promise after promotion')
         check('APPLY consumes promise once and advances sequence',s.rows[2] and s.counter==2 and s.reserved==0 and s.slots==0 and s.depth==2,s)
         ev(l,[[local old=tarn_lazy_control('pending')[2][1]; assert(old[4]==1 and old[6][1]=='old' and old[9]); box.space._tarn_meta:replace{'test.lazy.rf3.old',old}]])
@@ -199,6 +266,7 @@ local function main()
         local f=assert(io.open(work..'/killed-first')); local i=tonumber(f:read('*a')); f:close()
         f=assert(io.open(work..'/identity-first.json')); local before=json.decode(f:read('*a')); f:close()
         await('restarted first node catches confirmed floor',function() local s=state(i); return s and s.floor==3 and s.counter==3 and s.live.old==0 and s.live.prepared==1 end)
+        release_status_notification(i)
         pause(i)
         local s=state(i)
         check('first killed replica restarts same identity and catches up',s.uuid==before.uuid and s.pid~=before.pid and s.engine==engine,s)

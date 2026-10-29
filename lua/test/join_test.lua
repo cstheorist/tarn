@@ -1,3 +1,5 @@
+-- Protocol streams start with the first-read quorum contract. Raw IPROTO
+-- BEGIN refusal and unchanged ambient read sets are tested separately.
 -- Dependent co-located primary-prefix reads (issue #83). Run after the
 -- storage tests and before bucket_test.lua, while the shards have no map.
 local net = require('net.box')
@@ -6,6 +8,15 @@ local json = require('json')
 local msgpack = require('msgpack')
 local c = net.connect(os.getenv('S1'), {user = 'tarn', password = 'tarn', wait_connected = 5})
 assert(c:is_connected(), 'cannot connect to shard')
+local function ready()
+    local deadline = fiber.clock() + 10
+    repeat
+        if c:eval('return not box.info.ro and tarn.clock.read_check() == nil and tarn.clock.check({1}) == nil') then return end
+        fiber.sleep(0.05)
+    until fiber.clock() >= deadline
+    error('shard did not become ready')
+end
+ready()
 local pass, fail, tables = 0, 0, {}
 local function check(name, cond, extra)
     if cond then pass = pass + 1; print('  ok   ' .. name)
@@ -50,7 +61,7 @@ end
 local function read(rs, route) return c:call('tarn_select_join', {rs, true, false, route or box.NULL}) end
 local function prepare(id, writes)
     local st = c:new_stream()
-    st:begin()
+    st:eval('tarn.fresh.begin_stream()')
     return st:call('tarn_prepare', {id, 1, {1}, writes, {}, {}, fiber.time()})
 end
 
@@ -252,11 +263,13 @@ f = c:call('tarn_select_join', {rs, true, false, {e = epoch}}, {is_async = true}
 hook('reached')
 c:eval([[local e = ... box.space._tarn_meta:replace{'buckets', {count = 1, epoch = e + 1}}
           box.cfg{read_only = true} box.cfg{read_only = false}]], {epoch})
+ready()
 hook('release')
 r = result(f)
 check('a changed route refuses the whole reply', r[1] == 'moved' and r[2] == 1213, r)
 c:eval([[box.space._tarn_buckets:truncate() box.space._tarn_meta:delete{'buckets'}
           box.cfg{read_only = true} box.cfg{read_only = false}]])
+ready()
 check('the isolated test restores the absent map', c:call('tarn_buckets')[2] == 0)
 for _, name in ipairs(tables) do c:call('tarn_drop_table', {name}) end
 print(string.format('\n%d passed, %d failed', pass, fail))

@@ -9,7 +9,11 @@ box.cfg{work_dir = work, memtx_use_mvcc_engine = true, memtx_memory = 128 * 1024
         vinyl_memory = 32 * 1024 * 1024, vinyl_cache = 0, wal_mode = 'fsync',
         checkpoint_interval = 0, log_level = 3}
 require('tarn').init{shard_id = 1, peers = {}, native = false, test_hooks = true, check_yields = true}
-fiber.sleep(0.02)
+local deadline = fiber.clock() + 10
+while box.info.ro or tarn.clock.read_check() ~= nil or tarn.clock.check({1}) ~= nil do
+    assert(fiber.clock() < deadline, 'restart did not load a healthy clock policy')
+    fiber.sleep(0.05)
+end
 local name, sid, count = 'test.bf70_restart', 50110, 260
 local function journal() return box.space._tarn_alter_undo.index[0]:count{sid, 1} end
 local function old_writer()

@@ -13,6 +13,7 @@
 mod alloc_metrics;
 pub mod batch;
 pub mod fallback;
+pub mod freshness;
 pub mod locks;
 pub mod mp;
 pub mod select;
