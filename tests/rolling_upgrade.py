@@ -130,10 +130,14 @@ class Cluster:
 
     def ready(self, key):
         node = self.nodes[key]
-        wait("schema " + key, lambda: ev(node, "return rawget(_G,'tarn') ~= nil and "
-                                         "box.space._tarn_meta:get{'shard_id'} ~= nil and "
-                                         "(box.info.ro or tarn_compatibility == nil or "
-                                         "tarn_compatibility()[7] ~= 'pending')"))
+        # Readiness is observed before setup/canary mutations, never by replaying
+        # one after a refusal or an uncertain reply. Preserve the clock policy.
+        wait("schema/clock " + key, lambda: ev(node, """
+if rawget(_G,'tarn') == nil or box.space._tarn_meta:get{'shard_id'} == nil then return false end
+local clock=tarn.clock.status()
+return clock.read_ready and (box.info.ro or clock.state=='healthy') and
+    (box.info.ro or tarn_compatibility == nil or tarn_compatibility()[7] ~= 'pending')
+"""))
         ev(node, "tarn.cfg.recovery_after=3600; return true")
 
     def leader(self, shard):
@@ -421,6 +425,8 @@ def main():
         verify_build(receipt, root, gateway, native)
         receipts[version] = receipt
     assert receipts["old"]["revision"] == BASELINE, "unsupported predecessor build"
+    assert receipts["new"]["revision"] == subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip(), "wrong new source revision"
     assert sha(args.old_bin) != sha(args.new_bin), "old/new gateways are identical; refusing invalid upgrade evidence"
     manifest = {"baseline_revision": BASELINE, "old_source": source(args.old_root), "new_source": source(ROOT),
                 "build_receipts": receipts,

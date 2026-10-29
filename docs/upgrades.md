@@ -2,8 +2,10 @@
 
 The supported predecessor is exactly
 `2e8aaeb772542968e503212a143b2e6f8d27b8ab` (the merged statistics/freshness release, including cluster backup and current
-persisted clock/retention, capture binding and engine-cut contracts). This contract introduces connection admission and a format marker;
-it does not change stored user tuples, transaction records, lock semantics,
+persisted clock/retention, capture binding and engine-cut contracts). This release adds bounded query resource admission, connection compatibility
+admission and a format marker. Oversized work may be refused with 1041/HY000
+before commit under the configured resource policy; tune and validate that
+policy before replacing gateways. The upgrade does not change stored user tuples, transaction records, lock semantics,
 DDL/move/lazy metadata, or the native state layout. Other historical
 versions require a separate compatibility test before deployment.
 

@@ -4,6 +4,9 @@
 (* Connection/version admission precedes these unchanged actions. The     *)
 (* runtime compatibility matrix is tested separately (docs/upgrades.md);  *)
 (* this model does not prove arbitrary mixed-version refinement.          *)
+(* Resource refusal is confined to execution before these commit actions. *)
+(* QueryBudget checks admission/retained-output ownership separately; it   *)
+(* does not prove Rust allocation sizes or refine the complete executor.  *)
 (*                                                                         *)
 (* Query fanout diagnostics (issue #133) observe existing actions only.    *)
 (* They do not add protocol state, storage calls, retries or lock changes. *)
@@ -1171,4 +1174,3 @@ DirectReadAtomic ==
             /\ \E i \in 1..dpos[r][k1] : wh[k1][i] = t
             /\ ~\E i \in 1..dpos[r][k2] : wh[k2][i] = t
 
-=============================================================================
