@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Linux-only STOP/CONT broker for the fresh, owned tests/kv.sh fixture.
+"""Linux-only signal/replication-ingress broker for tests/kv.sh.
 
 One JSON request on stdin, one JSON response on stdout. No service lifecycle,
-arbitrary signal, host selection, relay or shell command is exposed here.
+arbitrary signal, host selection, relay target or shell command is exposed here.
 """
 import argparse
 import json
@@ -10,8 +10,12 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import stat
 import sys
+import time
+
+from kv_relay import validate_flows
 
 OWNER = "tarn-kv181-host-v1"
 
@@ -64,6 +68,20 @@ def read_manifest(path, platform=None):
         require(re.fullmatch(r"127\.0\.0\.1:[0-9]{1,5}", n.get("endpoint", ""))
                 and 0 < int(n["endpoint"].split(":")[1]) < 65536, "invalid endpoint")
         require(isinstance(n.get("exe"), str) and n["exe"].startswith("/"), "invalid executable identity")
+    if "relay" in m:
+        r = m["relay"]
+        require(isinstance(r, dict) and r.get("node_id") == "relay"
+                and all(type(r.get(k)) is int and r[k] > 0 for k in ("pid", "ppid", "starttime")),
+                "invalid relay process identity")
+        require(r["pid"] > 1 and r["ppid"] == m["launcher_pid"]
+                and r["pid"] not in {m["launcher_pid"], *(n["pid"] for n in nodes)}
+                and r.get("ownerNonce") == m["ownerNonce"]
+                and r.get("workdir") == str(parent / "relay")
+                and isinstance(r.get("exe"), str) and r["exe"].startswith("/"), "invalid owned relay")
+        require(r.get("control_socket") == str(parent / "replication-control.sock"), "invalid relay socket path")
+        validate_flows(r.get("flows"))
+        physical = {n["node_id"]: n["endpoint"] for n in nodes}
+        require(all(f["target"] == physical[f["server_node"]] for f in r["flows"]), "relay targets differ from owned nodes")
     return m
 
 
@@ -98,14 +116,77 @@ def verify_process(m, n, snapshot=proc_snapshot):
     return {**n, "state": p["state"], "identity_verified": True}
 
 
-def request(m, value, snapshot=proc_snapshot, send=os.kill):
+def verify_socket(m, lstat=lambda p: p.lstat()):
+    p = Path(m["relay"]["control_socket"])
+    s = lstat(p)
+    require(stat.S_ISSOCK(s.st_mode) and s.st_uid == os.getuid()
+            and stat.S_IMODE(s.st_mode) == 0o600, "relay control socket identity/mode differs")
+    return p
+
+
+def relay_exchange(m, frame):
+    p = verify_socket(m)
+    deadline = time.monotonic() + 3
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        def budget():
+            left = deadline - time.monotonic()
+            require(left > 0, "relay control deadline elapsed")
+            s.settimeout(left)
+        budget()
+        s.connect(str(p))
+        budget()
+        s.sendall((json.dumps(frame, sort_keys=True) + "\n").encode())
+        data = bytearray()
+        while b"\n" not in data:
+            budget()
+            chunk = s.recv(min(4096, 65537 - len(data)))
+            require(bool(chunk), "relay response ended before frame")
+            data.extend(chunk)
+            require(len(data) <= 65536, "relay response exceeds bound")
+    return json.loads(data)
+
+
+def relay_request(m, value, snapshot=proc_snapshot, exchange=relay_exchange):
+    require("relay" in m, "replication ingress capability unavailable")
+    r = m["relay"]
+    verify_process(m, r, snapshot)
+    reply = exchange(m, {"version": 1, "ownerNonce": m["ownerNonce"], **value})
+    verify_process(m, r, snapshot)
+    require(isinstance(reply, dict) and reply.get("version") == 1 and reply.get("status") == "ok"
+            and reply.get("ownerNonce") == m["ownerNonce"] and reply.get("pid") == r["pid"]
+            and type(reply.get("epoch")) is int and reply["epoch"] >= 0, "invalid relay response owner/version")
+    flows = reply.get("flows")
+    require(isinstance(flows, list) and len(flows) == 12, "invalid relay flow snapshot")
+    geometry = [{k: f[k] for k in ("id", "client_node", "server_node", "listen", "target")} for f in flows]
+    validate_flows(geometry)
+    require({f["id"]: f for f in geometry} == {f["id"]: f for f in r["flows"]}, "relay flow mapping changed")
+    for f in flows:
+        require(type(f.get("paused")) is bool and all(type(f.get(k)) is int and f[k] >= 0 for k in
+                ("connections", "accepted", "refused", "errors", "connect_failures", "queued_s2c", "queued_c2s", "drained_s2c", "drained_c2s")),
+                "invalid relay counters")
+        require(f["drained_s2c"] <= f["queued_s2c"] and f["drained_c2s"] <= f["queued_c2s"], "invalid relay drain counters")
+        if value["action"] == "replication_ingress" and f["client_node"] == value["node"]:
+            require(f["paused"] == value["pause"], "incoming relay gates differ from requested state")
+    return reply
+
+
+def request(m, value, snapshot=proc_snapshot, send=os.kill, exchange=relay_exchange):
     require(isinstance(value, dict), "request must be an object")
     if value.get("action") == "inspect":
         require(set(value) == {"action"}, "unsupported inspect fields")
-        return {"version": 1, "status": "ok", "capabilities": ["signal"],
-                "nodes": [verify_process(m, n, snapshot) for n in m["nodes"]]}
+        result = {"version": 1, "status": "ok", "capabilities": ["signal"],
+                  "nodes": [verify_process(m, n, snapshot) for n in m["nodes"]]}
+        if "relay" in m:
+            result["replication_ingress"] = relay_request(m, value, snapshot, exchange)
+            result["capabilities"].append("replication_ingress")
+        return result
+    if value.get("action") == "replication_ingress":
+        require(set(value) == {"action", "node", "pause"} and type(value["pause"]) is bool
+                and value["node"] in {n["node_id"] for n in m["nodes"]}, "unsupported ingress request")
+        return {"version": 1, "status": "ok", **value,
+                "replication_ingress": relay_request(m, value, snapshot, exchange)}
     require(value.get("action") == "signal" and set(value) == {"action", "node", "signal"},
-            "unsupported action/fields; relay is unavailable")
+            "unsupported action/fields")
     require(value["signal"] in ("STOP", "CONT"), "only STOP and CONT are supported")
     matches = [n for n in m["nodes"] if n["node_id"] == value["node"]]
     require(len(matches) == 1, "unknown owned node")

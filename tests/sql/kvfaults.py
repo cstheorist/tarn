@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import uuid
@@ -18,7 +19,7 @@ import pymysql
 from kvtest import Test, ev
 from movetest import bucket_of
 
-IMPLEMENTED = {"leader", "quorum", "stall"}
+IMPLEMENTED = {"leader", "quorum", "stall", "move", "ddl", "partition"}
 
 STATE = """
 assert(rawget(_G,'tarn')); local name=...; local s=assert(box.space[name])
@@ -76,16 +77,63 @@ rawset(_G,'__tarn_kv_fault_observer',nil)
 return {restored=tarn.clock.observe==s.original,expired=s.expired or false,capture_failed=s.capture_failed or false}
 """
 
+INSTALL_SCAN = """
+local owner=...; assert(tarn.cfg.test_hooks,'test_hooks required')
+assert(rawget(_G,'__tarn_kv_scan_hook')==nil,'another owned scan hook exists')
+local fiber,clock=require('fiber'),require('clock')
+local s={owner=owner,original=yield_point,control=tarn_test_hook,entered=false,resumed=false,
+ released=false,expired=false,restore_error=false,expires=clock.monotonic()+10}
+s.wrapped=function(name,...)
+ local first=name=='scan' and not s.entered
+ if first then s.entered=true; s.entered_at=clock.monotonic() end
+ local ok,result=pcall(s.original,name,...)
+ if first then s.resumed=true; s.resumed_at=clock.monotonic() end
+ if not ok then error(result,0) end
+ return result
+end
+rawset(_G,'__tarn_kv_scan_hook',s); yield_point=s.wrapped
+assert(s.control('scan','hold')[1]=='ok')
+fiber.create(function()
+ fiber.sleep(10)
+ if rawget(_G,'__tarn_kv_scan_hook')==s and not s.released then
+  s.expired=true
+  if yield_point~=s.wrapped or tarn_test_hook~=s.control then s.restore_error='scan hook identity changed'; return end
+  s.control('scan','release'); s.released=true; yield_point=s.original
+ end
+end)
+return {owner=owner,expires=s.expires}
+"""
+
+SCAN_CONTROL = """
+local owner,action=...; local s=assert(rawget(_G,'__tarn_kv_scan_hook')); assert(s.owner==owner,'scan owner changed')
+assert(not s.restore_error,s.restore_error)
+assert(tarn_test_hook==s.control,'scan control function changed')
+assert(yield_point==s.wrapped or s.released and yield_point==s.original,'scan yield function changed')
+if action=='release' or action=='close' then
+ if action=='release' then assert(s.entered and not s.resumed and not s.expired,'scan no longer held') end
+ if not s.released then s.released_at=require('clock').monotonic(); s.control('scan','release'); s.released=true end
+ if yield_point==s.wrapped then yield_point=s.original end
+end
+local result={owner=s.owner,entered=s.entered,resumed=s.resumed,released=s.released,expired=s.expired,
+ entered_at=s.entered_at or box.NULL,resumed_at=s.resumed_at or box.NULL,released_at=s.released_at or box.NULL}
+if action=='close' then rawset(_G,'__tarn_kv_scan_hook',nil) end
+return result
+"""
+
 
 class FaultTest(Test):
     def __init__(self, args):
         super().__init__(args)
         self.broker_argv = json.loads(args.fault_control)
         self.stopped = set()
+        self.ingress_paused = set()
+        self.capabilities = set()
+        self.replication_snapshot = None
         self.broker_nodes = {}
         self.initial_endpoints = list(self.nodes)
         self.finished_scenarios = []
         self.fault_tables_created = False
+        self.requested = set(args.scenarios.split(","))
 
     def control(self, request):
         def run():
@@ -102,6 +150,7 @@ class FaultTest(Test):
     def inspect(self):
         reply = self.control({"action": "inspect"})
         assert "signal" in reply.get("capabilities", []), reply
+        self.capabilities = set(reply["capabilities"])
         found = {}
         for node in reply.get("nodes", []):
             assert all(key in node for key in ("node_id", "shard_id", "replica", "endpoint", "pid", "ppid", "starttime")), node
@@ -113,7 +162,53 @@ class FaultTest(Test):
             nodes = [n for n in found.values() if n["endpoint"] in group]
             assert len(nodes) == 3 and {n["shard_id"] for n in nodes} == {self.identities[i]["id"]}, nodes
         self.broker_nodes = found
+        self.replication_snapshot = reply.get("replication_ingress")
         return found
+
+    def relay_snapshot(self, snapshot):
+        assert isinstance(snapshot, dict) and snapshot.get("version") == 1 and snapshot.get("status") == "ok", snapshot
+        flows = snapshot.get("flows", [])
+        assert len(flows) == 12 and len({f["id"] for f in flows}) == 12, snapshot
+        pairs = set()
+        for flow in flows:
+            client, server = flow["client_node"], flow["server_node"]
+            assert client in self.broker_nodes and server in self.broker_nodes and client != server, flow
+            assert self.broker_nodes[client]["shard_id"] == self.broker_nodes[server]["shard_id"], flow
+            assert flow["id"] == client + "<-" + server and (client, server) not in pairs, flow
+            pairs.add((client, server))
+            for name in ("queued_s2c", "queued_c2s", "drained_s2c", "drained_c2s", "connections", "accepted",
+                         "refused", "errors", "connect_failures"):
+                assert type(flow.get(name)) is int and flow[name] >= 0, flow
+        return snapshot
+
+    def ingress(self, node_id, pause):
+        assert node_id in self.broker_nodes and type(pause) is bool
+        assert "replication_ingress" in self.capabilities, "broker lacks replication ingress control"
+        if pause:
+            self.ingress_paused.add(node_id)  # A lost ACK does not remove the obligation to heal.
+        reply = self.control({"action": "replication_ingress", "node": node_id, "pause": pause})
+        snapshot = self.relay_snapshot(reply.get("replication_ingress"))
+        selected = [f for f in snapshot["flows"] if f["client_node"] == node_id]
+        assert len(selected) == 2 and all(f["paused"] is pause for f in selected), snapshot
+        if not pause:
+            self.ingress_paused.discard(node_id)
+        self.record("replication_ingress_transition", node=node_id, pause=pause, snapshot=snapshot)
+        return snapshot
+
+    def frozen_ingress(self, node_id, before):
+        self.inspect()
+        after = self.relay_snapshot(self.replication_snapshot)
+        earlier = {f["id"]: f for f in before["flows"] if f["client_node"] == node_id}
+        current = {f["id"]: f for f in after["flows"] if f["client_node"] == node_id}
+        self.check("both replication-ingress queued-byte counters remain frozen",
+                   len(current) == 2 and current.keys() == earlier.keys()
+                   and all(f["paused"] and f["queued_s2c"] == earlier[k]["queued_s2c"] for k, f in current.items()),
+                   node=node_id, before=before, after=after,
+                   scope="queued-before-drain; pre-pause drain completions may still increase")
+        self.check("relay connection caps did not create another fault",
+                   all(f["refused"] == earlier[k]["refused"] for k, f in current.items()),
+                   before=before, after=after)
+        return after
 
     def signal(self, node_id, signal):
         assert node_id in self.broker_nodes and signal in ("STOP", "CONT")
@@ -134,6 +229,11 @@ class FaultTest(Test):
 
     def restore(self):
         errors = []
+        for node in list(self.ingress_paused):
+            try:
+                self.ingress(node, False)
+            except Exception as error:
+                errors.append((node, "replication ingress heal: " + str(error)))
         for node in list(self.stopped):
             try:
                 self.signal(node, "CONT")
@@ -190,6 +290,58 @@ class FaultTest(Test):
         return {"version": 1, "consistency": "independent_points", "table": meta["table"],
                 "ownership": meta["ownership"], "keys": keys}
 
+    def start_sdk(self, table, keys):
+        state, lock = {}, threading.Lock()
+        def run():
+            try:
+                outcome = {"result": self.sdk(table, keys)}
+            except Exception as error:
+                outcome = {"error": {"type": type(error).__name__, "args": list(error.args),
+                                     "sqlstate": getattr(error, "sqlstate", None)}}
+            with lock:
+                state.update(outcome)
+        worker = threading.Thread(target=run, name="kv181-held-sdk-" + table, daemon=True)
+        self.workers.append(worker); worker.start()
+        return worker, state, lock
+
+    def await_scan(self, endpoint, owner, worker):
+        deadline, last = time.monotonic() + 4, None
+        while time.monotonic() < deadline:
+            last = ev(endpoint, SCAN_CONTROL, [owner, "snapshot"])
+            assert not last["expired"] and not last["resumed"], last
+            if last["entered"]:
+                self.record("sdk_second_group_scan_held", endpoint=endpoint, state=last)
+                return last
+            assert worker.is_alive(), "SDK finished before the selected scan was held"
+            time.sleep(.01)
+        raise AssertionError("SDK second group did not reach the real scan hook", last)
+
+    def close_scan(self, endpoint, owner, worker):
+        active_error = sys.exc_info()[0] is not None
+        try:
+            result = ev(endpoint, SCAN_CONTROL, [owner, "close"])
+            self.record("scan_hook_restore", endpoint=endpoint, result=result)
+            assert result["released"] and not result["expired"], result
+        except Exception:
+            self.record("scan_hook_cleanup_error", traceback=traceback.format_exc())
+            if not active_error:
+                raise
+        finally:
+            if worker is not None:
+                worker.join(13)
+                if worker.is_alive():
+                    self.record("scan_worker_unsettled", name=worker.name)
+                    if not active_error:
+                        raise AssertionError("owned held SDK worker remains live")
+
+    def move_report(self, endpoint, table, bucket):
+        meta = self.public(endpoint, "meta", {"version": 1, "db": self.db, "name": table})
+        assert meta.get("status") == "ok", meta
+        report = meta["buckets"]
+        owned = any(lo <= bucket <= hi for lo, hi in report["owned"])
+        other = [entry for entry in report["others"] if entry[0] == bucket]
+        return meta, owned, other
+
     def paired_values(self, table, tenant, expected):
         keys = [[tenant, key] for key in expected]
         with self.connect() as c:
@@ -220,6 +372,9 @@ class FaultTest(Test):
     def setup_faults(self):
         self.setup()
         self.inspect()
+        if "partition" in self.requested:
+            assert "replication_ingress" in self.capabilities, "partition requested without relay capability"
+            self.relay_snapshot(self.replication_snapshot)
         with self.connect() as c:
             ranges = self.sql(c, "SHOW TARN BUCKETS")
             count = sum(int(r[1]) for r in ranges)
@@ -230,12 +385,38 @@ class FaultTest(Test):
                     for part in str(row[2]).split(", ") if row[2] else []:
                         lo, _, hi = part.partition("-"); owned.update(range(int(lo), int(hi or lo) + 1))
             self.tenant = next(i for i in range(1, 10000) if bucket_of(i, count) in owned)
+            second = set(range(1, count + 1)) - owned
+            other_tenants = []
+            for candidate in range(1, 10000):
+                if bucket_of(candidate, count) in second and all(
+                        bucket_of(candidate, count) != bucket_of(previous, count) for previous in other_tenants):
+                    other_tenants.append(candidate)
+                    if len(other_tenants) == 4:
+                        break
+            assert len(other_tenants) == 4 and self.identities[0]["id"] < self.identities[1]["id"]
+            self.bucket_count = count
+            self.move_tenants = dict(zip(("memtx", "vinyl"), other_tenants[:2]))
+            self.ddl_tenants = dict(zip(("memtx", "vinyl"), other_tenants[2:]))
             for engine in ("memtx", "vinyl"):
                 table = "fault_" + engine
                 self.sql(c, f"CREATE TABLE {table} (tenant INT,id INT,v INT,PRIMARY KEY(tenant,id)) "
                          f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)
                 self.sql(c, f"INSERT INTO {table} VALUES (%s,1,10)", (self.tenant,), mutation=True)
                 self.grant(table)
+                if "partition" in self.requested:
+                    partition = "partition_" + engine
+                    self.sql(c, f"CREATE TABLE {partition} (tenant INT,id INT,v INT,PRIMARY KEY(tenant,id)) "
+                             f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)
+                    self.sql(c, f"INSERT INTO {partition} VALUES (%s,1,10)", (self.tenant,), mutation=True)
+                    self.grant(partition)
+                for scenario, tenants in (("move", self.move_tenants), ("ddl", self.ddl_tenants)):
+                    if scenario in self.requested:
+                        table = scenario + "_" + engine
+                        self.sql(c, f"CREATE TABLE {table} (tenant INT,id INT,v INT,PRIMARY KEY(tenant,id)) "
+                                 f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)
+                        self.sql(c, f"INSERT INTO {table} VALUES (%s,1,10),(%s,1,20)",
+                                 (self.tenant, tenants[engine]), mutation=True)
+                        self.grant(table)
         self.fault_tables_created = True
         for node in self.broker_nodes.values():
             self.configuration(node["endpoint"], "fault_memtx")
@@ -393,6 +574,244 @@ class FaultTest(Test):
         self.caught_up(table, tenant, self.values[engine])
         self.paired_values(table, tenant, self.values[engine])
 
+    def scenario_move(self, engine):
+        table = "move_" + engine
+        first, second = self.tenant, self.move_tenants[engine]
+        keys = [[first, 1], [second, 1], [second, 99]]
+        bucket = bucket_of(second, self.bucket_count)
+        with self.connect() as c:
+            self.paired(c, table, keys, "tenant,id,v", "tenant=%s AND id=%s")
+        source, meta = self.leader(1, table)
+        target, _ = self.leader(0, table)
+        before_meta, owned, _ = self.move_report(source["endpoint"], table, bucket)
+        assert owned and before_meta["ownership"] == meta["ownership"], before_meta
+        original = self.point_request(meta, [[second, 1], [second, 99]])
+        owner, worker = uuid.uuid4().hex, None
+        installed = False
+        try:
+            installed = True
+            receipt = ev(source["endpoint"], INSTALL_SCAN, [owner])
+            self.record("scan_hook_install", endpoint=source["endpoint"], receipt=receipt)
+            worker, outcome, lock = self.start_sdk(table, keys)
+            self.await_scan(source["endpoint"], owner, worker)
+            with self.connect() as c:
+                # The sequential SDK already completed its first shard
+                # group before this second-shard point reached the hook.
+                self.sql(c, f"UPDATE {table} SET v=11 WHERE tenant=%s AND id=1", (first,), mutation=True)
+                value_ack = self.ack
+                try:
+                    self.sql(c, f"TARN MOVE BUCKET {bucket} TO SHARD {self.identities[0]['id']}", mutation=True)
+                except Exception:
+                    # A missing job reply never authorizes mutation replay.
+                    try:
+                        self.record("uncertain_move_inspection", rows=self.sql(c, "SHOW TARN MOVES"))
+                    except Exception:
+                        self.record("uncertain_move_inspection_error", traceback=traceback.format_exc())
+                    raise
+            release = ev(source["endpoint"], SCAN_CONTROL, [owner, "release"])
+            self.record("scan_release_after_move_ack", result=release, value_ack_sequence=value_ack,
+                        move_ack_sequence=self.ack, bucket=bucket)
+            worker.join(13)
+            self.check("held SDK worker completes after the real move", not worker.is_alive())
+            with lock:
+                observed = dict(outcome)
+            result = observed.get("result", {})
+            expected = [{"tenant": first, "id": 1, "v": 11}, {"tenant": second, "id": 1, "v": 20}, None]
+            self.check(engine + " actual SDK retries the complete vector under the same schema",
+                       result.get("status") == "ok" and result.get("rows") == expected
+                       and result.get("schema", {}).get("token") == meta["table"],
+                       outcome=observed, expected=expected, value_ack_sequence=value_ack)
+        finally:
+            if installed:
+                self.close_scan(source["endpoint"], owner, worker)
+        current, still_owned, sent = self.move_report(source["endpoint"], table, bucket)
+        _, target_owned, target_other = self.move_report(target["endpoint"], table, bucket)
+        self.check(engine + " real move publishes Sent and target ownership",
+                   not still_owned and len(sent) == 1 and sent[0][1] == "sent"
+                   and sent[0][2] == self.identities[0]["id"] and target_owned and not target_other
+                   and current["ownership"]["bucket_epoch"] > meta["ownership"]["bucket_epoch"],
+                   source=current, target_owned=target_owned, bucket=bucket)
+        for label, request in (("old owner token", original),
+                               ("current unowned token", self.point_request(current, [[second, 1], [second, 99]]))):
+            reply = self.public(source["endpoint"], "get_many", request)
+            error = reply.get("error", {})
+            self.check(engine + " " + label + " refuses without a missing prefix",
+                       reply.get("status") == "error" and "slots" not in reply and error.get("kind") == "moved",
+                       reply=reply)
+            if label == "current unowned token":
+                self.check("current token reaches the actual numeric bucket guard",
+                           error.get("domain") == "mysql" and error.get("code") == 1213
+                           and ("bucket " + str(bucket)) in error.get("message", ""), reply=reply)
+        with self.connect() as c:
+            self.paired(c, table, keys, "tenant,id,v", "tenant=%s AND id=%s")
+        self.configuration(source["endpoint"], table)
+        self.configuration(target["endpoint"], table)
+
+    def scenario_ddl(self, engine):
+        table = "ddl_" + engine
+        first, second = self.tenant, self.ddl_tenants[engine]
+        keys = [[first, 1], [second, 1], [second, 99]]
+        with self.connect() as c:
+            self.paired(c, table, keys, "tenant,id,v", "tenant=%s AND id=%s")
+        source, meta = self.leader(1, table)
+        request = self.point_request(meta, [[second, 1], [second, 99]])
+        owner, worker = uuid.uuid4().hex, None
+        installed = False
+        try:
+            installed = True
+            receipt = ev(source["endpoint"], INSTALL_SCAN, [owner])
+            self.record("scan_hook_install", endpoint=source["endpoint"], receipt=receipt)
+            worker, outcome, lock = self.start_sdk(table, keys)
+            self.await_scan(source["endpoint"], owner, worker)
+            with self.connect() as c:
+                try:
+                    self.sql(c, f"ALTER TABLE {table} ADD COLUMN extra INT NOT NULL DEFAULT 7 FIRST", mutation=True)
+                except Exception:
+                    try:
+                        self.record("uncertain_ddl_inspection", endpoint=source["endpoint"],
+                                    jobs=ev(source["endpoint"], "return tarn_jobs()"))
+                    except Exception:
+                        self.record("uncertain_ddl_inspection_error", traceback=traceback.format_exc())
+                    raise
+            release = ev(source["endpoint"], SCAN_CONTROL, [owner, "release"])
+            self.record("scan_release_after_ddl_ack", result=release, ddl_ack_sequence=self.ack)
+            worker.join(13)
+            self.check("held SDK worker completes after the real DDL", not worker.is_alive())
+            with lock:
+                observed = dict(outcome)
+            result = observed.get("result", {})
+            self.check(engine + " actual SDK rejects a changed schema without its earlier prefix",
+                       result.get("status") == "error" and "rows" not in result
+                       and result.get("error", {}).get("kind") == "schema_changed",
+                       outcome=observed, original_table_token=meta["table"])
+        finally:
+            if installed:
+                self.close_scan(source["endpoint"], owner, worker)
+        refused = self.public(source["endpoint"], "get_many", request)
+        self.check(engine + " frozen pre-DDL RPC token is terminal",
+                   refused.get("status") == "error" and "slots" not in refused
+                   and refused.get("error", {}).get("kind") == "schema_changed"
+                   and refused["error"].get("code") == 1412, reply=refused)
+        self.record("explicit_schema_reopen", table=table,
+                    scope="the next SDK invocation deliberately opens a new handle; no implicit reinterpretation")
+        with self.connect() as c:
+            self.paired(c, table, keys, "extra,tenant,id,v", "tenant=%s AND id=%s")
+        fresh = self.public(source["endpoint"], "meta", {"version": 1, "db": self.db, "name": table})
+        self.check(engine + " explicit reopen has the new descriptor",
+                   fresh.get("status") == "ok" and fresh.get("table") != meta["table"], reply=fresh)
+        self.configuration(source["endpoint"], table)
+
+    def scenario_partition(self, engine):
+        table, tenant = "partition_" + engine, self.tenant
+        expected_before = {1: 10, 2: None, 99: None}
+        self.paired_values(table, tenant, expected_before)
+        self.caught_up(table, tenant, expected_before)
+        old, meta = self.leader(0, table)
+        before = self.configuration(old["endpoint"], table)
+        keys = [[tenant, 1], [tenant, 2], [tenant, 99]]
+        request = self.point_request(meta, keys)
+        raw_code = """
+local name,tenant=...; box.begin{txn_isolation='read-confirmed'}
+local ok,result=pcall(function()
+ local sp=assert(box.space[name]); local function get(id) local row=sp:get{tenant,id}; return row and row:totable() or box.NULL end
+ return {existing=get(1),inserted=get(2),absent=get(99),ro=box.info.ro,term=box.info.election.term}
+end)
+if box.is_in_txn() then box.rollback() end
+if not ok then error(result) end
+return result
+"""
+        baseline_raw = []
+        for node in self.group_nodes(0):
+            raw = ev(node["endpoint"], raw_code, [self.db + "." + table, tenant])
+            assert raw["existing"][:3] == [tenant, 1, 10] and raw["inserted"] is None and raw["absent"] is None, raw
+            baseline_raw.append({"node": node["node_id"], "image": raw})
+        self.record("partition_confirmed_baseline", images=baseline_raw, table=table)
+        self.inspect()
+        relay_before = self.relay_snapshot(self.replication_snapshot)
+        self.check("all twelve fixed relay flows carried traffic before the cut",
+                   all(not f["paused"] and f["accepted"] > 0 and f["queued_s2c"] > 0 and f["queued_c2s"] > 0
+                       for f in relay_before["flows"]), snapshot=relay_before)
+        codes = ev(old["endpoint"], """
+local out={}; for _,name in ipairs({'READONLY','TRANSACTION_CONFLICT','TRANSACTION_TIMEOUT',
+ 'QUORUM_WAIT','SYNC_QUORUM_TIMEOUT','SYNC_ROLLBACK','INTERFERING_PROMOTE','TIMEOUT'}) do
+ if type(box.error[name])=='number' then out[name]=box.error[name] end
+end; return out
+""")
+        self.record("partition_read_refusal_codes", constants=codes)
+        try:
+            paused = self.ingress(old["node_id"], True)
+            self.check("only the old leader's two incoming replication gates are paused",
+                       all(f["paused"] == (f["client_node"] == old["node_id"]) for f in paused["flows"]), snapshot=paused)
+            candidates = [n for n in self.group_nodes(0) if n["node_id"] != old["node_id"]]
+            candidate = sorted(candidates, key=lambda n: n["replica"])[0]
+            # One ordinary public promotion is allowed; it neither changes
+            # the configured membership/quorum nor stops a process.
+            promoted = ev(candidate["endpoint"], "box.ctl.promote(); return {ro=box.info.ro,term=box.info.election.term}")
+            self.record("partition_public_promotion", node=candidate["node_id"], result=promoted)
+            new, _ = self.leader(0, table, exclude=(old["node_id"],))
+            replacement = self.configuration(new["endpoint"], table)
+            self.check("relay cut replacement has an actual newer quorum term",
+                       replacement["term"] > before["term"], before=before, replacement=replacement)
+            # The SQL gateway may retain a responsive connection to A. It
+            # must learn the replacement through A's actual RO response,
+            # never a test-created routing flag or failed mutation replay.
+            deadline, former = time.monotonic() + 15, None
+            while time.monotonic() < deadline:
+                former = self.state(old["endpoint"], table)
+                if former["ro"] and former["term"] >= replacement["term"]:
+                    break
+                time.sleep(.02)
+            else:
+                raise AssertionError("cut former leader did not supply a real RO route fence", former)
+            self.frozen_ingress(old["node_id"], paused)
+            with self.connect() as c:
+                rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
+                self.check("partition SQL route warms through real RO fencing", rows == ((10,),), rows=rows)
+                self.sql(c, "BEGIN")
+                self.sql(c, f"UPDATE {table} SET v=11 WHERE tenant=%s AND id=1", (tenant,))
+                self.sql(c, f"INSERT INTO {table} VALUES (%s,2,12)", (tenant,))
+                self.sql(c, "COMMIT", mutation=True)  # One mutation attempt; any uncertainty fails.
+            ack_sequence = self.ack
+            raw = ev(old["endpoint"], raw_code, [self.db + "." + table, tenant])
+            self.record("partition_raw_after_sql_ack", sql_ack_sequence=ack_sequence, image=raw,
+                        scope="raw read-confirmed native reads omit the Tarn freshness/claim barrier")
+            self.check(engine + " post-ACK raw stale existing/missing-new witness is observed",
+                       raw["existing"] is not None and raw["existing"][:3] == [tenant, 1, 10]
+                       and raw["inserted"] is None and raw["absent"] is None, raw=raw)
+            self.frozen_ingress(old["node_id"], paused)
+            result = self.public(old["endpoint"], "get_many", request)
+            observed = self.configuration(old["endpoint"], table)
+            if result.get("status") == "ok":
+                slots = result.get("slots", [])
+                exact = (len(slots) == 3 and [s.get("position") for s in slots] == [1, 2, 3]
+                         and [s.get("key") for s in slots] == keys
+                         and [s.get("status") for s in slots] == ["present", "present", "missing"]
+                         and [s["tuple"][:3] for s in slots[:2]] == [[tenant, 1, 11], [tenant, 2, 12]]
+                         and "tuple" not in slots[2])
+                self.check(engine + " cut endpoint returns only the complete new ACK image", exact, reply=result)
+            else:
+                error = result.get("error", {})
+                supported = (error.get("kind") == "moved" and
+                             (error.get("domain") == "tarantool" and error.get("code") == codes.get("READONLY")
+                              or error.get("domain") == "mysql" and error.get("code") == 1213))
+                supported = supported or (error.get("kind") == "unavailable"
+                                         and error.get("domain") == "tarantool" and error.get("code") in codes.values())
+                self.check(engine + " cut endpoint gives a specific whole read refusal",
+                           result.get("status") == "error" and "slots" not in result and supported,
+                           reply=result, state=observed, sql_ack_sequence=ack_sequence)
+            self.record("partition_endpoint_classification", actual_ro=observed["ro"], actual_term=observed["term"],
+                        error=result.get("error"), scope="replication-ingress cut; no assumed stale writable role")
+            self.paired_values(table, tenant, {1: 11, 2: 12, 99: None})
+            self.frozen_ingress(old["node_id"], paused)
+        finally:
+            self.restore()
+        self.retarget(table)
+        self.caught_up(table, tenant, {1: 11, 2: 12, 99: None})
+        self.paired_values(table, tenant, {1: 11, 2: 12, 99: None})
+        self.configuration(self.nodes[0], table)
+        self.record("partition_recovery_complete", table=table,
+                    scope="two peer replication ingress flows only; direct clients/freshness/recovery RPCs remain allowed")
+
     def cleanup(self, success):
         errors = []
         try:
@@ -446,7 +865,7 @@ def main():
         summary = {"success": success and not errors, "completed_checks": test.completed,
                    "requested_scenarios": scenarios, "completed_scenarios": test.finished_scenarios,
                    "primary_error": failure, "cleanup_errors": errors, "database_preserved": test.created,
-                   "scope": "RF3 leader, no-quorum and observed monitor-gap histories; no asymmetric partition or snapshot claim"}
+                   "scope": "Requested RF3 histories include bounded replication-ingress cuts, not arbitrary networking or snapshots"}
         (test.evidence / "summary.json").write_text(json.dumps(summary, indent=2) + "\n"); test.events.close()
     print(f"{test.completed} checks, {'PASS' if summary['success'] else 'FAIL'}")
     return 0 if summary["success"] else 1

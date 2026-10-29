@@ -171,11 +171,46 @@ EVAL, raw fallback or write mode.
 ordered vectors and the independent-points label. Its six controls reach
 actual false absence, wrong-incarnation data, mixed schemas, clipped replies,
 missing prepared-claim protection and a falsely advertised atomic snapshot.
-It composes with existing freshness and commit models; it does not implement
-Tarantool replication, ACLs, codecs or MVCC.
+It assumes the existing freshness and commit contracts; there is no composed
+refinement proof. It does not implement Tarantool replication, ACLs, codecs
+or MVCC.
 
 Storage/network tests, paired SQL/SDK histories and RF3 faults establish the
 runtime mapping separately. Measurements of SQL, strong KV and raw native
 reads must retain their distinct contracts, RPC/byte/CPU scopes and complete
 repeated evidence. The legacy `kvbench` measures raw reads and is not a
 strong-KV benchmark.
+
+## Matched read measurements
+
+`bench/strong_kv.py` records SQL, strong KV and raw native reads separately.
+It uses six balanced trial orders, batches of one or 32 independent points,
+and one or 16 clients. A batch's latency is the latency of that complete
+operation; its key throughput is reported separately. SQL batch 32 issues
+32 independent autocommit statements, strong KV uses its bounded API, and
+raw native reads pipeline full-primary-key SELECTs.
+
+On Linux, the owned fixture can prepare and audit a fresh measurement cohort:
+
+```sh
+cargo build --release --workspace --all-targets --locked
+KV_STUDY_ENGINE=memtx tests/kv.sh
+KV_STUDY_ENGINE=vinyl tests/kv.sh
+```
+
+Each engine uses two RF3 shards, quorum two, synchronous spaces and fsync,
+with test hooks disabled. The workload reads an unchanged 10,000-row,
+64-byte-payload corpus for one hot tenant on one owning shard. This is a
+read-path study, not a distributed OLTP or production-capacity result.
+The fixture checks complete replica images before and after the study.
+Warmup and engine caches remain part of the recorded environment; a Vinyl
+cohort does not by itself establish cold-disk performance.
+
+Raw samples, errors, source/executable identities, discovery costs and
+timed RPC/protocol-byte counters are retained. CPU counters bracket each
+phase and identify client, gateways, storage processes and TX threads.
+TX-thread CPU is already included in storage-process CPU; those scopes
+must not be added together. Protocol bytes exclude TCP headers. The SQL
+and KV drivers also use different client stacks, so these observations
+do not isolate SQL parsing costs. Raw reads have the weaker visibility
+contract above and cannot establish an acceleration of strong reads.

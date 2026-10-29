@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      strong_kv_qualification:
+        description: Run strong KV RF3 histories and matched SQL/KV/raw measurements only
+        type: boolean
+        default: false
       file_backup_scale:
         description: Include the file-backup scale study
         type: boolean
@@ -23,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || 'ci' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification && 'kv' || 'ci' }}
   cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.strong_read_cost) }}
 
 env:
@@ -39,7 +43,7 @@ defaults:
 
 jobs:
   lint:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification)
     name: Format and clippy
     runs-on: ubuntu-24.04
     steps:
@@ -55,7 +59,7 @@ jobs:
         run: cargo clippy -p tarn-storage --features alloc-metrics --all-targets -- -D warnings
 
   test:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification)
     name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -81,6 +85,8 @@ jobs:
         run: pip install PyMySQL
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
+      - name: Strong KV administrative transport privacy controls
+        run: python3 tests/sql/kv_transport_test.py
       # Restore and save separately, so that the (slow) Tarantool build is
       # cached even when a later step fails.
       - name: Restore Tarantool
@@ -236,10 +242,12 @@ jobs:
             /tmp/tarn-kv181-*/processes.jsonl
             /tmp/tarn-kv181-*/lifecycle.json
             /tmp/tarn-kv181-*/preflight.json
+            /tmp/tarn-kv181-*/preflight.stderr
             /tmp/tarn-kv181-*/broker-preflight.json
             /tmp/tarn-kv181-*/*.log
             /tmp/tarn-kv181-*/functional/*
             /tmp/tarn-kv181-*/faults/*
+            !/tmp/tarn-kv181-credentials-*/**
           if-no-files-found: ignore
           retention-days: 30
       - name: Retain Vinyl pressure evidence
@@ -277,7 +285,7 @@ jobs:
           true
 
   tla:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification)
     name: TLA+ model checking
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -293,7 +301,7 @@ jobs:
         run: WORKERS=auto tla/check.sh
 
   verus:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.strong_kv_qualification)
     name: Verus proofs
     runs-on: ubuntu-24.04
     steps:
@@ -309,6 +317,68 @@ jobs:
         run: |
           "$HOME/verus/verus-x86-linux/verus" --crate-type=lib src/lib.rs 2>&1 | tee verus.log
           grep -qE "verification results:: [0-9]+ verified, 0 errors" verus.log
+
+  strong-kv-qualification:
+    if: github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification
+    name: Strong KV histories and matched measurements
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Python packages
+        run: pip install PyMySQL
+      - name: Restore Tarantool
+        id: tarantool-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the actual gateway, native module and KV clients
+        run: cargo build --release --workspace --all-targets --locked
+      - name: Retain checkout and executable identities
+        run: |
+          mkdir -p /tmp/tarn-kv-study-build
+          git rev-parse HEAD HEAD^{tree} > /tmp/tarn-kv-study-build/checkout.txt
+          rustc -Vv > /tmp/tarn-kv-study-build/rustc.txt
+          tarantool --version > /tmp/tarn-kv-study-build/tarantool.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so target/release/examples/strong_kv target/release/examples/strong_kv_bench > /tmp/tarn-kv-study-build/binaries.sha256
+      - name: Paired SQL and strong KV RF3 histories
+        run: |
+          TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh strong-kv tests/kv.sh
+          TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+      - name: Matched read measurements on both storage engines
+        run: |
+          for engine in memtx vinyl; do
+            KV_STUDY_ENGINE="$engine" TARN_NATIVE="$PWD/target/release/libtarn_storage.so" \
+              ci/annotate.sh "strong-kv-study-$engine" tests/kv.sh
+          done
+      - name: Retain histories, measurements, failures and source identities
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: strong-kv-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-kv-study-build/*
+            /tmp/tarn-kv181-*/*.json
+            /tmp/tarn-kv181-*/*.jsonl
+            /tmp/tarn-kv181-*/*.log
+            /tmp/tarn-kv181-*/preflight.stderr
+            /tmp/tarn-kv181-*/functional/*
+            /tmp/tarn-kv181-*/faults/*
+            /tmp/tarn-kv181-*/study/**
+            !/tmp/tarn-kv181-credentials-*/**
+          if-no-files-found: ignore
+          retention-days: 30
 
   strong-read-cost:
     if: github.event_name == 'workflow_dispatch' && inputs.strong_read_cost
