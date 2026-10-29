@@ -8,6 +8,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- RF3 storage fixtures refresh volatile lazy capture/quota readiness at an
+  ordinary empty entry before comparing exact durable totals
+  ([#165](https://github.com/cstheorist/tarn/issues/165)). The UNKNOWN probe
+  holds rebuild while observing the real admission guard. Engine-copy
+  timeouts retain the original single BUILD result or exception, fiber and
+  job/capture/queue state, and bounded owned-process logs. Live controls
+  preserve the original deadlines and never replay BUILD.
+
 - Shard withdrawal now drains every unresolved participant dependency
   ([#130](https://github.com/cstheorist/tarn/issues/130)). New promises are
   fenced when any dependency is draining, and removal counts in-flight,

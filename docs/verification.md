@@ -1955,6 +1955,49 @@ near-limit garbage recovery with native-core headroom; it is not a proof
 that arbitrary privileged EVAL allocations can safely exhaust the hard
 Lua heap limit.
 
+### RF3 fixture readiness and copy diagnostics (issue #165)
+
+A confirmed mutation does not pin volatile lazy caches. The production
+`box.status` callback invalidates capture and quota even when the current
+role is unchanged. Capture is refreshed on entry; the separate quota worker
+rebuilds its confirmed cut even while shipping is paused. The RF3 fixture
+therefore drives an empty ordinary autocommit and waits under its original
+25-second readiness bound before applying the original exact quota,
+capture, tuple, reservation, sequence and floor assertions. Selected
+durable summaries are equal before and after those empty entries; this is
+not a byte comparison of every database payload.
+
+The UNKNOWN probe holds background quota rebuild across the strong-read
+barrier and observes `ready()` at the actual production `q.change` guard.
+It requires a nonempty set of false observations, error 1213, a live worker,
+and unchanged byte images of the selected base/outbox/reservation/counter/
+slot/floor spaces. The original guard still decides admission. Both test
+wrappers are restored before recovery continues.
+
+Engine copying keeps one original BUILD attempt. On the original
+30-second copy-hook deadline, diagnostics retain its return or exception,
+fiber state, job, capture epoch/tickets, source hash, shadow/receipt, native
+cache, queue, leader and clock state. Each diagnostic RPC has a separate
+one-second bound, after the original wait; a failed controller prints the
+last 80 lines from each of its three owned process logs before cleanup.
+No diagnostic resends BUILD. A live source-definition mismatch proves the
+real 1412 refusal is retained with unchanged source/job and no shadow or
+receipt. Exception and sleeping-worker controls are explicitly synthetic;
+they test observation, not a claimed reconstruction of the historical
+unlogged timeout.
+
+`lua/test/run.sh` runs the normal RF3 suites, all three copy diagnostics
+controls and a held-notification lazy regression in native and Lua-only
+modes. The latter delays the actual initial `box.status` callback until
+after confirmed PREPARE/CAS, then releases all initial callbacks and the
+restarted replica's callback before later process loss. Its test-only
+preload arms after configuration and before Tarn initialization. It uses
+the actual notification and invokes the original production callback,
+with no general worker liveness claim. Production Lua, native code, protocol and model
+inputs are unchanged. The original failed CI execution and every local
+control, including nonqualifying setup failures, are retained separately
+in the [evidence index](../tests/evidence/rf3-fixture-readiness/index.json).
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:

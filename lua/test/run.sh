@@ -48,10 +48,21 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/engine_replication.sh" "$WORK/engine-rf3" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  for control in source-binding exception stall; do
+    ENGINE_RF3_COPY_CONTROL="$control" TARANTOOL="$T" \
+      bash "$DIR/test/engine_replication.sh" "$WORK/engine-rf3-$control" 2>&1 | tee -a "$WORK/test.out"
+    r=${PIPESTATUS[0]}
+    [ "$r" -ne 0 ] && rc=$r
+  done
   TARANTOOL="$T" bash "$DIR/test/lazy_faults.sh" "$WORK/lazy-faults" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/lazy_replication.sh" "$WORK/lazy-rf3" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+  LAZY_RF3_STATUS_CONTROL=1 LAZY_RF3_REAL_TARANTOOL="$T" \
+    TARANTOOL="$DIR/test/lazy_readiness_control.sh" \
+    bash "$DIR/test/lazy_replication.sh" "$WORK/lazy-readiness-rf3" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/alter_backfill_faults.sh" "$WORK/backfill" 2>&1 | tee -a "$WORK/test.out"
