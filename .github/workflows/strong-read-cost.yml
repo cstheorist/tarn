@@ -1,0 +1,51 @@
+name: Manual strong-read cost
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strong-read-cost-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  matched-cost:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      - name: Set up the isolated evidence directory
+        run: mkdir -p "$RUNNER_TEMP/strong-read-cost"
+      - name: Build source-bound Linux release artifacts
+        timeout-minutes: 20
+        run: python3 scripts/ci_strong_read_cost.py build --output "$RUNNER_TEMP/strong-read-cost"
+      - name: Three sequential matched cohorts
+        timeout-minutes: 36
+        run: python3 scripts/ci_strong_read_cost.py measure --output "$RUNNER_TEMP/strong-read-cost"
+      - name: Drain only this study's owned resources
+        if: always()
+        timeout-minutes: 3
+        run: python3 scripts/ci_strong_read_cost.py cleanup --output "$RUNNER_TEMP/strong-read-cost"
+      - name: Retain complete and failed raw evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: strong-read-cost-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/strong-read-cost
+            !${{ runner.temp }}/strong-read-cost/cohorts/**/data/**
+            !${{ runner.temp }}/strong-read-cost/cohorts/**/runtime-wal.tar
+            !${{ runner.temp }}/strong-read-cost/offline-wal/**/*.tmp
+            !${{ runner.temp }}/strong-read-cost/offline-wal/**/*.part
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 1
+          include-hidden-files: true
