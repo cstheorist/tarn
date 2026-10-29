@@ -553,6 +553,10 @@ pub(crate) async fn fetch_keys(
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(per_shard.keys().copied()),
+            )?;
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
@@ -927,6 +931,10 @@ async fn read_calls(
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -2334,6 +2342,10 @@ async fn storage_count(
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;

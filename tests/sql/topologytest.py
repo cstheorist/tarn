@@ -203,6 +203,11 @@ def main():
                         except pymysql.Error as e:
                             assert e.args[0] == 1205, e
                             report["checks"].append(dict(pair=pair, scan="explicit_refusal", error=list(e.args)))
+                        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                        rows = q(c, "SELECT id,v FROM topology188.t ORDER BY id")
+                        assert rows == tuple((k, k) for k in sorted(keys.values())), rows
+                        report["checks"].append(dict(pair=pair, rc_scan="complete", rows=len(rows)))
+                        q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
                         for key in keys.values():
                             point(c, key)
                     save()

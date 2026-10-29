@@ -46,6 +46,7 @@ impl TopologyConfig {
         if !(2..=65536).contains(&self.max_connections)
             || self.completion_connections == 0
             || self.completion_connections >= self.max_connections
+            || self.max_connections.saturating_sub(self.completion_connections) < 2
             || !(1..=86400).contains(&self.idle_secs)
             || self.fanout == 0
             || self.fanout >= self.active_branches
@@ -61,6 +62,22 @@ impl TopologyConfig {
         }
         Ok(())
     }
+}
+
+/// One serializable read cannot pin the entire ordinary socket budget before
+/// its bounded branches are polled. Existing transaction streams count too.
+/// RC reads do not retain streams and continue through the fanout window.
+pub(crate) fn check_pinned_reads(cfg: &TopologyConfig, shards: impl Iterator<Item = usize>) -> SqlResult<()> {
+    let limit = (cfg.max_connections - cfg.completion_connections) / 2;
+    let distinct: std::collections::BTreeSet<_> = shards.collect();
+    if distinct.len() > limit {
+        return Err(SqlError::new(
+            1205,
+            "HY000",
+            "serializable read would exceed the pinned-shard budget",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) struct Fanout {
@@ -135,6 +152,19 @@ mod tests {
     use super::*;
     use futures::FutureExt;
     use std::sync::Arc;
+
+    #[test]
+    fn a_read_leaves_ordinary_socket_capacity_and_counts_existing_unique_streams() {
+        let cfg = TopologyConfig {
+            max_connections: 20,
+            completion_connections: 4,
+            ..Default::default()
+        };
+        assert!(check_pinned_reads(&cfg, (0..8).chain(0..8)).is_ok());
+        let error = check_pinned_reads(&cfg, (0..8).chain([8])).unwrap_err();
+        assert_eq!(error.code, 1205);
+        assert!(check_pinned_reads(&cfg, 0..1024).is_err());
+    }
 
     #[test]
     fn configuration_cannot_disable_bounds_or_consume_every_slot_per_query() {

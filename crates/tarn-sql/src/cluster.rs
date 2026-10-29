@@ -302,6 +302,10 @@ async fn require_strong_reads(client: &Client, completion: bool) -> SqlResult<()
     .await;
     let valid = match response {
         Ok(Ok(r)) => r.data().is_some_and(|data| strong_read_contract(&data)),
+        Ok(Err(e @ tarn_iproto::Error::Admission { .. })) => {
+            client.close();
+            return Err(from_iproto(e));
+        }
         _ => false,
     };
     if valid {
@@ -540,6 +544,7 @@ impl Shard {
                         rd.value().ok().map(|v| v.as_i64() != Some(0))
                     })
                     .unwrap_or(true),
+                Err(e @ tarn_iproto::Error::Admission { .. }) => return Err(from_iproto(e)),
                 Err(e) => {
                     last_err = format!("{}: {}", addr, e);
                     continue;
@@ -550,6 +555,9 @@ impl Shard {
                 continue;
             }
             if let Err(e) = require_strong_reads(&c, completion).await {
+                if e.code == 1205 {
+                    return Err(e);
+                }
                 last_err = format!("{}: {}", addr, e);
                 continue;
             }

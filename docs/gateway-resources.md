@@ -51,8 +51,16 @@ runs. A branch holds its slot across its storage continuations. Completion
 RPCs keep their separate transport reserve. Bucket/DDL broadcasts also
 use bounded windows, retaining existing protocol ordering and error rules.
 Statement read sets, native handback ownership and validation are unchanged.
-If a transaction needs more pinned shard connections than fit, it fails
-explicitly; it does not evict its earlier streams or acknowledge a prefix.
+Before opening streams, a serializable read checks the distinct union of
+its shards and existing transaction streams against half the ordinary
+socket capacity: `(max_connections - completion_connections) / 2` (120 by
+default). It fails with 1205 before pinning the requested set if that set
+would exceed the limit. This leaves ordinary capacity for other work;
+several queries can still overload the aggregate budget and receive an
+explicit refusal. Earlier streams are not evicted and a prefix is never
+acknowledged. RC scans release each branch's client and can visit larger
+sets through their bounded window. These are resource refusals, not a
+change in the successful read's validation or freshness contract.
 
 `response_frame_bytes` rejects an advertised frame before allocating its
 payload. `response_bytes` is a gateway-wide bound on charged encoded
