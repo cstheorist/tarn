@@ -6,6 +6,14 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      file_backup_scale:
+        description: Include the file-backup scale study
+        type: boolean
+        default: false
+      backup_size_gib:
+        description: File-backup study payload GiB
+        type: string
+        default: '2'
       strong_read_cost:
         description: Run only the manual matched strong-read cost study
         type: boolean
@@ -123,6 +131,11 @@ jobs:
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
         run: TARN_NATIVE=0 ci/annotate.sh storage-lua lua/test/run.sh
+      - name: File backup, restore and seeded replicas
+        run: |
+          python3 tests/test_backup.py
+          TARN_NATIVE="$PWD/target/release/libtarn_storage.so" python3 tests/backup.py --work /tmp/tarn-backup-native --output /tmp/tarn-backup-native.json --functional --repetitions 1
+          TARN_NATIVE=0 python3 tests/backup.py --work /tmp/tarn-backup-lua --output /tmp/tarn-backup-lua.json --functional --repetitions 1
       - name: Decision placement, lost PREPARE reply and coordinator crash
         run: |
           ci/annotate.sh decision bash tests/decision.sh
@@ -284,3 +297,11 @@ jobs:
     uses: ./.github/workflows/strong-read-cost.yml
     permissions:
       contents: read
+
+  file-backup-scale:
+    if: github.event_name == 'workflow_dispatch' && inputs.file_backup_scale
+    uses: ./.github/workflows/file-backup.yml
+    with:
+      size_gib: ${{ inputs.backup_size_gib }}
+      repetitions: '3'
+      rate_mib: '128'

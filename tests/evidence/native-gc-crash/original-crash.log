@@ -1,0 +1,72 @@
+2026-10-28T19:18:37.4663702Z using cached Tarantool 3.9.0-0-g8b9a0f5
+2026-10-28T19:37:35.3511704Z 19:37:35 box.ctl.promote() on s1.2 (port 3512), attempt 1; the leader on 3511 will be demoted with its connections open
+2026-10-28T19:37:44.7302983Z 19:37:44 killing shard 1 leader on port 3513 (s1.3)
+2026-10-28T19:39:06.5413342Z FAILOVER TEST FAILED (bank rc=1 rc-bank rc=1 moves rc=1 kv=1 lock copy=0 move_failed=0); logs kept in /tmp/tarn-failover-vinyl
+2026-10-28T19:39:06.5413889Z --- s1.2 stopped on its own; the end of s1.2.log:
+--- s1.2 stopped on its own; the end of s1.2.log:
+19:37:35 box.ctl.promote() on s1.2 (port 3512), attempt 1; the leader on 3511 will be demoted with its connections open
+19:37:44 killing shard 1 leader on port 3513 (s1.3)
+2026-10-28T19:39:06.5702851Z ##[error]FAILOVER TEST FAILED (bank rc=1 rc-bank rc=1 moves rc=1 kv=1 lock copy=0 move_failed=0); logs kept in /tmp/tarn-failover-vinyl
+2026-10-28T19:39:06.5763168Z ##[error]::error title=Failover test failed::bank rc=1 rc-bank rc=1 moves rc=1 kv=1 lock copy=0 move_failed=0%0A--- s1.2 stopped on its own; the end of s1.2.log:%0A#8  0x564c5a9946c3 in lj_BC_FUNCC+70%0A#9  0x564c5a99b447 in lua_pcall+119%0A#10 0x564c5a9316ef in luaT_call+15%0A#11 0x564c5a8f2761 in box_process_lua+273%0A#12 0x564c5a8f2ceb in box_lua_call+59%0A#13 0x564c5a88bc66 in box_process_call+550%0A#14 0x564c5a783077 in tx_process_call(cmsg*)+1111%0A#15 0x564c5a95a2c7 in cmsg_deliv
+2026-10-28T19:39:06.5960576Z ##[group]/tmp/tarn-failover-vinyl/s1.2.log
+2026-10-28T19:39:06.5961592Z 2026-10-28 19:37:35.472 [21516] main/119/applier/tarn@127.0.0.1:3513 raft.c:496 I> RAFT: message {term: 3, vote: 2, leader: 2, leader is seen: true, state: follower} from shard1_127_0_0_1_3513 (id = 3, addr: 127.0.0.1:3513)
+2026-10-28T19:39:06.5962972Z 2026-10-28 19:37:35.472 [21516] main/119/applier/tarn@127.0.0.1:3513 raft.c:545 I> RAFT: vote request is skipped - the leader is already known - shard1_127_0_0_1_3512 (id = 2)
+2026-10-28T19:39:06.5963753Z 2026-10-28 19:37:35.543 [21516] main/113/applier/tarn@127.0.0.1:3511 raft.c:496 I> RAFT: message {term: 3, state: follower} from shard1_127_0_0_1_3511 (id = 1, addr: 127.0.0.1:3511)
+2026-10-28T19:39:06.5964325Z 2026-10-28 19:37:35.544 [21516] main/120/raft_worker box.cc:469 I> box switched to rw
+2026-10-28T19:39:06.5964763Z 2026-10-28 19:37:35.553 [21516] main/132/tarn_schema/tarn tarn.lua:1425 I> tarn: native procedures loaded
+2026-10-28T19:39:06.5965481Z 2026-10-28 19:37:35.553 [21516] main/113/applier/tarn@127.0.0.1:3511 raft.c:496 I> RAFT: message {term: 3, vote: 1, leader: 2, leader is seen: true, state: follower} from shard1_127_0_0_1_3511 (id = 1, addr: 127.0.0.1:3511)
+2026-10-28T19:39:06.5966509Z 2026-10-28 19:37:35.553 [21516] main/113/applier/tarn@127.0.0.1:3511 raft.c:545 I> RAFT: vote request is skipped - the leader is already known - shard1_127_0_0_1_3512 (id = 2)
+2026-10-28T19:39:06.5967001Z Segmentation fault
+2026-10-28T19:39:06.5967183Z   code: SEGV_MAPERR
+2026-10-28T19:39:06.5967361Z   addr: 0x2f
+2026-10-28T19:39:06.5967542Z   context: 0x564c6c5c0100
+2026-10-28T19:39:06.5967747Z   siginfo: 0x564c6c5c0230
+2026-10-28T19:39:06.5967954Z   rax      0x41a4a998         1101310360
+2026-10-28T19:39:06.5968176Z   rbx      0x406303b8         1080230840
+2026-10-28T19:39:06.5968380Z   rcx      0x418349d0         1099123152
+2026-10-28T19:39:06.5968712Z   rdx      0x418349d0         1099123152
+2026-10-28T19:39:06.5969033Z   rsi      0x2b               43
+2026-10-28T19:39:06.5969341Z   rdi      0x406303b8         1080230840
+2026-10-28T19:39:06.5969832Z   rsp      0x7f42c4880a40     139924741818944
+2026-10-28T19:39:06.5970186Z   rbp      0x406303b8         1080230840
+2026-10-28T19:39:06.5970510Z   r8       0x41d53130         1104490800
+2026-10-28T19:39:06.5970835Z   r9       0x7f42c4880a60     139924741818976
+2026-10-28T19:39:06.5971188Z   r10      0x564c6c75eea0     94886237171360
+2026-10-28T19:39:06.5971535Z   r11      0x411a2f30         1092235056
+2026-10-28T19:39:06.5971859Z   r12      0x41905ba0         1099979680
+2026-10-28T19:39:06.5972200Z   r13      0xfffffffe         4294967294
+2026-10-28T19:39:06.5972669Z   r14      0x406310a8         1080234152
+2026-10-28T19:39:06.5973000Z   r15      0x400994d0         1074369744
+2026-10-28T19:39:06.5973347Z   rip      0x564c5a9a048a     94885937546378
+2026-10-28T19:39:06.5973696Z   eflags   0x10246            66118
+2026-10-28T19:39:06.5974017Z   cs       0x33               51
+2026-10-28T19:39:06.5974318Z   gs       0x0                0
+2026-10-28T19:39:06.5974594Z   fs       0x0                0
+2026-10-28T19:39:06.5974799Z   cr2      0x2f               47
+2026-10-28T19:39:06.5974995Z   err      0x4                4
+2026-10-28T19:39:06.5975183Z   oldmask  0x0                0
+2026-10-28T19:39:06.5975386Z   trapno   0xe                14
+2026-10-28T19:39:06.5975585Z Current time: 1793216255
+2026-10-28T19:39:06.5975870Z Please file a bug at https://github.com/tarantool/tarantool/issues
+2026-10-28T19:39:06.5976252Z Attempting backtrace... Note: since the server has already crashed,
+2026-10-28T19:39:06.5976542Z this may fail as well
+2026-10-28T19:39:06.5976755Z #1  0x564c5a94cd52 in crash_signal_cb+162
+2026-10-28T19:39:06.5976992Z #2  0x7f4319c45330 in __sigaction+80
+2026-10-28T19:39:06.5977247Z #3  0x564c5a9a048a in gc_traverse_trace.part.0+330
+2026-10-28T19:39:06.5977508Z #4  0x564c5a9a0ab3 in propagatemark+1555
+2026-10-28T19:39:06.5977736Z #5  0x564c5a9a137c in lj_gc_step+92
+2026-10-28T19:39:06.5977954Z #6  0x564c5a9938dc in lj_BC_TNEW+103
+2026-10-28T19:39:06.5978174Z #7  0x564c5a8f257c in execute_lua_call+124
+2026-10-28T19:39:06.5978400Z #8  0x564c5a9946c3 in lj_BC_FUNCC+70
+2026-10-28T19:39:06.5978615Z #9  0x564c5a99b447 in lua_pcall+119
+2026-10-28T19:39:06.5978823Z #10 0x564c5a9316ef in luaT_call+15
+2026-10-28T19:39:06.5979047Z #11 0x564c5a8f2761 in box_process_lua+273
+2026-10-28T19:39:06.5979278Z #12 0x564c5a8f2ceb in box_lua_call+59
+2026-10-28T19:39:06.5979632Z #13 0x564c5a88bc66 in box_process_call+550
+2026-10-28T19:39:06.5979970Z #14 0x564c5a783077 in tx_process_call(cmsg*)+1111
+2026-10-28T19:39:06.5980222Z #15 0x564c5a95a2c7 in cmsg_deliver+23
+2026-10-28T19:39:06.5980448Z #16 0x564c5a95afcf in fiber_pool_f+207
+2026-10-28T19:39:06.5980895Z #17 0x564c5a776530 in fiber_cxx_invoke(int (*)(__va_list_tag*), __va_list_tag*)+16
+2026-10-28T19:39:06.5981412Z #18 0x564c5a955756 in fiber_loop+70
+2026-10-28T19:39:06.5981757Z #19 0x564c5abd1c16 in coro_init+70
+2026-10-28T19:39:06.5982436Z ##[endgroup]
