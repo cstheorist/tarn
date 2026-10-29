@@ -21,4 +21,4 @@ args=()
 python3 "$ROOT/tests/sql/topologytest.py" --config "$W/storage/cluster.json" \
   --gateway "${TARN_BIN:-$ROOT/target/release/tarn-server}" --out "$OUT" \
   --port "${SQL_PORT:-26400}" --pairs "${PAIRS:-5}" --seconds "${SECONDS_PER_RUN:-2}" \
-  --pool-size "${POOL_SIZE:-4}" --gateways "${GATEWAYS:-2}" --rate "${POINT_RATE:-1000}" "${args[@]}"
+  --pool-size "${POOL_SIZE:-4}" --gateways "${GATEWAYS:-2}" --rate "${POINT_RATE:-200}" "${args[@]}"

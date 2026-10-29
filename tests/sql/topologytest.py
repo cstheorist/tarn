@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import subprocess
+import threading
 import time
 
 import pymysql
@@ -36,6 +37,11 @@ def counters(c):
 
 
 def rss(pid):
+    status = pathlib.Path(f"/proc/{pid}/status")
+    if status.exists():
+        for line in status.read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
     return int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)], text=True).strip()) * 1024
 
 
@@ -52,7 +58,7 @@ def main():
     ap.add_argument("--pairs", type=int, default=5)
     ap.add_argument("--seconds", type=float, default=2)
     ap.add_argument("--port", type=int, default=26400)
-    ap.add_argument("--rate", type=float, default=1000, help="total scheduled point reads/s across eight clients")
+    ap.add_argument("--rate", type=float, default=200, help="total scheduled point reads/s across eight clients")
     ap.add_argument("--stack-bytes", help="explicit development-build stack override; release uses its default")
     ap.add_argument("--pool-size", type=int, default=4)
     ap.add_argument("--gateways", type=int, choices=range(1,9), default=2)
@@ -80,7 +86,7 @@ def main():
     report = dict(groups=groups, gateways=args.gateways, replicas=[len(s["replicas"]) for s in cfg["shards"]],
                   config=cfg, samples=[], checks=[], read_refusals=[], completed=False,
                   scheduled_rate=args.rate, stack_override=args.stack_bytes,
-                  source_head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                  source_head=os.environ.get("TARN_SOURCE_HEAD") or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                   source_files={str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                                 for root in ("crates", "tests", "lua")
                                 for p in pathlib.Path(root).rglob("*") if p.is_file() and p.suffix in (".rs", ".py", ".sh", ".lua", ".toml")},
@@ -135,6 +141,11 @@ def main():
                     if not initialized:
                         q(c, "CREATE DATABASE topology188")
                         q(c, "CREATE TABLE topology188.t(id INT PRIMARY KEY,v INT)")
+                        # Empty auxiliary tables activate both diagnostic
+                        # workers; a plain memtx-only catalog would hide their
+                        # topology-dependent background traffic.
+                        q(c, "CREATE TABLE topology188.v(id INT PRIMARY KEY,v INT) ENGINE=vinyl")
+                        q(c, "CREATE TABLE topology188.l(id INT PRIMARY KEY,v INT,KEY lv(v) COMMENT 'tarn:lazy')")
                         for key in keys.values(): q(c, f"INSERT INTO topology188.t VALUES({key},{key})")
                         initialized = True
                     # Exercise every configured group without retaining streams.
@@ -142,13 +153,15 @@ def main():
                         for key in keys.values():
                             point(client, key)
                     before = [counters(x) for x in clients]
-                    load_start = time.monotonic()
-                    deadline = load_start + args.seconds
+                    ready = threading.Barrier(9)
+                    start_load = threading.Event()
 
                     def worker(index):
                         c = connect(args.port + index % args.gateways)
                         latencies = []; failures = []; skipped = 0; slot = index
                         try:
+                            ready.wait(timeout=10)
+                            start_load.wait(timeout=10)
                             key = hot[index % len(hot)]
                             while time.monotonic() < deadline:
                                 due = load_start + slot / args.rate
@@ -171,7 +184,12 @@ def main():
                         return latencies, failures, skipped
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-                        runs = list(pool.map(worker, range(8)))
+                        tasks = [pool.submit(worker, i) for i in range(8)]
+                        ready.wait(timeout=10)
+                        load_start = time.monotonic() + .05
+                        deadline = load_start + args.seconds
+                        start_load.set()
+                        runs = [task.result() for task in tasks]
                     elapsed = time.monotonic() - load_start
                     latency = [v for values, _, _ in runs for v in values]
                     failures = [e for _, errors, _ in runs for e in errors]

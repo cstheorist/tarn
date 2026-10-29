@@ -7,6 +7,7 @@ Only this invocation's containers/networks are removed; all evidence survives.
 """
 import argparse
 import hashlib
+import ipaddress
 import json
 import pathlib
 import subprocess
@@ -82,9 +83,20 @@ def main():
           "--listen", "0.0.0.0:"+str(port), "--node-id", str(node), "--threads", "2", "--allow-all")
     try:
         report["image"] = json.loads(d("image", "inspect", a.image))[0]["Id"]
+        ids = d("network", "ls", "-q").splitlines()
+        ranges = d("network", "inspect", "--format", '{{json .IPAM.Config}}', *ids)
+        used = [ipaddress.ip_network(c["Subnet"]) for line in ranges.splitlines()
+                for c in (json.loads(line) or []) if c.get("Subnet")]
+        subnet = next(ipaddress.ip_network("10.188."+str(i)+".0/24") for i in range(100,255)
+                      if not any(ipaddress.ip_network("10.188."+str(i)+".0/24").overlaps(n)
+                                 for n in used if n.version == 4))
+        report["replication_subnet"] = str(subnet)
         for label in ("sql", "replication"):
             network = tag+"-"+label
-            d("network", "create", "--internal", network); networks.append(network)
+            # Docker Desktop does not publish host ports from an internal
+            # bridge. Only SQL gets host forwarding, bound to loopback below.
+            options = ["--internal", "--subnet", str(subnet)] if label == "replication" else []
+            d("network", "create", *options, network); networks.append(network)
         nodes = []
         for i in range(3):
             name = tag+"-n"+str(i); nodes.append(name)
@@ -102,7 +114,16 @@ def main():
             args = [item for k,v in env.items() for item in ("-e", k+"="+str(v))]
             d("exec", "-d", *args, name, "sh", "-c", "exec tarantool /work/lua/storage.lua > /data/node.log 2>&1")
         old = leader(range(3))
-        for i in range(3): assert control(i, "return tarn_info().native"), "native module not active"
+        deadline = time.monotonic()+30
+        for i in range(3):
+            while not control(i, "return box.info.status == 'running'"):
+                if time.monotonic() >= deadline: raise AssertionError("replica did not finish joining")
+                time.sleep(.1)
+        old = leader(range(3))
+        # Production loads native state on a leader, not on followers.
+        while not control(old, "local n=tarn_info().native; return n and n.ready == 1 and tarn.clock.status().read_ready"):
+            if time.monotonic() >= deadline: raise AssertionError("native leader did not become ready")
+            time.sleep(.1)
         gw = tag+"-gateways"
         d("run", "-d", "--name", gw, "--network", networks[0], "--memory", "256m",
           "-p", "127.0.0.1:"+str(a.port)+":4000", "-p", "127.0.0.1:"+str(a.port+1)+":4001",
@@ -151,7 +172,7 @@ def main():
         clients.clear()
         for label in ("majority", "former"):
             pid = d("exec", gw, "cat", "/data/"+label+".pid")
-            d("exec", gw, "kill", pid)
+            d("exec", gw, "sh", "-c", 'kill "$1"', "owned-gateway", pid)
         gateway("healed0", cfg, 4000, 903); gateway("healed1", cfg, 4001, 904)
         for port in (a.port,a.port+1):
             c = sql(port); assert q(c, "SELECT v FROM partition188.t WHERE id=1") == ((1,),)
