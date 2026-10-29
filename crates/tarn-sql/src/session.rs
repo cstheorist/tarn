@@ -115,6 +115,7 @@ pub struct Session {
     client_collation: String,
     /// Warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
+    omitted_warnings: usize,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
     lazy_wait_timeout: u64,
@@ -126,6 +127,26 @@ pub struct Warning {
     pub level: &'static str,
     pub code: u16,
     pub message: String,
+}
+
+/// Keep diagnostic storage bounded while preserving the full warning count.
+#[derive(Default)]
+struct DmlWarnings {
+    messages: Vec<Warning>,
+    total: usize,
+}
+
+impl DmlWarnings {
+    fn duplicate(&mut self, error: SqlError) {
+        self.total += 1;
+        if self.messages.len() < admin::MAX_ERROR_COUNT {
+            self.messages.push(Warning {
+                level: "Warning",
+                code: error.code,
+                message: error.message,
+            });
+        }
+    }
 }
 
 /// A finding of the tree checks as a warning or error message.
@@ -423,6 +444,7 @@ impl Session {
             collation_connection: cluster.cfg.default_collation.clone(),
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
+            omitted_warnings: 0,
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
             lazy_wait_timeout: 5,
@@ -433,7 +455,7 @@ impl Session {
     /// Number of warnings and notes of the last statement (the count OK and
     /// EOF packets carry).
     pub fn warning_count(&self) -> u16 {
-        self.warnings.len().min(u16::MAX as usize) as u16
+        (self.warnings.len() + self.omitted_warnings).min(u16::MAX as usize) as u16
     }
 
     pub fn warnings(&self) -> &[Warning] {
@@ -461,15 +483,20 @@ impl Session {
     }
 
     fn session_vars(&self) -> admin::SessionVars<'_> {
+        let globals = self.cluster.globals.lock();
         admin::SessionVars {
             autocommit: self.autocommit,
             db: self.db.as_deref(),
             isolation: self.isolation,
+            global_isolation: globals.isolation,
+            global_lock_wait_timeout: globals.lock_wait_timeout,
+            next_isolation: self.next_isolation,
+            active_mode: self.txn.as_ref().map(|t| t.mode),
             lock_wait_timeout: self.lock_wait_timeout,
             overrides: Some(&self.sys_vars),
             collation_connection: &self.collation_connection,
             collation_server: &self.cluster.cfg.default_collation,
-            warning_count: self.warnings.len(),
+            warning_count: self.warnings.len() + self.omitted_warnings,
         }
     }
 
@@ -548,6 +575,20 @@ impl Session {
             self.user_vars.insert(user.to_string(), v);
             return Ok(());
         }
+        // Unsupported GLOBAL assignments must not mutate session behavior
+        // (notably sql_mode) or report an unimplemented server default.
+        if scope == VarScope::Global
+            && !name.starts_with("tarn_")
+            && !matches!(
+                name,
+                "transaction_isolation" | "tx_isolation" | "innodb_lock_wait_timeout"
+            )
+        {
+            return Err(SqlError::unsupported(format!(
+                "SET GLOBAL {} (no mutable server default)",
+                name
+            )));
+        }
         if name == "names" {
             // SET NAMES charset [COLLATE collation]
             let mut words = rhs.split_whitespace();
@@ -598,6 +639,41 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
+            "max_error_count" => {
+                if value.is_none() || value.as_ref().and_then(Value::as_i64) == Some(admin::MAX_ERROR_COUNT as i64) {
+                    return Ok(());
+                }
+                return Err(SqlError::unsupported("max_error_count values other than 64"));
+            }
+            "tarn_isolation_contract" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "tarn_isolation_contract is a SESSION variable",
+                    ));
+                }
+                if text.eq_ignore_ascii_case("MYSQL") {
+                    return Err(SqlError::unsupported(
+                        "exact MySQL isolation; use Tarn's documented isolation contract (REPEATABLE READ is strictly serializable)",
+                    ));
+                }
+                if value.is_none() || text.eq_ignore_ascii_case("TARN") {
+                    return Ok(());
+                }
+                return Err(SqlError::new(
+                    1231,
+                    "42000",
+                    "tarn_isolation_contract accepts TARN; exact MYSQL is unsupported",
+                ));
+            }
+            "tarn_effective_isolation" | "tarn_next_isolation" | "tarn_active_isolation" => {
+                return Err(SqlError::new(
+                    1238,
+                    "HY000",
+                    format!("Variable '{}' is a read only variable", name),
+                ));
+            }
             "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
@@ -688,7 +764,10 @@ impl Session {
         }
         if scope == VarScope::Global {
             // Only the variables typed above have server-wide defaults.
-            return Ok(());
+            return Err(SqlError::unsupported(format!(
+                "SET GLOBAL {} (no mutable server default)",
+                name
+            )));
         }
         match value {
             None => {
@@ -742,6 +821,7 @@ impl Session {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !admin::reads_diagnostics(sql) {
             self.warnings.clear();
+            self.omitted_warnings = 0;
         }
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
@@ -961,9 +1041,10 @@ impl Session {
         if !self
             .prepared
             .get(&id)
-            .is_some_and(|p| matches!(p.admin, Some(Admin::ShowWarnings { .. })))
+            .is_some_and(|p| matches!(&p.admin, Some(Admin::ShowWarnings { .. }) | Some(Admin::SelectVars(_))))
         {
             self.warnings.clear();
+            self.omitted_warnings = 0;
         }
         let rp = self.restart_point();
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
@@ -1394,12 +1475,15 @@ impl Session {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
             let snapshot = txn.writes.clone();
+            let mut warnings = DmlWarnings::default();
             let res = match check_defs(&txn, stmt_tables(stmt)) {
                 Err(e) => Err(e),
-                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None).await,
+                Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None, &mut warnings).await,
             };
             if res.is_err() {
                 txn.writes = snapshot; // statement atomicity
+            } else {
+                self.note_dml_warnings(warnings);
             }
             let res = res.map(|(n, id)| self.dml_output(n, id));
             return self.finish_txn_stmt(txn, res);
@@ -1419,7 +1503,11 @@ impl Session {
         let mut attempt = 0;
         loop {
             let mut txn = self.new_txn(false);
-            let res = match self.dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref()).await {
+            let mut warnings = DmlWarnings::default();
+            let res = match self
+                .dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref(), &mut warnings)
+                .await
+            {
                 Ok(r) => self.commit_tracked(txn).await.map(|_| r),
                 Err(e) => {
                     txn.rollback(&self.cluster);
@@ -1427,7 +1515,10 @@ impl Session {
                 }
             };
             match res {
-                Ok((n, id)) => return Ok(self.dml_output(n, id)),
+                Ok((n, id)) => {
+                    self.note_dml_warnings(warnings);
+                    return Ok(self.dml_output(n, id));
+                }
                 Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
                     self.cluster.stats.retries.fetch_add(1, Ordering::Relaxed);
@@ -1447,6 +1538,21 @@ impl Session {
             affected,
             last_insert_id: insert_id.unwrap_or(0),
             info: String::new(),
+        }
+    }
+
+    fn note_dml_warnings(&mut self, warnings: DmlWarnings) {
+        self.omitted_warnings += warnings.total - warnings.messages.len();
+        for warning in warnings.messages {
+            self.note_warning(warning);
+        }
+    }
+
+    fn note_warning(&mut self, warning: Warning) {
+        if self.warnings.len() < admin::MAX_ERROR_COUNT {
+            self.warnings.push(warning);
+        } else {
+            self.omitted_warnings += 1;
         }
     }
 
@@ -2075,6 +2181,7 @@ impl Session {
         params: &[Value],
         now: &str,
         pre: Option<&(Vec<Row>, Option<u64>)>,
+        warnings: &mut DmlWarnings,
     ) -> SqlResult<(u64, Option<u64>)> {
         let cx = self.cx(params, now);
         match stmt {
@@ -2184,7 +2291,15 @@ impl Session {
                             self.stage(txn, w, pk_row.as_ref()).await?;
                             affected += 1 + deleted + pk_row.is_some() as u64;
                         }
-                        Some(_) if p.ignore => {}
+                        Some(_) if p.ignore => {
+                            let idx = if pk_row.is_some() {
+                                t.pk()
+                            } else {
+                                &t.indexes[uniq[0].0]
+                            };
+                            let shown: Vec<String> = idx.cols.iter().map(|&c| row[c].to_string()).collect();
+                            warnings.duplicate(SqlError::dup_key(&shown.join("-"), &idx.name));
+                        }
                         Some(_) => {
                             return Err(match (&pk_row, uniq.first()) {
                                 (Some(_), _) | (None, None) => {
@@ -2777,11 +2892,13 @@ impl Session {
     }
 
     fn note_tree(&mut self, found: Vec<lint::Finding>) {
-        self.warnings.extend(found.iter().map(|f| Warning {
-            level: f.level.name(),
-            code: lint::CODE,
-            message: tree_message(f),
-        }));
+        for f in &found {
+            self.note_warning(Warning {
+                level: f.level.name(),
+                code: lint::CODE,
+                message: tree_message(f),
+            });
+        }
     }
 
     // ---- session statements --------------------------------------------------
@@ -3031,7 +3148,13 @@ impl Session {
                 let mut columns = Vec::new();
                 let mut row = Vec::new();
                 for (alias, var) in &vars {
-                    let v = admin::system_var(var, &self.session_vars()).unwrap_or(Value::Null);
+                    let v = admin::system_var(var, &self.session_vars()).ok_or_else(|| {
+                        SqlError::new(
+                            1193,
+                            "HY000",
+                            format!("Unknown system variable '{}'", admin::sysvar_name(var)),
+                        )
+                    })?;
                     let ty = match &v {
                         Value::Int(_) | Value::UInt(_) => ColumnType::LongLong,
                         _ => ColumnType::VarString,
@@ -3039,6 +3162,10 @@ impl Session {
                     columns.push(Column::new(alias, ty));
                     row.push(v);
                 }
+                // SELECT @@warning_count reads the previous total, then
+                // clears the message list. SHOW WARNINGS preserves it.
+                self.warnings.clear();
+                self.omitted_warnings = 0;
                 rows_out(columns.into(), vec![row])
             }
             Admin::ShowDatabases { like } => {
@@ -3167,11 +3294,16 @@ impl Session {
                     .collect();
                 rows_out(cols(&c), rows)
             }
-            Admin::ShowVariables { like } => {
+            Admin::ShowVariables { global, like } => {
                 let mut rows = Vec::new();
                 for name in admin::SHOWN_VARIABLES {
-                    if like_ci(name, &like) {
-                        let v = admin::system_var(name, &self.session_vars()).unwrap_or(Value::Null);
+                    if like_ci(name, &like) && !(global && name.starts_with("tarn_")) {
+                        let scoped = if global {
+                            format!("global.{name}")
+                        } else {
+                            name.to_string()
+                        };
+                        let v = admin::system_var(&scoped, &self.session_vars()).unwrap_or(Value::Null);
                         rows.push(vec![Value::str(name), Value::Str(v.to_text().unwrap_or_default())]);
                     }
                 }
