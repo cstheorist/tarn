@@ -30,13 +30,143 @@ retains an unknown outcome and must not trigger mutation replay.
 |---|---|
 | Ordinary reads | `ts_select` serves eligible memtx points and bounded ranges, including supported stream reads/begins. Continuations, Vinyl and requests requiring refresh/waiting retain their Lua path. Existing in-stream IPROTO SELECTs already bypass Lua for suitable reads. |
 | Full-primary-key batches | The optional eight-argument `ts_select` form performs up to 128 memtx index gets and copies their tuples directly. Its narrower contract is below. Other `tarn_select_keys` shapes remain Lua. |
-| Autocommit and one-shard commit | `ts_autocommit` and `ts_commit_local` serve their supported memtx writes. Checks cover routes, definitions, claims, read sets and native exclusions. The Lua procedures retain unsupported shapes and operations with lazy capture, online-copy capture or row-lock ownership requirements. |
-| Read-only validation | `ts_validate` checks eligible transactions. Stream identity, term/DDL watermarks and membership remain part of its contract; it is not a replacement for all transaction coordination. |
+| Autocommit and one-shard commit | `ts_autocommit` and `ts_commit_local` serve their supported memtx writes. Existing replicated streams hand back before effects for Lua's final-prefix fence; RF1 stream kernels remain native. Lua also retains unsupported shapes and lazy capture, online-copy capture or row-lock ownership requirements. |
+| Read-only validation | `ts_validate` retains its RF1 kernel. Existing replicated streams hand back unchanged before the probe/commit for Lua's separate final quorum prefix and original read-set validation. |
 | Counts and predicates | `tarn_count` remains a Lua wrapper. A predicate-free equality/whole-index count already calls Tarantool's `idx:count`; predicates, exclusions for own writes and end bounds can require Lua tuple iteration. Porting the wrapper alone need not improve the underlying count. |
 | Co-located joins | `tarn_select_join` gathers dependent primary-prefix rowsets under one checked read. Rust reconstructs joins and overlays eligible own writes. Union read sets, empty-prefix phantoms, DDL history and incomplete-result fallback remain relevant. |
 | READ COMMITTED ownership | `tarn_lock`/`tarn_lock_range`, waiter queues, lock upgrades, session cleanup, deadlock handling and lock-generation checks remain Lua. The native lock copy stores counts/ranges used to decide eligibility; it does not replace ownership or the waiter protocol. `tarn_commit_rc` remains Lua. |
 | Distributed writes | PREPARE/APPLY/ABORT, durable receipts, decision recovery and record GC remain Lua, with Rust coordinating participants. A duplicate terminal receipt must certify confirmed state. |
 | Lifecycle and control work | Catalog/DDL jobs, materialization/undo, engine copies, bucket moves, membership/JOIN, lazy-index shipping/GC/capacity and startup/role refresh remain Lua. They supply state that native operations must trust only while current. |
+
+## Freshness and transaction ownership
+
+Default strong reads establish a new quorum barrier before their first data
+snapshot. This also covers local DML that can return a no-op without writing
+synchronous WAL. On the pinned Tarantool 3.9 source, an empty transaction's
+public `LINEARIZABLE` isolation setter collects fresh quorum vclocks, waits
+for local WAL catch-up and settles the synchronous queue. Tarn then switches
+the still-empty transaction to `READ_CONFIRMED` before any statement.
+Direct `LINEARIZABLE` access to Vinyl remains unsupported; the empty-barrier
+composition is the explicit native API premise, not a proof of Tarantool's
+implementation. See the pinned
+[setter and Vinyl restriction](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/txn.c#L1494)
+and [catch-up/queue wait](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/box.cc#L3027).
+
+Autocommit rolls back only that empty barrier and takes a later fresh view;
+its memtx get/check interval remains non-yielding. A first stream read keeps
+the same transaction and installs a certificate for its exact native
+transaction ID before reading data. The registry is bounded to 4096 active
+entries and uses public terminal commit/rollback callbacks for cleanup.
+Both preallocated terminal hooks are registered before publishing a token.
+A failed registration leaves no token, and an uncertain rollback
+classification drops the token so later use fails closed. Reclamation
+still trusts Tarantool to execute the registered hook.
+A savepoint rollback preserves the original stream certificate and read
+set. Later reads, local commit and validation require the existing
+certificate; they never install a late barrier in an arbitrary older ambient
+transaction. Before final validation/local commit of a replicated stream,
+Lua obtains a new quorum prefix in a separate owned child transaction, then
+validates the original caller's transaction ID, read set and view. Catch-up
+can invalidate that old view; starting a replacement caller transaction
+would incorrectly forget the observations already returned. The native
+replicated-stream kernels therefore hand back before effects, leaving this
+yielding fence to Lua. RF1 kernels remain native; no yielding native-to-Lua
+callback is added. Term/DDL watermarks, lock checks and the read-view probe
+remain separate commit obligations. An unsupported first native read drops only
+its newly owned transaction before whole-request Lua handback; a borrowed
+existing stream is retained. A barrier error retains its native code/message
+and propagates directly, without a second attempt in Lua.
+
+The yielding barrier changes the C input-lifetime boundary. IPROTO
+[discards CALL input on its first yield](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/iproto.cc#L2959),
+and its [raw argument port does not copy the request bytes](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/box/call.c#L57).
+Native read and shared write-procedure entries therefore copy CALL input
+into an owned Rust buffer before parsing slices that survive the barrier.
+No native State reference, schema-cache pointer or cache borrow crosses
+that wait. Before borrowing State and after the wait, native entries call
+ordinary `tarn.fresh.native_controls`, `native_space`, `native_mark` and
+`native_ok` functions through a small public Lua C API shim, looking up
+`_LOADED['tarn'].fresh` in Lua's registry. Lookup,
+argument creation and invocation run inside `lua_cpcall`'s C protection
+boundary, so an allocating Lua error does not unwind across Rust. The shim
+uses `luaT_state()` as an entry stack, restores its stack top and returns
+unavailable on a missing helper, invalid result or protected error. Exact
+transaction IDs enter Lua as uint64 values.
+
+A ready bucket cache before the barrier is not a promise that the native
+path will serve after it. The actual `box.status` callback conservatively
+invalidates that cache even for a notification with unchanged role/term.
+Native entries must recheck it and can hand back without reading data.
+The RF3 fixture separates a controlled native-path input/stream witness
+from delivery of that real callback during the pending stream barrier;
+the latter requires the stale-bucket handback and exact owned-transaction
+cleanup. Neither refreshes caches while the native call is pending or
+weakens a production guard. [Verification](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
+documents the original failure, diagnostic limits and exported evidence.
+
+These guards do not yield, publish/access native State or perform I/O.
+Their heap eligibility predicate observes free space without requesting a
+collection. The State stores no LuaJIT FFI callback addresses: ABI 13's
+entrypoints depended on LuaJIT's cached `CTState.L`, which need not identify
+the current native procedure's fiber. Public C API entry, stack/error
+protection and current-fiber transaction behavior remain runtime trust
+boundaries, not Verus-proved properties. Configuration checks still assume the
+[administrative stability contract](operations.md#strong-reads-and-storage-rollout)
+for in-flight commits; they cannot revoke a commit confirmed after an
+unsafe privileged quorum reduction.
+
+The current `State` layout is **ABI 14, 392 bytes**, checked by Rust/Lua
+layout compatibility. ABI 13, experimental ABI 12 and older ABI 11 modules
+are rejected. The unchanged total size does not make their callable tail
+compatible with ABI 14's reserved storage. The current tail is:
+
+| Field | Byte offset | Meaning |
+|---|---:|---|
+| `fresh_mode`, `fresh_clock_ok` | 312, 313 | published configuration/local-clock eligibility, not a quorum proof |
+| `fresh_reserved[6]` | 314 | reserved bytes, unchanged |
+| `read_timeout` | 320 | final autocommit barrier timeout |
+| `clock_mono`, `clock_wall` | 328, 336 | accepted monotonic/logical-wall observation in exact integer nanoseconds |
+| `clock_max_gap`, `clock_max_drift` | 344, 352 | observation bounds |
+| `fresh_guard_reserved[4]` | 360 | four zero uint64 words; no Lua callback addresses |
+
+The final timeout is set before the first wait; first streams retain their
+60-second transaction timeout. Native admission checks actual control/user
+space synchronization and current policy again after waiting. Cached mode
+or clock fields alone never establish quorum freshness. The shared
+Verus-verified clock arithmetic checks actual raw wall/monotonic observations
+against the accepted logical baseline. Monotonic time cannot decrease;
+raw-wall displacement minus monotonic elapsed time must fit the unchanged
+drift allowance. Lua also checks exact uint64 drift and gap budgets
+`floor(configured_seconds * 1e9)` through overflow-free subtractions;
+its seconds drift check can conservatively refuse additional samples.
+The logical wall retains `max(previous_logical, raw_wall)`
+in both seconds and exact nanoseconds, so an allowed small correction never
+lowers the published value. Peer probes use that same accepted pair, with
+raw fault evidence exposed separately. The raw persisted-floor check
+precedes clipping, and observation never renews a peer certificate.
+
+Retention assumes all relevant storage clocks and timestamp issuers remain
+in one fixed common reference band `[r + L, r + U]` over history, where
+reference `r` is nondecreasing and `U - L` is configured skew `S`. The
+logical maximum preserves that band and hence pairwise logical skew `S`;
+absolute raw error `S/2` about one reference is sufficient. Error `±S` or
+current pairwise agreement alone is insufficient. This stronger external
+premise is not established by quorum/peer probes or the arithmetic proofs.
+Lua's FFI arithmetic/publication and public clock/API behavior remain runtime
+trust boundaries. No State layout or wire-contract change is involved;
+an earlier ABI14 module may conservatively hand a bounded correction back
+to the guarded Lua path.
+
+Local read health is distinct from the relevant-writer clock coverage used
+for fresh protocol records and GC. [Operations](operations.md#clock-health-and-record-retention)
+describes those states and immutable policy.
+
+Raw native GET/SELECT calls have no Tarn barrier and can return old confirmed
+data on a follower or former leader. Lazy-index candidates may still omit
+recent matches even when their base rows are fetched through a fresh view.
+The [focused models](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
+state the bounded proof and native trust boundaries; they establish no
+availability guarantee or new runtime cost measurement.
 
 The Lua entry points and shared read/commit checks are in
 [`tarn.lua`](../lua/tarn.lua). The lifecycle modules are
@@ -77,8 +207,8 @@ windows must also permit serving. The get/check interval does not yield;
 all rows and claims therefore refer to one memtx state under the existing
 native-read premises.
 
-The existing twelve-argument `ts_select` operation and State ABI 11/312 are
-unchanged. An empty argument list returns only the versioned
+The twelve-argument `ts_select` shape is retained; current deployments use
+the ABI 14/392 freshness boundary above. An empty argument list returns only the versioned
 `['native_batch_keys', 1]` capability; it certifies code support, not
 leadership, readiness or data. Older modules hand that shape back. The
 gateway caches support or absence per connection, preserves existing
@@ -111,10 +241,17 @@ gateway, data, resource limits and repeated workload windows, switching
 only batch dispatch. Warm capability discovery outside the timed window.
 Record served/fallback counts, CPU, latency, throughput and allocation
 scope; a native path that silently falls back is a different experiment.
+Historical ABI 13 checkpoint measurements and ABI 11/12 reports retain
+their recorded source, module and guarantee scope; they are not ABI 14
+measurements. The later storage-process SIGSEGV observed in CI has no
+established cause. Replacing the callback entrypoints corrects the public
+API boundary; it has not been demonstrated to fix that crash.
 The [batch runner](../bench/native_batch.py) retains this experiment
 separately from earlier native-procedure results. The [completed paired experiment](../bench/NATIVE_BATCH.md) publishes
 CPU, allocation, latency and rate results, including SQL regressions,
 all raw trials and immutable build receipts.
+Those historical builds predate the new freshness barrier and owned CALL
+input copy; their measurements are not costs of the current read contract.
 
 The optional `tarn-storage` Cargo feature `alloc-metrics` defaults off.
 The one-argument `ts_select(["native_batch_allocs"])` diagnostic reports

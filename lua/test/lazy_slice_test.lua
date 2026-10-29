@@ -195,7 +195,8 @@ if native ~= nil and native ~= '0' then
     check('... counted as a fallback for lazy capture', lazy_fallbacks() == fb + 1, {fb, lazy_fallbacks()})
     local ffi = require('ffi')
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT}))
-    check('the native ABI has the integrated layout and offsets', ffi.sizeof('struct tarn_ns') == 312
+    check('the native ABI has the integrated layout and offsets', ns.layout == tarn.NS_LAYOUT and ns.layout == 14
+          and ffi.sizeof('struct tarn_ns') == 392
           and ffi.offsetof('struct tarn_ns', 'pl_spaces') == 160
           and ffi.offsetof('struct tarn_ns', 'held') == 168
           and ffi.offsetof('struct tarn_ns', 'scratch') == 172
@@ -207,7 +208,10 @@ if native ~= nil and native ~= '0' then
           and ffi.offsetof('struct tarn_ns', 'lk_point') == 240
           and ffi.offsetof('struct tarn_ns', 'locks_sizes') == 288
           and ffi.offsetof('struct tarn_ns', 'locks_range') == 296
-          and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304)
+          and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304
+          and ffi.offsetof('struct tarn_ns', 'fresh_reserved') == 314
+          and ffi.offsetof('struct tarn_ns', 'fresh_guard_reserved') == 360
+          and ffi.sizeof(ns.fresh_guard_reserved) == 32)
     local saved = ns.write_excluded
     ns.write_excluded = nil
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', sid, {9, 'null-array', 1}}}, {wb = {1}}})
@@ -227,7 +231,7 @@ if native ~= nil and native ~= '0' then
           and box.space[safe.id]:get{1} == nil and box.space[sid]:get{9} == nil)
     nr = box.func['tarn_storage.ts_autocommit']:call({{{'insert', safe.id, {2, 'safe', 1}}}, {wb = {1}}})
     check('non-lazy control still executes natively', nr[1] == 'ok' and box.space[safe.id]:get{2} ~= nil, nr)
-    box.func['tarn_storage.ts_state']:call({4})
+    box.func['tarn_storage.ts_state']:call({tarn.NS_LAYOUT + 1})
     local valid, mismatch = pcall(box.func['tarn_storage.ts_autocommit'].call,
         box.func['tarn_storage.ts_autocommit'], {{{'insert', safe.id, {3, 'bad-layout', 1}}}, {wb = {1}}})
     check('already-ready ABI mismatch blocks the old native entrypoint', not valid

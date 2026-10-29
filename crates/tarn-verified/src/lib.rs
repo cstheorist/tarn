@@ -10,6 +10,7 @@
 #![allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
 
 pub mod batch;
+pub mod clock;
 pub mod coord;
 pub mod locks;
 pub mod mp;

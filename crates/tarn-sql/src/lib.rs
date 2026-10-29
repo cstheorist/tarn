@@ -33,6 +33,7 @@ pub mod route;
 mod rpcs;
 pub use rpcs::RpcConfig;
 pub mod session;
+pub mod statistics;
 pub mod txn;
 pub mod types;
 pub mod vinyl;

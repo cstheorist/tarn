@@ -4,7 +4,7 @@ local opts = {user = 'tarn', password = 'tarn', wait_connected = 5}
 local c = {net.connect(assert(os.getenv('S1')), opts), net.connect(assert(os.getenv('S2')), opts),
            net.connect(assert(os.getenv('S3')), opts)}
 local pass, fail = 0, 0
-local function ok(r) assert(r[1] == 'ok', json.encode(r)); return r end
+local function ok(r) assert(r[1] == 'ok', debug.traceback(json.encode(r), 2)); return r end
 local function check(name, yes, extra)
     if yes then pass = pass + 1; print('  ok   ' .. name)
     else fail = fail + 1; print('  FAIL ' .. name .. ' ' .. json.encode(extra)) end
@@ -149,6 +149,12 @@ ok(call(3, 'tarn_bucket_init', 16, {}))
 local members = {ver = 1, shards = {}}
 for i = 1, 3 do members.shards[i] = {id=i,replicas={assert(os.getenv('S'..i))},state='active'} end
 for i = 1, 3 do ok(call(i, 'tarn_members_set', members)) end
+assert(wait(function()
+    for i = 1, 3 do
+        if not c[i]:eval('return tarn.clock.status().read_ready') then return false end
+    end
+    return true
+end), 'clock policy readiness after actual membership change')
 local joined = ok(call(1, 'tarn_bucket_send_begin', target, 3, 'lazy-join', 5))
 ok(call(3, 'tarn_bucket_recv_begin', target, 1, 'lazy-join'))
 copy_rows(1, 3, target, 'lazy-join'); ok(call(3, 'tarn_bucket_hold', target, 'lazy-join'))
@@ -175,6 +181,13 @@ local unknown_ok,unknown_error=pcall(call,3,'tarn_bucket_recv_rows',1,'heterogen
 check('unknown auxiliary names fail rather than silently discard bucket data',not unknown_ok
       and unknown_error.code==1210 and c[3]:eval('return box.space._tarn_recv:count{1}')==0)
 copy_rows(2,3,1,'heterogeneous-source')
+-- Keep the old owner's hint live across the entire move. Membership and
+-- leadership stay fixed; the local bucket-map revision must invalidate it.
+local cached_owner=c[3]:eval([[tarn_buckets()
+    local owner=tarn.lazy.owners({1})[1]
+    tarn.lazy.owner_cache.until_at=require('clock').monotonic()+60
+    return owner]])
+check('receiving shard caches the current source owner before handoff',cached_owner==2,cached_owner)
 -- Change after initial copy while the source is SENDING. Counter/version
 -- must come from the final delta, not remain at their first-copy values.
 ok(write(2,1,other)); assert(wait(function() return depth(2)==0 end))
@@ -187,6 +200,8 @@ local aux=c[3]:eval([[local sid=... return {box.space._tarn_lazy_counter.id,box.
     box.space._tarn_lazy_version.index.bucket_id:count{1}}]],{sid})
 check('heterogeneous-ID copy, counter delta and version deletion use stable auxiliary names',
       aux[1]==9051 and aux[2]==9052 and aux[3]==9053 and aux[4]==5 and aux[5]==0,aux)
+check('completed source handoff refreshes owner hints without waiting for TTL',
+      c[3]:eval('return tarn.lazy.owners({1})[1]')==3)
 ok(call(3,'tarn_lazy_gc',gen,target,{target}))
 c[3]:eval([[box.space._tarn_meta:replace{'test.lazy.join_restart',{sid=...,gen=select(2,...),target=select(3,...),
     replay=select(4,...),counter=5,aux={9051,9052,9053}}}]],{sid,gen,target,oldadd})

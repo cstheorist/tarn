@@ -14,17 +14,25 @@ PEERS="{\"1\":[\"tarn:tarn@127.0.0.1:$P1\"],\"2\":[\"tarn:tarn@127.0.0.1:$P2\"],
 cleanup() {
   for p in "$WORK"/s*.pid; do
     [ -f "$p" ] || continue
-    kill -CONT "$(cat "$p")" 2>/dev/null || true
-    kill "$(cat "$p")" 2>/dev/null || true
+    pid=$(cat "$p")
+    identity=${p%.pid}.identity
+    if [ -r "/proc/$pid/stat" ] && [ -r "$identity" ] &&
+       [ "$(awk '{print $4 ":" $22}' "/proc/$pid/stat")" = "$(cat "$identity")" ]; then
+      kill -CONT "$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
   done
 }
 trap cleanup EXIT
 for i in 1 2 3; do
   case $i in 1) port=$P1;; 2) port=$P2;; 3) port=$P3;; esac
   TARN_SHARD_ID=$i TARN_LISTEN=127.0.0.1:$port TARN_WORKDIR="$WORK/s$i" TARN_PEERS="$PEERS" \
-  TARN_MEMORY_MB=128 TARN_LOG_LEVEL=4 TARN_HOST_INSTANCES=3 TARN_CHECK_YIELDS=1 TARN_CHECK_LOCKS=1 \
+  TARN_MEMORY_MB=128 TARN_LOG_LEVEL=4 TARN_HOST_INSTANCES=3 TARN_CHECK_YIELDS=1 TARN_CHECK_LOCKS=1 TARN_TEST_HOOKS=1 \
   "$T" "$DIR/storage.lua" > "$WORK/s$i.log" 2>&1 &
   echo $! > "$WORK/s$i.pid"
+  pid=$(cat "$WORK/s$i.pid")
+  printf '%s:%s\n' "$$" "$(awk '{print $22}' "/proc/$pid/stat")" > "$WORK/s$i.identity"
 done
 for port in "$P1" "$P2" "$P3"; do
   for _ in $(seq 100); do
@@ -35,7 +43,7 @@ for port in "$P1" "$P2" "$P3"; do
   done
 done
 rc=0
-S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 S3=127.0.0.1:$P3 S3_PID=$(cat "$WORK/s3.pid") \
+S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 S3=127.0.0.1:$P3 RECOVERY_WORK="$WORK" \
   timeout 240 "$T" "$DIR/test/recovery_faults_test.lua" < /dev/null || rc=$?
 if grep -h "lock copy differs" "$WORK"/s*.log | head -3 | grep .; then
   echo "FAIL the native module's copy of the lock index differed from it"

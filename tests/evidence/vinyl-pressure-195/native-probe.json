@@ -1,0 +1,2709 @@
+{
+  "boundary": "Isolated RF1 Tarantool primitive check; not full SQL/fault validation or a performance claim. Default LSM options; 512 old + 32 small random 8 KiB rows.",
+  "source_sha256": "7009ed30c0f3091ae1d8f214d7d4347a39375bc00465ef6dd1d9345e11d9c1b1",
+  "samples": [
+    {
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "two_runs",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 0,
+        "dump_output": 4470378,
+        "compaction_queue": 0,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 1,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 0,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 2,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 3,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 4,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 5,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 6,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 7,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 8,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 9,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 10,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 11,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 12,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 13,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 14,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    },
+    {
+      "sample": 15,
+      "index": {
+        "latency": {
+          "p99": 1e-06,
+          "p95": 1e-06,
+          "p90": 1e-06,
+          "p75": 1e-06,
+          "p50": 1e-06
+        },
+        "range_count": 1,
+        "lookup": 544,
+        "cache": {
+          "invalidate": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "index_size": 0,
+          "rows": 0,
+          "evict": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "put": {
+            "rows": 0,
+            "bytes": 0
+          },
+          "lookup": 544,
+          "bytes": 0,
+          "get": {
+            "rows": 0,
+            "bytes": 0
+          }
+        },
+        "run_histogram": "[2]:1",
+        "disk": {
+          "last_level": {
+            "bytes_compressed": 4217098,
+            "pages": 512,
+            "rows": 512,
+            "bytes": 4207370
+          },
+          "rows": 544,
+          "statement": {
+            "inserts": 544,
+            "replaces": 0,
+            "upserts": 0,
+            "deletes": 0
+          },
+          "dump": {
+            "input": {
+              "rows": 544,
+              "bytes": 4472930
+            },
+            "time": 0.0080224580015056,
+            "output": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "count": 2
+          },
+          "bloom_size": 589,
+          "index_size": 27906,
+          "iterator": {
+            "read": {
+              "bytes_compressed": 16476,
+              "pages": 2,
+              "rows": 2,
+              "bytes": 16438
+            },
+            "bloom": {
+              "hit": 30,
+              "miss": 2
+            },
+            "lookup": 2,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          },
+          "compaction": {
+            "input": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "queue": {
+              "bytes_compressed": 4480714,
+              "pages": 544,
+              "rows": 544,
+              "bytes": 4470378
+            },
+            "time": 0,
+            "output": {
+              "bytes_compressed": 0,
+              "pages": 0,
+              "rows": 0,
+              "bytes": 0
+            },
+            "count": 0
+          },
+          "pages": 544,
+          "bytes_compressed": 4480714,
+          "bytes": 4470378
+        },
+        "range_size": 134217728,
+        "rows": 544,
+        "run_avg": 2,
+        "dumps_per_compaction": 1,
+        "upsert": {
+          "squashed": 0,
+          "applied": 0
+        },
+        "bytes": 4470378,
+        "put": {
+          "rows": 544,
+          "bytes": 4472930
+        },
+        "skip": {
+          "rows": 0,
+          "bytes": 0
+        },
+        "run_count": 2,
+        "txw": {
+          "bytes": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 544,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "memory": {
+          "bytes": 0,
+          "index_size": 0,
+          "rows": 0,
+          "iterator": {
+            "lookup": 1055,
+            "get": {
+              "rows": 0,
+              "bytes": 0
+            }
+          }
+        },
+        "get": {
+          "rows": 0,
+          "bytes": 0
+        }
+      },
+      "stage": "limited",
+      "scheduler": {
+        "dump_time": 0.0080224580015056,
+        "tasks_inprogress": 1,
+        "dump_output": 4470378,
+        "compaction_queue": 4470378,
+        "compaction_output": 0,
+        "compaction_time": 0,
+        "dump_count": 2,
+        "tasks_failed": 0,
+        "tasks_completed": 2,
+        "dump_input": 4472930,
+        "compaction_input": 0
+      }
+    }
+  ]
+}

@@ -2,11 +2,17 @@
 local net,fiber=require('net.box'),require('fiber')
 local c=net.connect(assert(os.getenv('S3')),{user='tarn',password='tarn',wait_connected=10,reconnect_after=.05})
 local deadline=fiber.clock()+5
+local initialized=false
 while fiber.clock()<deadline do
-    local ok,ready=pcall(c.eval,c,'return rawget(_G,"tarn")~=nil and tarn.lazy.quota.ready()')
-    if ok and ready then break end
+    local ok,ready=pcall(c.eval,c,[[
+        if rawget(_G,'tarn')==nil then return false end
+        tarn_buckets() -- discover persisted membership before loading its clock epoch
+        return tarn.lazy.quota.ready() and tarn.clock.status().read_ready
+    ]])
+    if ok and ready then initialized=true;break end
     fiber.sleep(.02)
 end
+assert(initialized,'joined shard policy did not become ready after membership recovery')
 local state=c:eval('return box.space._tarn_meta:get{"test.lazy.join_restart"}.value')
 assert(c:eval([[local r=... return box.space._tarn_lazy_counter.id==r.aux[1]
     and box.space._tarn_lazy_version.id==r.aux[2] and box.space._tarn_lazy_floor.id==r.aux[3]

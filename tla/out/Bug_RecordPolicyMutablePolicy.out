@@ -1,0 +1,170 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 87 and seed 2401727557578541990 with 4 workers on 16 cores with 1472MB heap and 64MB offheap memory [pid: 33081] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/RecordExpiryPolicy.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8069238004549788121/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module RecordExpiryPolicy
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module RecordExpiryPolicy
+Starting... (2026-10-28 14:13:21)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-28 14:13:21.
+Error: Invariant NoUnsafeAdmission is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ wall = 0
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = FALSE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 0
+
+State 2: <Tick line 48, col 5 to line 51, col 59 of module RecordExpiryPolicy>
+/\ wall = 1
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = FALSE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 0
+
+State 3: <Tick line 48, col 5 to line 51, col 59 of module RecordExpiryPolicy>
+/\ wall = 2
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = FALSE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 0
+
+State 4: <Tick line 48, col 5 to line 51, col 59 of module RecordExpiryPolicy>
+/\ wall = 3
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = FALSE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 0
+
+State 5: <Tick line 48, col 5 to line 51, col 59 of module RecordExpiryPolicy>
+/\ wall = 4
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = FALSE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 0
+
+State 6: <Tick line 48, col 5 to line 51, col 59 of module RecordExpiryPolicy>
+/\ wall = 5
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = FALSE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 0
+
+State 7: <GC line 54, col 5 to line 60, col 59 of module RecordExpiryPolicy>
+/\ wall = 5
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = TRUE
+/\ restarts = 0
+/\ policyChanged = FALSE
+/\ healthy = TRUE
+/\ configuredAge = 2
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 5
+
+State 8: <ChangePolicy line 69, col 5 to line 72, col 44 of module RecordExpiryPolicy>
+/\ wall = 5
+/\ entryAllowed = FALSE
+/\ jumped = FALSE
+/\ forgotten = TRUE
+/\ restarts = 0
+/\ policyChanged = TRUE
+/\ healthy = TRUE
+/\ configuredAge = 7
+/\ phase = "idle"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 5
+
+State 9: <BeginAdmission line 87, col 5 to line 91, col 44 of module RecordExpiryPolicy>
+/\ wall = 5
+/\ entryAllowed = TRUE
+/\ jumped = FALSE
+/\ forgotten = TRUE
+/\ restarts = 0
+/\ policyChanged = TRUE
+/\ healthy = TRUE
+/\ configuredAge = 7
+/\ phase = "planning"
+/\ unsafeAdmission = FALSE
+/\ healthChanged = FALSE
+/\ high = 5
+
+State 10: <FinishAdmission line 94, col 5 to line 103, col 44 of module RecordExpiryPolicy>
+/\ wall = 5
+/\ entryAllowed = TRUE
+/\ jumped = FALSE
+/\ forgotten = TRUE
+/\ restarts = 0
+/\ policyChanged = TRUE
+/\ healthy = TRUE
+/\ configuredAge = 7
+/\ phase = "done"
+/\ unsafeAdmission = TRUE
+/\ healthChanged = FALSE
+/\ high = 5
+
+997 states generated, 407 distinct states found, 107 states left on queue.
+The depth of the complete state graph search is 11.
+Finished in 00s at (2026-10-28 14:13:21)
+Trace exploration spec path: ./RecordExpiryPolicy_TTrace_1793211201.tla

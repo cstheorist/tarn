@@ -116,6 +116,7 @@ struct Trace {
     buckets: BTreeSet<u32>,
     unknown_buckets: bool,
     rpc_attempts: u64,
+    storage_rows: u64,
     grouped_reads: u64,
     commit_parts: Option<usize>,
 }
@@ -185,12 +186,20 @@ pub(crate) fn grouped() {
     edit(|t| t.grouped_reads = t.grouped_reads.saturating_add(1));
 }
 
+/// Successfully decoded tuples returned by SELECT/select_keys/grouped
+/// reads, including repeated attempts. Not index entries examined, COUNT
+/// work, response bytes, or the final SQL result cardinality.
+pub(crate) fn storage_rows(n: usize) {
+    edit(|t| t.storage_rows = t.storage_rows.saturating_add(n as u64));
+}
+
 pub(crate) fn commit(parts: usize) {
     edit(|t| t.commit_parts = Some(parts));
 }
 
 #[derive(Clone)]
 struct Entry {
+    storage_rows: u64,
     descriptor: Descriptor,
     seen: u64,
     calls: u64,
@@ -213,6 +222,7 @@ struct Entry {
 impl Entry {
     fn new(descriptor: Descriptor) -> Self {
         Self {
+            storage_rows: 0,
             descriptor,
             seen: 0,
             calls: 0,
@@ -290,6 +300,7 @@ impl Metrics {
         e.known_buckets = e.known_buckets.saturating_add(trace.buckets.len() as u64);
         e.unknown_bucket_calls = e.unknown_bucket_calls.saturating_add(u64::from(trace.unknown_buckets));
         e.rpc_attempts = e.rpc_attempts.saturating_add(trace.rpc_attempts);
+        e.storage_rows = e.storage_rows.saturating_add(trace.storage_rows);
         e.grouped_reads = e.grouped_reads.saturating_add(trace.grouped_reads);
         if let Some(parts) = trace.commit_parts {
             if error {
@@ -346,6 +357,7 @@ impl Metrics {
                         e.distributed_commits,
                         e.commit_errors,
                         e.total_us,
+                        e.storage_rows,
                     ]
                     .map(Value::UInt),
                 );

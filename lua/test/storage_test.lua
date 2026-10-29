@@ -1,3 +1,5 @@
+-- Protocol streams start with the first-read quorum contract. Raw IPROTO
+-- BEGIN refusal and unchanged ambient read sets are tested separately.
 -- Exercises lua/tarn.lua on two single-node shards, playing the role of the
 -- Tarn coordinator with net.box streams. Run via lua/test/run.sh.
 local net = require('net.box')
@@ -14,6 +16,22 @@ local function check(name, cond, extra)
     if cond then pass = pass + 1; print('  ok   ' .. name)
     else fail = fail + 1; print('  FAIL ' .. name .. (extra and ('  -- ' .. json.encode(extra)) or '')) end
 end
+local function wait_for(cond, secs)
+    local deadline = fiber.clock() + (secs or 5)
+    while fiber.clock() < deadline do
+        if cond() then return true end
+        fiber.sleep(0.05)
+    end
+    return cond()
+end
+local function ready(i, required)
+    assert(wait_for(function()
+        return c[i]:eval([[local ids = ...
+            return not box.info.ro and tarn.clock.read_check() == nil
+                and (ids == nil or tarn.clock.check(ids) == nil)]], {required})
+    end, 10), 'shard ' .. i .. ' did not become ready')
+end
+for i = 1, 2 do ready(i, {1, 2}) end
 
 -- DDL on both shards: test.acct(id unsigned PK, bal integer, email string unique, bucket_id)
 local def = {
@@ -50,13 +68,13 @@ r = c[1]:call('tarn_autocommit', {{{'update', sid, {99}, {{'=', 2, 100}}}}, {fou
 check('update of a missing row counts 0 found rows', r[1] == 'ok' and r[2] == 0, r)
 
 print('single-shard commit (TarnCommit!CommitLocal)')
-local st = c[1]:new_stream(); st:begin()
+local st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 local cur = st.space['test.acct']:get{1}
 r = st:call('tarn_commit_local', {'L1', {{'replace', sid, {1, cur[2] - 10, 'a@x', 1}}}})
 check('commit_local ok', r[1] == 'ok' and bal(1, 1) == 90, r)
 
 -- MVCC validation: a read invalidated by a concurrent commit makes commit_local fail.
-st = c[1]:new_stream(); st:begin()
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 cur = st.space['test.acct']:get{1}
 c[1]:call('tarn_autocommit', {{{'update', sid, {1}, {{'+', 2, 1}}}}})
 r = st:call('tarn_commit_local', {'L2', {{'replace', sid, {1, cur[2] + 1000, 'a@x', 1}}}})
@@ -65,19 +83,19 @@ check('stale read -> conflict 1213', r[1] == 'conflict' and r[2] == 1213 and bal
 print('cross-shard commit (Prepare/ApplyAt)')
 local function prepare(i, txid, writes, rkeys, rranges, _, stream)
     local s = stream or c[i]:new_stream()
-    if not stream then s:begin() end
+    if not stream then s:eval('tarn.fresh.begin_stream()') end
     return s:call('tarn_prepare', {txid, 1, {1, 2}, writes, rkeys or {}, rranges or {}, fiber.time()})
 end
 -- transfer 40 from acct 1 (shard 1) to acct 2 (shard 2)
-local s1 = c[1]:new_stream(); s1:begin(); local a = s1.space['test.acct']:get{1}
-local s2 = c[2]:new_stream(); s2:begin(); local b = s2.space['test.acct']:get{2}
+local s1 = c[1]:new_stream(); s1:eval('tarn.fresh.begin_stream()'); local a = s1.space['test.acct']:get{1}
+local s2 = c[2]:new_stream(); s2:eval('tarn.fresh.begin_stream()'); local b = s2.space['test.acct']:get{2}
 local v1 = prepare(1, 'X1', {{'replace', sid, {1, a[2] - 40, 'a@x', 1}}}, {{sid, 0, {1}}}, nil, nil, s1)
 local v2 = prepare(2, 'X1', {{'replace', sid, {2, b[2] + 40, 'b@x', 2}}}, {{sid, 0, {2}}}, nil, nil, s2)
 check('both participants vote yes', v1[1] == 'yes' and v2[1] == 'yes', {v1, v2})
 check('decision record is staging on D', c[1]:call('tarn_txn_status', {'X1'}) == 'staging')
 check('intents invisible to direct reads', bal(1, 1) == 91 and bal(2, 2) == 100)
 -- A single-shard writer and an autocommit writer must not overwrite a prepared row.
-st = c[1]:new_stream(); st:begin()
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 r = st:call('tarn_commit_local', {'L3', {{'replace', sid, {1, 0, 'a@x', 1}}}})
 check('commit_local blocked by prepared W lock', r[1] == 'conflict', r)
 local t0 = fiber.clock()
@@ -99,11 +117,11 @@ check('NO leaves a tombstone', c[1]:call('tarn_part_status', {'X3'}) == 'aborted
 v2 = prepare(1, 'X3', {{'replace', sid, {1, 3, 'a@x', 1}}})
 check('re-delivered PREPARE after tombstone votes no', v2[1] == 'no', v2)
 -- Read validation: a reader of acct 1 is refused while X2 holds its W lock.
-s1 = c[1]:new_stream(); s1:begin(); s1.space['test.acct']:get{1}
+s1 = c[1]:new_stream(); s1:eval('tarn.fresh.begin_stream()'); s1.space['test.acct']:get{1}
 v1 = prepare(1, 'X4', {}, {{sid, 0, {1}}}, nil, nil, s1)
 check('read of W-locked key votes no', v1[1] == 'no', v1)
 -- R lock blocks a later writer: X5 reads acct 2 and prepares; a writer of acct 2 is refused.
-s2 = c[2]:new_stream(); s2:begin(); s2.space['test.acct']:get{2}
+s2 = c[2]:new_stream(); s2:eval('tarn.fresh.begin_stream()'); s2.space['test.acct']:get{2}
 v2 = prepare(2, 'X5', {}, {{sid, 0, {2}}}, nil, nil, s2)
 check('reader X5 prepared', v2[1] == 'yes', v2)
 r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
@@ -115,7 +133,7 @@ c[1]:call('tarn_abort', {'X2', 1, {1, 2}})
 check('abort restores nothing (intents dropped)', bal(1, 1) == 51)
 
 print('range locks and unique keys')
-s2 = c[2]:new_stream(); s2:begin(); s2.space['test.acct']:select({10}, {iterator = 'GE', limit = 100})
+s2 = c[2]:new_stream(); s2:eval('tarn.fresh.begin_stream()'); s2.space['test.acct']:select({10}, {iterator = 'GE', limit = 100})
 v2 = prepare(2, 'X6', {}, {}, {{sid, 0, {10}, {20}, true, true}}, nil, s2)
 check('range reader prepared', v2[1] == 'yes', v2)
 r = c[2]:call('tarn_autocommit', {{{'insert', sid, {15, 1, 'r@x', 2}}}})
@@ -153,14 +171,14 @@ fiber.sleep(0.05)
 check('range tarn_read sees the applied row', got and got[1] == 'ok' and #got[2] >= 2, got)
 -- commit_local validates its read set against W locks
 v1 = prepare(1, 'W3', {{'replace', sid, {1, 8, 'a@x', 1}}})
-st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{1}
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()'); st.space['test.acct']:get{1}
 r = st:call('tarn_commit_local', {'L4', {{'replace', sid, {50, 1, 'q@x', 1}}}, {{sid, 0, {1}}}})
 check('commit_local with W-locked read key -> conflict', r[1] == 'conflict', r)
-st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{1}
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()'); st.space['test.acct']:get{1}
 r = st:call('tarn_validate', {'L5', {{sid, 0, {1}}}})
 check('read-only validate with W-locked read key -> conflict', r[1] == 'conflict', r)
 c[1]:call('tarn_abort', {'W3', 1, {1, 2}})
-st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{1}
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()'); st.space['test.acct']:get{1}
 r = st:call('tarn_validate', {'L6', {{sid, 0, {1}}}})
 check('read-only validate passes once unlocked', r[1] == 'ok', r)
 -- secondary-index reads see W locks on old and new index keys
@@ -239,6 +257,16 @@ check('... and counts in its snapshot', got[1] == 'ok' and got[2] == 10, got)
 st:rollback()
 
 print('row counts for the access path (issue #81)')
+print('bounded optimizer samples (issue #136)')
+got = c[1]:call('tarn_analyze', {sid, 0, 3, {1, 2}})
+check('ANALYZE returns bounded integer projections and a size hint',
+      got[1] == 'ok' and #got[3] == 3 and #got[3][1] == 2 and got[2] >= 3, got)
+got = c[1]:call('tarn_analyze', {sid, 999, 3, {1}})
+check('ANALYZE refuses a mismatched definition', got[1] == 'error' and got[2] == 1412, got)
+for _, args in ipairs({{sid, 0, 257, {1}}, {sid, 0, 3, {3}}}) do
+    got = c[1]:call('tarn_analyze', args)
+    check('ANALYZE refuses excessive samples/noninteger fields', got[1] == 'error' and got[2] == 1235, got)
+end
 got = c[1]:call('tarn_estimate', {sid, 2, {9}, 0, {}, 51})
 check('memtx counts both prefixes in its indexes',
       got[1] == 'ok' and got[2] == #c[1].space['test.acct'].index[2]:select({9})
@@ -248,8 +276,8 @@ check('an empty prefix counts 0', got[1] == 'ok' and got[2] == 0 and got[3] == 1
 
 print('recovery (coordinator crashed)')
 -- (a) both prepared, coordinator vanished: implicitly committed -> applied.
-s1 = c[1]:new_stream(); s1:begin(); a = s1.space['test.acct']:get{1}
-s2 = c[2]:new_stream(); s2:begin(); b = s2.space['test.acct']:get{2}
+s1 = c[1]:new_stream(); s1:eval('tarn.fresh.begin_stream()'); a = s1.space['test.acct']:get{1}
+s2 = c[2]:new_stream(); s2:eval('tarn.fresh.begin_stream()'); b = s2.space['test.acct']:get{2}
 prepare(1, 'R1', {{'replace', sid, {1, a[2] - 1, 'a@x', 1}}}, {{sid, 0, {1}}}, nil, nil, s1)
 prepare(2, 'R1', {{'replace', sid, {2, b[2] + 1, 'b@x', 2}}}, {{sid, 0, {2}}}, nil, nil, s2)
 -- (b) only the non-decision shard prepared: D fenced -> aborted.
@@ -278,14 +306,6 @@ check('all locks released', c[1]:call('tarn_info').locks == 0 and c[2]:call('tar
 v2 = prepare(2, 'R3', {{'replace', sid, {42, -999, 'r4@x', 2}}})
 check('late PREPARE after fence votes no', v2[1] == 'no', v2)
 
-local function wait_for(cond, secs)
-    local deadline = fiber.clock() + (secs or 5)
-    while fiber.clock() < deadline do
-        if cond() then return true end
-        fiber.sleep(0.1)
-    end
-    return cond()
-end
 local function raises_readonly(ok, err)
     return not ok and tostring(err):find('read%-only') ~= nil
 end
@@ -326,8 +346,10 @@ check('PREPARE on a demoted node raises READONLY',
 check('lock-checked read on a demoted node raises READONLY',
       raises_readonly(pcall(c[2].call, c[2], 'tarn_read', {sid, 0, {2}, 'EQ', 1})))
 c[2]:eval('box.cfg{read_only = false}')
+ready(2, {1, 2})
 st = stream_begin(2, {2})
 c[2]:eval('box.ctl.promote()')   -- new election term
+ready(2, {1, 2})
 r = st:call('tarn_validate', {'V2', {{sid, 0, {2}}}, {}, true})
 check('validate of a stream begun in an earlier term -> conflict', r[1] == 'conflict', r)
 st = stream_begin(2, {2})
@@ -340,7 +362,7 @@ local function new_term(i)
     -- queue keeps the term)
     local t0 = c[i]:eval('return box.info.election.term')
     c[i]:eval("box.ctl.demote() box.ctl.promote()")
-    wait_for(function() return not c[i]:eval('return box.info.ro') end, 5)
+    ready(i, {1, 2})
     return c[i]:eval('return box.info.election.term') > t0
 end
 local row = {172, 1, 'u172@x', 2}
@@ -357,56 +379,102 @@ r = c[2]:call('tarn_commit_local', {'L4', {{'replace', sid, row}}, {{sid, 0, {2}
 check('local commit of reads whose stream transaction is gone -> conflict', r[1] == 'conflict', r)
 r = c[2]:call('tarn_prepare', {'P4', 1, {1, 2}, {{'replace', sid, row}}, {{sid, 0, {2}}}, {}, fiber.time()})
 check('PREPARE of reads whose stream transaction is gone -> no', r[1] == 'no', r)
+check('... with its authoritative NO tombstone', c[2]:call('tarn_part_status', {'P4'}) == 'aborted')
 st = stream_begin(2, {2})
 r = st:call('tarn_commit_local', {'L3', {{'replace', sid, row}}, {{sid, 0, {2}}}, {}})
 check('local commit of a stream begun in the current term commits', r[1] == 'ok', r)
 
 print('lock index rebuild with a PREPARE waiting for quorum')
+-- Admit the observer before Q1: a new request must wait for pending sync
+-- work at its first barrier, whereas this stream already owns its view.
+local pending_reader = stream_begin(2, {2})
 c[2]:eval([[box.space._tarn_locks:alter{is_sync = true}; box.space._tarn_part:alter{is_sync = true}
-            box.cfg{replication_synchro_quorum = 2, replication_synchro_timeout = 2}]])
+            box.cfg{replication_synchro_quorum = 2, replication_synchro_timeout = 5}]])
 local pend
 fiber.create(function()
     pend = c[2]:call('tarn_prepare', {'Q1', 1, {1, 2}, {{'replace', sid, {2, 5, 'b@x', 2}}}, {}, {}, fiber.time()})
 end)
-fiber.sleep(0.3)
+check('PREPARE reached the synchronous queue', wait_for(function()
+    return c[2]:eval('return box.info.synchro.queue.len > 0')
+end))
 -- A read-only round trip makes the index stale; the next check rebuilds it
 -- while Q1's lock records still wait for a quorum.
 c[2]:eval('box.cfg{read_only = true}; require("fiber").sleep(0.05); box.cfg{read_only = false}')
-fiber.sleep(0.05)
-r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
-check('rebuilt index keeps the lock of a PREPARE waiting for quorum', r[1] == 'conflict', r)
-check('the waiting PREPARE fails once the quorum times out', wait_for(function() return pend ~= nil end, 10) and pend[1] == 'no', pend)
+ready(2)
+r = pending_reader:call('tarn_validate', {'Q1-reader', {{sid, 0, {2}}}, {}, true})
+check('rebuilt index keeps the lock of a PREPARE waiting for quorum',
+      pend == nil and r[1] == 'conflict'
+      and tostring(r[3]):find('read row locked by prepared transaction Q1', 1, true) ~= nil
+      and c[2]:call('tarn_info').lock_index > 0, r)
+check('the waiting PREPARE returns no vote after its clock epoch changed',
+      wait_for(function() return pend ~= nil end, 10) and pend[1] == 'expired', pend)
+check('... without manufacturing a NO tombstone', c[2]:call('tarn_part_status', {'Q1'}) == 'none')
 c[2]:eval([[box.cfg{replication_synchro_quorum = 1}
             box.space._tarn_locks:alter{is_sync = false}; box.space._tarn_part:alter{is_sync = false}]])
+ready(2, {1, 2})
 check('... and its lock is gone', wait_for(function() return c[2]:call('tarn_info').lock_index == 0 end), c[2]:call('tarn_info'))
 r = c[2]:call('tarn_autocommit', {{{'update', sid, {2}, {{'+', 2, 1}}}}})
 check('... so the row is writable again', r[1] == 'ok', r)
 
 print('garbage collection')
-for i = 1, 2 do c[i]:eval('tarn.cfg.max_txn_age = 0.5; tarn.cfg.clock_skew = 0.5; tarn.cfg.recovery_after = 1000') end
+for i = 1, 2 do c[i]:eval('tarn.cfg.recovery_after = 1000') end
+-- Keep the immutable timing policy. Age only this test's receipts, including
+-- legacy rows whose stored expiry used one skew margin, instead of changing
+-- the cluster's admission/retention contract to make GC run sooner.
+local function age_records(i, txid)
+    c[i]:eval([[local id = ...
+        local ts = require('clock').realtime() - tarn.cfg.max_txn_age - 2 * tarn.cfg.clock_skew - 10
+        box.atomic(function()
+            if box.space._tarn_part:get{id} then
+                box.space._tarn_part:update({id}, {{'=', 5, ts}, {'=', 6, ts + 1}})
+            end
+            if box.space._tarn_txn:get{id} then
+                box.space._tarn_txn:update({id}, {{'=', 4, ts}, {'=', 5, ts + 1}})
+            end
+        end)]], {txid})
+end
+c[2]:eval([[local now = require('clock').realtime()
+    local a, s = tarn.cfg.max_txn_age, tarn.cfg.clock_skew
+    box.atomic(function()
+        box.space._tarn_part:replace{'GOLD', 'aborted', 1, {1, 2}, now - a - 2*s - 10, now - 1}
+        box.space._tarn_part:replace{'GLEGACY', 'aborted', 1, {1, 2}, now - a - s - 1, now - 1}
+    end)]])
+check('a fully aged receipt is collected', wait_for(function()
+    return c[2]:call('tarn_part_status', {'GOLD'}) == 'none'
+end))
+check('the same GC pass retains a legacy receipt for the second skew margin',
+      c[2]:call('tarn_part_status', {'GLEGACY'}) == 'aborted')
+age_records(2, 'GLEGACY')
+check('the legacy receipt is collected once the full retention passes', wait_for(function()
+    return c[2]:call('tarn_part_status', {'GLEGACY'}) == 'none'
+end))
 -- G1 is applied on shard 2 only; its record on D (shard 1) stays STAGING.
 prepare(1, 'G1', {{'replace', sid, {80, 1, 'g80@x', 1}}})
 prepare(2, 'G1', {{'replace', sid, {81, 1, 'g81@x', 2}}})
 c[2]:call('tarn_apply', {'G1'})
+age_records(1, 'G1'); age_records(2, 'G1')
 fiber.sleep(2.5)
 check('applied participant record kept while the decision record is STAGING',
       c[2]:call('tarn_part_status', {'G1'}) == 'applied')
 c[1]:call('tarn_apply', {'G1'})
 check('decision record COMMITTED once D applied', c[1]:call('tarn_txn_status', {'G1'}) == 'committed')
+age_records(1, 'G1')
 check('then every G1 record is collected', wait_for(function()
     return c[2]:call('tarn_part_status', {'G1'}) == 'none' and c[1]:call('tarn_part_status', {'G1'}) == 'none'
        and c[1]:call('tarn_txn_status', {'G1'}) == 'none' end))
 -- G2's decision record is final (ABORTED) while shard 2 is still prepared.
 prepare(2, 'G2', {{'replace', sid, {82, 1, 'g82@x', 2}}})
 c[1]:call('tarn_txn_cas', {'G2', 'none', 'aborted', {1, 2}})
+age_records(1, 'G2'); age_records(2, 'G2')
 fiber.sleep(2.5)
 check('decision record kept while a participant is prepared', c[1]:call('tarn_txn_status', {'G2'}) == 'aborted')
 c[2]:call('tarn_abort', {'G2', 1, {1, 2}})
+age_records(2, 'G2')
 check('collected once nobody is prepared, tombstone too', wait_for(function()
     return c[1]:call('tarn_txn_status', {'G2'}) == 'none' and c[2]:call('tarn_part_status', {'G2'}) == 'none' end))
 check('resolve of a vanished transaction writes nothing',
       c[1]:eval("return tarn.resolve('GONE1', 1, {1, 2})") == 'gone' and c[1]:call('tarn_txn_status', {'GONE1'}) == 'none')
-for i = 1, 2 do c[i]:eval('tarn.cfg.max_txn_age = 120; tarn.cfg.clock_skew = 60; tarn.cfg.recovery_after = 2') end
+for i = 1, 2 do c[i]:eval('tarn.cfg.recovery_after = 2') end
 
 print('arithmetic updates keep MySQL integer semantics (issue #11)')
 c[1]:call('tarn_autocommit', {{{'replace', sid, {90, 0, 'a90@x', 1}}}})
@@ -520,7 +588,7 @@ c[1]:call('tarn_unlock', {'P10'})
 fiber.sleep(0.05)
 check('... and writes once it is released', got and got[1] == 'ok' and bal(1, 301) == 2, got)
 lock(1, 'P11', {k(301)}, 'X', {})
-st = c[1]:new_stream(); st:begin(); st.space['test.acct']:get{301}
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()'); st.space['test.acct']:get{301}
 r = st:call('tarn_commit_local', {'L20', {{'replace', sid, {301, 3, 'r301@x', 1}}}, {{sid, 0, {301}}}})
 check('a serializable commit over a row lock conflicts', r[1] == 'conflict', r)
 -- a stale generation (leader change) or a lost connection breaks a transaction
@@ -549,7 +617,7 @@ v1 = prepare(1, 'P15', {{'replace', sid, {303, 6, 'r303@x', 1}}}, nil, nil, nil,
 check('PREPARE without row locks is unaffected', v1[1] == 'yes', v1)
 c[1]:call('tarn_apply', {'P15'})
 r = lock(1, 'P16', {k(304)}, 'X', {})
-local s16 = c[1]:new_stream(); s16:begin()
+local s16 = c[1]:new_stream(); s16:eval('tarn.fresh.begin_stream()')
 v1 = s16:call('tarn_prepare', {'P16', 1, {1}, {{'replace', sid, {304, 7, 'r304@x', 1}}}, {}, {}, fiber.time(), 'stale'})
 check('PREPARE of an RC transaction whose locks were lost votes NO', v1[1] == 'no' and v1[2] == 1213, v1)
 c[1]:call('tarn_abort', {'P16', 1, {1}})
@@ -665,10 +733,10 @@ r = aw(0, {'update', asid, {1}, {{'+', 2, 1}}})
 check('a write made with the replaced definition is refused (1412)', r[1] == 'error' and r[2] == 1412, r)
 r = aw(5, {'update', asid, {1}, {{'+', 2, 1}}})
 check('... one made with the new definition is not', r[1] == 'ok', r)
-local sa = c[1]:new_stream(); sa:begin()
+local sa = c[1]:new_stream(); sa:eval('tarn.fresh.begin_stream()')
 r = sa:call('tarn_commit_local', {'AL1', {{'replace', asid, {1, 0, 'abc', 1}}}, {}, {}, box.NULL, {asid, 0}})
 check('CommitLocal refuses it too', r[1] == 'error' and r[2] == 1412 and aget(1)[2] == 12, r)
-sa = c[1]:new_stream(); sa:begin()
+sa = c[1]:new_stream(); sa:eval('tarn.fresh.begin_stream()')
 v1 = sa:call('tarn_prepare', {'AP1', 1, {1, 2}, {{'replace', asid, {1, 0, 'abc', 1}}}, {}, {}, fiber.time(), box.NULL, {asid, 0}})
 check('... and PREPARE votes NO', v1[1] == 'no' and v1[2] == 1412, v1)
 r = c[1]:call('tarn_alter_abort', {'test.alt', aargs(5, {builds = iv})})
@@ -1321,10 +1389,10 @@ c[1]:call('tarn_apply', {'GX3'})
 r = c[1]:call('tarn_autocommit', {{{'insert', 20011, {'old', 9, 7}}}, {fence = {20010, 9}}})
 check('an entry written with the definition from before TRUNCATE gets 1412 (fenced by its table)',
       r[1] == 'error' and r[2] == 1412, r)
-local sl = c[1]:new_stream(); sl:begin()
+local sl = c[1]:new_stream(); sl:eval('tarn.fresh.begin_stream()')
 r = sl:call('tarn_commit_local', {'GL1', {{'replace', 20010, {6, 'cap', 1}}, {'replace', 20010, {5, 'pin', 1}}}})
 check('a local commit moves a value from a later row to an earlier one', r[1] == 'ok', r)
-sl = c[1]:new_stream(); sl:begin()
+sl = c[1]:new_stream(); sl:eval('tarn.fresh.begin_stream()')
 r = sl:call('tarn_commit_local', {'GL2', {{'replace', 20010, {5, 'cap', 1}}, {'replace', 20010, {6, 'pin', 1}}}})
 check('... and two rows swap their values', r[1] == 'ok' and c[1]:eval('return box.space["test.gt"]:get{6}[2]') == 'pin', r)
 r = prepare(1, 'GX5', {{'replace', 20010, {6, 'pin', 1}}, {'replace', 20010, {5, 'cap', 1}}})
@@ -1500,7 +1568,7 @@ for _, engine in ipairs({'memtx', 'vinyl'}) do
     check(engine .. ': a range with a limit and an end key, in pages',
           rows and #rows == 5000 and rows[1] == 100 and rows[5000] == 5099 and n == 2, {rows and #rows, n})
     local threes = c[1]:eval('return box.space[...].index[1]:count{3}', {'test.pg_' .. engine})
-    rows, n = pages(psid, c[1], {1, {3}, 'EQ', box.NULL, box.NULL, true, false})
+    rows, n = pages(psid, c[1], {1, {3}, 'EQ', box.NULL, box.NULL, true, true})
     check(engine .. ': a secondary-index prefix', rows and #rows == threes and n == 1, {rows and #rows, n, threes})
     local old = cfg('scan_page_bytes', 4096)
     rows, n = pages(psid, c[1], {0, {}, 'ALL', box.NULL, box.NULL, true, true})
@@ -1600,7 +1668,7 @@ do
     used = c[1]:eval('return ' .. alloc .. '.used()')
     c[1]:eval(alloc .. '.setlimit(...)', {used + 8 * 1024 * 1024})
     r = c[1]:call('tarn_select', {bsid, 0, {}, 'ALL', box.NULL, box.NULL, true, true})
-    local r2 = c[1]:call('tarn_select', {bsid, 0, {10}, 'GE', box.NULL, {150000}, true, false})
+    local r2 = c[1]:call('tarn_select', {bsid, 0, {10}, 'GE', box.NULL, {150000}, true, true})
     c[1]:eval(alloc .. '.setlimit(...)', {limit0})
     check('a read short of Lua memory fails with 1041', r[1] == 'error' and r[2] == 1041, r)
     check('... in a scan with an end key too', r2[1] == 'error' and r2[2] == 1041, r2)
@@ -1675,14 +1743,22 @@ do
     end
     check('garbage pressure reaches the heap reserve while preserving native-core headroom',
           pressure_ok and min_unused < reserve and min_unused >= 1048576, min_unused)
+    -- The clock monitor also runs PG.heap_low(), so it can reclaim this
+    -- garbage before the dedicated watcher increments heap_collects. Check
+    -- recovered heap headroom and working calls, rather than which worker
+    -- won that race. No request here explicitly asks for a collection.
+    local recovered_unused
     local ok = wait_for(function()
-        local good, info = pcall(c[1].call, c[1], 'tarn_info')
-        return good and info.stats.heap_collects > collects0 and pcall(c[1].eval, c[1], 'return 1')
+        local good, unused = pcall(c[1].eval, c[1], 'return ' .. alloc .. '.unused()')
+        if not good or unused < reserve then return false end
+        recovered_unused = unused
+        return pcall(c[1].call, c[1], 'tarn_info') and pcall(c[1].eval, c[1], 'return 1')
     end, 5)
     local info = ok and c[1]:call('tarn_info')
     pcall(c[1].eval, c[1], 'collectgarbage() ' .. alloc .. '.setlimit(...)', {limit0})
     check('a heap of garbage at the limit is collected without a manual collect, and calls succeed',
-          ok and info.stats.heap_collects > collects0, info and info.stats.heap_collects)
+          ok and recovered_unused >= reserve,
+          {recovered_unused, reserve, info and info.stats.heap_collects - collects0})
     check('the lazy delivery worker survives recovered Lua heap pressure',
           c[1]:eval('return tarn.lazy.worker ~= nil and tarn.lazy.worker:status() ~= "dead"'))
 end

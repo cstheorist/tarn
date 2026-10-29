@@ -41,7 +41,8 @@ def port_ready(port):
 def run_sample(args, label, repeat):
     nodes = ['127.0.0.1:' + str(args.base + 10 * i + 1) for i in range(1, 4)]
     endpoint = '127.0.0.1:' + str(args.port)
-    env = dict(os.environ, TARN_BIN=getattr(args, label + '_bin'), TARN_NATIVE=args.native)
+    env = dict(os.environ, TARN_BIN=getattr(args, label + '_bin'), TARN_NATIVE=args.native,
+               TARN_MAX_TXN_AGE=str(args.expiry_seconds), TARN_CLOCK_SKEW=str(args.clock_skew_seconds))
     cluster = ROOT / 'scripts' / 'cluster.sh'
     with tempfile.TemporaryDirectory(prefix='tarn-placement-') as temp:
         work = Path(temp)
@@ -53,8 +54,7 @@ def run_sample(args, label, repeat):
                                 '-b', str(args.base), '-p', str(args.port), '-m', '256', '-w', 'fsync'],
                                env=env, stdout=output, stderr=subprocess.STDOUT, check=True)
                 for node in nodes:
-                    ev(node, "local age=...; tarn.cfg.max_txn_age=age; tarn.cfg.clock_skew=0; "
-                       "tarn.cfg.recovery_interval=.1; return true", [args.expiry_seconds])
+                    ev(node, "tarn.cfg.recovery_interval=.1; return true")
                 config = work / 'cluster.json'
                 cfg = json.loads(config.read_text())
                 cfg['max_txn_age'] = args.expiry_seconds
@@ -99,7 +99,8 @@ def run_sample(args, label, repeat):
                     return state if not any(txids.intersection(s['parts']) or txids.intersection(s['txns'])
                                             for s in state) else None
 
-                final = wait_for(collected, args.expiry_seconds + 10, 'complete eligible record GC')
+                final = wait_for(collected, args.expiry_seconds + 2 * args.clock_skew_seconds + 10,
+                                 'complete eligible record GC')
                 gc_txn = [s['gc_txn'] - b['gc_txn'] for b, s in zip(before, final)]
                 gc_part = [s['gc_part'] - b['gc_part'] for b, s in zip(before, final)]
                 assert gc_txn == counts and gc_part == [args.transactions] * 3, (gc_txn, gc_part, counts)
@@ -141,11 +142,13 @@ def main():
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--repeats', type=int, default=3)
     ap.add_argument('--expiry-seconds', type=float, default=15)
+    ap.add_argument('--clock-skew-seconds', type=float, default=.25,
+                    help='fixed startup bound; must also cover peer sampling uncertainty')
     ap.add_argument('--base', type=int, default=5700)
     ap.add_argument('--port', type=int, default=5800)
     args = ap.parse_args()
     assert args.workers > 0 and args.transactions > 0 and args.transactions % args.workers == 0
-    assert args.repeats >= 3 and args.expiry_seconds >= 5
+    assert args.repeats >= 3 and args.expiry_seconds >= 5 and args.clock_skew_seconds >= 0
     for name in ['before_bin', 'after_bin', 'native', 'out']:
         setattr(args, name, str(Path(getattr(args, name)).resolve()))
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +158,8 @@ def main():
         'binary_sha256': {name: sha256(getattr(args, name + '_bin')) for name in ['before', 'after']},
         'native_sha256': sha256(args.native),
         'topology': '3 shards x 1 replica, memtx, WAL fsync, one two-thread gateway, pool 2',
-        'expiry_seconds': args.expiry_seconds, 'clock_skew_seconds': 0,
+        'expiry_seconds': args.expiry_seconds, 'clock_skew_seconds': args.clock_skew_seconds,
+        'retention_seconds': args.expiry_seconds + 2 * args.clock_skew_seconds,
         'scope': 'single-host placement workload; no RF3 or end-to-end speedup claim',
         'samples': [],
     }

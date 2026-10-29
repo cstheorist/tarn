@@ -99,7 +99,7 @@ pub struct Prepared {
     diagnostic: Option<crate::observe::Descriptor>,
     pub n_params: usize,
     pub columns: Arc<[Column]>,
-    plan: Option<(u64, Stmt)>,
+    plan: Option<((u64, Option<u64>), Stmt)>,
     admin: Option<Admin>,
     /// Statement with subqueries/UNION: the parsed template (placeholders
     /// ?1..?N), bound and run through `run_complex` at execute time.
@@ -395,6 +395,29 @@ fn is_ddl(sql: &str) -> bool {
 
 fn cols(names: &[(&str, ColumnType)]) -> Arc<[Column]> {
     names.iter().map(|(n, t)| Column::new(n, *t)).collect::<Vec<_>>().into()
+}
+
+fn analyze_columns() -> Arc<[Column]> {
+    cols(&[
+        ("Table", ColumnType::VarString),
+        ("Op", ColumnType::VarString),
+        ("Msg_type", ColumnType::VarString),
+        ("Msg_text", ColumnType::VarString),
+    ])
+}
+
+fn statistics_columns() -> Arc<[Column]> {
+    cols(&[
+        ("Table", ColumnType::VarString),
+        ("Index", ColumnType::VarString),
+        ("Prefix_parts", ColumnType::LongLong),
+        ("Estimated_table_rows", ColumnType::Double),
+        ("Sample_rows", ColumnType::LongLong),
+        ("Observed_distinct", ColumnType::LongLong),
+        ("Estimated_distinct", ColumnType::Double),
+        ("Age_ms", ColumnType::LongLong),
+        ("Generation", ColumnType::LongLong),
+    ])
 }
 
 fn like_ci(s: &str, pat: &Option<String>) -> bool {
@@ -916,6 +939,23 @@ impl Session {
         let sql = crate::prep::expand_comments(sql);
         let sql: &str = &sql;
         if let Some(a) = admin::recognize(sql)? {
+            let columns = match &a {
+                Admin::Analyze(text) => {
+                    let catalog = self.cluster.catalog();
+                    let ctx = PlanCtx {
+                        statistics: None,
+                        catalog: &catalog,
+                        db: self.db.as_deref(),
+                        params: &[],
+                        conn_coll: &self.collation_connection,
+                        default_coll: &self.cluster.cfg.default_collation,
+                    };
+                    planner::analyze_target(text, &ctx)?;
+                    analyze_columns()
+                }
+                Admin::ShowTarnStatistics => statistics_columns(),
+                _ => Arc::from(Vec::new()),
+            };
             self.prepared.insert(
                 id,
                 Prepared {
@@ -923,13 +963,13 @@ impl Session {
                     diagnostic: matches!(a, Admin::Commit)
                         .then(|| crate::observe::Descriptor::new(self.db.as_deref(), "COMMIT")),
                     n_params: 0,
-                    columns: Arc::from(Vec::new()),
+                    columns: columns.clone(),
                     plan: None,
                     admin: Some(a),
                     complex: None,
                 },
             );
-            return Ok((0, Arc::from(Vec::new())));
+            return Ok((0, columns));
         }
         if crate::prep::has_var_refs(sql) {
             return Err(SqlError::unsupported("variables in prepared statements"));
@@ -958,7 +998,7 @@ impl Session {
             Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),
         };
-        let version = self.cluster.catalog().version;
+        let version = self.plan_version(&stmt);
         let diagnostic = if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
@@ -1045,9 +1085,8 @@ impl Session {
                     "Incorrect arguments to mysqld_stmt_execute",
                 ));
             }
-            let version = self.cluster.catalog().version;
             let stmt = match &p.plan {
-                Some((v, s)) if *v == version => Some(s.clone()),
+                Some((v, s)) if *v == self.plan_version(s) => Some(s.clone()),
                 _ => None,
             };
             (p.admin.clone(), stmt)
@@ -1062,12 +1101,33 @@ impl Session {
                 let template = self.prepared[&id].template.clone();
                 self.plan_cached(&template, params)?
             }
+            Some(Stmt::Select(p))
+                if !params.is_empty()
+                    && matches!(&p.source,Source::Join { left, .. } if matches!(left.as_ref(),Source::Table(_)))
+                    && p.project.iter().all(|e| matches!(e, Expr::Col(_) | Expr::Lit(_)))
+                    && p.agg.is_none()
+                    && p.limit.is_none()
+                    && !p.distinct
+                    && p.source.tables().iter().all(|a| {
+                        self.cluster
+                            .statistics
+                            .snapshot(self.cluster.catalog().version)
+                            .tables
+                            .contains_key(&a.table.space_id)
+                    }) =>
+            {
+                // The projection's metadata is independent of parameters.
+                // Use the shared type-keyed cache so bound integer predicates
+                // can use hints, while unbound/noninteger plans stay conservative.
+                let template = self.prepared[&id].template.clone();
+                self.plan_cached(&template, params)?
+            }
             Some(s) => s,
             None => {
                 // catalog changed since PREPARE: re-plan
                 let template = self.prepared[&id].template.clone();
                 let s = self.plan_cached(&template, &[])?;
-                let version = self.cluster.catalog().version;
+                let version = self.plan_version(&s);
                 self.prepared.get_mut(&id).unwrap().plan = Some((version, s.clone()));
                 s
             }
@@ -1169,7 +1229,9 @@ impl Session {
             return Ok(p.stmt.clone());
         }
         let catalog = self.cluster.catalog();
+        let statistics = self.cluster.statistics.snapshot(catalog.version);
         let ctx = PlanCtx {
+            statistics: Some(&statistics),
             catalog: &catalog,
             db: self.db.as_deref(),
             params,
@@ -1196,6 +1258,7 @@ impl Session {
                     &key,
                     Arc::new(CachedPlan {
                         resource_guard: cache_guard,
+                        statistics_generation: stmt.uses_statistics().then_some(statistics.generation),
                         version: catalog.version,
                         stmt: stmt.clone(),
                         diagnostic,
@@ -1204,6 +1267,15 @@ impl Session {
             }
         }
         Ok(stmt)
+    }
+
+    fn plan_version(&self, stmt: &Stmt) -> (u64, Option<u64>) {
+        let v = self.cluster.catalog().version;
+        (
+            v,
+            stmt.uses_statistics()
+                .then(|| self.cluster.statistics.snapshot(v).generation),
+        )
     }
 
     // ---- dispatch -------------------------------------------------------------
@@ -3074,6 +3146,73 @@ impl Session {
                 )),
             },
             Admin::Noop => Ok(Output::ok(0)),
+            Admin::Analyze(sql) => {
+                // As in MariaDB, ANALYZE is an implicit-commit statement.
+                self.cluster.refresh_if_newer().await?;
+                let catalog = self.cluster.catalog();
+                let ctx = PlanCtx {
+                    statistics: None,
+                    catalog: &catalog,
+                    db: self.db.as_deref(),
+                    params: &[],
+                    conn_coll: &self.collation_connection,
+                    default_coll: &self.cluster.cfg.default_collation,
+                };
+                let t = planner::analyze_target(&sql, &ctx)?;
+                self.implicit_commit().await?;
+                let _collector = self.cluster.statistics.collecting.try_lock().map_err(|_| {
+                    SqlError::new(1205, "HY000", "ANALYZE collector is already running on this gateway")
+                })?;
+                let stats = crate::statistics::collect(&self.cluster, &t).await?;
+                self.cluster.refresh_if_newer().await?;
+                if self.cluster.catalog().version != catalog.version {
+                    return Err(SqlError::new(
+                        1412,
+                        "HY000",
+                        "Table definition changed during ANALYZE; retry",
+                    ));
+                }
+                self.cluster.statistics.publish(catalog.version, vec![stats]);
+                rows_out(
+                    analyze_columns(),
+                    vec![vec![
+                        Value::str(&format!("{}.{}", t.db, t.name)),
+                        Value::str("analyze"),
+                        Value::str("status"),
+                        Value::str("OK"),
+                    ]],
+                )
+            }
+            Admin::ShowTarnStatistics => {
+                let snapshot = self.cluster.statistics.snapshot(catalog.version);
+                let mut tables: Vec<_> = snapshot.tables.values().collect();
+                tables.sort_by_key(|t| t.space);
+                let mut rows = Vec::new();
+                for s in tables {
+                    let t = catalog.all().find(|t| t.space_id == s.space);
+                    let Some(t) = t else { continue };
+                    for p in s.prefixes.iter().map(Some).chain(s.prefixes.is_empty().then_some(None)) {
+                        let index = t
+                            .indexes
+                            .iter()
+                            .find(|i| p.is_some_and(|p| i.id == p.index))
+                            .map(|i| i.name.as_str())
+                            .unwrap_or("");
+                        rows.push(vec![
+                            Value::str(&format!("{}.{}", t.db, t.name)),
+                            if p.is_some() { Value::str(index) } else { Value::Null },
+                            Value::UInt(p.map_or(0, |p| p.parts as u64)),
+                            Value::Float(s.rows),
+                            Value::UInt(s.sampled as u64),
+                            p.map_or(Value::Null, |p| Value::UInt(p.observed_distinct as u64)),
+                            p.map_or(Value::Null, |p| Value::Float(p.distinct)),
+                            Value::UInt(s.collected.elapsed().as_millis().min(u64::MAX as u128) as u64),
+                            Value::UInt(snapshot.generation),
+                        ]);
+                    }
+                }
+                rows_out(statistics_columns(), rows)
+            }
             Admin::LockTables => {
                 self.implicit_commit().await?;
                 Ok(Output::ok(0))
@@ -3263,6 +3402,7 @@ impl Session {
                     "Distributed_commits",
                     "Commit_errors",
                     "Total_us",
+                    "Storage_rows",
                 ] {
                     columns.push(Column::new(name, ColumnType::LongLong));
                 }
@@ -4077,6 +4217,7 @@ mod tests {
     fn show_create_control_strings_round_trip() {
         let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],

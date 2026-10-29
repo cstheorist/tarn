@@ -1,0 +1,122 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 89 and seed 5839631549666811611 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 79604] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue130-logical-clock-av5gfsz5/registered/LogicalClockExpiry.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6206464713648490623/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LogicalClockExpiry
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LogicalClockExpiry
+Starting... (2026-10-28 19:58:02)
+Computing initial states...
+Computed 2 initial states...
+Finished computing initial states: 3 distinct states generated at 2026-10-28 19:58:02.
+Error: Invariant NoFalseNO is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ logical = [holder |-> 0, peer |-> 0]
+/\ forgotten = FALSE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 0, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 0
+/\ newReceipt = "none"
+/\ dataCommitted = TRUE
+
+State 2: <Observe("holder",1) line 61, col 5 to line 72, col 86 of module LogicalClockExpiry>
+/\ logical = [holder |-> 1, peer |-> 0]
+/\ forgotten = FALSE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 1, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 0
+/\ newReceipt = "none"
+/\ dataCommitted = TRUE
+
+State 3: <Observe("holder",3) line 61, col 5 to line 72, col 86 of module LogicalClockExpiry>
+/\ logical = [holder |-> 3, peer |-> 0]
+/\ forgotten = FALSE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 3, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 0
+/\ newReceipt = "none"
+/\ dataCommitted = TRUE
+
+State 4: <Observe("holder",5) line 61, col 5 to line 72, col 86 of module LogicalClockExpiry>
+/\ logical = [holder |-> 5, peer |-> 0]
+/\ forgotten = FALSE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 5, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 0
+/\ newReceipt = "none"
+/\ dataCommitted = TRUE
+
+State 5: <Observe("holder",7) line 61, col 5 to line 72, col 86 of module LogicalClockExpiry>
+/\ logical = [holder |-> 7, peer |-> 0]
+/\ forgotten = FALSE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 7, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 0
+/\ newReceipt = "none"
+/\ dataCommitted = TRUE
+
+State 6: <GC line 75, col 5 to line 79, col 67 of module LogicalClockExpiry>
+/\ logical = [holder |-> 7, peer |-> 0]
+/\ forgotten = TRUE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 7, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 7
+/\ newReceipt = "none"
+/\ dataCommitted = TRUE
+
+State 7: <FreshNo line 82, col 5 to line 89, col 78 of module LogicalClockExpiry>
+/\ logical = [holder |-> 7, peer |-> 0]
+/\ forgotten = TRUE
+/\ inflated = FALSE
+/\ timestamp = 0
+/\ corrected = FALSE
+/\ rawAccepted = [holder |-> 7, peer |-> 0]
+/\ real = 0
+/\ lastMono = [holder |-> 0, peer |-> 0]
+/\ holderHigh = 7
+/\ newReceipt = "aborted"
+/\ dataCommitted = TRUE
+
+12533 states generated, 4028 distinct states found, 2509 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-10-28 19:58:02)
+Trace exploration spec path: ./LogicalClockExpiry_TTrace_1793231882.tla

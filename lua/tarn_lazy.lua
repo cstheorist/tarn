@@ -137,7 +137,81 @@ function M.new(c)
         local ok, err = f:join()
         if not ok then error(err) end
     end
+    -- A request-local negative proof, restricted by the caller to an
+    -- already-marked READ_CONFIRMED CommitLocal stream. The original
+    -- transaction tracks every catalog/capture lookup and the full defs
+    -- scan: an applicable publication or phantom must still conflict with
+    -- its user writes. This never makes the global registry/native bitmap
+    -- fresh, and is not a certificate for any active or pending capture.
+    local plain_tag = {}
+    local function plain_check(proof, rows, plans)
+        if type(proof) ~= 'table' or proof.tag ~= plain_tag or c.plain_stream == nil
+           or c.plain_stream() ~= proof.txid or #rows ~= proof.count
+           or (not plans and rows ~= proof.writes) then
+            bad(1412, 'Lazy plain-source proof is no longer valid')
+        end
+        for i = 1, proof.count do
+            local row = rows[i]
+            local sid = proof.ids[i]
+            local source = proof.sources[sid]
+            if type(row) ~= 'table' then bad(1412, 'Lazy plain-source proof is no longer valid') end
+            local actual
+            if plans then actual = row[1] else actual = box.space[row[2]] end
+            if source == nil or actual ~= source.space or box.space[sid] ~= source.space
+               or source.space.name ~= source.name or (not plans and row[2] ~= sid) then
+                bad(1412, 'Lazy plain-source proof is no longer valid')
+            end
+        end
+    end
+    function L.prove_plain(writes, fence, original)
+        -- No RPC argument can opt into this path: CommitLocal captures the
+        -- entry transaction, whose first-read mark implies confirmed
+        -- visibility under the supported Lua/native stream constructors.
+        if c.plain_stream == nil or c.plain_stream() ~= original or original == nil then
+            bad(1412, 'Lazy plain-source proof lost its stream transaction')
+        end
+        if #writes == 0 or isnull(fence) then return nil end
+        local versions = {}
+        for i = 1, #fence, 2 do versions[fence[i]] = fence[i + 1] end
+        local proof = {tag = plain_tag, txid = original, writes = writes, fence = fence,
+                       count = #writes, ids = {}, sources = {}}
+        for i, w in ipairs(writes) do
+            local sid, sp = w[2], box.space[w[2]]
+            if sp == nil then return nil end
+            proof.ids[i] = sid
+            if proof.sources[sid] == nil then
+                local name = sp.name
+                local catalog = box.space._tarn_catalog:get{name}
+                if catalog == nil or catalog.def.id ~= sid or catalog.def.name ~= name
+                   or (catalog.def.ver or 0) ~= versions[sid] then return nil end
+                local declared = catalog.def.lazy
+                if declared ~= nil and (type(declared) ~= 'table' or next(declared) ~= nil) then return nil end
+                local capture = box.space._tarn_lazy_capture:get{sid}
+                if capture ~= nil and next(capture.specs) ~= nil then return nil end
+                proof.sources[sid] = {space = sp, name = name, ver = versions[sid]}
+            end
+        end
+        -- There is no base_id index. Keep this full scan in the same
+        -- transaction so inserts/replacements for any written SID are
+        -- tracked. Unrelated lazy DDL can conservatively conflict too.
+        for _, d in box.space._tarn_lazy_defs:pairs() do
+            if proof.sources[d.base_id] ~= nil and d.phase ~= 'retired' then return nil end
+        end
+        plain_check(proof, writes, false)
+        return proof
+    end
     function L.guard(writes, fence, plans)
+        if plans and writes.lazy_plain ~= nil then
+            local proof = writes.lazy_plain
+            plain_check(proof, writes, true)
+            if fence ~= proof.fence then bad(1412, 'Lazy plain-source proof is no longer valid') end
+            local versions = {}
+            for i = 1, #fence, 2 do versions[fence[i]] = fence[i + 1] end
+            for sid, source in pairs(proof.sources) do
+                if versions[sid] ~= source.ver then bad(1412, 'Lazy plain-source proof is no longer valid') end
+            end
+            return nil
+        end
         if L.stale then return {'error', 1412, 'Lazy capture registry is stale'} end
         if isnull(fence) then fence = {} end
         local versions = {}
@@ -535,7 +609,8 @@ function M.new(c)
         return ok and result or c.failure(result)
     end
     local function rowid(sid, pk) return tostring(bin({sid, pk})) end
-    function L.initial(writes, target)
+    function L.initial(writes, target, plain)
+        if plain ~= nil then plain_check(plain, writes, false); return {} end
         local out = {}
         for _, w in ipairs(writes) do
             local source, sp = L.sources[w[2]], box.space[w[2]]
@@ -547,7 +622,14 @@ function M.new(c)
         end
         return out
     end
-    local function rowplans(plans)
+    local function rowplans(plans, allow_plain)
+        if plans.lazy_plain ~= nil then
+            -- A CommitLocal proof cannot stand in for durable PREPARE
+            -- reservations or be reinterpreted against a newer cache.
+            if not allow_plain then bad(1412, 'Lazy plain-source proof is not a reservation') end
+            plain_check(plans.lazy_plain, plans, true)
+            return {}
+        end
         if L.stale then bad(1412, 'Lazy capture registry is stale') end
         local rows, order, out = {}, {}, {}
         for _, p in ipairs(plans) do
@@ -617,7 +699,7 @@ function M.new(c)
         for i, m in ipairs(row[5]) do enqueue(assignment(row, m, seq, i), promised) end
     end
     function L.capture(plans)
-        for _, row in ipairs(rowplans(plans)) do publish(row, false) end
+        for _, row in ipairs(rowplans(plans, true)) do publish(row, false) end
     end
     function L.reserve(txid, plans)
         local reservations = box.space._tarn_lazy_reservation
@@ -783,8 +865,12 @@ function M.new(c)
     function L.owners(buckets)
         local now, out, missing = clock.monotonic(), {}, {}
         local cache = L.owner_cache
-        if cache == nil or cache.until_at <= now or cache.mver ~= c.bk.mver or cache.gen ~= c.bk.gen then
-            cache = {rows = {}, n = 0, until_at = now + .25, mver = c.bk.mver, gen = c.bk.gen}
+        -- A local handoff advances ver without changing membership or the
+        -- leadership generation. Discard hints as soon as that map changes.
+        if cache == nil or cache.until_at <= now or cache.mver ~= c.bk.mver or cache.gen ~= c.bk.gen
+           or cache.bucket_ver ~= c.bk.ver then
+            cache = {rows = {}, n = 0, until_at = now + .25, mver = c.bk.mver, gen = c.bk.gen,
+                     bucket_ver = c.bk.ver}
             L.owner_cache = cache
         end
         for _, bucket in ipairs(buckets) do

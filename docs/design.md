@@ -50,6 +50,13 @@ specifies capture, delivery, session catch-up, bootstrap and topology rules.
 | `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads, writes and commits without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec, their lock checks through the Verus-verified counts of a copy of the lock index. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
+Optional [cardinality hints](operations.md#optional-cardinality-statistics)
+can reorder eligible two-table integer-equality inner joins. A bounded,
+explicit ANALYZE samples index prefixes; schema/expiry generations invalidate
+plans. Estimates affect physical order only: predicates, read sets, OCC and
+buffered-write overlays retain their existing contracts. SQL column layout
+and metadata are preserved through the physical permutation.
+
 ### 1.1 Data layout and routing
 
 * Table `db.t` is the Tarantool space `"db.t"` with one field per column (same
@@ -137,13 +144,16 @@ is nothing to wait for or refuse, and otherwise hands them, unwritten, to
   `tarn_storage.ts_commit_local` first, in the stream, which commits it
   itself when there is nothing to wait for or refuse, and otherwise hands
   it back to `tarn_commit_local`, its stream's transaction as it was
-  (§1.5).
+  (§1.5). Existing replicated streams hand back before effects for Lua's
+  final quorum prefix and validation of the original read set.
 * *Commit, read-only (one or several shards):* each participant validates in
   its stream that no read was overwritten and nothing read is W-locked
   (`tarn_validate`; see §2.4 for how "not overwritten" is enforced). The SQL
   server calls the shard's native procedure `tarn_storage.ts_validate`
   first, which validates when nothing would make `tarn_validate` refuse or
-  do more, and otherwise hands the stream back to it unchanged (§1.5).
+  do more on RF1. Existing replicated streams hand back unchanged for Lua's
+  separate final quorum prefix, followed by original read-set validation
+  (§1.5).
 * *Commit, read-write across shards:* a "parallel commit" two-phase commit.
   PREPARE runs on every participant in parallel and, in one local
   transaction, validates the reads, takes durable R/W locks (W locks carry the
@@ -502,8 +512,10 @@ and the fences are stale, how many tables are held, the page limits, how
 many locks prepared transactions hold on each table, and a copy of the lock
 index (below). The Lua code updates it where it changes that state, in the
 same step. A native procedure runs in the same thread as the Lua code,
-between two of its steps, and does not yield, so it sees the state of one
-moment, as a Lua procedure's step that does not yield does. A read it serves is the one
+between two of its steps. Freshness admission may yield before any data,
+schema-cache pointer or native State borrow is retained; the subsequent
+memtx get/check interval does not yield, so it sees one state. Native CALL
+arguments are copied into Rust-owned memory before that wait. A read it serves is the one
 `tarn_select` would make in that state, with the same rows: in the model it
 is `SnapshotRead` with nothing to wait for (§2.2), so the model does not
 change. Its reads count for their bucket's load (§2.13) as the Lua
@@ -514,10 +526,15 @@ procedure serves, as it takes none.
 The SQL server calls `ts_select` for the reads it serves, and `tarn_select`
 for the others and after a `["lua"]`: those of vinyl tables, and the pages
 after a page. The first read of a stream begins its transaction, as
-`tarn_select`'s does (read-confirmed, rolled back after 60 s); a read the
-native procedure hands back takes that transaction back, so that
-`tarn_select` begins it. (Inside a transaction, a read without an
-end key needs neither: it is an IPROTO SELECT, which runs no Lua.) A shard without the module (an older
+`tarn_select`'s does (a fresh empty-transaction barrier, then read-confirmed,
+with a 60 s transaction timeout). Its exact native transaction ID is marked
+before the first data read. A read handed back rolls back only a newly
+owned transaction; an existing stream and its prior reads remain intact.
+The gateway can use IPROTO SELECT for later suitable reads of that stream;
+its eventual commit still validates the stream. An arbitrary unmarked
+ambient transaction is refused, never refreshed after it already read.
+[Native storage](native-storage.md#freshness-and-transaction-ownership)
+describes the ABI and input-lifetime boundary. A shard without the module (an older
 version, or `TARN_NATIVE=0`) answers that the procedure does not exist, one
 whose module did not load or is of another build than its `lua/tarn.lua`
 (the layout of the state differs) that it failed to load, and the SQL
@@ -598,10 +615,13 @@ here. In a stream it writes under a savepoint, so that it hands a commit
 back with the stream's transaction open: its reads, and none of the
 writes. Its attempt reads the rows its writes replace, in that transaction,
 as the Lua procedure's writes do; a commit handed back has read them a
-round trip earlier. Rolling back to the savepoint runs the transaction's
-`on_rollback` triggers, of which a stream's transaction has none before
-its commit: what the Lua module knows of when a stream began is a number
-(`TERM_TXN`, `DDL_TXN`, below). It hands back what `ts_autocommit` hands
+round trip earlier. This stream kernel remains native on RF1; an existing
+replicated stream hands back before effects for Lua's final-prefix fence.
+Savepoint rollback may run `on_rollback` triggers while the transaction
+remains open; freshness cleanup preserves that exact live transaction's
+certificate and original read set. The Lua module also records when a
+stream began as transaction numbers (`TERM_TXN`, `DDL_TXN`, below).
+It hands back what `ts_autocommit` hands
 back, and also:
 
 * a transaction with row locks on this shard (`FOR UPDATE`, `FOR SHARE`):
@@ -644,7 +664,7 @@ Lua procedure then commits in the same stream.
 **Read-only transactions.** The fourth procedure, `tarn_storage.ts_validate`,
 takes `tarn_validate`'s arguments and validates a stream's transaction that
 read on this shard and wrote nothing (TarnCommit!ValidateRO, or the commit
-of a read-only transaction of one shard). It makes the same probe write
+of a read-only transaction of one shard). On RF1 it makes the same probe write
 (§2.4), which a transaction whose reads were overwritten refuses (it
 replies 1213, as `tarn_validate` does, having rolled the transaction
 back), and commits the transaction; the probe's space is data-temporary,
@@ -658,6 +678,21 @@ twin streams through both procedures: those it serves get the Lua
 procedure's reply, among them one whose read was overwritten (1213), and
 the Lua procedure validates or refuses those it hands back, in the same
 stream, as it does their twins.
+
+Existing replicated streams conservatively hand back before probe or
+commit. Lua obtains the final quorum prefix in a separate owned child
+transaction, then validates the original caller transaction and read set.
+This adds no yielding native-to-Lua call. Current Lua and native code use
+ABI 14/392. Nonyielding guard helpers enter through a protected public Lua
+C API shim before State borrowing; the State's four uint64 words at offset
+360 are reserved and contain no LuaJIT callback addresses. Exact transaction
+certificates and their scopes are unchanged. The version rejects ABI 13,
+experimental ABI 12 and older ABI 11 modules. The C API entry and stack/error
+boundary remain runtime premises, not properties proved by Verus.
+Historical benchmark builds retain their recorded ABI and execution paths;
+the ABI 13 checkpoint does not measure ABI 14. A later CI storage SIGSEGV's
+cause remains unproven, so the API correction is not a demonstrated causal
+fix. See the [native boundary](native-storage.md#freshness-and-transaction-ownership).
 
 Two checks of `tarn_validate` concern when the stream began: the node must
 have been the leader since then (TarnCommit: `lost`), and a `TRUNCATE` or
@@ -748,6 +783,10 @@ what it touches (and of which kind), state being read again, a held table,
 a vinyl table, a read of more than a page, and so on
 (`tarn_info().native.fallbacks`, [operations](operations.md)).
 
+The profiling and throughput results below describe their recorded builds,
+before the request-specific barriers and owned CALL-input copy of #130.
+They do not measure the current freshness contract's cost.
+
 On two shards under `oltp_write_only` (16 threads, three runs of each
 build, `bench/sysbench.sh`), the native procedure handed 93% of the
 one-shard commits to Lua (15,534 of 16,638), as cross-shard transactions
@@ -815,15 +854,20 @@ still runs in Lua.
   **strictly serializable** by default: there is a serial order consistent
   with real time.
 * Sessions may choose **READ COMMITTED** instead, with InnoDB's semantics
-  (§2.9): plain reads see the latest committed data per statement and never
-  abort; writes and locking reads take pessimistic row locks; no update is
+  (§2.9): plain reads use a committed view per statement; writes and locking
+  reads take pessimistic row locks; no update is
   lost. Commits stay atomic across shards, durable on a quorum and visible in
   real time, and the writes of READ COMMITTED transactions are ordered as
   under strict two-phase locking, also against serializable transactions.
-* Direct Key/Value readers see only committed data (`read-confirmed`
-  isolation: in replicated shards, only data acknowledged by a quorum), and a
-  direct read issued after an SQL COMMIT returned sees that commit (except
-  when an APPLY failed and the commit was acknowledged without it, see §1.2).
+* Strong SQL/storage read procedures establish a request-specific quorum
+  barrier before their first snapshot. A writable-role flag alone is not
+  evidence that a former leader is current. A failed freshness or clock
+  admission returns an error rather than stale SQL results (§2.6).
+* Raw native Key/Value reads use the configured Tarantool visibility
+  (`read-confirmed` by default), but have no Tarn freshness barrier. A
+  follower or former leader can return old confirmed tuples, including
+  after an SQL COMMIT returned. Raw reads also do not wait for a pending
+  cross-shard APPLY; the stronger SQL procedures check its write locks.
 * Documented trade-offs (checked by TLC as *expected* violations): a direct
   reader that reads two rows of a cross-shard transaction on two different
   shards may see one applied and the other not yet (`Tradeoff_DirectReadAtomic`;
@@ -866,6 +910,12 @@ Invariants checked in every configuration:
 `StrictSerializable` is checked constructively: the spec records the order in
 which writes reached each key and the real-time predecessors of each
 transaction, and the invariant searches for a witness order.
+
+The core model's direct reader observes a current authoritative shard state
+and leader replacement is atomic. `DirectReadYourWrites` therefore does
+not establish freshness for a raw request sent to a partitioned former
+leader. `StrongReadFreshness` checks the additional premise for strong
+procedures; unbarriered raw native reads retain the weaker contract (§2.1).
 
 Each workload (`MC.tla`) is three transactions over two shards: *Skew* (two
 cross-shard read-modify-writes that read each other's write target, plus a
@@ -971,12 +1021,15 @@ so "reads unchanged" plus "no W lock now" together give the model's atomic
 
 ### 2.6 Record lifecycle and timing assumptions
 
-Every protocol record carries an expiry time: `max_txn_age` (120 s) plus a
-clock-skew allowance (60 s) after it was written. A participant refuses a
-PREPARE whose transaction started more than `max_txn_age` ago (by the
-coordinator's timestamp, on the participant's clock), so after a record's
-expiry no PREPARE of its transaction can be accepted any more. Records are
-garbage-collected only after expiry, and
+Every protocol record carries an expiry time: `max_txn_age` (`A`, 120 s)
+plus **two** `clock_skew` margins (`2*S`, 120 s by default) beyond its retained timestamp.
+The immutable coordinator timestamp must have been issued before that
+write. Two margins cover an issuer ahead of the record holder at the write
+and a receiving participant behind the holder at GC, even as bounded
+offsets change. Fresh PREPARE admission checks age again after yielding
+planning, using `max(local_wall, persisted_high_water)`; its YES or fresh
+NO/tombstone needs current clock coverage for the transaction's relevant
+logical writer shards. Records are garbage-collected only after expiry, and
 
 * a *prepared* participant record never (recovery resolves it first);
 * an *applied* participant record only once the decision record is final
@@ -992,7 +1045,14 @@ not expired or some participant is still prepared (either rules out "the
 record was collected"); otherwise it reports the outcome as unknown. An
 expired PREPARE is refused without writing anything and without a vote: a
 NO could contradict a commit whose records are already gone (TLC found this,
-§2.8). The `*_GC` configurations check all of this.
+§2.8). A current receipt is inspected in a separate fresh-barrier,
+read-confirmed transaction, rather than through an older caller snapshot.
+A confirmed existing promise can be reissued without creating a new
+clock-dependent vote. Missing/expired/uncertain history is not a NO vote
+and must not justify aborting a transaction that may already be committed.
+The `*_GC` configurations and the focused
+[expiry refinements](verification.md#record-expiry-clocks-and-persisted-admission-policy-issue-130)
+check these separate lifecycle and timing premises.
 
 **Recovery and garbage collection move on** (issue #129). While a shard is
 down, recovery cannot resolve the transactions that need it, and garbage
@@ -1030,16 +1090,100 @@ and once the shard is back they are resolved too. `tarn_info().recovery`
 reports the backlog, the age of its oldest transaction, the shards in
 backoff and garbage collection's laps (`docs/operations.md`).
 
-Timing assumptions remain in two places. The expiry rules assume that clocks
-differ by less than the 60 s allowance. And a leader that is partitioned
-away but does not yet know it has been replaced can still answer autocommit
-reads from its (possibly stale) data until Tarantool's
-`election_fencing_mode = 'strict'` makes it step down, which bounds the
-window by the election timeout; this is the usual leader-lease assumption
-and is not part of the TLA+ model, which treats leader changes as atomic.
-A leader that knows it was demoted refuses every lock check, validation and
-commit with ER_READONLY (it may still serve plain reads of an open stream,
-whose commit then fails). A step that commits the reads of a stream (a
+Scheduling does not certify clock health or read freshness. Fresh votes
+and deletions still obey their admission and retention guards; a record
+without the required deletion evidence remains retained. Already-decided
+finishing remains independent of new clock certification.
+
+The timing policy (`A`, `S`, monitor gap and drift bounds) and GC high-water
+mark live in `_tarn_meta['clock:policy:1']`. Each destructive GC chunk
+advances that mark in the same transaction as its deletions; restart and
+promotion cannot lower it. Old records also retain at least
+`record.ts + A + 2*S`, even if their stored expiry used one margin. Policy
+changes and clock discontinuities outside the observation allowance fail
+closed.
+
+The clock premise covers the entire relevant retention/admission history:
+there are fixed common constants `L` and `U`, with `U - L = S`, such that
+every relevant storage clock and timestamp issuer's raw wall at
+nondecreasing reference time `r` lies in `[r + L, r + U]`. An absolute error
+bound of `S/2` about the same reference is sufficient; an error of `±S` is
+not that bound. Current pairwise agreement alone does not establish this
+fixed historical band. These are trusted deployment facts, including
+initial/common-mode bounds and issuer history; neither quorum replies nor
+the peer sampler proves them.
+
+An observation compares raw wall displacement from the **previous logical
+wall** with monotonic elapsed time, using the unchanged drift allowance.
+Lua checks exact uint64 nanosecond drift and gap budgets, each
+`floor(configured_seconds * 1e9)`, with overflow-free subtractions; the old
+seconds drift check remains an additional conservative rejection.
+Monotonic time must not decrease. After the raw persisted-floor check,
+accepted wall time becomes `max(previous_logical, raw_wall)`, including its
+exact integer nanoseconds. A small raw backward correction may therefore
+be accepted without decreasing the published wall; repeated corrections
+remain measured against the logical maximum. The maximum stays in the
+same fixed reference band: the raw sample supplies its lower bound, and
+the previous logical wall's upper bound cannot increase relative to a
+nondecreasing reference. Logical clocks thus retain pairwise skew at most
+`S`, preserving the `A + 2*S` retention argument. `LogicalClockExpiry`
+checks that refinement and controls for an ungrounded floor and a broken
+raw-clock band. It does not establish the external clock premise.
+
+Installing a policy does not reconstruct protocol history already lost by
+an older deployment. [Operations](operations.md#clock-health-and-record-retention)
+describes the failure states and rollout limits.
+
+Decided finishing is allowed under unknown clock health, but must preserve
+inherited receipt history. One sample supplies the local time floor from
+the finite raw sample, last valid observation, policy creation and H. An
+existing receipt's terminal timestamp is at least both that floor and its
+old timestamp; its expiry is at least both the old expiry and the retained
+timestamp plus `A + 2*S`. Local floors alone cannot bound a receipt from a
+later good-clock leader. `CompletionRetention` catches terminal shortening
+that would allow GC, reboot and a fresh abort over already-committed data.
+
+Read freshness no longer relies on an old leader's election-timeout lease.
+Before the first strong snapshot, a request obtains fresh quorum vclock
+replies, waits for local WAL catch-up and settles its synchronous queue.
+An isolated former leader cannot substitute its writable flag or an older
+successful barrier. A barrier failure refuses the observation, including a
+conditional DML result that writes no WAL. The native/Lua implementation
+uses the pinned Tarantool 3.9 empty `LINEARIZABLE` → `READ_CONFIRMED`
+composition before any data read; direct `LINEARIZABLE` Vinyl access remains
+unsupported. The native replication/API mapping is a trust boundary,
+separate from the bounded [quorum model](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130).
+
+That refinement requires membership, read/write quorum intersection and
+WAL/synchronous durability guarantees to remain valid for every in-flight
+commit. A privileged write-quorum reduction while `box.commit()` waits can
+confirm work already submitted; a precommit configuration check cannot
+reverse its acknowledgement or GC effects. Observed unsupported settings
+are refused, but arbitrary administrative transitions are outside the
+protocol. Drain outstanding work or preserve the guarantees throughout
+reconfiguration; see [operations](operations.md#strong-reads-and-storage-rollout).
+
+Reads and local DML require a ready local clock policy and a current local
+observation, independently of their data-freshness quorum. They do not wait
+for every physical replica's clock. Fresh protocol admission and GC need
+additional expiring coverage of the relevant logical shard leaders,
+whose clock replies themselves follow a fresh quorum proof. Already-decided
+APPLY/ABORT and terminal recovery remain finishable without new clock
+certification. No progress or latency bound follows when quorum, relevant
+writers or clock health are unavailable.
+
+A first-read certificate is not a final validation certificate: an old
+leader may still have an unobserved replacement term and stale data when
+another shard returns newer data. Replicated streams therefore obtain a
+fresh final prefix in a separate owned child transaction before validating
+or locally committing their original read set. Catch-up and settlement
+make the replacement history visible to the existing MVCC probe/term
+checks; the original caller's view is retained and may be rejected, never
+replaced to forget its old reads. `StrongStreamCompletion` checks this
+boundary and both omission/read-set-loss controls.
+
+A known demotion produces ER_READONLY before the clock/freshness checks so
+the gateway retires its old connection. A step that commits the reads of a stream (a
 validation, a local commit, a PREPARE) is refused when the stream began
 under an earlier election term (its transaction's number is below that of
 one begun once the node saw the current term, §1.5), as when the node was
@@ -1780,8 +1924,12 @@ runs the statement again, or rolls the transaction back. A transaction
 routed with the old membership that scanned the sender before the bucket
 left fails its validation there (MVCC, §2.12); one that scanned it after
 can commit only once every shard has the new version, which then refuses
-it. Removing a shard needs no check: a shard leaves once it owns no bucket
-and receives none, and a scan that still reads it finds nothing there.
+it. An empty departing shard contributes no rows to a scan. Before its
+storage stops, withdrawal also fences new promises that name it and drains
+every in-flight, PREPARED and STAGING dependency across the remaining
+shards. Recovery can still need a participant that has released its own
+bucket locks. `DepartureDependencies` checks this protocol reachability
+obligation separately from JoinScan's row coverage.
 
 **The model.** With `MJoin`, B joins the cluster -- `MemberJoin` raises
 `mver` on each shard, in any order -- and x moves from A to B once every
@@ -1812,6 +1960,15 @@ there a server that finds the job abandoned finishes it forward), and
 writes the new membership on every shard (`tarn_members_set` only raises
 the version) before the job ends; a move to the new shard is a job too, so
 it begins once every shard has the new version, as the model's moves do.
+Installing a new version invalidates the local clock policy/evidence.
+After the confirmed membership commit and outside the bucket-state latch,
+`tarn_members_set` reloads confirmed policy/H and checks current local read
+health before acknowledging. The existing-version branch does the same,
+so readiness recovery does not depend on the background clock worker.
+This does not certify remote writers or replace subsequent read barriers.
+A failed post-commit readiness step reports `1180` with the recorded
+version, rather than implying no effect; the existing job must be inspected
+and resumed. An ambient transaction is refused before membership effects.
 A transaction takes its server's version when it begins (`Txn::mver`): a
 server adds a joining shard to its list before it takes the shard's
 version, and a scan reads every shard on the list, so the transaction's
@@ -1834,8 +1991,8 @@ stops, and would wait forever for a shard that is gone. So `TARN REMOVE
 SHARD` first marks the shard *draining* (a `members` job, as above), and
 from then on a participant refuses a PREPARE whose decision shard is not
 active (in the PREPARE's atomic section, with the 'moved' status that makes
-its server read the membership again; a coordinator takes the lowest
-active participant that writes as its decision shard). Its buckets then
+its server read the membership again; a coordinator selects among active
+writing participants using its stable transaction identity). Its buckets then
 move to the active shards (a move to a shard that is not active is refused
 under the move's job), and it waits until no shard counts a PREPARE in
 progress or a prepared participant naming the shard as its decision shard,
@@ -1878,9 +2035,18 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **134 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **140 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
+* **Native clock arithmetic** (`clock.rs`). The shared executable
+  `observation_ok` body checks nondecreasing monotonic input, the observation
+  gap and raw-wall displacement from the previous logical wall against the
+  drift allowance, including bounded negative displacement. `logical_wall`
+  returns the exact maximum; a lemma preserves an absolute reference band
+  under a nondecreasing reference. Integer arithmetic cannot overflow or
+  underflow. These proofs do not establish a common band across clocks,
+  Lua's FFI integer/seconds checks and publication, clock sources, remote offsets,
+  persisted policy, quorum availability or record-GC safety.
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
   specification (`crc_bytes`) for any input; `bucket_from_crc` returns a
   bucket in `1..=bucket_count`; `shard_of_bucket` returns a shard in
@@ -2041,11 +2207,20 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
+| Bug_CompletionRetentionForgetReceipt | violates NoContradictoryReopen | 56 | 76 | 6 | 00s | 6 |
 | Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
 | Bug_DecisionIgnoreLeaving | violates ActivePreferred | 252 | 252 | 2 | 00s | 2 |
 | Bug_DecisionReadOnly | violates WritingParticipant | 162 | 162 | 2 | 00s | 2 |
 | Bug_DecisionReselect | violates RecordedRecovery | 1142 | 2570 | 4 | 00s | 4 |
+| Bug_DepartureDecisionOnly | violates NoOrphanPrepared | 301 | 866 | 14 | 00s | 13 |
+| Bug_DepartureIgnoreStaging | violates NoOrphanStaging | 301 | 895 | 14 | 00s | 13 |
+| Bug_DepartureLateAdmission | violates NoOrphanPrepared | 490 | 1374 | 15 | 00s | 13 |
+| Bug_DepartureNoCommitCheck | violates NoNewDependencyAfterDrainACK | 208 | 523 | 9 | 00s | 8 |
+| Bug_DepartureUntrackedWal | violates NoOrphanPrepared | 341 | 1186 | 14 | 00s | 13 |
 | Bug_EngineAliasNoMutex | violates BothCallersOK | 25 | 46 | 8 | 00s | 8 |
+| Bug_EngineBuildCallerOnlyCut | violates PreparedImage | 2058 | 4782 | 13 | 00s | 13 |
+| Bug_EngineBuildKeepPrefix | violates PreparedImage | 764 | 1673 | 9 | 00s | 9 |
+| Bug_EngineBuildReusePage | violates PreparedImage | 747 | 1651 | 10 | 00s | 10 |
 | Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
 | Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
 | Bug_EngineCopyLosePersistentFence | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
@@ -2071,6 +2246,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
+| Bug_FileBackupHash | violates RestoredChecked | 350 | 999 | 10 | 00s | 10 |
+| Bug_FileBackupIdentity | violates SeedDistinct | 244 | 571 | 8 | 00s | 8 |
+| Bug_FileBackupLease | violates PublicationLease | 111 | 227 | 6 | 00s | 6 |
+| Bug_FileBackupPartial | violates PublishedComplete | 12 | 13 | 3 | 00s | 3 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
 | Bug_GroupedDDLIgnoreGeneration | violates NoHeldSnapshot | 36 | 46 | 5 | 00s | 5 |
@@ -2137,6 +2316,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LockCopyOnQuorum | violates NativeFindsLocks | 17 | 21 | 3 | 00s | 3 |
 | Bug_LockCopyReleaseFirst | violates NativeFindsLocks | 162 | 387 | 5 | 00s | 5 |
 | Bug_LockReloadNoCopy | violates NativeFindsLocks | 166 | 395 | 5 | 00s | 5 |
+| Bug_LockReplyIgnoreDisconnect | violates ReturnedRowsLocked | 184 | 438 | 12 | 00s | 10 |
+| Bug_LockReplyRelabelGeneration | violates ReturnedRowsLocked | 187 | 436 | 12 | 00s | 11 |
+| Bug_LogicalClockFloorAdvance | violates NoFalseNO | 134 | 194 | 4 | 00s | 4 |
+| Bug_LogicalClockRawBound | violates NoFalseNO | 4028 | 12533 | 7 | 00s | 7 |
 | Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
 | Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
 | Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
@@ -2155,12 +2338,30 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_QueryEarlyResultRelease | violates Ownership | 24 | 30 | 5 | 00s | 5 |
 | Bug_QueryEarlyWireRelease | violates Ownership | 5 | 5 | 3 | 00s | 3 |
 | Bug_QueryPostDecisionRefusal | violates NoPartialBudgetDML | 39 | 58 | 6 | 00s | 6 |
+| Bug_PlainLazyCapture | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyDeclared | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyFirstWriteOnly | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyGlobalStale | violates UnrelatedOneCommit | 15 | 22 | 7 | 00s | 7 |
+| Bug_PlainLazyPending | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyReplaceReadset | violates NoStaleReadCommit | 9 | 12 | 6 | 00s | 6 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
 | Bug_RCReadBeforeLock | violates StrictSerializable | 2543 | 7817 | 11 | 02s | 11 |
 | Bug_ROValidateNoReadCheck | violates StrictSerializable | 19011 | 70050 | 12 | 06s | 12 |
 | Bug_ROValidateNoWLockCheck | violates StrictSerializable | 10550 | 37003 | 11 | 04s | 11 |
+| Bug_RecordExpiryClockBackward | violates NoResurrectedPrepare | 741 | 9636 | 7 | 00s | 7 |
+| Bug_RecordExpiryExcessSkew | violates NoResurrectedPrepare | 1275 | 39253 | 6 | 00s | 6 |
+| Bug_RecordExpiryFutureTimestamp | violates NoResurrectedPrepare | 274 | 3615 | 6 | 00s | 6 |
+| Bug_RecordExpiryMissingTimestamp | violates NoResurrectedPrepare | 534 | 6952 | 6 | 00s | 6 |
+| Bug_RecordExpiryRaiseMaxAge | violates NoResurrectedPrepare | 689 | 9159 | 7 | 00s | 7 |
+| Bug_RecordExpirySingleMargin | violates NoResurrectedPrepare | 472 | 5681 | 5 | 00s | 5 |
+| Bug_RecordPolicyEntryOnly | violates NoUnsafeAdmission | 316 | 726 | 10 | 00s | 9 |
+| Bug_RecordPolicyIgnoreHealth | violates NoUnsafeAdmission | 104 | 217 | 7 | 00s | 4 |
+| Bug_RecordPolicyMutablePolicy | violates NoUnsafeAdmission | 407 | 997 | 11 | 00s | 10 |
+| Bug_RecordPolicyNoWatermark | violates NoUnsafeAdmission | 393 | 977 | 12 | 00s | 10 |
+| Bug_StreamCompletionDropReadset | violates NoFracturedCommit | 2798 | 6345 | 14 | 00s | 14 |
+| Bug_StreamCompletionSkipFinalPrefix | violates NoFracturedCommit | 196 | 372 | 8 | 00s | 8 |
 | Bug_StreamMarksCommitInNewTxn | violates CommittedReadsCurrent | 11392 | 22752 | 8 | 01s | 8 |
 | Bug_StreamMarksDoomAfterCommit | violates CommittedReadsCurrent | 20376 | 44345 | 9 | 01s | 8 |
 | Bug_StreamMarksDoomBeforeClear | violates CommittedReadsCurrent | 68565 | 172713 | 10 | 02s | 10 |
@@ -2171,6 +2372,17 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_StreamMarksRoAfterTermChange | violates CommittedReadsCurrent | 165 | 202 | 5 | 00s | 4 |
 | Bug_StreamMarksValidateNoFenceFresh | violates CommittedReadsCurrent | 70994 | 178466 | 11 | 02s | 9 |
 | Bug_StreamMarksWritableBeforeTrigger | violates CommittedReadsCurrent | 462 | 706 | 6 | 00s | 5 |
+| Bug_StrongReadNoIntersection | violates StrongReadsSeePriorAcks | 11323 | 31467 | 9 | 00s | 8 |
+| Bug_StrongReadReuseBarrier | violates StrongReadsSeePriorAcks | 342886 | 1571900 | 15 | 02s | 14 |
+| Bug_StrongReadRoleOnly | violates StrongReadsSeePriorAcks | 396 | 727 | 6 | 00s | 5 |
+| Bug_StrongReadSkipCatchup | violates StrongReadsSeePriorAcks | 43183 | 148151 | 11 | 00s | 10 |
+| Bug_StrongReadSkipSettlement | violates StrongReadsSeePriorAcks | 38069 | 127663 | 11 | 00s | 11 |
+| Bug_StrongReadSnapshotBeforeBarrier | violates StrongReadsSeePriorAcks | 80486 | 286081 | 12 | 00s | 12 |
+| Bug_StrongStreamCertifyLateSnapshot | violates CertificateBeforeRead | 523 | 893 | 7 | 00s | 6 |
+| Bug_StrongStreamIgnoreCap | violates RegistryBounded | 770 | 1431 | 7 | 00s | 7 |
+| Bug_StrongStreamMarkBeforeBarrier | violates CertificateHasProvenance | 58 | 69 | 5 | 00s | 3 |
+| Bug_StrongStreamNoCleanup | violates RegistryOnlyLive | 200 | 293 | 6 | 00s | 5 |
+| Bug_StrongStreamWrongTxnID | violates ReadHasOwnCertificate | 373 | 614 | 6 | 00s | 6 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
 | Bug_UnconfirmedPrepare | violates CertifiedYesDurable | 6 | 6 | 4 | 00s | 4 |
@@ -2182,13 +2394,17 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
+| DepartureDependencies | no errors | 564 | 1626 | 17 | 00s |  |
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
+| EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
+| FileBackup | no errors | 356 | 983 | 15 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
@@ -2217,6 +2433,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Local_GC_ROValidate | no errors | 1207771 | 8610883 | 25 | 02min 47s |  |
 | Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
+| LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
+| LogicalClockExpiry | no errors | 85476 | 387918 | 19 | 01s |  |
 | Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
@@ -2226,6 +2444,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Placement_Failover | no errors | 516733 | 2823296 | 21 | 01min 37s |  |
 | Placement_RC | no errors | 1153174 | 8224685 | 26 | 03min 23s |  |
 | Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
+| PlainLazyBinding | no errors | 115 | 137 | 7 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
 | QueryBudget | no errors | 142 | 249 | 13 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
@@ -2234,6 +2453,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | RC_Local | no errors | 50606 | 277842 | 19 | 09s |  |
 | RC_Mixed | no errors | 171352 | 1029336 | 20 | 27s |  |
 | RC_MixedFailover | no errors | 1219288 | 6901169 | 22 | 03min 56s |  |
+| RecordExpiryClock | no errors | 1092 | 17022 | 9 | 00s |  |
+| RecordExpiryPolicy | no errors | 1368 | 3658 | 23 | 00s |  |
 | Recov | no errors | 71927 | 412881 | 18 | 11s |  |
 | RecovReaders | no errors | 28258 | 135451 | 17 | 06s |  |
 | Recov_AckOnPrepare | no errors | 83195 | 475418 | 18 | 14s |  |
@@ -2247,6 +2468,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Skew_ROValidate | no errors | 1944298 | 16444418 | 26 | 04min 27s |  |
 | StreamMarks | no errors | 2134412 | 8112746 | 21 | 24s |  |
 | StreamMarks_TwoTables | no errors | 27772812 | 122862175 | 23 | 06min 23s |  |
+| StrongReadFreshness | no errors | 2443260 | 13421587 | 31 | 17s |  |
+| StrongStreamCertificate | no errors | 24180 | 76876 | 19 | 00s |  |
+| StrongStreamCompletion | no errors | 3369 | 7585 | 19 | 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
@@ -2328,15 +2552,17 @@ discussion. In short, on this 2-vCPU machine (load generator included):
 * Serializable transactions must commit within `max_txn_age` (120 s) of
   their first statement (stream transactions already time out after 60 s;
   READ COMMITTED transactions have no limit); protocol
-  records are kept for about 3 minutes, which at several thousand
-  cross-shard commits per second costs on the order of 100 MB of memtx
-  memory per shard.
+  records have a retention horizon of at least `max_txn_age + 2*clock_skew`
+  (four minutes at the defaults), and unresolved prepared work is retained
+  longer. Size metadata memory for the commit rate and retained records.
 * A commit or autocommit write interrupted by a lost connection is reported
   as "outcome unknown" (1180/40003), as in other distributed databases; the
   client has to check.
-* Timing assumptions (§2.6): clocks within 60 s of each other, and a leader
-  lease bounded by Tarantool's election timeout for autocommit reads on a
-  partitioned old leader.
+* Clock safety (§2.6): the configured cross-node/issuer bound and historical
+  timestamp assumptions remain trusted. Uncertain local health or relevant
+  writer coverage can refuse new work and delay GC. Raw native reads have
+  no request-specific quorum barrier and may return stale confirmed data;
+  opted-in lazy indexes may miss recent matches even with fresh base rows.
 * Write paths read in `read-committed` isolation, so in a replicated shard a
   write can fail with a duplicate key (1062) because of an insert that is
   not yet confirmed by the quorum and is later rolled back by a failover (a
