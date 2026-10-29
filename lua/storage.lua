@@ -70,6 +70,12 @@ end
 assert(not fio.path.exists(fio.pathjoin(workdir, 'INCOMPLETE')),
        'refusing an incomplete backup/restore directory')
 fio.mktree(workdir)
+local maintenance = require('tarn_backup').read_marker(workdir)
+local restore_parent = fio.dirname(fio.abspath(workdir))
+if fio.path.exists(fio.pathjoin(restore_parent, 'cluster-source.json')) and not maintenance then
+    assert(fio.path.exists(fio.pathjoin(restore_parent, 'activated.json')),
+           'cluster restore activation is incomplete')
+end
 
 -- Vinyl reads a page that misses its cache on one of vinyl_read_threads,
 -- in turn; Tarantool's default of one thread queues every such read behind
@@ -88,7 +94,7 @@ local replicated = #replicas > 1
 local election_mode = env('TARN_ELECTION_MODE', replicated and 'candidate' or 'off')
 assert(election_mode == 'candidate' or election_mode == 'voter' or election_mode == 'off',
        'TARN_ELECTION_MODE must be candidate, voter or off')
-assert(not replicated or election_mode ~= 'off',
+assert(maintenance or not replicated or election_mode ~= 'off',
        'replicated Tarn requires candidate or voter election mode')
 local instance_uuid = env('TARN_INSTANCE_UUID', '')
 if instance_uuid ~= '' then
@@ -136,10 +142,13 @@ box.cfg{
     log_level = tonumber(env('TARN_LOG_LEVEL', '5')),
     checkpoint_interval = 3600,
     feedback_enabled = false,
-    replication = replicated and replicas or nil,
+    -- Restores are inspected in quarantine with no replication or elections.
+    -- A source fence survives restart while retaining catch-up connectivity.
+    replication = maintenance and maintenance.kind == 'restore' and {} or (replicated and replicas or nil),
+    read_only = maintenance ~= nil,
     replication_synchro_quorum = replicated and 'N / 2 + 1' or nil,
     replication_synchro_timeout = 5,
-    election_mode = election_mode,
+    election_mode = maintenance and 'off' or election_mode,
     election_fencing_mode = replicated and 'strict' or nil,
     replication_timeout = 0.5,
     bootstrap_strategy = replicated and 'config' or 'auto',
@@ -148,6 +157,12 @@ box.cfg{
     instance_uuid = instance_uuid ~= '' and instance_uuid or nil,
     replicaset_name = 'shard' .. shard_id,
 }
+
+if maintenance then
+    assert(maintenance.uuid == tostring(box.info.uuid), 'maintenance identity mismatch')
+    log.warn('tarn: maintenance fence %s; application initialization disabled', maintenance.token)
+    return
+end
 
 -- The first instance bootstraps users; replicas receive them via replication.
 if not replicated then
