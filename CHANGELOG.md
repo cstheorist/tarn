@@ -58,6 +58,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Source-bound RF3 native-GC crash investigation controls
+  ([#160](https://github.com/cstheorist/tarn/issues/160)), with historical,
+  Lua-only, JIT-off and current-source trials, retained successful/failed
+  logs and crash cores. The original fault remains unexplained; no
+  production fix or successful-repeat-as-fix claim is made. See
+  [the investigation boundary](docs/native-gc-investigation.md).
+
 - Request-specific quorum freshness for default SQL and strong storage
   reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty
   transaction establishes the confirmed prefix before data access; a first
