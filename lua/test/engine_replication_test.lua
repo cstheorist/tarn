@@ -41,7 +41,7 @@ end
 local r={pid=box.info.pid,uuid=tostring(box.info.uuid),id=box.info.id,term=box.info.election.term,
     ro=box.info.ro,workdir=require('fio').cwd(),wal=box.cfg.wal_mode,sync=tarn.cfg.sync,
     queue=box.info.synchro.queue,version=box.info.version,check_locks=tarn.cfg.check_locks,
-    lock_copy_errors=tarn.stats.lock_copy_errors}
+    lock_copy_errors=tarn.stats.lock_copy_errors,clock=tarn.clock.status()}
 if not r.ro then
     r.native=tarn_info().native; r.quota_ready=tarn.lazy.quota.ready()
     if r.native and r.native.ready==1 then
@@ -71,22 +71,39 @@ local function state(i)
 end
 local function mode_ok(s)
     return s.check_locks == true and s.lock_copy_errors == 0 and
-        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 11 and s.state_size == 312
+        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 14 and s.state_size == 392
             and s.fallback_offset == 304
         or mode == 'lua' and s.native == false)
 end
 local function leader()
-    return await('confirmed writable leader', function()
-        local found
+    local snapshots, first = {}, true
+    local started = fiber.clock()
+    local good, result = pcall(await, 'confirmed writable leader', function()
+        local found, eligible = nil, 0
         for i = 1, 3 do
             local yes, s = pcall(state, i)
-            if yes and s and not s.ro and s.quota_ready and s.queue.len == 0
+            snapshots[i] = {connected = conns[i]:is_connected(), response = yes and s or false,
+                error = not yes and tostring(s) or (s == false and tostring(conns[i].error) or false)}
+            if yes and s and not s.ro and s.quota_ready and s.clock.read_ready and s.queue.len == 0
                and not s.queue.busy and s.queue.owner == s.id and mode_ok(s) then
-                assert(found == nil, 'multiple writable leaders'); found = i
+                eligible = eligible + 1; found = i
             end
         end
+        if first then event('leader readiness first observation', snapshots); first = false end
+        assert(eligible <= 1, 'multiple writable leaders')
         return found
     end)
+    if not good then
+        -- Capture every node's last response/error before the shell's
+        -- finally cleanup. In particular a durable clock fault must stay
+        -- closed; cache warming or a longer wait must not hide it.
+        local data = {error = tostring(result), elapsed = fiber.clock() - started, nodes = snapshots}
+        event('leader readiness timeout', data)
+        io.stderr:write('ENGINE_RF3_LEADER_DIAGNOSTIC ', json.encode(data), '\n')
+        error(result)
+    end
+    event('leader readiness accepted', {index = result, elapsed = fiber.clock() - started, nodes = snapshots})
+    return result
 end
 local function args(i)
     return ev(i, "return assert(box.space._tarn_meta:get{'test:engine_rf3'}).value.a")
@@ -181,7 +198,7 @@ require('fiber').create(function() _G.engine_rf3_build=tarn_alter_build(name,a,1
         check('promoted leader publishes, cleans and accepts a fresh write',
             s.catalog_id == new_id and s.target_engine == target_engine and s.source_rows == 0
             and s.target_rows == count + 2 and s.target_zero and not s.held and s.receipt.cleaned, s)
-        local r = call(l, 'tarn_select', old_id, 0, {1}, 'EQ', 1)
+        local r = call(l, 'tarn_select', old_id, 0, {1}, 'EQ', 1, box.NULL, true, true)
         check('retired ID remains a schema-change error after both leader deaths', r[1] == 'error' and r[2] == 1412, r)
     else error('unknown engine replication stage ' .. stage) end
 end

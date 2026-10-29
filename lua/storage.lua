@@ -25,6 +25,9 @@
 --   TARN_LOAD_WINDOW   seconds of requests a bucket's load counts (the
 --                      rebalancer's TARN REBALANCE BY LOAD; default 60:
 --                      the last one or two minutes)
+--   TARN_MAX_TXN_AGE, TARN_CLOCK_SKEW, TARN_CLOCK_MAX_GAP,
+--   TARN_CLOCK_MAX_DRIFT  immutable timing policy, in seconds; set on every
+--                      replica before its first policy installation
 --   TARN_CHECK_YIELDS, TARN_TEST_HOOKS  (tests) see lua/tarn.lua "Yields"
 --   TARN_CHECK_LOCKS   (tests) see lua/tarn.lua "Native procedures"
 --   TARN_DUMP_EVERY    (tests) checkpoint every N seconds, so that vinyl rows
@@ -47,6 +50,20 @@ local listen = env('TARN_LISTEN', '127.0.0.1:3301')
 local workdir = env('TARN_WORKDIR', 'data')
 local replicas = json.decode(env('TARN_REPLICAS', '[]'))
 local peers = json.decode(env('TARN_PEERS', '{}'))
+local function timing(name, default)
+    local value = tonumber(env(name, tostring(default)))
+    if value == nil or value ~= value or value < 0 or value > 9007199254 then
+        error(name .. ' must be a finite nonnegative number within the clock policy bounds')
+    end
+    return value
+end
+local max_age = timing('TARN_MAX_TXN_AGE', 120)
+local skew = timing('TARN_CLOCK_SKEW', 60)
+local max_gap = timing('TARN_CLOCK_MAX_GAP', 2)
+local max_drift = timing('TARN_CLOCK_MAX_DRIFT', .25)
+if max_age <= 0 or max_gap <= 0 or max_drift >= max_gap or max_age + 2 * skew > 9007199254 then
+    error('timing policy requires positive age/gap, drift < gap and age + 2*skew within the clock bounds')
+end
 fio.mktree(workdir)
 
 -- Vinyl reads a page that misses its cache on one of vinyl_read_threads,
@@ -153,6 +170,10 @@ require('tarn').init{
     shard_id = shard_id,
     peers = peers,
     sync = replicated,
+    max_txn_age = max_age,
+    clock_skew = skew,
+    clock_max_gap = max_gap,
+    clock_max_drift = max_drift,
     -- Tests: fail a protocol step that yields inside its atomic section, and
     -- let tests hold a step at its yield points (lua/tarn.lua "Yields").
     check_yields = env('TARN_CHECK_YIELDS', '') ~= '',

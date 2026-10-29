@@ -14,7 +14,8 @@ box.cfg{work_dir = work, listen = uri, memtx_use_mvcc_engine = true, memtx_memor
 box.ctl.promote()
 local tarn = require('tarn'); tarn.lazy.paused = true
 tarn.init{shard_id = 1, peers = {}, sync = true, native = native ~= nil and native ~= '0' and native or false,
-    test_hooks = true, check_yields = true, recovery_after = 1000000}
+    test_hooks = true, check_yields = true, recovery_after = 1000000,
+    max_txn_age = 1, clock_skew = 1}
 fiber.sleep(.03)
 local function wait(label, fn)
     local until_ = fiber.clock() + 5
@@ -22,11 +23,13 @@ local function wait(label, fn)
     error(label .. ' timed out')
 end
 wait('schema/quota/native ready', function()
-    return box.space._tarn_part ~= nil and tarn.lazy.quota.ready()
+    return box.space._tarn_part ~= nil and tarn.lazy.quota.ready() and tarn.clock.status().read_ready
         and (native == nil or native == '0' or (tarn_info().native or {}).ready == 1)
 end)
 local function ok(r) assert(r[1] == 'ok', json.encode(r)); return r end
-ok(tarn_bucket_init(16, {{1, 16}})); ok(tarn_autocommit({}, {}))
+ok(tarn_bucket_init(16, {{1, 16}}))
+wait('clock policy after initial membership discovery', function() return tarn.clock.status().read_ready end)
+ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then
     layout = tonumber(require('ffi').cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
@@ -96,6 +99,7 @@ for n, engine in ipairs({'memtx', 'vinyl'}) do
           first[1] ~= 'yes' and after.part ~= 'prepared' and after.decision ~= 'staging'
           and after.locks == 0 and after.reservations == 0 and not after.row, {first, after})
     box.cfg{replication_synchro_quorum = 1}
+    wait('current clock coverage after quorum release', function() return tarn.clock.check({1}) == nil end)
     -- A NO may legitimately tombstone its old ID. Retry the logical work
     -- with a fresh transaction ID, then prove confirmed revotes work.
     local retry = id .. '-retry'
@@ -123,10 +127,10 @@ for n, engine in ipairs({'memtx', 'vinyl'}) do
           and confirmed.part == 'prepared' and confirmed.reservations == 1 and not confirmed.row, {yes, confirmed})
     yes = tarn_prepare(unpack(stream_args))
     check(engine .. ': confirmed stream PREPARE can be revoted outside its stream', yes[1] == 'yes', yes)
-    local max_age = tarn.cfg.max_txn_age
-    tarn.cfg.max_txn_age = .01; fiber.sleep(.02)
+    -- The policy is immutable. Age the original frame under the actual
+    -- configured bound, instead of changing admission rules mid-history.
+    fiber.sleep(tarn.cfg.max_txn_age + .05)
     yes = tarn_prepare(unpack(stream_args))
-    tarn.cfg.max_txn_age = max_age
     check(engine .. ': known durable YES is revoted before expiry and missing-stream checks',
           yes[1] == 'yes' and state(sid, stream_id, 2).part == 'prepared', yes)
     assert(tarn_txn_cas(stream_id, 'staging', 'committed', {1}) == 'committed'); ok(tarn_apply(stream_id))
@@ -140,14 +144,13 @@ for n, engine in ipairs({'memtx', 'vinyl'}) do
     -- An expired request without its original stream must not create an
     -- ABORT fence. In particular, normal record GC can remove an already
     -- committed transaction's history: the late frame must leave it gone.
-    tarn.cfg.max_txn_age = .01
     local absent_id = id .. '-expired-absent'
     local late_args = args(absent_id, {{'replace', sid, {2, 99, n}}}, reads)
     late_args[7] = stream_args[7]
     local expired = tarn_prepare(unpack(late_args))
     local absent = state(sid, absent_id, 2)
     check(engine .. ': expired missing-stream request creates no new history or business effects',
-          expired[1] == 'expired' and absent.part == 'none' and absent.decision == 'none'
+          expired[1] == 'expired' and expired[3] == 'transaction too old' and absent.part == 'none' and absent.decision == 'none'
           and absent.locks == 0 and absent.reservations == 0 and absent.row[2] == 9
           and #ok(tarn_lazy_control('pending'))[2] == 0, {expired, absent})
     confirmed = state(sid, stream_id, 2)
@@ -160,9 +163,8 @@ for n, engine in ipairs({'memtx', 'vinyl'}) do
     box.commit()
     expired = tarn_prepare(unpack(stream_args))
     local collected = state(sid, stream_id, 2)
-    tarn.cfg.max_txn_age = max_age
     check(engine .. ': expired committed history stays collected after late read-set PREPARE',
-          expired[1] == 'expired' and collected.part == 'none' and collected.decision == 'none'
+          expired[1] == 'expired' and expired[3] == 'transaction too old' and collected.part == 'none' and collected.decision == 'none'
           and collected.locks == 0 and collected.reservations == 0 and collected.row[2] == 9
           and #ok(tarn_lazy_control('pending'))[2] == 0, {expired, collected})
 end

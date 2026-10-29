@@ -21,6 +21,10 @@ tests/ddlfaults.sh                         # CREATE / DROP / TRUNCATE when a sha
 tla/check.sh                               # needs tla/tla2tools.jar
 ```
 
+The formal registry has 252 default configurations, including 185 expected
+broken/tradeoff outcomes, and 265 total configurations (259 generated and
+six maintained directly). Explicit check arguments override the default.
+
 ## Rules of the road
 
 - The commit protocol lives in `lua/tarn.lua` (participants, recovery,
@@ -38,7 +42,7 @@ tla/check.sh                               # needs tla/tla2tools.jar
   and lock updates inside `atomic()` with no yield, right before
   `box.commit()` (`lua/tarn.lua` "Yields", `docs/design.md` §2.11); the
   storage tests run with `TARN_CHECK_YIELDS`.
-- Code in `crates/tarn-verified` must keep verifying with Verus (137 verified,
+- Code in `crates/tarn-verified` must keep verifying with Verus (140 verified,
   0 errors); keep its Verus idioms.
 - SQL behaviour is defined by MariaDB 10.11: add cases to
   `tests/sql/difftest.py`.

@@ -40,6 +40,8 @@ return require('json').encode{
  cpu_thread_ns=tonumber(clock.thread64()),cpu_process_ns=tonumber(clock.proc64()),
  gc=m,call=box.stat().CALL.total,eval=box.stat().EVAL.total,
  info=i,pid=pid,uuid=tostring(box.info.uuid),version=box.info.version,
+ read_contract=tarn_read_contract(),
+ native_fresh_clock_ok=n and tonumber(n.fresh_clock_ok) or box.NULL,
  native_layout=n and tonumber(n.layout) or box.NULL,
  native_size=n and ffi.sizeof('struct tarn_ns') or box.NULL,
  route={epoch=b[3],membership=b[6],count=b[2]},proc_stat=proc,
@@ -154,6 +156,10 @@ def measure(args, root, number, trial, mode, shape, batch, workers, seed, route)
             raise RuntimeError("client failed (raw samples/error text retained): " + errors)
         before, after = record["before"], record["after"]
         assert before["uuid"] == after["uuid"] and before["pid"] == after["pid"], "storage restarted"
+        for snapshot in (before, after):
+            assert snapshot["read_contract"] == ["strong_reads", 1]
+            assert snapshot["native_layout"] == 14 and snapshot["native_size"] == 392
+            assert snapshot["native_fresh_clock_ok"] == 1 and snapshot["info"]["clock"]["read_ready"]
         assert result["operations"] > 0
         operations = result["operations"]
         requested = operations * batch
@@ -249,7 +255,8 @@ def run(args):
                 "rust_counter_scope": "module-wide successful Rust System allocator requests; separate from Lua/C/tuples/RSS; instrumented BOTH paths",
                 "rust_observer_order": "before counter snapshot AFTER tarn_info; after snapshot BEFORE tarn_info; stack-only counter reply",
                 "cpu_scope": "TX/process CPU includes the observer/background interval between snapshots; idle/probe control retained, not subtracted",
-                "jit_gc": "normal JIT and incremental GC; no stop/collect in timed phases"}
+                "jit_gc": "normal JIT and incremental GC; no stop/collect in timed phases",
+                "read_guarantee": "strong_reads V1: fresh quorum barrier before data on both Lua/native paths; native ABI14/392 and owned CALL input copy"}
     manifest["arguments"]["client"] = str(args.client)
     manifest["arguments"]["output"] = str(args.output)
     write(root/"manifest.json", manifest)
@@ -257,7 +264,7 @@ def run(args):
     write(root/"initial.json", initial)
     assert initial["jit_on"] and initial["gc_running"] is not False
     assert initial["info"]["native"]["ready"] == 1, "other native procedures must stay enabled"
-    assert initial["native_layout"] == 11 and initial["native_size"] == 312
+    assert initial["native_layout"] == 14 and initial["native_size"] == 392
     assert initial["test_hooks"] is False,"performance fixture must omit TARN_TEST_HOOKS rather than set string0"
     assert initial["info"]["locks"] == initial["info"]["prepared"] == initial["info"]["ddl_held"] == 0
     idle0 = observe(args)
@@ -416,7 +423,7 @@ def run_prepared_controls(args):
     assert args.tenant is not None and args.bucket>0 and args.modes==['lua','native']
     assert args.trials*2*(args.warmup+args.seconds)<=40,'prepared control must finish within60s'
     initial=observe(args);write(root/'initial.json',initial)
-    assert initial['native_layout']==11 and initial['native_size']==312 and initial['info']['native']['ready']==1
+    assert initial['native_layout']==14 and initial['native_size']==392 and initial['info']['native']['ready']==1
     assert initial['test_hooks'] is False and initial['active_native_hooks']==0 and initial['jit_on'] and initial['gc_running'] is not False
     assert initial['info']['locks']==initial['info']['prepared']==initial['info']['ddl_held']==0
     write(root/'manifest.json',{'script_sha256':digest(__file__),'client_sha256':digest(args.client),

@@ -762,6 +762,7 @@ dependencies = [
 name = "tarn-storage"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "tarn-verified",
 ]
 

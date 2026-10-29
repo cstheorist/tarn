@@ -1,6 +1,6 @@
 -- Recovery and garbage collection move on past what they cannot resolve
 -- (issue #129). Run by recovery_faults.sh: S1, S2, S3 are the three shards,
--- S3_PID the third's process, which this test pauses and resumes.
+-- RECOVERY_WORK identifies the exact child processes this fixture owns.
 --
 -- While shard 3 is paused, shards 1 and 2 each hold more prepared
 -- participants that need it (its decision records) than a recovery pass
@@ -13,12 +13,25 @@
 local net = require('net.box')
 local json = require('json')
 local fiber = require('fiber')
+local fio = require('fio')
+local ffi = require('ffi')
 
 local opts = {user = 'tarn', password = 'tarn', wait_connected = 5}
 local c = {net.connect(os.getenv('S1'), opts), net.connect(os.getenv('S2'), opts),
            net.connect(os.getenv('S3'), opts)}
 for i = 1, 3 do assert(c[i]:is_connected(), 'cannot connect to shard ' .. i) end
-local pid3 = assert(os.getenv('S3_PID'))
+local work = assert(os.getenv('RECOVERY_WORK'))
+ffi.cdef('int kill(int, int);')
+local function signal(i, sig)
+    local f = assert(io.open(fio.pathjoin(work, 's' .. i .. '.pid')))
+    local pid = assert(tonumber(f:read('*a'))); f:close()
+    f = assert(io.open(fio.pathjoin(work, 's' .. i .. '.identity')))
+    local identity = f:read('*a'):match('^%s*(.-)%s*$'); f:close()
+    f = assert(io.open('/proc/' .. pid .. '/stat')); local fields = {}
+    for x in f:read('*a'):gmatch('%S+') do fields[#fields+1] = x end; f:close()
+    assert(fields[4] .. ':' .. fields[22] == identity, 'owned process identity changed')
+    assert(ffi.C.kill(pid, sig) == 0)
+end
 
 local pass, fail = 0, 0
 local function check(name, cond, extra)
@@ -33,6 +46,11 @@ local function wait_for(cond, secs)
     end
     return cond()
 end
+for i = 1, 3 do
+    assert(wait_for(function() return c[i]:eval([[return box.space._tarn_scratch~=nil
+        and box.space._tarn_meta:get{'shard_id'}~=nil and tarn.clock.read_check()==nil
+        and tarn.clock.check({1,2,3})==nil]]) end, 10), 'actual clock coverage not ready on shard ' .. i)
+end
 
 local def = {
     name = 'test.rec', engine = 'memtx',
@@ -46,21 +64,20 @@ c[1]:reload_schema()
 local sid = c[1].space['test.rec'].id
 local BLOCKED = 250   -- (more than a recovery pass takes: recovery_batch is 200)
 for i = 1, 2 do
-    -- Undecided transactions are resolved after a second; a failed one, and
-    -- an unreachable shard, are tried again after at most 2 s; records
-    -- expire 2 s after they are written; a GC pass looks at no more than
+    -- Keep the immutable startup timing policy. Hold recovery while making
+    -- the real prepared prefix with all relevant writers available; release
+    -- it only after shard 3 is paused. A GC pass looks at no more than
     -- 200 records of each space (gc_batch * 40), fewer than the blocked
     -- ones, and deletes at most 20 (gc_batch * 4).
-    c[i]:eval([[tarn.cfg.recovery_after = 1; tarn.cfg.recovery_backoff_max = 2
-                tarn.cfg.max_txn_age = 1; tarn.cfg.clock_skew = 1; tarn.cfg.gc_batch = 5]])
+    c[i]:eval([[tarn.cfg.recovery_after = 1000000; tarn.cfg.recovery_backoff_max = 2
+                tarn.cfg.gc_batch = 5]])
 end
 local function prepare(i, txid, dshard, parts, id)
     return c[i]:call('tarn_prepare', {txid, dshard, parts, {{'replace', sid, {id, 1, 1}}}, {}, {}, fiber.time()})
 end
 local function info(i) return c[i]:call('tarn_info') end
 
-print('shard 3 paused; transactions that need it, then newer ones that do not')
-os.execute('kill -STOP ' .. pid3)
+print('real transactions that need shard 3 prepare while all writers are healthy')
 local ok_all = true
 for k = 1, BLOCKED do
     -- (shard 3 is their decision shard, and never prepared)
@@ -69,7 +86,56 @@ for k = 1, BLOCKED do
     if a[1] ~= 'yes' or b[1] ~= 'yes' then ok_all = false end
 end
 check(BLOCKED .. ' prepared on each healthy shard that need shard 3', ok_all)
-fiber.sleep(1.2)
+signal(3, 19)
+for i = 1, 2 do
+    assert(wait_for(function() return c[i]:eval([[return tarn.clock.check({3})~=nil
+        and tarn.clock.check({1,2})==nil]]) end, 10), 'missing shard 3 must not remove healthy relevant coverage')
+    c[i]:eval('tarn.cfg.recovery_after=1')
+end
+
+-- Fewer than one chunk: unknown coverage must not poison a healthy record
+-- next to it even when every fair-scan lap contains both again.
+local high = c[1]:eval([[local t=require('clock').realtime();box.begin{txn_isolation='read-confirmed'}
+    box.space._tarn_part:insert{'gc-0-unknown','aborted',3,{1,3},t-1000,t-900}
+    box.space._tarn_part:insert{'gc-1-healthy','aborted',1,{1,2},t-1000,t-900};box.commit()
+    return box.space._tarn_meta:get{'clock:policy:1'}.value.high]])
+check('a small mixed GC lap collects healthy coverage while retaining unknown coverage',
+    wait_for(function() return c[1]:eval([[return box.space._tarn_part:get{'gc-1-healthy'}==nil
+        and box.space._tarn_part:get{'gc-0-unknown'}~=nil
+        and box.space._tarn_meta:get{'clock:policy:1'}.value.high>=...]], {high}) end, 10))
+
+-- Hold GC after a genuine confirmed status proof, then let only that
+-- record's relevant writer coverage expire during the yield.
+c[1]:eval([[assert(tarn.cfg.test_hooks)
+    recovery_original_statuses=tarn_txn_statuses;recovery_gc_hold=true;recovery_gc_reached=false
+    tarn_txn_statuses=function(ids)
+        local r=recovery_original_statuses(ids)
+        for _,id in ipairs(ids) do if id=='gc-yield-coverage' then
+            recovery_gc_reached=true;while recovery_gc_hold do require('fiber').sleep(.005) end
+        end end;return r end
+    local t=require('clock').realtime();box.begin{txn_isolation='read-confirmed'}
+    box.space._tarn_part:insert{'gc-yield-coverage','applied',1,{1,2},t-1000,t-900}
+    box.space._tarn_txn:insert{'gc-yield-coverage','committed',{1,2},t-1000,t-900};box.commit()]])
+assert(wait_for(function() return c[1]:eval('return recovery_gc_reached') end, 10), 'GC did not reach yielded status proof')
+signal(2, 19)
+assert(wait_for(function() return c[1]:eval('return tarn.clock.check({2})~=nil') end, 10))
+local h = c[1]:eval([[recovery_gc_hold=false;return box.space._tarn_meta:get{'clock:policy:1'}.value.high]])
+fiber.sleep(.2)
+check('a yielded GC batch rechecks expired relevant coverage before H or deletion',
+    c[1]:eval([[return box.space._tarn_part:get{'gc-yield-coverage'}~=nil
+        and box.space._tarn_meta:get{'clock:policy:1'}.value.high==...]], {h}))
+c[1]:eval('tarn_txn_statuses=recovery_original_statuses;recovery_original_statuses=nil')
+signal(2, 18)
+for i=1,2 do assert(wait_for(function()return c[i]:eval('return tarn.clock.check({1,2})==nil')end,10))end
+check('the yielded receipt is collected after its relevant writer returns',
+    wait_for(function()return c[1]:eval("return box.space._tarn_part:get{'gc-yield-coverage'}==nil")end,10))
+
+-- Historical terminal receipts form an expired prefix longer than GC's
+-- scan budget. They require shard 3, so stay while it is unavailable.
+for i=1,2 do c[i]:eval([[local count=...;local t=require('clock').realtime()
+    box.begin{txn_isolation='read-confirmed'}
+    for k=1,count do box.space._tarn_part:insert{'G-'..k,'applied',3,{tarn.cfg.shard_id,3},t-2000,t-1900}end
+    box.commit()]],{BLOCKED})end
 ok_all = true
 for k = 1, 10 do
     -- N: prepared everywhere, decision shard 1: recovery commits them;
@@ -112,6 +178,23 @@ check('a full lap of the prepared participants counts the blocked backlog',
 check('the oldest undecided participant is reported', info(1).recovery.oldest_prepared > 1, info(1).recovery)
 
 print('garbage collection past the blocked records')
+-- Only exact terminal records of the completed owned transactions are
+-- made historical. No policy is changed, and no prepared promise is aged.
+local function age_terminal(i, ids)
+    c[i]:eval([[local ids=...;local t=require('clock').realtime()
+        box.begin{txn_isolation='read-confirmed'}
+        for _,id in ipairs(ids) do
+            local p=box.space._tarn_part:get{id}
+            if p then assert(p.state=='applied' or p.state=='aborted')
+                box.space._tarn_part:update({id},{{'=',5,t-1000},{'=',6,t-900}})end
+            local d=box.space._tarn_txn:get{id}
+            if d then assert(d.status=='committed' or d.status=='aborted')
+                box.space._tarn_txn:update({id},{{'=',4,t-1000},{'=',5,t-900}})end
+        end;box.commit()]], {ids})
+end
+local newer_ids={}
+for k=1,10 do newer_ids[#newer_ids+1]='N-'..k;newer_ids[#newer_ids+1]='A-'..k end
+for i=1,2 do age_terminal(i,newer_ids)end
 local function newer_collected()
     for k = 1, 10 do
         for i = 1, 2 do
@@ -133,11 +216,10 @@ check('... in more than one lap of the expired records', i1.recovery.gc.laps.par
       {i1.recovery.gc, i2.recovery.gc})
 
 print('shard 3 resumed')
-os.execute('kill -CONT ' .. pid3)
+signal(3, 18)
 check('recovery resolves the blocked ones', wait_for(function()
     return info(1).prepared == 0 and info(2).prepared == 0 end, 60), {info(1).recovery, info(2).recovery})
--- (shard 3 keeps its records past the test: its expiry is the default; the
--- tombstones on shards 1 and 2 expire after 2 s, so check their rows)
+-- Shard 3 retains its fresh final decisions under the unchanged policy.
 check('... aborted: shard 3 fenced their decision', c[3]:call('tarn_txn_status', {'B1-1'}) == 'aborted'
       and c[3]:call('tarn_txn_status', {'B2-' .. BLOCKED}) == 'aborted'
       and c[1].space['test.rec']:get{1000 + BLOCKED} == nil and c[2].space['test.rec']:get{2001} == nil)
@@ -147,9 +229,15 @@ check('... and shard 3 out of backoff', wait_for(function()
     {info(1).recovery, info(2).recovery})
 r = c[1]:call('tarn_autocommit', {{{'replace', sid, {1001, 2, 1}}}})
 check('a write of one of their rows goes through', r[1] == 'ok', r)
+for i=1,2 do
+    local ids={};for k=1,BLOCKED do ids[#ids+1]='B'..i..'-'..k end
+    age_terminal(i,ids)
+end
 check('their records are collected in turn', wait_for(function()
     return c[1]:call('tarn_part_status', {'B1-1'}) == 'none' and c[2]:call('tarn_part_status', {'B2-' .. BLOCKED}) == 'none'
 end, 60), {info(1).recovery.gc, info(2).recovery.gc})
+check('the previously unavailable small-lap receipt is collected after relevant coverage returns',
+    wait_for(function()return c[1]:eval("return box.space._tarn_part:get{'gc-0-unknown'}==nil")end,10))
 
 print(string.format('%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
