@@ -122,7 +122,15 @@ def decimal_keys(s):
     s.q("SELECT id FROM integer_keys WHERE id=9007199254740993.0", record=True)
     assert s.error("INSERT INTO integer_keys VALUES (18446744073709551616,0)") == 1264
     assert s.error("INSERT INTO integer_keys VALUES ('10000000000000000000000000000000000000000',0)") == 1264
+    assert s.error("INSERT INTO integer_keys VALUES (-1,0)") == 1264
     s.q("SELECT id,v FROM integer_keys ORDER BY id", record=True)
+    s.fresh("decimal_round", "id INT PRIMARY KEY,d DECIMAL(5,2) UNSIGNED,UNIQUE KEY ud(d)")
+    s.q("INSERT INTO decimal_round VALUES (1,9.995)")
+    s.q("SELECT id,d FROM decimal_round ORDER BY id", record=True)
+    assert s.error("INSERT INTO decimal_round VALUES (2,10.000)") == 1062
+    assert s.error("INSERT INTO decimal_round VALUES (3,999.995)") == 1264
+    assert s.error("INSERT INTO decimal_round VALUES (4,-0.01)") == 1264
+    s.q("SELECT id,d FROM decimal_round ORDER BY id", record=True)
 
 
 def binary_keys(s):
@@ -180,6 +188,18 @@ def temporal_legacy(s):
     s.q("INSERT INTO temporal_keys VALUES (1,'2024-1-2T03:04:05.12')")
     assert s.error("INSERT INTO temporal_keys VALUES (2,'20240102030405.120000')") == 1062
     s.q("SELECT id FROM temporal_keys WHERE d='2024-01-02 03:04:05.120000' ORDER BY id", record=True)
+
+
+def pad_legacy(s):
+    if s.kind == "tarn":
+        s.q("SET tarn_key_contract='LEGACY'")
+    # Intentionally different: retain the difference instead of calling
+    # Tarn's existing byte encoding MySQL PAD SPACE compatibility.
+    rows = s.q("SELECT 'a' COLLATE utf8mb4_bin = 'a ' COLLATE utf8mb4_bin", record=True)
+    assert rows == [[0 if s.kind == "tarn" else 1]]
+    if s.kind == "tarn":
+        s.q("SET tarn_key_contract='MYSQL'")
+        assert s.error("SELECT 'a' COLLATE utf8mb4_bin = 'a ' COLLATE utf8mb4_bin") == 1235
 
 
 def refusals(s):
@@ -252,7 +272,7 @@ def main():
               "source_sha256": {str(f.relative_to(ROOT)): hashlib.sha256(f.read_bytes()).hexdigest() for directory in ["crates", "lua"] for f in sorted((ROOT / directory).rglob("*")) if f.is_file()}, "runs": [], "started": time.time()}
     try:
         for protocol in ["pymysql-text", "connector-binary"]:
-            for case in [text_keys, decimal_keys, binary_keys, lazy_keys, schema_keys, temporal_legacy, refusals]:
+            for case in [text_keys, decimal_keys, binary_keys, lazy_keys, schema_keys, temporal_legacy, pad_legacy, refusals]:
                 results = []
                 for kind, address in [("mysql", args.ref), ("tarn", args.tarn)]:
                     s = Client(address, kind, protocol, args.engine)
@@ -271,7 +291,7 @@ def main():
                         raise
                     finally:
                         s.c.close()
-                if case != refusals:
+                if case not in (refusals, pad_legacy):
                     assert results[0] == results[1], (case.__name__, protocol, results)
                 print(protocol, case.__name__, "PASS", flush=True)
         report["status"] = "passed"

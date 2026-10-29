@@ -120,6 +120,37 @@ def main():
                         raise
                     time.sleep(.1)  # only this read-only query is retried
 
+        # Observe promotion before restoring the killed member. Sustained
+        # availability after the required clock peer expires is not promised.
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                promoted = leaders(config["shards"])
+                assert promoted[0][1]["pid"] != pid
+                break
+            except (AssertionError, tarantool.Error, OSError):
+                assert time.monotonic() < deadline, "no promoted leader"
+                time.sleep(.1)
+        report["promoted_leaders"] = promoted
+        instance = pidfiles[0].stem
+        # A container PID 1 may leave the killed child as a zombie. `kill -0`
+        # in cluster.sh cannot distinguish it from a live instance. Remove
+        # only the matching pidfile after proving that process is dead.
+        state = Path(f"/proc/{pid}/stat")
+        assert not state.exists() or state.read_text().rsplit(") ", 1)[1].split()[0] == "Z"
+        assert int(pidfiles[0].read_text()) == pid
+        pidfiles[0].unlink()
+        subprocess.run([str(Path(__file__).resolve().parents[2] / "scripts/cluster.sh"), "restart", "-d", str(directory), instance], check=True, timeout=45)
+        report["events"].append({"restart": instance, "time": time.time()})
+        deadline = time.monotonic() + 30
+        while True:
+            clocks = [ev(node, "return tarn_clock_status()")[0] for node, _ in leaders(config["shards"])]
+            if all(clock["state"] == "healthy" for clock in clocks):
+                break
+            assert time.monotonic() < deadline, clocks
+            time.sleep(.1)
+        report["recovered_clocks"] = clocks
+
         rows = read_all()
         actual = {(r, i): [d, k] for r, i, d, k in rows}
         assert len(actual) == len(rows)
@@ -158,15 +189,26 @@ def main():
         assert read_all() == expected
         report["events"].append({"move": bucket, "from": owner, "to": target})
 
-        instance = pidfiles[0].stem
-        subprocess.run([str(Path(__file__).resolve().parents[2] / "scripts/cluster.sh"), "restart", "-d", str(directory), instance], check=True, timeout=45)
-        assert read_all() == expected
-        report["after_restart"] = expected
+        report["after_move_and_restart"] = expected
         report["final_leaders"] = leaders(config["shards"])
-        report["raw_leaders"] = [ev(node, "local out={} for _,t in box.space['key_contracts.fault_keys']:pairs() do out[#out+1]={t[1],t[2],tostring(t[3]),t[4],t[5]} end return out")[0]
+        raw_query = "local out={} for _,t in box.space['key_contracts.fault_keys']:pairs() do out[#out+1]={t[1],t[2],tostring(t[3]),t[4],t[5]} end return out"
+        report["raw_leaders"] = [ev(node, raw_query)[0]
                                  for node, _ in report["final_leaders"]]
         raw = sorted([r[:4] for group in report["raw_leaders"] for r in group])
         assert raw == expected, (raw, expected)
+        # At this quiescent point the restarted replica must catch up to
+        # its current leader, including the subsequent bucket move.
+        wanted = sorted(report["raw_leaders"][0])
+        deadline = time.monotonic() + 30
+        while True:
+            recovered = sorted(ev(address, raw_query)[0])
+            if recovered == wanted:
+                break
+            assert time.monotonic() < deadline, (recovered, wanted)
+            time.sleep(.1)
+        report["restarted_replica"] = recovered
+        if args.native == "1":
+            assert sum(info["native"]["served"] for _, info in report["final_leaders"]) > 0
         report["status"] = "passed"
         c.c.close()
     except Exception as exc:

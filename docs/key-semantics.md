@@ -112,8 +112,8 @@ native/Lua storage suites, global uniqueness and movement/restart faults,
 the TLA+ registry and shared Verus checks remain required release gates.
 The `Exact key contracts` workflow runs both clients in all four
 memtx/vinyl × native/Lua configurations, then kills an owned RF3 leader
-during writes, reconciles every acknowledged/refused/uncertain attempt,
-moves a populated bucket and restarts the killed replica. It compares the
+during writes, observes promotion, restores the killed clock peer, reconciles
+every acknowledged/refused/uncertain attempt and moves a populated bucket. It compares the
 final SQL values with native decoded tuples. Mutations are never retried.
 Artifacts retain traces, build hashes, client versions, fault outcomes and
 cluster logs even on failure; a failing or absent matrix cell is not evidence

@@ -50,6 +50,12 @@
       "classification": "intentional-difference",
       "description": "Unsupported exact declarations and expressions refuse before effects and preserve prior transaction work",
       "test": "tests/sql/key_semantics.py::refusals"
+    },
+    {
+      "id": "keys_pad_legacy",
+      "classification": "intentional-difference",
+      "description": "Retains utf8mb4_bin trailing-space mismatch explicitly; MYSQL mode refuses this collation",
+      "test": "tests/sql/key_semantics.py::pad_legacy"
     }
   ]
 }
