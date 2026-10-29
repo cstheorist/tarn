@@ -584,3 +584,19 @@ improvement claim. No samples were discarded or replaced. An isolated
 machine is required to quantify the remaining overhead. These observations
 do not establish production performance; separate unit, SQL and live-fault
 tests establish the resource/outcome contracts, not this timing probe.
+
+## Strong-read freshness cost (issue #130)
+
+The [matched report](STRONG_READ_FRESHNESS.md) and
+[evidence index](evidence/strong-read-freshness/index.json) compare Lua and
+native batch reads under the same strong-read contract. One Linux job ran
+72 phases and 36 pairs across direct RF1, direct RF3 and SQL RF3 cells,
+with six balanced pairs per cell. Every prior incomplete cohort remains
+separate from the final statistics.
+
+For RF3 batches of 128 keys at 64 workers, the median native/Lua ratio was
+0.527 for leader transaction-thread CPU per batch, 1.852 for batch rate and
+0.506 for p99 latency. The report includes all six cells, complete ranges,
+raw observations, source/build identities, proof boundaries and failure
+history. These instrumented hot-corpus read results retain their component
+scope; they do not establish a TiDB/YugabyteDB or production-capacity ranking.

@@ -157,6 +157,11 @@ by half or more, and autocommit writes by 71% to 76%, at 29% to 44% of the
 shard's CPU per statement
 ([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
+The [strong-read cost study](bench/STRONG_READ_FRESHNESS.md) compares the
+current Lua and native batch paths with the same freshness guarantee across
+RF1, RF3 and SQL: 72 accepted phases and 36 balanced pairs. It covers hot
+read components; the older throughput tables retain their original scope.
+
 ## Correctness
 
 * **TLA+** ([`tla/TarnCommit.tla`](tla/TarnCommit.tla)): strict
