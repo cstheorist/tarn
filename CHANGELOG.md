@@ -88,7 +88,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preserve NULLs, buffered writes, physical-layout defaults, full scanned
   ranges and the existing snapshot/lock/routing checks. Unsupported SQL
   shapes and missing optional storage procedures retain ordinary execution.
-  `query_pushdown: false` supplies an executor control; new status counters
+  Opt in with `query_pushdown: true` after measuring the workload; the
+  default `false` retains ordinary execution because narrow-row cases can
+  regress. New status counters
   expose reduction RPCs and projected scan attempts.
 
 - Physical per-shard file backups and verified restores with bounded copy

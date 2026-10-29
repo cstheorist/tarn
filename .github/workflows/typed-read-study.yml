@@ -102,6 +102,7 @@ jobs:
           key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
       - name: RF3 exact SQL and fallback controls
         env:
+          TARN_QUERY_PUSHDOWN: 'true'
           TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/pushdown-build/libtarn_storage.so' || '0' }}
           TARN_BIN: /tmp/pushdown-build/tarn-server
           TARN_CHECK_LOCKS: '1'

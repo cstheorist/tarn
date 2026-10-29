@@ -184,5 +184,63 @@ The fixture fits in memory and imposes no native I/O pressure, even with
 Vinyl cache disabled. This is shared-runner, single-client evidence, not
 a disk-bound or throughput-capacity claim. CPU zeros can fall below the
 100 Hz counter resolution. Partial runs retain their original error and
-completed samples. Results and qualification remain pending until this
-workflow runs successfully; the existing tables above remain unchanged.
+completed samples. The existing tables above remain pinned to their
+earlier source.
+
+## Expanded release results
+
+[Run 40935962215](https://github.com/cstheorist/tarn/actions/runs/40935962215)
+passes all four RF3/fsync correctness configurations: 47 exact MySQL
+comparisons plus overlay, missing/malformed-procedure and OCC controls
+in each. The paired study completes 960 samples (9,600 queries) across
+both engines, all three payload sizes and both measurement phases.
+[Ordinary CI](https://github.com/cstheorist/tarn/actions/runs/40935962457)
+also passes its full MariaDB/storage/SQL/live-fault, TLA+ and Verus gates.
+Actual compiled merge source is `fe1180b8ea13e2778e79e82832d995289fe2dd6f`,
+from PR head `9e26213`. All raw samples, configuration/runtime receipts,
+source/binary hashes and correctness outputs are
+[retained here](pushdown-rf3/40935962215/index.json); the
+[complete summary](pushdown-rf3/40935962215/summary.csv) includes every
+query shape, bytes and gateway/storage CPU. Samples from different
+widths, engines or phases are not pooled.
+
+Direct elapsed ratios (enabled/ordinary), median and full range of the
+five paired means; lower is faster:
+
+| Engine | Payload | Low-selectivity narrow projection | High-selectivity integer reduction |
+|---|---:|---:|---:|
+| memtx | 256 B | 1.18 (1.10–1.43) | 2.77 (2.43–3.02) |
+| Vinyl | 256 B | 1.07 (0.23–1.11) | 2.48 (1.89–3.15) |
+| memtx | 4 KiB | 0.69 (0.60–0.84) | 1.48 (1.42–1.89) |
+| Vinyl | 4 KiB | 0.56 (0.50–0.59) | 1.57 (1.33–1.64) |
+| memtx | 64 KiB | 0.19 (0.15–0.21) | 0.20 (0.17–0.22) |
+| Vinyl | 64 KiB | 0.36 (0.33–0.42) | 0.52 (0.44–0.58) |
+
+Every paired full-table projection/reduction at 64 KiB is faster in this
+study. This does not extend to every range: one Vinyl 64 KiB range-reduction
+pair regresses (range 0.64–1.15). Both engines consistently regress on the
+256 B/4 KiB range reductions and high-selectivity reductions. Low-selectivity
+256 B reductions and several other small-row cases are mixed. Grouped/full
+projection controls remain ordinary execution and also show runner noise.
+These observations motivate making the new paths **opt in**, defaulting
+`query_pushdown` to `false`. There is no selectivity/row-width cost model
+yet; enabling this gateway-wide switch can hurt narrow queries.
+
+The work reduction is real but insufficient alone to establish a timing
+win. At 64 KiB, the low-selectivity memtx reduction transfers about
+67,134,284 IPROTO response bytes/query versus 297 enabled. Median measured
+gateway/storage CPU changes from 31/40 ms to below-resolution/4 ms per
+query. The matching Vinyl figures are 67,134,251 versus 301 bytes and
+23/72 ms versus below-resolution/19 ms. Counts include the measured
+window's control traffic. At 256 B, high-selectivity reduction still
+removes almost all response bytes, yet increases storage CPU from 4 to
+8 ms (memtx) or 4 to 11 ms (Vinyl) and is slower end to end.
+
+These are ten-query samples on a shared CI host. The full paired ranges
+describe observed variability, not statistical confidence intervals.
+CPU uses Linux ticks; zero is below resolution. Direct timing excludes
+the counting proxies and result hashing, but includes the SQL client
+receiving/decoding rows. No saturation, throughput-capacity, disk-bound or
+multi-host advantage is established. The later default-off change alters
+rollout policy; these measurements remain evidence for the explicit off/on
+paths at the recorded source, with new-head validation kept separate.

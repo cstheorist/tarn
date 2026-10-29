@@ -149,8 +149,11 @@ extrema keep the ordinary executor. An absent optional procedure permits
 complete read-only fallback; malformed or other errored responses fail.
 The existing COUNT and ordered-page algorithms remain in use. Numeric
 predicates ignore the connection's fallback text collation; text predicates
-still require byte comparison. Set
-`query_pushdown: false` in a gateway's config for a matched control.
+still require byte comparison. These extensions are opt in with
+`query_pushdown: true`; the default `false` keeps ordinary execution.
+The [matched RF3 study](../bench/PUSHDOWN.md#expanded-release-results)
+finds wide-row gains and narrow-row regressions, so measure the actual
+workload before enabling them.
 
 **Autocommit single-shard DML** (`UPDATE ... WHERE pk = ?`, single-shard
 `INSERT`, `DELETE ... WHERE pk = ?`): one call to `tarn_autocommit`, which runs

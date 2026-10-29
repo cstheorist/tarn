@@ -60,9 +60,9 @@ pub struct ClusterConfig {
     /// remain enabled when this is false, for isolated profiling.
     #[serde(default)]
     pub native_batch_reads: bool,
-    /// Exact projected scans and integer partial aggregates. Disable for
-    /// matched executor controls; this does not change isolation.
-    #[serde(default = "default_query_pushdown")]
+    /// Opt into exact projected scans and integer partial aggregates after
+    /// measuring the workload. Narrow-row scans can regress; isolation is unchanged.
+    #[serde(default)]
     pub query_pushdown: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
@@ -114,10 +114,6 @@ pub struct ClusterConfig {
 
 fn default_move_timeout() -> f64 {
     10.0
-}
-
-fn default_query_pushdown() -> bool {
-    true
 }
 
 fn default_ddl_job_stale() -> f64 {

@@ -1,0 +1,40 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40935962215",
+  "head": "9e262133eccb6a76e5a58416a3a4ddb54b42442c",
+  "source": "fe1180b8ea13e2778e79e82832d995289fe2dd6f",
+  "ordinary_ci": "https://github.com/cstheorist/tarn/actions/runs/40935962457",
+  "scope": "RF3/fsync normal release, 47 MySQL exact-value controls in all four modes. Native-enabled benchmark in both engines. In-memory payload fixture; explicit off/on configuration; source-bound, not universal speedup. Regressions retained.",
+  "files": [
+    {
+      "path": "memtx-width-256.json",
+      "sha256": "8053d3de9c0f256662dc2edba95b1008cfd41c31050215400c5d5d1424c51ba5",
+      "samples": 160
+    },
+    {
+      "path": "memtx-width-4096.json",
+      "sha256": "6dad79f5556a8698fb756af6eea757c2257bbc871353da874cf4b4ff0d65eb6b",
+      "samples": 160
+    },
+    {
+      "path": "memtx-width-65536.json",
+      "sha256": "15515ba6493f0fb06a702dfebeccf1c6b25ebdb9411404e23d8046d6e0f23a74",
+      "samples": 160
+    },
+    {
+      "path": "vinyl-width-256.json",
+      "sha256": "372872da350c88a291ed625c55349111b7a41cb1771f0975571fc7459d12779c",
+      "samples": 160
+    },
+    {
+      "path": "vinyl-width-4096.json",
+      "sha256": "9088338bf78dfeab4014c0a9742940b0fcf1b553bcc95888d692880fec635235",
+      "samples": 160
+    },
+    {
+      "path": "vinyl-width-65536.json",
+      "sha256": "6000f9c30c25d6e456f6d8aaea80d4f5a90ad91dfa0ba754034fe6e543a68db4",
+      "samples": 160
+    }
+  ],
+  "records": 960
+}

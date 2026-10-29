@@ -549,7 +549,7 @@ options:
   "user": "tarn", "password": "tarn",
   "pool_size": 4,
   "native_batch_reads": false,
-  "query_pushdown": true,
+  "query_pushdown": false,
   "node_id": 1,
   "ack_on_prepare": false,
   "max_txn_age": 120,
@@ -569,12 +569,15 @@ Each connection negotiates support, so older native modules retain their
 ordinary read paths. Turning this option off keeps other native procedures
 enabled. See [the native storage inventory and contract](native-storage.md).
 
-`query_pushdown` (default `true`) enables exact integer partial aggregates
-and filtered column projections over eligible range scans. Disable it to
-compare with ordinary execution under the same isolation and storage
-settings. Unsupported shapes and missing optional storage procedures fall
+`query_pushdown` (default `false`) opts into exact integer partial aggregates
+and filtered column projections over eligible range scans. The matched
+RF3 study finds consistent gains for its 64 KiB scans and regressions for
+several 256 B/4 KiB shapes. Measure the workload before enabling it, using
+`false` as the ordinary-executor control under the same isolation and
+storage settings. Unsupported shapes and missing optional procedures fall
 back completely; this setting does not change the existing COUNT or ordered
-page paths. See [request paths](design.md#12-request-paths).
+page paths. See [request paths](design.md#12-request-paths) and
+[the complete results](../bench/PUSHDOWN.md#expanded-release-results).
 
 `default_collation` (`--default-collation`) is the collation of text
 columns in tables that declare none (`@@collation_server`); MySQL's own

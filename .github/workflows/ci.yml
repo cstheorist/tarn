@@ -59,6 +59,8 @@ jobs:
     name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      TARN_QUERY_PUSHDOWN: 'true'
     services:
       # Reference server for the SQL differential tests.
       mariadb:
