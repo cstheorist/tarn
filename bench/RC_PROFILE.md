@@ -23,16 +23,41 @@ the expected key, every refusal must be absent, and every per-key counter
 must equal its acknowledged effects. Unknown outcomes fail qualification;
 the database is retained rather than replayed or destroyed.
 
-Normal timing and sampling are separate phases. The latter uses full guest
-and host call chains from Tarantool's
-[platform profiler](https://www.tarantool.io/docs/tarantool/3_x/tooling/luajit_sysprof),
-with raw profiles and the exact runtime binary retained for interpretation.
+Normal timing and sampling are separate phases. Sampling uses the
+[LuaJIT guest-stack API](https://luajit.org/ext_profiler.html), retaining at
+most 256 distinct stacks, eight frames and 2,048 bytes per stack, plus an
+overflow sample count. It samples every 10 ms and stops automatically two
+seconds after the planned window if the controller disappears. It writes no
+profile files. This does not resolve host C stacks or separate exact engine
+and WAL costs; VM-state samples and guest frames are only a coarse profile.
+JIT inlining and callback delay also limit source-line attribution.
+The complete bounded histogram and exact runtime binary are retained.
 TX-thread/process CPU ticks, allocation/GC counters, native/fallback census,
 lock/commit waits and all attempts are retained. Metric intervals include
 connection setup and diagnostic RPC overhead; they are not exact per-function
 allocation measurements. Clock-tick quantization, background work, client
 contention and shared-runner variance remain visible limitations. The small
 fixture is not a disk-capacity or open-loop overload experiment.
+
+## Retained collector failure
+
+[The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)
+used full platform call-chain profiling. Its memtx/Lua fixture completed
+15 ordinary timing samples with exact accounting, but the first profiled
+window emitted a 48,746,177,842-byte trace. The original leader became
+unresponsive and a follower was elected. The diagnostic RPC then failed;
+the original collector did not persist that unfinished sample's attempts.
+Those effects remain unaccounted for in this receipt. Later repeats also
+failed; no complete performance baseline or production-crash explanation is
+claimed. The original evidence, compressed-artifact hash and successful
+partial samples remain in [the failure receipt](rc-evidence/original-40963530299.json).
+
+The collector now persists attempts before reading process/profiler metrics,
+attempts independent SQL readback even when diagnostics fail, and retains
+diagnostic stderr. Guest-stack profiling replaces the unbounded host trace;
+it is a narrower measurement with explicit memory/time bounds. Neither this
+change nor a subsequent successful profile would explain #160's unrelated
+historical native GC crash.
 
 The focused `WaiterAllocation` model precedes implementation. Eager and
 deferred allocation both preserve a ready condition before a request is

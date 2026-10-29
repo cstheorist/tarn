@@ -1,0 +1,1915 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40963530299",
+  "head": "d571afeeaf7aa8386000134ce88d82e72e7ae81f",
+  "source": "0827b8eb1b3bd63a94388fd0b35628d21af2dd1d",
+  "original_complete": false,
+  "original_failure": "CalledProcessError(1, ['tarantool', '-e', \"\\nlocal out={}\\nfor _,address in ipairs(require('json').decode(os.getenv('RC186_ENDPOINTS'))) do\\n local c=require('net.box').connect('tarn:tarn@'..address,{wait_connected=5})\\n assert(c:is_connected(),address)\\n out[#out+1]={address=address,result=c:eval(os.getenv('RC186_CODE'))}\\n c:close()\\nend\\nprint(require('json').encode(out)); os.exit(0)\\n\"])",
+  "manifest_sha256": "35f23e9543c641daa177c81e96af1736e3e118f80a236b9551654386992cdd7c",
+  "archive": {
+    "artifact": 12937772128,
+    "run": 40963530299,
+    "archive_bytes": 118077358,
+    "archive_sha256": "6c635e3f0a45840e8acade9c8bdc0c06e73eca24ccfbafb8b5eeebae3cf47f16",
+    "profile_member": "rc-cluster/s1.1/rc-sample-16.sysprof",
+    "profile_uncompressed_bytes": 48746177842,
+    "profile_crc32": "0x494a0731",
+    "profile_compressed_bytes": 95160566,
+    "expanded_trace_removed": true
+  },
+  "profile_files": [
+    {
+      "path": "rc-cluster/s2.1/rc-sample-16.sysprof",
+      "bytes": 1858529,
+      "prefix_1m_sha256": "87fbc96f374a951adcce18f6d96e51ad6b3e7e309d535e3a3a2a44fafd1582d9",
+      "suffix_1m_sha256": "e63aa2df5b514b1fa0afd45fb1fced6012df30493c27bc01abbf5b3531e72b24",
+      "first64": "6c6a730300000000e08c9e8e04053d6576616c0000d8f18181041c72657475726e20626f782e6366672e656c656374696f6e5f6d6f6465000090ee8181041872"
+    },
+    {
+      "path": "rc-cluster/s1.1/rc-sample-16.sysprof",
+      "bytes": 48746177842,
+      "prefix_1m_sha256": "25d544970389a7697e93ef0c453bf09d46249070da8de4da5beb80a1a1e48956",
+      "suffix_1m_sha256": "4b284974e2f5bd23ec0b54150c5a70c88ea2398c100207500b6f7c0f06ce3c0f",
+      "first64": "6c6a730300000000a08bac8004053d6576616c000090ccde87041c72657475726e20626f782e6366672e656c656374696f6e5f6d6f64650000b0cade87041872"
+    }
+  ],
+  "observation": "15 ordinary timing samples completed with exact ledger and per-key reconciliation. The first full call-chain profile emitted 48,746,177,842 bytes; the original leader stopped responding and a follower was elected. No natural native-GC crash or causal locking defect is inferred. The original collector lost the unfinished sample attempt records when its diagnostic RPC failed; its outcome accounting is therefore incomplete.",
+  "successful_unprofiled_samples": [
+    {
+      "number": 1,
+      "shape": "uncontended",
+      "acknowledged": 1438,
+      "refused": 0,
+      "goodput_per_second": 287.57829100239064,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 4433,
+          "metrics": {
+            "gc_allocated": 58818144,
+            "gc_freed": 59169045,
+            "gc_steps_propagate": 179753,
+            "gc_steps_atomic": 6,
+            "gc_steps_sweep": 20740,
+            "gc_steps_finalize": 27164
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 1438,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 64742,
+            "gc_freed": 20344,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 63481,
+            "gc_freed": 20348,
+            "gc_steps_propagate": 599,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 96,
+          "metrics": {
+            "gc_allocated": 1659434,
+            "gc_freed": 4753293,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 6555,
+            "gc_steps_finalize": 742
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 50031,
+            "gc_freed": 15584,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 6332
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45359,
+            "gc_freed": 3039639,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 1233,
+            "gc_steps_finalize": 1289
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-1.jsonl",
+      "attempts_sha256": "0aa6961f1922a9ad669a5c45ece15cead067bb478f73273cd3503d17a818d699"
+    },
+    {
+      "number": 2,
+      "shape": "unrelated",
+      "acknowledged": 521,
+      "refused": 0,
+      "goodput_per_second": 98.15559214209908,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 1644,
+          "metrics": {
+            "gc_allocated": 25573591,
+            "gc_freed": 28058278,
+            "gc_steps_propagate": 90210,
+            "gc_steps_atomic": 4,
+            "gc_steps_sweep": 7954,
+            "gc_steps_finalize": 9315
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 521,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 6,
+          "metrics": {
+            "gc_allocated": 70149,
+            "gc_freed": 20104,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 6,
+          "metrics": {
+            "gc_allocated": 67574,
+            "gc_freed": 21736,
+            "gc_steps_propagate": 750,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 58,
+          "metrics": {
+            "gc_allocated": 3239047,
+            "gc_freed": 369058,
+            "gc_steps_propagate": 6005,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 53241,
+            "gc_freed": 15784,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 1460
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 41945,
+            "gc_freed": 7228,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 666
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-2.jsonl",
+      "attempts_sha256": "cad65d6fa553c32f7bd601a5b5aff066d3f92a53f2dbb8efcdb5401ed1af1f8a"
+    },
+    {
+      "number": 3,
+      "shape": "hot",
+      "acknowledged": 1442,
+      "refused": 0,
+      "goodput_per_second": 287.4562002319896,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 4424,
+          "metrics": {
+            "gc_allocated": 62830376,
+            "gc_freed": 59320818,
+            "gc_steps_propagate": 181095,
+            "gc_steps_atomic": 6,
+            "gc_steps_sweep": 15799,
+            "gc_steps_finalize": 16881
+          },
+          "stats": {
+            "plock_waits": 1441,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 1442,
+            "commit_waits": 1441
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 55078,
+            "gc_freed": 19096,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 63406,
+            "gc_freed": 141716,
+            "gc_steps_propagate": 67,
+            "gc_steps_atomic": 1,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 80,
+          "metrics": {
+            "gc_allocated": 1500321,
+            "gc_freed": 329034,
+            "gc_steps_propagate": 17458,
+            "gc_steps_atomic": 1,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 34043,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 1320
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 39563,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 648
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-3.jsonl",
+      "attempts_sha256": "88b47e3c216e3e580a8a3a79d20a54018a28af98194799da331cb771ab176b4c"
+    },
+    {
+      "number": 4,
+      "shape": "hot",
+      "acknowledged": 1433,
+      "refused": 0,
+      "goodput_per_second": 285.7979311985644,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 4410,
+          "metrics": {
+            "gc_allocated": 62162997,
+            "gc_freed": 67125042,
+            "gc_steps_propagate": 211261,
+            "gc_steps_atomic": 8,
+            "gc_steps_sweep": 18468,
+            "gc_steps_finalize": 20515
+          },
+          "stats": {
+            "plock_waits": 1432,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 1433,
+            "commit_waits": 1432
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 54862,
+            "gc_freed": 19096,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 55406,
+            "gc_freed": 122247,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 46,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 87,
+          "metrics": {
+            "gc_allocated": 1482391,
+            "gc_freed": 2502708,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 1613,
+            "gc_steps_finalize": 1039
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 32864,
+            "gc_freed": 4792,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 1280
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 36024,
+            "gc_freed": 5656,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 646
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-4.jsonl",
+      "attempts_sha256": "1b7e3c01089a9ff3ae83fc66e36c7c919688ac5abd1268d9e08da358fdb6b60c"
+    },
+    {
+      "number": 5,
+      "shape": "unrelated",
+      "acknowledged": 2087,
+      "refused": 0,
+      "goodput_per_second": 416.01368017233057,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 6356,
+          "metrics": {
+            "gc_allocated": 88088459,
+            "gc_freed": 87193222,
+            "gc_steps_propagate": 271446,
+            "gc_steps_atomic": 10,
+            "gc_steps_sweep": 23737,
+            "gc_steps_finalize": 26568
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 2087,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 2,
+          "metrics": {
+            "gc_allocated": 51097,
+            "gc_freed": 10120,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 2,
+          "metrics": {
+            "gc_allocated": 58386,
+            "gc_freed": 20508,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 190,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 79,
+          "metrics": {
+            "gc_allocated": 2113106,
+            "gc_freed": 265616,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 428447,
+            "gc_freed": 791656,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 877
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 37963,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 665
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-5.jsonl",
+      "attempts_sha256": "49c28f78910f3223a6b73f377e4a5ceff01b3573506cf2fd643f8e999031d865"
+    },
+    {
+      "number": 6,
+      "shape": "uncontended",
+      "acknowledged": 651,
+      "refused": 0,
+      "goodput_per_second": 130.195678571076,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 2038,
+          "metrics": {
+            "gc_allocated": 27903770,
+            "gc_freed": 27871571,
+            "gc_steps_propagate": 92046,
+            "gc_steps_atomic": 4,
+            "gc_steps_sweep": 8263,
+            "gc_steps_finalize": 10492
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 651,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 3,
+          "metrics": {
+            "gc_allocated": 48286,
+            "gc_freed": 9112,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 3,
+          "metrics": {
+            "gc_allocated": 63539,
+            "gc_freed": 155890,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 205,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 65,
+          "metrics": {
+            "gc_allocated": 1865855,
+            "gc_freed": 227144,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 33324,
+            "gc_freed": 5176,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35483,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 665
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-6.jsonl",
+      "attempts_sha256": "52d544ca022738072db0fe8089ade5ae9b02ed18f22f376f37579339dc6961fc"
+    },
+    {
+      "number": 7,
+      "shape": "uncontended",
+      "acknowledged": 980,
+      "refused": 0,
+      "goodput_per_second": 195.33012704909288,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 3039,
+          "metrics": {
+            "gc_allocated": 39182163,
+            "gc_freed": 38377904,
+            "gc_steps_propagate": 120517,
+            "gc_steps_atomic": 4,
+            "gc_steps_sweep": 10967,
+            "gc_steps_finalize": 12209
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 980,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45214,
+            "gc_freed": 9112,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 55218,
+            "gc_freed": 297193,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 180,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 80,
+          "metrics": {
+            "gc_allocated": 1396583,
+            "gc_freed": 201808,
+            "gc_steps_propagate": 14472,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35995,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35483,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-7.jsonl",
+      "attempts_sha256": "e420d4df2d27b46999d32b899765155f6aff7fe37ab47f6c7da0abe0e947f3f9"
+    },
+    {
+      "number": 8,
+      "shape": "unrelated",
+      "acknowledged": 3436,
+      "refused": 0,
+      "goodput_per_second": 686.6839526148315,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 10409,
+          "metrics": {
+            "gc_allocated": 143024526,
+            "gc_freed": 145734548,
+            "gc_steps_propagate": 452844,
+            "gc_steps_atomic": 15,
+            "gc_steps_sweep": 39607,
+            "gc_steps_finalize": 43445
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 3436,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 44880,
+            "gc_freed": 9112,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45688,
+            "gc_freed": 806990,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 180,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 82,
+          "metrics": {
+            "gc_allocated": 1403013,
+            "gc_freed": 6870044,
+            "gc_steps_propagate": 10491,
+            "gc_steps_atomic": 1,
+            "gc_steps_sweep": 1616,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 34045,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35705,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-8.jsonl",
+      "attempts_sha256": "a2605218172b1e2cb33549f8ee2b9e738bb94983413b8650cfa001f0f49c3bad"
+    },
+    {
+      "number": 9,
+      "shape": "hot",
+      "acknowledged": 1389,
+      "refused": 0,
+      "goodput_per_second": 271.643583107818,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 4264,
+          "metrics": {
+            "gc_allocated": 60028492,
+            "gc_freed": 58810785,
+            "gc_steps_propagate": 181421,
+            "gc_steps_atomic": 6,
+            "gc_steps_sweep": 16082,
+            "gc_steps_finalize": 19942
+          },
+          "stats": {
+            "plock_waits": 1388,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 1389,
+            "commit_waits": 1388
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 46032,
+            "gc_freed": 9016,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45512,
+            "gc_freed": 134494,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 175,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 75,
+          "metrics": {
+            "gc_allocated": 1278260,
+            "gc_freed": 174120,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 34245,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35813,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-9.jsonl",
+      "attempts_sha256": "137cee41f4061fde4b3f858e34ce4ef0dc56e6e24e898d29411ce0b98d727920"
+    },
+    {
+      "number": 10,
+      "shape": "hot",
+      "acknowledged": 961,
+      "refused": 0,
+      "goodput_per_second": 189.93606662662216,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 2993,
+          "metrics": {
+            "gc_allocated": 42217538,
+            "gc_freed": 39691905,
+            "gc_steps_propagate": 138375,
+            "gc_steps_atomic": 4,
+            "gc_steps_sweep": 10681,
+            "gc_steps_finalize": 12285
+          },
+          "stats": {
+            "plock_waits": 960,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 961,
+            "commit_waits": 960
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 44784,
+            "gc_freed": 9016,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45184,
+            "gc_freed": 9048,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 180,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 90,
+          "metrics": {
+            "gc_allocated": 1525210,
+            "gc_freed": 208752,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 34245,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35485,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 665
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-10.jsonl",
+      "attempts_sha256": "d2496a682378c963bfb2c7540626137fb9715c1376a3923184a6eb603d566bcc"
+    },
+    {
+      "number": 11,
+      "shape": "unrelated",
+      "acknowledged": 2971,
+      "refused": 0,
+      "goodput_per_second": 593.4572951978557,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 9019,
+          "metrics": {
+            "gc_allocated": 124351076,
+            "gc_freed": 126607536,
+            "gc_steps_propagate": 367124,
+            "gc_steps_atomic": 15,
+            "gc_steps_sweep": 34404,
+            "gc_steps_finalize": 37680
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 2971,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45220,
+            "gc_freed": 9400,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45392,
+            "gc_freed": 17736,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 111,
+            "gc_steps_finalize": 277
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 86,
+          "metrics": {
+            "gc_allocated": 1461120,
+            "gc_freed": 199872,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 33917,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35053,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-11.jsonl",
+      "attempts_sha256": "3ff28a8be377b1433bae384f2f4abdac1a8b09e8b5dac088bbe93394fbcd00d1"
+    },
+    {
+      "number": 12,
+      "shape": "uncontended",
+      "acknowledged": 738,
+      "refused": 0,
+      "goodput_per_second": 144.78678631339747,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 2313,
+          "metrics": {
+            "gc_allocated": 29782398,
+            "gc_freed": 29811207,
+            "gc_steps_propagate": 90440,
+            "gc_steps_atomic": 3,
+            "gc_steps_sweep": 8596,
+            "gc_steps_finalize": 11985
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 738,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45240,
+            "gc_freed": 9016,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 46280,
+            "gc_freed": 9784,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 724
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 82,
+          "metrics": {
+            "gc_allocated": 1421806,
+            "gc_freed": 202896,
+            "gc_steps_propagate": 4893,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 34981,
+            "gc_freed": 5608,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35053,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-12.jsonl",
+      "attempts_sha256": "ca7ae6b06ef3462abeb45af5e8c013cd263af62f07898aece5e6d18cfc2c86d1"
+    },
+    {
+      "number": 13,
+      "shape": "uncontended",
+      "acknowledged": 979,
+      "refused": 0,
+      "goodput_per_second": 195.71178639595192,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 3044,
+          "metrics": {
+            "gc_allocated": 39160516,
+            "gc_freed": 39939564,
+            "gc_steps_propagate": 120133,
+            "gc_steps_atomic": 4,
+            "gc_steps_sweep": 11312,
+            "gc_steps_finalize": 12890
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 979,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 44796,
+            "gc_freed": 9016,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 45952,
+            "gc_freed": 9784,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 744
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 86,
+          "metrics": {
+            "gc_allocated": 1463879,
+            "gc_freed": 4838008,
+            "gc_steps_propagate": 12761,
+            "gc_steps_atomic": 1,
+            "gc_steps_sweep": 1091,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 33589,
+            "gc_freed": 5224,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35357,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-13.jsonl",
+      "attempts_sha256": "0e4a20859f47ee4fc46b8bca7f239474134eb1cd4aa1a4a7b111b1c024284c50"
+    },
+    {
+      "number": 14,
+      "shape": "unrelated",
+      "acknowledged": 1852,
+      "refused": 0,
+      "goodput_per_second": 369.96532987972336,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 5658,
+          "metrics": {
+            "gc_allocated": 77698160,
+            "gc_freed": 82178038,
+            "gc_steps_propagate": 241820,
+            "gc_steps_atomic": 10,
+            "gc_steps_sweep": 22120,
+            "gc_steps_finalize": 24972
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 1852,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 44432,
+            "gc_freed": 9016,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 48284,
+            "gc_freed": 9976,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 766
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 82,
+          "metrics": {
+            "gc_allocated": 1403772,
+            "gc_freed": 215568,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 645
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 40193,
+            "gc_freed": 5256,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35117,
+            "gc_freed": 6088,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 606
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-14.jsonl",
+      "attempts_sha256": "efc1730530a4b3fdd9eb52e96551fd744744b15bb76ddb8fb5ea0d1198486c9d"
+    },
+    {
+      "number": 15,
+      "shape": "hot",
+      "acknowledged": 1408,
+      "refused": 0,
+      "goodput_per_second": 280.1987278990087,
+      "deltas": [
+        {
+          "address": "127.0.0.1:3311",
+          "calls": 4330,
+          "metrics": {
+            "gc_allocated": 62095729,
+            "gc_freed": 62878704,
+            "gc_steps_propagate": 182498,
+            "gc_steps_atomic": 7,
+            "gc_steps_sweep": 16786,
+            "gc_steps_finalize": 19547
+          },
+          "stats": {
+            "plock_waits": 1407,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 1408,
+            "commit_waits": 1407
+          }
+        },
+        {
+          "address": "127.0.0.1:3312",
+          "calls": 3,
+          "metrics": {
+            "gc_allocated": 47120,
+            "gc_freed": 9016,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3313",
+          "calls": 3,
+          "metrics": {
+            "gc_allocated": 49624,
+            "gc_freed": 9976,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 766
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3321",
+          "calls": 85,
+          "metrics": {
+            "gc_allocated": 2915198,
+            "gc_freed": 344712,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3322",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 33821,
+            "gc_freed": 5128,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 0
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        },
+        {
+          "address": "127.0.0.1:3323",
+          "calls": 0,
+          "metrics": {
+            "gc_allocated": 35149,
+            "gc_freed": 6184,
+            "gc_steps_propagate": 0,
+            "gc_steps_atomic": 0,
+            "gc_steps_sweep": 0,
+            "gc_steps_finalize": 626
+          },
+          "stats": {
+            "plock_waits": 0,
+            "deadlocks": 0,
+            "lock_timeouts": 0,
+            "commit_rc": 0,
+            "commit_waits": 0
+          }
+        }
+      ],
+      "attempts_file": "baseline-sample-15.jsonl",
+      "attempts_sha256": "f43324ee8996f2148d249c7f56ada9c3d255a32174c54ddac274b98f5616cda2"
+    }
+  ],
+  "later_run": "https://github.com/cstheorist/tarn/actions/runs/40965865151",
+  "later_observation": "All four baseline jobs failed before complete profiling; the checked memtx/Lua job reported an absent process while reading CPU counters. No passing profile matrix is claimed."
+}

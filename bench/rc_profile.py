@@ -56,8 +56,10 @@ end
 print(require('json').encode(out)); os.exit(0)
 """
     result = subprocess.run(['tarantool', '-e', script], text=True, capture_output=True,
-                            timeout=30, check=True,
+                            timeout=30, stdin=subprocess.DEVNULL,
                             env=dict(os.environ, RC186_ENDPOINTS=json.dumps(endpoints), RC186_CODE=code))
+    if result.returncode:
+        raise RuntimeError(f'diagnostic RPC exited {result.returncode}: {result.stderr[-12000:]}')
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
@@ -75,6 +77,15 @@ def percentile(values, fraction):
     return values[min(len(values) - 1, int(fraction * len(values)))] if values else None
 
 
+def diagnostic(record, name, operation):
+    """A failed diagnostic must not prevent independent effect accounting."""
+    try:
+        return operation()
+    except Exception as exc:
+        record.setdefault('diagnostic_errors', []).append(dict(stage=name, error=repr(exc)))
+        return None
+
+
 def reconcile(records, counters, ledger):
     """Exact identities matter; equal aggregate sums are insufficient."""
     acknowledged = {r['token']: r['key'] for r in records if r['outcome'] == 'ok'}
@@ -90,6 +101,7 @@ def reconcile(records, counters, ledger):
 
 
 def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=False):
+    sample_started = time.monotonic()
     admin = connect(args.sql)
     query(admin, 'TRUNCATE TABLE ledger')
     query(admin, 'UPDATE t SET v=0')
@@ -105,12 +117,12 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
             assert (isinstance(n, dict) and n.get('ready') == 1) if args.native == 'enabled' else n is False
     pids = [r['result']['pid'] for r in before]
     if profiled:
-        profile_files = evaluate(leaders,
-            "local p=box.cfg.work_dir..'/rc-sample-" + str(number) + ".sysprof'; "
-            "local ok,err=require('misc').sysprof.start({mode='C',interval=1,path=p}); "
-            "assert(ok,err); return p")
+        source = Path(__file__).with_name('rc_guest_profile.lua').read_text()
+        profile_bounds = evaluate(leaders,
+            'rc186_profile=assert(loadstring(' + json.dumps(source) + '))(); '
+            'return rc186_profile.start(' + str(args.seconds) + ')')
     else:
-        profile_files = []
+        profile_bounds = []
     cpus_before = {str(pid): cpu(pid) for pid in pids}
     records, failures = [], []
     clients = 1 if shape == 'uncontended' else 8
@@ -168,29 +180,41 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
         join_deadline = start[0] + args.seconds + 35
         for thread in threads:
             thread.join(max(0, join_deadline - time.monotonic()))
+    except Exception as exc:
+        failures.append(repr(exc))
     finally:
         cancel.set()
-    elapsed = time.monotonic() - start[0]
-    cpus_after = {str(pid): cpu(pid) for pid in pids}
-    profile = evaluate(leaders, "local m=require('misc'); local r=m.sysprof.report(); m.sysprof.stop(); return r") if profiled else None
-    after = evaluate(endpoints, METRICS)
+    elapsed = time.monotonic() - (start[0] or sample_started)
     attempt_path = output.parent / f'{output.stem}-sample-{number}.jsonl'
     attempt_path.write_text(''.join(json.dumps(r, sort_keys=True) + '\n' for r in sorted(records, key=lambda r: r['token'])))
     record = dict(number=number, shape=shape, profiled=profiled, warmup=warmup, clients=clients,
                   scheduled_seconds=args.seconds, elapsed_seconds=elapsed,
-                  before=before, after=after, cpu_before=cpus_before, cpu_after=cpus_after,
-                  profile=profile, profile_files=profile_files,
+                  before=before, cpu_before=cpus_before, profile_bounds=profile_bounds,
                   errors=failures, workers_live=any(t.is_alive() for t in threads),
                   attempts_file=attempt_path.name, attempts_sha256=sha(attempt_path), complete=False)
     evidence['samples'].append(record)
+    # Persist completed attempts before any diagnostic that could fail after a
+    # process loss. Preserve partial outcomes even when no metric/readback works.
     output.write_text(json.dumps(evidence, indent=2) + '\n')
-    assert not record['workers_live'] and not failures, record
-    counters = query(admin, 'SELECT id,v FROM t WHERE tenant=1 ORDER BY id')
-    ledger = query(admin, 'SELECT token,k FROM ledger WHERE tenant=1 ORDER BY token')
+    record['cpu_after'] = diagnostic(record, 'cpu', lambda: {str(pid): cpu(pid) for pid in pids})
+    if profiled:
+        record['profile'] = diagnostic(record, 'profile', lambda: evaluate(leaders,
+            'return rc186_profile.stop()'))
+    after = diagnostic(record, 'metrics', lambda: evaluate(endpoints, METRICS))
+    record['after'] = after
     # Preserve readback even when reconciliation rejects it.
-    record['readback'] = dict(counters=counters, ledger=ledger)
+    record['readback'] = diagnostic(record, 'readback', lambda: dict(
+        counters=query(admin, 'SELECT id,v FROM t WHERE tenant=1 ORDER BY id'),
+        ledger=query(admin, 'SELECT token,k FROM ledger WHERE tenant=1 ORDER BY token')))
+    admin.close()
     output.write_text(json.dumps(evidence, indent=2) + '\n')
-    record.update(reconcile(records, counters, ledger))
+    assert not record['workers_live'], 'workers did not settle; readback is not final'
+    if record['readback'] is not None:
+        record.update(reconcile(records, record['readback']['counters'], record['readback']['ledger']))
+    assert not failures and not record.get('diagnostic_errors'), record
+    if profiled:
+        assert sum(r['result']['samples'] for r in record['profile']) > 0, 'no profiler samples'
+        assert all(not r['result']['auto_stopped'] for r in record['profile']), 'profile exceeded its deadline'
     assert record['acknowledged'] > 0
     record['goodput_per_second'] = record['acknowledged'] / elapsed
     record['latency'] = {outcome: {f'p{int(p * 100)}': percentile(
@@ -208,7 +232,6 @@ def sample(args, number, shape, profiled, endpoints, output, evidence, warmup=Fa
                    ('plock_waits', 'deadlocks', 'lock_timeouts', 'commit_rc', 'commit_waits')}))
     record['complete'] = True
     output.write_text(json.dumps(evidence, indent=2) + '\n')
-    admin.close()
     print(json.dumps({k: record[k] for k in ('number', 'shape', 'profiled', 'acknowledged', 'refused', 'goodput_per_second')}), flush=True)
 
 
@@ -233,6 +256,7 @@ def main():
                     source=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
                     source_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], text=True)),
                     binary_sha256=sha(args.bin), harness_sha256=sha(__file__),
+                    profiler_sha256=sha(Path(__file__).with_name('rc_guest_profile.lua')),
                     native_sha256=sha(Path(args.bin).with_name('libtarn_storage.so')),
                     lua_sha256=sha('lua/tarn.lua'), host=platform.platform(),
                     cpu_tick_hz=os.sysconf('SC_CLK_TCK'), engine=args.engine, native=args.native,
