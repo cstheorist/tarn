@@ -2207,6 +2207,12 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
+| Bug_ClusterBackupDrain | violates NoLostAcknowledgement | 40367 | 182089 | 12 | 00s | 12 |
+| Bug_ClusterBackupEarlyCopy | violates CoherentData | 43988 | 157326 | 9 | 00s | 9 |
+| Bug_ClusterBackupMetadata | violates MetadataRetained | 31165 | 142161 | 11 | 00s | 11 |
+| Bug_ClusterBackupPartialRestore | violates NoPartialActivation | 42283 | 206696 | 13 | 00s | 13 |
+| Bug_ClusterBackupReplica | violates CompleteSet | 15833 | 63832 | 9 | 00s | 9 |
+| Bug_ClusterBackupRestart | violates FrozenCut | 10969 | 38737 | 8 | 00s | 8 |
 | Bug_CompletionRetentionForgetReceipt | violates NoContradictoryReopen | 56 | 76 | 6 | 00s | 6 |
 | Bug_CountsAuxMetadata | violates NewClusterDefault | 1741 | 2173 | 4 | 00s | 4 |
 | Bug_DecisionIgnoreLeaving | violates ActivePreferred | 252 | 252 | 2 | 00s | 2 |
@@ -2394,6 +2400,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| ClusterBackup | no errors | 52164 | 255561 | 30 | 00s |  |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
 | DepartureDependencies | no errors | 564 | 1626 | 17 | 00s |  |
