@@ -69,6 +69,22 @@ ok(c:call('tarn_create_table', {{id=sid,name='test.native_fresh',engine='memtx',
              {name='bucket_id',unique=false,parts={{4,'unsigned'}}}}}}))
 ev(leader, [[local sid,token=...;box.space[sid]:replace{1,token,0,1}
     tarn.cfg.scan_page_bytes=4*1024*1024;tarn.cfg.scan_page_rows=1024;tarn.ns_sync()
+    native_fresh_status_events={sequence=0,events={}}
+    native_fresh_status_watch=box.watch('box.status',function(value)
+        local s=native_fresh_status_events
+        s.sequence=s.sequence+1
+        if #s.events==8 then table.remove(s.events,1) end
+        s.events[#s.events+1]={sequence=s.sequence,value=value,ro=box.info.ro,
+            term=box.info.election.term,mono=require('clock').monotonic()}
+    end)
+    function native_fresh_cache()
+        local ffi=require('ffi');local n=ffi.cast('struct tarn_ns*',box.func['tarn_storage.ts_state']:call())
+        return {ready=tonumber(n.ready),bk_stale=tonumber(n.bk_stale),lk_stale=tonumber(n.lk_stale),
+            fence_stale=tonumber(n.fence_stale),hooks=tonumber(n.hooks),count=tonumber(n.count),
+            bucket1=n.count>0 and tonumber(n.serves[1]) or 0,
+            ro=box.info.ro,term=box.info.election.term,queue=box.info.synchro.queue.len,
+            status=native_fresh_status_events}
+    end
     function native_fresh_recycle(payload) return #payload end
     box.schema.func.create('native_fresh_recycle',{if_not_exists=true})
     box.schema.user.grant('tarn','execute','function','native_fresh_recycle',{if_not_exists=true})]], {sid, token})
@@ -91,10 +107,23 @@ local round = 0
 local function blocked(proc, args, via)
     round = round + 1
     ok(c:call('tarn_select', read_args)) -- refresh ordinary caches before blocking
+    local after_read = ev(leader, 'return native_fresh_cache()')
+    -- A read need not leave the native WRITE bucket cache ready. In
+    -- particular, a box.status notification conservatively invalidates it
+    -- even when the term/RO role did not change. Refresh through the public
+    -- map reader while every quorum member is still running, never after
+    -- the synchronous entry below is pending.
+    ok(c:call('tarn_buckets'))
+    local prepared = ev(leader, 'return native_fresh_cache()')
+    check(proc .. ' native write/read caches are ready before replica pause',
+        prepared.ready==1 and prepared.hooks==0 and prepared.bk_stale==0 and prepared.lk_stale==0
+        and prepared.fence_stale==0 and prepared.count==16 and prepared.bucket1==2
+        and not prepared.ro and prepared.queue==0, {after_read=after_read,prepared=prepared})
     signal(follower, 19)
     local yes, result = xpcall(function()
         local writer = c:eval('local sid,key,v=...;box.space[sid]:replace{1,key,v,1};return v', {sid,token,round}, {is_async=true})
         await('pending synchronous WAL entry', function() return ev(leader,'return box.info.synchro.queue.len') > 0 end, 2)
+        local pending_cache = ev(leader, 'return native_fresh_cache()') -- diagnostics only; no refresh/barrier
         local before = c:call('tarn_info').native
         local future = (via or c):call(proc, args, {is_async=true})
         fiber.sleep(.03)
@@ -105,7 +134,11 @@ local function blocked(proc, args, via)
         signal(follower, 18)
         local wr, we = writer:wait_result(5); assert(wr, tostring(we))
         local r, err = future:wait_result(5); assert(r, tostring(err))
-        return {reply=r, before=before, after=c:call('tarn_info').native}
+        local cache_after = ev(leader, 'return native_fresh_cache()')
+        event('native cache across yielded call', {proc=proc,round=round,prepared=prepared,
+              pending=pending_cache,after=cache_after})
+        return {reply=r, before=before, after=c:call('tarn_info').native,
+                cache={prepared=prepared,pending=pending_cache,after=cache_after}}
     end, debug.traceback)
     if not yes then pcall(signal, follower, 18); error(result) end
     return result
@@ -137,11 +170,11 @@ local payload = string.rep('write-input-',4096)
 r = blocked('tarn_storage.ts_autocommit', {{{'replace',sid,{2,payload,200,1}}},{fence={sid,0},wb={1}}})
 local row = ev(leader, 'return box.space[...]:get{2,select(2,...)}', {sid,payload})
 check('native autocommit retains its mutation payload after the pre-data yield', r.reply[1][1] == 'ok' and row[2] == payload
-    and row[3] == 200 and r.after.writes == r.before.writes+1, r.after)
+    and row[3] == 200 and r.after.writes == r.before.writes+1, {native=r.after,cache=r.cache})
 r = blocked('tarn_storage.ts_commit_local', {'native-input-local',{{'replace',sid,{3,payload,300,1}}},{},{},box.NULL,{sid,0},{1},box.NULL})
 row = ev(leader, 'return box.space[...]:get{3,select(2,...)}', {sid,payload})
 check('native write-only local commit retains its payload after the pre-data yield', r.reply[1][1] == 'ok' and row[2] == payload
-    and row[3] == 300 and r.after.commits == r.before.commits+1, r.after)
+    and row[3] == 300 and r.after.commits == r.before.commits+1, {native=r.after,cache=r.cache})
 local no_op = c:new_stream(); ok(no_op:call('tarn_storage.ts_select', first))
 local no_op_id = no_op:eval("return tostring(require('ffi').C.box_txn_id())")
 local no_op_args = {'native-final-no-op',{{'delete',sid,{999,token}}},{{sid,0,{1,token},1}},{},box.NULL,{sid,0},{1},box.NULL}
