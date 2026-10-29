@@ -17,6 +17,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The native RF3 freshness fixture distinguishes a controlled native-path
+  witness from a legitimate post-barrier stale-bucket handback (#170).
+  It schedules the actual production status callback without replacing
+  freshness/cache checks, preserves stream/read-set and no-replay assertions,
+  records the real status payload, and exports source/module/process and
+  pre-pause/pending/post-yield evidence from CI on success or failure.
 - The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
   across the warmup, limited-I/O and release windows, so fast writers cannot
   consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).

@@ -249,6 +249,24 @@ jobs:
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true
+      - name: Retain native freshness evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-freshness-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          path: |
+            /tmp/tarn-lua-test.*/native-freshness-*/events.jsonl
+            /tmp/tarn-lua-test.*/native-freshness-*/source.sha256
+            /tmp/tarn-lua-test.*/native-freshness-*/native.sha256
+            /tmp/tarn-lua-test.*/native-freshness-*/tarantool.sha256
+            /tmp/tarn-lua-test.*/native-freshness-*/tarantool-version.txt
+            /tmp/tarn-lua-test.*/native-freshness-*/control
+            /tmp/tarn-lua-test.*/native-freshness-*/cleanup.txt
+            /tmp/tarn-lua-test.*/native-freshness-*/s*.process-identity
+            /tmp/tarn-lua-test.*/native-freshness-*/s*.pid
+            /tmp/tarn-lua-test.*/native-freshness-*/s*.log
+            /tmp/tarn-lua-test.*/native-freshness-*/s*/status-events.jsonl
 
   tla:
     if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
