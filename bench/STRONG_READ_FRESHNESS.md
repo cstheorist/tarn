@@ -28,8 +28,9 @@ preserve guarantees through in-flight synchronous commits.
 Persisted immutable timing policy and relevant-writer certification fence
 uncertain new votes and GC. The GC high-water mark and deletions share one
 transaction. Decided completion remains available under clock faults and
-preserves inherited receipt timestamps and expiry horizons. No operation
-is replayed after mutation outcome uncertainty.
+preserves inherited receipt timestamps and expiry horizons. Non-idempotent
+mutations are never automatically replayed after outcome uncertainty;
+idempotent protocol recovery can redeliver requests.
 
 Accepted wall-clock corrections stay within the unchanged elapsed-time drift
 budget. Monotonic reversals still fault; publication retains the maximum of
@@ -101,8 +102,9 @@ first failed Linux run has no uploaded verified WAL export. A second attempt
 completed RF1 and cleanup but failed an assertion that used the ARM build
 version abbreviation for x86; its complete raw scope is retained separately.
 
-Each cell has six paired trials, three in each Lua/native order, shuffled
-independently across cells. Each phase has a one-second warmup and five
+Each cell has six paired trials, three in each Lua/native order. Case order
+is shuffled per trial; pair order alternates by trial and stable case index.
+Each phase has a one-second warmup and five
 timed seconds. All phases, raw latencies, outcomes and rejected setups are
 retained. Neither path receives a weaker guarantee or selectively omitted
 trial. CPU covers the queried leader's transaction thread, including common probe
@@ -169,8 +171,10 @@ it refreshes the public bucket map before pausing a replica and records
 cache/status changes. The production and benchmark implementations are
 unchanged. The 32-check focused run requires exact payloads and actual native
 service after the forced yield; the combined final local run passed 1,743
-printed checks across 58 sections. A later CI test-setup failure is
-retained separately from the successful read study.
+printed checks across 58 sections. Its source/log binding is in the separate
+[final validation attestation](https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json).
+The measured revision `62cf4c6` ordinary CI test-setup failure preceded this
+fixture correction and is retained separately from the successful read study.
 
 ## Evidence and publication gates
 

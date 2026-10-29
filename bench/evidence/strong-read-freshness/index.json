@@ -20,7 +20,7 @@
   "functional_ci": {
     "run": 40794098539,
     "source_commit": "18cd3a9f457ee0ff8c8d3f1d582f1dc1255ef3db",
-    "source_qualification": "all86compiled/310proof/65frozenLua inputs equal measuredsource; no new proof run inferred"
+    "source_qualification": "86 source/config inputs, 310 proof inputs and 65 frozen Lua inputs match the measured source; this source comparison does not imply a new proof run"
   },
   "final_ci_attestation": {
     "url": "https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json",
