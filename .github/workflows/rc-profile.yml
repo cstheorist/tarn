@@ -1,0 +1,115 @@
+name: READ COMMITTED allocation profile
+
+on:
+  pull_request:
+    paths:
+      - 'bench/rc_*.py'
+      - 'bench/rc_*.lua'
+      - 'lua/tarn.lua'
+      - '.github/workflows/rc-profile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc-profile-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Build unchanged release profile
+        run: |
+          cargo build --release --locked -p tarn-server -p tarn-storage
+          mkdir -p /tmp/rc-build
+          cp target/release/tarn-server target/release/libtarn_storage.so /tmp/rc-build/
+          git rev-parse HEAD > /tmp/rc-build/source.txt
+          rustc -Vv > /tmp/rc-build/rustc.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/rc-build/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc-build-${{ github.run_id }}
+          path: /tmp/rc-build
+          retention-days: 30
+
+  profile:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        engine: [memtx, vinyl]
+        native: [enabled, disabled]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: rc-build-${{ github.run_id }}
+          path: /tmp/rc-build
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - run: python3 bench/rc_profile_test.py
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          chmod +x /tmp/rc-build/tarn-server
+          test "$(cat /tmp/rc-build/source.txt)" = "$(git rev-parse HEAD)"
+          mkdir -p target/release /tmp/rc-results
+          cp /tmp/rc-build/tarn-server /tmp/rc-build/libtarn_storage.so target/release/
+          sha256sum -c /tmp/rc-build/binaries.sha256
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: RF3 fsync baseline, exact ledger and per-key effects
+        env:
+          TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/rc-build/libtarn_storage.so' || '0' }}
+          TARN_BIN: /tmp/rc-build/tarn-server
+          TARN_VINYL_CACHE_MB: '0'
+        run: |
+          scripts/cluster.sh start -d /tmp/rc-cluster -n 2 -r 3 -w fsync -p 4000 -s 1 -m 256 -e '${{ matrix.engine }}'
+          tarantool --version > /tmp/rc-results/tarantool.txt
+          python3 bench/rc_profile.py --cluster-dir /tmp/rc-cluster --bin /tmp/rc-build/tarn-server \
+            --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
+            --repeats 5 --seconds 5 --out /tmp/rc-results/baseline.json
+      - name: Stop the owned fixture and retain its state
+        if: always()
+        run: KEEP=1 scripts/cluster.sh stop -d /tmp/rc-cluster
+      - name: Preserve failed-run storage state
+        if: failure()
+        run: tar -czf /tmp/rc-results/failed-cluster.tar.gz -C /tmp rc-cluster
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rc-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          path: |
+            /tmp/rc-results
+            /tmp/rc-build/source.txt
+            /tmp/rc-build/rustc.txt
+            /tmp/rc-build/binaries.sha256
+            /tmp/rc-cluster/*.log
+            /tmp/rc-cluster/*.sh
+            /tmp/rc-cluster/cluster.json
+            /tmp/rc-cluster/params
+          retention-days: 30
+          if-no-files-found: error
