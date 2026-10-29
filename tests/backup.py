@@ -30,6 +30,7 @@ def main():
     ap.add_argument('--min-backup-bytes', type=int, default=0)
     ap.add_argument('--output', required=True)
     ap.add_argument('--functional', action='store_true')
+    ap.add_argument('--foreground', choices=['read','write'], default='read')
     args = ap.parse_args()
     assert args.rows > 0 and args.payload >= 1024 and args.repetitions >= 1
     work = pathlib.Path(args.work).absolute();work.mkdir(mode=0o700)
@@ -45,7 +46,7 @@ def main():
     revision=os.getenv('TARN_SOURCE_REVISION') or subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     record={'format':'tarn-backup-study-v1','source_revision':revision,
             'source_sha256':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
-                             [ROOT/'scripts/backup.py',ROOT/'scripts/backup_rpc.lua',ROOT/'tests/backup.py',*sorted((ROOT/'lua').glob('*.lua'))]},
+                             [ROOT/'scripts/backup.py',ROOT/'scripts/backup_rpc.lua',ROOT/'tests/backup.py',ROOT/'tests/backup_rpc.lua',*sorted((ROOT/'lua').glob('*.lua'))]},
             'settings':vars(args),'samples':[],'boundary':'owned same-host component; RF and resources explicit; no cross-shard snapshot or production-capacity claim'}
     def save():
         pathlib.Path(args.output).write_text(json.dumps(record,indent=2)+'\n')
@@ -53,15 +54,17 @@ def main():
         r=subprocess.run(cmd,cwd=ROOT,env=env,capture_output=True,text=True,timeout=1800)
         if okay and r.returncode:raise RuntimeError('command failed: '+str(cmd)+'\n'+r.stdout+'\n'+r.stderr[-6000:])
         return r
-    def rpc(i,code):
+    def rpc(i,code,timeout=30):
         path=work/('request-'+uuid.uuid4().hex+'.lua');path.write_text(code)
-        try:return json.loads(run([T,str(ROOT/'tests/backup_rpc.lua'),uris[i],str(path)]).stdout)
+        try:return json.loads(run([T,str(ROOT/'tests/backup_rpc.lua'),uris[i],str(path),str(timeout)]).stdout)
         finally:path.unlink()
-    def await_rpc(i,code,seconds=60):
+    def await_rpc(i,code,seconds=60,process=None):
         deadline=time.monotonic()+seconds;last=None
         while time.monotonic()<deadline:
+            if process is not None and process.poll() is not None:
+                raise RuntimeError('candidate exited with code '+str(process.returncode)+'; inspect owned node logs')
             try:
-                last=rpc(i,code)
+                last=rpc(i,code,timeout=2)
                 if last:return last
             except (RuntimeError,json.JSONDecodeError) as e:last=str(e)[-1000:]
             time.sleep(.1)
@@ -91,7 +94,9 @@ require('fiber').create(function()
  while p.active do
   local begin=require('clock').monotonic()
   local v=box.space[88002]:get{2}.v+1
-  local good,r=pcall(tarn_autocommit,{{'replace',88002,{2,v,1}}},{fence={88002,0},wb={1}})
+  local good,r
+ if FOREGROUND_WRITE then good,r=pcall(tarn_autocommit,{{'replace',88002,{2,v,1}}},{fence={88002,0},wb={1}})
+ else good,r=pcall(function() box.begin{txn_isolation='read-confirmed'};local row=box.space[88001]:get{1};assert(row~=nil);box.commit();return {'ok'} end);if not good then pcall(box.rollback) end end
   p.samples[#p.samples+1]=(require('clock').monotonic()-begin)*1000
   if not good or r[1]~='ok' then p.errors[#p.errors+1]=tostring(r);p.active=false end
   if #p.samples>=120000 then p.errors[#p.errors+1]='sample bound reached';p.active=false end
@@ -100,7 +105,7 @@ require('fiber').create(function()
  p.done=true
 end)
 return true
-""")
+""".replace('FOREGROUND_WRITE','true' if args.foreground=='write' else 'false'))
     def probe_stop(i):
         samples=rpc(i,"local p=assert(__backup_probe);p.active=false;while not p.done do require('fiber').sleep(.001) end;__backup_probe=nil;return p")
         assert not samples['errors'],samples
@@ -167,7 +172,7 @@ for i=1,rows do
  end
 end
 box.snapshot();return {rows=box.space[88001].index[0]:count(),version=box.info.version,uuid=tostring(box.info.uuid),vclock=box.info.vclock,throttled=throttled}
-"""%(args.rows,args.payload))
+"""%(args.rows,args.payload),timeout=1800)
         record['load']=loaded;print('LOADED',loaded,flush=True)
         # Restore normal checkpoint policy after the bulk loader; checkpoint
         # every source to release its initial-load WAL before copying data.
@@ -182,10 +187,11 @@ local d=require('crypto').digest.sha256.new();local n=0
 for _,t in box.space[88001]:pairs() do d:update(require('msgpack').encode(t:totable()));n=n+1; if n%128==0 then require('fiber').sleep(0);collectgarbage('step',256) end end
 return {rows=n,sha256=require('digest').base64_encode(d:result()),uuid=tostring(box.info.uuid),vclock=box.info.vclock}
 """
-        expected=rpc(leader,digest_code);record['fixture']=expected
+        expected=rpc(leader,digest_code,timeout=300);record['fixture']=expected
         record['environment']={'platform':sys.platform,'uname':list(os.uname()),'native':os.getenv('TARN_NATIVE','default'),
                                'replication_contract':'three live synchronous source replicas; registered fourth candidate starts as a voter; no failover claim',
-                               'foreground':'internal storage autocommit, one small row, 20ms think time; excludes client/network/SQL latency',
+                               'foreground':'native read-confirmed vinyl point read' if args.foreground=='read' else 'Tarn autocommit memtx write',
+                               'foreground_boundary':'one client, 20ms think time; raw local read excludes strong quorum barrier, network and SQL latency',
                                'cpu_limit':pathlib.Path('/sys/fs/cgroup/cpu.max').read_text().strip() if pathlib.Path('/sys/fs/cgroup/cpu.max').exists() else None,
                                'memory_limit':pathlib.Path('/sys/fs/cgroup/memory.max').read_text().strip() if pathlib.Path('/sys/fs/cgroup/memory.max').exists() else None}
         native=pathlib.Path(os.getenv('TARN_NATIVE','0'))
@@ -283,13 +289,13 @@ return {rows=n,sha256=require('digest').base64_encode(d:result()),uuid=tostring(
                 rpc(leader,"local r=tarn_autocommit({{'replace',88002,{1,%d,1}}},{fence={88002,0},wb={1}});assert(r[1]=='ok');return true"%tail)
                 p=start(candidate,directory,seeded_uuid)
                 try:
-                    info=await_rpc(candidate,"return rawget(_G,'tarn')~=nil and box.space[88002]~=nil and box.space[88002]:get{1}.v==%d and {uuid=tostring(box.info.uuid),ro=box.info.ro,vclock=box.info.vclock,rows=box.space[88001].index[0]:count()}"%tail,seconds=1800)
+                    info=await_rpc(candidate,"return rawget(_G,'tarn')~=nil and box.space[88002]~=nil and box.space[88002]:get{1}.v==%d and {uuid=tostring(box.info.uuid),ro=box.info.ro,vclock=box.info.vclock,rows=box.space[88001].index[0]:count()}"%tail,seconds=1800,process=p)
                     elapsed=time.monotonic()-started
                     foreground=probe_stop(leader)
                     assert info['ro'] and info['uuid']==seeded_uuid and info['rows']==args.rows,info
-                    check=rpc(candidate,digest_code);assert check['sha256']==expected['sha256'] and check['rows']==expected['rows']
+                    check=rpc(candidate,digest_code,timeout=300);assert check['sha256']==expected['sha256'] and check['rows']==expected['rows']
                     sample={'repetition':rep+1,'label':label,'elapsed_s':elapsed,'seed_copy_s':copy_s,'start_follow_s':elapsed-copy_s,
-                            'physical_backup_bytes':manifest['bytes'],'seconds_per_100GB_linear_normalization':elapsed*100000000000/manifest['bytes'],
+                            'physical_backup_bytes':manifest['bytes'],'seconds_per_100GB_payload_linear_normalization':elapsed*100000000000/(args.rows*args.payload),
                             'verified':check,'tail_value':tail,'state':info,'foreground':foreground}
                     record['samples'].append(sample);save();print(label,rep+1,round(elapsed,3),'s',flush=True)
                 finally:stop(p)

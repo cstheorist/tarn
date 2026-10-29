@@ -1315,8 +1315,8 @@ restore, exact full-data digests, a separately registered voter, WAL tail
 catch-up, corruption/traversal/ownership/expiry and copier-death controls.
 `tests/test_backup.py` checks offline recovery safety. The scale driver
 alternates full-join and backup-seeded candidates, repeats file backups,
-records every sample and exact tuple digest, and retains foreground storage
-write latencies. Its fixture pins one candidate leader and leaves the other
+records every sample and exact tuple digest, and retains foreground native read-confirmed vinyl point-read
+latencies (20 ms think time, no SQL/network or strong-read quorum barrier). Its fixture pins one candidate leader and leaves the other
 source replicas as voters; it is not a failover-capacity benchmark.
 
 The opt-in `File backup scale study` workflow records Linux CI evidence;
@@ -1334,8 +1334,14 @@ TARN_NATIVE=target/release/libtarn_storage.so python3 tests/backup.py \
 Keep roughly six times the payload size free during population, checkpoints,
 backup and candidate recovery. Candidate directories belong to this fixture
 and are removed only after their process stops and the full digest matches.
-The work directory and raw failure logs are retained. A `seconds_per_100GB`
-linear normalization is a throughput display from the actual measured
+The work directory and raw failure logs are retained. A `seconds_per_100GB_payload_linear_normalization`
+field is a payload-based linear normalization is a throughput display from the actual measured
 size, not an observed 100 GB result or validated scaling prediction. CI and
 reference hardware/settings have separate records; compare each study's
 paired samples without combining their rates. See [benchmark evidence](../bench/RESULTS.md).
+
+A 512 MiB rehearsal with an active write probe reproduced the documented
+Tarantool 3.9 full-join first-checkpoint timeout. The matched timing studies
+therefore use the same read-only point workload on both paths. Write-active
+bootstrap capacity is not established by those studies; the failed run and
+its source/settings remain part of the retained evidence.

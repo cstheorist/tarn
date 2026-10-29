@@ -1,5 +1,16 @@
 name: File backup scale study
 on:
+  workflow_call:
+    inputs:
+      size_gib:
+        type: string
+        default: '2'
+      repetitions:
+        type: string
+        default: '3'
+      rate_mib:
+        type: string
+        default: '128'
   workflow_dispatch:
     inputs:
       size_gib:

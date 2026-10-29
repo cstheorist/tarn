@@ -6,6 +6,14 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      file_backup_scale:
+        description: Include the file-backup scale study
+        type: boolean
+        default: false
+      backup_size_gib:
+        description: File-backup study payload GiB
+        type: string
+        default: '2'
       strong_read_cost:
         description: Run only the manual matched strong-read cost study
         type: boolean
@@ -247,3 +255,11 @@ jobs:
     uses: ./.github/workflows/strong-read-cost.yml
     permissions:
       contents: read
+
+  file-backup-scale:
+    if: github.event_name == 'workflow_dispatch' && inputs.file_backup_scale
+    uses: ./.github/workflows/file-backup.yml
+    with:
+      size_gib: ${{ inputs.backup_size_gib }}
+      repetitions: '3'
+      rate_mib: '128'
