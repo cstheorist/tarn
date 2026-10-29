@@ -48,7 +48,7 @@
 2026-10-28T19:39:06.5975386Z   trapno   0xe                14
 2026-10-28T19:39:06.5975585Z Current time: 1793216255
 2026-10-28T19:39:06.5975870Z Please file a bug at https://github.com/tarantool/tarantool/issues
-2026-10-28T19:39:06.5976252Z Attempting backtrace... Note: since the server has already crashed, 
+2026-10-28T19:39:06.5976252Z Attempting backtrace... Note: since the server has already crashed,
 2026-10-28T19:39:06.5976542Z this may fail as well
 2026-10-28T19:39:06.5976755Z #1  0x564c5a94cd52 in crash_signal_cb+162
 2026-10-28T19:39:06.5976992Z #2  0x7f4319c45330 in __sigaction+80
