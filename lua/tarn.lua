@@ -6746,10 +6746,7 @@ end
 -- change shows once the step made it, as BK.early does), and builds the
 -- report once per change: reading 15,000 buckets from _tarn_buckets takes
 -- about 11 ms, and SQL servers read the map after every move.
-function tarn_buckets()
-    M.fresh.barrier()
-    writable()
-    BK.fresh()
+function BK.bucket_report()
     if BK.count == 0 then return {OK, 0, #BK.spaces(false)} end
     local r = BK.report
     if r ~= nil and r.ver == BK.ver then return r.reply end
@@ -6772,6 +6769,12 @@ function tarn_buckets()
     if lo ~= nil then owned[#owned + 1] = {lo, hi} end
     BK.report = {ver = BK.ver, reply = {OK, BK.count, BK.epoch, owned, others, BK.mver}}
     return BK.report.reply
+end
+function tarn_buckets()
+    M.fresh.barrier()
+    writable()
+    BK.fresh()
+    return BK.bucket_report()
 end
 
 -- R: receive bucket b from shard `from` in move `move`.
@@ -7440,6 +7443,7 @@ local function setup_schema()
     box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
     box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
     ensure_schema()
+    M.kv.register()
     if M.cfg.native then
         for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit',
                             'tarn_storage.ts_commit_local', 'tarn_storage.ts_validate'}) do
@@ -7680,5 +7684,48 @@ function tarn_lazy_gc(gen, bucket, route) return M.lazy.gc(gen, bucket, route) e
 function tarn_lazy_stats() return M.lazy.stats() end
 function tarn_lazy_control(action, arg) return M.lazy.control(action, arg) end
 function tarn_vinyl_stats() return {OK, M.vinyl.stats()} end
+
+-- Private adapter callbacks retain the ordinary strong point path. The
+-- public KV functions expose neither its raw/stream knobs nor control RPCs.
+M.kv = require('tarn_kv').new{
+    cfg = M.cfg, fresh = M.fresh,
+    prepare = function()
+        M.fresh.barrier()
+        lk_fresh(); fence_fresh(); BK.fresh()
+    end,
+    point = function(sid, key, bucket)
+        return tarn_select(sid, 0, key, 'EQ', 1, nil, nil, true, nil, false, nil, bucket)
+    end,
+    guard = function(sid, ver)
+        writable()
+        M.fresh.clock_check(); M.fresh.controls()
+        if LK_STALE or FENCE_STALE or BK.stale then
+            error(box.error.new{code = box.error.TRANSACTION_CONFLICT,
+                                reason = 'Strong KV metadata became stale during the read'})
+        end
+        local stale = stale_definition({sid, ver})
+        if stale or DDL_HELD[sid] ~= nil then
+            error({kv_v1 = true, kind = 'schema_changed', domain = 'contract', code = 1412,
+                   message = 'Table definition is fenced; explicitly open a new table handle'}, 0)
+        end
+        return DDL_GEN
+    end,
+    topology = function()
+        if BK.stale then error('Strong KV bucket metadata is stale') end
+        local report = BK.bucket_report()
+        if report[1] ~= OK then error('Strong KV bucket report is unavailable') end
+        local members = BK.members.shards or {}
+        if #members == 0 then
+            members = {}
+            for id, replicas in pairs(M.cfg.peers) do
+                members[#members + 1] = {id = tonumber(id), replicas = replicas, state = 'active'}
+            end
+            table.sort(members, function(a, b) return a.id < b.id end)
+        end
+        return {shard_id = M.cfg.shard_id, count = report[2], epoch = BK.epoch, mver = BK.mver,
+                owned = report[4] or {}, others = report[5] or {}, members = members}
+    end,
+}
+rawset(_G, 'tarn_kv_v1', {meta = M.kv.meta, get = M.kv.get, get_many = M.kv.get_many})
 
 return M

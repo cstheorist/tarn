@@ -85,6 +85,8 @@ Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck"
 DEFAULT="$DEFAULT PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture Bug_PlainLazyPending
 Bug_PlainLazyFirstWriteOnly Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale"
 DEFAULT="$DEFAULT EngineBuildReentry Bug_EngineBuildReusePage Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix"
+DEFAULT="$DEFAULT ExternalStrongKV Bug_KVOwnerFence Bug_KVIncarnation Bug_KVSchemaAsOwner
+Bug_KVClippedComplete Bug_KVMissingClaim Bug_KVFalseAtomic"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

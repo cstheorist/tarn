@@ -57,7 +57,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and checked with TLC (263 default configurations, including 194
+  and checked with TLC (270 default configurations, including 200
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -192,6 +192,7 @@ covers and how to run it.
 |---|---|
 | [Getting started](docs/getting-started.md) | build, run a cluster, SQL and key/value access, failover |
 | [SQL compatibility](docs/sql-compatibility.md) | supported statements, types, functions, and differences from MySQL |
+| [Strong Key/Value reads](docs/strong-kv.md) | versioned read-only point and bounded multi-get API, authentication, ownership and schema handles |
 | [Operations](docs/operations.md) | configuration, deployment, monitoring, error codes, security |
 | [Design](docs/design.md) | architecture, the commit protocol, and the correctness argument |
 | [Verification](docs/verification.md) | the TLA+ model, the Verus proofs, the test suites, CI |
