@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
+  across the warmup, limited-I/O and release windows, so fast writers cannot
+  consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).
+  Exact bounded acknowledged/refused-key readback and raw attempt evidence
+  are retained before a failed pressure assertion, without replaying unknown
+  writes. Virtual-time controls exercise the same scheduler and finalizer.
+
 - An engine BUILD could return 1213 after a status notification revoked its
   transaction cut between successful stages
   ([#165](https://github.com/cstheorist/tarn/issues/165)). The original BUILD
