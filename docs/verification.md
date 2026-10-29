@@ -1932,10 +1932,10 @@ runtime histories define those separate obligations. No Verus body changes.
 
 ### Configuration counts
 
-The default list contains 270 unique configurations: 70 positive
-outcomes and 200 expected broken/trade-off outcomes. The 277 generated
+The default list contains 282 unique configurations: 72 positive
+outcomes and 210 expected broken/trade-off outcomes. The 289 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 283 total. Explicit
+placement configurations are maintained directly, for 295 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1971,14 +1971,15 @@ The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
 formed a 263-case union. The full list subsequently passed in
 [CI 40910653977](https://github.com/cstheorist/tarn/actions/runs/40910653977),
-alongside all four required jobs on the exact #191 source tree. Seven
-external-KV checks then passed separately through the registered checker,
-preserving the 263-case prefix, existing model/config bytes and dispatch.
-The generator reproduces twice without changes. The current proof
-inventory is 338 files: 322 TLA+ model/config files, 11 verified-crate
-source/test/manifest files and five formal runner/inspection scripts.
-The complete 270-case CI run remains a separate validation gate. Verus
-bodies are unchanged.
+alongside all four required jobs on the exact #191 source tree. File-backup
+and cluster-backup registrations add twelve configurations, and seven
+external-KV checks passed separately through the registered checker.
+Integration preserves both groups, their model/config bytes and dispatch.
+This is an input union; prior CI runs did not execute the integrated list.
+The current proof inventory is 352 files: 336 TLA+ model/config files,
+11 verified-crate source/test/manifest files and five formal runner/inspection
+scripts. The complete 282-case CI run remains a separate validation gate.
+Verus bodies are unchanged.
 
 ## Verus proofs
 
@@ -2336,3 +2337,57 @@ routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
 malformed/lost-reply faults and failover preserve the existing uncertainty
 and matched fencing behavior. Resource budgets do not certify whole-query
 memory bounds or benchmark speedups.
+
+### Physical file backup agent and seed identity (issue #56)
+
+`FileBackup.tla` checks the agent's publication and seed-mode contract with
+two abstract files: copier death/lease expiry, file reclamation, corruption,
+checked restore, registration, distinct seed identity and read-only follow
+before operator-authorized promotion. It checks complete-file publication,
+a valid publication lease, verified restored contents and identity separation.
+The four `Bug_FileBackup*` configurations deliberately publish partial data,
+skip hash checks, reuse the source identity or ignore an expired lease;
+each must violate its corresponding invariant.
+
+Tarantool's coherent backup file list/WAL recovery, actual filesystem
+`fsync`/rename behavior, SHA-256, fixed-width header format, administrative
+registration and the operator's catch-up/promotion decision are trusted
+premises. This bounded model does not prove file IO, a whole-cluster backup,
+Tarantool replication, performance, or Python/Lua refinement. The existing
+commit/locking/recovery models and 140 verified shared bodies are unchanged.
+Live tests recover real vinyl files and compare every tuple byte, including
+post-backup WAL and negative lease/copy/restore controls. The startup voter
+marker prevents accidental candidate startup until an operator clears it;
+it does not make the operator's catch-up decision automatically.
+
+
+### Quiescent cluster backup and restore (issue #137)
+
+`ClusterBackup.tla` models a distributed decision, independent replica APPLY,
+complete replica fencing, restart, certification, per-node copying, controller
+failure, publication and quarantined restore/activation. The positive bounded
+configuration explores 52,164 distinct states at depth 30. Six controls remove
+all-replica fencing, draining, replica completeness, durable restart fencing,
+complete restore verification or metadata retention. Each violates its named
+invariant; the early-copy and no-drain controls expose incoherent copied rows
+and loss of an acknowledged effect, respectively. This is a separate backup
+contract; it does not modify or prove a refinement of `TarnCommit`.
+
+The runtime additionally checks published membership, catalogs, exact bucket
+coverage, equal WAL vectors and per-replica tuple/schema digests. Its drain
+refuses PREPARED/STAGING, unfinished DDL/movement and unshipped lazy obligations;
+it does not remove them. Tarantool 3.9.0's
+[read-only transition](https://github.com/tarantool/tarantool/blob/3.9.0/src/box/box.cc#L449)
+aborts in-progress persistent nonlocal writes. Settled synchronous queues,
+replica catch-up, stable before/after WAL vectors and the pinned immutable
+checkpoint/file contract remain trusted storage premises. Persistent local
+spaces are refused because read-only mode does not fence them. The live drill
+holds an actual uncommitted mutation across acquisition and checks its refusal.
+
+Filesystem fsync/rename, hash collision resistance, Tarantool's checkpoint/WAL
+and replication implementation, complete honest inventory, exclusive administrative
+access and isolated restored networking remain trusted. No unbounded theorem,
+online-backup guarantee, arbitrary-time PITR, whole-code refinement or automatic
+liveness/restart bound follows. The [operations contract](cluster-backup.md)
+and [live evidence index](../tests/evidence/cluster-backup/index.json) retain
+these boundaries and all source-bound outcomes.

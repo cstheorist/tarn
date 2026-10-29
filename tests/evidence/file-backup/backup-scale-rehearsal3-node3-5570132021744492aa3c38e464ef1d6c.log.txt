@@ -1,0 +1,4 @@
+2026-10-29 13:35:39.235 [5100] main/104/storage.lua replication.cc:1406 C> failed to connect to 3 out of 4 replicas
+2026-10-29 13:36:00.224 [5100] main/104/storage.lua box.cc:5515 E> failed to create a checkpoint
+2026-10-29 13:36:00.227 [5100] main/104/storage.lua checkpoint.c:134 E> timed out {"type":"TimedOut","errno":110,"trace":[{"file":"./src/box/checkpoint.c","line":134}]}
+2026-10-29 13:36:00.227 [5100] main/104/storage.lua say.c:88 F> can't initialize storage: timed out
