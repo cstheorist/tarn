@@ -20,8 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "sql"))
 from lazytest import ev, rpc, q, wait_empty  # noqa: E402
 from movetest import bucket_of  # noqa: E402
 import pymysql  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from upgrade_build_receipt import verify as verify_build  # noqa: E402
 
-BASELINE = "c3b3d14e2d46b9039af9971db7c313556b4a996c"
+BASELINE = "21cd7082d9179a60841ed2324408a255d0d91b34"
 ROOT = Path(__file__).resolve().parents[1]
 TARANTOOL = os.environ.get("TARANTOOL", "tarantool")
 
@@ -412,7 +414,16 @@ def main():
     p.add_argument("--engine", choices=("memtx", "vinyl"), default="memtx")
     args = p.parse_args()
     args.evidence.mkdir(parents=True, exist_ok=False)
+    receipts = {}
+    for version, root, gateway, native in [("old", args.old_root, args.old_bin, args.old_native),
+                                          ("new", ROOT, args.new_bin, args.new_native)]:
+        receipt = json.loads((gateway.parent / (version + "-build.json")).read_text())
+        verify_build(receipt, root, gateway, native)
+        receipts[version] = receipt
+    assert receipts["old"]["revision"] == BASELINE, "unsupported predecessor build"
+    assert sha(args.old_bin) != sha(args.new_bin), "old/new gateways are identical; refusing invalid upgrade evidence"
     manifest = {"baseline_revision": BASELINE, "old_source": source(args.old_root), "new_source": source(ROOT),
+                "build_receipts": receipts,
                 "artifacts": {name: {"path": str(getattr(args, name)), "sha256": sha(getattr(args, name))}
                               for name in ("old_bin", "old_native", "new_bin", "new_native")},
                 "engine": args.engine, "replicas": 3, "wal_mode": "fsync",

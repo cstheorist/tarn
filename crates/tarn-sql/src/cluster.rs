@@ -2644,6 +2644,26 @@ mod tests {
             let mut rd = Rd::new(&body);
             assert_eq!(rd.map().unwrap(), 2);
             assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+            assert_eq!(rd.string().unwrap(), "tarn_compatibility");
+            let mut body = Mp::new();
+            body.map(1)
+                .uint(0x30)
+                .arr(1)
+                .arr(8)
+                .str("ok")
+                .uint(1)
+                .uint(1)
+                .uint(1)
+                .str("3.9.0")
+                .uint(14)
+                .str("ready")
+                .f64(120.0);
+            reply(&mut sock, sync, 0, &body.0).await;
+            let (kind, sync, stream, body) = request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let mut rd = Rd::new(&body);
+            assert_eq!(rd.map().unwrap(), 2);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
             assert_eq!(rd.string().unwrap(), "tarn_read_contract");
             let mut body = Mp::new();
             body.map(1).uint(0x30).arr(1).arr(2).str("strong_reads").uint(1);
@@ -2677,10 +2697,13 @@ mod tests {
             client.call(0, "ordinary", &[0x90]).await,
             Err(tarn_iproto::Error::Admission { .. })
         ));
-        tokio::time::timeout(Duration::from_secs(2), require_strong_reads(&client, true))
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            crate::compat::admit(&client, 1, 120.0, true).await?;
+            require_strong_reads(&client, true).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
         held.await.unwrap();
         assert_eq!(budget.stats().pending, 0);
         assert!(!client.is_closed());

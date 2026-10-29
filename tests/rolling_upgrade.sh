@@ -3,10 +3,11 @@
 # owned processes/data. Retain build logs and all source/binary identities.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BASELINE=c3b3d14e2d46b9039af9971db7c313556b4a996c
+BASELINE=21cd7082d9179a60841ed2324408a255d0d91b34
 WORK=$(mktemp -d /tmp/tarn-upgrade-build.XXXXXX)
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-1}
-export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$ROOT/target}
+OLD_TARGET="$WORK/old-target"
+NEW_TARGET="$WORK/new-target"
 mkdir -p "$WORK/old" "$WORK/artifacts"
 git -C "$ROOT" cat-file -e "$BASELINE^{commit}" || {
   echo "Fetch the supported predecessor first: git fetch origin $BASELINE" >&2
@@ -14,17 +15,21 @@ git -C "$ROOT" cat-file -e "$BASELINE^{commit}" || {
 }
 git -C "$ROOT" archive "$BASELINE" | tar -x -C "$WORK/old"
 echo "Upgrade build/evidence directory: $WORK"
-cargo build --release --workspace --locked --manifest-path "$WORK/old/Cargo.toml" > "$WORK/old-build.log" 2>&1 || {
+CARGO_TARGET_DIR="$OLD_TARGET" cargo build --release --workspace --locked --manifest-path "$WORK/old/Cargo.toml" > "$WORK/old-build.log" 2>&1 || {
   tail -80 "$WORK/old-build.log"; exit 1;
 }
 mkdir -p "$WORK/old-native" "$WORK/new-native"
-cp "$CARGO_TARGET_DIR/release/tarn-server" "$WORK/artifacts/old-server"
-cp "$CARGO_TARGET_DIR/release/libtarn_storage.so" "$WORK/old-native/libtarn_storage.so"
-cargo build --release --workspace --locked --manifest-path "$ROOT/Cargo.toml" > "$WORK/new-build.log" 2>&1 || {
+cp "$OLD_TARGET/release/tarn-server" "$WORK/artifacts/old-server"
+cp "$OLD_TARGET/release/libtarn_storage.so" "$WORK/old-native/libtarn_storage.so"
+python3 "$ROOT/scripts/upgrade_build_receipt.py" --source "$WORK/old" --revision "$BASELINE" \
+  --gateway "$WORK/artifacts/old-server" --native "$WORK/old-native/libtarn_storage.so" --output "$WORK/artifacts/old-build.json"
+CARGO_TARGET_DIR="$NEW_TARGET" cargo build --release --workspace --locked --manifest-path "$ROOT/Cargo.toml" > "$WORK/new-build.log" 2>&1 || {
   tail -80 "$WORK/new-build.log"; exit 1;
 }
-cp "$CARGO_TARGET_DIR/release/tarn-server" "$WORK/artifacts/new-server"
-cp "$CARGO_TARGET_DIR/release/libtarn_storage.so" "$WORK/new-native/libtarn_storage.so"
+cp "$NEW_TARGET/release/tarn-server" "$WORK/artifacts/new-server"
+cp "$NEW_TARGET/release/libtarn_storage.so" "$WORK/new-native/libtarn_storage.so"
+python3 "$ROOT/scripts/upgrade_build_receipt.py" --source "$ROOT" --revision "$(git -C "$ROOT" rev-parse HEAD)" \
+  --gateway "$WORK/artifacts/new-server" --native "$WORK/new-native/libtarn_storage.so" --output "$WORK/artifacts/new-build.json"
 EVIDENCE=${UPGRADE_EVIDENCE:-$WORK/results}
 python3 "$ROOT/tests/rolling_upgrade.py" --old-root "$WORK/old" \
   --old-bin "$WORK/artifacts/old-server" --old-native "$WORK/old-native/libtarn_storage.so" \

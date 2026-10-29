@@ -49,7 +49,7 @@ fn validate(data: &[u8], shard: u32, max_txn_age: f64) -> SqlResult<()> {
         || format != FORMAT
         || id != u64::from(shard)
         || runtime.split('-').next() != Some("3.9.0")
-        || layout == 0
+        || layout != 14
         || !matches!(native.as_str(), "ready" | "disabled" | "load_failed" | "abi_mismatch")
         || age != max_txn_age
     {
@@ -60,15 +60,30 @@ fn validate(data: &[u8], shard: u32, max_txn_age: f64) -> SqlResult<()> {
     Ok(())
 }
 
-pub(crate) async fn admit(client: &Client, shard: u32, max_txn_age: f64) -> SqlResult<()> {
-    let reply = tokio::time::timeout(Duration::from_secs(3), client.call(0, "tarn_compatibility", &[0x90]))
-        .await
-        .map_err(|_| incompatible("compatibility check timed out"))?
-        .map_err(incompatible)?;
-    let data = reply
-        .data()
-        .ok_or_else(|| incompatible("compatibility reply has no data"))?;
-    validate(&data, shard, max_txn_age).map_err(incompatible)
+pub(crate) async fn admit(client: &Client, shard: u32, max_txn_age: f64, completion: bool) -> SqlResult<()> {
+    let result = async {
+        let call = async {
+            if completion {
+                client.call_control(0, "tarn_compatibility", &[0x90]).await
+            } else {
+                client.call(0, "tarn_compatibility", &[0x90]).await
+            }
+        };
+        let reply = tokio::time::timeout(Duration::from_secs(3), call)
+            .await
+            .map_err(|_| incompatible("compatibility check timed out"))?
+            .map_err(incompatible)?;
+        let data = reply
+            .data()
+            .ok_or_else(|| incompatible("compatibility reply has no data"))?;
+        validate(&data, shard, max_txn_age).map_err(incompatible)
+    }
+    .await;
+    if result.is_err() {
+        // Retire a cancelled/failed handshake's waiter with its socket.
+        client.close();
+    }
+    result
 }
 
 #[cfg(test)]
@@ -85,7 +100,7 @@ mod tests {
             .uint(format)
             .uint(shard)
             .str(runtime)
-            .uint(11)
+            .uint(14)
             .str(native)
             .f64(age);
         m.0
@@ -113,6 +128,24 @@ mod tests {
     }
 
     #[test]
+    fn refuses_other_native_layout_contracts() {
+        for layout in [0, 11, 13, 15] {
+            let mut m = Mp::new();
+            m.arr(1)
+                .arr(8)
+                .str("ok")
+                .uint(1)
+                .uint(1)
+                .uint(2)
+                .str("3.9.0")
+                .uint(layout)
+                .str("ready")
+                .f64(120.0);
+            assert!(validate(&m.0, 2, 120.0).is_err());
+        }
+    }
+
+    #[test]
     fn refuses_truncated_extended_and_coerced_reports() {
         let data = report(1, 1, 2, "3.9.0", "ready", 120.0);
         for end in 0..data.len() {
@@ -130,7 +163,7 @@ mod tests {
             .uint(1)
             .uint(2)
             .str("3.9.0")
-            .uint(11)
+            .uint(14)
             .str("ready")
             .f64(120.0);
         assert!(validate(&text_protocol.0, 2, 120.0).is_err());

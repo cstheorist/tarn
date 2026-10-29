@@ -262,8 +262,14 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: rolling-upgrade-${{ matrix.engine }}
-          path: /tmp/tarn-upgrade-build.*/
-          retention-days: 14
+          path: |
+            /tmp/tarn-upgrade-build.*/old-build.log
+            /tmp/tarn-upgrade-build.*/new-build.log
+            /tmp/tarn-upgrade-build.*/artifacts/
+            /tmp/tarn-upgrade-build.*/old-native/
+            /tmp/tarn-upgrade-build.*/new-native/
+            /tmp/tarn-upgrade-build.*/results/
+          retention-days: 30
 
   tla:
     if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost

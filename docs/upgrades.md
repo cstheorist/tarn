@@ -1,8 +1,8 @@
 # Rolling upgrades
 
 The supported predecessor is exactly
-`c3b3d14e2d46b9039af9971db7c313556b4a996c` (the native batch prototype
-merge). This contract introduces connection admission and a format marker;
+`21cd7082d9179a60841ed2324408a255d0d91b34` (the physical file backup merge, including the current freshness,
+persisted clock/retention, capture binding and engine-cut contracts). This contract introduces connection admission and a format marker;
 it does not change stored user tuples, transaction records, lock semantics,
 DDL/move/lazy metadata, or the native state layout. Other historical
 versions require a separate compatibility test before deployment.
@@ -15,10 +15,10 @@ vinyl user spaces retain synchronous memtx protocol metadata under RF3.
 
 | Gateway | Lua/storage | Native module | Admission and behavior |
 |---|---|---|---|
-| Predecessor | Predecessor | Its ABI 11 module or disabled | Existing behavior; no compatibility handshake |
-| Predecessor | This version | This version's ABI 11 module | Supported transition; existing RPC and metadata contracts remain unchanged |
-| This version | This version | Matching ABI 11 module | Protocol 1 / format 1 handshake before use |
-| This version | This version | Predecessor's ABI 11 module | Same state and RPC contract; tested explicitly |
+| Predecessor | Predecessor | Its ABI 14 module or disabled | Existing behavior; no compatibility handshake |
+| Predecessor | This version | This version's ABI 14 module | Supported transition; existing RPC and metadata contracts remain unchanged |
+| This version | This version | Matching ABI 14 module | Protocol 1 / format 1 handshake before use |
+| This version | This version | Predecessor's ABI 14 module | Same state and RPC contract; tested explicitly |
 | This version | This version | Disabled, load failure, or incompatible ABI | Explicit Lua fallback, with the reason in the compatibility report; all SQL semantics retained |
 | This version | Predecessor or missing compatibility RPC | Any | Refused before forwarding user RPCs; upgrade storage first |
 | This version | Unknown protocol, disk format, runtime, shard identity, or expiry contract | Any | Refused; no unsafe compatibility override |
@@ -37,7 +37,7 @@ storage release.
  native_state_layout, native_status, max_txn_age]
 ```
 
-Current values are protocol **1**, format **1**, native layout **11**, and
+Current values are protocol **1**, format **1**, native layout **14/392**, and
 the configured transaction age (120 seconds by default). Native status is
 `ready`, `disabled`, `load_failed`, or `abi_mismatch`. A node still starting
 may report `pending`; a new gateway refuses it until initialization ends.
@@ -129,7 +129,7 @@ With the pinned Rust toolchain, Tarantool 3.9.0, a C compiler, Python and
 PyMySQL installed, run on a dedicated Linux test machine:
 
 ```sh
-git fetch origin c3b3d14e2d46b9039af9971db7c313556b4a996c
+git fetch origin 21cd7082d9179a60841ed2324408a255d0d91b34
 bash tests/rolling_upgrade.sh
 ENGINE=vinyl bash tests/rolling_upgrade.sh
 ```
@@ -154,3 +154,20 @@ checks refusal of unknown/coerced persisted formats before schema creation.
 The existing handback model and lost-reply fault suites remain the evidence
 for uncertain mutation handling; compatibility negotiation does not extend
 their proof boundary.
+
+The supported predecessor already has ABI 14/392, request-specific first-read
+barriers and final-prefix validation, persisted clock policy/high-water and
+retention semantics, and the current lazy/engine capture binding contracts.
+Those records and guarantees remain unchanged across this exact pair. The
+older ABI-11 prototype is outside this rolling/rollback contract; it cannot
+be inferred safe merely because an old gateway ignores a format marker.
+Seeded voters retain their registered identity and `seed.json` election gate;
+verify WAL follow before promotion through either release.
+
+Every compatibility RPC used to discover an existing completion uses the
+reserved completion lane, as do role and strong-read capability probes. A
+cold pool must not spend ordinary capacity before it can finish decided work.
+The overload unit test holds the entire normal lane while both negotiations
+complete. Build roots have separate target directories regardless of an
+inherited `CARGO_TARGET_DIR`; each build receipt binds compiled source and
+artifact hashes, and the matrix refuses identical old/new gateway binaries.
