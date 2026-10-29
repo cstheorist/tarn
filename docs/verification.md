@@ -2191,6 +2191,50 @@ the scheduled RF1 witness establishes the refusal mechanism. A later
 successful run is separate evidence, not a retrospective fault diagnosis
 or a benchmark improvement.
 
+### Vinyl pressure phase scheduling and failed-witness readback (issue #174)
+
+`tests/sql/vinylpressure.py --real-pressure` keeps its total 20,000-attempt
+bound, eight writers by default, 8 KiB random payloads and the real native
+I/O, regulator and compaction checks. It reserves phase-local slots in
+proportion to the three-second warmup, requested limited-I/O window and
+three-second release window. Each writer owns interleaved slots spaced
+across the actual window. Missed slots expire; they are never transferred
+or sent in a catch-up burst. Workers park between slots and while the
+controller changes I/O. The limited window opens after the 0.5 MiB/s control
+receipt; the release window opens after restoring uncapped I/O. Every
+writer must dispatch work in each complete window. Timestamps observe
+client call entry and completion, rather than promising physical network
+arrival at a particular instant.
+
+The fixture freezes its attempt, native-sample and in-flight ledgers after
+bounded drain. Before checking the pressure witness, it reads back at most
+20,001 ordered IDs and saves exact missing acknowledged IDs, present refused
+IDs, unexpected IDs and any unresolved IDs. An uncertain result is never
+replayed or classified as settled merely because readback sees its key.
+Incomplete drain or readback is explicit; a live writer at the drain cut
+preserves the owned database for investigation. Stage, restore, drain,
+readback and assertion failures remain distinguishable. CI retains the
+manifest, events, summary and raw JSONL ledgers on success and failure.
+
+```sh
+python3 tests/sql/vinylpressure_phase_test.py
+```
+
+These offline controls use virtual monotonic time and the fixture's actual
+scheduler, controller, audit and finalizer. They offer more than the entire
+budget during warmup, check later phase activity and the total bound, and
+exercise slow calls, expired permits, I/O-control errors and failed-witness
+readback. A source-derived adapter for the former global-cap policy fails
+the early-exit oracle; it does not execute the entire historical fixture.
+The retained original CI failure identifies cap exhaustion, but did not
+retain per-attempt phase records or perform exact readback. Its phase of
+exhaustion and exact effects remain unobserved.
+
+This is a test-driver change. Production admission, commit, locking and
+recovery code, TLA+ inputs and Verus bodies are unchanged. These controls
+prove neither native-engine latency nor a comparative performance result;
+the complete release SQL and live-fault matrix remains required.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:
