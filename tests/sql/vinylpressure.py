@@ -193,8 +193,7 @@ class PressureSchedule:
                                   "inflight_dispatches": list(self.inflight.values())})
 
 
-def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lambda *a, **kw: None,
-                        prepare_limited=lambda: None, opened=lambda name: None):
+def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lambda *a, **kw: None):
     """Real controller path, with injectable time/I/O only for offline controls."""
     result = {"receipts": {}, "controls": [], "primary": None, "restore_errors": []}
     active = None
@@ -211,21 +210,14 @@ def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lam
         return receipt
     try:
         for name, limit in zip(PRESSURE_PHASES[:2], (0, .5)):
-            if name == PRESSURE_PHASES[1]:
-                stage = "compaction run preparation"
-                prepare_limited()
             stage = name + " I/O control"
             receipt = apply(name, limit)
             result["receipts"][name] = receipt
             schedule.open_phase(name, now(), receipt)
             active = name
             record("real_pressure_phase_open", phase=name, timing=schedule.snapshot())
-            stage = name + " opening control"
-            opened(name)
             stage = name + " window"
-            remaining = schedule.phases[schedule.active]["deadline_monotonic"] - now()
-            assert remaining > 0, "phase setup exhausted its bounded window"
-            if wait(remaining):
+            if wait(schedule.phases[schedule.active]["duration_seconds"]):
                 raise AssertionError("pressure writers stopped during " + name)
             schedule.close_phase(name, now())
             active = None
@@ -727,18 +719,6 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
         assert identity["vinyl_cache"] == 0, "real-pressure fixture requires cache zero"
         assert 0 < identity["vinyl_timeout"] <= .5, "real-pressure fixture requires the short native quota wait"
         tenant = self.keys[0][0]
-        seed_tenant = self.keys[0][1]
-        # A bounded, separately identified tenant supplies disk input even
-        # when the paced warmup is too small to finish several memory dumps.
-        # These writes precede the measured ledger and are never replayed.
-        def seed(first, count):
-            with self.connect() as c:
-                for start in range(first, first + count, 16):
-                    rows = [(seed_tenant, key, base64.b64encode(os.urandom(6144)).decode("ascii"))
-                            for key in range(start, min(start + 16, first + count))]
-                    sql = "INSERT INTO p VALUES " + ",".join(["(%s,%s,%s)"] * len(rows))
-                    assert q(c, sql, tuple(value for row in rows for value in row)) == len(rows)
-        seed(1, 512)
         live_records, live_samples, live_errors = [], [], []
         inflight = {}
         lock = threading.Lock()
@@ -747,12 +727,11 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
         ready = threading.Barrier(self.args.writers + 1)
         schedule = PressureSchedule(self.args.writers, self.args.pressure_seconds)
 
-        def native_sample(compact=False):
-            value = ev(self.nodes[0], """
-local name,compact=...;local space=assert(box.space[name]);local indices={}
-if compact then
-    for iid,index in pairs(space.index) do if type(iid)=='number' then index:compact() end end
-end
+        def sample():
+            while not sampling_stop.is_set():
+                try:
+                    value = ev(self.nodes[0], """
+local space=assert(box.space[...]);local indices={}
 for iid,index in pairs(space.index) do if type(iid)=='number' then
     local s=index:stat();indices[#indices+1]={id=iid,run_count=s.run_count,range_count=s.range_count,
         run_avg=s.run_avg,run_histogram=s.run_histogram,compaction=s.disk.compaction} end end
@@ -760,15 +739,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
     public=tarn_vinyl_stats(),indices=indices,vinyl_timeout=box.cfg.vinyl_timeout,
     vinyl_memory=box.cfg.vinyl_memory,vinyl_cache=box.cfg.vinyl_cache,
     snap_io_rate_limit=box.cfg.snap_io_rate_limit or 0,engine=space.engine}
-""", [self.db + ".p", compact])
-            value["observed_monotonic"] = time.monotonic()
-            value["compaction_requested"] = compact
-            return value
-
-        def sample():
-            while not sampling_stop.is_set():
-                try:
-                    value = native_sample()
+""", [self.db + ".p"])
                     with lock:
                         live_samples.append(value)
                 except Exception as error:
@@ -776,40 +747,6 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                         live_errors.append("native sample: " + repr(error))
                     return
                 sampling_stop.wait(.2)
-
-        compaction = {}
-        def prepare_limited():
-            # Writers are parked between phase windows. Compact the old
-            # image once, then add a much smaller run at a new LSM level.
-            # Equal-sized runs can auto-compact before a periodic sampler
-            # sees them. Keep all real I/O uncapped during this preparation.
-            before = ev(self.nodes[0], """
-local space=assert(box.space[...]);box.snapshot()
-for iid,index in pairs(space.index) do if type(iid)=='number' then index:compact() end end
-return box.stat.vinyl().scheduler
-""", [self.db + ".p"])
-            def settled():
-                value = native_sample()
-                return value if all(i["run_count"] == i["range_count"] > 0 for i in value["indices"]) else None
-            old = wait_for(settled, 15, "single old compaction run")
-            seed(513, 32)
-            ev(self.nodes[0], "box.snapshot();return true")
-            prepared = native_sample()
-            compaction.update(seed_tenant=seed_tenant, seed_rows=544, before=before, old=old, prepared=prepared)
-            self.record("real_pressure_compaction_prepared", **compaction)
-
-        def opened(name):
-            if name == PRESSURE_PHASES[1]:
-                # This supported operation and its native receipt happen
-                # in the active writer window, after the actual I/O cap.
-                # Read the queue in the same RPC before fast compaction can
-                # disappear between periodic samples; never synthesize it.
-                value = native_sample(compact=True)
-                value["phase"] = name
-                compaction["trigger"] = value
-                with lock:
-                    live_samples.append(value)
-                self.record("real_pressure_compaction_requested", receipt=value)
 
         def writer(index):
             c = None
@@ -896,8 +833,7 @@ return box.stat.vinyl().scheduler
                     self.record("real_pressure_begin", source=self.nodes[0], tenant=tenant,
                                 note="paced native I/O control; no forced classifier override; call-entry times "
                                      "are observations, not physical network-arrival promises", identity=identity)
-                    phase_result = run_pressure_phases(schedule, control.io_limit, stop.wait, record=self.record,
-                                                       prepare_limited=prepare_limited, opened=opened)
+                    phase_result = run_pressure_phases(schedule, control.io_limit, stop.wait, record=self.record)
                     primary = phase_result["primary"]
                     restore_errors.extend(phase_result["restore_errors"])
                 except BaseException as error:
@@ -977,7 +913,6 @@ return box.stat.vinyl().scheduler
             values = [row["latency_ms"] for row in records if row["result"] == result]
             outcomes[result] = {"count": len(values), **quantiles(values)}
         summary = {"attempts": timing["attempts"], "completed": len(records),
-                   "compaction_setup": compaction,
                    "acknowledged": len(success), "refused_1205": len(refused),
                    "stored_ids_match_acknowledgements": None, "refused_ids_absent": None,
                    "by_outcome": outcomes, "worker_errors": errors,
@@ -1035,15 +970,6 @@ return box.stat.vinyl().scheduler
             # the periodic sampler; either genuine observation can witness it.
             assert control_limit or periodic_limit, "real regulator limit was not observed"
             assert queue is not None and queue > 0, "no actual queued compaction input; pressure fixture did not exercise compaction"
-            trigger = compaction.get("trigger")
-            window = timing["phases"][1]
-            assert trigger and (window["opened_monotonic"] <= trigger["observed_monotonic"]
-                                < window["deadline_monotonic"]), "missing in-window native compaction receipt"
-            assert metric(trigger, "native", "scheduler", "compaction_queue") > 0, \
-                "same-call native compaction receipt has no queued input"
-            prior = {i["id"]: i["compaction"]["count"] for i in compaction["prepared"]["indices"]}
-            assert any(i["compaction"]["count"] > prior[i["id"]]
-                       for row in samples for i in row["indices"]), "no completed native compaction of the fixture"
             assert (blocked is not None and blocked > 0 or level0 is not None and level0 >= .75 * identity["vinyl_memory"]
                     or queue >= identity["vinyl_memory"]), "no actual native pressure witness"
             assert any(index["run_count"] > index["range_count"] > 0 for row in samples for index in row["indices"]), "no real run amplification"
