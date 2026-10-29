@@ -378,6 +378,11 @@ def case_rc_paged_snapshot(s):
                 ended=time.monotonic()
                 assert s.kind=="tarn" and [e.errno,e.sqlstate]==[1213,"40001"], repr(e)
                 reads.append({"begin":began,"end":ended,"rows":None,"error":[e.errno,e.sqlstate]})
+            # Bound the burst independently of reader speed: a fast oracle
+            # must not stop the writer before the required 30 updates.
+            if len(reads)==1:
+                thread.join(15)
+                assert not thread.is_alive() and not errors, errors
             if sum(r["error"] is None for r in reads)>=3 and not thread.is_alive(): break
         q(a,"COMMIT")
     finally:

@@ -2982,7 +2982,13 @@ impl Session {
                 let mut columns = Vec::new();
                 let mut row = Vec::new();
                 for (alias, var) in &vars {
-                    let v = admin::system_var(var, &self.session_vars()).unwrap_or(Value::Null);
+                    let v = admin::system_var(var, &self.session_vars()).ok_or_else(|| {
+                        SqlError::new(
+                            1193,
+                            "HY000",
+                            format!("Unknown system variable '{}'", admin::sysvar_name(var)),
+                        )
+                    })?;
                     let ty = match &v {
                         Value::Int(_) | Value::UInt(_) => ColumnType::LongLong,
                         _ => ColumnType::VarString,

@@ -268,6 +268,10 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
     let global = name.trim_start_matches('@').to_ascii_lowercase().starts_with("global.");
     if global {
         match n.as_str() {
+            "tarn_isolation_contract"
+            | "tarn_effective_isolation"
+            | "tarn_next_isolation"
+            | "tarn_active_isolation" => return None,
             "tx_isolation" | "transaction_isolation" => return Some(Value::str(sv.global_isolation.name())),
             "innodb_lock_wait_timeout" => return Some(Value::Int(sv.global_lock_wait_timeout.round() as i64)),
             _ => {}
