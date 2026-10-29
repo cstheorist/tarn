@@ -176,6 +176,21 @@ printed checks across 58 sections. Its source/log binding is in the separate
 The measured revision `62cf4c6` ordinary CI test-setup failure preceded this
 fixture correction and is retained separately from the successful read study.
 
+Another retained Lua-only CI failure at `1640271` saw both identical alias
+replays return `ok` while the global synchronous queue contained one entry.
+Its writer identity was not logged. A deterministic control delayed the real
+clock loader and reproduced that assertion with `clock:policy:1` written by
+the clock worker, while the alias replays performed no replacement. The
+corrected fixture waits for confirmed policy and local read readiness before
+holding quorum, keeps the worker live and both original deadlines, and
+retains the empty-queue assertion with an additional zero-metadata-write
+check. A forced-startup control proves policy installation precedes alias
+creation; ordinary native and Lua-only alias runs each pass all nine checks.
+These later failures, controls and current source bindings belong to the
+separate final validation evidence, rather than the immutable measured-data
+archive. The control establishes a matching failure mechanism, not the
+unlogged historical writer's identity.
+
 ## Evidence and publication gates
 
 [Summary](evidence/strong-read-freshness/summary.json),
