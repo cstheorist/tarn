@@ -166,9 +166,11 @@ Every persistent user/internal space, schema digest, transaction tombstone,
 catalog, bucket map, lazy incarnation/version/counter/frontier/floor and WAL
 identity must match the cut. An audit failure leaves quarantine intact.
 
-Activation repeats the logical audit before removing quarantine and publishes
-`activated.json` only after all markers are removed. Startup refuses a restored
-child without its marker until this whole-parent activation file exists. Thus an
+Activation repeats the logical audit before removing quarantine and atomically
+publishes `activated.json` only after all marker removals and the receipt's
+contents are durable. Startup validates the receipt and requires its replica UUID
+to match the restored snapshot. A child whose quarantine marker is already removed
+still cannot start before this whole-parent receipt is published. Thus an
 interrupted activation cannot expose a partly admitted restore. Do not start
 processes or change files concurrently with verification/activation. The command
 does not start any service. Start the original configuration in the isolated
@@ -195,6 +197,25 @@ and retains failure logs as well as passes. The quiescent policy stops foregroun
 work during capture; timings from this fault-heavy small same-host fixture are
 operational drill observations, not online overhead, production RTO or throughput
 claims. See the [source-bound evidence index](../tests/evidence/cluster-backup/index.json).
+
+The final local matrix at `1c601f8` passed 30 checks in every mode with 256 rows
+per shard. These are single fault-inclusive drills per mode, not repeated
+performance samples. The source outage includes deliberate interruptions and
+the checked write after release/restart; restore-to-write includes copying,
+both audits, quarantine/interrupted-activation controls, restart and canaries.
+
+| Engine | Procedures | Source fence to resumed write | Copy and first audit | Restore to checked writes |
+|---|---|---:|---:|---:|
+| memtx | native | 7.45 s | 0.74 s | 5.28 s |
+| memtx | Lua | 7.46 s | 1.01 s | 5.54 s |
+| vinyl | native | 7.63 s | 0.95 s | 5.64 s |
+| vinyl | Lua | 7.73 s | 0.93 s | 5.68 s |
+
+Earlier development failures remain in the same evidence index. Two concurrent
+trials and an earlier serial trial encountered replica role/readiness failures;
+their root cause is unproven. The final fixture observes leader readiness before
+membership publication and never retries a mutation. Passing later drills do not
+erase those availability observations or establish a production recovery bound.
 
 ## Incremental, WAL and PITR design boundary
 
