@@ -12,6 +12,21 @@ kind of mistake:
 What each layer found, and how the findings were fixed, is described in the
 [design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5, §2.8 and §2.9).
 
+## Resource ownership
+
+`QueryBudget.tla` checks two concurrent queries sharing an admission cap,
+wire ownership after caller cancellation, result ownership through output
+flush, validation before successful output, and refusal only before a DML
+commit decision. Three negative controls remove wire ownership, release
+results before delivery, or refuse after decision; each violates its
+corresponding invariant. `TarnCommit`'s execution/commit boundary is unchanged.
+
+The Rust resource meter and heap implementation are ordinary tested Rust,
+not Verus-proved allocation bounds. The model abstracts allocation units and
+RPC completion; it does not prove the concrete multipliers, Tokio scheduling,
+allocator RSS, or socket/kernel behavior. The live and differential controls
+and measured boundaries are recorded in [SQL resource limits](resources.md).
+
 ## TLA+ model
 
 `tla/TarnCommit.tla` specifies the protocol: shards, keys with owners, three
@@ -1962,10 +1977,10 @@ runtime histories define those separate obligations. No Verus body changes.
 
 ### Configuration counts
 
-The default list contains 284 unique configurations: 72 positive
-outcomes and 212 expected broken/trade-off outcomes. The 291 generated
-configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 297 total. Explicit
+The default list contains 288 unique configurations: 73 positive
+outcomes and 215 expected broken/trade-off outcomes. The 291 generated
+configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
+placement and query-budget configurations are maintained directly, for 301 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2006,10 +2021,11 @@ and cluster-backup registrations add twelve configurations, and seven
 external-KV checks passed separately through the registered checker.
 Integration preserves both groups, their model/config bytes and dispatch.
 This is an input union; prior CI runs did not execute the integrated list.
-The current proof inventory is 354 files: 338 TLA+ model/config files,
+The current proof inventory is 359 files: 343 TLA+ model/config files,
 11 verified-crate source/test/manifest files and five formal runner/inspection
-scripts. The complete 284-case CI run remains a separate validation gate.
-Verus bodies are unchanged.
+scripts. The complete 288-case CI run remains a separate validation gate.
+Four query-budget configurations add one positive and three expected
+violations. Verus bodies are unchanged.
 The two malformed-handback controls complete this union. The prior 277-case
 list passed in [CI 40945628982](https://github.com/cstheorist/tarn/actions/runs/40945628982);
 that result does not certify the added KV model or this combined source.

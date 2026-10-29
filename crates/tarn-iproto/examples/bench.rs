@@ -248,6 +248,7 @@ async fn main() {
         user: Some("tarn".into()),
         password: Some("tarn".into()),
         connect_timeout: Duration::from_secs(5),
+        max_response_bytes: tarn_iproto::iproto::BODY_LEN_MAX,
         ..Opts::new("")
     };
     // The environment flag lets the unchanged baseline binary ignore the

@@ -6,7 +6,6 @@ use parking_lot::Mutex;
 use sha1::{Digest, Sha1};
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::ops::Deref;
@@ -123,17 +122,16 @@ struct Trace {
 }
 
 tokio::task_local! {
-    static CURRENT: RefCell<Trace>;
+    static CURRENT: Arc<Mutex<Trace>>;
 }
 
 fn edit(f: impl FnOnce(&mut Trace)) {
     let _ = CURRENT.try_with(|cell| {
-        // Telemetry must not turn an unexpected nested observation into a
-        // SQL panic. No borrow is held across a storage call or an await.
-        if let Ok(mut t) = cell.try_borrow_mut() {
-            if !t.disabled {
-                f(&mut t);
-            }
+        // Owned foreground workers can report concurrently. These edits
+        // never recurse or hold the lock across a storage call or await.
+        let mut t = cell.lock();
+        if !t.disabled {
+            f(&mut t);
         }
     });
 }
@@ -388,16 +386,28 @@ impl Drop for Completion<'_> {
     }
 }
 
+/// Carry only the foreground observation into an owned RPC/commit worker.
+/// Ordinary background maintenance still starts without a diagnostic scope.
+pub(crate) fn inherit<T>(future: impl Future<Output = T>) -> impl Future<Output = T> {
+    let scope = CURRENT.try_with(Arc::clone).ok();
+    async move {
+        match scope {
+            Some(scope) => CURRENT.scope(scope, future).await,
+            None => future.await,
+        }
+    }
+}
+
 pub(crate) async fn track<T>(metrics: &Metrics, future: impl Future<Output = SqlResult<T>>) -> SqlResult<T> {
     if CURRENT.try_with(|_| ()).is_ok() {
         return future.await;
     }
     let mut completion = Completion { metrics, done: false };
     CURRENT
-        .scope(RefCell::new(Trace::default()), async move {
+        .scope(Arc::new(Mutex::new(Trace::default())), async move {
             let start = Instant::now();
             let result = future.await;
-            let trace = CURRENT.with(|cell| cell.take());
+            let trace = CURRENT.with(|cell| std::mem::take(&mut *cell.lock()));
             metrics.record(
                 trace,
                 result.is_err(),
@@ -469,6 +479,39 @@ mod tests {
             .unwrap();
         assert_eq!((write.distributed, write.errors, write.commit_errors), (1, 1, 1));
         assert_eq!(m.cancelled.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn owned_foreground_workers_keep_fanout_and_commit_attribution() {
+        let metrics = Metrics::default();
+        track(&metrics, async {
+            describe(Descriptor::new(Some("d"), "UPDATE t SET v = ?"));
+            let workers = (0..2).map(|id| {
+                tokio::spawn(inherit(async move {
+                    shard(id);
+                    rpc();
+                    commit(2);
+                }))
+            });
+            for worker in futures::future::join_all(workers).await {
+                worker.unwrap();
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let registry = metrics.registry.lock();
+        let entry = registry.entries.values().next().unwrap();
+        assert_eq!(
+            (
+                entry.calls,
+                entry.distributed,
+                entry.max_shards,
+                entry.rpc_attempts,
+                entry.distributed_commits
+            ),
+            (1, 1, 2, 2, 1)
+        );
     }
 
     #[tokio::test]
