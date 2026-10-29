@@ -34,6 +34,13 @@ done
 python3 "$ROOT/tests/outcome_proxy.py" --listen "$PP" --upstream "${nodes[0]##*:}" \
   --plan "$W/plan.json" > "$W/proxy.jsonl" 2> "$W/proxy.err" &
 echo $! > "$W/proxy.pid"
+ready=0
+for _ in $(seq 100); do
+  kill -0 "$(cat "$W/proxy.pid")" 2>/dev/null || { cat "$W/proxy.err"; exit 1; }
+  if (exec 3<>/dev/tcp/127.0.0.1/"$PP") 2>/dev/null; then ready=1; break; fi
+  sleep .05
+done
+[ "$ready" = 1 ] || { cat "$W/proxy.err"; echo 'proxy did not listen'; exit 1; }
 python3 - "$W/cluster.json" "$PP" <<'PY'
 import json, pathlib, sys
 p = pathlib.Path(sys.argv[1]); c = json.loads(p.read_text())

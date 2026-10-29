@@ -53,7 +53,8 @@ jobs:
           if [ '${{ matrix.native }}' = 0 ]; then export TARN_NATIVE=0
           else export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"; fi
           for client in pymysql connector prepared; do
-            R=3 WAL=fsync RPC_CLIENT="$client" tests/rpcs.sh > "$OUTCOME_DIR/rpcs-$client.log" 2>&1
+            R=3 WAL=fsync RPC_CLIENT="$client" RPC_DIR="$OUTCOME_DIR/rpcs-$client" \
+              tests/rpcs.sh > "$OUTCOME_DIR/rpcs-$client.log" 2>&1
           done
       - name: Retain every history and storage log
         if: always()

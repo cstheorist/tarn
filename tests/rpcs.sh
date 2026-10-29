@@ -5,13 +5,14 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
-W=$(mktemp -d /tmp/tarn-rpcs.XXXX)
+W=${RPC_DIR:-$(mktemp -d /tmp/tarn-rpcs.XXXX)}
+mkdir -p "$W"
 BASE=${BASE:-5800}; PP=${PP:-5840}; QP=${QP:-5900}
 cleanup() {
   rc=$?
   KEEP=1 "$ROOT/scripts/cluster.sh" stop -d "$W" >/dev/null 2>&1 || true
   [ -z "${proxy_pid:-}" ] || { kill "$proxy_pid" 2>/dev/null || true; wait "$proxy_pid" 2>/dev/null || true; }
-  if [ "$rc" = 0 ]; then rm -rf "$W"; else echo "RPC test logs: $W"; fi
+  if [ "$rc" = 0 ] && [ -z "${RPC_DIR:-}" ]; then rm -rf "$W"; else echo "RPC test logs: $W"; fi
 }
 trap cleanup EXIT
 export TARN_CHECK_LOCKS=1 TARN_CHECK_YIELDS=1
@@ -27,6 +28,13 @@ done
 TARN_FAULT_REPLY=stall TARN_FAULT_COUNT=1000000 TARN_PROXY_ARM_FILE="$W/armed" \
   python3 "$ROOT/tests/proxy.py" "$PP" "$leader" autocommit update > "$W/proxy.log" 2>&1 &
 proxy_pid=$!
+ready=0
+for _ in $(seq 100); do
+  kill -0 "$proxy_pid" 2>/dev/null || { cat "$W/proxy.log"; exit 1; }
+  if (exec 3<>/dev/tcp/127.0.0.1/"$PP") 2>/dev/null; then ready=1; break; fi
+  sleep .05
+done
+[ "$ready" = 1 ] || { cat "$W/proxy.log"; echo 'proxy did not listen'; exit 1; }
 for scope in connection shard global; do
   python3 - "$W/cluster.json" "$PP" "$scope" <<'PY'
 import json,pathlib,sys
