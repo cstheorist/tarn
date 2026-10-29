@@ -33,6 +33,17 @@ def private_json(path):
     return json.loads(path.read_text())
 
 
+def validate_marker_record(m, n):
+    if "owner_marker" not in n:
+        return
+    marker = n["owner_marker"]
+    require(isinstance(marker, dict) and set(marker) == {"fd", "path", "dev", "ino"}
+            and type(marker.get("fd")) is int and marker["fd"] == 9
+            and marker.get("path") == str(Path(m["workdir"]) / "owner-nonce")
+            and all(type(marker.get(k)) is int and marker[k] > 0 for k in ("dev", "ino")),
+            "invalid inherited owner marker record")
+
+
 def read_manifest(path, platform=None):
     require((platform or sys.platform) == "linux", "only Linux host backend is supported")
     path = Path(path)
@@ -68,6 +79,7 @@ def read_manifest(path, platform=None):
         require(re.fullmatch(r"127\.0\.0\.1:[0-9]{1,5}", n.get("endpoint", ""))
                 and 0 < int(n["endpoint"].split(":")[1]) < 65536, "invalid endpoint")
         require(isinstance(n.get("exe"), str) and n["exe"].startswith("/"), "invalid executable identity")
+        validate_marker_record(m, n)
     if "relay" in m:
         r = m["relay"]
         require(isinstance(r, dict) and r.get("node_id") == "relay"
@@ -80,6 +92,7 @@ def read_manifest(path, platform=None):
                 and isinstance(r.get("exe"), str) and r["exe"].startswith("/"), "invalid owned relay")
         require(r.get("control_socket") == str(parent / "replication-control.sock"), "invalid relay socket path")
         validate_flows(r.get("flows"))
+        validate_marker_record(m, r)
         physical = {n["node_id"]: n["endpoint"] for n in nodes}
         require(all(f["target"] == physical[f["server_node"]] for f in r["flows"]), "relay targets differ from owned nodes")
     return m
@@ -97,8 +110,18 @@ def parse_stat(raw):
 def proc_snapshot(pid):
     p = Path("/proc") / str(pid)
     info = parse_stat((p / "stat").read_text())
-    info.update(uid=p.stat().st_uid, cwd=os.readlink(p / "cwd"), exe=os.readlink(p / "exe"),
-                environ=(p / "environ").read_bytes().split(b"\0"))
+    info.update(uid=p.stat().st_uid, cwd=os.readlink(p / "cwd"), exe=os.readlink(p / "exe"))
+    try:
+        info["environ"] = (p / "environ").read_bytes().split(b"\0")
+    except OSError:
+        info["environ"] = None
+    try:
+        fd = p / "fd/9"
+        s = fd.stat()
+        info["owner_marker"] = {"fd": 9, "path": os.readlink(fd), "dev": s.st_dev, "ino": s.st_ino,
+                                "uid": s.st_uid, "mode": stat.S_IMODE(s.st_mode), "regular": stat.S_ISREG(s.st_mode)}
+    except OSError:
+        info["owner_marker"] = None
     return info
 
 
@@ -110,9 +133,26 @@ def verify_process(m, n, snapshot=proc_snapshot):
     require(p["pid"] == n["pid"] and p["ppid"] == n["ppid"] and p["starttime"] == n["starttime"]
             and p["uid"] == os.getuid() and p["state"] != "Z", "node process identity changed")
     require(p["cwd"] == n["workdir"] and p["exe"] == n["exe"], "node executable/workdir changed")
-    for key, value in (("TARN_KV_OWNER_NONCE", m["ownerNonce"]), ("TARN_KV_NODE_ID", n["node_id"]),
-                       ("TARN_KV_WORKDIR", n["workdir"])):
-        require((key + "=" + value).encode() in p["environ"], "node environment owner changed")
+    if "owner_marker" in n:
+        # Tarantool may rewrite its original argv/environ memory. A recorded
+        # inherited FD is mandatory here; never fall back to mutable env bytes.
+        validate_marker_record(m, n)
+        marker = n["owner_marker"]
+        observed = p.get("owner_marker")
+        require(isinstance(observed, dict) and all(observed.get(k) == marker[k]
+                for k in ("fd", "path", "dev", "ino")) and observed.get("uid") == os.getuid()
+                and observed.get("mode") == 0o600 and observed.get("regular") is True,
+                "inherited owner marker changed/missing")
+        path = Path(marker["path"])
+        s = path.lstat()
+        require(stat.S_ISREG(s.st_mode) and s.st_uid == os.getuid() and stat.S_IMODE(s.st_mode) == 0o600
+                and (s.st_dev, s.st_ino) == (marker["dev"], marker["ino"])
+                and s.st_size in (32, 33) and path.read_text().rstrip("\n") == m["ownerNonce"],
+                "owner nonce file identity/content changed")
+    else:
+        for key, value in (("TARN_KV_OWNER_NONCE", m["ownerNonce"]), ("TARN_KV_NODE_ID", n["node_id"]),
+                           ("TARN_KV_WORKDIR", n["workdir"])):
+            require((key + "=" + value).encode() in (p.get("environ") or []), "node environment owner changed")
     return {**n, "state": p["state"], "identity_verified": True}
 
 

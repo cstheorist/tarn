@@ -131,10 +131,24 @@ def checked_host_process(node, nonce, proc_root=Path('/proc')):
         raise ValueError('owned process identity changed')
     if os.readlink(p/'cwd')!=node['workdir'] or os.readlink(p/'exe')!=node['exe']:
         raise ValueError('owned process cwd/executable changed')
-    env=(p/'environ').read_bytes().split(b'\0')
-    for name,value in [('TARN_KV_OWNER_NONCE',nonce),('TARN_KV_NODE_ID',node['node_id']),('TARN_KV_WORKDIR',node['workdir'])]:
-        if (name+'='+value).encode() not in env:
-            raise ValueError('owned process nonce/node/workdir changed')
+    marker=node.get('owner_marker')
+    if marker is not None:
+        if (not isinstance(marker,dict) or type(marker.get('fd')) is not int or marker['fd']!=9
+                or type(marker.get('path')) is not str or not Path(marker['path']).is_absolute()
+                or type(marker.get('dev')) is not int or marker['dev']<0
+                or type(marker.get('ino')) is not int or marker['ino']<=0):
+            raise ValueError('invalid recorded process ownership marker')
+        descriptor=p/'fd'/str(marker['fd'])
+        observed=descriptor.stat()
+        if os.readlink(descriptor)!=marker['path'] or (observed.st_dev,observed.st_ino)!=(marker['dev'],marker['ino']):
+            raise ValueError('owned process marker descriptor/path/inode changed')
+    else:
+        # Older fixture receipts have no persistent descriptor. Do not weaken
+        # their original environment identity guard or silently change schemes.
+        env=(p/'environ').read_bytes().split(b'\0')
+        for name,value in [('TARN_KV_OWNER_NONCE',nonce),('TARN_KV_NODE_ID',node['node_id']),('TARN_KV_WORKDIR',node['workdir'])]:
+            if (name+'='+value).encode() not in env:
+                raise ValueError('owned process nonce/node/workdir changed')
     after=parse_stat((p/'stat').read_text())
     if (after['pid'],after['ppid'],after['starttime'])!=(before['pid'],before['ppid'],before['starttime']):
         raise ValueError('process changed across identity inspection')

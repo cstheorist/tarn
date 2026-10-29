@@ -10,10 +10,16 @@ TARN_SERVER=${TARN_SERVER:-$ROOT/target/release/tarn-server}
 KV_SDK=${KV_SDK:-$ROOT/target/release/examples/strong_kv}
 KV_BENCH=${KV_BENCH:-$ROOT/target/release/examples/strong_kv_bench}
 KV_STUDY_ENGINE=${KV_STUDY_ENGINE:-}
+KV_CLOCK_FAULT=${KV_CLOCK_FAULT:-0}
 TARN_NATIVE=${TARN_NATIVE:-$ROOT/target/release/libtarn_storage.so}
 KV_SCENARIOS=${KV_SCENARIOS:-leader,quorum,stall,move,ddl,partition}
 HOOKS=1
 RELAY=1
+case "$KV_CLOCK_FAULT" in 0|1) ;; *) echo 'KV_CLOCK_FAULT must be 0 or 1' >&2; exit 2;; esac
+if [ "$KV_CLOCK_FAULT" = 1 ]; then
+    [ -z "$KV_STUDY_ENGINE" ] || { echo 'Clock fault and measurement cohorts must be separate' >&2; exit 2; }
+    RELAY=0
+fi
 if [ -n "$KV_STUDY_ENGINE" ]; then
     case "$KV_STUDY_ENGINE" in memtx|vinyl) ;; *) echo 'KV_STUDY_ENGINE must be memtx or vinyl' >&2; exit 2;; esac
     HOOKS=''
@@ -45,6 +51,10 @@ PY
 WORK=$(mktemp -d /tmp/tarn-kv181-XXXXXXXX)
 chmod 700 "$WORK"
 NONCE=$("$PYTHON" -c 'import os; print(os.urandom(16).hex())')
+printf '%s\n' "$NONCE" > "$WORK/owner-nonce"
+chmod 600 "$WORK/owner-nonce"
+MARKER_DEV=$(stat -Lc %d "$WORK/owner-nonce")
+MARKER_INO=$(stat -Lc %i "$WORK/owner-nonce")
 echo "Strong KV evidence: $WORK"
 declare -a PIDS=() NAMES=()
 declare -A BIRTHS=() WORKDIRS=() EXES=() IDS=()
@@ -56,13 +66,31 @@ owned() {
     [ "$2" = "$$" ] && [ "${20}" = "${BIRTHS[$pid]:-missing}" ] || return 1
     [ "$(readlink "/proc/$pid/cwd")" = "${WORKDIRS[$pid]:-missing}" ] || return 1
     [ "$(readlink "/proc/$pid/exe")" = "${EXES[$pid]:-missing}" ] || return 1
-    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fx "TARN_KV_OWNER_NONCE=$NONCE" >/dev/null || return 1
-    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fx "TARN_KV_NODE_ID=${IDS[$pid]:-missing}" >/dev/null || return 1
-    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fx "TARN_KV_WORKDIR=${WORKDIRS[$pid]:-missing}" >/dev/null
+    [ "$(readlink "/proc/$pid/fd/9")" = "$WORK/owner-nonce" ] || return 1
+    [ "$(stat -Lc %d "/proc/$pid/fd/9")" = "$MARKER_DEV" ] || return 1
+    [ "$(stat -Lc %i "/proc/$pid/fd/9")" = "$MARKER_INO" ]
 }
 cleanup() {
     local status=$? pid round live=0 failure=0
     trap - EXIT INT TERM
+    "$PYTHON" - "$WORK" <<'PY'
+import json,os,pathlib
+import sys
+p=pathlib.Path(sys.argv[1]);out=[]
+for line in (p/'processes.jsonl').read_text().splitlines() if (p/'processes.jsonl').exists() else []:
+ n=json.loads(line);q=pathlib.Path('/proc',str(n['pid']));actual={}
+ for key in ['cwd','exe','fd/9']:
+  try:actual[key]=os.readlink(q/key)
+  except OSError as e:actual[key]={'error':e.errno}
+ try:
+  actual['stat']=(q/'stat').read_text();env=(q/'environ').read_bytes().split(b'\0')
+  actual['original_environment_marker_presence']={k:any(x.startswith((k+'=').encode()) for x in env)
+   for k in ['TARN_KV_OWNER_NONCE','TARN_KV_NODE_ID','TARN_KV_WORKDIR']}
+  s=(q/'fd/9').stat();actual['marker_stat']={'dev':s.st_dev,'ino':s.st_ino,'uid':s.st_uid}
+ except OSError as e:actual['inspection_errno']=e.errno
+ out.append({'recorded':n,'actual_before_shutdown':actual})
+f=p/'cleanup-identities.json';f.write_text(json.dumps(out,indent=2)+'\n');f.chmod(0o600)
+PY
     for pid in "${PIDS[@]}"; do if owned "$pid"; then kill -CONT "$pid" 2>/dev/null || true; fi; done
     for pid in "${PIDS[@]}"; do if owned "$pid"; then kill -TERM "$pid" 2>/dev/null || true; fi; done
     for round in {1..100}; do
@@ -111,6 +139,7 @@ q=p/'owner.json';q.write_text(json.dumps(owner,indent=2)+'\n');q.chmod(0o600)
 repo=pathlib.Path(sys.argv[4]);paths=list((repo/'lua').glob('*.lua'))
 paths += [repo/'tests'/n for n in ['kv.sh','kv_control.py','kv_relay.py'] if (repo/'tests'/n).is_file()]
 paths += [repo/'tests/sql'/n for n in ['kvready.lua','kvtest.py','kvfaults.py','kvrpc.lua','lazyrpc.lua','lazytest.py','movetest.py']]
+if (repo/'tests/sql/kvclockfaults.py').is_file():paths += [repo/'tests/sql/kvclockfaults.py']
 paths += [repo/'bench'/n for n in ['strong_kv.py','strong_kv_fixture.py','strong_kv_cpu.py'] if (repo/'bench'/n).is_file()]
 paths += list((repo/'crates').rglob('*.rs')) + list((repo/'crates').rglob('Cargo.toml'))
 paths += [repo/n for n in ['Cargo.toml','Cargo.lock','rust-toolchain.toml']]
@@ -145,23 +174,25 @@ PY
 start() {
     local name=$1 port=$2 dir=$3 expected_exe=$4; shift 4
     mkdir -m 700 "$dir"
-    (cd "$dir"; exec env TARN_KV_OWNER_NONCE="$NONCE" TARN_KV_NODE_ID="$name" TARN_KV_WORKDIR="$dir" "$@") > "$WORK/$name.log" 2>&1 &
+    (cd "$dir"; exec 9< "$WORK/owner-nonce"; exec env TARN_KV_OWNER_NONCE="$NONCE" TARN_KV_NODE_ID="$name" TARN_KV_WORKDIR="$dir" "$@") > "$WORK/$name.log" 2>&1 &
     local pid=$! line rest birth count
     PIDS+=("$pid");NAMES+=("$name");WORKDIRS[$pid]=$dir;EXES[$pid]=$expected_exe;IDS[$pid]=$name
     line=$(cat "/proc/$pid/stat");rest=${line##*) };set -- $rest;birth=${20};BIRTHS[$pid]=$birth
-    # Wait for exec/cwd/env, while preserving this child's original birth.
-    for count in {1..100}; do owned "$pid" && break; sleep .01; done
-    owned "$pid" || { echo "Owned child $name failed its startup identity" >&2; return 1; }
-    "$PYTHON" - "$WORK" "$name" "$port" "$pid" "$$" "$birth" "$dir" "$NONCE" <<'PY'
+    # Record the expected original child even if its startup guard fails.
+    "$PYTHON" - "$WORK" "$name" "$port" "$pid" "$$" "$birth" "$dir" "$NONCE" "$MARKER_DEV" "$MARKER_INO" "$expected_exe" <<'PY'
 import json,os,pathlib,sys
 root=pathlib.Path(sys.argv[1]);name=sys.argv[2];pid=int(sys.argv[4])
 n={'node_id':name,'endpoint':'127.0.0.1:'+sys.argv[3],'pid':pid,'ppid':int(sys.argv[5]),
- 'starttime':int(sys.argv[6]),'workdir':sys.argv[7],'ownerNonce':sys.argv[8],'exe':os.readlink(f'/proc/{pid}/exe')}
+ 'starttime':int(sys.argv[6]),'workdir':sys.argv[7],'ownerNonce':sys.argv[8],'exe':sys.argv[11],
+ 'owner_marker':{'fd':9,'path':str(root/'owner-nonce'),'dev':int(sys.argv[9]),'ino':int(sys.argv[10])}}
 if name.startswith('s'):n.update(shard_id=int(name[1]),replica=int(name[3]))
 fd=os.open(str(root/'processes.jsonl'),os.O_WRONLY|os.O_APPEND|os.O_CREAT,0o600)
 try:os.write(fd,(json.dumps(n)+'\n').encode())
 finally:os.close(fd)
 PY
+    # Require exec/cwd and the inherited owner descriptor, preserving birth.
+    for count in {1..100}; do owned "$pid" && break; sleep .01; done
+    owned "$pid" || { echo "Owned child $name failed its startup identity" >&2; return 1; }
 }
 if [ "$RELAY" = 1 ]; then
     "$PYTHON" - "$WORK" "$NONCE" "$REPLICAS" "${PORTS[@]:8:12}" <<'PY'
@@ -255,6 +286,12 @@ PY
 )
 printf '%s\n' '{"action":"inspect"}' | "$PYTHON" "$ROOT/tests/kv_control.py" --manifest "$WORK/manifest.json" > "$WORK/broker-preflight.json"
 TARN="127.0.0.1:${PORTS[6]},127.0.0.1:${PORTS[7]}"
+if [ "$KV_CLOCK_FAULT" = 1 ]; then
+    "$PYTHON" "$ROOT/tests/sql/kvclockfaults.py" --tarn "$TARN" --shards "$LEADERS" --replicas "$REPLICAS" \
+        --sdk "$KV_SDK" --evidence "$WORK/clock-fault" > "$WORK/clock-fault.log" 2>&1
+    cat "$WORK/clock-fault.log"
+    exit 0
+fi
 if [ -n "$KV_STUDY_ENGINE" ]; then
     "$PYTHON" "$ROOT/bench/strong_kv_fixture.py" --work "$WORK" --tarn "$TARN" --shards "$LEADERS" \
         --replicas "$REPLICAS" --engine "$KV_STUDY_ENGINE" --driver "$KV_BENCH" --sdk "$KV_SDK" \

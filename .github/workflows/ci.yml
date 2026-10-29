@@ -230,6 +230,8 @@ jobs:
         run: |
           ci/annotate.sh strong-kv tests/kv.sh
           TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+          KV_CLOCK_FAULT=1 ci/annotate.sh strong-kv-clock tests/kv.sh
+          KV_CLOCK_FAULT=1 TARN_NATIVE=0 ci/annotate.sh strong-kv-clock-lua tests/kv.sh
       - name: Retain strong KV histories and fixture evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -241,12 +243,14 @@ jobs:
             /tmp/tarn-kv181-*/manifest.json
             /tmp/tarn-kv181-*/processes.jsonl
             /tmp/tarn-kv181-*/lifecycle.json
+            /tmp/tarn-kv181-*/cleanup-identities.json
             /tmp/tarn-kv181-*/preflight.json
             /tmp/tarn-kv181-*/preflight.stderr
             /tmp/tarn-kv181-*/broker-preflight.json
             /tmp/tarn-kv181-*/*.log
             /tmp/tarn-kv181-*/functional/*
             /tmp/tarn-kv181-*/faults/*
+            /tmp/tarn-kv181-*/clock-fault/*
             !/tmp/tarn-kv181-credentials-*/**
           if-no-files-found: ignore
           retention-days: 30
@@ -356,6 +360,8 @@ jobs:
         run: |
           TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh strong-kv tests/kv.sh
           TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+          KV_CLOCK_FAULT=1 TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh strong-kv-clock tests/kv.sh
+          KV_CLOCK_FAULT=1 TARN_NATIVE=0 ci/annotate.sh strong-kv-clock-lua tests/kv.sh
       - name: Matched read measurements on both storage engines
         run: |
           for engine in memtx vinyl; do
@@ -375,6 +381,7 @@ jobs:
             /tmp/tarn-kv181-*/preflight.stderr
             /tmp/tarn-kv181-*/functional/*
             /tmp/tarn-kv181-*/faults/*
+            /tmp/tarn-kv181-*/clock-fault/*
             /tmp/tarn-kv181-*/study/**
             !/tmp/tarn-kv181-credentials-*/**
           if-no-files-found: ignore
