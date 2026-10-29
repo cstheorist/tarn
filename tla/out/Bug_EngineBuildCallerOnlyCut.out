@@ -1,0 +1,436 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 42 and seed 8927290625830387661 with 2 workers on 16 cores with 736MB heap and 64MB offheap memory [pid: 30361] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue165-build-registration-jnf7b8ik/registered-checker/tla/EngineBuildReentry.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2652981361017185717/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EngineBuildReentry
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EngineBuildReentry
+Starting... (2026-10-29 10:15:04)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Finished computing initial states: 12 distinct states generated at 2026-10-29 10:15:04.
+Error: Invariant PreparedImage is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "sampled"
+/\ cutReady = FALSE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 0
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 1
+/\ copied = {"A"}
+/\ oldPending = TRUE
+/\ source = [A |-> 1, B |-> 1]
+/\ captureValid = FALSE
+/\ captureEpoch = 2
+/\ page = [ active |-> TRUE,
+  key |-> "B",
+  value |-> 1,
+  sampledCapture |-> 1,
+  lease |-> 1,
+  cut |-> 1,
+  owner |-> 1 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = FALSE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 0
+/\ owner = 1
+
+State 2: <RequestReentry line 69, col 5 to line 73, col 84 of module EngineBuildReentry>
+/\ phase = "waiting"
+/\ cutReady = FALSE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 0
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 1
+/\ copied = {"A"}
+/\ oldPending = TRUE
+/\ source = [A |-> 1, B |-> 1]
+/\ captureValid = FALSE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = FALSE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 0
+/\ owner = 1
+
+State 3: <AcquireCurrentCut line 76, col 5 to line 81, col 84 of module EngineBuildReentry>
+/\ phase = "owned"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 0
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 1
+/\ copied = {"A"}
+/\ oldPending = TRUE
+/\ source = [A |-> 1, B |-> 1]
+/\ captureValid = FALSE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = FALSE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 4: <GapWrite("A") line 107, col 5 to line 112, col 76 of module EngineBuildReentry>
+/\ phase = "owned"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 0
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 1
+/\ copied = {"A"}
+/\ oldPending = TRUE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = FALSE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 5: <RereadOwned line 86, col 5 to line 104, col 84 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {}
+/\ oldPending = TRUE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 0, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 6: <ReadPage line 115, col 5 to line 122, col 84 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {}
+/\ oldPending = TRUE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> TRUE,
+  key |-> "A",
+  value |-> 2,
+  sampledCapture |-> 2,
+  lease |-> 2,
+  cut |-> 2,
+  owner |-> 1 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 0, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 7: <WritePage line 125, col 5 to line 132, col 84 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A"}
+/\ oldPending = TRUE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 2, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 8: <ReadPage line 115, col 5 to line 122, col 84 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A"}
+/\ oldPending = TRUE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> TRUE,
+  key |-> "B",
+  value |-> 1,
+  sampledCapture |-> 2,
+  lease |-> 2,
+  cut |-> 2,
+  owner |-> 1 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 2, B |-> 0]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 9: <WritePage line 125, col 5 to line 132, col 84 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A", "B"}
+/\ oldPending = TRUE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 2, B |-> 1]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 10: <ResolveOld(TRUE) line 173, col 5 to line 178, col 63 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A", "B"}
+/\ oldPending = FALSE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 1]
+/\ oldQueue = TRUE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 11: <QueueSettles line 185, col 5 to line 188, col 75 of module EngineBuildReentry>
+/\ phase = "copying"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A", "B"}
+/\ oldPending = FALSE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 1]
+/\ oldQueue = FALSE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 12: <BeginTail line 135, col 5 to line 139, col 84 of module EngineBuildReentry>
+/\ phase = "tail"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "copying"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A", "B"}
+/\ oldPending = FALSE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 0
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 1]
+/\ oldQueue = FALSE
+/\ cutEpoch = 2
+/\ owner = 1
+
+State 13: <Prepare line 149, col 5 to line 154, col 84 of module EngineBuildReentry>
+/\ phase = "prepared"
+/\ cutReady = TRUE
+/\ oldTicket = FALSE
+/\ dirty = {}
+/\ resetCount = 1
+/\ oldLocal = FALSE
+/\ receiptPhase = "prepared"
+/\ mode = "capture"
+/\ receiptCapture = 2
+/\ copied = {"A", "B"}
+/\ oldPending = FALSE
+/\ source = [A |-> 2, B |-> 1]
+/\ captureValid = TRUE
+/\ captureEpoch = 2
+/\ page = [ active |-> FALSE,
+  key |-> "B",
+  value |-> 0,
+  sampledCapture |-> 0,
+  lease |-> 0,
+  cut |-> 0,
+  owner |-> 0 ]
+/\ preparedBy = 1
+/\ oldCaller = FALSE
+/\ gapDone = TRUE
+/\ oldKey = "A"
+/\ shadow = [A |-> 1, B |-> 1]
+/\ oldQueue = FALSE
+/\ cutEpoch = 2
+/\ owner = 1
+
+4782 states generated, 2058 distinct states found, 85 states left on queue.
+The depth of the complete state graph search is 13.
+Finished in 00s at (2026-10-29 10:15:04)
+Trace exploration spec path: ./EngineBuildReentry_TTrace_1793283304.tla

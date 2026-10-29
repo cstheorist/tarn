@@ -1875,12 +1875,58 @@ tla/check.sh PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture \
   Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale
 ```
 
+### Re-entering one engine BUILD after a lost cut (issue #165)
+
+`EngineBuildReentry.tla` starts one original BUILD at a successful-return,
+pre-effect checkpoint. A saved baseline page predates a known native cut
+invalidation. Before further effects, BUILD discards the page, reacquires
+current terminal-ticket and queue evidence, and rereads ownership, phase
+and capture. Cut-only loss keeps the copied prefix and captured dirty keys;
+capture loss resets the incomplete generation and recopies. An uncertified
+`preparing` receipt with an invalid track follows that recopy path.
+Certified `prepared`/`applying`/`published` images are handled before reset.
+A newer cut epoch invalidates a saved page even if readiness has already
+been rebuilt by the time the original request resumes.
+
+The two-key positive model checks `PreparedImage`, `OwnerCertified`,
+`CertifiedRetained` and `CutOnlyNoRecopy`, exploring 1,500 distinct states to
+depth 14. Under one finite invalidation and weak fairness of native
+terminal/queue completion and the original BUILD's successful actions,
+`OriginalBuildCompletes` reaches certification or an ownership refusal.
+Three sensitivity controls reach an actual wrong PREPARED shadow image:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_EngineBuildReusePage` | 747 | 10 | `PreparedImage`: an old payload is relabelled with a current capture/cut lease |
+| `Bug_EngineBuildCallerOnlyCut` | 2,058 | 13 | `PreparedImage`: a submitted old effect outlives its caller and overwrites a new page before final queue settlement |
+| `Bug_EngineBuildKeepPrefix` | 764 | 9 | `PreparedImage`: an incomplete prefix misses a source change during lost capture |
+
+Every control retains the generic owner, current-cut and capture checks.
+Their final states have settled old tickets/queue and current ownership,
+but shadow data differs from the source. Old pending shadow effects and
+their terminal mapping are conservative compositional inputs; the model
+does not claim that the observed CI builder had such an effect or prove
+its full native reachability. Confirmed page effects and final source-tail
+ordering retain the `EngineCopy`/`EngineSourceDrain` premises.
+
+There is no retry action for helper, page-transaction, final-guard or commit
+exceptions, no second RPC, and no replay of an uncertain effect. The runtime
+keeps its original deadline and eight-reset limit; this finite model does
+not establish completion within either bound, under repeated invalidation,
+or after arbitrary mid-helper failures. Native WAL, replication and the
+full runtime remain outside this local contract.
+
+```sh
+tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
+  Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
+```
+
 ### Configuration counts
 
-The default list contains 259 unique configurations: 68 positive
-outcomes and 191 expected broken/trade-off outcomes. The 266 generated
+The default list contains 268 unique configurations: 70 positive
+outcomes and 198 expected broken/trade-off outcomes. The 275 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 272 total. Explicit
+placement configurations are maintained directly, for 281 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1908,11 +1954,19 @@ The final report-head CI/validation attestation is a separate publication
 gate; a previous run is never represented as execution of changed models.
 The seven plain lazy-binding cases subsequently completed the registered
 checker with the outcomes above. The original 252-case prefix, model/config
-bytes and module dispatch remain unchanged. This forms the current 259-case
-union; it is not a claim that a new full 259-case CI run has completed. The
-generator reproduces twice without changes. The current proof inventory is
-325 files: 309 TLA+ model/config files, 11 verified-crate source/test/manifest
-files and five formal runner/inspection scripts. Verus bodies are unchanged.
+bytes and module dispatch remain unchanged. CI run
+[40876376448](https://github.com/cstheorist/tarn/actions/runs/40876376448)
+then completed all 259 cases with 68 positive and 191 expected control
+outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
+The four BUILD re-entry cases subsequently completed separately, preserving
+the original 259-case prefix, model/config bytes and module dispatch. This
+formed the 263-case union. The five file-backup cases then completed
+separately with one positive and four expected violations; the combined
+registry contains all 268 inputs. This is an input union, not a claim that
+a previous CI run executed changed models. The generator reproduces
+without changes. The current proof inventory is 336 files: 320 TLA+
+model/config files, 11 verified-crate source/test/manifest files and five
+formal runner/inspection scripts. Verus bodies are unchanged.
 
 ## Verus proofs
 
@@ -2122,6 +2176,95 @@ required. SQL fresh-table diagnostics retain the failed phase, commit ACK,
 cleanup and independent row observation; an unknown outcome stays unknown.
 These checks establish no benchmark improvement or general DDL liveness.
 
+### Engine BUILD re-entry runtime boundary (reopened issue #165)
+
+A status notification can revoke the engine cut after BUILD's initial
+readiness check, including after a confirmed `copying` receipt and before
+its first shadow page. The engine meter has no background rebuilder. Its
+UNKNOWN state therefore remains a safe refusal until another engine entry
+establishes a cut. BUILD now checks readiness before start and at loop
+re-entry, rereads the owned receipt and capture, and discards local work
+when a successful reset or confirmed page read outlives that evidence.
+It compares the sampled ticket epoch even if another operation has already
+rebuilt readiness. Lost capture resets the incomplete generation; cut-only
+rebuilding retains a valid capture. Certified phases are handled before
+any reset, and the existing uncertified `preparing` recovery remains valid.
+
+This is pre-effect re-entry inside the same original BUILD. Generic
+transaction/cut/invalidation helpers, final epoch/capture/role/ownership
+checks and exception classification are unchanged. Any exception from
+start, reset, refresh, a submitted page transaction or commit still escapes.
+There is no catch-and-retry of a closure or RPC, and no progress promise
+through those errors. The original deadline and eight-reset limit remain
+runtime checks. A same-observed-role notification is not assumed harmless:
+coalesced observations cannot exclude an intervening physical role change.
+
+`engine_cut_test.lua` is an RF1/fsync mechanism witness, separate from RF3
+process loss. It holds a real registered initial `box.status` callback and
+releases it after reset or after the original confirmed source-page read.
+The second schedule identifies the original read frame, descriptor, tuple
+page and PK cursor without replacing its result. Real gap writes change
+the source while capture is invalid. The same one BUILD must recapture
+before writing a fresh page, reconcile later acknowledged mutations and a
+rollback extra, and publish the exact image through PREPARE/APPLY. Its
+wrappers observe only the owned worker and restore original functions.
+Baseline controls retain the exact 1213 refusal and empty copying receipt.
+Existing detached-shadow/terminal, source-drain, engine/cutover and RF3
+leader-loss checks remain required.
+
+The retained CI counters and exact-source call graph single out a
+same-observed-RO status callback as the historical post-track hard loss,
+conditional on the normal one-init fixture and no out-of-band invalidation.
+They do not identify its payload, producer or exact delivery boundary.
+The observation-only RF3 run establishes repeated same-role deliveries;
+the scheduled RF1 witness establishes the refusal mechanism. A later
+successful run is separate evidence, not a retrospective fault diagnosis
+or a benchmark improvement.
+
+### Vinyl pressure phase scheduling and failed-witness readback (issue #174)
+
+`tests/sql/vinylpressure.py --real-pressure` keeps its total 20,000-attempt
+bound, eight writers by default, 8 KiB random payloads and the real native
+I/O, regulator and compaction checks. It reserves phase-local slots in
+proportion to the three-second warmup, requested limited-I/O window and
+three-second release window. Each writer owns interleaved slots spaced
+across the actual window. Missed slots expire; they are never transferred
+or sent in a catch-up burst. Workers park between slots and while the
+controller changes I/O. The limited window opens after the 0.5 MiB/s control
+receipt; the release window opens after restoring uncapped I/O. Every
+writer must dispatch work in each complete window. Timestamps observe
+client call entry and completion, rather than promising physical network
+arrival at a particular instant.
+
+The fixture freezes its attempt, native-sample and in-flight ledgers after
+bounded drain. Before checking the pressure witness, it reads back at most
+20,001 ordered IDs and saves exact missing acknowledged IDs, present refused
+IDs, unexpected IDs and any unresolved IDs. An uncertain result is never
+replayed or classified as settled merely because readback sees its key.
+Incomplete drain or readback is explicit; a live writer at the drain cut
+preserves the owned database for investigation. Stage, restore, drain,
+readback and assertion failures remain distinguishable. CI retains the
+manifest, events, summary and raw JSONL ledgers on success and failure.
+
+```sh
+python3 tests/sql/vinylpressure_phase_test.py
+```
+
+These offline controls use virtual monotonic time and the fixture's actual
+scheduler, controller, audit and finalizer. They offer more than the entire
+budget during warmup, check later phase activity and the total bound, and
+exercise slow calls, expired permits, I/O-control errors and failed-witness
+readback. A source-derived adapter for the former global-cap policy fails
+the early-exit oracle; it does not execute the entire historical fixture.
+The retained original CI failure identifies cap exhaustion, but did not
+retain per-attempt phase records or perform exact readback. Its phase of
+exhaustion and exact effects remain unobserved.
+
+This is a test-driver change. Production admission, commit, locking and
+recovery code, TLA+ inputs and Verus bodies are unchanged. These controls
+prove neither native-engine latency nor a comparative performance result;
+the complete release SQL and live-fault matrix remains required.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request:
@@ -2181,3 +2324,25 @@ routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
 malformed/lost-reply faults and failover preserve the existing uncertainty
 and matched fencing behavior. Resource budgets do not certify whole-query
 memory bounds or benchmark speedups.
+
+### Physical file backup agent and seed identity (issue #56)
+
+`FileBackup.tla` checks the agent's publication and seed-mode contract with
+two abstract files: copier death/lease expiry, file reclamation, corruption,
+checked restore, registration, distinct seed identity and read-only follow
+before operator-authorized promotion. It checks complete-file publication,
+a valid publication lease, verified restored contents and identity separation.
+The four `Bug_FileBackup*` configurations deliberately publish partial data,
+skip hash checks, reuse the source identity or ignore an expired lease;
+each must violate its corresponding invariant.
+
+Tarantool's coherent backup file list/WAL recovery, actual filesystem
+`fsync`/rename behavior, SHA-256, fixed-width header format, administrative
+registration and the operator's catch-up/promotion decision are trusted
+premises. This bounded model does not prove file IO, a whole-cluster backup,
+Tarantool replication, performance, or Python/Lua refinement. The existing
+commit/locking/recovery models and 140 verified shared bodies are unchanged.
+Live tests recover real vinyl files and compare every tuple byte, including
+post-backup WAL and negative lease/copy/restore controls. The startup voter
+marker prevents accidental candidate startup until an operator clears it;
+it does not make the operator's catch-up decision automatically.

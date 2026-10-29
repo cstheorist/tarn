@@ -2211,6 +2211,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_DepartureNoCommitCheck | violates NoNewDependencyAfterDrainACK | 208 | 523 | 9 | 00s | 8 |
 | Bug_DepartureUntrackedWal | violates NoOrphanPrepared | 341 | 1186 | 14 | 00s | 13 |
 | Bug_EngineAliasNoMutex | violates BothCallersOK | 25 | 46 | 8 | 00s | 8 |
+| Bug_EngineBuildCallerOnlyCut | violates PreparedImage | 2058 | 4782 | 13 | 00s | 13 |
+| Bug_EngineBuildKeepPrefix | violates PreparedImage | 764 | 1673 | 9 | 00s | 9 |
+| Bug_EngineBuildReusePage | violates PreparedImage | 747 | 1651 | 10 | 00s | 10 |
 | Bug_EngineCopyBeforeCapture | violates PreparedImage | 6274 | 18783 | 11 | 00s | 11 |
 | Bug_EngineCopyCaptureOnlyNewKeys | violates PreparedImage | 3122 | 8315 | 12 | 00s | 12 |
 | Bug_EngineCopyLosePersistentFence | violates PreparedImage | 2534 | 6856 | 11 | 00s | 11 |
@@ -2236,6 +2239,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_EngineSourceDrainCallerOnly | violates PreparedImage | 22 | 29 | 9 | 00s | 9 |
 | Bug_FairnessPrefix | violates BoundedWait | 1281 | 1281 | 6 | 00s | 6 |
 | Bug_FenceAfterExpiry | violates NoAbortAfterCommit | 113180 | 569134 | 14 | 14s | 14 |
+| Bug_FileBackupHash | violates RestoredChecked | 350 | 999 | 10 | 00s | 10 |
+| Bug_FileBackupIdentity | violates SeedDistinct | 244 | 571 | 8 | 00s | 8 |
+| Bug_FileBackupLease | violates PublicationLease | 111 | 227 | 6 | 00s | 6 |
+| Bug_FileBackupPartial | violates PublishedComplete | 12 | 13 | 3 | 00s | 3 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
 | Bug_GroupedDDLIgnoreGeneration | violates NoHeldSnapshot | 36 | 46 | 5 | 00s | 5 |
@@ -2382,10 +2389,12 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | DepartureDependencies | no errors | 564 | 1626 | 17 | 00s |  |
 | EngineAlias | no errors | 12 | 13 | 7 | 00s |  |
 | EngineAlias_Existing | no errors | 8 | 9 | 5 | 00s |  |
+| EngineBuildReentry | no errors | 1500 | 2946 | 14 | 00s |  |
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
+| FileBackup | no errors | 356 | 983 | 15 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
 | FracFailover | no errors | 2715768 | 21085027 | 25 | 10min 51s |  |
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |

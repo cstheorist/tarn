@@ -14,6 +14,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   freshness/cache checks, preserves stream/read-set and no-replay assertions,
   records the real status payload, and exports source/module/process and
   pre-pause/pending/post-yield evidence from CI on success or failure.
+- The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
+  across the warmup, limited-I/O and release windows, so fast writers cannot
+  consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).
+  Exact bounded acknowledged/refused-key readback and raw attempt evidence
+  are retained before a failed pressure assertion, without replaying unknown
+  writes. Virtual-time controls exercise the same scheduler and finalizer.
+
+- An engine BUILD could return 1213 after a status notification revoked its
+  transaction cut between successful stages
+  ([#165](https://github.com/cstheorist/tarn/issues/165)). The original BUILD
+  now reacquires the terminal/native cut at pre-effect checkpoints, rereads
+  its receipt and capture, and discards stale sampled pages before recopying.
+  Certified images and the original deadline/reset limit remain intact.
+  Exceptions from a submitted transaction or commit still leave the call;
+  no mutation or uncertain result is replayed.
 
 - An unrelated ALTER could invalidate the lazy registry while an existing
   serializable stream committed a plain table, causing a definite 1412
@@ -73,6 +88,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose reply is invalid remains 1180/40003 and is never replayed.
 
 ### Added
+
+- Physical per-shard file backups and verified restores with bounded copy
+  rates, owned expiring GC leases and incomplete-directory refusal
+  ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a
+  separately registered replica identity; the seed starts as a voter until
+  an operator verifies WAL catch-up. The agent preserves SQL tuples and
+  protocol metadata, with native/Lua RF3 recovery tests and opt-in scale
+  evidence. This does not provide a coordinated cross-shard SQL snapshot.
+- Source-bound RF3 native-GC crash investigation controls
+  ([#160](https://github.com/cstheorist/tarn/issues/160)), with historical,
+  Lua-only, JIT-off and current-source trials, retained successful/failed
+  logs and crash cores. The original fault remains unexplained; no
+  production fix or successful-repeat-as-fix claim is made. See
+  [the investigation boundary](docs/native-gc-investigation.md).
 
 - Request-specific quorum freshness for default SQL and strong storage
   reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty

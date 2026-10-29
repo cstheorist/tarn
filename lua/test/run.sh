@@ -27,6 +27,14 @@ if [ -z "${TEST:-}" ]; then
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
   done
+  for boundary in post-reset after-baseline; do
+    for engine in memtx vinyl; do
+      echo "storage test engine_cut_test $engine $boundary" | tee -a "$WORK/test.out"
+      timeout 60 "$T" "$DIR/test/engine_cut_test.lua" "$WORK/engine-cut-$engine-$boundary" "$engine" desired "$boundary" 2>&1 | tee -a "$WORK/test.out"
+      r=${PIPESTATUS[0]}
+      [ "$r" -ne 0 ] && rc=$r
+    done
+  done
   TARANTOOL="$T" bash "$DIR/test/member_dependency.sh" "$WORK/member-dependency" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

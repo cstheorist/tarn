@@ -1,0 +1,11 @@
+{
+  "issue": 160,
+  "run": 40753059987,
+  "job": 123044577438,
+  "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+  "original_job_log_sha256": "60ca08399f4617af4e998d9f55603f66506e12b3a86fca59926276628932b3f1",
+  "excerpt_sha256": "db1d118c33f553604685d843f17289eeb4a1c15e4b001572fd3082a315c21795",
+  "original_artifacts": [],
+  "scope": "Original log observation only. Native module presence is not a causal diagnosis; no original binary/core or recovered-effect accounting available.",
+  "excerpt_processing": "Selected original log lines, with trailing whitespace stripped; the original full decoded job-log hash is recorded separately."
+}
