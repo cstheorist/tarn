@@ -142,8 +142,14 @@
     {
       "path": "tests/evidence/integrity/ci-initial-failure.txt",
       "sha256": "e1f1f5a6a3266359839494f2994397e9df90ba7261900644e0df1de4f890cea3"
+    },
+    {
+      "path": "tests/evidence/integrity/ci-integrated-startup-failure.txt",
+      "sha256": "c9dbd7a2446f16fd236ef3e23b18fa20d9dd0596197c95bb9f80983d22a91e03"
     }
   ],
   "ci_initial": "https://github.com/cstheorist/tarn/actions/runs/40922484589",
-  "ci_corrected_contract": "https://github.com/cstheorist/tarn/actions/runs/40924677141"
+  "ci_corrected_contract": "https://github.com/cstheorist/tarn/actions/runs/40924677141",
+  "ci_integrated_startup_failure": "https://github.com/cstheorist/tarn/actions/runs/40927561808",
+  "ci_integrated_startup_scope": "Integrity, ordinary/Vinyl suites, pressure and mutation/RPC faults passed; bucket-count fixture started the gateway after a port-only storage restart and encountered read-only recovery. Later topology/RF3 steps were skipped. Bounded PID/normal writable metadata readiness now precedes gateway startup; no production health fence is changed."
 }
