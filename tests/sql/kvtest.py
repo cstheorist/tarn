@@ -21,9 +21,49 @@ import uuid
 
 import pymysql
 
-from lazytest import ev, q, rpc
+from lazytest import ev as _admin_ev, q, rpc
 from lazyfaults import Lease as ApplyLease, decision_node
 from movetest import bucket_of
+
+
+def ev(node, script, args=None, *, stage="administrative_eval", sensitive=()):
+    """Keep admin transport uncertainty, without retaining its argv secrets.
+
+    The test transport may carry credential-setup arguments in argv. Its
+    outer timeout, or a timeout printed by an owned executable wrapper,
+    must never reach a retained traceback as a raw command.
+    """
+    try:
+        return _admin_ev(node, script, args)
+    except Exception as error:
+        transport = isinstance(error, (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError))
+        message = "" if transport else str(error)
+        nested = isinstance(error, RuntimeError) and any(
+            marker in message for marker in ("TimeoutExpired", "CalledProcessError", "FileNotFoundError"))
+        if transport or nested:
+            details = {"stage": stage, "type": type(error).__name__, "outcome": "unknown_no_replay",
+                       "script_sha256": hashlib.sha256(script.encode()).hexdigest()}
+            for name in ("timeout", "returncode", "errno"):
+                value = getattr(error, name, None)
+                if isinstance(value, (int, float)):
+                    details[name] = value
+            command = getattr(error, "cmd", None)
+            if command is not None:
+                encoded = json.dumps(command, default=str, ensure_ascii=True, sort_keys=True).encode()
+                details["command_sha256"] = hashlib.sha256(encoded).hexdigest()
+            if nested:
+                details["private_diagnostic_sha256"] = hashlib.sha256(message.encode()).hexdigest()
+            raise RuntimeError("Administrative transport failure: " + json.dumps(details, sort_keys=True)) from None
+        redacted = message
+        for secret in sensitive:
+            if isinstance(secret, str) and secret:
+                for spelling in (secret, json.dumps(secret)[1:-1], repr(secret)[1:-1]):
+                    redacted = redacted.replace(spelling, "<redacted>")
+        if redacted != message:
+            # Preserve the remaining diagnostic/code text; suppress the raw
+            # original context even when a wrapper truncated its type tag.
+            raise RuntimeError(redacted) from None
+        raise  # Actual database diagnostics are not reclassified by text/code.
 
 
 def typed(value):
@@ -201,7 +241,7 @@ for _,name in ipairs({'tarn_kv_v1.meta','tarn_kv_v1.get','tarn_kv_v1.get_many'})
  assert(box.func[name]); box.schema.user.grant(user,'execute','function',name)
 end
 return {uid=assert(box.space._user.index.name:get{user}).id}
-""", [self.user, self.password])
+""", [self.user, self.password], stage="create_reader", sensitive=(self.password,))
             assert isinstance(result, dict) and isinstance(result.get("uid"), int), result
             self.users.append((node, result["uid"]))  # Cleanup only a definite creation ACK.
             self.record("admin_reader_create", node=node, result=result)

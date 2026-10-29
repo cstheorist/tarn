@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A versioned, read-only strong Key/Value API for full-primary-key points
+  and bounded independent-point batches, with dedicated-reader grants,
+  ownership/schema handles and a generic Rust client. Complete responses
+  preserve input positions, duplicates and misses; unsupported snapshot,
+  transaction and mutation requests fail explicitly. See the
+  [contract and raw-native visibility boundaries](docs/strong-kv.md).
+
 - A quiescent whole-cluster backup/restore workflow with durable replica fences,
   complete membership/routing and transaction/DDL/lazy drain checks, source-bound
   physical manifests, exact isolated restore audits and guarded activation

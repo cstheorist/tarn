@@ -15,8 +15,7 @@ import uuid
 
 import pymysql
 
-from kvtest import Test
-from lazytest import ev
+from kvtest import Test, ev
 from movetest import bucket_of
 
 IMPLEMENTED = {"leader", "quorum", "stall"}
