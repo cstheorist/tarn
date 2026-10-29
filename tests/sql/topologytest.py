@@ -32,7 +32,7 @@ def connect(port):
 
 def counters(c):
     return {k: int(v) for k, v in q(c, "SHOW GLOBAL STATUS") if k.startswith((
-        "Tarn_storage_", "Tarn_fanout_", "Tarn_response_", "Tarn_rpc_"))}
+        "Tarn_storage_", "Tarn_fanout_", "Tarn_response_", "Tarn_rpc_", "Tarn_topology_"))}
 
 
 def rss(pid):
@@ -54,13 +54,15 @@ def main():
     ap.add_argument("--port", type=int, default=26400)
     ap.add_argument("--rate", type=float, default=1000, help="total scheduled point reads/s across eight clients")
     ap.add_argument("--stack-bytes", help="explicit development-build stack override; release uses its default")
+    ap.add_argument("--pool-size", type=int, default=4)
+    ap.add_argument("--idle-seconds", type=float, default=2)
     args = ap.parse_args()
     assert args.pairs > 0 and args.seconds > 0 and args.rate > 0
     out = pathlib.Path(args.out); out.mkdir(parents=True, exist_ok=True)
     cfg = json.loads(pathlib.Path(args.config).read_text())
     groups = len(cfg["shards"])
     count = cfg.get("bucket_count", 2048)
-    cfg.update(pool_size=4, deadlock_interval=0)
+    cfg.update(pool_size=args.pool_size, deadlock_interval=0)
     cfg["topology"] = dict(max_connections=20, completion_connections=4, idle_secs=1,
                            fanout=4, active_branches=16, queued_branches=32,
                            response_bytes=16 << 20, response_frame_bytes=8 << 20,
@@ -183,6 +185,11 @@ def main():
                     report["samples"].append(sample); save()
                     assert not failures, sample
                     if mode == "candidate":
+                        idle_start = time.monotonic()
+                        idle_before = [counters(x) for x in clients]
+                        time.sleep(args.idle_seconds)
+                        idle_after = [counters(x) for x in clients]
+                        sample["idle"] = dict(seconds=time.monotonic()-idle_start, before=idle_before, after=idle_after)
                         for status in after:
                             assert status["Tarn_storage_sockets_peak"] <= 20, status
                             assert status["Tarn_response_bytes_peak"] <= 16 << 20, status

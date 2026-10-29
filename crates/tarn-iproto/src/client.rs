@@ -332,6 +332,7 @@ pub(crate) struct Shared {
     tasks: Mutex<Vec<AbortHandle>>,
     counters: Counters,
     responses: Option<crate::ResponseBudget>,
+    traffic: Option<crate::ConnectionBudget>,
     response_frame_bytes: usize,
 }
 
@@ -683,6 +684,9 @@ async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: IoOwner<
         match rd.io.read_buf(&mut buf).await {
             Ok(0) => break Error::Io(std::io::ErrorKind::UnexpectedEof.into()),
             Ok(n) => {
+                if let Some(traffic) = &shared.traffic {
+                    traffic.read(n);
+                }
                 shared.counters.read_batches.fetch_add(1, Ordering::Relaxed);
                 shared.counters.bytes_read.fetch_add(n as u64, Ordering::Relaxed);
             }
@@ -728,6 +732,9 @@ async fn writer_task<W: AsyncWrite + Unpin>(shared: Arc<Shared>, mut wr: IoOwner
             break;
         }
         shared.counters.write_batches.fetch_add(1, Ordering::Relaxed);
+        if let Some(traffic) = &shared.traffic {
+            traffic.written(buf.len());
+        }
         shared
             .counters
             .bytes_written
@@ -1032,6 +1039,7 @@ impl Client {
             tasks: Mutex::new(Vec::with_capacity(3)),
             counters: Counters::default(),
             responses: opts.responses.clone(),
+            traffic: opts.connections.clone(),
             response_frame_bytes: opts.response_frame_bytes,
         });
         for scope in &shared.parents {
@@ -1169,6 +1177,9 @@ impl Client {
                 order.retain(|id| waiters.contains_key(id));
             }
             st.order.push_back(sync);
+            if let Some(traffic) = &shared.traffic {
+                traffic.enqueued();
+            }
             (was_empty, first_pending)
         };
         if was_empty {

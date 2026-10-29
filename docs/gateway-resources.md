@@ -40,6 +40,9 @@ at most ten seconds after the configured idle age when that worker is
 being scheduled. Closing a socket does not release its budget until both
 physical I/O halves drop. Saturation can therefore refuse discovery with
 1205/HY000 even after a handle was removed from a pool.
+Pressure eviction waits up to 50 ms for physical retirement before trying
+another idle owner; it never refunds the slot itself. Completion discovery
+bypasses the ordinary failed-discovery backoff.
 
 Read fanouts poll at most `fanout` branches per operation and share FIFO
 admission for `active_branches` across the gateway. The waiting set has
@@ -87,6 +90,15 @@ authoritative; no routing hierarchy or ownership rule changes.
 failed and cancelled handshakes. `SHOW TARN RPCS` continues to expose
 connection/request observations; those observations are not the socket
 admission authority and can omit already retired sockets.
+`Tarn_storage_rpc_enqueued`, `_bytes_written` and `_bytes_read` retain
+lifetime traffic across evicted connections. They exclude the handshake;
+written bytes count completed write batches, excluding a failed partial
+write. Requests count enqueue, not transaction outcome. The
+`Tarn_topology_catalog_refreshes`, `_member_refreshes` and `_bucket_refreshes`
+counters expose completed refresh work. Idle fixture intervals measure
+background traffic by subtraction; deadlock polling is explicitly disabled
+in this fixture and remains a separate full-graph operation with a bounded
+RPC window, proportional to the number of live groups.
 
 Run `GROUPS_COUNT=8 tests/topology.sh` (also 32 or 128) with the normal
 release binaries and Tarantool 3.9.0. Every group is a real storage process;
@@ -94,4 +106,18 @@ two gateways share it. The fixture retains configuration, binaries,
 all paired samples when `BASELINE_BIN` is supplied, errors, RSS, socket
 observations and high-water counters. Exact point reads cover every group;
 successful scatter results must equal the complete expected set. Runtime
-scaling on one host is not independent-host or RF3 performance evidence.
+scaling on one host is not independent-host performance evidence. The CI
+matrix includes RF1 at 8/32/128 groups, RF3 at eight groups and pool maxima
+of one and four. It compares a frozen baseline under the same release
+profile, durability and paced load. Missed scheduled slots and actual
+elapsed time are retained; a slow run is not reported as full admitted load.
+
+`simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps`
+exercises the actual lazy discovery, response accounting, membership decode
+and refresh locks of two configured gateways. One fake wire peer represents
+1,024 logical groups. Eight simultaneous refresh callers per gateway must
+share one successful full round, with complete membership and socket,
+response and fanout limits intact. Its printed payload/traffic/peak counts
+are control-plane simulation evidence, not 1,024 real storage groups or
+data-plane throughput. Configurations above the 1,024-position limit fail
+before opening I/O.

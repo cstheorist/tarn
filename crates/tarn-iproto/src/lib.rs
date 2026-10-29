@@ -23,7 +23,7 @@ mod responses;
 
 pub use admission::{AdmissionStats, Budget, Limits};
 pub use client::{Client, Response, ServerInfo, Stats};
-pub use connections::{ConnectionBudget, ConnectionStats};
+pub use connections::{ConnectionBudget, ConnectionStats, TrafficStats};
 pub use errcode::*;
 pub use responses::{ResponseBudget, ResponseStats};
 

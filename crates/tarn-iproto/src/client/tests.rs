@@ -464,6 +464,8 @@ async fn socket_budget_covers_handshake_cancellation_and_pinned_handles() {
     })
     .await;
     assert_eq!(sockets.stats().peak, 1);
+    assert_eq!(sockets.traffic().requests, 1);
+    assert!(sockets.traffic().bytes_written > 0);
 }
 
 #[tokio::test]

@@ -20,7 +20,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        groups: [8, 32, 128]
+        include:
+          - {groups: 8, replicas: 1, pool: 4}
+          - {groups: 32, replicas: 1, pool: 4}
+          - {groups: 128, replicas: 1, pool: 4}
+          - {groups: 8, replicas: 3, pool: 4}
+          - {groups: 8, replicas: 1, pool: 1}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,22 +51,32 @@ jobs:
           sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/topology-evidence/binaries.txt
       - uses: actions/upload-artifact@v6
         with:
-          name: topology-release-${{ matrix.groups }}
+          name: topology-release-${{ matrix.groups }}-${{ matrix.replicas }}-${{ matrix.pool }}
           path: |
             target/release/tarn-server
             target/release/libtarn_storage.so
             /tmp/topology-evidence/source.txt
             /tmp/topology-evidence/binaries.txt
+      - name: Build the frozen comparison gateway with the same release profile
+        run: |
+          git worktree add --detach /tmp/topology-baseline 7b063f6d2920c230b72dde639f4eb6323bc47d3d
+          cd /tmp/topology-baseline
+          cargo build --release --locked -p tarn-server
+          git rev-parse HEAD > /tmp/topology-evidence/baseline-source.txt
+          sha256sum target/release/tarn-server > /tmp/topology-evidence/baseline-binary.txt
       - name: Real shards, two gateways, bounded point and scatter reads
         env:
           GROUPS_COUNT: ${{ matrix.groups }}
+          REPLICAS: ${{ matrix.replicas }}
+          POOL_SIZE: ${{ matrix.pool }}
+          BASELINE_BIN: /tmp/topology-baseline/target/release/tarn-server
           TOPOLOGY_WORK: /tmp/topology-work
           TOPOLOGY_OUT: /tmp/topology-evidence
         run: bash tests/topology.sh
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: topology-results-${{ matrix.groups }}
+          name: topology-results-${{ matrix.groups }}-${{ matrix.replicas }}-${{ matrix.pool }}
           path: |
             /tmp/topology-evidence
             /tmp/topology-work/storage/*.log

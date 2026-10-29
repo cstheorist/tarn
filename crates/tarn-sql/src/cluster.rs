@@ -638,7 +638,7 @@ pub struct Cluster {
     pub globals: Mutex<Globals>,
     /// Catalog reloads so far, and the lock that makes concurrent
     /// `refresh_catalog` calls share one reload.
-    reloads: AtomicU64,
+    pub(crate) reloads: AtomicU64,
     reload_mu: tokio::sync::Mutex<()>,
     /// Row-lock requests in flight, by transaction (each makes one at a
     /// time): where the cross-shard deadlock detector starts.
@@ -957,7 +957,7 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
 }
 
 impl Cluster {
-    pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+    fn configured(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
         cfg.rpc.validate()?;
         cfg.topology.validate()?;
         if cfg.shards.len() > MAX_SHARDS || cfg.pool_size == 0 || cfg.pool_size > 1024 {
@@ -1027,6 +1027,11 @@ impl Cluster {
             lazy_samples: Mutex::new(Default::default()),
             vinyl_samples: Mutex::new(Default::default()),
         });
+        Ok(c)
+    }
+
+    pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+        let c = Self::configured(cfg)?;
         // The first shard (jobs, catalog) must answer, and every shard in
         // the cluster; one of the configuration that left the cluster need
         // not (the membership the others keep says it left).
@@ -1159,14 +1164,23 @@ impl Cluster {
         }
         candidates.sort_unstable();
         for (_, s, id) in candidates {
+            let mut removed = false;
             if let Some(p) = self.shards[s].leader.read().clone() {
-                p.clients
-                    .lock()
-                    .retain(|(c, _)| c.stats().id != id || !c.exclusively_idle());
+                p.clients.lock().retain(|(c, _)| {
+                    let keep = c.stats().id != id || !c.exclusively_idle();
+                    removed |= !keep;
+                    keep
+                });
             }
-            // Drop-abort is asynchronous; yield so the two actual I/O owners
-            // can retire before admitting a replacement under the same cap.
-            tokio::task::yield_now().await;
+            // Drop-abort is asynchronous. A single yield can resume before
+            // either I/O task retires, evicting every idle socket and then
+            // refusing a replacement. Wait for actual retirement, bounded
+            // even if another discoverer takes the freed slot first.
+            if pressure && removed {
+                self.connections
+                    .wait_available(completion, Duration::from_millis(50))
+                    .await;
+            }
             if pressure && self.connections.available(completion) {
                 break;
             }
@@ -2670,6 +2684,7 @@ pub(crate) mod wire_test {
 
     pub async fn accept(listener: &TcpListener) -> TcpStream {
         let (mut sock, _) = listener.accept().await.unwrap();
+        sock.set_nodelay(true).unwrap();
         let mut greeting = [b' '; 128];
         let first = b"Tarantool 3.9.0 (Binary)";
         greeting[..first.len()].copy_from_slice(first);
@@ -2688,6 +2703,10 @@ pub(crate) mod wire_test {
 #[cfg(test)]
 #[path = "cluster_fallback_tests.rs"]
 mod fallback_tests;
+
+#[cfg(test)]
+#[path = "cluster_topology_tests.rs"]
+mod topology_tests;
 
 #[cfg(test)]
 mod tests {

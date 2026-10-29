@@ -105,6 +105,7 @@ pub(crate) fn rows(cluster: &Cluster) -> Vec<Vec<Value>> {
 pub(crate) fn counters(cluster: &Cluster) -> Vec<(&'static str, u64)> {
     let s = cluster.rpc_global.stats();
     let sockets = cluster.connections.stats();
+    let traffic = cluster.connections.traffic();
     let responses = cluster.responses.stats();
     let (active, peak) = cluster.fanout.counters();
     vec![
@@ -112,6 +113,18 @@ pub(crate) fn counters(cluster: &Cluster) -> Vec<(&'static str, u64)> {
         ("Tarn_storage_sockets_peak", sockets.peak as u64),
         ("Tarn_storage_connect_attempts", sockets.opened),
         ("Tarn_storage_socket_refusals", sockets.refused),
+        ("Tarn_storage_rpc_enqueued", traffic.requests),
+        ("Tarn_storage_bytes_written", traffic.bytes_written),
+        ("Tarn_storage_bytes_read", traffic.bytes_read),
+        (
+            "Tarn_topology_catalog_refreshes",
+            cluster.reloads.load(std::sync::atomic::Ordering::Relaxed),
+        ),
+        (
+            "Tarn_topology_member_refreshes",
+            cluster.member_reads.load(std::sync::atomic::Ordering::Relaxed),
+        ),
+        ("Tarn_topology_bucket_refreshes", cluster.bucket_loads()),
         ("Tarn_fanout_active", active as u64),
         ("Tarn_fanout_peak", peak as u64),
         ("Tarn_response_bytes", responses.bytes as u64),
