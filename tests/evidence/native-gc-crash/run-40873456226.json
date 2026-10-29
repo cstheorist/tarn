@@ -1,0 +1,747 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40873456226",
+  "scope": "Retained original results; Lua control collector expected null instead of false. No causal fix or proof of absence.",
+  "rows": [
+    {
+      "source_commit": "41bcc14b4926efdc0e666d9a06b68e67fc5317b9",
+      "mode": "native",
+      "engine": "memtx",
+      "jit_control": "on",
+      "seconds": 45,
+      "repetitions": 3,
+      "tarantool_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "runtime": "{\"os\":\"Linux\",\"arch\":\"x64\",\"version\":\"3.9.0-0-g8b9a0f5\",\"status\":[true,\"SSE3\",\"SSE4.1\",\"BMI2\",\"fold\",\"cse\",\"dce\",\"fwd\",\"dse\",\"narrow\",\"loop\",\"abc\",\"sink\",\"fuse\"],\"gc64\":false,\"jit\":\"LuaJIT 2.1.0-beta3\"}",
+      "harness_sha256": "69797f6a54785ad9180836e417838fd10d2a235eda77734d220c1b2e38239d35",
+      "build_receipt_sha256": "241b89c01098206776ca4022d3403c25d021515e40c930d19dec549409ec2a77",
+      "artifact": "gc-current-memtx-native-on-40873456226",
+      "manifest_sha256": "c36628539cdab00f43b50f09d30e5d924dc234ecf5b99826e0bc308decb7caff",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 2732,
+              "commits_to_lua": 966,
+              "served": 12541,
+              "to_lua": 346,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "read": {
+                  "stale_buckets": 4,
+                  "bucket": 22,
+                  "w_lock": 319,
+                  "page": 1
+                },
+                "commit": {
+                  "freshness": 966
+                },
+                "validate": {
+                  "freshness": 2732
+                },
+                "write": {
+                  "stale_buckets": 2,
+                  "bucket": 20,
+                  "row_lock": 235
+                }
+              },
+              "writes": 4428,
+              "writes_to_lua": 257
+            },
+            {
+              "validations_to_lua": 1864,
+              "commits_to_lua": 794,
+              "served": 8539,
+              "to_lua": 298,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "read": {
+                  "page": 1,
+                  "stale_fences": 7,
+                  "w_lock": 270,
+                  "stale_buckets": 4,
+                  "bucket": 16
+                },
+                "commit": {
+                  "freshness": 794
+                },
+                "validate": {
+                  "freshness": 1864
+                },
+                "write": {
+                  "row_lock": 259,
+                  "bucket": 17
+                }
+              },
+              "writes": 4093,
+              "writes_to_lua": 276
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 1935,
+              "commits_to_lua": 1084,
+              "served": 9892,
+              "to_lua": 326,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "read": {
+                  "stale_buckets": 40,
+                  "bucket": 23,
+                  "w_lock": 251,
+                  "stale_locks": 12
+                },
+                "commit": {
+                  "freshness": 1084
+                },
+                "validate": {
+                  "freshness": 1935
+                },
+                "write": {
+                  "stale_buckets": 6,
+                  "bucket": 5,
+                  "row_lock": 281,
+                  "stale_locks": 4
+                }
+              },
+              "writes": 4289,
+              "writes_to_lua": 296
+            },
+            {
+              "validations_to_lua": 1784,
+              "commits_to_lua": 528,
+              "served": 7733,
+              "to_lua": 483,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "read": {
+                  "stale_buckets": 240,
+                  "bucket": 32,
+                  "w_lock": 211
+                },
+                "commit": {
+                  "freshness": 528
+                },
+                "validate": {
+                  "freshness": 1784
+                },
+                "write": {
+                  "stale_buckets": 25,
+                  "bucket": 15,
+                  "row_lock": 168
+                }
+              },
+              "writes": 3035,
+              "writes_to_lua": 208
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 4660,
+              "commits_to_lua": 2159,
+              "served": 21988,
+              "to_lua": 838,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "read": {
+                  "page": 1,
+                  "read_only": 3,
+                  "w_lock": 699,
+                  "stale_buckets": 51,
+                  "bucket": 84
+                },
+                "commit": {
+                  "freshness": 2159
+                },
+                "validate": {
+                  "freshness": 4660
+                },
+                "write": {
+                  "read_only": 2,
+                  "row_lock": 592,
+                  "stale_buckets": 6,
+                  "lazy_capture": 7,
+                  "bucket": 69
+                }
+              },
+              "writes": 9267,
+              "writes_to_lua": 676
+            },
+            {
+              "validations_to_lua": 2628,
+              "commits_to_lua": 761,
+              "served": 11589,
+              "to_lua": 447,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "read": {
+                  "stale_locks": 5,
+                  "bucket": 39,
+                  "w_lock": 399,
+                  "stale_buckets": 3,
+                  "page": 1
+                },
+                "commit": {
+                  "freshness": 761
+                },
+                "validate": {
+                  "freshness": 2628
+                },
+                "write": {
+                  "stale_buckets": 2,
+                  "bucket": 29,
+                  "row_lock": 251
+                }
+              },
+              "writes": 4581,
+              "writes_to_lua": 282
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        }
+      ],
+      "core_files": []
+    },
+    {
+      "source_commit": "41bcc14b4926efdc0e666d9a06b68e67fc5317b9",
+      "mode": "native",
+      "engine": "vinyl",
+      "jit_control": "on",
+      "seconds": 45,
+      "repetitions": 3,
+      "tarantool_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "runtime": "{\"os\":\"Linux\",\"arch\":\"x64\",\"version\":\"3.9.0-0-g8b9a0f5\",\"status\":[true,\"SSE3\",\"SSE4.1\",\"BMI2\",\"fold\",\"cse\",\"dce\",\"fwd\",\"dse\",\"narrow\",\"loop\",\"abc\",\"sink\",\"fuse\"],\"gc64\":false,\"jit\":\"LuaJIT 2.1.0-beta3\"}",
+      "harness_sha256": "69797f6a54785ad9180836e417838fd10d2a235eda77734d220c1b2e38239d35",
+      "build_receipt_sha256": "241b89c01098206776ca4022d3403c25d021515e40c930d19dec549409ec2a77",
+      "artifact": "gc-current-vinyl-native-on-40873456226",
+      "manifest_sha256": "bbbbd10cf2fa832ecb2b05992fa1d79db9c710bcd06f0c744217415e93086e0c",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 2501,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "freshness": 2501
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 1611,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "freshness": 1611
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 2911,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "freshness": 2911
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 2312,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "freshness": 2312
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 2988,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "freshness": 2988
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 2248,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 0,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "freshness": 2248
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        }
+      ],
+      "core_files": []
+    },
+    {
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "mode": "lua",
+      "engine": "vinyl",
+      "jit_control": "on",
+      "seconds": 45,
+      "repetitions": 3,
+      "tarantool_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "runtime": "{\"os\":\"Linux\",\"arch\":\"x64\",\"version\":\"3.9.0-0-g8b9a0f5\",\"status\":[true,\"SSE3\",\"SSE4.1\",\"BMI2\",\"fold\",\"cse\",\"dce\",\"fwd\",\"dse\",\"narrow\",\"loop\",\"abc\",\"sink\",\"fuse\"],\"gc64\":false,\"jit\":\"LuaJIT 2.1.0-beta3\"}",
+      "harness_sha256": "69797f6a54785ad9180836e417838fd10d2a235eda77734d220c1b2e38239d35",
+      "build_receipt_sha256": "9db491740215f629a158cfe3f28b2e4dd7a223d8bd655423228727bd29e6e468",
+      "artifact": "gc-observed-vinyl-lua-on-40873456226",
+      "manifest_sha256": "1d651dfc7dfb405cf13c3eb4fb206030a8b7fa7df1875f10b1075787f2e4f297",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            false,
+            false
+          ],
+          "fixture_passed": false,
+          "native_mode_confirmed": false
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            false,
+            false
+          ],
+          "fixture_passed": false,
+          "native_mode_confirmed": false
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            false,
+            false
+          ],
+          "fixture_passed": false,
+          "native_mode_confirmed": false
+        }
+      ],
+      "core_files": []
+    },
+    {
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "mode": "native",
+      "engine": "vinyl",
+      "jit_control": "off",
+      "seconds": 45,
+      "repetitions": 3,
+      "tarantool_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "runtime": "{\"os\":\"Linux\",\"arch\":\"x64\",\"version\":\"3.9.0-0-g8b9a0f5\",\"status\":[false,\"SSE3\",\"SSE4.1\",\"BMI2\",\"fold\",\"cse\",\"dce\",\"fwd\",\"dse\",\"narrow\",\"loop\",\"abc\",\"sink\",\"fuse\"],\"gc64\":false,\"jit\":\"LuaJIT 2.1.0-beta3\"}",
+      "harness_sha256": "69797f6a54785ad9180836e417838fd10d2a235eda77734d220c1b2e38239d35",
+      "build_receipt_sha256": "9db491740215f629a158cfe3f28b2e4dd7a223d8bd655423228727bd29e6e468",
+      "artifact": "gc-observed-vinyl-native-off-40873456226",
+      "manifest_sha256": "1f1c0cc0111b652ace27d504547f95b62cab908791c4bc778005bffee4ce5198",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 3199,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 443,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 3068,
+                  "bucket": 131
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 2066,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 499,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 2010,
+                  "bucket": 56
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 5368,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 817,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 5171,
+                  "bucket": 197
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 2963,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 539,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 2877,
+                  "bucket": 86
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 1559,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 279,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 1504,
+                  "bucket": 55
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 1513,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 271,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 1467,
+                  "bucket": 46
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        }
+      ],
+      "core_files": []
+    },
+    {
+      "source_commit": "420bde9fa9393c847cf022d4230b233c49b01fa7",
+      "mode": "native",
+      "engine": "vinyl",
+      "jit_control": "on",
+      "seconds": 45,
+      "repetitions": 3,
+      "tarantool_sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f",
+      "runtime": "{\"os\":\"Linux\",\"arch\":\"x64\",\"version\":\"3.9.0-0-g8b9a0f5\",\"status\":[true,\"SSE3\",\"SSE4.1\",\"BMI2\",\"fold\",\"cse\",\"dce\",\"fwd\",\"dse\",\"narrow\",\"loop\",\"abc\",\"sink\",\"fuse\"],\"gc64\":false,\"jit\":\"LuaJIT 2.1.0-beta3\"}",
+      "harness_sha256": "69797f6a54785ad9180836e417838fd10d2a235eda77734d220c1b2e38239d35",
+      "build_receipt_sha256": "9db491740215f629a158cfe3f28b2e4dd7a223d8bd655423228727bd29e6e468",
+      "artifact": "gc-observed-vinyl-native-on-40873456226",
+      "manifest_sha256": "98d55f916afad2747f80bb0daab5bac9085bc1351c81b752ec7cb2f6ba46a8e6",
+      "trials": [
+        {
+          "trial": 1,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 6084,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 1271,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 5961,
+                  "bucket": 123
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 5606,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 1226,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 5090,
+                  "bucket": 516
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 2,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 10399,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 1902,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "stale_locks": 2,
+                  "bucket": 189,
+                  "w_lock": 10208
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 6118,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 1266,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 4920,
+                  "bucket": 1198
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        },
+        {
+          "trial": 3,
+          "exit_code": 0,
+          "timed_out": false,
+          "crash_logs": [],
+          "trace_gc_crash": false,
+          "native_reports": [
+            {
+              "validations_to_lua": 7233,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 2381,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 7077,
+                  "bucket": 156
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            },
+            {
+              "validations_to_lua": 6025,
+              "commits_to_lua": 0,
+              "served": 0,
+              "to_lua": 0,
+              "validations": 1152,
+              "commits": 0,
+              "ready": 1,
+              "fallbacks": {
+                "validate": {
+                  "w_lock": 4854,
+                  "bucket": 1171
+                }
+              },
+              "writes": 0,
+              "writes_to_lua": 0
+            }
+          ],
+          "fixture_passed": true,
+          "native_mode_confirmed": true
+        }
+      ],
+      "core_files": []
+    }
+  ]
+}

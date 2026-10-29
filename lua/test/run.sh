@@ -13,11 +13,27 @@ if [ -z "${TEST:-}" ]; then
   timeout 60 "$T" "$DIR/test/vinyl_admission_test.lua" "$WORK/vinyl-admission" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
-  for test in clock_guard_test clock_initialization_test membership_freshness_test read_freshness_test native_lua_guard_test native_key_batch_test engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test; do
+  for test in clock_guard_test clock_initialization_test membership_freshness_test read_freshness_test native_lua_guard_test native_key_batch_test engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test lazy_plain_binding_test; do
     echo "storage test $test" | tee -a "$WORK/test.out"
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
     r=${PIPESTATUS[0]}
     [ "$r" -ne 0 ] && rc=$r
+  done
+  for schedule in after-publish during-publish; do
+    timeout 60 "$T" "$DIR/test/lazy_registry_test.lua" "$WORK/lazy-registry-$schedule" success "$schedule" 2>&1 | tee -a "$WORK/test.out"
+    r=${PIPESTATUS[0]}
+    [ "$r" -ne 0 ] && rc=$r
+    timeout 60 "$T" "$DIR/test/lazy_metadata_mvcc_test.lua" "$WORK/lazy-metadata-$schedule" "$schedule" 2>&1 | tee -a "$WORK/test.out"
+    r=${PIPESTATUS[0]}
+    [ "$r" -ne 0 ] && rc=$r
+  done
+  for boundary in post-reset after-baseline; do
+    for engine in memtx vinyl; do
+      echo "storage test engine_cut_test $engine $boundary" | tee -a "$WORK/test.out"
+      timeout 60 "$T" "$DIR/test/engine_cut_test.lua" "$WORK/engine-cut-$engine-$boundary" "$engine" desired "$boundary" 2>&1 | tee -a "$WORK/test.out"
+      r=${PIPESTATUS[0]}
+      [ "$r" -ne 0 ] && rc=$r
+    done
   done
   TARANTOOL="$T" bash "$DIR/test/member_dependency.sh" "$WORK/member-dependency" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
@@ -33,9 +49,12 @@ if [ -z "${TEST:-}" ]; then
   [ "$r" -ne 0 ] && rc=$r
   freshness_native=${TARN_NATIVE:-$DIR/../target/release/libtarn_storage.so}
   if [ "$freshness_native" != 0 ] && [ -f "$freshness_native" ]; then
-    TARN_NATIVE="$freshness_native" TARANTOOL="$T" bash "$DIR/test/native_freshness.sh" "$WORK/native-freshness" 2>&1 | tee -a "$WORK/test.out"
-    r=${PIPESTATUS[0]}
-    [ "$r" -ne 0 ] && rc=$r
+    for control in native handback; do
+      NATIVE_FRESHNESS_CONTROL="$control" TARN_NATIVE="$freshness_native" TARANTOOL="$T" \
+        bash "$DIR/test/native_freshness.sh" "$WORK/native-freshness-$control" 2>&1 | tee -a "$WORK/test.out"
+      r=${PIPESTATUS[0]}
+      [ "$r" -ne 0 ] && rc=$r
+    done
   elif [ -n "${TARN_NATIVE:-}" ] && [ "$TARN_NATIVE" != 0 ]; then
     echo 'FAIL explicitly requested native freshness module is missing' | tee -a "$WORK/test.out"
     rc=1
