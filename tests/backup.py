@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -22,6 +23,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--work', required=True)
+    ap.add_argument('--resume-state', help='reuse a fully loaded pre-registration fixture from its saved failed study')
     ap.add_argument('--rows', type=int, default=256)
     ap.add_argument('--payload', type=int, default=4096)
     ap.add_argument('--repetitions', type=int, default=3)
@@ -33,13 +35,29 @@ def main():
     ap.add_argument('--foreground', choices=['read','write'], default='read')
     args = ap.parse_args()
     assert args.rows > 0 and args.payload >= 1024 and args.repetitions >= 1
+    resume=json.loads(pathlib.Path(args.resume_state).read_text()) if args.resume_state else None
+    if resume:
+        assert resume.get('load',{}).get('rows')==args.rows and resume['settings']['payload']==args.payload
+        assert 'registration' not in resume,'only an untimed pre-registration fixture can be reused'
+        for name,digest in resume['source_sha256'].items():
+            if name.startswith('lua/'):
+                assert hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest,'storage code changed'
     work = pathlib.Path(args.work).absolute();work.mkdir(mode=0o700)
+    source_root=pathlib.Path(resume['settings']['work']) if resume else work
+    source_dirs=[source_root/('source'+str(i)) for i in range(args.replicas)]
+    prior_ports=[]
+    if resume:
+        for i in range(args.replicas):
+            logs=list(source_root.glob('node'+str(i)+'-*.log'));assert len(logs)==1,'ambiguous source logs'
+            found=set(re.findall(r'Self: shard1_127_0_0_1_(\d+)',logs[0].read_text()))
+            assert len(found)==1,'cannot recover source listen identity'
+            prior_ports.append(int(found.pop()))
     T = os.getenv('TARANTOOL','tarantool')
     processes=[];logs=[];ports=[]
     # Reserve a private port range chosen by the OS; refuse all collisions.
     sockets=[]
-    for _ in range(args.replicas+1):
-        s=socket.socket();s.bind(('127.0.0.1',0));ports.append(s.getsockname()[1]);sockets.append(s)
+    for i in range(args.replicas+1):
+        s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('127.0.0.1',prior_ports[i] if i<len(prior_ports) else 0));ports.append(s.getsockname()[1]);sockets.append(s)
     for s in sockets:s.close()
     uris=['tarn:tarn@127.0.0.1:'+str(p) for p in ports]
     peers=json.dumps({'1':uris[:args.replicas]})
@@ -48,6 +66,10 @@ def main():
             'source_sha256':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
                              [ROOT/'scripts/backup.py',ROOT/'scripts/backup_rpc.lua',ROOT/'tests/backup.py',ROOT/'tests/backup_rpc.lua',*sorted((ROOT/'lua').glob('*.lua'))]},
             'settings':vars(args),'samples':[],'boundary':'owned same-host component; RF and resources explicit; no cross-shard snapshot or production-capacity claim'}
+    if resume:
+        record['reused_fixture']={'source_study':args.resume_state,'data_source_revision':resume['source_revision'],
+                                  'initial_load':resume['load'],'source_directories':[str(p) for p in source_dirs]}
+    record['ports']=ports
     def save():
         pathlib.Path(args.output).write_text(json.dumps(record,indent=2)+'\n')
     def run(cmd,env=None,okay=True):
@@ -111,15 +133,16 @@ return true
         assert not samples['errors'],samples
         return samples
     try:
-        base_processes=[start(i,work/('source'+str(i))) for i in range(args.replicas)]
-        for i in range(args.replicas):await_rpc(i,'return rawget(_G,"tarn")~=nil')
+        base_processes=[start(i,source_dirs[i]) for i in range(args.replicas)]
+        for i in range(args.replicas):await_rpc(i,'return rawget(_G,"tarn")~=nil and box.info.pid=='+str(base_processes[i].pid),process=base_processes[i])
         leader=None
         deadline=time.monotonic()+60
         while leader is None and time.monotonic()<deadline:
             for i in range(args.replicas):
-                ready=rpc(i,"if box.info.ro or box.info.id==0 then return false end; "
+                try:ready=rpc(i,"if box.info.ro or box.info.id==0 then return false end; "
                           +("if box.info.election.leader~=box.info.id or box.info.synchro.queue.owner~=box.info.id then return false end; " if args.replicas>1 else "")
                           +"local r=tarn_autocommit({},{});return r[1]=='ok'")
+                except RuntimeError:ready=False
                 if ready:leader=i;break
             if leader is None:time.sleep(.1)
         assert leader is not None,'no stable writable source'
@@ -127,67 +150,72 @@ return true
         seeded_uuid=str(uuid.uuid4());candidate=args.replicas
         candidate_name='shard1_127_0_0_1_'+str(ports[candidate])
         assert leader==0,'fixture pins one leader; all other sources are voters'
-        for i in range(args.replicas):rpc(i,'box.cfg{checkpoint_interval=2,checkpoint_count=1};return true')
-        rpc(leader,"""
-local function good(r) assert(r[1]=='ok',require('json').encode(r)) end
-good(tarn_bucket_init(16,{{1,16}}))
-local function create(id,name,engine,format)
- good(tarn_create_table{id=id,name=name,ver=0,engine=engine,json='{}',lazy={},format=format,
- indexes={{name='primary',unique=true,parts={{1,'unsigned'}}}, {name='bucket_id',unique=false,parts={{3,'unsigned'}}}}})
-end
-create(88001,'test.backup_data','vinyl',{{name='id',type='unsigned'},{name='v',type='string'},{name='bucket_id',type='unsigned'}})
-create(88002,'test.backup_probe','memtx',{{name='id',type='unsigned'},{name='v',type='unsigned'},{name='bucket_id',type='unsigned'}})
-good(tarn_autocommit({{'insert',88002,{1,0,1}},{'insert',88002,{2,0,1}}},{fence={88002,0},wb={1}}))
-return true
-""")
-        print('LOAD',args.rows*args.payload,'payload bytes',flush=True)
-        loaded=rpc(leader,"""
-local digest,fiber=require('digest'),require('fiber')
-local rows,payload=%d,%d
-local batch={}
-local throttled,serializations=0,0
-local function publish(writes)
- local deadline=fiber.clock()+60
- repeat
-  local good,r=pcall(tarn_autocommit,writes,{fence={88001,0},wb={1}})
-  if good and r[1]=='ok' then return end
-  local code
-  if not good then local yes,value=pcall(function() return r.code end);if yes then code=tonumber(value) end end
-  if (not good and (code==97 or code==7)) or (good and r[1]=='error' and r[2]==1213) then
-   -- Matched ER_TRANSACTION_CONFLICT / ER_READONLY and 1213 are the
-   -- server's 40001/no-effect contract (mpw::from_iproto). Retry this
-   -- transaction only; unknown outcomes and transport faults fail below.
-   serializations=serializations+1
-  else
-   assert(good and r[1]=='throttled' and r[2]==1205,good and require('json').encode(r) or tostring(r))
-   throttled=throttled+1
-   if #writes>1 then
-    local left,right={},{}
-    for i,w in ipairs(writes) do if i<=math.floor(#writes/2) then left[#left+1]=w else right[#right+1]=w end end
-    publish(left);publish(right);return
-   end
-  end
-  assert(fiber.clock()<deadline,'fixture write admission did not recover')
-  fiber.sleep(.05)
- until false
-end
-for i=1,rows do
- batch[#batch+1]={'insert',88001,{i,digest.urandom(payload),1}}
- if #batch>=8 or i==rows then
-  publish(batch);batch={};fiber.sleep(.001)
- end
-end
-box.snapshot();return {rows=box.space[88001].index[0]:count(),version=box.info.version,uuid=tostring(box.info.uuid),vclock=box.info.vclock,throttled=throttled,serialization_refusals=serializations}
-"""%(args.rows,args.payload),timeout=1800)
-        record['load']=loaded;print('LOADED',loaded,flush=True)
+        if not resume:
+            for i in range(args.replicas):rpc(i,'box.cfg{checkpoint_interval=2,checkpoint_count=1};return true')
+            rpc(leader,"""
+    local function good(r) assert(r[1]=='ok',require('json').encode(r)) end
+    good(tarn_bucket_init(16,{{1,16}}))
+    local function create(id,name,engine,format)
+     good(tarn_create_table{id=id,name=name,ver=0,engine=engine,json='{}',lazy={},format=format,
+     indexes={{name='primary',unique=true,parts={{1,'unsigned'}}}, {name='bucket_id',unique=false,parts={{3,'unsigned'}}}}})
+    end
+    create(88001,'test.backup_data','vinyl',{{name='id',type='unsigned'},{name='v',type='string'},{name='bucket_id',type='unsigned'}})
+    create(88002,'test.backup_probe','memtx',{{name='id',type='unsigned'},{name='v',type='unsigned'},{name='bucket_id',type='unsigned'}})
+    good(tarn_autocommit({{'insert',88002,{1,0,1}},{'insert',88002,{2,0,1}}},{fence={88002,0},wb={1}}))
+    return true
+    """)
+            print('LOAD',args.rows*args.payload,'payload bytes',flush=True)
+            loaded=rpc(leader,"""
+    local digest,fiber=require('digest'),require('fiber')
+    local rows,payload=%d,%d
+    local batch={}
+    local throttled,serializations=0,0
+    local function publish(writes)
+     local deadline=fiber.clock()+60
+     repeat
+      local good,r=pcall(tarn_autocommit,writes,{fence={88001,0},wb={1}})
+      if good and r[1]=='ok' then return end
+      local code
+      if not good then local yes,value=pcall(function() return r.code end);if yes then code=tonumber(value) end end
+      if (not good and (code==97 or code==7)) or (good and r[1]=='error' and r[2]==1213) then
+       -- Matched ER_TRANSACTION_CONFLICT / ER_READONLY and 1213 are the
+       -- server's 40001/no-effect contract (mpw::from_iproto). Retry this
+       -- transaction only; unknown outcomes and transport faults fail below.
+       serializations=serializations+1
+      else
+       assert(good and r[1]=='throttled' and r[2]==1205,good and require('json').encode(r) or tostring(r))
+       throttled=throttled+1
+       if #writes>1 then
+        local left,right={},{}
+        for i,w in ipairs(writes) do if i<=math.floor(#writes/2) then left[#left+1]=w else right[#right+1]=w end end
+        publish(left);publish(right);return
+       end
+      end
+      assert(fiber.clock()<deadline,'fixture write admission did not recover')
+      fiber.sleep(.05)
+     until false
+    end
+    for i=1,rows do
+     batch[#batch+1]={'insert',88001,{i,digest.urandom(payload),1}}
+     if #batch>=8 or i==rows then
+      publish(batch);batch={};fiber.sleep(.001)
+     end
+    end
+    box.snapshot();return {rows=box.space[88001].index[0]:count(),version=box.info.version,uuid=tostring(box.info.uuid),vclock=box.info.vclock,throttled=throttled,serialization_refusals=serializations}
+    """%(args.rows,args.payload),timeout=1800)
+            record['load']=loaded;print('LOADED',loaded,flush=True)
+        else:
+            loaded=resume['load'];record['load']=loaded
+            print('REUSING confirmed loaded fixture',loaded,flush=True)
         # Restore normal checkpoint policy after the bulk loader; checkpoint
         # every source to release its initial-load WAL before copying data.
         for i in range(args.replicas):rpc(i,'box.cfg{checkpoint_interval=3600,checkpoint_count=2};return true')
         for _ in range(3):
             rpc(leader,"box.space._tarn_meta:replace{'test.backup.checkpoint',require('clock').realtime()};return true")
             for i in range(args.replicas):rpc(i,'box.snapshot();return true')
-        source=work/('source'+str(leader))
-        for i in range(args.replicas):await_rpc(i,'return box.space[88001]~=nil and box.space[88001].index[0]:count()=='+str(args.rows))
+        source=source_dirs[leader]
+        prefix=' and '.join('(box.info.vclock[%d] or 0)>=%d'%(int(k),v) for k,v in loaded['vclock'].items() if int(k)!=0)
+        for i in range(args.replicas):await_rpc(i,'return box.space[88001]~=nil and '+prefix,process=base_processes[i])
         # Populate the existing RF3 first. Registering a dormant fourth member
         # before bulk load raises quorum to three and removes its spare voter.
         registration=rpc(leader,"local r=box.space._cluster:auto_increment{%s,%s};box.snapshot();return {id=r[1],uuid=r[2],quorum=box.info.synchro.quorum}"%(json.dumps(seeded_uuid),json.dumps(candidate_name)))
@@ -197,10 +225,11 @@ local d=require('crypto').digest.sha256.new();local n=0
 for _,t in box.space[88001]:pairs() do d:update(require('msgpack').encode(t:totable()));n=n+1; if n%128==0 then require('fiber').sleep(0);collectgarbage('step',256) end end
 return {rows=n,sha256=require('digest').base64_encode(d:result()),uuid=tostring(box.info.uuid),vclock=box.info.vclock}
 """
-        expected=rpc(leader,digest_code,timeout=300);record['fixture']=expected
+        expected=rpc(leader,digest_code,timeout=300);assert expected['rows']==args.rows;record['fixture']=expected
         record['environment']={'platform':sys.platform,'uname':list(os.uname()),'native':os.getenv('TARN_NATIVE','default'),
                                'replication_contract':'three live synchronous source replicas; registered fourth candidate starts as a voter; no failover claim',
                                'foreground':'native read-confirmed vinyl point read' if args.foreground=='read' else 'Tarn autocommit memtx write',
+                               'readiness_boundary':'process, voter role and post-backup committed marker; full digest/count validation follows outside timed phase',
                                'foreground_boundary':'one client, 20ms think time; raw local read excludes strong quorum barrier, network and SQL latency',
                                'cpu_limit':pathlib.Path('/sys/fs/cgroup/cpu.max').read_text().strip() if pathlib.Path('/sys/fs/cgroup/cpu.max').exists() else None,
                                'memory_limit':pathlib.Path('/sys/fs/cgroup/memory.max').read_text().strip() if pathlib.Path('/sys/fs/cgroup/memory.max').exists() else None}
@@ -299,11 +328,12 @@ return {rows=n,sha256=require('digest').base64_encode(d:result()),uuid=tostring(
                 rpc(leader,"local r=tarn_autocommit({{'replace',88002,{1,%d,1}}},{fence={88002,0},wb={1}});assert(r[1]=='ok');return true"%tail)
                 p=start(candidate,directory,seeded_uuid)
                 try:
-                    info=await_rpc(candidate,"return rawget(_G,'tarn')~=nil and box.space[88002]~=nil and box.space[88002]:get{1}.v==%d and {uuid=tostring(box.info.uuid),ro=box.info.ro,vclock=box.info.vclock,rows=box.space[88001].index[0]:count()}"%tail,seconds=1800,process=p)
+                    info=await_rpc(candidate,"return rawget(_G,'tarn')~=nil and box.space[88002]~=nil and box.space[88002]:get{1}.v==%d and {uuid=tostring(box.info.uuid),ro=box.info.ro,vclock=box.info.vclock}"%tail,seconds=1800,process=p)
                     elapsed=time.monotonic()-started
                     foreground=probe_stop(leader)
-                    assert info['ro'] and info['uuid']==seeded_uuid and info['rows']==args.rows,info
+                    assert info['ro'] and info['uuid']==seeded_uuid,info
                     check=rpc(candidate,digest_code,timeout=300);assert check['sha256']==expected['sha256'] and check['rows']==expected['rows']
+                    info['rows']=check['rows']
                     sample={'repetition':rep+1,'label':label,'elapsed_s':elapsed,'seed_copy_s':copy_s,'start_follow_s':elapsed-copy_s,
                             'physical_backup_bytes':manifest['bytes'],'seconds_per_100GB_payload_linear_normalization':elapsed*100000000000/(args.rows*args.payload),
                             'verified':check,'tail_value':tail,'state':info,'foreground':foreground}

@@ -1359,3 +1359,12 @@ refusals. Unknown outcomes and transport failures abort the fixture. An
 earlier 10 GiB setup treated a transient clock-policy-readiness serialization
 refusal as fatal; its failed outcome is retained as well. No clock policy,
 watermark, quorum or failure detector is weakened for ingestion.
+
+The scale controller polls only small readiness/vclock/marker state. Full
+counts and SHA-256 scans run once outside the timed startup phase with a
+separate bounded deadline and cooperative yields. A confirmed, fully loaded
+pre-registration fixture may be reused with `--resume-state`; it restarts
+only its owned nodes with the saved identities, verifies unchanged storage
+code, waits for the committed prefix and rechecks every tuple. It never
+replays fixture inserts after a controller failure. The source study and
+initial-load provenance are retained in the resulting record.
