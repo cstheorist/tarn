@@ -29,11 +29,39 @@ jobs:
         run: python3 scripts/ci_strong_read_cost.py build --output "$RUNNER_TEMP/strong-read-cost"
       - name: Three sequential matched cohorts
         timeout-minutes: 36
-        run: python3 scripts/ci_strong_read_cost.py measure --output "$RUNNER_TEMP/strong-read-cost"
+        run: |
+          sudo --preserve-env=GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT \
+            env LD_LIBRARY_PATH="$pythonLocation/lib" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" \
+            "$pythonLocation/bin/python3" scripts/ci_strong_read_cost.py measure --output "$RUNNER_TEMP/strong-read-cost"
       - name: Drain only this study's owned resources
         if: always()
         timeout-minutes: 3
-        run: python3 scripts/ci_strong_read_cost.py cleanup --output "$RUNNER_TEMP/strong-read-cost"
+        run: |
+          sudo --preserve-env=GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT \
+            env LD_LIBRARY_PATH="$pythonLocation/lib" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" \
+            "$pythonLocation/bin/python3" scripts/ci_strong_read_cost.py cleanup --output "$RUNNER_TEMP/strong-read-cost"
+      - name: Make only retained evidence readable by the uploader
+        if: always()
+        run: |
+          sudo env LD_LIBRARY_PATH="$pythonLocation/lib" "$pythonLocation/bin/python3" - "$RUNNER_TEMP/strong-read-cost" "$RUNNER_TEMP" <<'PY'
+          import json, os, stat, sys
+          from pathlib import Path
+          root, parent = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+          assert root.parent == parent and root.name == 'strong-read-cost'
+          if (root / 'study.json').exists():
+              assert json.loads((root / 'study.json').read_text())['task'] == 'tarn-strong-read-cost-ci'
+          for current, dirs, files in os.walk(root, followlinks=False):
+              current = Path(current)
+              dirs[:] = [d for d in dirs if not (current / d).is_symlink()]
+              if current.parent == root / 'cohorts':
+                  dirs[:] = [d for d in dirs if d != 'data']
+              current.chmod(stat.S_IMODE(current.stat().st_mode) | 0o555)
+              for name in files:
+                  path = current / name
+                  source_wal = name == 'runtime-wal.tar' and current.parent == root / 'cohorts'
+                  if not path.is_symlink() and not source_wal:
+                      path.chmod(stat.S_IMODE(path.stat().st_mode) | 0o444)
+          PY
       - name: Retain complete and failed raw evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -41,6 +69,7 @@ jobs:
           name: strong-read-cost-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/strong-read-cost
+            !${{ runner.temp }}/strong-read-cost/cohorts/**/data
             !${{ runner.temp }}/strong-read-cost/cohorts/**/data/**
             !${{ runner.temp }}/strong-read-cost/cohorts/**/runtime-wal.tar
             !${{ runner.temp }}/strong-read-cost/offline-wal/**/*.tmp

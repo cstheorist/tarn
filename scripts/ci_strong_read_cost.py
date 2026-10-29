@@ -414,7 +414,7 @@ def main():
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     save(out / (args.phase + "-invocation.json"), {"phase": args.phase, "python": sys.version,
-         "platform": platform.platform(), "source": str(ROOT)})
+         "platform": platform.platform(), "source": str(ROOT), "uid": os.geteuid(), "gid": os.getegid()})
     try:
         {"build": build, "measure": measure, "cleanup": cleanup}[args.phase](out)
     except BaseException:
