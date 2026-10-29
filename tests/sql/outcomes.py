@@ -107,7 +107,22 @@ def case_statement_rollback(f):
     assert c.active(), 'duplicate key must preserve the preceding transaction'
     c.query('COMMIT')
     assert not c.active() and f.value() == 0 and f.value(f.other) == 7
-    return {'error': error, 'preceding_write': 7, 'failed_statement': 0}
+    # Tarantool's duplicate diagnostic can include non-UTF8 collation
+    # weights inside a valid MessagePack string. Keep its known DB outcome.
+    c.query("CREATE TABLE ciu (t INT, id INT, email VARCHAR(40), PRIMARY KEY(t,id), "
+            "UNIQUE KEY ue(t,email)) ENGINE=" + f.args.engine +
+            " DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci PARTITION BY KEY(t)")
+    c.query("INSERT INTO ciu VALUES(1,1,'a@x.org'),(1,2,'b@x.org')")
+    c.query('BEGIN')
+    c.query('UPDATE t SET v=8 WHERE id=%s', (f.other,))
+    collated = [c.error("INSERT INTO ciu VALUES(1,3,'a@X.ORG')"),
+                c.error("UPDATE ciu SET email='B@X.org' WHERE t=1 AND id=1")]
+    assert collated == [[1062, '23000'], [1062, '23000']] and c.active(), collated
+    c.query('COMMIT')
+    assert not c.active() and f.value(f.other) == 8
+    assert c.query('SELECT id,email FROM ciu ORDER BY id') == [[1, 'a@x.org'], [2, 'b@x.org']]
+    return {'error': error, 'preceding_write': 7, 'failed_statement': 0,
+            'collated_errors': collated, 'collated_preceding_write': 8}
 
 
 def case_known_abort(f):
