@@ -394,7 +394,8 @@ not a liveness result of this finite safety check.
 The shared runtime selection feeds both SELECT and EXPLAIN; it is evaluated
 after prepared-plan lookup. `lazytest.py`'s `test_consistency_*` cases pause
 actual delivery and distinguish rejected stale membership, an omitted new
-match, exact strong results, LIMIT/OFFSET, independent sessions and policy
+match, exact strong results, LIMIT/OFFSET, a real result-budget restart
+returning every key, independent sessions and policy
 switches retaining cumulative buckets. Existing `lazyfaults.py` and
 `LazyBarrier`/`LazyApplyConfirm` retain the pending-APPLY, failed/canceled
 catch-up and confirmed completion controls. `tests/lazypolicy.sh` runs the

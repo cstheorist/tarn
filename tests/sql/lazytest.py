@@ -207,6 +207,29 @@ class T:
             q(c, "SET tarn_lazy_consistency=DEFAULT")
             assert q(c, "SHOW VARIABLES LIKE 'tarn_lazy_consistency'") == (("tarn_lazy_consistency", "eventual"),)
 
+    def test_consistency_result_budget_restarts_complete_strong_read(self):
+        with self.c() as c:
+            q(c, "DROP TABLE IF EXISTS t_policy_budget")
+            q(c, "CREATE TABLE t_policy_budget (tenant_id INT NOT NULL,id INT NOT NULL,k INT,n INT,v MEDIUMBLOB,"
+                 "PRIMARY KEY(tenant_id,id),KEY lk(k,n,id) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant_id) "
+                 f"ENGINE={self.args.engine}")
+            # The real lazy result budget counts fetched base tuples even
+            # for a narrow projection. >16 MiB forces the actual strong
+            # restart; a clipped candidate prefix must never count as success.
+            payload = b'x' * (256 * 1024)
+            rows = [(i % 11, i, 7, i, payload) for i in range(1, 81)]
+            with c.cursor() as cur:
+                cur.executemany("INSERT INTO t_policy_budget VALUES (%s,%s,%s,%s,%s)", rows)
+            self.caught_up(c)
+            sql = "SELECT id FROM t_policy_budget WHERE k=7 ORDER BY n,id"
+            self.consistency(c, sql, "eventual")
+            reads, falls = stat(c, "Tarn_lazy_reads"), stat(c, "Tarn_lazy_fallbacks")
+            assert q(c, sql) == tuple((i,) for i in range(1, 81))
+            assert stat(c, "Tarn_lazy_reads") == reads
+            assert stat(c, "Tarn_lazy_fallbacks") == falls + 1
+            q(c, "SET tarn_lazy_consistency='strong'")
+            assert q(c, sql) == tuple((i,) for i in range(1, 81))
+
     def test_bootstrap_and_next_writes(self):
         with self.table("t_boot", lazy=False) as c:
             q(c, "INSERT INTO t_boot VALUES (1,1,7,1,'a'),(2,2,7,2,'b'),(3,3,NULL,3,'c')")

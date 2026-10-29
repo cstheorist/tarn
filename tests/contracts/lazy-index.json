@@ -20,7 +20,7 @@
       "id": "lazy.limit_after_recheck",
       "classification": "intentional_extension",
       "behavior": "LIMIT/OFFSET apply after rechecks and deduplication. Resource exhaustion restarts strong execution or errors; no collected prefix is acknowledged as complete.",
-      "tests": ["tests/sql/lazytest.py::T.test_limit_offset_refills_more_than_two_pages", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan"]
+      "tests": ["tests/sql/lazytest.py::T.test_limit_offset_refills_more_than_two_pages", "tests/sql/lazytest.py::T.test_consistency_override_retains_history_and_prepared_plan", "tests/sql/lazytest.py::T.test_consistency_result_budget_restarts_complete_strong_read"]
     },
     {
       "id": "lazy.strong_policy",
