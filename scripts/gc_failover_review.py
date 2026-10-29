@@ -77,6 +77,13 @@ def classify(logs, returncode, timed_out=False):
                 r"bank:|bank \(READ COMMITTED\)|counters:|final balance|ledger|unknown outcome|direct KV sum|FAIL|EXCEPTION", line)]}
 
 
+def native_mode_confirmed(reports, mode):
+    # tarn_info().native is JSON false when BK.ns is absent. Do not accept
+    # missing/null reports: they do not establish that Lua served the trial.
+    expected = (lambda n: isinstance(n, dict) and n.get("ready") == 1) if mode == "native" else (lambda n: n is False)
+    return len(reports) == 2 and all(expected(n) for n in reports)
+
+
 def run(args):
     source, binaries, out = args.source.resolve(), args.binaries.resolve(), args.output.resolve()
     # Refuse accidental reuse; each invocation retains all its trials.
@@ -143,8 +150,7 @@ def run(args):
         logs = {str(p.relative_to(trial)): p.read_text(errors="replace") for p in trial.rglob("*")
                 if p.is_file() and p.suffix in (".log", ".out")}
         result = classify(logs, rc, timed_out)
-        expected = (lambda n: isinstance(n, dict) and n.get("ready") == 1) if args.mode == "native" else (lambda n: n is None)
-        result["native_mode_confirmed"] = len(result["native_reports"]) == 2 and all(expected(n) for n in result["native_reports"])
+        result["native_mode_confirmed"] = native_mode_confirmed(result["native_reports"], args.mode)
         result["fixture_passed"] = result["fixture_passed"] and result["native_mode_confirmed"]
         result.update(trial=i, elapsed_seconds=time.monotonic() - start,
                       log_sha256={name: sha(trial / name) for name in logs})

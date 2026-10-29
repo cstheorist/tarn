@@ -75,3 +75,28 @@ No production, locking, commit, recovery, schema, native ABI or verified
 executable code changes in this investigation. Existing TLA+/Verus
 contracts do not prove LuaJIT heap integrity. Full ordinary CI still runs
 separately; diagnostic results must be cited with their own source/run.
+
+## First retained matrix
+
+[Run 40873456226](https://github.com/cstheorist/tarn/actions/runs/40873456226)
+completed all 15 trials. The four native rows passed all three trials each.
+The three Lua-only workloads also exited successfully with their bank,
+ledger, acknowledged/unknown-effect counter bounds and direct native tuple
+checks intact. No trial logged a crash signature or produced a core.
+The current-source rows used merge commit
+`41bcc14b4926efdc0e666d9a06b68e67fc5317b9`, not a moving main reference.
+
+The workflow is retained as **failed**: its collector incorrectly required
+JSON `null` for a disabled native module, whereas `tarn_info().native`
+reports JSON `false`. Both leaders reported `false` in every Lua trial.
+The collector now requires exactly two explicit `false` reports; missing,
+null, numeric zero, malformed and mixed native/Lua reports fail its regression
+controls. The original manifests have not been rewritten.
+
+[The retained result summary](../tests/evidence/native-gc-crash/run-40873456226.json)
+records source, binary/runtime and original-manifest hashes, original trial
+results and core inventory. Full binaries, logs and failed-trial archives are
+in the run artifacts. Ordinary format/clippy, Tests, TLA+ and Verus jobs
+[passed separately](https://github.com/cstheorist/tarn/actions/runs/40873456428).
+These bounded negative results do not explain the original crash or establish
+its recovered effects; #160 remains open.

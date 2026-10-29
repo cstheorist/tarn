@@ -35,10 +35,18 @@ class EvidenceTests(unittest.TestCase):
                 'counters: 9 acknowledged increments, 1 with unknown outcome\n'
                 'direct KV sum on new leaders: 64000\n'
                 'shard 1 leader, native procedures:\t{"ready":1,"writes":4}\n'
-                'shard 2 leader, native procedures:\tnull\nFAILOVER TEST PASSED\n')
+                'shard 2 leader, native procedures:\tfalse\nFAILOVER TEST PASSED\n')
         result = review.classify({"run.log": text}, 0)
         self.assertEqual(len(result["accounting_output"]), 4)
-        self.assertEqual(result["native_reports"], [{"ready": 1, "writes": 4}, None])
+        self.assertEqual(result["native_reports"], [{"ready": 1, "writes": 4}, False])
+
+    def test_lua_control_requires_explicit_disabled_reports(self):
+        # Run 40873456226 retained two false reports in every Lua trial.
+        self.assertTrue(review.native_mode_confirmed([False, False], "lua"))
+        for reports in ([], [False], [None, None], [0, 0], [False, {"ready": 1}], ["invalid-report", False]):
+            self.assertFalse(review.native_mode_confirmed(reports, "lua"))
+        self.assertFalse(review.native_mode_confirmed([False, False], "native"))
+        self.assertTrue(review.native_mode_confirmed([{"ready": 1}, {"ready": 1}], "native"))
 
     def test_real_subprocess_trials_retain_success_failure_and_archived_state(self):
         with tempfile.TemporaryDirectory() as temp:
