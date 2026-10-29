@@ -17,6 +17,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Lazy-index owner hints now expire immediately when the local bucket map
+  changes. A completed handoff can no longer leave immediate garbage
+  collection contacting the old source owner until the cache TTL expires;
+  frontier and floor proof checks remain unchanged
+  ([#163](https://github.com/cstheorist/tarn/issues/163)).
 - The native RF3 freshness fixture distinguishes a controlled native-path
   witness from a legitimate post-barrier stale-bucket handback (#170).
   It schedules the actual production status callback without replacing
