@@ -54,8 +54,8 @@ old rows valid. All such tables therefore retain an unknown historical status,
 even after their last recorded foreign key is dropped or another ALTER succeeds.
 
 SQL INSERT, REPLACE, UPDATE and DELETE on a legacy/unknown table fail with
-1235/42000 by default, before the fast path, row locks, buffered mutations or
-storage effects. SELECT, inspection, DROP and migration DDL remain available.
+1235/42000 by default, before the target fast path, target row locks, buffered mutations or
+storage effects. Source subqueries keep their normal read/lock behavior. SELECT, inspection, DROP and migration DDL remain available.
 This includes parameterized execution, INSERT SELECT, upserts and IGNORE.
 A temporary, **session-only** acknowledgement allows continuing the old
 unenforced behavior while migrating:
