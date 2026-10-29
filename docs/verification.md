@@ -1893,10 +1893,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 265 unique configurations: 69 positive
-outcomes and 196 expected broken/trade-off outcomes. The 272 generated
+The default list contains 270 unique configurations: 70 positive
+outcomes and 200 expected broken/trade-off outcomes. The 277 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 278 total. Explicit
+placement configurations are maintained directly, for 283 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1930,11 +1930,15 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-formed the 263-case union, not execution of a new full 263-case CI
-run. The generator reproduces twice without changes. That proof
-inventory was 330 files: 314 TLA+ model/config files, 11 verified-crate
-source/test/manifest files and five formal runner/inspection scripts.
-Verus bodies are unchanged.
+formed the 263-case union. The five file-backup cases then completed
+separately with one positive and four expected violations; the combined
+registry contains all 268 inputs. This is an input union, not a claim that
+a previous CI run executed changed models. The generator reproduces
+without changes. The current proof inventory is 338 files: 322 TLA+
+model/config files, 11 verified-crate source/test/manifest files and five
+formal runner/inspection scripts. Verus bodies are unchanged.
+The two malformed-handback controls bring the current registry to 270
+inputs; their focused checks do not replace a full run of that union.
 
 ## Verus proofs
 
@@ -2292,6 +2296,28 @@ routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
 malformed/lost-reply faults and failover preserve the existing uncertainty
 and matched fencing behavior. Resource budgets do not certify whole-query
 memory bounds or benchmark speedups.
+
+### Physical file backup agent and seed identity (issue #56)
+
+`FileBackup.tla` checks the agent's publication and seed-mode contract with
+two abstract files: copier death/lease expiry, file reclamation, corruption,
+checked restore, registration, distinct seed identity and read-only follow
+before operator-authorized promotion. It checks complete-file publication,
+a valid publication lease, verified restored contents and identity separation.
+The four `Bug_FileBackup*` configurations deliberately publish partial data,
+skip hash checks, reuse the source identity or ignore an expired lease;
+each must violate its corresponding invariant.
+
+Tarantool's coherent backup file list/WAL recovery, actual filesystem
+`fsync`/rename behavior, SHA-256, fixed-width header format, administrative
+registration and the operator's catch-up/promotion decision are trusted
+premises. This bounded model does not prove file IO, a whole-cluster backup,
+Tarantool replication, performance, or Python/Lua refinement. The existing
+commit/locking/recovery models and 140 verified shared bodies are unchanged.
+Live tests recover real vinyl files and compare every tuple byte, including
+post-backup WAL and negative lease/copy/restore controls. The startup voter
+marker prevents accidental candidate startup until an operator clears it;
+it does not make the operator's catch-up decision automatically.
 
 ## Mutation acknowledgement outcomes (issue #183)
 
