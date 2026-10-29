@@ -84,6 +84,7 @@ DEFAULT="$DEFAULT TypedRead Bug_TypedReadOverlay Bug_TypedReadCoverage Bug_Typed
 
 DEFAULT="$DEFAULT DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAdmission
 Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck"
+DEFAULT="$DEFAULT FileBackup Bug_FileBackupPartial Bug_FileBackupHash Bug_FileBackupIdentity Bug_FileBackupLease"
 DEFAULT="$DEFAULT PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture Bug_PlainLazyPending
 Bug_PlainLazyFirstWriteOnly Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale"
 DEFAULT="$DEFAULT EngineBuildReentry Bug_EngineBuildReusePage Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix"

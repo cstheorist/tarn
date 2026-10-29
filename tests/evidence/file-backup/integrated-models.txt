@@ -1,0 +1,6 @@
+FileBackup                   no errors                                     356 distinct states found    depth=15       0s
+Bug_FileBackupPartial        Invariant PublishedComplete is violated       12 distinct states found     depth=3        1s
+Bug_FileBackupHash           Invariant RestoredChecked is violated         350 distinct states found    depth=10       1s
+Bug_FileBackupIdentity       Invariant SeedDistinct is violated            244 distinct states found    depth=8        0s
+Bug_FileBackupLease          Invariant PublicationLease is violated        111 distinct states found    depth=6        1s
+all outcomes as expected

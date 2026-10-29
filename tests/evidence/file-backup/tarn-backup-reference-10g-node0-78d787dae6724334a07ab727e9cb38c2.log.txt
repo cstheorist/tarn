@@ -1,0 +1,19 @@
+2026-10-29 13:49:43.670 [10843] main/115/applier/tarn@127.0.0.1:59917 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-29 13:49:43.670 [10843] main/115/applier/tarn@127.0.0.1:59917 coio.c:207 E> connect, called on fd 21, aka 127.0.0.1:41942: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-29 13:49:43.670 [10843] main/114/applier/tarn@127.0.0.1:57793 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-29 13:49:43.670 [10843] main/114/applier/tarn@127.0.0.1:57793 coio.c:207 E> connect, called on fd 19, aka 127.0.0.1:41720: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-29 13:49:43.671 [10843] main/104/storage.lua replication.cc:1406 C> failed to connect to 2 out of 3 replicas
+2026-10-29 13:49:43.676 [10843] main/119/applier/tarn@127.0.0.1:57793 applier.cc:121 E> Applier to d2f78edf-e07d-41f9-8640-27842b4f397a (id = 0, addr: 127.0.0.1:57793) disconnected. Self: shard1_127_0_0_1_35331 (id = 1, addr: 127.0.0.1:41760)
+2026-10-29 13:49:43.676 [10843] main/119/applier/tarn@127.0.0.1:57793 box.cc:4520 E> Instance bootstrap hasn't finished yet {"type":"ClientError","code":116,"name":"LOADING","trace":[{"file":"./src/box/box.cc","line":4520}]}
+2026-10-29 13:49:44.177 [10843] main/118/applier/tarn@127.0.0.1:59917 applier.cc:121 E> Applier to 3f65b90d-048e-4c21-b7f4-0046234b7a4e (id = 0, addr: 127.0.0.1:59917) disconnected. Self: shard1_127_0_0_1_35331 (id = 1, addr: 127.0.0.1:41988)
+2026-10-29 13:49:44.177 [10843] main/118/applier/tarn@127.0.0.1:59917 box.cc:4520 E> Instance bootstrap hasn't finished yet {"type":"ClientError","code":116,"name":"LOADING","trace":[{"file":"./src/box/box.cc","line":4520}]}
+2026-10-29 13:55:47.967 [10843] relay/127.0.0.1:57050/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_57793 (id = 2, addr: 127.0.0.1:57050) disconnected. Self: shard1_127_0_0_1_35331 (id = 1, addr: 127.0.0.1:35331)
+2026-10-29 13:55:47.971 [10843] relay/127.0.0.1:57050/101/main coio.c:439 E> timed out {"type":"TimedOut","errno":110,"trace":[{"file":"./src/lib/core/coio.c","line":439}]}
+2026-10-29 13:55:47.967 [10843] relay/127.0.0.1:57064/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_59917 (id = 3, addr: 127.0.0.1:57064) disconnected. Self: shard1_127_0_0_1_35331 (id = 1, addr: 127.0.0.1:35331)
+2026-10-29 13:55:47.971 [10843] relay/127.0.0.1:57064/101/main coio.c:439 E> timed out {"type":"TimedOut","errno":110,"trace":[{"file":"./src/lib/core/coio.c","line":439}]}
+2026-10-29 13:55:48.517 [10843] relay/127.0.0.1:43800/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_57793 (id = 2, addr: 127.0.0.1:43800) disconnected. Self: shard1_127_0_0_1_35331 (id = 1, addr: 127.0.0.1:35331)
+2026-10-29 13:55:48.517 [10843] relay/127.0.0.1:43800/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
+2026-10-29 13:55:48.517 [10843] relay/127.0.0.1:43818/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_59917 (id = 3, addr: 127.0.0.1:43818) disconnected. Self: shard1_127_0_0_1_35331 (id = 1, addr: 127.0.0.1:35331)
+2026-10-29 13:55:48.517 [10843] relay/127.0.0.1:43818/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
+2026-10-29 13:55:48.524 [10843] main/103/on_shutdown vy_scheduler.c:1170 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/box/vy_scheduler.c","line":1170}]}
+2026-10-29 13:55:48.524 [10843] main/103/on_shutdown vy_scheduler.c:1724 E> 88001/0: failed to compact range ([138683]..inf)
