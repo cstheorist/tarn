@@ -55,6 +55,7 @@ def main():
     ap.add_argument("--rate", type=float, default=1000, help="total scheduled point reads/s across eight clients")
     ap.add_argument("--stack-bytes", help="explicit development-build stack override; release uses its default")
     ap.add_argument("--pool-size", type=int, default=4)
+    ap.add_argument("--gateways", type=int, choices=range(1,9), default=2)
     ap.add_argument("--idle-seconds", type=float, default=2)
     args = ap.parse_args()
     assert args.pairs > 0 and args.seconds > 0 and args.rate > 0
@@ -76,7 +77,7 @@ def main():
     assert len(keys) == groups
     hot = list(keys.values())[:2]
     initialized = False
-    report = dict(groups=groups, replicas=[len(s["replicas"]) for s in cfg["shards"]],
+    report = dict(groups=groups, gateways=args.gateways, replicas=[len(s["replicas"]) for s in cfg["shards"]],
                   config=cfg, samples=[], checks=[], read_refusals=[], completed=False,
                   scheduled_rate=args.rate, stack_override=args.stack_bytes,
                   source_head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -113,7 +114,7 @@ def main():
                 processes = []; clients = []; logs = []
                 try:
                     started = time.monotonic()
-                    for gateway in range(2):
+                    for gateway in range(args.gateways):
                         log = (out / f"{pair}-{mode}-{gateway}.log").open("w"); logs.append(log)
                         p = subprocess.Popen([binary, "--config", str(config), "--listen", f"127.0.0.1:{args.port+gateway}",
                                               "--node-id", str(gateway + 801), "--threads", "2", "--allow-all"],
@@ -145,7 +146,7 @@ def main():
                     deadline = load_start + args.seconds
 
                     def worker(index):
-                        c = connect(args.port + index % 2)
+                        c = connect(args.port + index % args.gateways)
                         latencies = []; failures = []; skipped = 0; slot = index
                         try:
                             key = hot[index % len(hot)]

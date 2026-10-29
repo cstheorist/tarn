@@ -605,6 +605,7 @@ fn capability(d: &[u8]) -> SqlResult<()> {
 impl Cluster {
     pub(crate) async fn lazy_capabilities_on(&self, replicas: &[String]) -> SqlResult<()> {
         for addr in replicas {
+            self.reclaim_connections(false).await;
             let client = tarn_iproto::Client::connect(&self.opts(addr))
                 .await
                 .map_err(crate::mpw::from_iproto)?;

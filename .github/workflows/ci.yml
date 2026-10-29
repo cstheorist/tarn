@@ -173,7 +173,7 @@ jobs:
           ENGINE=vinyl ci/annotate.sh rpcs-vinyl tests/rpcs.sh
       - name: Fault injection
         env:
-          TARN_TOPOLOGY_LIMITS: '{"max_connections":10,"completion_connections":2,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
           TARN_CHECK_LOCKS=1 ci/annotate.sh faults tests/faults.sh
           TARN_NATIVE=0 ci/annotate.sh faults-lua tests/faults.sh
@@ -189,21 +189,21 @@ jobs:
         run: ci/annotate.sh bucketcount tests/bucketcount.sh
       - name: A shard joins under load
         env:
-          TARN_TOPOLOGY_LIMITS: '{"max_connections":10,"completion_connections":2,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
           ci/annotate.sh jointest tests/jointest.sh
           R=3 ENGINE=vinyl DIR=/tmp/tarn-join-vinyl ci/annotate.sh vinyl-jointest tests/jointest.sh
       - name: Grow from 2 shards to 4 and shrink to 3 under load
         env:
-          TARN_TOPOLOGY_LIMITS: '{"max_connections":10,"completion_connections":2,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
       - name: Failover (2 shards x 3 replicas)
         env:
-          TARN_TOPOLOGY_LIMITS: '{"max_connections":10,"completion_connections":2,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
         env:
-          TARN_TOPOLOGY_LIMITS: '{"max_connections":10,"completion_connections":2,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh

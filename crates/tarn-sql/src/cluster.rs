@@ -1990,6 +1990,7 @@ impl Cluster {
     async fn require_engine_capabilities(&self) -> SqlResult<()> {
         for shard in self.live_shards() {
             for addr in self.shards[shard].replicas() {
+                self.reclaim_connections(false).await;
                 let client = tarn_iproto::Client::connect(&self.opts(addr))
                     .await
                     .map_err(|e| SqlError::unsupported(format!("engine-copy storage capability unavailable: {e}")))?;
