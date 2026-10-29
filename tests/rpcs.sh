@@ -47,6 +47,7 @@ c['rpc']={'timeout_secs':1.0,
     'global':{'requests':4 if scope=='global' else 8,'reserved_requests':1 if scope=='global' else 2,'bytes':1048576,'reserved_bytes':262144}}
 p.write_text(json.dumps(c))
 PY
+  cp "$W/cluster.json" "$W/config-$scope.json"
   extra=(); [ -z "${ENGINE:-}" ] || extra=(--default-engine "$ENGINE")
   "$TARN" --config "$W/cluster.json" --listen "127.0.0.1:$QP" --node-id 1 --threads 2 --allow-all "${extra[@]}" > "$W/tarn-$scope.log" 2>&1 &
   echo $! > "$W/tarn1.pid"
@@ -56,7 +57,7 @@ PY
     sleep .1
   done
   [ "$ready" = 1 ] || { cat "$W/tarn-$scope.log"; exit 1; }
-  python3 "$ROOT/tests/sql/rpctest.py" --tarn "127.0.0.1:$QP" --config "$W/cluster.json" --arm "$W/armed" --scope "$scope" --client "${RPC_CLIENT:-pymysql}"
+  python3 "$ROOT/tests/sql/rpctest.py" --tarn "127.0.0.1:$QP" --config "$W/cluster.json" --arm "$W/armed" --scope "$scope" --client "${RPC_CLIENT:-pymysql}" --evidence "$W/results-$scope.json"
   kill "$(cat "$W/tarn1.pid")"
   wait "$(cat "$W/tarn1.pid")" 2>/dev/null || true
   rm "$W/tarn1.pid"

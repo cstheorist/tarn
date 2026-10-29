@@ -328,6 +328,9 @@ def main():
             finally:
                 f.close()
         result['complete'] = True
+    except Exception as e:
+        result['error'] = repr(e)
+        raise
     finally:
         output.write_text(json.dumps(result, indent=2) + '\n')
 
