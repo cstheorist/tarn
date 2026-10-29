@@ -954,8 +954,15 @@ impl StrongKvClient {
         }
         // Bound caller-supplied variable-length values before normalization
         // allocates weight strings or copies an oversized encoded request.
-        let mut input_bytes = 0usize;
+        // A lower bound on encoded input (one array/scalar header byte),
+        // rather than a conservative upper bound that would reject valid
+        // requests at the advertised exact 64 KiB boundary.
+        let mut input_bytes = 1usize;
         for key in keys {
+            if key.len() != table.schema.definition.pk().cols.len() {
+                return Err(KvError::Invalid("a complete non-NULL primary key is required".into()));
+            }
+            input_bytes += 1;
             for value in key {
                 let bytes = match value {
                     Value::Str(b) | Value::Bin(b) => b.len(),
@@ -963,7 +970,7 @@ impl StrongKvClient {
                     _ => 0,
                 };
                 input_bytes = input_bytes
-                    .checked_add(bytes.saturating_add(16))
+                    .checked_add(bytes.saturating_add(1))
                     .ok_or_else(|| KvError::LimitExceeded("input keys".into()))?;
                 if input_bytes > 65536 {
                     return Err(KvError::LimitExceeded("input keys exceed 64 KiB".into()));
@@ -1629,21 +1636,45 @@ mod tests {
 
     // In-process IPROTO mocks, not database services. Exercise actual auth,
     // public client dispatch, cached routing and whole-vector retry behavior.
+    async fn mock_request(sock: &mut tokio::net::TcpStream) -> (u64, u64, u64, Vec<u8>) {
+        use tokio::io::AsyncReadExt;
+        assert_eq!(sock.read_u8().await.unwrap(), 0xce);
+        let size = sock.read_u32().await.unwrap();
+        // The 64 KiB key vector also carries table/ownership tokens. Keep
+        // the fixture bounded without imposing the smaller generic mock cap.
+        assert!(size < 2 * 1024 * 1024);
+        let mut packet = vec![0; size as usize];
+        sock.read_exact(&mut packet).await.unwrap();
+        let mut rd = Rd::new(&packet);
+        let (mut kind, mut sync, mut stream) = (0, 0, 0);
+        for _ in 0..rd.map().unwrap() {
+            let key = rd.value().unwrap().as_i64().unwrap();
+            let value = rd.value().unwrap().as_i64().unwrap() as u64;
+            match key {
+                0 => kind = value,
+                1 => sync = value,
+                10 => stream = value,
+                _ => {}
+            }
+        }
+        (kind, sync, stream, rd.buf.to_vec())
+    }
+
     async fn mock(
         make: impl FnOnce(&str) -> Vec<(&'static str, Bytes)>,
     ) -> (String, tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>) {
-        use crate::cluster::wire_test::{accept, reply, request};
+        use crate::cluster::wire_test::{accept, reply};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = listener.local_addr().unwrap().to_string();
         let replies = make(&endpoint);
         let actor = tokio::spawn(async move {
             let mut sock = accept(&listener).await;
-            let (kind, sync, stream, _) = request(&mut sock).await;
+            let (kind, sync, stream, _) = mock_request(&mut sock).await;
             assert_eq!((kind, stream), (7, 0));
             reply(&mut sock, sync, 0, &[0x80]).await;
             let mut seen = Vec::new();
             for (name, data) in replies {
-                let (kind, sync, stream, body) = request(&mut sock).await;
+                let (kind, sync, stream, body) = mock_request(&mut sock).await;
                 assert_eq!((kind, stream), (10, 0));
                 let mut p = body.as_slice();
                 let n = tarn_iproto::mp::read_map_len(&mut p).unwrap();
@@ -1668,6 +1699,61 @@ mod tests {
             seen
         });
         (endpoint, actor)
+    }
+
+    #[tokio::test]
+    async fn public_batch_accepts_exact_key_byte_limit_and_rejects_one_over_before_wire() {
+        let mut d = descriptor();
+        d["columns"] = json!([{
+            "name":"id", "ty":"VARBINARY(65535)", "nullable":false,
+            "default":null, "auto_increment":false
+        }]);
+        d["indexes"][0]["cols"] = json!([0]);
+        let h = handle(d);
+        let keys = vec![vec![Value::Bin(Bytes::from(vec![b'k'; 65531]))]];
+        let oversized = vec![vec![Value::Bin(Bytes::from(vec![b'k'; 65532]))]];
+        for (input, length) in [(&keys, 65536), (&oversized, 65537)] {
+            let mut encoded = Mp::new();
+            encoded.arr(input.len()).vals(&input[0]);
+            assert_eq!(encoded.0.len(), length);
+        }
+        let (endpoint, actor) = mock(|_| vec![("tarn_kv_v1.get_many", point_reply(&h, &keys, &[None]))]).await;
+        let client = StrongKvClient::connect(KvOptions::new(
+            vec![ShardConfig {
+                id: 1,
+                replicas: vec![endpoint.clone()],
+            }],
+            Credentials {
+                user: "reader".into(),
+                password: "test".into(),
+            },
+        ))
+        .unwrap();
+        let mut meta = metadata(&meta_reply(&h, &endpoint, 1), "d", "t").unwrap();
+        meta.endpoint = endpoint;
+        let map = crate::buckets::BucketMap::from_reports(vec![meta.report.clone()], &HashMap::from([(1, 0)])).unwrap();
+        client.routes.lock().insert(
+            ("d".into(), "t".into()),
+            Arc::new(Routing {
+                map,
+                shards: vec![meta],
+            }),
+        );
+        assert!(matches!(
+            client.get_many(&h, &oversized).await,
+            Err(KvError::LimitExceeded(_))
+        ));
+        let batch = client.get_many(&h, &keys).await.unwrap();
+        assert_eq!(batch.rows, vec![None]);
+        let seen = actor.await.unwrap();
+        assert_eq!(seen.len(), 1, "the oversized request must never reach the wire");
+        let fields = fields(
+            &seen[0].1,
+            &["version", "consistency", "table", "ownership", "keys"],
+            &["version", "consistency", "table", "ownership", "keys"],
+        )
+        .unwrap();
+        assert_eq!(fields["keys"].len(), 65536);
     }
 
     #[tokio::test]
