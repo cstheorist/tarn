@@ -8,6 +8,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An engine BUILD could return 1213 after a status notification revoked its
+  transaction cut between successful stages
+  ([#165](https://github.com/cstheorist/tarn/issues/165)). The original BUILD
+  now reacquires the terminal/native cut at pre-effect checkpoints, rereads
+  its receipt and capture, and discards stale sampled pages before recopying.
+  Certified images and the original deadline/reset limit remain intact.
+  Exceptions from a submitted transaction or commit still leave the call;
+  no mutation or uncertain result is replayed.
+
 - An unrelated ALTER could invalidate the lazy registry while an existing
   serializable stream committed a plain table, causing a definite 1412
   refusal ([#161](https://github.com/cstheorist/tarn/issues/161)). CommitLocal
