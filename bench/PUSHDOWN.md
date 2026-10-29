@@ -151,3 +151,38 @@ complete matrix pass with `RUST_MIN_STACK=16777216`. The
 is retained. These results do not establish release/default-stack
 behavior; release CI runs separately. Performance and RF3 evidence remain
 pinned to the earlier checkpoint.
+
+## Expanded release study
+
+`typed-read-study.yml` builds the normal release profile, then checks the
+focused SQL/overlay/fallback histories against pinned MySQL 8.4.13 on RF3
+memtx and Vinyl with native procedures enabled and disabled. MariaDB and
+the complete existing fault/model checks remain in ordinary CI. This
+workflow is additional validation; it does not make the older measurements
+evidence for the newly integrated source.
+
+`pushdown_matrix.py` uses 1,024 rows with 256 B, 4 KiB or 64 KiB payloads
+(other columns and tuple framing add to those widths). Each width/engine
+has five alternating off/on pairs per shape: narrow/full projection and
+integer reduction at 1/128 and 127/128 selectivity, a tenant/index-range
+reduction, and a grouped-aggregate fallback control. Each sample contains
+ten queries. Full projection and grouped aggregation must remain fallback;
+both enabled optimization paths must be witnessed by production counters.
+
+Both gateways share the same source-bound binary, RF3 storage, fsync,
+SERIALIZABLE isolation and fixture. The instrumented phase counts actual
+IPROTO frames/bytes across all replicas and records Linux gateway/storage
+CPU. A separate direct phase removes counting proxies from the timing
+comparison. Returned rows and value bytes are separate from encoded IPROTO
+bytes; value bytes exclude MySQL protocol framing. All result digests must
+match the ordinary executor on every iteration. Runtime receipts record
+actual engine, durability, leadership and native mode. Five raw paired
+ratios, their median and complete range retain regressions; the summary
+does not infer statistical confidence or a general performance advantage.
+
+The fixture fits in memory and imposes no native I/O pressure, even with
+Vinyl cache disabled. This is shared-runner, single-client evidence, not
+a disk-bound or throughput-capacity claim. CPU zeros can fall below the
+100 Hz counter resolution. Partial runs retain their original error and
+completed samples. Results and qualification remain pending until this
+workflow runs successfully; the existing tables above remain unchanged.
