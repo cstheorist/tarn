@@ -147,6 +147,7 @@ pub struct Session {
     warnings: Vec<Warning>,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
+    lazy_consistency: crate::lazy::Consistency,
     lazy_wait_timeout: u64,
 }
 
@@ -432,6 +433,7 @@ impl Session {
             warnings: Vec::new(),
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
+            lazy_consistency: crate::lazy::Consistency::default(),
             lazy_wait_timeout: 5,
             cluster,
         }
@@ -605,7 +607,7 @@ impl Session {
         }
         let text = value.as_ref().map(|v| v.to_string()).unwrap_or_default();
         match name {
-            "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
+            "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" | "tarn_lazy_consistency" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
                         1228,
@@ -619,6 +621,9 @@ impl Session {
                 let v = if name == "tarn_lazy_read_your_writes" {
                     self.lazy_read_your_writes = crate::lazy::flag(value.as_ref())?;
                     Value::Int(self.lazy_read_your_writes as i64)
+                } else if name == "tarn_lazy_consistency" {
+                    self.lazy_consistency = crate::lazy::Consistency::parse(value.as_ref())?;
+                    Value::str(self.lazy_consistency.name())
                 } else {
                     self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
                     Value::Int(self.lazy_wait_timeout as i64)
@@ -1129,7 +1134,17 @@ impl Session {
             .as_ref()
             .map(|t| t.writes.keys().map(|(space, _)| *space).collect())
             .unwrap_or_default();
-        let value = exec::diagnostics::render(&self.cluster, stmt, version, &cx, committed, &buffered)?;
+        let value = exec::diagnostics::render(
+            &self.cluster,
+            stmt,
+            version,
+            &cx,
+            exec::diagnostics::SessionContext {
+                committed,
+                buffered: &buffered,
+                lazy: self.lazy_read_context(),
+            },
+        )?;
         let text = serde_json::to_string(&value).map_err(|e| SqlError::internal(e.to_string()))?;
         Ok(Output::Rows {
             columns: vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
@@ -1166,6 +1181,15 @@ impl Session {
         self.txn.is_some() || !self.autocommit
     }
 
+    fn lazy_read_context(&self) -> crate::lazy::ReadContext {
+        crate::lazy::ReadContext {
+            consistency: self.lazy_consistency,
+            transaction: self.txn_needed(),
+            history_strong: self.lazy_history.strong,
+            read_your_writes: self.lazy_read_your_writes,
+        }
+    }
+
     pub(crate) fn ensure_txn(&mut self) {
         if self.txn.is_none() {
             self.txn = Some(self.new_txn(true));
@@ -1198,7 +1222,7 @@ impl Session {
             };
             return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
         }
-        if crate::lazy::eligible(p) && !self.lazy_history.strong {
+        if self.lazy_read_context().strong_reason(p).is_none() {
             if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
                 return Err(SqlError::new(
                     1205,

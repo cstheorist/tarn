@@ -48,6 +48,57 @@ initial implementation. The local index continues to provide a strong
 fallback. Existing indexes that merely contain a comment are not activated
 until their durable lazy configuration has completed bootstrap.
 
+### Selecting consistency
+
+```sql
+SET SESSION tarn_lazy_consistency = 'strong';
+SELECT id FROM t WHERE status = 'ready';
+SET SESSION tarn_lazy_consistency = 'eventual';
+```
+
+This session-only variable accepts `strong` and `eventual` (case
+insensitive); `DEFAULT` restores `eventual`. Unknown values fail with
+1231/42000, and `SET GLOBAL` fails with 1228/HY000. `SELECT
+@@tarn_lazy_consistency` and `SHOW VARIABLES` expose the current value.
+The choice is checked at execution, so an already prepared statement and
+a cached plan honor a later change. A connection pool must restore the
+session policy when returning a connection, as with other session state.
+
+`strong` bypasses the asynchronous copy and uses ordinary SQL execution
+under the session's configured isolation, including its normal freshness,
+write-claim, schema, movement and transaction validation. It does not wait
+for lazy propagation or drop/rebuild the index. `eventual` permits the lazy
+path only for a ready, explicitly annotated index and an eligible query;
+it never weakens an unannotated index, a transaction, locking read or DML.
+It preserves the existing schema opt-in by default. On MySQL/MariaDB the
+same index comment is only a comment: queries retain ordinary index
+membership semantics. Exporting that comment to Tarn can therefore opt
+eligible reads into a different contract. Exported durable lazy metadata
+and bootstrap readiness, rather than a legacy comment alone, activate it.
+
+`EXPLAIN FORMAT=JSON` includes `plan.read_consistency`: requested policy,
+selected path, the reason for strong execution, and whether an eventual
+read requires own-session catch-up. It reports transaction/locking,
+history fallback, index readiness, routing-prefix and query-shape refusals.
+An eventual selection is conditional: candidate/result limits or a changed
+bucket map can restart through strong execution; a failed catch-up returns
+an error. EXPLAIN performs no barrier and does not certify delivery or a
+snapshot. Its surrounding routing estimates describe the strong path;
+the lazy alternative routes by the index prefix and returned base keys.
+
+Changing this variable never clears pending APPLY or touched-bucket
+history. A strong read may succeed while delivery is paused; switching back
+to eventual with read-your-writes enabled still waits for every retained
+obligation or returns 1205. Unknown outcomes or history overflow retain the
+sticky strong fallback even after explicitly requesting `eventual`.
+Own-session catch-up is causal and can still omit another session's newly
+matching row. It is not a substitute for `strong`.
+
+The versioned [lazy contract fragment](../tests/contracts/lazy-index.json)
+maps these guarantees and intentional differences to executable cases for
+the broader compatibility manifest tracked in #178. It does not claim the
+unimplemented pinned-MySQL release matrix is already complete.
+
 Routing, equality and identity must agree for supported SQL types. Nullable
 non-unique keys remain eligible for storage. Case-insensitive keys use
 their normalized weights for routing and comparison while retaining raw

@@ -375,6 +375,40 @@ all previous configuration files are unchanged.
 
 ### Lazy secondary indexes (issue #82)
 
+`LazyReadPolicy.tla` adds the session policy boundary for #182. A committed
+row is absent from the lazy copy while an obsolete row remains. Explicit
+strong policy, transactions and sticky history fallback select ordinary
+SQL; eventual reads still recheck membership, and causal reads retain
+their own pending-delivery obligation until confirmed. Policy changes
+cannot erase that history. This reuses the storage/snapshot premises below;
+it does not model a new freshness barrier or make causal reads globally
+serializable. Delivery fairness/availability is a convergence premise,
+not a liveness result of this finite safety check.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `LazyReadPolicy` | 76 | 4 | passes |
+| `Bug_LazyPolicyIgnoreStrong` | 18 | 2 | violates `StrongReadIsStrong` |
+| `Bug_LazyPolicyForgetHistory` | 17 | 2 | violates `PendingRetained` |
+
+The shared runtime selection feeds both SELECT and EXPLAIN; it is evaluated
+after prepared-plan lookup. `lazytest.py`'s `test_consistency_*` cases pause
+actual delivery and distinguish rejected stale membership, an omitted new
+match, exact strong results, LIMIT/OFFSET, a real result-budget restart
+returning every key, independent sessions and policy
+switches retaining cumulative buckets. Existing `lazyfaults.py` and
+`LazyBarrier`/`LazyApplyConfirm` retain the pending-APPLY, failed/canceled
+catch-up and confirmed completion controls. `tests/lazypolicy.sh` runs the
+new policy cases on memtx/vinyl RF3/fsync and crashes only its owned leader
+after confirmed DML; the original read-only prepared query must return
+exact rows through the replacement. It never replays a SQL mutation.
+CI retains source/binary hashes, configuration, role/process and event logs.
+
+```sh
+tla/check.sh LazyReadPolicy Bug_LazyPolicyIgnoreStrong Bug_LazyPolicyForgetHistory
+bash tests/lazypolicy.sh
+```
+
 Four separate local refinement modules specify the eventual-index contract
 before implementation. They leave `TarnCommit.tla` and its configurations
 unchanged. They do **not** establish distributed serializability for lazy
@@ -1893,10 +1927,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 263 unique configurations: 69 positive
-outcomes and 194 expected broken/trade-off outcomes. The 270 generated
+The default list contains 266 unique configurations: 70 positive
+outcomes and 196 expected broken/trade-off outcomes. The 273 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 276 total. Explicit
+placement configurations are maintained directly, for 279 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1930,7 +1964,7 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-forms the current 263-case union, not execution of a new full 263-case CI
+forms that historical 263-case union, not execution of a new full 263-case CI
 run. The generator reproduces twice without changes. The current proof
 inventory is 330 files: 314 TLA+ model/config files, 11 verified-crate
 source/test/manifest files and five formal runner/inspection scripts.

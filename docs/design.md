@@ -15,7 +15,10 @@ The [README](../README.md) and [getting started](getting-started.md) cover build
 An explicit `COMMENT 'tarn:lazy'` on a non-unique index opts eligible
 nonlocking autocommit lookups into eventual index propagation. They fetch
 and recheck current base rows, but may miss recent matches. Explicit
-transactions keep the strong path. [Lazy secondary indexes](lazy-indexes.md)
+transactions keep the strong path. `SET SESSION tarn_lazy_consistency='strong'`
+also selects ordinary SQL execution without rebuilding an annotated index;
+the default `eventual` policy preserves the explicit schema opt-in.
+[Lazy secondary indexes](lazy-indexes.md)
 specifies capture, delivery, session catch-up, bootstrap and topology rules.
 
 ## 1. Architecture
@@ -2299,6 +2302,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyMeterRefundUncertain | violates ReadyConservative | 45 | 76 | 6 | 00s | 6 |
 | Bug_LazyMeterStaleCallback | violates ReadyConservative | 1035 | 2281 | 10 | 00s | 10 |
 | Bug_LazyMeterStaleInstall | violates ReadyEpochCurrent | 25 | 38 | 5 | 00s | 5 |
+| Bug_LazyPolicyForgetHistory | violates PendingRetained | 17 | 17 | 2 | 00s | 2 |
+| Bug_LazyPolicyIgnoreStrong | violates StrongReadIsStrong | 18 | 19 | 2 | 00s | 2 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
 | Bug_LockCopyAfterYield | violates NativeFindsLocks | 16 | 20 | 3 | 00s | 3 |
@@ -2411,6 +2416,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LazyHandoffLive | no errors | 76 | 196 | 12 | 00s |  |
 | LazyIndex | no errors | 475615 | 6599566 | 38 | 09s |  |
 | LazyMeter | no errors | 1918745 | 7064587 | 30 | 20s |  |
+| LazyReadPolicy | no errors | 76 | 160 | 4 | 00s |  |
 | LazyTargetConfirm | no errors | 19 | 24 | 5 | 00s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
