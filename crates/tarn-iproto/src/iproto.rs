@@ -34,7 +34,7 @@ pub const UNWATCH: u32 = 75;
 pub const EVENT: u32 = 76;
 pub const WATCH_ONCE: u32 = 77;
 /// Non-final response (`box.session.push`). Shares the sync of the request
-/// that is still running; the client skips these.
+/// that is still running; the client skips these only for an owned SYNC.
 pub const CHUNK: u32 = 128;
 /// Bit set in the response type of error responses; the low 15 bits are the
 /// `box.error` code.

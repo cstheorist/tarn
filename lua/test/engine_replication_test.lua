@@ -20,7 +20,7 @@ local function check(label, yes, data)
     event(label, data or {}); assert(yes, label .. ': ' .. json.encode(data)); passed = passed + 1
     print('  ok   ' .. engine .. ': ' .. label)
 end
-local function ev(i, script, args) return conns[i]:eval(script, args or {}, {timeout = 12}) end
+local function ev(i, script, args, timeout) return conns[i]:eval(script, args or {}, {timeout = timeout or 12}) end
 local function call(i, proc, ...) return conns[i]:call(proc, {...}, {timeout = 12}) end
 local function ok(r) assert(type(r) == 'table' and r[1] == 'ok', json.encode(r)); return r end
 local function await(label, fn, seconds)
@@ -33,7 +33,7 @@ local function await(label, fn, seconds)
     error(label .. ' timed out: ' .. tostring(last))
 end
 local probe = [[
-local old_id,new_id,name=...
+local old_id,new_id,name,full=...
 if rawget(_G,'tarn')==nil then return false end
 for _,key in ipairs{'_tarn_meta','_tarn_buckets','_tarn_catalog','_tarn_part','_tarn_locks','_tarn_txn'} do
     if box.space[key]==nil or box.space[key].index[0]==nil then return false end
@@ -41,13 +41,26 @@ end
 local r={pid=box.info.pid,uuid=tostring(box.info.uuid),id=box.info.id,term=box.info.election.term,
     ro=box.info.ro,workdir=require('fio').cwd(),wal=box.cfg.wal_mode,sync=tarn.cfg.sync,
     queue=box.info.synchro.queue,version=box.info.version,check_locks=tarn.cfg.check_locks,
-    lock_copy_errors=tarn.stats.lock_copy_errors}
+    lock_copy_errors=tarn.stats.lock_copy_errors,clock=tarn.clock.status()}
+local e,t=tarn.engine,tarn.engine.tracks[old_id]
+r.capture={stale=e.stale,epoch=e.epoch,capture_epoch=e.capture_epoch,
+    track=t and {valid=t.valid,epoch=t.epoch,token=t.token,dirty_keys=#t.list,bytes=t.bytes} or false,
+    tickets={ready=e.tickets.ready(),epoch=e.tickets.epoch,outstanding=e.tickets.outstanding,
+             building=e.tickets.building}}
+local b=rawget(_G,'engine_rf3_build_state')
+if b then
+    r.builder=table.deepcopy(b)
+    local f=rawget(_G,'engine_rf3_build_fiber')
+    if f then r.builder.fiber={id=f:id(),status=f:status(),csw=f:csw()} end
+else r.builder=false end
 if not r.ro then
     r.native=tarn_info().native; r.quota_ready=tarn.lazy.quota.ready()
     if r.native and r.native.ready==1 then
         r.layout=tonumber(require('ffi').cast('struct tarn_ns *',box.func['tarn_storage.ts_state']:call()).layout)
         r.state_size=require('ffi').sizeof('struct tarn_ns')
         r.fallback_offset=require('ffi').offsetof('struct tarn_ns','fallbacks')
+        local ns=require('ffi').cast('struct tarn_ns *',box.func['tarn_storage.ts_state']:call())
+        r.native_cache={capture_stale=ns.capture_stale~=0,bk_stale=ns.bk_stale~=0,hooks=tonumber(ns.hooks)}
     end
 end
 box.begin{txn_isolation='read-confirmed'}
@@ -59,34 +72,88 @@ local yes,err=pcall(function()
     r.target_zero=target and target:get{0}~=nil or false
     r.target_engine=target and target.engine or false
     local m=box.space._tarn_meta:get{'engine:'..old_id}; r.receipt=m and m.value or false
+    local j=box.space._tarn_meta:get{'job:'..name};r.job=j and j.value or false
     local cat=box.space._tarn_catalog:get{name};r.catalog_id=cat and cat.def.id or 0
     r.held=box.space._tarn_meta:get{'hold:'..new_id}~=nil
+    if full then
+        local rows={}
+        if old then for _,tuple in old.index[0]:pairs() do rows[#rows+1]=tuple:totable() end end
+        r.source_sha256=require('digest').sha256_hex(require('msgpack').encode(rows))
+    end
 end)
 box.rollback();if not yes then error(err) end
 return r
 ]]
-local function state(i)
+local function state(i, timeout, full)
     if not conns[i]:is_connected() then return false end
-    return ev(i, probe, {old_id, new_id, name})
+    return ev(i, probe, {old_id, new_id, name, full or false}, timeout)
+end
+local function copy_hook(i)
+    local started = fiber.clock()
+    local good, result = pcall(await, 'partial copy hook', function()
+        return call(i, 'tarn_test_hook', 'engine_copy', 'reached')[2] == 1
+    end)
+    if good then return true end
+    local wait_elapsed = fiber.clock() - started
+    -- Do not re-send BUILD. Capture its one attempt and current durable/
+    -- volatile progress before the controller stops these owned processes.
+    -- Each diagnostic RPC is bounded separately; it cannot extend the
+    -- original hook wait or the copy's own deadline.
+    local nodes = {}
+    for j = 1, 3 do
+        local yes, s = pcall(state, j, 1, true)
+        nodes[j] = {connected = conns[j]:is_connected(), response = yes and s or false,
+            error = not yes and tostring(s) or (s == false and tostring(conns[j].error) or false),
+            process_log = work .. '/s' .. j .. '.log'}
+    end
+    local data = {error = tostring(result), elapsed = wait_elapsed,
+        diagnostic_elapsed = fiber.clock() - started - wait_elapsed, leader = i, nodes = nodes}
+    event('partial copy hook timeout', data)
+    io.stderr:write('ENGINE_RF3_COPY_DIAGNOSTIC ', json.encode(data), '\n')
+    return false, result, data
+end
+local function same(a, b)
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= 'table' then return a == b end
+    for k, v in pairs(a) do if not same(v, b[k]) then return false end end
+    for k in pairs(b) do if a[k] == nil then return false end end
+    return true
 end
 local function mode_ok(s)
     return s.check_locks == true and s.lock_copy_errors == 0 and
-        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 11 and s.state_size == 312
+        (mode == 'native' and s.native and s.native.ready == 1 and s.layout == 14 and s.state_size == 392
             and s.fallback_offset == 304
         or mode == 'lua' and s.native == false)
 end
 local function leader()
-    return await('confirmed writable leader', function()
-        local found
+    local snapshots, first = {}, true
+    local started = fiber.clock()
+    local good, result = pcall(await, 'confirmed writable leader', function()
+        local found, eligible = nil, 0
         for i = 1, 3 do
             local yes, s = pcall(state, i)
-            if yes and s and not s.ro and s.quota_ready and s.queue.len == 0
+            snapshots[i] = {connected = conns[i]:is_connected(), response = yes and s or false,
+                error = not yes and tostring(s) or (s == false and tostring(conns[i].error) or false)}
+            if yes and s and not s.ro and s.quota_ready and s.clock.read_ready and s.queue.len == 0
                and not s.queue.busy and s.queue.owner == s.id and mode_ok(s) then
-                assert(found == nil, 'multiple writable leaders'); found = i
+                eligible = eligible + 1; found = i
             end
         end
+        if first then event('leader readiness first observation', snapshots); first = false end
+        assert(eligible <= 1, 'multiple writable leaders')
         return found
     end)
+    if not good then
+        -- Capture every node's last response/error before the shell's
+        -- finally cleanup. In particular a durable clock fault must stay
+        -- closed; cache warming or a longer wait must not hide it.
+        local data = {error = tostring(result), elapsed = fiber.clock() - started, nodes = snapshots}
+        event('leader readiness timeout', data)
+        io.stderr:write('ENGINE_RF3_LEADER_DIAGNOSTIC ', json.encode(data), '\n')
+        error(result)
+    end
+    event('leader readiness accepted', {index = result, elapsed = fiber.clock() - started, nodes = snapshots})
+    return result
 end
 local function args(i)
     return ev(i, "return assert(box.space._tarn_meta:get{'test:engine_rf3'}).value.a")
@@ -132,14 +199,73 @@ return tarn_job_begin({owner=owner,kind='alter',space=name,names={name},ver=5,a=
 ]], {old_id, new_id, name, engine, target_engine, owner, count}))
         for i = 1, 3 do await('source replicated', function() local s = state(i); return s and s.source_rows == count end) end
         check('RF3 quorum2 fsync source and native mode', state(l).sync and state(l).wal == 'fsync' and mode_ok(state(l)))
-    elseif stage == 'kill-first' then
+    elseif stage == 'kill-first' or stage == 'copy-control' then
         local l = leader()
+        local control = stage == 'copy-control' and assert(os.getenv('ENGINE_RF3_COPY_CONTROL')) or ''
+        assert(control == '' or control == 'source-binding' or control == 'exception' or control == 'stall',
+            'unknown private engine copy control')
+        local before = control ~= '' and assert(state(l, 12, true)) or nil
         ev(l, [[
-local name=...;local a=box.space._tarn_meta:get{'test:engine_rf3'}.value.a
+local name,control=...;local a=table.deepcopy(box.space._tarn_meta:get{'test:engine_rf3'}.value.a)
+assert(rawget(_G,'engine_rf3_build_state')==nil,'engine BUILD was already attempted; refusing replay')
 tarn_test_hook('engine_copy','hold')
-require('fiber').create(function() _G.engine_rf3_build=tarn_alter_build(name,a,1) end)
-]], {name})
-        await('partial copy hook', function() return call(l, 'tarn_test_hook', 'engine_copy', 'reached')[2] == 1 end)
+local fiber=require('fiber')
+local s={attempts=1,calls=0,done=false,started=fiber.clock(),control=control,
+    synthetic=control=='exception' or control=='stall'}
+_G.engine_rf3_build_state=s
+local f=fiber.new(function()
+    local yes,result=pcall(function()
+        -- The binding control reaches the REAL production refusal before
+        -- any shadow/cursor write. The other two controls exercise only
+        -- exception/stall observation and are explicitly synthetic.
+        if control=='source-binding' then a.engine_change.old_ver=a.engine_change.old_ver+1 end
+        if control=='exception' then error('synthetic engine builder exception') end
+        -- A host pause must not let the synthetic stall expire and start a
+        -- real mutation after its diagnostic deadline. Only cancellation
+        -- or the owning controller's process cleanup can end this branch.
+        while control=='stall' do fiber.sleep(1) end
+        s.calls=s.calls+1
+        return tarn_alter_build(name,a,1)
+    end)
+    s.ok,s.finished=yes,fiber.clock()
+    if yes then _G.engine_rf3_build=result;s.result=result
+    else
+        s.exception=tostring(result)
+        if type(result)=='cdata' or type(result)=='table' then
+            local valid,code=pcall(function() return result.code end)
+            if valid then s.exception_code=code end
+        end
+    end
+    s.done=true
+end)
+f:name('engine_rf3_build');f:set_joinable(true);_G.engine_rf3_build_fiber=f
+]], {name, control})
+        local reached, err, diagnostic = copy_hook(l)
+        if control ~= '' then
+            assert(not reached and diagnostic, 'control unexpectedly reached the copy hook')
+            local after = assert(diagnostic.nodes[l].response)
+            local b = assert(after.builder)
+            check('single-attempt copy diagnostic retains the original failure',
+                b.attempts == 1 and (control == 'source-binding' and b.calls == 1 and b.done and b.ok
+                    and b.result[1] == 'error' and b.result[2] == 1412
+                    and b.result[3]:find('Engine source definition changed', 1, true)
+                or control == 'exception' and b.calls == 0 and b.done and b.ok == false
+                    and b.exception:find('synthetic engine builder exception', 1, true)
+                or control == 'stall' and b.calls == 0 and not b.done and b.fiber.status == 'suspended'), after)
+            check('pre-copy control preserves exact source, job and empty shadow/receipt',
+                before.source_rows == count and after.source_rows == count
+                and before.source_sha256 == after.source_sha256 and same(before.job, after.job)
+                and before.target_rows == 0 and after.target_rows == 0 and not before.receipt and not after.receipt
+                and after.queue.len == 0 and not after.queue.busy and after.term == before.term and not after.ro, after)
+            -- Only the synthetic sleeping worker needs cancellation. Never
+            -- retry the mutation to repair a diagnostic or a failed build.
+            ev(l, [[local f=assert(rawget(_G,'engine_rf3_build_fiber'))
+                if not _G.engine_rf3_build_state.done then f:cancel() end
+                f:join();tarn_test_hook('engine_copy','release')]])
+            event('copy diagnostic control accepted', {control = control, synthetic = b.synthetic, diagnostic = diagnostic})
+            return
+        end
+        if not reached then error(err) end
         ok(call(l, 'tarn_autocommit', {{'insert', old_id, {0, 777, 1}}}, {fence = {old_id, 0}}))
         for i = 1, 3 do await('partial copy and acknowledged dirty row replicated', function()
             local s = state(i)
@@ -181,7 +307,7 @@ require('fiber').create(function() _G.engine_rf3_build=tarn_alter_build(name,a,1
         check('promoted leader publishes, cleans and accepts a fresh write',
             s.catalog_id == new_id and s.target_engine == target_engine and s.source_rows == 0
             and s.target_rows == count + 2 and s.target_zero and not s.held and s.receipt.cleaned, s)
-        local r = call(l, 'tarn_select', old_id, 0, {1}, 'EQ', 1)
+        local r = call(l, 'tarn_select', old_id, 0, {1}, 'EQ', 1, box.NULL, true, true)
         check('retired ID remains a schema-change error after both leader deaths', r[1] == 'error' and r[2] == 1412, r)
     else error('unknown engine replication stage ' .. stage) end
 end

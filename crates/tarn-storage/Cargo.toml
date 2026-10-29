@@ -24,3 +24,6 @@ alloc-metrics = []
 [dependencies]
 # (its MessagePack codec, verified with Verus)
 tarn-verified.workspace = true
+
+[build-dependencies]
+cc = "1"

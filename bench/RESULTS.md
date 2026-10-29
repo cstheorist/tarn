@@ -467,6 +467,63 @@ about half of which it serves.
   APPLY. The transaction thread then spends 38% to 53% of its samples in
   Lua and its garbage collector.
 
+## Decision-record placement
+
+Issue [#132](https://github.com/cstheorist/tarn/issues/132) replaces the first
+active writing participant with a stable transaction-ID hash over writers
+ordered by durable shard ID. This distributes the extra decision record and
+its cleanup when transactions share a broad writer set.
+
+The complete matched evidence is
+[`results_decision_placement.json`](results_decision_placement.json), produced
+by [`decision_placement.py`](decision_placement.py): control `12ef447be1c3d236d987755dacfa45b88d9c3324`,
+candidate `4d495692f9e63144bc1f7cabb96b2e6ef4273ce5`, Rust 1.98.1 release builds,
+identical native-module SHA-256, Tarantool 3.9.0, three RF1 memtx shards with
+fsync WAL, one two-thread gateway with pool 2, and four PyMySQL clients.
+The Docker quota was three CPUs and 1.5 GiB on a shared arm64 development
+machine; other services were not stopped. Each sample uses a fresh cluster,
+600 transactions and disjoint rows per client, with one write on every
+shard. The run order alternates before/after across three repetitions.
+Only these owned single-clock fixtures shorten retention to 15 seconds and
+set clock-skew allowance to zero; the gateway and storage age limits match.
+
+| Repetition | Before decision records, shards 1/2/3 | After decision records, shards 1/2/3 | Before txn/s | After txn/s |
+|---|---|---|---:|---:|
+| 1 | 600 / 0 / 0 | 200 / 199 / 201 | 1,096.5 | 1,110.6 |
+| 2 | 600 / 0 / 0 | 203 / 193 / 204 | 1,041.7 | 1,044.9 |
+| 3 | 600 / 0 / 0 | 212 / 190 / 198 | 1,067.9 | 942.4 |
+
+Every sample has exactly 600 participant records on each shard. Every
+recorded decision matches the selector, every participant records that same
+ID, and every committed tuple has the expected value. The busiest shard's
+decision records fall at least 64%, from 600 to at most 212. Workload WAL
+rows change from `6000 / 4800 / 4800` to at most 5,224 on any shard: 13%
+less work on the busiest writer, with the same 15,600 rows in total.
+The busiest shard's measured WAL-file growth is 394–395 kB before and
+336–337 kB after; the JSON retains every shard's bytes and WAL rows.
+
+After expiry, all 600 decisions and 1,800 participant records are collected,
+with their original eligibility checks. Decision deletions have the same
+per-shard distribution as the table above; participant deletions stay at
+600 per shard. GC's WAL rows change from `1200 / 600 / 600` to at most 812
+on any shard, with the same 2,400 rows in total. WAL-file growth during GC
+varies with batching/compression and is reported without a byte-saving claim.
+
+The throughput medians are 1,067.9 and 1,044.9 txn/s; the ranges are
+1,041.7–1,096.5 and 942.4–1,110.6. These short shared-host samples do not
+establish a throughput or latency improvement. This demonstrates placement and peak
+per-shard record/WAL/GC work; it is not a sustained RF3 result or a comparison
+with TiDB or YugabyteDB.
+
+```sh
+python3 bench/decision_placement.py \
+  --before-bin /path/to/control/tarn-server --after-bin /path/to/candidate/tarn-server \
+  --native /path/to/libtarn_storage.so \
+  --before-ref 12ef447be1c3d236d987755dacfa45b88d9c3324 \
+  --after-ref 4d495692f9e63144bc1f7cabb96b2e6ef4273ce5 \
+  --out decision-placement-results.json
+```
+
 ## What would make Tarn faster
 
 * **Native procedures for the other hot paths**
@@ -490,3 +547,166 @@ about half of which it serves.
 * **More cores per process**: Tarantool's transaction thread is single
   threaded per instance; on real hardware one would run several shards per
   machine and several SQL servers.
+
+
+## Storage RPC admission component measurements (issue #127)
+
+The complete [initial](results_rpc_admission_initial.json) and
+[scope-sharing revision](results_rpc_admission_optimized.json) records retain
+all paired samples, raw output, CPU and latency measurements, exact source
+revisions, binary hashes, fixture/workload hashes and environment. The
+control is `a0faf804372f911e5122317889aaf2cc1dc6ab83`; initial candidate
+`75f53e2404c123c2b34f8426495152d6063e27e4`; revised candidate
+`b944dcb39061d1ab1d10fc29891ca51f5b50afc5`. Both drivers use the exact same
+phase and `init.lua` fixture. `bench/rpc_admission.py` alternates order
+across five repetitions of eight seconds per build, with 64 tasks/four
+connections reading one of 1000 memtx tuples over local TCP. The revised
+candidate uses one per-connection scope-set reference per request instead
+of cloning shared shard/global budget references.
+
+This measures the IPROTO component on one RF1 Tarantool 3.9 process with
+MVCC, no TLS and no timed writes. It is not a MySQL, RF3, durable-write or
+competitor comparison. The fixture uses Tarantool's default WAL mode;
+initialization is outside the timed read phase. Rust 1.98.1 release builds
+use matched thin LTO/codegen settings. The shared Docker VM grants the
+fixture/driver three CPUs and 3 GiB; other task-owned validation/builds were
+stopped during measurements. Other host workloads remained uncontrolled.
+
+| Candidate | Control median (range), ops/s | Candidate median (range), ops/s |
+|---|---:|---:|
+| Initial | 572,629 (109,582–626,623) | 554,509 (527,902–566,400) |
+| Shared scope ownership | 360,729 (335,516–569,769) | 426,295 (289,026–552,590) |
+
+The initial run exposed a cost in several pairs and motivated removing
+avoidable reference churn and waiter metadata. The broad, shifting control
+and candidate ranges prevent a reliable cost estimate or throughput/latency
+improvement claim. No samples were discarded or replaced. An isolated
+machine is required to quantify the remaining overhead. These observations
+do not establish production performance; separate unit, SQL and live-fault
+tests establish the resource/outcome contracts, not this timing probe.
+
+## Strong-read freshness cost (issue #130)
+
+The [matched report](STRONG_READ_FRESHNESS.md) and
+[evidence index](evidence/strong-read-freshness-v2/index.json) compare Lua and
+native batch reads under the same strong-read contract. One Linux job ran
+72 phases and 36 pairs across direct RF1, direct RF3 and SQL RF3 cells,
+with six balanced pairs per cell at post-withdrawal-fix source `554ef08`.
+Every prior incomplete cohort and the earlier complete `62cf4c6` checkpoint
+remain separate from the current statistics.
+
+For RF3 batches of 128 keys at 64 workers, the median native/Lua ratio was
+0.409 for leader transaction-thread CPU per batch, 2.372 for batch rate and
+0.472 for p99 latency. The report includes all six cells, complete ranges,
+raw observations, source/build identities, proof boundaries and failure
+history. These instrumented hot-corpus read results retain their component
+scope; they do not establish a TiDB/YugabyteDB or production-capacity ranking.
+
+
+## Physical file backup and replica seeding (#56)
+
+The completed reference acceptance uses **10 GiB of random row payload**
+(163,840 rows × 65,536 bytes), with 20,480,274,298 bytes of selected physical
+files per backup. Three complete copies, an isolated original-UUID restore,
+and three alternating full-join/seed pairs all reproduce every tuple's
+SHA-256. Seeded candidates use a distinct, pre-registered voter UUID and
+recover a committed marker created after the backup through WAL. All
+foreground point-read probes complete with zero errors.
+
+These are per-shard physical recovery measurements, separate from the
+historical SQL benchmarks above. The reference runs in one Docker ARM64
+container on Apple M4 Max, limited to two CPUs and 1.5 GiB RAM, with three
+synchronous source replicas, `wal_mode=fsync`, memtx 128 MiB, vinyl memory
+64 MiB and vinyl cache zero. The data and selected physical files exceed
+the container memory limit. CI runs on Ubuntu 24.04 x86_64 with its normal
+release native build; its CPU/memory cgroup values are recorded as
+unavailable. Both use Tarantool 3.9.0; exact build/source/native hashes and
+settings are in the linked JSON.
+
+| Completed study | Payload / selected files | File-copy cap | Backup wall, median (range), s | Full join, median (range), s | Seed, median (range), s |
+|---|---|---|---:|---:|---:|
+| [Reference](results_file_backup_reference.json) | 10 GiB / 20,480,274,298 B | uncapped | 26.654 (26.286–27.090) | 124.100 (113.174–125.164) | 26.583 (26.374–26.625) |
+| [CI 40897427899](results_file_backup_ci.json) | 2 GiB / 4,083,396,802 B | 128 MiB/s | 31.623 (31.582–31.708) | 77.246 (65.772–79.182) | 31.759 (31.716–32.313) |
+
+Each table cell contains three measurements. Within the reference profile,
+median seeding is 4.67× faster than full join. Backup creation is a separate
+cost; the seed timer includes local copy, hash verification, fixed-width
+header rewrite, file/directory fsync, process start and WAL catch-up, plus
+controller/RPC overhead. Readiness checks process/role, the committed WAL
+prefix and the post-backup marker. Exact count/full SHA scans follow once
+outside that timer. The cap applies to aggregate agent file-copy bytes,
+not native full-join traffic or later WAL follow.
+
+The physical files include indexes and retained LSM files, so the agent
+copies about 1.9 times the row payload. A capped seed can be slower than a
+logical full join: the earlier [CI 40888068812](results_file_backup_ci_ordered.json)
+measured full-join median 25.407 s versus seed 31.555 s at 128 MiB/s; the
+[512 MiB read rehearsal](results_file_backup_read_rehearsal.json) measured
+5.713 s versus 8.346 s. Other completed CI samples are
+[40885381400](results_file_backup_ci_initial.json) and
+[40891371139](results_file_backup_ci_serial.json). Those earlier controllers
+included an exact count in timed readiness. Different revisions, runner
+conditions and timing boundaries prevent a controlled comparison between
+these studies. All retained outcomes remain part of the evidence.
+
+The foreground probe repeatedly reads key 1 through the local native
+read-confirmed vinyl path with one client and 20 ms think time. It excludes
+SQL, network and the strong-read quorum freshness barrier. Nearest-rank
+p99 below is shown per phase (range across three phases), with raw sample
+arrays retained. Baseline lasts only three seconds and is noisy.
+
+| Study | Baseline p99, ms | During backup p99 range, ms | During full join p99 range, ms | During seed p99 range, ms | Probe errors |
+|---|---:|---:|---:|---:|---:|
+| Reference | 1.180 | 0.272–0.286 | 20.870–26.247 | 0.247–0.279 | 0 |
+| CI 40897427899 | 0.194 | 0.212–0.274 | 0.239–0.287 | 0.174–0.201 | 0 |
+
+No OS/backend cache flush is attempted. All replicas, candidate, source and
+file copies share one host; the random data does not establish cold device
+behavior. Three pairs show observed variability, not a production latency
+SLO, network-transfer result, failover-capacity result or write-active
+bootstrap limit. The fixture pins one leader and keeps the other original
+replicas as voters. Its repeated candidate identity is used only inside
+this fixed-leader fixture with all three sources retained; it is not a
+recipe for production membership rollback or origin-ID reuse.
+
+`seconds_per_100GB_payload_linear_normalization` is elapsed seconds ×
+100,000,000,000 / actual payload bytes. It is a linear throughput display,
+not an observed 100 GB run or evidence that performance scales linearly.
+For reference backup/full-join/seed medians this yields 248.236 / 1,155.771 /
+247.571 s per 100 GB payload; for CI 40897427899 it yields 1,472.558 /
+3,597.027 / 1,478.872 s. These two profiles have different hardware, sizes
+and copy caps; their normalized rates are not a hardware comparison.
+
+The [evidence index](../tests/evidence/file-backup/index.json) records hashes,
+scope and workflow links for every retained study, including failures:
+
+- The [write-active rehearsal](results_file_backup_write_failure.json)
+  backed up/restored 512 MiB but the full-join candidate timed out creating
+  its first checkpoint. The controller was interrupted after that candidate
+  died. The matched final studies use read probes; they do not resolve
+  write-active bootstrap capacity. Bounded node log excerpts are retained.
+- The [first 10 GiB load attempt](results_file_backup_load_failure_initial.json)
+  failed before population completed: registering the dormant fourth member
+  first raised synchronous quorum to all three live replicas. The fixture
+  now fills RF3 before registration, preserving quorum/durability settings.
+- The [next load attempt](results_file_backup_load_failure_clock.json)
+  failed on a transient clock-policy-readiness serialization refusal. The
+  loader now bounds retries for matched no-effect refusals and aborts on
+  unknown outcomes or transport failure; no clock fence is bypassed.
+- The [controller failure](results_file_backup_controller_failure.json)
+  completed all 163,840 inserts, then mistakenly polled a 10 GiB count with
+  a two-second RPC deadline. The final reference reuses only that confirmed
+  pre-registration fixture, with unchanged storage code and saved UUIDs,
+  verifies its committed WAL prefix, and rehashes every tuple. Inserts were
+  never replayed. Load provenance (revision `900e71f`) is retained separately
+  from the completed controller/measurement revision (`ec1401e`).
+
+The [native](../tests/evidence/file-backup/safety_native.json) and
+[Lua-only](../tests/evidence/file-backup/safety_lua.json) live safety controls
+cover original restore, seed identity/WAL follow, incomplete/corrupt/path
+refusal, lease ownership/expiry, killed copier and startup role guards.
+The bounded FileBackup model checks publication, integrity, identity and
+lease obligations with four deliberately broken controls. Tarantool's
+coherent backup set, filesystem durability, SHA/header interpretation,
+registration and operator catch-up verification remain trusted boundaries.
+This does not prove a coordinated multi-shard SQL backup protocol.

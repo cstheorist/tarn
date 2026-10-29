@@ -703,6 +703,7 @@ dependencies = [
  "bytes",
  "libc",
  "parking_lot",
+ "serde",
  "sha1",
  "tarn-common",
  "thiserror",
@@ -747,6 +748,7 @@ dependencies = [
  "rmp",
  "serde",
  "serde_json",
+ "sha1",
  "sqlparser",
  "tarn-common",
  "tarn-iproto",
@@ -760,6 +762,7 @@ dependencies = [
 name = "tarn-storage"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "tarn-verified",
 ]
 

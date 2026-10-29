@@ -15,6 +15,7 @@ let client = Client::connect(&Opts {
     user: Some("tarn".into()),
     password: Some("tarn".into()),
     connect_timeout: std::time::Duration::from_secs(3),
+    ..Opts::new("127.0.0.1:3301")
 }).await?;
 
 // Primary-key lookup: key and tuples are pre-encoded MessagePack arrays.
@@ -33,7 +34,7 @@ client.commit(sid).await?;          // Err(Server{code: ER_TRANSACTION_CONFLICT,
 
 | item | notes |
 |---|---|
-| `Opts { addr, user, password, connect_timeout }` | `user: None` stays `guest`. `password: None` is the empty password. `Duration::ZERO` means no timeout. `Opts::new(addr)` gives no auth and a 5 s timeout. |
+| `Opts { addr, user, password, connect_timeout, ..Opts::new(addr) }` | `user: None` stays `guest`. `password: None` is the empty password. `Duration::ZERO` means no timeout. `Opts::new(addr)` gives no auth and a 5 s timeout. |
 | `Client::connect` | Reads the 128-byte greeting, then sends `IPROTO_ID` (version 1, features `streams` + `transactions`) and a chap-sha1 `IPROTO_AUTH` pipelined in one write. The whole handshake is bounded by `connect_timeout` (`Error::Timeout`). |
 | `request(type, stream_id, body)` | Any request type, with `body` as a pre-encoded MessagePack map (empty = no body). |
 | `ping`, `select`, `insert`, `replace`, `update`, `delete`, `call`, `eval` | `key`, `tuple`, `ops` and `args` are MessagePack arrays; an empty slice means `[]`. `call` is `IPROTO_CALL` (10), not `CALL_16`. |
@@ -43,7 +44,7 @@ client.commit(sid).await?;          // Err(Server{code: ER_TRANSACTION_CONFLICT,
 | `is_closed()` | True once the connection failed or was closed. Every later call fails at once with `Error::Closed`. |
 | `is_stale()`, `mark_stale()` | True once the server answered any request with `ER_READONLY` (it was demoted or is a replica). The connection keeps working; Tarn's connection pools stop handing it out and look for the new leader. |
 | `Response { schema_version, body }` | `data()` returns the raw `IPROTO_DATA` value; `tuples()` returns each element of `DATA` as a raw slice. Both are zero-copy slices of `body`. |
-| `Error` | `Io`, `Protocol(String)`, `Server { code, message }`, `Closed`, `Timeout`. `code` is the error code from the reply type (`type & 0x7fff`). `message` comes from `IPROTO_ERROR_24` (0x31), falling back to the first entry of the `IPROTO_ERROR` (0x52) stack. |
+| `Error` | `Io`, `Protocol(String)`, `Server { code, message }`, `Closed`, `Timeout`, `Admission { scope }`. `code` is the error code from the reply type (`type & 0x7fff`). `message` comes from `IPROTO_ERROR_24` (0x31), falling back to the first entry of the `IPROTO_ERROR` (0x52) stack. |
 | error codes | `ER_TUPLE_FOUND` (3), `ER_READONLY` (7), `ER_PROC_LUA` (32), `ER_NO_SUCH_PROC` (33), `ER_NO_SUCH_SPACE` (36), `ER_TRANSACTION_CONFLICT` (97), `ER_TRANSACTION_TIMEOUT` (231), `ER_UNABLE_TO_PROCESS_{IN,OUT_OF}_STREAM` (229/230), and others: see `errcode` (all re-exported at the crate root). There is no "no such stream" error; the server creates streams on first use. |
 | `Iter`, `TxnIsolation` | `#[repr(u32)]` + `Copy`, so `iter as u64` gives the wire code. |
 
@@ -113,11 +114,20 @@ reader task ◀── socket ◀── server ◀── writer task: swap wbuf o
   buffer. With a single request in flight there is nothing to wait for, so it
   flushes immediately and adds no latency at concurrency 1.
 * **Reader task:** it reads into a 128 KiB `BytesMut`, splits each complete
-  packet off as a frozen `Bytes` (no copy), parses only the header (type, sync,
-  schema version), and completes all waiters from one read under a single lock
-  acquisition. Error bodies are decoded later by the waiting caller.
-  `IPROTO_CHUNK` pushes are skipped, and replies for cancelled requests are
-  dropped.
+  packet off as a frozen `Bytes` (no copy), validates the header and the body
+  envelope, and completes all waiters from one read under a single lock
+  acquisition. Error messages are decoded later by the waiting caller.
+  Every frame-length encoding is checked against `BODY_LEN_MAX` before
+  reserving payload memory. Type and SYNC must be present exactly once;
+  only OK and the database-error family are terminal. A nonempty body is
+  one complete MessagePack map without trailing bytes.
+  `IPROTO_CHUNK` pushes are skipped only for an outstanding SYNC, including
+  a cancelled caller's retained entry; they never complete or fence a request.
+  The exact terminal reply drains that entry even when its receiver is gone.
+  Unknown/duplicate SYNCs, unsupported response types and malformed frames
+  retire the connection. No part of a batch with ambiguous correlation is
+  published as a database result. The handshake also requires unique owned
+  terminal replies.
 * **Connection death:** the reader or writer hits EOF or an error,
   `close()` is called explicitly, or the last `Client` clone is dropped. In
   each case the state is marked closed under the same lock used to register
@@ -125,6 +135,10 @@ reader task ◀── socket ◀── server ◀── writer task: swap wbuf o
   `Error::Closed`, both tasks are aborted and the socket closes; the server
   then rolls back open stream transactions. Later calls fail before encoding
   anything.
+  For a sent mutation, this failure is transport uncertainty, not a matched
+  retryable database error: the SQL layer reports 1180/40003 and never
+  replays it. These checks do not add admission limits or post-connect
+  deadlines; that separate work is tracked in [#127](https://github.com/cstheorist/tarn/issues/127).
 * **Ordering:** packets enter the buffer in call order. Tarantool runs the
   requests of one stream strictly in order, so `begin`, writes and `commit`
   may even be issued concurrently on the same stream.
@@ -139,8 +153,12 @@ of plain arrays.
 
 ## Tests
 
-`cargo test -p tarn-iproto` runs 12 unit tests and 18 integration tests,
-about 3 s in total. Each integration test starts its own Tarantool
+`cargo test -p tarn-iproto` includes codec tests, nine in-memory async
+transport tests and integration tests against Tarantool. The transport
+controls cover fragmented/coalesced and reordered replies, header and body
+corruption, oversized uint32/uint64 length prefixes before allocation,
+cancelled ownership, pushes, duplicate/unknown SYNCs and reusable database
+errors. Each integration test starts its own Tarantool
 (`$TARANTOOL`, default `tarantool`) in a temp dir
 with `tests/common/init.lua`: `listen = 127.0.0.1:0`,
 `memtx_use_mvcc_engine = true`, user `tarn`/`tarn` with super grants, and test
@@ -256,3 +274,36 @@ rows are dropped on another thread:
 * The server applies backpressure with `net_msg_max` (default 768 in-flight
   messages per iproto thread). It stops reading the socket, so 20k
   outstanding requests simply queue in TCP and the client's buffer.
+
+### Bounded admission and request deadlines
+
+`Opts::new` also sets `request_limits` (256 requests, 64 MiB, with 16
+requests/8 MiB reserved) and a nonzero `request_timeout` of 120 seconds.
+`Limits` validates nonzero ordinary/completion count capacity and at least
+128 bytes in each class. The gateway adds a larger terminal-fence minimum.
+Explicitly configure larger finite limits for larger pipelines; the 20k
+integration test opts in to its intended count. `Opts::admission` accepts
+up to two shared `Budget`s, normally shard then global; all scopes must
+admit before encoding/enqueue. `Budget` clones preserve accounting across
+connection replacement. Byte charges conservatively include 128 bytes of
+encoding headroom; `Stats::pending_wire_bytes` reports exact wire bytes.
+
+`Error::Admission` means the request was refused before enqueue, owns no
+identity, and took no effect. Ordinary `call`/`eval` use ordinary capacity.
+Explicit `call_control`/`eval_control` and stream COMMIT/ROLLBACK may use
+reserved capacity but obey all hard caps. They add no retries.
+
+Cancelling a future drops its receiver, retaining its identity, capacity
+charge and original deadline. Only an exact final response or physical
+connection retirement releases those charges; CHUNK never does. The
+oldest pending request expiring retires the whole connection and leaves
+unresolved requests `Error::Closed`, which does not certify no effect.
+Tarn maps uncertain mutations to 1180/40003 and never replays them.
+Capacity is retained until both I/O owners drop their socket halves.
+
+Connection stats expose charges, peaks, refusals, abandoned receivers,
+oldest pending age and deadline retirements. Shared `Budget::stats` counters
+survive reconnects. `Budget::connections` provides cached weak observations
+(up to 4096, with `observation_drops` for incomplete coverage); enforcement
+covers all requests. No status operation sends a storage RPC. Budgets cover
+in-flight request resources, not returned query rows or full process RSS.

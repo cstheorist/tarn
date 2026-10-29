@@ -7,13 +7,15 @@ MySQL-compatible server and compare what comes back.
 Every case is executed on both servers in a fresh database. Result sets are
 compared as multisets unless the query has ORDER BY (then in order); numbers
 are compared numerically (DECIMAL vs DOUBLE representation differences are
-tolerated), strings exactly. DML is compared by affected-row counts and by a
+tolerated), strings exactly. Engine-specific EXPLAIN plans compare their
+JSON envelope, with exact data/transaction checks after them. DML is compared by affected-row counts and by a
 dump of the table afterwards. Errors must occur on both sides (codes are
 reported when they differ but only the presence of an error is required).
 """
 import argparse
 import datetime
 import decimal
+import json
 import re
 import sys
 
@@ -21,6 +23,7 @@ import pymysql
 from pymysql.constants import CLIENT
 
 SCHEMA = [
+    "CREATE DATABASE IF NOT EXISTS `{db}_雪`",
     "CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b VARCHAR(20), c DECIMAL(10,2), d DOUBLE, e DATETIME, KEY ka (a))",
     "CREATE TABLE t2 (id INT PRIMARY KEY, t1_id INT, name VARCHAR(30), qty INT NOT NULL DEFAULT 0, KEY k1 (t1_id))",
     "CREATE TABLE t3 (k1 INT, k2 VARCHAR(10), v INT, PRIMARY KEY (k1, k2))",
@@ -179,8 +182,22 @@ def seed():
     return s
 
 
-# (sql, kind): 'q', 'rows' (requires a row result), 'dml' (then table dumps), or 'err'.
+# (sql, kind): 'q', 'rows', 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
 CASES = [
+    # Engine plans differ; compare the JSON result envelope and subsequent
+    # exact data/transaction behavior, never cost or plan field equality.
+    ("EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE id=1", "plan"),
+    ("EXPLAIN FORMAT=JSON SELECT a,COUNT(*) FROM t1 GROUP BY a", "plan"),
+    ("EXPLAIN FORMAT=JSON SELECT t1.id,t2.name FROM t1 JOIN t2 ON t2.t1_id=t1.id WHERE t1.id=1", "plan"),
+    ("EXPLAIN FORMAT=JSON UPDATE t1 SET a=a+1 WHERE id=1", "plan"),
+    ("EXPLAIN FORMAT=JSON DELETE FROM t1 WHERE id=1", "plan"),
+    ("SELECT id,a,b FROM t1 ORDER BY id", "rows"),
+    ("BEGIN", "q"),
+    ("UPDATE t1 SET a=a+1 WHERE id=1", "dml:t1"),
+    ("EXPLAIN FORMAT=JSON DELETE FROM t1", "plan"),
+    ("ROLLBACK", "q"),
+    ("SELECT id,a,b FROM t1 ORDER BY id", "rows"),
+
     # point and range access
     ("SELECT * FROM t1 WHERE id = 7", "q"),
     ("SELECT id, a, b FROM t1 WHERE id IN (1, 5, 9, 100)", "q"),
@@ -1375,6 +1392,82 @@ CASES += [
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
 ]
 
+# Administrative metadata differs by engine (SHOW CREATE/STATUS) and server
+# (SHOW TABLES column labels). Compare the exact names/field names and row
+# cardinality for these commands; ordinary cases still compare every column.
+# These use the public SQL path so a correct lexer alone is not sufficient.
+CASES += [
+    ("USE `{db}_雪`", "q"),
+    ("SELECT DATABASE()", "q"),
+    ("USE `{db}`", "q"),
+    ("DROP DATABASE `{db}_雪`", "q"),
+    ("CREATE TABLE `t_雪é` (id INT PRIMARY KEY, v INT)", "q"),
+    ("INSERT INTO `t_雪é` VALUES (1, 7)", "q"),
+    ("SHOW CREATE TABLE `t_雪é`", "admin_names"),
+    ("SHOW CREATE TABLE t_雪é", "admin_names"),
+    ("SHOW TABLE STATUS LIKE 't_雪é'", "admin_names"),
+    (r"SHOW TABLES LIKE 't\_雪%'", "admin_names"),
+    ('SHOW TABLES LIKE "t_雪é"', "admin_names"),
+    ("SHOW COLUMNS FROM `t_雪é`", "admin_names"),
+    ("DESCRIBE `t_雪é`", "admin_names"),
+    ("SHOW INDEX FROM `t_雪é`", "admin_names"),
+    ("BEGIN", "q"),
+    ("SAVEPOINT `sp_雪é`", "q"),
+    ("UPDATE `t_雪é` SET v = 8 WHERE id = 1", "q"),
+    ("ROLLBACK TO SAVEPOINT `sp_雪é`", "q"),
+    ("SELECT v FROM `t_雪é` WHERE id = 1", "q"),
+    ("RELEASE SAVEPOINT `sp_雪é`", "q"),
+    ("ROLLBACK", "q"),
+    ("SET @`名_雪` = 'é''雪', @tail = 2", "q"),
+    ("SELECT @`名_雪`, @tail", "q"),
+    ("CREATE TABLE `q_雪'fin` (id INT PRIMARY KEY)", "q"),
+    ("SHOW CREATE TABLE `q_雪'fin`", "admin_names"),
+    ("SHOW TABLE STATUS LIKE 'q_雪''fin'", "admin_names"),
+    (r"SHOW TABLE STATUS LIKE 'q_雪\'fin'", "admin_names"),
+    ("CREATE TABLE `q_雪``fin` (id INT PRIMARY KEY)", "q"),
+    ("SHOW CREATE TABLE `q_雪``fin`", "admin_names"),
+    ("SHOW TABLES LIKE 'q_雪`fin'", "admin_names"),
+    ("CREATE TABLE `p_%雪` (id INT PRIMARY KEY)", "q"),
+    (r"SHOW TABLE STATUS LIKE 'p\_\%雪'", "admin_names"),
+    ("SHOW CREATE TABLE `missing_雪`", "err"),
+    ("SHOW TABLES LIKE '雪", "err"),
+    ("SHOW TABLES LIKE '雪''", "err"),
+    ("SHOW CREATE TABLE `雪", "err"),
+    ("DROP TABLE `t_雪é`", "q"),
+    ("DROP TABLE `q_雪'fin`", "q"),
+    ("DROP TABLE `q_雪``fin`", "q"),
+    ("DROP TABLE `p_%雪`", "q"),
+]
+
+
+# Database DDL affected rows and complete LIKE filtering (issue #149).
+# The ASCII pattern prefix also matches a UTF-8 database name. Double the
+# backslash in SQL to leave one escape for LIKE's literal underscore.
+CASES += [
+    ("SHOW DATABASES LIKE 'information_schema'", "rows"),
+    ("SHOW SCHEMAS LIKE 'information%'", "rows"),
+    ("SHOW DATABASES LIKE 'no_such_database149'", "rows"),
+    ("CREATE DATABASE db149_ascii", "q"),
+    ("CREATE DATABASE IF NOT EXISTS db149_ascii", "q"),
+    ("CREATE DATABASE db149_ascii", "err"),
+    ("CREATE DATABASE IF NOT EXISTS `db149_雪`", "q"),
+    ("CREATE DATABASE IF NOT EXISTS `db149_雪`", "q"),
+    ("CREATE DATABASE `db149_雪`", "err"),
+    ("CREATE SCHEMA db149xother", "q"),
+    ("CREATE SCHEMA IF NOT EXISTS db149xother", "q"),
+    ("SHOW DATABASES LIKE 'db149%'", "rows"),
+    (r"SHOW DATABASES LIKE 'db149\\_%'", "rows"),
+    ("SHOW SCHEMAS LIKE 'db149_ascii'", "rows"),
+    ("SHOW DATABASES LIKE 'db149_missing'", "rows"),
+    ("DROP DATABASE db149_ascii", "q"),
+    ("CREATE DATABASE IF NOT EXISTS db149_ascii", "q"),
+    ("DROP DATABASE db149_ascii", "q"),
+    ("DROP DATABASE IF EXISTS db149_ascii", "q"),
+    ("DROP DATABASE `db149_雪`", "q"),
+    ("DROP SCHEMA db149xother", "q"),
+    ("SHOW DATABASES LIKE 'db149%'", "rows"),
+]
+
 
 # Run on connections with CLIENT_FOUND_ROWS (issue #39): UPDATE reports the
 # rows it matched, and an upsert that changes nothing reports 1.
@@ -1469,6 +1562,7 @@ def setup(conn, db, reference=False):
     for s in SCHEMA + seed():
         if isinstance(s, tuple):
             s = s[1 if reference else 0]
+        s = s.replace("{db}", db)
         r = run(conn, s)
         if r[0] == "err":
             raise SystemExit(f"setup failed: {s}: {r}")
@@ -1491,7 +1585,19 @@ def main():
         ra, rb = run(a, sql), run(b, sql)
         ok = True
         msg = ""
-        if kind == "err":
+        if kind == "admin_names":
+            ok = (ra[0] == rb[0] == "rows"
+                  and rows_equal([(r[0],) for r in ra[1]], [(r[0],) for r in rb[1]], False))
+        elif kind == "plan":
+            def json_plan(r):
+                if r[0] != "rows" or r[2] != ["EXPLAIN"] or len(r[1]) != 1 or len(r[1][0]) != 1:
+                    return False
+                try:
+                    return isinstance(json.loads(r[1][0][0]), dict)
+                except (TypeError, ValueError):
+                    return False
+            ok = json_plan(ra) and json_plan(rb)
+        elif kind == "err":
             # both must fail, with the same MySQL error code
             ok = ra[0] == "err" and rb[0] == "err" and ra[1] == rb[1]
         elif kind == "rows" and (ra[0] != "rows" or rb[0] != "rows"):

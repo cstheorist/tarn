@@ -6,12 +6,130 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
+  across the warmup, limited-I/O and release windows, so fast writers cannot
+  consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).
+  Exact bounded acknowledged/refused-key readback and raw attempt evidence
+  are retained before a failed pressure assertion, without replaying unknown
+  writes. Virtual-time controls exercise the same scheduler and finalizer.
+
+- An engine BUILD could return 1213 after a status notification revoked its
+  transaction cut between successful stages
+  ([#165](https://github.com/cstheorist/tarn/issues/165)). The original BUILD
+  now reacquires the terminal/native cut at pre-effect checkpoints, rereads
+  its receipt and capture, and discards stale sampled pages before recopying.
+  Certified images and the original deadline/reset limit remain intact.
+  Exceptions from a submitted transaction or commit still leave the call;
+  no mutation or uncertain result is replayed.
+
+- An unrelated ALTER could invalidate the lazy registry while an existing
+  serializable stream committed a plain table, causing a definite 1412
+  refusal ([#161](https://github.com/cstheorist/tarn/issues/161)). CommitLocal
+  now binds catalog, capture and pending-definition evidence for every
+  written table inside the original marked transaction before its first
+  write. Applicable metadata changes still conflict through MVCC; active
+  or pending lazy indexes keep the strict path. The global registry stays
+  stale, and SQL COMMIT is never replayed.
+
+- RF3 storage fixtures refresh volatile lazy capture/quota readiness at an
+  ordinary empty entry before comparing exact durable totals
+  ([#165](https://github.com/cstheorist/tarn/issues/165)). The UNKNOWN probe
+  holds rebuild while observing the real admission guard. Engine-copy
+  timeouts retain the original single BUILD result or exception, fiber and
+  job/capture/queue state, and bounded owned-process logs. Live controls
+  preserve the original deadlines and never replay BUILD.
+
+- Shard withdrawal now drains every unresolved participant dependency
+  ([#130](https://github.com/cstheorist/tarn/issues/130)). New promises are
+  fenced when any dependency is draining, and removal counts in-flight,
+  PREPARED and STAGING references across all surviving shards. A participant
+  that released its own locks remains available while another participant
+  still needs it for recovery. Existing receipts and decided completion
+  remain finishable.
+
+- Recovery and garbage collection could be held up by what they cannot
+  resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
+  shard was down, 200 undecided transactions that needed it, the first ones
+  each recovery pass took, kept every newer one from being resolved; and
+  records that could not be collected could fill garbage collection's scan
+  window. Each pass now continues where the previous one stopped,
+  `recovery_workers` fibers resolve transactions at once, and a
+  transaction or a shard that failed waits before it is tried again (up to
+  `recovery_backoff_max`). Garbage collection runs on its own fiber, with
+  its own budget (`gc_interval`, `gc_time_budget`). What recovery does
+  with a transaction, and what garbage collection may delete, are
+  unchanged. `tarn_info().recovery` reports the backlog, the age of its
+  oldest transaction, the shards in backoff and garbage collection's laps;
+  `stats.recovered` counts the participants recovery resolved (it counted
+  the attempts that did not raise). `tla/RecoveryFairness.tla` models the
+  order of the passes, and `lua/test/recovery_faults.sh` stops one of
+  three shards.
+
+- Native-to-Lua autocommit fallback reuses the selected physical connection
+  after a matched handback or cached native unavailability. It no longer
+  advances an even-sized pool twice per write, leaving half its connections
+  unused. Explicit read-only refusals still discover a leader; lost replies
+  remain unknown outcomes and are never replayed
+  ([#155](https://github.com/cstheorist/tarn/issues/155)).
+
+- IPROTO reply integrity ([#128](https://github.com/cstheorist/tarn/issues/128)):
+  malformed frames, unsupported response types and unknown/duplicate SYNCs
+  retire the connection instead of certifying a result. Every length-prefix
+  width is bounded before payload allocation. Pushes retain the pending
+  request's identity, including after caller cancellation. A sent mutation
+  whose reply is invalid remains 1180/40003 and is never replayed.
+
 ### Added
 
 - Define a tested rolling-upgrade/rollback pair with protocol/format
   admission on every new gateway storage connection, explicit native
   fallback diagnostics, and RF3/fsync mixed-version regressions for memtx
   and vinyl. See [rolling upgrades](docs/upgrades.md).
+- Physical per-shard file backups and verified restores with bounded copy
+  rates, owned expiring GC leases and incomplete-directory refusal
+  ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a
+  separately registered replica identity; the seed starts as a voter until
+  an operator verifies WAL catch-up. The agent preserves SQL tuples and
+  protocol metadata, with native/Lua RF3 recovery tests and opt-in scale
+  evidence. This does not provide a coordinated cross-shard SQL snapshot.
+- Source-bound RF3 native-GC crash investigation controls
+  ([#160](https://github.com/cstheorist/tarn/issues/160)), with historical,
+  Lua-only, JIT-off and current-source trials, retained successful/failed
+  logs and crash cores. The original fault remains unexplained; no
+  production fix or successful-repeat-as-fix claim is made. See
+  [the investigation boundary](docs/native-gc-investigation.md).
+
+- Request-specific quorum freshness for default SQL and strong storage
+  reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty
+  transaction establishes the confirmed prefix before data access; a first
+  stream read retains that transaction and its MVCC read set. Existing
+  unmarked ambient transactions are refused without a late refresh.
+  Both engines use the pinned empty-barrier/confirmed-view composition;
+  raw native reads retain local visibility and lazy indexes retain their
+  documented eventual semantics. Replicated transaction completion proves
+  another current prefix before validating the original read set. Immutable
+  clock bounds fence uncertain new votes and garbage collection; decided
+  completion preserves every receipt's timestamp and retention horizon.
+  New gateways require the storage
+  `strong_reads` V1 capability. See [the rollout and trusted
+  configuration boundary](docs/operations.md#strong-reads-and-storage-rollout).
+
+- Distributed transactions spread decision records across active writing
+  participants using a stable hash of the transaction ID
+  ([#132](https://github.com/cstheorist/tarn/issues/132)). Durable shard IDs
+  determine the candidate order; every PREPARE and recovery operation uses
+  the one selected identity. Atomic local commits keep their existing path.
+  Placement models, lost-reply/coordinator-crash tests and a repeated
+  record/WAL/GC benchmark cover the change.
+
+- Query routing diagnostics ([#133](https://github.com/cstheorist/tarn/issues/133)):
+  `EXPLAIN FORMAT=JSON` reports physical access paths, shard/bucket bounds,
+  colocation eligibility and possible global-index participants without
+  executing the query. `SHOW TARN PLAN FOR` diagnoses unbound prepared
+  statements, and bounded `SHOW TARN QUERIES` observations distinguish
+  completed runtime fanout from compile-time constraints.
 
 - An opt-in native primary-key batch prototype
   ([#141](https://github.com/cstheorist/tarn/issues/141)) replaces the Lua
@@ -21,6 +139,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checks missing-key locks, snapshot consistency and complete results;
   the executed budget checks are verified with Verus. See the
   [native storage inventory](docs/native-storage.md).
+
+- Bounded storage RPCs ([#127](https://github.com/cstheorist/tarn/issues/127)):
+  connection/shard/gateway count and byte admission, reserved completion
+  capacity, and deadlines that retire stalled physical connections while
+  preserving cancelled identities and 40001 versus 40003. `SHOW TARN RPCS`
+  and cached status counters expose charges, age, refusals and retirements.
 
 - Online engine replacement ([#57](https://github.com/cstheorist/tarn/issues/57)):
   `ALTER TABLE ... ENGINE=vinyl` or `memtx` copies physical tuples while
@@ -495,6 +619,40 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- Native storage procedures retain their CALL arguments across the yielding
+  freshness barrier. ABI 14/392 enters current policy, space and exact
+  transaction guards through a protected public Lua C API shim, replacing
+  stored LuaJIT FFI callback addresses with reserved zero words. ABI 13/12/11
+  modules use the guarded Lua implementation. The later CI storage SIGSEGV
+  has no proven cause; this API correction is not a demonstrated crash fix.
+- Clock policy and the GC rejection floor persist with the receipt
+  transitions they protect. Retention uses two skew margins, timing policy
+  changes fail closed, and expiring work requires coverage of its relevant
+  logical writers. Clock uncertainty never prevents completion of an
+  already decided transaction. See [verification boundaries](docs/verification.md).
+- Small raw wall corrections within the unchanged drift allowance retain a
+  nondecreasing logical wall and exact nanosecond native mirror. Probes
+  publish one accepted pair; first-fault diagnostics distinguish raw and
+  logical samples. Exact drift/gap checks reject violations hidden by
+  epoch-scale double rounding. Retention assumes a fixed common historical
+  raw-clock band of width the configured skew; probes cannot prove it.
+- Uncertain PREPARE receipt checks return no vote and preserve a borrowed
+  stream. Fresh refusal and GC boundaries recheck current durability
+  eligibility; a concurrent confirmed YES cannot become a contradictory NO.
+
+- Database administration matches MariaDB affected-row counts and result
+  metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
+  CREATE DATABASE reports one row for a new database and zero for an
+  existing IF NOT EXISTS target. SHOW DATABASES LIKE filters
+  `information_schema` too, and includes the pattern in its column name.
+
+- Quoted administrative SQL tokens preserve UTF-8
+  ([#142](https://github.com/cstheorist/tarn/issues/142)): SHOW, USE,
+  savepoints and quoted variable names retain multibyte characters.
+  Doubled quotes and string backslash escapes are decoded without changing
+  the original byte offsets used for SET expressions. Unterminated quoted
+  tokens return syntax error 1064.
 
 - A duplicate PREPARE on a participant without an open stream could vote
   YES from an unconfirmed record, then lose that promise when the original

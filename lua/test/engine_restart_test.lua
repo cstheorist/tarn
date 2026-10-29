@@ -54,12 +54,12 @@ wait('schema/native', function()
     end
     return box.space._tarn_part.index.state ~= nil and box.space._tarn_txn.index.exp ~= nil and
         box.space._tarn_lazy_floor.index.bucket_id ~= nil and box.space._tarn_lazy_usage:get{0} ~= nil and
-        box.space._tarn_meta:get{'shard_id'} ~= nil and tarn.lazy.quota.ready() and
+        box.space._tarn_meta:get{'shard_id'} ~= nil and tarn.lazy.quota.ready() and tarn.clock.status().read_ready and
         (not native or native == '0' or (tarn_info().native or {}).ready == 1)
 end)
 if native and native ~= '0' then
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-    assert(ns.layout == 11 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 312)
+    assert(ns.layout == 14 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 392)
     assert(ffi.offsetof('struct tarn_ns', 'fallbacks') == 304)
 else assert(tarn.cfg.native == false and tarn_info().native == false) end
 print('IDENTITY ' .. json.encode{version = box.info.version, native = tarn_info().native,
@@ -112,7 +112,7 @@ local function audit(extra)
     assert(receipt().phase == 'published' and receipt().cleaned == true)
     assert(box.space._tarn_meta:get{'hold:' .. old_id} == nil)
     assert(box.space._tarn_meta:get{'hold:' .. new_id} == nil)
-    local stale = tarn_select(old_id, 0, {1}, 'EQ', 1)
+    local stale = tarn_select(old_id, 0, {1}, 'EQ', 1, box.NULL, true, true)
     assert(stale[1] == 'error' and stale[2] == 1412, json.encode(stale))
     assert(tarn_info().stats.lock_copy_errors == 0, 'native lock copy differed during restart recovery')
 end

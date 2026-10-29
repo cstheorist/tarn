@@ -1,0 +1,130 @@
+{
+  "archive": {
+    "bytes": 3111239,
+    "regular_members": 1154,
+    "sha256": "10fd37c6141c3b2aba4f1f8abcf58e0fbbd0e0affd68cc3dfbd2adab75ceb2a2",
+    "url": "https://github.com/cstheorist/tarn/releases/download/validation-rf3-fixture-readiness-165-v1/rf3-fixture-readiness-evidence.tar.gz"
+  },
+  "base_commit": "d9f2f0fbb9b072a7b1cf333239e66dbedf4274f6",
+  "final_native_executed_test_inputs": {
+    "test/engine_replication.sh": "19c1ebe28f8375954fedb7069dfbef5ed897fac662d4ab8256d424f49167951c",
+    "test/engine_replication_diagnostics_test.lua": "694d225c78ed3bbe7dfa4f58063ac104113f628c2d81e33aa8a5ce144b11c450",
+    "test/engine_replication_test.lua": "bc0acab3192a1c7927ba3d3b7c1444a7cf7d0a0a8ffdebd86a4166a9082e0cdd",
+    "test/lazy_readiness_control.lua": "ee469c8fecd9a95e09d8b8d0bb0c2fa30629f99a6a4e46e8a46c04b42a7fbcda",
+    "test/lazy_readiness_control.sh": "bfae77d27dfe045b0f70fbdaa46d873907a24fc6cd69b8c409ec99a6a446fe13",
+    "test/lazy_replication.sh": "9232b81b2179de387ae08d1056ffba0abe4f0a58cf50e27c319a7716fdc48b67",
+    "test/lazy_replication_test.lua": "f3211a8dae37d6a10f4bc25eb58e1b69500720045caff73c1246ef94d55d9285"
+  },
+  "issue": 165,
+  "local_source_binding_original_sha256": "d5e1a94623bd21659da3f47344af19af25a69a149237213f3118115c75115310",
+  "package_receipt_url": "https://github.com/cstheorist/tarn/releases/download/validation-rf3-fixture-readiness-165-v1/package-receipt.json",
+  "proof_boundary": "Test-only fixture and diagnostic changes. Existing production Lua, Rust/native and TLA+ inputs are unchanged. Configured outcomes preserve intended negatives, unexpected baseline failure and nonqualifying setup discovery separately. Full local Lua matrix predates only cleanup-status propagation in the two controllers; final native matrix uses final controllers. Final repository CI is a separate required gate, not asserted by this immutable local packet. The historical unlogged copy failure is not assigned a cause. No child-OOM census or performance claim.",
+  "runs": [
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 56,
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "label": "native-unchanged",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 56,
+      "scope": "Unchanged main, native: complete engine and lazy RF3 memtx/Vinyl suites."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 20,
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "label": "lua-unchanged-failure",
+      "outcome_as_configured": "retained_baseline_failure",
+      "owned_container_absent": true,
+      "printed_ok_lines": 22,
+      "scope": "Launched as a positive unchanged-main Lua baseline; failed the original UNKNOWN fixture probe after both engine suites. Worker recovery before admission was not instrumented in this historical execution."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 0,
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "label": "preload-setup-discovery",
+      "outcome_as_configured": "nonqualifying_setup",
+      "owned_container_absent": true,
+      "printed_ok_lines": 1,
+      "scope": "First preload preparation failed to release a unique held notification before the intended stale-cache oracle; excluded from reproduction and positive counts."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 0,
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "label": "lazy-baseline-negative",
+      "outcome_as_configured": "expected_negative",
+      "owned_container_absent": true,
+      "printed_ok_lines": 1,
+      "scope": "Original exact assertions plus notification-release instrumentation: actual initial production callbacks after confirmed PREPARE/CAS, then original quota/capture assertion fails."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 40,
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "label": "lazy-native-held-positive",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 40,
+      "scope": "Fixed native held-notification memtx/Vinyl suites, 40 printed checks. Before cleanup status propagation; exact runtime source hashes retained."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 6,
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "label": "copy-native-binding-positive",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 6,
+      "scope": "Real pre-copy source-definition refusal retained without replay, both engines, six printed checks. Earlier controller before log-tail/status refinements."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 114,
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "label": "lua-fixed-full",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 114,
+      "scope": "Complete fixed Lua matrix: normal engine/lazy failover, real source-binding and synthetic exception/stall observations, held-notification lazy suite. 114 printed checks /48 completed sections. Frozen before the two cleanup status changes."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 1,
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "label": "copy-vinyl-baseline-negative",
+      "outcome_as_configured": "expected_negative",
+      "owned_container_absent": true,
+      "printed_ok_lines": 1,
+      "scope": "Original Vinyl driver with the same wrong private old_ver times out blindly. Separate read-only observer records exactly one real 1412 response, unchanged source/job and no shadow/receipt."
+    },
+    {
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 114,
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "label": "native-fixed-final",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 114,
+      "scope": "Complete final native matrix with reviewed final controllers: 114 printed checks /48 completed sections, both engines, normal and held-notification failover plus all three diagnostic controls."
+    }
+  ],
+  "schema_version": 1,
+  "summary_sha256": "ece77f55a11347e7b9885e58f26570169891988b569bafc2ebf8bc2fee793ca5",
+  "unchanged_production_inputs": {
+    "lua_directory_production_files": 8,
+    "native_source_config_files": 86,
+    "proof_inputs": 317
+  }
+}
