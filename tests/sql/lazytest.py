@@ -119,6 +119,94 @@ class T:
         q(c, "SET SESSION tarn_lazy_wait_timeout=5")
         wait_empty(self.nodes)
 
+    def consistency(self, c, sql, selected, reason=None):
+        plan = json.loads(q(c, "EXPLAIN FORMAT=JSON " + sql)[0][0])["plan"]
+        policy = plan["read_consistency"]
+        assert policy["selected"] == selected, policy
+        if reason is not None:
+            assert policy["reason"] == reason, policy
+        return policy
+
+    def test_consistency_override_retains_history_and_prepared_plan(self):
+        with self.table("t_policy") as c, self.c() as other:
+            sql = "SELECT id,n FROM t_policy WHERE k=7 ORDER BY n,id"
+            q(c, "INSERT INTO t_policy VALUES (1,1,7,1,'old'),(2,2,7,2,'kept')")
+            self.caught_up(c)
+            assert self.lazy(c, sql) == ((1, 1), (2, 2))
+            create = q(c, "SHOW CREATE TABLE t_policy")
+            q(c, "SET tarn_lazy_read_your_writes=OFF")
+            q(c, "PREPARE policy_q FROM 'SELECT id,n FROM t_policy WHERE k=? ORDER BY n,id'")
+            q(c, "SET @k=7")
+            pause(self.nodes)
+            try:
+                q(c, "UPDATE t_policy SET k=8 WHERE tenant_id=1 AND id=1")
+                q(c, "INSERT INTO t_policy VALUES (3,3,7,3,'new')")
+                # The obsolete membership is rejected; the newly matching
+                # row has no delivered candidate and is explicitly absent.
+                assert self.lazy(c, "EXECUTE policy_q USING @k") == ((2, 2),)
+                assert self.lazy(c, sql + " LIMIT 1 OFFSET 1") == ()
+                self.consistency(c, sql, "eventual")
+                touched = stat(c, "Tarn_lazy_session_touched_buckets")
+                assert touched >= 2, "fixture needs cumulative source buckets"
+                # Another session's causal barrier has no own writes to
+                # wait for. It cannot turn an eventual query into strong SQL.
+                q(other, "SET tarn_lazy_read_your_writes=ON")
+                assert self.lazy(other, sql) == ((2, 2),)
+                assert q(other, "SELECT @@tarn_lazy_consistency") == (("eventual",),)
+
+                q(c, "SET SESSION tarn_lazy_consistency='STRONG'")
+                q(c, "SET tarn_lazy_read_your_writes=ON,tarn_lazy_wait_timeout=0")
+                self.consistency(c, sql, "strong", "session_strong_policy")
+                before = stat(c, "Tarn_lazy_reads")
+                # Same prepared statement and cached physical plan, new
+                # execution-time policy. No outbox wait/rebuild is needed.
+                assert q(c, "EXECUTE policy_q USING @k") == ((2, 2), (3, 3))
+                assert q(c, sql + " LIMIT 1 OFFSET 1") == ((3, 3),)
+                assert q(c, "SELECT id FROM t_policy WHERE k=8") == ((1,),)
+                assert stat(c, "Tarn_lazy_reads") == before
+                assert stat(c, "Tarn_lazy_session_touched_buckets") == touched
+                assert q(c, "SHOW CREATE TABLE t_policy") == create
+                # The override selects the ordinary isolation contract,
+                # including READ COMMITTED, rather than a new snapshot mode.
+                q(c, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                assert q(c, sql) == ((2, 2), (3, 3))
+                q(c, "SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                q(c, "SET tarn_lazy_consistency='eventual'")
+                self.consistency(c, sql, "eventual")
+                try:
+                    q(c, "EXECUTE policy_q USING @k")
+                except pymysql.MySQLError as e:
+                    assert e.args[0] == 1205, e
+                else:
+                    raise AssertionError("policy switch discarded unfulfilled catch-up history")
+                assert stat(c, "Tarn_lazy_session_touched_buckets") == touched
+                q(c, "BEGIN")
+                self.consistency(c, sql, "strong", "transaction")
+                assert q(c, sql) == ((2, 2), (3, 3))
+                q(c, "ROLLBACK")
+                self.consistency(c, sql + " FOR UPDATE", "strong", "locking_read")
+                assert q(c, sql + " FOR UPDATE") == ((2, 2), (3, 3))
+            finally:
+                q(c, "ROLLBACK")
+                resume(self.nodes)
+            self.caught_up(c)
+            assert self.lazy(c, "EXECUTE policy_q USING @k") == ((2, 2), (3, 3))
+            assert stat(c, "Tarn_lazy_session_touched_buckets") == 0
+            q(c, "DEALLOCATE PREPARE policy_q")
+
+    def test_consistency_does_not_activate_ordinary_indexes(self):
+        with self.table("t_plain_policy", lazy=False) as c:
+            q(c, "INSERT INTO t_plain_policy VALUES (1,1,7,1,'plain')")
+            sql = "SELECT id FROM t_plain_policy WHERE k=7"
+            before = stat(c, "Tarn_lazy_reads")
+            self.consistency(c, sql, "strong")
+            assert q(c, sql) == ((1,),)
+            assert stat(c, "Tarn_lazy_reads") == before
+            q(c, "SET tarn_lazy_consistency='strong'")
+            assert q(c, "SELECT @@tarn_lazy_consistency") == (("strong",),)
+            q(c, "SET tarn_lazy_consistency=DEFAULT")
+            assert q(c, "SHOW VARIABLES LIKE 'tarn_lazy_consistency'") == (("tarn_lazy_consistency", "eventual"),)
+
     def test_bootstrap_and_next_writes(self):
         with self.table("t_boot", lazy=False) as c:
             q(c, "INSERT INTO t_boot VALUES (1,1,7,1,'a'),(2,2,7,2,'b'),(3,3,NULL,3,'c')")
@@ -222,6 +310,10 @@ class T:
         with self.table("t_session") as c:
             assert q(c, "SELECT @@tarn_lazy_read_your_writes,@@tarn_lazy_wait_timeout") == ((0, 5),)
             for sql, expected in [("SET GLOBAL tarn_lazy_read_your_writes=ON", 1228),
+                                  ("SET GLOBAL tarn_lazy_consistency='strong'", 1228),
+                                  ("SET tarn_lazy_consistency='causal'", 1231),
+                                  ("SET tarn_lazy_consistency=1", 1231),
+                                  ("SET tarn_lazy_consistency=NULL", 1231),
                                   ("SET GLOBAL tarn_lazy_wait_timeout=5", 1228),
                                   ("SET tarn_lazy_wait_timeout=-1", 1231),
                                   ("SET tarn_lazy_wait_timeout=61", 1231),

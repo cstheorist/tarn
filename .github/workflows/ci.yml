@@ -98,6 +98,8 @@ jobs:
         run: cargo test --release --workspace
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
+      - name: Lazy contract manifest links
+        run: python3 tests/contracts/check.py
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
@@ -107,6 +109,8 @@ jobs:
           ci/annotate.sh decision bash tests/decision.sh
           TARN_NATIVE=0 ci/annotate.sh decision-lua bash tests/decision.sh
           ENGINE=vinyl ci/annotate.sh decision-vinyl bash tests/decision.sh
+      - name: Lazy read policy under RF3 fsync and leader loss
+        run: ci/annotate.sh lazy-policy bash tests/lazypolicy.sh
       - name: Start a 2-shard cluster (two SQL servers)
         run: TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
@@ -202,6 +206,20 @@ jobs:
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true
+
+      - name: Retain lazy policy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lazy-policy-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          path: |
+            /tmp/tarn-lazy-policy.*/*.sha256
+            /tmp/tarn-lazy-policy.*/*.txt
+            /tmp/tarn-lazy-policy.*/*/*.log
+            /tmp/tarn-lazy-policy.*/*/*.json
+            /tmp/tarn-lazy-policy.*/*/*.jsonl
+            /tmp/tarn-lazy-policy.*/*/*.pid
 
   tla:
     if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost

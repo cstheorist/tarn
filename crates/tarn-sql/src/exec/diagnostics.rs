@@ -8,6 +8,12 @@ use serde_json::{json, Value as Json};
 const MAX_KEYS: usize = 256;
 const MAX_ACCESSES: usize = 64;
 
+pub(crate) struct SessionContext<'a> {
+    pub committed: bool,
+    pub buffered: &'a BTreeSet<u32>,
+    pub lazy: crate::lazy::ReadContext,
+}
+
 fn static_expr(e: &Expr, params: &[Value]) -> bool {
     match e {
         Expr::Lit(_) => true,
@@ -35,6 +41,7 @@ struct Context<'a, 'c> {
     cx: &'a EvalCtx<'c>,
     committed: bool,
     buffered: &'a BTreeSet<u32>,
+    lazy: crate::lazy::ReadContext,
 }
 
 impl Context<'_, '_> {
@@ -189,12 +196,17 @@ impl Context<'_, '_> {
         }
     }
 
-    fn select(&self, p: &SelectPlan) -> Json {
+    fn select(&self, p: &SelectPlan, dml_source: bool) -> Json {
+        let consistency = if dml_source {
+            serde_json::json!({"requested":self.lazy.consistency.name(),"selected":"strong","reason":"dml_source"})
+        } else {
+            self.lazy.diagnostics(p)
+        };
         let mut steps = Vec::new();
         let mut source = &p.source;
         loop {
             if steps.len() == MAX_ACCESSES {
-                return json!({"accesses":[],"routing":self.unknown("diagnostic table budget exceeded"),"colocation":{"eligible":null,"reason":"diagnostic table budget exceeded"}});
+                return json!({"accesses":[],"read_consistency":consistency,"routing":self.unknown("diagnostic table budget exceeded"),"colocation":{"eligible":null,"reason":"diagnostic table budget exceeded"}});
             }
             match source {
                 Source::Dual => break,
@@ -242,12 +254,12 @@ impl Context<'_, '_> {
                 fallback
             }
         };
-        json!({"accesses":accesses,"routing":routing,
+        json!({"accesses":accesses,"routing":routing,"read_consistency":consistency,
             "colocation":colocation,
             "runtime_alternative_access":p.ordered.as_ref().and_then(|path| steps.first().map(|(a,_,_)| json!({
                 "routing":self.path(&a.table,path,0),
                 "condition":"runtime row-count samples may choose the ordered index for LIMIT"}))),
-            "lazy_index_alternative":crate::lazy::eligible(p).then(|| self.unknown(
+            "lazy_index_alternative":(!dml_source && self.lazy.strong_reason(p).is_none()).then(|| self.unknown(
                 "an eligible nonlocking autocommit query may use lazy index routing and subsequent base-row fetches; this plan shows the strong path")),
             "runtime_participants":null,
             "runtime_observations":"SHOW TARN QUERIES reports completed foreground routing, separately from these estimates"})
@@ -357,8 +369,7 @@ pub(crate) fn render(
     stmt: &Stmt,
     version: u64,
     cx: &EvalCtx<'_>,
-    committed: bool,
-    buffered: &BTreeSet<u32>,
+    session: SessionContext<'_>,
 ) -> SqlResult<Json> {
     let mut live: Vec<u32> = cluster.live_shards().map(|p| cluster.shards[p].id).collect();
     live.sort_unstable();
@@ -367,11 +378,12 @@ pub(crate) fn render(
         map: cluster.bucket_map(),
         live,
         cx,
-        committed,
-        buffered,
+        committed: session.committed,
+        buffered: session.buffered,
+        lazy: session.lazy,
     };
     let (kind, body) = match stmt {
-        Stmt::Select(p) => ("select", context.select(p)),
+        Stmt::Select(p) => ("select", context.select(p, false)),
         Stmt::Update(p) => (
             "update",
             json!({"accesses":[context.access(&p.access, context.committed)],
@@ -396,7 +408,7 @@ pub(crate) fn render(
                 "conflict_write_routing":if p.replace || !p.on_dup.is_empty() {
                     Some(context.unknown("REPLACE or ON DUPLICATE KEY may also change existing rows and old global entries"))
                 } else { None },
-                "source":match &p.source {InsertSource::Select(p,_)=>Some(context.select(p)),_=>None}}),
+                "source":match &p.source {InsertSource::Select(p,_)=>Some(context.select(p,true)),_=>None}}),
             )
         }
         _ => {

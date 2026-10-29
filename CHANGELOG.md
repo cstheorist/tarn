@@ -6,6 +6,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `SET SESSION tarn_lazy_consistency='strong'` selects ordinary SQL reads
+  on lazy-index tables without rebuilding indexes (#182). The default
+  `eventual` policy retains explicit schema opt-in; prepared statements
+  observe changes at execution, EXPLAIN reports consistency/fallback
+  reasons, and switching policies preserves session catch-up obligations.
+
 ### Fixed
 
 - An engine BUILD could return 1213 after a status notification revoked its
