@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A quiescent whole-cluster backup/restore workflow with durable replica fences,
+  complete membership/routing and transaction/DDL/lazy drain checks, source-bound
+  physical manifests, exact isolated restore audits and guarded activation
+  ([#137](https://github.com/cstheorist/tarn/issues/137)). Interrupted copies and
+  restores remain unavailable; source release requires explicit process restart.
+  See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
+
 ### Fixed
 
 - Preserve 1180/40003 for native commit uncertainty, missing write DATA and

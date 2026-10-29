@@ -117,6 +117,18 @@ jobs:
           python3 tests/test_backup.py
           TARN_NATIVE="$PWD/target/release/libtarn_storage.so" python3 tests/backup.py --work /tmp/tarn-backup-native --output /tmp/tarn-backup-native.json --functional --repetitions 1
           TARN_NATIVE=0 python3 tests/backup.py --work /tmp/tarn-backup-lua --output /tmp/tarn-backup-lua.json --functional --repetitions 1
+      - name: Cluster-consistent backup and isolated restore
+        run: |
+          python3 tests/test_cluster_backup.py
+          for engine in memtx vinyl; do
+            for mode in native lua; do
+              native="$PWD/target/release/libtarn_storage.so"
+              [ "$mode" != lua ] || native=0
+              TARN_NATIVE="$native" python3 tests/cluster_backup.py \
+                --work "/tmp/tarn-cluster-backup-$engine-$mode" --engine "$engine" \
+                --output "/tmp/tarn-cluster-backup-$engine-$mode.json"
+            done
+          done
       - name: Decision placement, lost PREPARE reply and coordinator crash
         run: |
           ci/annotate.sh decision bash tests/decision.sh
@@ -210,6 +222,18 @@ jobs:
         with:
           name: vinyl-pressure-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/tarn-vinylpressure-*/*
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Retain cluster backup and restore evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cluster-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-cluster-backup-*.json
+            /tmp/tarn-cluster-backup-*/*.log
+            /tmp/tarn-cluster-backup-*/backup/*.json
+            /tmp/tarn-cluster-backup-*/restore/*.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Cluster logs
