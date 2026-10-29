@@ -156,7 +156,7 @@
     {
       "id": "bounded_warnings",
       "classification": "equivalent",
-      "description": "Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default).",
+      "description": "Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list.",
       "test": "tests/sql/contracts.py::case_bounded_warnings"
     }
   ]

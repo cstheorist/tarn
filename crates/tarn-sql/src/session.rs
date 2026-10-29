@@ -1025,7 +1025,7 @@ impl Session {
         if !self
             .prepared
             .get(&id)
-            .is_some_and(|p| matches!(p.admin, Some(Admin::ShowWarnings { .. })))
+            .is_some_and(|p| matches!(&p.admin, Some(Admin::ShowWarnings { .. }) | Some(Admin::SelectVars(_))))
         {
             self.warnings.clear();
             self.omitted_warnings = 0;
@@ -3044,6 +3044,10 @@ impl Session {
                     columns.push(Column::new(alias, ty));
                     row.push(v);
                 }
+                // SELECT @@warning_count reads the previous total, then
+                // clears the message list. SHOW WARNINGS preserves it.
+                self.warnings.clear();
+                self.omitted_warnings = 0;
                 rows_out(columns.into(), vec![row])
             }
             Admin::ShowDatabases { like } => {

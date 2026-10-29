@@ -393,13 +393,15 @@ def case_warnings_errors(s):
 def case_bounded_warnings(s):
     c=s.fresh()
     affected=s.sql(c,"INSERT IGNORE INTO t VALUES "+",".join("(1,99,99)" for _ in range(70)))
-    total=q(c,"SELECT @@warning_count")
     messages=q(c,"SHOW WARNINGS")
+    total=q(c,"SELECT @@warning_count")
+    cleared=q(c,"SHOW WARNINGS")
     assert affected==0 and total==[[70]] and len(messages)==64, (affected,total,len(messages))
     assert all(row[:2]==["Warning",1062] for row in messages), messages
+    assert cleared==[], cleared
     rows=s.sql(c,"SELECT id,v FROM t ORDER BY id")
     assert rows==[[1,10],[2,20]], rows
-    return [affected,total,len(messages),rows]
+    return [affected,total,len(messages),cleared,rows]
 
 
 def case_rc_paged_snapshot(s):

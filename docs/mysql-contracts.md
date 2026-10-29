@@ -34,7 +34,7 @@ Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8m
 | `lock_upgrade` | equivalent | Two READ COMMITTED shared-lock upgrades choose one 1213/40001 victim; only the survivor increment commits. |
 | `local_commit` | equivalent | Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values; Tarn runtime counters prove the local path. |
 | `distributed_commit` | equivalent | Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values across shards; Tarn runtime counters prove two-phase commit. |
-| `bounded_warnings` | equivalent | Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default). |
+| `bounded_warnings` | equivalent | Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (the pinned MySQL default). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list. |
 
 Each history runs with data statements sent as ordinary text and as binary prepared executions; settings and transaction control use text in both histories. `CLIENT_FOUND_ROWS` is checked in both modes. A registered equivalent case must match both servers and its explicit expected result. Difference/refusal cases assert each server's stated behavior rather than accepting any mismatch. A failed case remains in the result file and fails the job.
 
