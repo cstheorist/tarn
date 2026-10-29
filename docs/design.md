@@ -1093,9 +1093,36 @@ mark live in `_tarn_meta['clock:policy:1']`. Each destructive GC chunk
 advances that mark in the same transaction as its deletions; restart and
 promotion cannot lower it. Old records also retain at least
 `record.ts + A + 2*S`, even if their stored expiry used one margin. Policy
-changes and proven clock discontinuities fail closed. Initial/common-mode
-clock bounds, historical rates and all timestamp issuers remain external
-premises: local monitoring and peer agreement cannot prove those facts.
+changes and clock discontinuities outside the observation allowance fail
+closed.
+
+The clock premise covers the entire relevant retention/admission history:
+there are fixed common constants `L` and `U`, with `U - L = S`, such that
+every relevant storage clock and timestamp issuer's raw wall at
+nondecreasing reference time `r` lies in `[r + L, r + U]`. An absolute error
+bound of `S/2` about the same reference is sufficient; an error of `±S` is
+not that bound. Current pairwise agreement alone does not establish this
+fixed historical band. These are trusted deployment facts, including
+initial/common-mode bounds and issuer history; neither quorum replies nor
+the peer sampler proves them.
+
+An observation compares raw wall displacement from the **previous logical
+wall** with monotonic elapsed time, using the unchanged drift allowance.
+Lua checks exact uint64 nanosecond drift and gap budgets, each
+`floor(configured_seconds * 1e9)`, with overflow-free subtractions; the old
+seconds drift check remains an additional conservative rejection.
+Monotonic time must not decrease. After the raw persisted-floor check,
+accepted wall time becomes `max(previous_logical, raw_wall)`, including its
+exact integer nanoseconds. A small raw backward correction may therefore
+be accepted without decreasing the published wall; repeated corrections
+remain measured against the logical maximum. The maximum stays in the
+same fixed reference band: the raw sample supplies its lower bound, and
+the previous logical wall's upper bound cannot increase relative to a
+nondecreasing reference. Logical clocks thus retain pairwise skew at most
+`S`, preserving the `A + 2*S` retention argument. `LogicalClockExpiry`
+checks that refinement and controls for an ungrounded floor and a broken
+raw-clock band. It does not establish the external clock premise.
+
 Installing a policy does not reconstruct protocol history already lost by
 an older deployment. [Operations](operations.md#clock-health-and-record-retention)
 describes the failure states and rollout limits.
@@ -1922,6 +1949,15 @@ there a server that finds the job abandoned finishes it forward), and
 writes the new membership on every shard (`tarn_members_set` only raises
 the version) before the job ends; a move to the new shard is a job too, so
 it begins once every shard has the new version, as the model's moves do.
+Installing a new version invalidates the local clock policy/evidence.
+After the confirmed membership commit and outside the bucket-state latch,
+`tarn_members_set` reloads confirmed policy/H and checks current local read
+health before acknowledging. The existing-version branch does the same,
+so readiness recovery does not depend on the background clock worker.
+This does not certify remote writers or replace subsequent read barriers.
+A failed post-commit readiness step reports `1180` with the recorded
+version, rather than implying no effect; the existing job must be inspected
+and resumed. An ambient transaction is refused before membership effects.
 A transaction takes its server's version when it begins (`Txn::mver`): a
 server adds a joining shard to its list before it takes the shard's
 version, and a scan reads every shard on the list, so the transaction's
@@ -1988,14 +2024,18 @@ a stream of moves would keep it waiting.
 ## 3. Verus
 
 `crates/tarn-verified` is checked with Verus (`verus --crate-type=lib
-src/lib.rs`: **138 verified, 0 errors**) and compiled into the server and the
+src/lib.rs`: **140 verified, 0 errors**) and compiled into the server and the
 native module as plain Rust. What is proven:
 
 * **Native clock arithmetic** (`clock.rs`). The shared executable
-  `observation_ok` body exactly checks nondecreasing wall/monotonic inputs,
-  the elapsed observation-gap bound and absolute elapsed-time drift, without
-  integer overflow/underflow. It does not certify clock sources, remote
-  offsets, persisted policy, quorum availability or record-GC safety.
+  `observation_ok` body checks nondecreasing monotonic input, the observation
+  gap and raw-wall displacement from the previous logical wall against the
+  drift allowance, including bounded negative displacement. `logical_wall`
+  returns the exact maximum; a lemma preserves an absolute reference band
+  under a nondecreasing reference. Integer arithmetic cannot overflow or
+  underflow. These proofs do not establish a common band across clocks,
+  Lua's FFI integer/seconds checks and publication, clock sources, remote offsets,
+  persisted policy, quorum availability or record-GC safety.
 * **Routing** (`route.rs`). `crc32c_update` equals a bitwise CRC-32C
   specification (`crc_bytes`) for any input; `bucket_from_crc` returns a
   bucket in `1..=bucket_count`; `shard_of_bucket` returns a shard in
@@ -2255,6 +2295,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LockReloadNoCopy | violates NativeFindsLocks | 166 | 395 | 5 | 00s | 5 |
 | Bug_LockReplyIgnoreDisconnect | violates ReturnedRowsLocked | 184 | 438 | 12 | 00s | 10 |
 | Bug_LockReplyRelabelGeneration | violates ReturnedRowsLocked | 187 | 436 | 12 | 00s | 11 |
+| Bug_LogicalClockFloorAdvance | violates NoFalseNO | 134 | 194 | 4 | 00s | 4 |
+| Bug_LogicalClockRawBound | violates NoFalseNO | 4028 | 12533 | 7 | 00s | 7 |
 | Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
 | Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
 | Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
@@ -2357,6 +2399,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Local_ROValidate | no errors | 66348 | 377760 | 19 | 13s |  |
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
+| LogicalClockExpiry | no errors | 85476 | 387918 | 19 | 01s |  |
 | Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
 | Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
 | Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |

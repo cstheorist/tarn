@@ -81,6 +81,7 @@ of workload, fault budget and options. The names say what is checked:
 | `LockReplyOwnership` | a yielding locking RPC returns rows only under its original observed role/generation and live session |
 | `RecordExpiryClock` / `RecordExpiryPolicy` | a two-skew retention margin under varying bounded clock offsets, plus local persisted-policy/high-water admission after GC |
 | `CompletionRetention` | decided finishing preserves inherited receipt timestamps/horizons despite an unknown clock, preventing GC and a contradictory fresh abort after reboot |
+| `LogicalClockExpiry` | bounded raw corrections produce monotone logical clocks under a fixed common reference band, preserving the two-skew expiry/admission contract |
 | `Fairness` | bounded pass ordering reaches eligible records beyond a fixed stuck set; it does not change record lifecycle or timing guards |
 | `DecisionPlacement` / `Placement_*` | stable decision identity among frozen writers, plus commit/GC checks with another transaction-specific placement |
 | `PipelineAdmission` | connection/shard/gateway resource charges and uncertainty survive cancellation and physical retirement |
@@ -1461,6 +1462,57 @@ age limit, or omit/provide a future timestamp. Each permits a fresh PREPARE
 after its old record was forgotten. These are premise counterexamples, not
 a proof that a runtime clock monitor detects every such violation.
 
+`LogicalClockExpiry.tla` checks a sufficient clock refinement for accepting
+small raw backward corrections. Monotonic time still cannot decrease;
+the accepted raw displacement is compared with the **previous logical**
+wall value using the unchanged drift and observation-gap bounds. Publication
+uses `max(previous_logical, accepted_raw)`. Comparing only consecutive raw
+samples would permit a sequence of individually small corrections to move
+farther behind the retained logical floor.
+
+The raw-clock premise is a **fixed common reference band of width S**:
+for every relevant storage node and timestamp issuer, throughout the
+issue/retention/admission history, `real + L <= raw <= real + U`, with
+constant `U-L = S` and nondecreasing reference time. An absolute error bound
+of `S/2` about one trusted reference is sufficient. Absolute error `S`
+would imply only pairwise `2*S`, and a changing contemporaneous pairwise
+raw bound alone does not establish the fixed-band premise. This is an
+explicitly stronger external premise; quorum, current offsets and peer
+agreement cannot prove common-mode or historical reference-clock bounds.
+
+If the previous logical value was at most `previous_real + U`, it is still
+at most `current_real + U`. The accepted current raw value supplies both
+the current lower bound and its own upper bound. Their maximum therefore
+stays in the same band. Fresh logical observations retain pairwise bound
+`S`, so the existing issuer/holder/participant argument still uses `A+2*S`.
+Neither the configured skew nor drift allowance is widened. A cached old
+logical sample has no current lower-band guarantee until another accepted
+observation; peer interval/TTL validity and historical issuer bounds remain
+separate trusted obligations. Logical certificate checks retain their
+existing `S` allowance and may refuse a pair after clamping.
+
+The finite fixture has reference/monotonic time 0–8, issuer timestamp
+0–2 issued before the record write, `A=2`, `S=2`, drift allowance 2 and
+maximum observation gap 3 in symbolic units. Holder/peer observations are
+asynchronous. GC and fresh admission require their respective current
+accepted samples. An accepted path includes raw 2 at time 0, then raw 1
+at time 1: logical time stays 2 while the raw/previous-logical drift is
+exactly -2. The positive checks `LogicalBand` and `NoFalseNO` in 85,476
+states, depth 19.
+
+Two controls retain the same local drift/gap checks but add an ungrounded
+post-check logical floor or violate the fixed raw reference band through
+finite accepted steps. Both reach actual receipt GC followed by a new
+abort/NO over committed data. They fail `NoFalseNO` in 134 states/depth 4
+and 4,028 states/depth 7; the intermediate band assertion is omitted in
+these controls so it does not stop their traces early. These are timing-
+contract boundary consequences, not complete Lua/runtime counterexamples
+or a claim that production peer certificates accept those clocks. The
+refinement also requires publication of the same accepted logical-wall/
+monotonic pair; a second unvalidated raw sample cannot certify it. Clock
+source quality, certification, rebaseline availability, native API/WAL
+semantics and runtime liveness are outside this bounded check.
+
 `RecordExpiryPolicy.tla` checks local protection after local GC. Persist an
 immutable policy and atomically advance a wall high-water mark with each
 destructive GC chunk. Fresh absent-record state creation uses
@@ -1531,7 +1583,7 @@ and user/protocol writes are atomically durable. It does not establish
 initial clock history, health certification, fault persistence before a
 crash, or native WAL semantics.
 
-The seven positive outcomes are:
+The eight positive outcomes are:
 
 | Configuration | Distinct states | Depth | Principal invariant |
 |---|---:|---:|---|
@@ -1542,17 +1594,18 @@ The seven positive outcomes are:
 | `RecordExpiryClock` | 1,092 | 9 | `NoResurrectedPrepare` |
 | `RecordExpiryPolicy` | 1,368 | 23 | `NoUnsafeAdmission` |
 | `CompletionRetention` | 672 | 25 | `NoContradictoryReopen` |
+| `LogicalClockExpiry` | 85,476 | 19 | `LogicalBand`, `NoFalseNO` |
 
-All 33 focused configurations (seven positive and 26 expected controls) are
+All 36 focused configurations (eight positive and 28 expected controls) are
 generated and included in the default list. Their recorded outcomes are
-included in the validated 243-case TLC union below; that evidence is not a
+included in the validated 246-case TLC union below; that evidence is not a
 claim that the entire runtime CI suite passed. Per-control states and violated invariants are
 in the generated [design results table](design.md#51-model-checking).
 Run only these checks with the same outcome checker as CI:
 
 ```sh
-configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention)
-for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention; do
+configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention LogicalClockExpiry)
+for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention LogicalClock; do
   for cfg in tla/Bug_${family}*.cfg; do
     name=${cfg#tla/}
     configs+=("${name%.cfg}")
@@ -1671,10 +1724,10 @@ it does not establish an RF3 performance or operational advantage.
 
 ### Configuration counts
 
-The merged default list contains 243 unique configurations: 65 positive
-outcomes and 178 expected broken/trade-off outcomes. The 250 generated
+The merged default list contains 246 unique configurations: 66 positive
+outcomes and 180 expected broken/trade-off outcomes. The 253 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 256 total. Explicit
+placement configurations are maintained directly, for 259 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1685,8 +1738,10 @@ then passed the registered checker with one positive and two expected
 violations. The original 238 model/config inputs and module dispatch were
 checked unchanged, forming a validated 241-case union. Two completion-
 retention cases then passed separately with those 241 model/config inputs
-and dispatch unchanged. Their exact argument union is the current
-243-case default list. This validates the merged TLC inputs without
+and dispatch unchanged, forming 243 cases. Three logical-clock expiry
+cases then passed through the current checker, with all 243 prior model/
+config bytes and dispatch checked unchanged. Their exact argument union
+is the current 246-case default list. This validates the TLC inputs without
 treating the premerge run as evidence for changed models.
 
 ## Verus proofs
@@ -1696,12 +1751,15 @@ builds it with the specifications and proofs erased, and the server uses the
 result. Verus proves:
 
 * **Native clock observation arithmetic** (`clock.rs`): `observation_ok`
-  exactly decides that neither clock moved backward, the monotonic elapsed
-  gap is within its bound and the absolute difference of wall/monotonic
-  elapsed time is within the drift allowance. All subtractions are free of
-  overflow/underflow for every `u64` input. The executable body is shared
-  with native admission. This is arithmetic, not certification of clock
-  sources, remote offsets, persisted policy, quorum health or GC safety.
+  exactly decides monotonic nondecrease, a bounded observation gap and
+  `abs((raw_wall - previous_logical_wall) - elapsed_mono) <= max_drift`,
+  including bounded raw backward corrections. All subtractions are free of
+  overflow/underflow for every `u64` input. `logical_wall` returns exactly
+  the maximum of the previous logical and raw values. A lemma preserves
+  one clock's absolute band around a nondecreasing reference; it does not
+  derive a pairwise bound from that error parameter. The executable bodies
+  are shared with native admission. These are arithmetic proofs, not clock
+  source, publication, remote-offset, persisted-policy, quorum or GC proofs.
 * **Native batch budgets** (`batch.rs`): `can_step` permits the next lookup
   exactly while work, rows and bytes each have room. `step` either rejects
   the whole native attempt or charges one work unit, one row for a present
@@ -1767,7 +1825,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 138 verified, 0 errors
+# verification results:: 140 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with

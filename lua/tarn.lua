@@ -7076,9 +7076,10 @@ end
 -- the SQL server that adds or removes a shard (a job).
 function tarn_members_set(m)
     writable()
+    if box.is_in_txn() then return {'error', 1210, 'Membership update requires its own transaction'} end
     yield_point('members_set')   -- (tests: a join held while it records the membership)
     BK.fresh()
-    return BK.locked(function()
+    local r = BK.locked(function()
         local cur = box.space._tarn_meta:get{'members'}
         local v = cur ~= nil and cur.value.ver or 0
         if (m.ver or 0) <= v then return {OK, v} end
@@ -7089,6 +7090,16 @@ function tarn_members_set(m)
         BK.ver = BK.ver + 1
         return {OK, m.ver}
     end)
+    -- load_members invalidates clock policy/evidence when the version rises.
+    -- Reload the confirmed policy/H outside the bucket latch before replying,
+    -- including an existing-version retry after an earlier readiness failure.
+    -- No peer clock coverage or data barrier is substituted by this reload.
+    local ok, ready = pcall(function() return M.clock.load() and M.clock.read_check() == nil end)
+    if not ok or not ready then
+        return {'error', 1180, string.format('Membership version %s is already recorded and committed; local read readiness '
+                .. 'is unavailable. Inspect or resume the membership DDL job before continuing.', tostring(r[2]))}
+    end
+    return r
 end
 
 -- Whether shard `id` may still be needed to finish a transaction here:

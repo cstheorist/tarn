@@ -16,7 +16,7 @@ local function check(name, yes)
     assert(yes, name); passed = passed + 1; print('  ok   ' .. name)
 end
 local function status(r, s) return type(r) == 'table' and r[1] == s end
-local function new(sync)
+local function new(sync, public_clock)
     n = n + 1
     local meta = box.schema.space.create('clock_meta_' .. n, {
         format = {{'key', 'string'}, {'value', 'map'}}})
@@ -26,8 +26,22 @@ local function new(sync)
     local g = guard.new{cfg = cfg, meta = meta,
         required_peers = function() return sync and {'p1', 'p2'} or {} end,
         can_run = function() return cfg.monitor_allowed ~= false end}
-    assert(g.test_time(1000, 100)[1] == 'ok')
+    if not public_clock then assert(g.test_time(1000, 100)[1] == 'ok') end
     return g, cfg, meta
+end
+-- Stub only the public Lua clock functions for exact integer controls. No
+-- production hook, OS clock change, or background worker is involved.
+local function with_clock64(run)
+    local source = require('clock')
+    local old_wall, old_mono = source.realtime64, source.monotonic64
+    local wall, mono, wall_reads, mono_reads
+    local function set(w, m) wall, mono, wall_reads, mono_reads = w, m, 0, 0 end
+    set(1000000000000ULL, 100000000000ULL)
+    source.realtime64 = function() wall_reads = wall_reads + 1; return ffi.cast('int64_t', wall) end
+    source.monotonic64 = function() mono_reads = mono_reads + 1; return ffi.cast('int64_t', mono) end
+    local ok, err = pcall(run, set, function() return wall_reads, mono_reads end)
+    source.realtime64, source.monotonic64 = old_wall, old_mono
+    assert(ok, err)
 end
 local function cert(g, ids)
     local peers = {}
@@ -173,6 +187,129 @@ check('diagnostic formatting failure cannot prevent the original fault latch and
       guarded and status(rejected, 'clock_unknown') and diagnostic_failure.fault == 'clock moved backward'
       and diagnostic_failure.status().fault_observation == nil
       and status(diagnostic_failure.check(), 'clock_unknown') and not diagnostic_failure.read_native_state())
+with_clock64(function(set, reads)
+    local corrected = new(false, true); assert(corrected.load())
+    set(999875000000ULL, 100125000000ULL)
+    check('a backward raw correction at the unchanged drift boundary retains logical time',
+          corrected.check() == nil and corrected.fault == nil and corrected.status().wall == 1000
+          and corrected.status().accepted_raw_wall_ns == '999875000000')
+    local probe = corrected.probe()
+    local _, native_mono, native_wall = corrected.read_native_state()
+    check('probe status and native mirror publish the same accepted logical pair',
+          probe.wall_ns == corrected.status().wall_ns and probe.mono_ns == corrected.status().mono_ns
+          and native_wall == 1000000000000ULL and native_mono == 100125000000ULL
+          and probe.wall_ns == '1000000000000' and probe.mono_ns == '100125000000')
+    set(999875000000ULL, 100125000000ULL)
+    probe = corrected.probe()
+    local wall_reads, mono_reads = reads()
+    check('one probe takes one validated sample and no later raw sample',
+          wall_reads == 1 and mono_reads == 1 and probe.local_ok and probe.wall == 1000)
+    set(1000000000000ULL, 100000000000ULL)
+    local over = new(false, true); assert(over.load())
+    set(999875000000ULL, 100125000001ULL)
+    check('one nanosecond beyond the negative drift boundary retains the old backward fault',
+          status(over.check(), 'clock_unknown') and over.fault == 'clock moved backward')
+    set(1000000000000ULL, 100000000000ULL)
+    local zero, zero_cfg = new(false, true); zero_cfg.clock_max_drift = 0; assert(zero.load())
+    check('zero drift permits equal raw and logical samples', zero.check() == nil)
+    set(999999999999ULL, 100000000000ULL)
+    check('zero drift still rejects a distinguishable raw backward step',
+          status(zero.check(), 'clock_unknown') and zero.fault == 'clock moved backward')
+end)
+with_clock64(function(set)
+    set(1800000000000000000ULL, 100000000000ULL)
+    local correction = new(false, true); assert(correction.load())
+    set(1799999999999200319ULL, 100000096750ULL)
+    check('the observed 799681ns wall correction with 96750ns monotonic advance stays within drift',
+          correction.check() == nil and correction.fault == nil
+          and correction.status().wall_ns == '1800000000000000000'
+          and correction.status().accepted_raw_wall_ns == '1799999999999200319')
+    set(1800000000000000000ULL, 4000000000000000000ULL)
+    local precision = new(false, true); assert(precision.load())
+    set(1799999999999999999ULL, 4000000000000000000ULL)
+    local before = tonumber(1800000000000000000ULL)
+    check('double-equal wall samples still retain the exact uint64 logical maximum',
+          before == tonumber(1799999999999999999ULL) and precision.check() == nil
+          and precision.status().wall_ns == '1800000000000000000'
+          and precision.status().accepted_raw_wall_ns == '1799999999999999999')
+    set(1799999999999999999ULL, 3999999999999999999ULL)
+    check('double-equal monotonic samples still reject an exact one-nanosecond reversal',
+          tonumber(4000000000000000000ULL) == tonumber(3999999999999999999ULL)
+          and status(precision.check(), 'clock_unknown') and precision.fault == 'clock moved backward')
+end)
+with_clock64(function(set)
+    local epoch_wall, epoch_mono = 1793000000000000000ULL, 4000000000000000000ULL
+    set(epoch_wall, epoch_mono)
+    local boundary = new(false, true); assert(boundary.load())
+    set(epoch_wall - 250000000ULL, epoch_mono)
+    check('epoch-scale exact negative drift at the nanosecond budget remains admissible',
+          boundary.check() == nil and boundary.fault == nil
+          and boundary.status().wall_ns == '1793000000000000000')
+    set(epoch_wall, epoch_mono)
+    local rounded = new(false, true); assert(rounded.load())
+    set(epoch_wall - 250000001ULL, epoch_mono)
+    check('epoch rounding cannot admit a negative drift violation one nanosecond over budget',
+          status(rounded.check(), 'clock_unknown') and rounded.fault == 'clock moved backward'
+          and rounded.status().fault_observation.wall_delta_ns == '-250000001')
+    set(epoch_wall + 129ULL, epoch_mono)
+    local hidden = new(false, true); assert(hidden.load())
+    set(epoch_wall + 129ULL - 250000001ULL, epoch_mono)
+    check('exact negative drift refusal also covers the adjacent epoch rounding bucket',
+          status(hidden.check(), 'clock_unknown') and hidden.fault == 'clock moved backward')
+    set(epoch_wall + 129ULL, epoch_mono)
+    local forward = new(false, true); assert(forward.load())
+    set(epoch_wall + 129ULL + 250000001ULL, epoch_mono)
+    check('exact forward drift also refuses a one-nanosecond epoch rounding violation',
+          status(forward.check(), 'clock_unknown') and forward.fault == 'wall/monotonic drift exceeded')
+    set(epoch_wall, epoch_mono)
+    local zero, settings = new(false, true); settings.clock_max_drift = 0; assert(zero.load())
+    set(epoch_wall - 1ULL, epoch_mono)
+    check('zero drift refuses a double-equal one-nanosecond raw backward correction',
+          tonumber(epoch_wall) == tonumber(epoch_wall - 1ULL)
+          and status(zero.check(), 'clock_unknown') and zero.fault == 'clock moved backward')
+    set(epoch_wall, epoch_mono)
+    local gap = new(true, true); assert(gap.load()); assert(gap.certify(cert(gap)) == nil)
+    set(epoch_wall + 5000000001ULL, epoch_mono + 5000000001ULL)
+    local gap_result = gap.observe()
+    check('an exact gap one nanosecond over budget remains UNKNOWN despite double rounding',
+          tonumber(epoch_mono + 5000000001ULL) / 1000000000 - tonumber(epoch_mono) / 1000000000 == 5
+          and status(gap_result, 'clock_unknown') and gap_result[3] == 'Clock safety unavailable: clock monitor gap exceeded'
+          and gap.fault == nil and not gap.native_state() and gap.status().covered_peer_count == 0)
+    check('exact gap detection clears old certificates before local health can recover',
+          gap.read_check() == nil and status(gap.check(), 'clock_unknown') and gap.read_native_state())
+end)
+do
+    local ratchet = new(); assert(ratchet.load())
+    ratchet.test_time(999.9375, 100.0625); assert(ratchet.check() == nil)
+    ratchet.test_time(999.8125, 100.125); assert(ratchet.check() == nil)
+    ratchet.test_time(999.75, 100.1875)
+    check('repeated corrections compare against the logical maximum and cannot ratchet downward',
+          status(ratchet.check(), 'clock_unknown') and ratchet.fault == 'clock moved backward')
+    local observed = ratchet.status().fault_observation
+    check('fault diagnostics distinguish previous raw time from the logical detector baseline',
+          observed.previous_wall_ns == '999812500000' and observed.previous_logical_wall_ns == '1000000000000'
+          and observed.wall_delta_ns == '-62500000' and observed.wall_from_logical_delta_ns == '-250000000')
+    local floor = new(); assert(floor.load()); floor.high = 1002.2
+    floor.test_time(999.875, 100.125)
+    check('raw persisted-floor validation precedes logical clipping', status(floor.check(), 'clock_unknown')
+          and floor.fault == 'clock precedes persisted high-water mark'
+          and floor.status().fault_observation.kind == 'persisted_floor')
+    local sticky = new(); assert(sticky.load()); sticky.fault_now('existing fault')
+    local old_epoch = sticky.epoch
+    sticky.test_time(999.875, 100.125)
+    check('an allowed raw correction cannot clear or recertify an existing latched fault',
+          status(sticky.check(), 'clock_unknown') and sticky.fault == 'existing fault'
+          and sticky.epoch == old_epoch and not sticky.read_native_state())
+    local bounded = new(true); assert(bounded.load()); assert(bounded.certify(cert(bounded)) == nil)
+    bounded.test_time(1004, 104); assert(bounded.observe() == nil)
+    bounded.test_time(1003.9375, 104.0625); assert(bounded.observe() == nil)
+    local certified, _, logical_wall, remaining = bounded.native_state()
+    check('clipping wall time never renews a peer certificate lifetime', certified
+          and logical_wall == 1004000000000ULL and remaining == 937500000ULL)
+    bounded.test_time(1005.0625, 105.0625)
+    check('logical wall correction cannot revive an expired peer certificate',
+          status(bounded.check(), 'clock_unknown') and not bounded.native_state() and bounded.read_native_state())
+end
 local e = new(); assert(e.load()); e.test_time(1006, 106)
 local raw = e.probe()
 check('raw probe remains available and checks a resumed peer before its worker', raw.wall == 1006

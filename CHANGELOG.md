@@ -572,6 +572,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes fail closed, and expiring work requires coverage of its relevant
   logical writers. Clock uncertainty never prevents completion of an
   already decided transaction. See [verification boundaries](docs/verification.md).
+- Small raw wall corrections within the unchanged drift allowance retain a
+  nondecreasing logical wall and exact nanosecond native mirror. Probes
+  publish one accepted pair; first-fault diagnostics distinguish raw and
+  logical samples. Exact drift/gap checks reject violations hidden by
+  epoch-scale double rounding. Retention assumes a fixed common historical
+  raw-clock band of width the configured skew; probes cannot prove it.
 - Uncertain PREPARE receipt checks return no vote and preserve a borrowed
   stream. Fresh refusal and GC boundaries recheck current durability
   eligibility; a concurrent confirmed YES cannot become a contradictory NO.

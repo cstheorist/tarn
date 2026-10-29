@@ -108,7 +108,7 @@ configured values makes admission fail closed rather than rewriting history.
 | `max_txn_age` | 120 s | immutable policy: age limit for fresh PREPARE; must match `max_txn_age` in `cluster.json` |
 | `clock_skew` | 60 s | immutable policy: assumed cross-node/issuer bound `S`; record retention uses two margins |
 | `clock_max_gap` | 2 s | immutable policy: local observation-gap bound and clock-certificate lifetime |
-| `clock_max_drift` | 0.25 s | immutable policy: allowed difference between wall and monotonic elapsed time per observation |
+| `clock_max_drift` | 0.25 s | immutable policy: allowed difference between raw-wall displacement from the previous logical wall and monotonic elapsed time |
 | `read_freshness_timeout` | 5 s | fresh autocommit quorum-barrier wait; not a whole-query deadline; first streams retain their 60 s transaction timeout |
 | `recovery_after` | 2 s | age at which an undecided cross-shard transaction is resolved by the recovery fiber |
 | `recovery_interval` | 0.5 s | period of the recovery fiber's passes, and the first wait before recovery tries a failed transaction, or a shard a call failed on, again |
@@ -233,10 +233,29 @@ advances `H` atomically with deletion. Fresh admission uses `max(local_wall,H)`
 too, so a local rollback/restart cannot make a locally collected transaction
 young again. Legacy rows retain at least `row.ts + A + 2*S`, even if their
 stored expiry used one margin. Retaining rows still present cannot recover
-history an earlier deployment already discarded. Initial/common-mode clock
-bounds, historical rates and immutable past-issued timestamps from every
-coordinator remain explicit trusted prerequisites; neither policy adoption
-nor peer agreement proves them.
+history an earlier deployment already discarded.
+
+The trusted clock prerequisite is a **fixed common reference band over the
+whole relevant history**: all storage clocks and timestamp issuers have
+raw walls in `[r + L, r + U]` at nondecreasing reference time `r`, for the
+same fixed `L` and `U`, with `U - L = S`. For example, an absolute error
+bound of `S/2` about one reference is sufficient. Raw error of `±S`, or
+current pairwise agreement alone, does not establish that premise. Policy
+adoption, quorum freshness and peer probes cannot certify initial or
+common-mode error, historical bounds or immutable past-issued timestamps.
+
+The monitor compares each raw wall with the previous logical wall and
+monotonic elapsed time. It checks exact integer nanoseconds against the
+floored configured drift and gap budgets, so epoch-scale rounding cannot
+hide a one-nanosecond violation. The seconds drift check can additionally
+refuse a sample. Within the existing drift allowance it can accept
+a small raw backward correction, then publishes
+`max(previous_logical_wall, raw_wall)`. Both seconds and exact nanoseconds
+retain that maximum; the raw persisted-floor check happens first. This
+keeps logical clocks in the same trusted band and preserves the two-skew
+retention bound without increasing any configured limit. Comparing against
+the previous logical wall also prevents repeated corrections from
+ratcheting the baseline downward.
 
 Decided finishing samples its local time floor once, including the finite
 raw sample, last valid observation, policy creation time and H. When an
@@ -250,12 +269,24 @@ A matched wall/monotonic monitor gap becomes UNKNOWN: it invalidates the
 epoch/evidence and resets the observation baseline. A request that first
 detects the gap fails; a subsequent valid local observation plus a fresh data quorum
 can restore read eligibility. Fresh protocol work still waits for its
-required writer coverage. A proven backward clock, excessive wall/monotonic
-drift, invalid reading or immutable-policy mismatch is sticky and persisted
+required writer coverage. Backward monotonic time, a raw wall correction
+outside the drift allowance, excessive forward wall/monotonic drift,
+an invalid reading or immutable-policy mismatch is sticky and persisted
 when possible. A confirmed fault survives restart. There is no supported
 fault-clear or policy-reset API: diagnose the clocks and re-establish trusted
 history; never delete the policy, lower `H` or increase the age limit to
 force work through.
+
+`tarn_clock_status()` and the unguarded `tarn_clock_probe()` expose the last
+accepted logical wall/monotonic pair, with exact `wall_ns` and `mono_ns`
+strings and `accepted_raw_wall_ns`. A probe validates one sample and does
+not return a second unchecked raw sample. On a detected clock fault,
+`fault_observation` retains the first rejected raw values, previous raw
+and logical walls, signed nanosecond deltas and detector operands. Capture
+is best effort after the fault is latched; it cannot clear a fault or
+change admission, and is volatile rather than part of persisted policy.
+These values help identify which clock moved and by how much; they do not
+establish an OS or VM cause.
 
 Expired or uncertain fresh PREPARE admission creates no new participant,
 decision or refusal tombstone and sends **no YES/NO vote**. For wire
@@ -725,6 +756,17 @@ membership from before, when they read the bucket map, and when they start
 once buckets can have moved to it (see design §2.13). Buckets move to the
 cluster's members only: once a shard has joined with `TARN ADD SHARD`, a
 shard added only to the SQL servers' configuration gets none.
+
+A storage membership acknowledgement also reloads its confirmed clock
+policy/high-water mark and checks current local read readiness. It does
+not wait for unrelated writer-clock coverage or replace a read's quorum
+barrier. If membership was recorded but readiness cannot be restored, the
+call reports `1180/HY000` and explicitly names the recorded version; it
+does not report a retryable no-effect conflict. Inspect the recorded
+membership and resume its existing DDL job rather than assuming rollback
+or blindly replaying a membership mutation. An existing-version call also
+performs the readiness reload. Membership updates require their own
+transaction and refuse an ambient transaction before changing it.
 
 To **remove a shard**, run on any SQL server:
 

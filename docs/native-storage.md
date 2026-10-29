@@ -114,7 +114,7 @@ compatible with ABI 14's reserved storage. The current tail is:
 | `fresh_mode`, `fresh_clock_ok` | 312, 313 | published configuration/local-clock eligibility, not a quorum proof |
 | `fresh_reserved[6]` | 314 | reserved bytes, unchanged |
 | `read_timeout` | 320 | final autocommit barrier timeout |
-| `clock_mono`, `clock_wall` | 328, 336 | integer nanosecond observation |
+| `clock_mono`, `clock_wall` | 328, 336 | accepted monotonic/logical-wall observation in exact integer nanoseconds |
 | `clock_max_gap`, `clock_max_drift` | 344, 352 | observation bounds |
 | `fresh_guard_reserved[4]` | 360 | four zero uint64 words; no Lua callback addresses |
 
@@ -122,8 +122,31 @@ The final timeout is set before the first wait; first streams retain their
 60-second transaction timeout. Native admission checks actual control/user
 space synchronization and current policy again after waiting. Cached mode
 or clock fields alone never establish quorum freshness. The shared
-Verus-verified clock arithmetic checks actual wall/monotonic observations;
-local read health is distinct from the relevant-writer clock coverage used
+Verus-verified clock arithmetic checks actual raw wall/monotonic observations
+against the accepted logical baseline. Monotonic time cannot decrease;
+raw-wall displacement minus monotonic elapsed time must fit the unchanged
+drift allowance. Lua also checks exact uint64 drift and gap budgets
+`floor(configured_seconds * 1e9)` through overflow-free subtractions;
+its seconds drift check can conservatively refuse additional samples.
+The logical wall retains `max(previous_logical, raw_wall)`
+in both seconds and exact nanoseconds, so an allowed small correction never
+lowers the published value. Peer probes use that same accepted pair, with
+raw fault evidence exposed separately. The raw persisted-floor check
+precedes clipping, and observation never renews a peer certificate.
+
+Retention assumes all relevant storage clocks and timestamp issuers remain
+in one fixed common reference band `[r + L, r + U]` over history, where
+reference `r` is nondecreasing and `U - L` is configured skew `S`. The
+logical maximum preserves that band and hence pairwise logical skew `S`;
+absolute raw error `S/2` about one reference is sufficient. Error `±S` or
+current pairwise agreement alone is insufficient. This stronger external
+premise is not established by quorum/peer probes or the arithmetic proofs.
+Lua's FFI arithmetic/publication and public clock/API behavior remain runtime
+trust boundaries. No State layout or wire-contract change is involved;
+an earlier ABI14 module may conservatively hand a bounded correction back
+to the guarded Lua path.
+
+Local read health is distinct from the relevant-writer clock coverage used
 for fresh protocol records and GC. [Operations](operations.md#clock-health-and-record-retention)
 describes those states and immutable policy.
 

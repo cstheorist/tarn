@@ -57,7 +57,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and checked with TLC (243 default configurations, including 178
+  and checked with TLC (246 default configurations, including 180
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -166,7 +166,7 @@ shard's CPU per statement
   moves between shards. TLC found a real design flaw early on: single-shard
   reads could break strict serializability. It later caught a flaw in a fix
   too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 138 verified
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 140 verified
   functions and lemmas for routing, coordinator decisions, global index
   maintenance, the MySQL wire codec, and the native procedures' MessagePack
   and lock checks, plus native clock-observation arithmetic.

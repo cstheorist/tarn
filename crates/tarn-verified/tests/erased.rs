@@ -10,13 +10,13 @@ use tarn_verified::route;
 use tarn_verified::wire;
 
 #[test]
-fn clock_observations_refuse_pause_steps_and_backwards_time() {
+fn clock_observations_refuse_pause_steps_and_backwards_monotonic_time() {
     assert!(clock::observation_ok(100, 20, 105, 25, 5, 0));
     // A resumed process can have agreeing clocks and still miss its
     // required observation interval.
     assert!(!clock::observation_ok(100, 20, 106, 26, 5, 0));
     assert!(!clock::observation_ok(100, 20, 200, 25, 5, 2));
-    assert!(!clock::observation_ok(100, 20, 99, 25, 5, 200));
+    assert!(clock::observation_ok(100, 20, 99, 25, 5, 200));
     assert!(!clock::observation_ok(100, 20, 105, 19, 5, 200));
 }
 
@@ -34,6 +34,64 @@ fn clock_observations_do_not_overflow_at_integer_limits() {
     assert!(clock::observation_ok(u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0));
     assert!(clock::observation_ok(0, u64::MAX, u64::MAX, u64::MAX, 0, u64::MAX));
     assert!(!clock::observation_ok(0, u64::MAX, u64::MAX, u64::MAX, 0, u64::MAX - 1));
+    assert!(clock::observation_ok(u64::MAX, 0, 0, 0, u64::MAX, u64::MAX));
+    assert!(!clock::observation_ok(u64::MAX, 0, 0, 1, u64::MAX, u64::MAX));
+    assert!(clock::observation_ok(u64::MAX, 0, 1, 1, u64::MAX, u64::MAX));
+    assert!(!clock::observation_ok(u64::MAX, 0, 1, 2, u64::MAX, u64::MAX));
+    assert_eq!(clock::logical_wall(0, u64::MAX), u64::MAX);
+    assert_eq!(clock::logical_wall(u64::MAX, 0), u64::MAX);
+}
+
+#[test]
+fn clock_backward_correction_accounts_for_elapsed_monotonic_time() {
+    assert!(clock::observation_ok(100, 20, 98, 25, 5, 7));
+    assert!(!clock::observation_ok(100, 20, 98, 25, 5, 6));
+    assert!(!clock::observation_ok(100, 20, 92, 20, 5, 7));
+    assert!(clock::observation_ok(100, 20, 93, 20, 5, 7));
+    assert!(!clock::observation_ok(100, 20, 98, 19, 5, u64::MAX));
+}
+
+#[test]
+fn clock_recorded_correction_deltas_use_the_exact_drift_boundary() {
+    // Recorded deltas: wall -799681 ns, monotonic +96750 ns. The base
+    // timestamps are arbitrary; only those exact displacements matter.
+    let (wall, mono) = (1_793_000_000_000_000_000, 42_000_000_000);
+    assert!(clock::observation_ok(
+        wall,
+        mono,
+        wall - 799_681,
+        mono + 96_750,
+        2_000_000_000,
+        896_431
+    ));
+    assert!(!clock::observation_ok(
+        wall,
+        mono,
+        wall - 799_681,
+        mono + 96_750,
+        2_000_000_000,
+        896_430
+    ));
+    assert!(clock::observation_ok(
+        wall,
+        mono,
+        wall - 799_681,
+        mono + 96_750,
+        2_000_000_000,
+        250_000_000
+    ));
+}
+
+#[test]
+fn clock_corrections_cannot_ratchet_the_logical_baseline_backwards() {
+    assert!(clock::observation_ok(1000, 10, 999, 11, 5, 2));
+    let logical = clock::logical_wall(1000, 999);
+    assert_eq!(logical, 1000);
+    assert!(!clock::observation_ok(logical, 11, 998, 12, 5, 2));
+    // Replacing the logical baseline with the raw value would incorrectly
+    // accept another decrement with the same per-step displacement.
+    assert!(clock::observation_ok(999, 11, 998, 12, 5, 2));
+    assert_eq!(clock::logical_wall(logical, 1001), 1001);
 }
 
 #[test]

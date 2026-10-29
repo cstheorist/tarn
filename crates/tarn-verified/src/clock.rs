@@ -1,14 +1,41 @@
 //! Arithmetic at the native clock-health boundary.
 //!
-//! A published observation is usable only while both clocks have advanced,
-//! the observer gap is bounded and their elapsed times differ by no more
-//! than the configured drift allowance. Inputs are nanoseconds. This proves
-//! the exact overflow-free decision used by native procedures; it does not
-//! certify clock sources, remote offsets, policy persistence or GC safety.
+//! The monotonic clock cannot decrease, the observer gap is bounded, and
+//! raw wall-clock displacement from the last LOGICAL wall observation must
+//! agree with elapsed monotonic time within the drift allowance. A bounded
+//! backward correction is therefore allowed; publication keeps the maximum
+//! logical wall value. Inputs are nanoseconds. This proves the shared exact
+//! arithmetic, not clock sources, peer bounds, Lua publication or GC safety.
 
 use vstd::prelude::*;
 
 verus! {
+
+#[inline]
+pub fn logical_wall(previous: u64, raw: u64) -> (r: u64)
+    ensures
+        r >= previous,
+        r >= raw,
+        r == previous || r == raw,
+        r == (if previous >= raw { previous } else { raw }),
+{
+    if previous >= raw { previous } else { raw }
+}
+
+/// A single clock retains an absolute error band around a nondecreasing
+/// reference. This does not establish a pairwise bound between clocks;
+/// the configured peer/issuer bound remains a separate trusted premise.
+pub proof fn lemma_logical_wall_preserves_band(
+    previous: u64, raw: u64, previous_reference: int, reference: int, error: nat,
+)
+    requires
+        previous_reference <= reference,
+        previous as int <= previous_reference + error,
+        reference - error <= raw as int <= reference + error,
+    ensures
+        reference - error <= (if previous >= raw { previous } else { raw }) as int <= reference + error,
+{
+}
 
 #[inline]
 pub fn observation_ok(
@@ -20,7 +47,7 @@ pub fn observation_ok(
     max_drift: u64,
 ) -> (r: bool)
     ensures
-        r == (wall >= last_wall && mono >= last_mono
+        r == (mono >= last_mono
             && mono as int - last_mono as int <= max_gap as int
             && (if wall as int - last_wall as int >= mono as int - last_mono as int {
                 (wall as int - last_wall as int) - (mono as int - last_mono as int) <= max_drift as int
@@ -28,18 +55,23 @@ pub fn observation_ok(
                 (mono as int - last_mono as int) - (wall as int - last_wall as int) <= max_drift as int
             })),
 {
-    if wall < last_wall || mono < last_mono {
+    if mono < last_mono {
         return false;
     }
     let dm = mono - last_mono;
     if dm > max_gap {
         return false;
     }
-    let dw = wall - last_wall;
-    if dw >= dm {
-        dw - dm <= max_drift
+    let logical = logical_wall(last_wall, wall);
+    let forward = logical - last_wall;
+    let backward = logical - wall;
+    if wall < last_wall {
+        // backward + dm may overflow even though each delta is valid.
+        backward <= max_drift && dm <= max_drift - backward
+    } else if forward >= dm {
+        forward - dm <= max_drift
     } else {
-        dm - dw <= max_drift
+        dm - forward <= max_drift
     }
 }
 

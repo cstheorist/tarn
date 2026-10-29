@@ -32,6 +32,7 @@ for cfg in "$@"; do
     RecordExpiryClock|Bug_RecordExpiry*) module=RecordExpiryClock.tla ;;
     RecordExpiryPolicy|Bug_RecordPolicy*) module=RecordExpiryPolicy.tla ;;
     CompletionRetention|Bug_CompletionRetention*) module=CompletionRetention.tla ;;
+    LogicalClockExpiry|Bug_LogicalClock*) module=LogicalClockExpiry.tla ;;
     StrongStreamCertificate|Bug_StrongStream*) module=StrongStreamCertificate.tla ;;
     StrongStreamCompletion|Bug_StreamCompletion*) module=StrongStreamCompletion.tla ;;
     LockReplyOwnership|Bug_LockReply*) module=LockReplyOwnership.tla ;;
