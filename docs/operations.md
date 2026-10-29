@@ -53,6 +53,8 @@ clients or on the storage machines.
 | `TARN_LISTEN` | `127.0.0.1:3301` | IPROTO listen address |
 | `TARN_LISTEN_UNIX` | | optional Unix socket to listen on as well |
 | `TARN_WORKDIR` | `data` | data directory: WAL, snapshots and vinyl's files |
+| `TARN_INSTANCE_UUID`, `TARN_INSTANCE_NAME` | derived / unset | stable registered identity for a backup-seeded replica |
+| `TARN_ELECTION_MODE` | `candidate` with replicas | `candidate`, `voter`, or `off`; seeded copies require `voter` |
 | `TARN_REPLICAS` | `[]` | JSON list of every replica URI of this shard; more than one enables synchronous replication and elections |
 | `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber; shards added with `TARN ADD SHARD` are found in the membership) |
 | `TARN_MAX_TXN_AGE` | `120` | immutable timing policy `A`, seconds; must match the gateway's `max_txn_age` |
@@ -1196,3 +1198,144 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
   in the process list); without any, every login is accepted.
 * The storage user `tarn`/`tarn` has full privileges on the storage nodes.
 * See [SECURITY.md](../SECURITY.md) to report a vulnerability.
+
+## Physical shard backups and backup-seeded replicas
+
+`scripts/backup.py` copies the physical files returned by Tarantool 3.9's
+[`box.backup.start()`](https://tarantool.io/docs/tarantool/en/3_x/admin/backups).
+It copies the selected checkpoint, vinyl run/index/metadata files and the
+closed WAL files selected by the API. It does not enumerate or dump SQL
+rows. The tool requires Python 3, a local Tarantool executable, administrative
+IPROTO access, and direct access to the source instance's data directory on
+the same host. Default Tarn directory layout is supported; absolute or
+external WAL/vinyl directory layouts are refused. Use the same tested Tarn,
+Tarantool and native-module release when restoring.
+
+A manifest records the source and replica-set UUIDs, Tarantool version,
+backup vclock, every file's length and SHA-256, elapsed copy time and rate.
+The API pins its selected files against GC. The agent checks its owned lease
+while copying and releases it in `finally`; after a killed agent the lease
+expires at `--ttl` (default one hour). Choose a TTL longer than the complete
+copy and leave disk space for files retained during that interval. A
+competing agent cannot release the first agent's lease. A lost START or STOP
+reply fails the operation; START is never replayed.
+
+Provision `TARN_BACKUP_URI` in the agent environment through your normal
+credential mechanism (a local administrative Unix socket is also accepted).
+The URI is not written to the manifest. On the storage host:
+
+```sh
+python3 scripts/backup.py create --source /srv/tarn/shard1 \
+  --output /backups/shard1-copy --rate-mib 64 --ttl 3600
+python3 scripts/backup.py restore --backup /backups/shard1-copy \
+  --output /srv/tarn/shard1-restored --rate-mib 64
+```
+
+The output directory must not exist. Data is streamed in 1 MiB chunks;
+`--rate-mib` caps aggregate file-copy bytes per second with at most one
+chunk of burst (zero explicitly disables the cap). It does not cap native
+full-join traffic, later WAL follow, all memory, or foreground latency. Tune
+it against the workload's measured latency and the disk/network budget;
+protect WAL catch-up separately with host/network controls when needed.
+Restore verifies all copied bytes against the manifest before publishing
+`restore.json`. Interrupted/failed outputs retain `INCOMPLETE` and have no
+complete manifest; the agent and `lua/storage.lua` refuse such directories.
+The agent never overwrites, merges, or removes an existing output directory.
+Keep the manifest with the backup in trusted storage; checksums detect
+corruption, not an attacker who can replace both files and the manifest.
+
+An ordinary restore preserves the source UUID and every body byte. Fence the
+old instance before starting this restored identity in its replica set.
+Validate an isolated restore with no replication and read-only access first.
+Existing clock-policy/high-water and transaction-recovery fences remain in
+force; restoring files does not reset them or certify clock health. This is
+a **per-shard physical backup**, not a coordinated multi-shard SQL snapshot.
+A cluster-consistent backup/restore protocol is tracked separately in #137.
+
+### Add a replica from a recent file backup
+
+1. Choose a new UUID and stable instance name. Register them on the current
+   writable replica before taking the backup. Use a fresh origin ID greater
+   than every current/historical vclock ID; do not reset a WAL component or
+   reuse a retired identity. For example, on its administrative console:
+
+   ```lua
+   local next_id = 1
+   for id in pairs(box.info.vclock) do next_id = math.max(next_id, id + 1) end
+   for _, r in box.space._cluster:pairs() do next_id = math.max(next_id, r.id + 1) end
+   box.space._cluster:insert{next_id, NEW_UUID, 'shard1_r4'}
+   box.snapshot()
+   ```
+
+   Retain quorum throughout this membership operation: adding a fourth
+   registered member raises the automatic synchronous quorum to three.
+   An old replica must be fenced before permanent removal; follow the
+   [Tarantool removal procedure](https://www.tarantool.io/en/doc/2.11/how-to/replication/repl_remove_instances/)
+   and preserve its historical WAL clock. The backup agent performs no
+   membership change or deletion for the operator.
+2. Take a recent backup with `create ... --seed-uuid NEW_UUID`. This refuses
+   an unregistered UUID or the source UUID. Keep enough source WAL to cover
+   the backup age and full transfer/recovery period. A file backup does not
+   reserve all future WAL for an offline candidate. A WAL gap is a failed
+   bootstrap; take a fresh backup rather than force recovery or skip records.
+3. Restore with `restore ... --seed-uuid NEW_UUID`. The tool changes only the
+   fixed-width `Instance:` UUID in each validated `0.13` file header. Row
+   bodies, CRCs, transaction records, replica-set UUID and vclocks are
+   unchanged. The original backup remains intact and reusable. A small
+   `seed.json` identity marker keeps this new copy out of elections.
+4. Start `lua/storage.lua` with the correct shard, peers, timing policy,
+   matching native module and replica addresses, and:
+
+   ```sh
+   TARN_INSTANCE_UUID=NEW_UUID TARN_INSTANCE_NAME=shard1_r4 \
+   TARN_ELECTION_MODE=voter TARN_WORKDIR=/srv/tarn/shard1-new \
+     tarantool lua/storage.lua
+   ```
+
+   Supply `TARN_REPLICAS`/`TARN_PEERS` from the deployment configuration;
+   the example only lists the new identity/role settings. `seed.json`
+   requires this matching UUID and voter mode. Existing instances retain
+   their default candidate mode; these settings change no commit rules.
+5. Observe the original source and candidate vclocks: for every source
+   component, the candidate must reach an explicitly recorded committed
+   source barrier. Check upstream `follow` status, synchronous queue
+   settlement, native/Lua readiness, table checksums and a post-backup
+   committed marker. Restore from files plus later WAL is required; files
+   alone do not establish current read freshness.
+6. After verifying catch-up and the normal clock/admission readiness checks,
+   archive `seed.json` as `seed.verified.json`, update the deployment's
+   replica addresses and election mode, and restart using candidate mode
+   when this replica should be eligible for promotion. Do not archive the
+   marker to bypass a failed or incomplete verification. Keep the UUID and
+   stable name unchanged on future restarts.
+
+`tests/backup.py --functional` exercises actual quorum-replicated Tarn
+instances with native and Lua-only procedures, original-identity isolated
+restore, exact full-data digests, a separately registered voter, WAL tail
+catch-up, corruption/traversal/ownership/expiry and copier-death controls.
+`tests/test_backup.py` checks offline recovery safety. The scale driver
+alternates full-join and backup-seeded candidates, repeats file backups,
+records every sample and exact tuple digest, and retains foreground storage
+write latencies. Its fixture pins one candidate leader and leaves the other
+source replicas as voters; it is not a failover-capacity benchmark.
+
+The opt-in `File backup scale study` workflow records Linux CI evidence;
+apply `backup-scale` to a PR touching these files to run its 2 GiB study.
+After merge, `workflow_dispatch` defaults to 10 GiB and accepts an explicit
+size, repetition count and cap. A reference 10 GiB study uses:
+
+```sh
+TARN_NATIVE=target/release/libtarn_storage.so python3 tests/backup.py \
+  --work /tmp/tarn-backup-reference --rows 163840 --payload 65536 \
+  --min-backup-bytes 10737418240 --repetitions 3 --rate-mib 128 \
+  --output bench/results_file_backup_reference.json
+```
+
+Keep roughly six times the payload size free during population, checkpoints,
+backup and candidate recovery. Candidate directories belong to this fixture
+and are removed only after their process stops and the full digest matches.
+The work directory and raw failure logs are retained. A `seconds_per_100GB`
+linear normalization is a throughput display from the actual measured
+size, not an observed 100 GB result or validated scaling prediction. CI and
+reference hardware/settings have separate records; compare each study's
+paired samples without combining their rates. See [benchmark evidence](../bench/RESULTS.md).

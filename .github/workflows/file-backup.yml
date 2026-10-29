@@ -1,0 +1,83 @@
+name: File backup scale study
+on:
+  workflow_dispatch:
+    inputs:
+      size_gib:
+        description: Physical random-payload GiB (10 GiB needs about 60 GiB free)
+        default: '10'
+        required: true
+      repetitions:
+        description: Backup repetitions and alternating full-join/seed pairs
+        default: '3'
+        required: true
+      rate_mib:
+        description: Aggregate file-copy MiB/s, 0 unlimited
+        default: '128'
+        required: true
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'scripts/backup*'
+      - 'tests/backup*'
+      - 'lua/storage.lua'
+      - '.github/workflows/file-backup.yml'
+permissions:
+  contents: read
+jobs:
+  measure:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'backup-scale')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Build the normal native storage release
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          cargo +1.98.1 build --release --locked -p tarn-storage
+      - name: Run the complete study
+        env:
+          REQUESTED_GIB: ${{ inputs.size_gib || '2' }}
+          REPETITIONS: ${{ inputs.repetitions || '3' }}
+          RATE_MIB: ${{ inputs.rate_mib || '128' }}
+          TARN_NATIVE: ${{ github.workspace }}/target/release/libtarn_storage.so
+        run: |
+          mkdir -p evidence
+          df -h | tee evidence/disk.txt
+          python3 - <<'PY'
+          import os, subprocess
+          size = int(os.environ['REQUESTED_GIB'])
+          assert 1 <= size <= 100
+          payload = 65536
+          subprocess.run(['python3', 'tests/backup.py', '--work', os.environ['RUNNER_TEMP']+'/tarn-backup-scale',
+                          '--rows', str(size*1024**3//payload), '--payload', str(payload),
+                          '--repetitions', os.environ['REPETITIONS'], '--rate-mib', os.environ['RATE_MIB'],
+                          '--min-backup-bytes', str(size*1024**3), '--output', 'evidence/study.json'], check=True)
+          PY
+      - name: Retain all outcomes and owned-process logs
+        if: always()
+        run: |
+          mkdir -p evidence/logs
+          find "$RUNNER_TEMP/tarn-backup-scale" -maxdepth 1 -name '*.log' -exec cp {} evidence/logs/ \; 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: file-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+          retention-days: 30

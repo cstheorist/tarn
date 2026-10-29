@@ -2057,3 +2057,25 @@ routing while ordinary capacity remains occupied. Native/Lua/vinyl modes,
 malformed/lost-reply faults and failover preserve the existing uncertainty
 and matched fencing behavior. Resource budgets do not certify whole-query
 memory bounds or benchmark speedups.
+
+### Physical file backup agent and seed identity (issue #56)
+
+`FileBackup.tla` checks the agent's publication and seed-mode contract with
+two abstract files: copier death/lease expiry, file reclamation, corruption,
+checked restore, registration, distinct seed identity and read-only follow
+before operator-authorized promotion. It checks complete-file publication,
+a valid publication lease, verified restored contents and identity separation.
+The four `Bug_FileBackup*` configurations deliberately publish partial data,
+skip hash checks, reuse the source identity or ignore an expired lease;
+each must violate its corresponding invariant.
+
+Tarantool's coherent backup file list/WAL recovery, actual filesystem
+`fsync`/rename behavior, SHA-256, fixed-width header format, administrative
+registration and the operator's catch-up/promotion decision are trusted
+premises. This bounded model does not prove file IO, a whole-cluster backup,
+Tarantool replication, performance, or Python/Lua refinement. The existing
+commit/locking/recovery models and 140 verified shared bodies are unchanged.
+Live tests recover real vinyl files and compare every tuple byte, including
+post-backup WAL and negative lease/copy/restore controls. The startup voter
+marker prevents accidental candidate startup until an operator clears it;
+it does not make the operator's catch-up decision automatically.
