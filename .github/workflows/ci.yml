@@ -5,13 +5,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      strong_read_cost:
+        description: Run only the manual matched strong-read cost study
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || 'ci' }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.strong_read_cost) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +31,7 @@ defaults:
 
 jobs:
   lint:
+    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
     name: Format and clippy
     runs-on: ubuntu-24.04
     steps:
@@ -41,6 +47,7 @@ jobs:
         run: cargo clippy -p tarn-storage --features alloc-metrics --all-targets -- -D warnings
 
   test:
+    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
     name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -200,6 +207,7 @@ jobs:
           true
 
   tla:
+    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
     name: TLA+ model checking
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -215,6 +223,7 @@ jobs:
         run: WORKERS=auto tla/check.sh
 
   verus:
+    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
     name: Verus proofs
     runs-on: ubuntu-24.04
     steps:
@@ -230,3 +239,9 @@ jobs:
         run: |
           "$HOME/verus/verus-x86-linux/verus" --crate-type=lib src/lib.rs 2>&1 | tee verus.log
           grep -qE "verification results:: [0-9]+ verified, 0 errors" verus.log
+
+  strong-read-cost:
+    if: github.event_name == 'workflow_dispatch' && inputs.strong_read_cost
+    uses: ./.github/workflows/strong-read-cost.yml
+    permissions:
+      contents: read

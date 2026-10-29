@@ -1,0 +1,784 @@
+{
+  "count_scope": "Printed ok lines and completed-summary totals are separate observations. Aborted stages may have no summary. FAIL/fatal lines are retained, not converted into invented check counts.",
+  "excluded": "WAL, snapshots, binaries and all non-allowlisted runtime files",
+  "redaction_scope": "Only JSON metadata private paths are redacted with type/numeric/signed-zero invariance. Code, raw logs and JSONL retain exact bytes.",
+  "runs": [
+    {
+      "FAIL_lines": [],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 56,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "fatal_lines": [],
+      "label": "native-unchanged",
+      "log_sha256": "1b15aa7d0d4e5e89ede411bf627b72f9f0345974eaf30cdca89c68b3c6305c1c",
+      "manifest_original_sha256": "256778389de0997e85e1c53396f8af63606c73bd1430b8b8f7f8756f52ad319c",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 56,
+      "scope": "Unchanged main, native: complete engine and lazy RF3 memtx/Vinyl suites."
+    },
+    {
+      "FAIL_lines": [
+        "FAIL lazy RF3 memtx after-first: /src/test/lazy_replication_test.lua:30: UNKNOWN rejects new source publication without user tuple: [[\"ok\",1,[52,\"blocked\",1]],false]"
+      ],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 20,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "fatal_lines": [],
+      "label": "lua-unchanged-failure",
+      "log_sha256": "e55d3cad6ed5a748032b11e384a21a31de78f2f3bc7370d03d18a69408a3d3f5",
+      "manifest_original_sha256": "d2aaae821393dd62664ffea9b31887edad0c0a24abe2e1633357935fa985d946",
+      "outcome_as_configured": "retained_baseline_failure",
+      "owned_container_absent": true,
+      "printed_ok_lines": 22,
+      "scope": "Launched as a positive unchanged-main Lua baseline; failed the original UNKNOWN fixture probe after both engine suites. Worker recovery before admission was not instrumented in this historical execution."
+    },
+    {
+      "FAIL_lines": [
+        "FAIL lazy RF3 memtx setup: /src/test/lazy_readiness_control.lua:37: no unique held initial notification"
+      ],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 0,
+      "completed_summary_rows": [],
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "fatal_lines": [],
+      "label": "preload-setup-discovery",
+      "log_sha256": "07b52b32f2fd348cf09063946632f6e03edcc524669bbf3b5758179cbbcb6cc9",
+      "manifest_original_sha256": "0a809946f9aa811aa709c454df31701e1359a7def98e5fe94ffb1ac78962b6f3",
+      "outcome_as_configured": "nonqualifying_setup",
+      "owned_container_absent": true,
+      "printed_ok_lines": 1,
+      "scope": "First preload preparation failed to release a unique held notification before the intended stale-cache oracle; excluded from reproduction and positive counts."
+    },
+    {
+      "FAIL_lines": [
+        "FAIL lazy RF3 memtx setup: /src/test/lazy_readiness_baseline_test.lua:30: confirmed base/outbox and durable YES retain exact quota: {\"configured_native\":true,\"quota_ready\":false,\"id\":1,\"ro\":false,\"reserved_bytes\":46,\"uuid\":\"e9ef4d3e-cd98-4367-b3db-e4df4b20f482\",\"pid\":21,\"wal\":\"fsync\",\"version\":\"3.9.0-0-g8b9a0f59a9\",\"capture_stale\":true,\"want_layout\":14,\"reserved\":1,\"queue\":{\"owner\":1,\"size\":0,\"term\":2,\"busy\":false,\"age\":0,\"confirm_lag\":0.00089608298731036,\"len\":0},\"slots\":1,\"rows\":[true,false,false],\"engine\":\"memtx\",\"term\":2,\"target_engine\":\"memtx\",\"depth\":1,\"sync\":true,\"counter\":1,\"layout\":14,\"native\":{\"validations_to_lua\":0,\"commits_to_lua\":0,\"served\":0,\"to_lua\":0,\"validations\":0,\"commits\":0,\"ready\":1,\"fallbacks\":{},\"writes\":0,\"writes_to_lua\":0},\"workdir\":\"/data/lazy-held-baseline/memtx/s1\",\"live\":{\"prepared\":0,\"old\":0,\"new\":0},\"bytes\":25,\"part\":\"prepared\",\"capture\":true}"
+      ],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 0,
+      "completed_summary_rows": [],
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "fatal_lines": [],
+      "label": "lazy-baseline-negative",
+      "log_sha256": "34a953413cd91bab886bcbdfd002484e918ce5d7e6745ef52374162e96ec2c9e",
+      "manifest_original_sha256": "80fe4c286924f4f2699ebf15cc074192c0f4c7cd3c87d3e6d2af2ac86d950e99",
+      "outcome_as_configured": "expected_negative",
+      "owned_container_absent": true,
+      "printed_ok_lines": 1,
+      "scope": "Original exact assertions plus notification-release instrumentation: actual initial production callbacks after confirmed PREPARE/CAS, then original quota/capture assertion fails."
+    },
+    {
+      "FAIL_lines": [],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 40,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "fatal_lines": [],
+      "label": "lazy-native-held-positive",
+      "log_sha256": "de24878b1cf74039d15fff9bececeb82d5194ac6eff7d6472de309fe72ebcda8",
+      "manifest_original_sha256": "352fcc6f7273ce45b4a93c2e9037644f6eab2c4caad294fed590b100cfa3af65",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 40,
+      "scope": "Fixed native held-notification memtx/Vinyl suites, 40 printed checks. Before cleanup status propagation; exact runtime source hashes retained."
+    },
+    {
+      "FAIL_lines": [],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 6,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "fatal_lines": [],
+      "label": "copy-native-binding-positive",
+      "log_sha256": "f86892ed64722149d380e13bc79cdc195b1af4ebb1a6d426fab68002a0d536a9",
+      "manifest_original_sha256": "752637b150f658c3203f1a607fe6a9aa07fc353afebece2476fb08c6df314523",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 6,
+      "scope": "Real pre-copy source-definition refusal retained without replay, both engines, six printed checks. Earlier controller before log-tail/status refinements."
+    },
+    {
+      "FAIL_lines": [],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 114,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "fatal_lines": [],
+      "label": "lua-fixed-full",
+      "log_sha256": "0e34bfeb4f5a1f494babe1900cacbbe6850b4647d4191ef1178bd425313deb62",
+      "manifest_original_sha256": "8e5bb215d6e0ef4aecb76cdddbd6c16b5587d1e509e65cd46d3c466b867a5944",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 114,
+      "scope": "Complete fixed Lua matrix: normal engine/lazy failover, real source-binding and synthetic exception/stall observations, held-notification lazy suite. 114 printed checks /48 completed sections. Frozen before the two cleanup status changes."
+    },
+    {
+      "FAIL_lines": [
+        "FAIL engine RF3 vinyl kill-first: /src/test/engine_replication_baseline_test.lua:33: partial copy hook timed out: false"
+      ],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 1,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 1
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 1,
+      "fatal_lines": [],
+      "label": "copy-vinyl-baseline-negative",
+      "log_sha256": "328782a4c6257ac2008015dbb98a51dbf54fc5b504f562b52f9deda13b4c0adb",
+      "manifest_original_sha256": "4c1e291807879266ddc3c6b04693cba2c3868ca58bad200c702b8b33a265d0cd",
+      "outcome_as_configured": "expected_negative",
+      "owned_container_absent": true,
+      "printed_ok_lines": 1,
+      "scope": "Original Vinyl driver with the same wrong private old_ver times out blindly. Separate read-only observer records exactly one real 1412 response, unchanged source/job and no shadow/receipt."
+    },
+    {
+      "FAIL_lines": [],
+      "completed_summary_failures": 0,
+      "completed_summary_passes": 114,
+      "completed_summary_rows": [
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        },
+        {
+          "failed": 0,
+          "passed": 3
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 7
+        },
+        {
+          "failed": 0,
+          "passed": 2
+        },
+        {
+          "failed": 0,
+          "passed": 1
+        },
+        {
+          "failed": 0,
+          "passed": 6
+        }
+      ],
+      "docker_oom_killed": false,
+      "exit_code": 0,
+      "fatal_lines": [],
+      "label": "native-fixed-final",
+      "log_sha256": "451ece3d94c6f4adbcbd5afe5bb807404a8ef90e4abf1576146c3b1be2ba0e77",
+      "manifest_original_sha256": "81c050dba606a834285fb41f20db4361753b85113201bdfc3bd90938637adfaf",
+      "outcome_as_configured": "positive",
+      "owned_container_absent": true,
+      "printed_ok_lines": 114,
+      "scope": "Complete final native matrix with reviewed final controllers: 114 printed checks /48 completed sections, both engines, normal and held-notification failover plus all three diagnostic controls."
+    }
+  ],
+  "schema_version": 1,
+  "scope": "Data-only collection; configured run labels and recorded exit/Docker OOMKilled/cleanup/log hashes checked. No child-OOM census, Git/source relationship, historical causal identity, proof, runtime, performance or publication gate is asserted.",
+  "source_context_as_supplied": {
+    "base_commit": "d9f2f0fbb9b072a7b1cf333239e66dbedf4274f6",
+    "base_lua_directory_files": 67,
+    "native_abi": 14,
+    "native_image": "tarantool/tarantool@sha256:1a64f298fd5494728c660d221c4c5331e994ac4c57082246ca7c87c6497b0873",
+    "native_source_config_inputs_unchanged": 86,
+    "platform_scope": "Linux arm64 owned local functional controls; historical failing CI is Linux amd64. Final CI against the final committed source is required separately. No performance or storage-runtime proof claim.",
+    "production_lua_files_unchanged": 8,
+    "proof_inputs_unchanged": 317,
+    "run_status_scope": "Configured expected exit codes are packaging-time observations. retained_baseline_failure was an unexpected failure when launched, never an intended negative.",
+    "source_binding_sha256": "d5e1a94623bd21659da3f47344af19af25a69a149237213f3118115c75115310"
+  }
+}

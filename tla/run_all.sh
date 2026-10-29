@@ -8,6 +8,7 @@ for cfg in "$@"; do
   # Focused grouped-read and backfill modules check local refinement
   # premises; other configurations use the commit-protocol MC module.
   case "$cfg" in
+    DepartureDependencies|Bug_Departure*) module=DepartureDependencies.tla ;;
     DecisionPlacement|Bug_Decision*) module=DecisionPlacement.tla ;;
     PipelineAdmission|Bug_Pipeline*) module=PipelineAdmission.tla ;;
     LazyIndex|Bug_LazyIndex*) module=LazyIndex.tla ;;
@@ -28,6 +29,14 @@ for cfg in "$@"; do
     EngineCutover|Bug_EngineCutover*) module=EngineCutover.tla ;;
     EngineSourceDrain|Bug_EngineSourceDrain*) module=EngineSourceDrain.tla ;;
     EngineAlias|EngineAlias_Existing|Bug_EngineAlias*) module=EngineAlias.tla ;;
+    StrongReadFreshness|Bug_StrongRead*) module=StrongReadFreshness.tla ;;
+    RecordExpiryClock|Bug_RecordExpiry*) module=RecordExpiryClock.tla ;;
+    RecordExpiryPolicy|Bug_RecordPolicy*) module=RecordExpiryPolicy.tla ;;
+    CompletionRetention|Bug_CompletionRetention*) module=CompletionRetention.tla ;;
+    LogicalClockExpiry|Bug_LogicalClock*) module=LogicalClockExpiry.tla ;;
+    StrongStreamCertificate|Bug_StrongStream*) module=StrongStreamCertificate.tla ;;
+    StrongStreamCompletion|Bug_StreamCompletion*) module=StrongStreamCompletion.tla ;;
+    LockReplyOwnership|Bug_LockReply*) module=LockReplyOwnership.tla ;;
     NativeKeyBatch|Bug_KeyBatch*) module=NativeKeyBatch.tla ;;
     LockCopy|Bug_Lock*) module=NativeLockCopy.tla ;;
     Fairness*|Bug_Fairness*) module=RecoveryFairness.tla ;;

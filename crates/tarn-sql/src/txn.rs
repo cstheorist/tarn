@@ -47,6 +47,92 @@ use tarn_verified::coord::{self, Decision, Vote};
 
 pub type Row = Vec<Value>;
 
+/// Only a complete, explicit durable NO can justify aborting a parallel
+/// commit. Expiry, unavailable freshness, malformed and future statuses
+/// are no vote: a previous PREPARE might already have committed.
+fn prepare_reply(data: &[u8]) -> (Vote, Option<SqlError>) {
+    let parsed = (|| -> SqlResult<(Vote, Option<SqlError>)> {
+        let mut rd = Rd::new(data);
+        if rd.array()? != 1 {
+            return Err(crate::mpw::proto("PREPARE must return exactly one status"));
+        }
+        let n = rd.array()?;
+        let Value::Str(tag) = rd.value()? else {
+            return Err(crate::mpw::proto("PREPARE status must be a string"));
+        };
+        let tag: &[u8] = &tag;
+        let result = match tag {
+            b"yes" if n == 1 => (Vote::Yes, None),
+            b"no" | b"moved" | b"expired" | b"clock_unknown" if n == 3 => {
+                let code = rd.value()?;
+                if !matches!(code, Value::Int(c) if c > 0 && c <= u16::MAX as i64)
+                    && !matches!(code, Value::UInt(c) if c > 0 && c <= u16::MAX as u64)
+                {
+                    return Err(crate::mpw::proto("invalid PREPARE error code"));
+                }
+                let Value::Str(message) = rd.value()? else {
+                    return Err(crate::mpw::proto("PREPARE error message must be a string"));
+                };
+                if matches!(tag, b"expired" | b"clock_unknown") {
+                    (
+                        Vote::Unknown,
+                        Some(SqlError::conflict(String::from_utf8_lossy(&message))),
+                    )
+                } else {
+                    let err = lua_status(data)
+                        .err()
+                        .ok_or_else(|| crate::mpw::proto("invalid PREPARE NO"))?;
+                    (Vote::No, Some(err))
+                }
+            }
+            _ => return Err(crate::mpw::proto("unsupported or incomplete PREPARE status")),
+        };
+        if !rd.buf.is_empty() {
+            return Err(crate::mpw::proto("trailing PREPARE reply data"));
+        }
+        Ok(result)
+    })();
+    parsed.unwrap_or_else(|e| (Vote::Unknown, Some(e)))
+}
+
+/// PREPARE is sent once. Only a complete no-vote reply authorizes cleaning
+/// up this gateway's preserved read stream; transport uncertainty must be
+/// resolved from durable records, without cancelling or resending PREPARE.
+async fn prepare_once(client: &Client, stream: u64, args: &[u8]) -> (Vote, Option<SqlError>) {
+    match client.call(stream, "tarn_prepare", args).await {
+        Ok(r) => match r.data() {
+            Some(data) => {
+                let parsed = prepare_reply(&data);
+                if stream != 0
+                    && matches!(parsed.0, Vote::Unknown)
+                    && parsed.1.as_ref().is_some_and(|e| e.code == 1213)
+                    && (crate::mpw::status_is(&data, "expired") || crate::mpw::status_is(&data, "clock_unknown"))
+                {
+                    // These tags certify no new vote. If cleanup cannot be
+                    // confirmed, retire the connection so its read streams
+                    // are released rather than lost from our bookkeeping.
+                    let cleaned =
+                        match tokio::time::timeout(std::time::Duration::from_secs(1), client.rollback(stream)).await {
+                            Ok(Ok(())) => true,
+                            Ok(Err(tarn_iproto::Error::Server { code, .. }))
+                                if code == tarn_iproto::errcode::ER_NO_TRANSACTION =>
+                            {
+                                true
+                            }
+                            _ => false,
+                        };
+                    if !cleaned {
+                        client.close();
+                    }
+                }
+                parsed
+            }
+            None => (Vote::Unknown, Some(crate::mpw::proto("no data"))),
+        },
+        Err(e) => (Vote::Unknown, Some(from_iproto(e))),
+    }
+}
+
 /// A known-committed transaction whose physical APPLY is not yet confirmed
 /// everywhere. Participant identifiers are stable shard IDs, not positions
 /// in a gateway's current routing map. This is never an unknown decision.
@@ -1199,29 +1285,12 @@ impl Txn {
             self.encode_fence(p, &mut m);
             encode_buckets(&mut m, &wb);
             self.encode_mver(&mut m);
-            futs.push(async move {
-                match client.call(id, "tarn_prepare", &m.0).await {
-                    Ok(r) => match r.data() {
-                        // 'expired' is neither YES nor NO (TarnCommit: an
-                        // expired PREPARE has no effect and sends no vote).
-                        Some(d) if crate::mpw::status_is(&d, "expired") => (
-                            Vote::Unknown,
-                            Some(SqlError::conflict("transaction too old (max_txn_age exceeded)")),
-                        ),
-                        Some(d) => match lua_status(&d) {
-                            Ok(_) => (Vote::Yes, None),
-                            Err(e) => (Vote::No, Some(e)),
-                        },
-                        None => (Vote::Unknown, Some(crate::mpw::proto("no data"))),
-                    },
-                    Err(e) => (Vote::Unknown, Some(from_iproto(e))),
-                }
-            });
+            futs.push(async move { prepare_once(&client, id, &m.0).await });
         }
         let results = futures::future::join_all(futs).await;
         let votes: Vec<Vote> = results.iter().map(|(v, _)| *v).collect();
         let first_err = results.into_iter().find_map(|(_, e)| e);
-        self.streams.clear(); // every stream's transaction ended inside tarn_prepare
+        self.streams.clear(); // consumed by PREPARE, or explicitly cleaned after a no-vote
         let parts_v: Vec<usize> = parts.iter().copied().collect();
         match coord::decide(&votes) {
             Decision::Commit => {
@@ -2024,6 +2093,151 @@ const MARK_NO_NATIVE_BATCH: u32 = 5;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepare_uncertainty_is_never_a_no_vote() {
+        for status in ["expired", "clock_unknown", "future_status", "error"] {
+            let mut m = Mp::new();
+            m.arr(1).arr(3).str(status).uint(1213).str("freshness unavailable");
+            let (vote, error) = prepare_reply(&m.0);
+            assert!(matches!(vote, Vote::Unknown), "{status}");
+            assert!(error.is_some());
+            assert!(matches!(coord::decide(&[Vote::Yes, vote]), Decision::Unknown));
+        }
+        for status in ["no", "moved"] {
+            let mut m = Mp::new();
+            m.arr(1).arr(3).str(status).uint(1213).str("confirmed refusal");
+            let (vote, error) = prepare_reply(&m.0);
+            assert!(matches!(vote, Vote::No));
+            assert!(error.is_some());
+            assert!(matches!(coord::decide(&[Vote::Yes, vote]), Decision::Abort));
+        }
+    }
+
+    #[test]
+    fn prepare_votes_require_exact_complete_envelopes() {
+        let mut yes = Mp::new();
+        yes.arr(1).arr(1).str("yes");
+        assert!(matches!(prepare_reply(&yes.0).0, Vote::Yes));
+        for n in 0..yes.0.len() {
+            assert!(matches!(prepare_reply(&yes.0[..n]).0, Vote::Unknown));
+        }
+        yes.nil();
+        assert!(matches!(prepare_reply(&yes.0).0, Vote::Unknown));
+        let mut no = Mp::new();
+        no.arr(1).arr(4).str("no").uint(1213).str("refusal").nil();
+        assert!(matches!(prepare_reply(&no.0).0, Vote::Unknown));
+        let mut ok = Mp::new();
+        ok.arr(1).arr(1).str("ok");
+        assert!(matches!(prepare_reply(&ok.0).0, Vote::Unknown));
+    }
+
+    #[tokio::test]
+    async fn prepare_only_cleans_owned_stream_after_complete_explicit_no_vote() {
+        use crate::cluster::wire_test::{accept, reply, request};
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+        use tokio::time::{timeout, Duration};
+
+        // expired, clock_unknown, YES, NO, malformed, future, lost reply,
+        // failed cleanup, timed-out cleanup, no owned stream, server error,
+        // and a stream that storage already ended.
+        for case in 0..12 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let stream = if case == 9 { 0 } else { 73 };
+            let peer = tokio::spawn(async move {
+                let mut sock = accept(&listener).await;
+                let (kind, sync, seen_stream, body) = request(&mut sock).await;
+                assert_eq!((kind, seen_stream), (10, stream));
+                let mut rd = Rd::new(&body);
+                assert_eq!(rd.map().unwrap(), 2);
+                assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+                assert_eq!(rd.string().unwrap(), "tarn_prepare");
+                assert_eq!(rd.value().unwrap().as_i64(), Some(0x21));
+                assert_eq!(rd.array().unwrap(), 0);
+                assert!(rd.buf.is_empty());
+                if case == 6 {
+                    return 1; // a lost PREPARE reply cannot authorize ROLLBACK
+                }
+                let mut body = Mp::new();
+                let code = if case == 10 {
+                    body.map(1).uint(0x31).str("controlled server error");
+                    0x8000 | 7
+                } else {
+                    body.map(1).uint(0x30).arr(1);
+                    match case {
+                        2 => {
+                            body.arr(1).str("yes");
+                        }
+                        3 => {
+                            body.arr(3).str("no").uint(1213).str("confirmed refusal");
+                        }
+                        4 => {
+                            body.arr(3).str("expired").uint(1213).uint(1);
+                        }
+                        5 => {
+                            body.arr(3).str("future_status").uint(1213).str("unknown status");
+                        }
+                        _ => {
+                            body.arr(3)
+                                .str(if case == 1 { "clock_unknown" } else { "expired" })
+                                .uint(1213)
+                                .str("no vote");
+                        }
+                    }
+                    0
+                };
+                reply(&mut sock, sync, code, &body.0).await;
+                let cleanup = matches!(case, 0 | 1 | 7 | 8 | 11);
+                if cleanup {
+                    let (kind, sync, seen_stream, body) = request(&mut sock).await;
+                    assert_eq!((kind, seen_stream), (16, stream));
+                    assert!(body.is_empty());
+                    if case != 8 {
+                        let mut body = Mp::new();
+                        let code = if case == 7 || case == 11 {
+                            body.map(1).uint(0x31).str("cleanup refused");
+                            0x8000
+                                | if case == 11 {
+                                    tarn_iproto::errcode::ER_NO_TRANSACTION as u64
+                                } else {
+                                    97
+                                }
+                        } else {
+                            body.map(0);
+                            0
+                        };
+                        reply(&mut sock, sync, code, &body.0).await;
+                    }
+                }
+                // No replay of PREPARE, and no ROLLBACK after uncertainty.
+                assert!(timeout(Duration::from_secs(3), sock.read_u8()).await.unwrap().is_err());
+                if cleanup {
+                    2
+                } else {
+                    1
+                }
+            });
+            let client = Client::connect(&tarn_iproto::Opts::new(addr.to_string()))
+                .await
+                .unwrap();
+            let (vote, error) = timeout(Duration::from_secs(3), prepare_once(&client, stream, &[0x90]))
+                .await
+                .unwrap();
+            assert_eq!(matches!(vote, Vote::Yes), case == 2);
+            assert_eq!(matches!(vote, Vote::No), case == 3);
+            assert_eq!(error.is_none(), case == 2);
+            if matches!(case, 6..=8) {
+                assert!(client.is_closed(), "case {case}");
+            } else if matches!(case, 0 | 1 | 11) {
+                assert!(!client.is_closed(), "confirmed cleanup must keep a healthy socket");
+            }
+            client.close();
+            let count = timeout(Duration::from_secs(4), peer).await.unwrap().unwrap();
+            assert_eq!(count, if matches!(case, 0 | 1 | 7 | 8 | 11) { 2 } else { 1 });
+        }
+    }
 
     #[test]
     fn batch_capability_is_versioned_and_complete() {

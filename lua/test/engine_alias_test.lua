@@ -26,10 +26,21 @@ wait('schema/native', function()
     if box.space._tarn_part.index.state == nil or box.space._tarn_meta:get{'shard_id'} == nil then return false end
     return not native or native == '0' or (tarn_info().native or {}).ready == 1
 end)
+-- A synchronous clock-policy installation is independent of alias writes.
+-- Keep a bounded trace so any unexpected pending writer is identifiable.
+local phase, meta_writes, meta_write_count = 'startup', {}, 0
+local function trace_meta_write(old, new)
+    meta_write_count = meta_write_count + 1
+    if #meta_writes < 24 then
+        meta_writes[#meta_writes + 1] = {key = (new or old)[1], phase = phase,
+            fiber = fiber.self():name(), txn = tostring(box.txn_id())}
+    end
+end
+box.space._tarn_meta:on_replace(trace_meta_write)
 if native and native ~= '0' then
     local ffi = require('ffi')
     local ns = ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call())
-    assert(ns.layout == 11 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 312)
+    assert(ns.layout == 14 and ns.ready == 1 and ffi.sizeof('struct tarn_ns') == 392)
     assert(ffi.offsetof('struct tarn_ns', 'capture_stale') == 200
         and ffi.offsetof('struct tarn_ns', 'write_excluded') == 208
         and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304)
@@ -75,6 +86,16 @@ _G.tarn_engine_counter_alias = function(old, new)
     return original(old, new)
 end
 local ok, err = xpcall(function()
+    -- sync=true initializes the schema and clock policy in separate fibers.
+    -- Schema/native readiness alone can precede clock:policy:1's first WAL
+    -- write. Finish that real confirmed initialization before holding quorum;
+    -- leave the clock worker running throughout the alias experiment.
+    wait('confirmed clock policy/local read readiness', function()
+        return tarn.clock.loaded and tarn.clock.read_check() == nil
+            and confirmed(function() return box.space._tarn_meta:get{'clock:policy:1'} ~= nil end)
+            and box.info.synchro.queue.len == 0
+    end)
+    phase = 'create'
     box.cfg{replication_synchro_quorum = 2}
     local first = start(clients[1], 120000, watched)
     wait('first native quorum wait', function() return arrived == 1 and box.info.synchro.queue.len == 1 end)
@@ -90,14 +111,20 @@ local ok, err = xpcall(function()
         successful(first) and successful(second) and alias(watched) == 120000,
         {first = first.reply, second = second.reply})
 
+    phase = 'replay'
+    local writes_before_replay = meta_write_count
     box.cfg{replication_synchro_quorum = 2}
     local a, b = start(clients[1], 120000, watched), start(clients[2], 120000, watched)
     local deadline = fiber.clock() + .3
     repeat if a.done and b.done then break end; fiber.sleep(.005) until fiber.clock() >= deadline
     check('confirmed identical replays both succeed without a new synchronous write',
-        successful(a) and successful(b) and box.info.synchro.queue.len == 0,
-        {first = a.reply, second = b.reply, queue = box.info.synchro.queue.len})
+        successful(a) and successful(b) and box.info.synchro.queue.len == 0
+            and meta_write_count == writes_before_replay,
+        {first = a.reply, second = b.reply, queue = box.info.synchro.queue.len,
+         writes_before = writes_before_replay, writes_after = meta_write_count,
+         writes = meta_writes, clock = tarn.clock.status()})
     box.cfg{replication_synchro_quorum = 1}; joined(a); joined(b)
+    phase = 'next-generation'
     check('read-only replays preserve the confirmed alias', alias(watched) == 120000)
 
     local wrong = clients[1]:call('tarn_engine_counter_alias', {120099, watched})
@@ -116,8 +143,14 @@ local ok, err = xpcall(function()
 end, debug.traceback)
 box.cfg{replication_synchro_quorum = 1}
 _G.tarn_engine_counter_alias = original
+box.space._tarn_meta:on_replace(nil, trace_meta_write)
 if box.is_in_txn() then box.rollback() end
 for _, c in ipairs(clients) do c:close() end
-if not ok then failed = failed + 1; print('  FAIL alias exception: ' .. tostring(err)) end
+if not ok then
+    failed = failed + 1
+    print('  FAIL alias exception: ' .. tostring(err))
+    print('ALIAS_DIAGNOSTIC ' .. json.encode{phase = phase, writes = meta_writes,
+        write_count = meta_write_count, clock = tarn.clock.status(), queue = box.info.synchro.queue.len})
+end
 print(string.format('%d passed, %d failed', passed, failed))
 os.exit(failed == 0 and 0 or 1)

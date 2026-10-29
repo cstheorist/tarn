@@ -1,0 +1,95 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 99 and seed 466890825593051743 with 4 workers on 16 cores with 1472MB heap and 64MB offheap memory [pid: 33203] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue130/tla/StrongStreamCertificate.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8082828483832459639/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module StrongStreamCertificate
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module StrongStreamCertificate
+Starting... (2026-10-28 14:13:23)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-28 14:13:23.
+Error: Invariant RegistryOnlyLive is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ certified = {}
+/\ live = {}
+/\ replies = {}
+/\ current = [A |-> 0, B |-> 0]
+/\ bornOwned = <<FALSE, FALSE, FALSE>>
+/\ phase = <<"unused", "unused", "unused">>
+/\ nextId = 1
+/\ markedEmpty = {}
+/\ writeDone = FALSE
+/\ snapshot = <<2, 2, 2>>
+/\ barrierDone = {}
+
+State 2: <Begin("A",TRUE) line 43, col 5 to line 49, col 86 of module StrongStreamCertificate>
+/\ certified = {}
+/\ live = {1}
+/\ replies = {}
+/\ current = [A |-> 1, B |-> 0]
+/\ bornOwned = <<TRUE, FALSE, FALSE>>
+/\ phase = <<"waiting", "unused", "unused">>
+/\ nextId = 2
+/\ markedEmpty = {}
+/\ writeDone = FALSE
+/\ snapshot = <<2, 2, 2>>
+/\ barrierDone = {}
+
+State 3: <PassBarrier("A") line 71, col 5 to line 75, col 63 of module StrongStreamCertificate>
+/\ certified = {}
+/\ live = {1}
+/\ replies = {}
+/\ current = [A |-> 1, B |-> 0]
+/\ bornOwned = <<TRUE, FALSE, FALSE>>
+/\ phase = <<"barrier", "unused", "unused">>
+/\ nextId = 2
+/\ markedEmpty = {}
+/\ writeDone = FALSE
+/\ snapshot = <<2, 2, 2>>
+/\ barrierDone = {1}
+
+State 4: <Mark("A") line 79, col 5 to line 87, col 96 of module StrongStreamCertificate>
+/\ certified = {1}
+/\ live = {1}
+/\ replies = {}
+/\ current = [A |-> 1, B |-> 0]
+/\ bornOwned = <<TRUE, FALSE, FALSE>>
+/\ phase = <<"ready", "unused", "unused">>
+/\ nextId = 2
+/\ markedEmpty = {1}
+/\ writeDone = FALSE
+/\ snapshot = <<2, 2, 2>>
+/\ barrierDone = {1}
+
+State 5: <EndTxn("A") line 112, col 5 to line 116, col 94 of module StrongStreamCertificate>
+/\ certified = {1}
+/\ live = {}
+/\ replies = {}
+/\ current = [A |-> 0, B |-> 0]
+/\ bornOwned = <<TRUE, FALSE, FALSE>>
+/\ phase = <<"ended", "unused", "unused">>
+/\ nextId = 2
+/\ markedEmpty = {1}
+/\ writeDone = FALSE
+/\ snapshot = <<2, 2, 2>>
+/\ barrierDone = {1}
+
+293 states generated, 200 distinct states found, 139 states left on queue.
+The depth of the complete state graph search is 6.
+Finished in 00s at (2026-10-28 14:13:23)
+Trace exploration spec path: ./StrongStreamCertificate_TTrace_1793211203.tla

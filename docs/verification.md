@@ -75,6 +75,17 @@ of workload, fault budget and options. The names say what is checked:
 | `StreamMarks` | a separate local refinement model of the transaction numbers by which a shard knows that a stream began in its current term and after any `TRUNCATE` of a table it read, and of the premises the native steps rely on |
 | `Handback*` | a separate model of the contract between the SQL server and a native procedure that commits writes: served as the Lua procedure would, or handed back unchanged, never once its commit began, and never sent again after a lost connection (`*_Autocommit`: an autocommit write) |
 | `NativeKeyBatch` | a bounded native full-primary-key batch returns the complete ordered filter-map of one memtx image, checking write claims even on missing keys, or hands the whole request back |
+| `StrongReadFreshness` | a request-specific quorum observation, local WAL catch-up and synchronous-queue settlement precede the first strong snapshot |
+| `StrongStreamCertificate` | an owned empty transaction is certified after its first barrier and before any read; later reads require that exact native transaction ID |
+| `StrongStreamCompletion` | a separate final quorum prefix precedes validation of the original caller transaction/read set; neither skipping the prefix nor replacing the read set may commit a fractured view |
+| `LockReplyOwnership` | a yielding locking RPC returns rows only under its original observed role/generation and live session |
+| `RecordExpiryClock` / `RecordExpiryPolicy` | a two-skew retention margin under varying bounded clock offsets, plus local persisted-policy/high-water admission after GC |
+| `CompletionRetention` | decided finishing preserves inherited receipt timestamps/horizons despite an unknown clock, preventing GC and a contradictory fresh abort after reboot |
+| `LogicalClockExpiry` | bounded raw corrections produce monotone logical clocks under a fixed common reference band, preserving the two-skew expiry/admission contract |
+| `DepartureDependencies` | publish draining everywhere, fence new admissions, and drain all prepared, staging and in-flight dependencies before stopping a shard |
+| `Fairness` | bounded pass ordering reaches eligible records beyond a fixed stuck set; it does not change record lifecycle or timing guards |
+| `DecisionPlacement` / `Placement_*` | stable decision identity among frozen writers, plus commit/GC checks with another transaction-specific placement |
+| `PipelineAdmission` | connection/shard/gateway resource charges and uncertainty survive cancellation and physical retirement |
 | `EngineCopy` / `EngineCutover` | local online copy, final fencing and prepared-image retention, followed by confirmed decision/publication, auxiliary readiness, identity and counter continuity |
 | `Backfill` | a separate local refinement model of append-only instant-column materialization, persistent fencing, original-length undo, abort and slot reuse |
 | `BackfillDDL` | a separate local refinement model of whole-RPC serialization around yielding native index builds and delayed ALTER cleanup |
@@ -886,6 +897,15 @@ change the cache of holds is anything until read from storage again.
 term it committed them in, of the table as it still was then, with no
 hold on it.
 
+These are local observed-term/DDL marking premises. They do not establish
+that an old leader has observed a replacement before final validation.
+Current ABI 14/392 replicated-stream native validation/local commit hands
+back before effects for Lua's separate final-prefix fence; RF1 kernels
+remain native. `StrongStreamCompletion` below supplies the additional
+prefix/original-read-set composition check without a yielding native
+call. Historical ABI 13 checkpoint and ABI 11/experimental ABI 12
+measurements retain their original source, ABI and guarantee scope.
+
 Each protection has a switch, and TLC finds each `Bug_StreamMarks*`
 configuration violating `CommittedReadsCurrent` within seconds:
 
@@ -1306,6 +1326,297 @@ the immutable old/new identity premise.
 tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 ```
 
+### Strong-read freshness, stream provenance and locking replies (issue #130)
+
+`StrongReadFreshness.tla` refines the replica-freshness premise that the
+commit model's atomic failover does not express. Three replicas retain
+their own observed term, writable role, WAL evidence and settled effects.
+Two requests race two acknowledged writes across A → B → A leadership,
+one pause/resume and one partition/heal. The bounded network choices are a
+healthy mesh and three faults affecting A: isolation, outgoing links only,
+or incoming links only. These are representative directed networks, not
+exhaustive exploration of all 64 edge subsets.
+
+An acknowledged write leaves immutable WAL evidence on a write quorum of
+two. Each request collects fresh replies from a read quorum of two, joins
+their observed WAL, waits for local catch-up and settles the local sync
+queue before taking its first snapshot. Every prior write quorum intersects
+that request's reply quorum, so `CollectedCoversPriorAcks` follows from the
+reply observations and monotone WAL; no action tests the desired freshness
+predicate or reads the client's ACK floor. Catch-up and settlement then
+give `StrongReadsSeePriorAcks`. A later new snapshot, including one after
+an empty barrier transaction was rolled back, remains valid under this
+monotone confirmed-prefix premise.
+
+The six read controls independently admit a role-only read on a former
+leader, reuse an earlier barrier, retain a snapshot taken before the
+barrier, skip catch-up, skip queue settlement, or use a read quorum that
+does not intersect every write quorum. Each reaches an actual strong read
+missing a prior acknowledged write. The nonintersection control omits the
+intermediate coverage invariant so TLC reaches that final missing-data
+result. Native quorum durability, log/term safety, unconfirmed rollback,
+WAL catch-up and queue settlement remain trusted replication premises;
+this model does not implement Tarantool or prove its public C API mapping.
+
+`StrongStreamCertificate.tla` checks a separate provenance obligation.
+Only an owned empty transaction is marked after its first barrier and
+before any read. Later Lua/native reads require the exact current native
+transaction ID; an arbitrary unmarked ambient transaction is refused,
+including one whose old snapshot a late barrier cannot repair. The fixture
+has two stream slots, three never-reused transaction IDs and registry
+capacity one. Commit/rollback cleanup removes that ID. A savepoint rollback
+may conservatively remove a live transaction's certificate too: its later
+read refuses rather than refreshing the old transaction. Five controls
+catch late-snapshot marking, marking before the barrier, another
+transaction's certificate, missing cleanup and ignored capacity. Native ID
+uniqueness, terminal-trigger execution and ordering, the actual 4096-entry
+bound, FFI layout and nonyielding guard/read admission remain runtime duties.
+
+ABI 14/392 replaces the four stored LuaJIT FFI guard callback pointers with
+`fresh_guard_reserved: uint64[4]` at offset 360, all zero; the six reserved
+bytes at offset 314 remain unchanged. A small C shim enters the ordinary
+`F.native_controls`, `F.native_space`, `F.native_mark` and `F.native_ok`
+helpers through the public Lua C API before any Rust State borrow and
+again after a yielding freshness wait. It protects lookup, exact uint64
+argument creation and invocation with `lua_cpcall`, restores the entry
+stack and maps errors or invalid results to unavailable. The helpers keep
+their exact current-transaction certificate and nonyielding/no-State-access
+contracts. No guard address is retained from LuaJIT's cached `CTState.L`.
+
+Neither the TLA+ models nor the Verus kernels prove this C entry shim,
+Lua's allocation/error behavior, current-fiber transaction context or the
+underlying Tarantool implementation. Current ABI 14 validation must be
+bound to its own source and artifact. Earlier runtime counts and ABI 13
+checkpoint timings are not evidence for the changed entrypoint. A later
+CI storage-process SIGSEGV prompted this investigation. Its cause has not
+been established; this public-API correction is not a demonstrated causal
+fix for that failure.
+
+`StrongStreamCompletion.tla` checks a different boundary: the first-read
+certificate alone does not certify final validation while a former leader
+has not observed its successor's writes or term. A reader observes `X=0`,
+a replacement writer stores WAL on a write quorum and acknowledges its
+`X=1, Y=1` transaction, and a healthy logical shard can return `Y=1`. The
+old X leader's writable flag and observed term may still look unchanged.
+
+A separate owned child transaction obtains fresh replies from two of
+three X replicas. Its reply quorum intersects the writer's two-replica WAL
+quorum; `CollectedCoversStartAck` follows from those observations. Local
+catch-up and queue settlement apply that history before the original
+caller's MVCC probe/observed-term validation. The caller retains its exact
+transaction and read set. Applying the replacement write invalidates that
+old read view, so `NoFracturedCommit` follows without replacing the values
+the reader already returned. A healthy `X=0, Y=0` transaction can still
+commit before the writer. An unavailable final quorum supplies no progress
+guarantee.
+
+The two controls reach actual commits of `X=0, Y=1`. Skipping the final
+prefix leaves the isolated former leader's old view writable. Dropping the
+caller's read set after a successful prefix creates a new transaction that
+passes its probe while retaining the already-returned old X observation.
+Neither control stops at an early identity assertion. The bounded fixture
+has one writer and one reader, two logical shards, RF3 only for X, four
+representative link patterns and one heal. First-read certification, native
+MVCC invalidation/probe semantics, confirmed replication and current
+clock/configuration eligibility remain trusted premises. It does not prove
+the child-fiber API, native handback implementation, clock certification or
+safe administrative reconfiguration.
+
+`LockReplyOwnership.tla` checks the first point/range locking-RPC reply,
+where the gateway has no earlier generation to compare. Capture the role
+epoch and `PL_GEN` after the barrier and `pl_begin`; retain them across
+grants, row reads and yields. A final comparison with the same observed
+local role/generation and live session derives `ReturnedRowsLocked` from
+the grant/invalidation history. It does not assume ownership as an extra
+guard. Two rows race one demote/promote cycle and one disconnect. Relabeling
+the reply with the new generation, or ignoring the disconnected session,
+returns rows whose locks are gone in the two controls. The relabel control
+checks actual lock ownership rather than stopping at the earlier epoch
+mismatch. This local proof does not promise leadership persists after the
+admission barrier; existing commit validation, stream term/read-view checks,
+lock/DDL history, bucket fences, FIFO and native read semantics still apply.
+
+These checks cover default strong procedures, not a stronger contract for
+raw native reads or opted-in lazy indexes. Raw reads have no request-specific
+quorum barrier. A fresh base-row view does not make a lazy index complete:
+recent matching rows may still be absent from its candidates.
+
+### Record-expiry clocks and persisted admission policy (issue #130)
+
+`RecordExpiryClock.tla` refines the core model's irreversible `Expire`
+action. The positive fixture permits offsets to rise or fall while elapsed
+time advances, provided each actual clock is nondecreasing and every
+pairwise difference stays within `S`. Separate forward steps are allowed;
+a paused process delays its actions while wall time continues. The finite
+fixture has elapsed time 0–7, offsets 0–2, age limit `A = 2` and `S = 1`.
+The timestamp is finite, immutable and issued before the record was written;
+the issuer is included in the clock-bound premise.
+
+Retention needs **two** skew margins when offsets vary. At the write,
+`timestamp <= holder_write + S`. If GC requires
+`holder_gc > holder_write + A + 2*S`, the receiving participant's clock is
+`peer_gc >= holder_gc - S > timestamp + A`. Its nondecreasing clock then
+keeps the transaction expired. A single margin fails even with monotone
+clocks whose current pairwise differences always satisfy the bound. The
+other controls exceed the bound, move a clock backward after GC, raise the
+age limit, or omit/provide a future timestamp. Each permits a fresh PREPARE
+after its old record was forgotten. These are premise counterexamples, not
+a proof that a runtime clock monitor detects every such violation.
+
+`LogicalClockExpiry.tla` checks a sufficient clock refinement for accepting
+small raw backward corrections. Monotonic time still cannot decrease;
+the accepted raw displacement is compared with the **previous logical**
+wall value using the unchanged drift and observation-gap bounds. Publication
+uses `max(previous_logical, accepted_raw)`. Comparing only consecutive raw
+samples would permit a sequence of individually small corrections to move
+farther behind the retained logical floor.
+
+The raw-clock premise is a **fixed common reference band of width S**:
+for every relevant storage node and timestamp issuer, throughout the
+issue/retention/admission history, `real + L <= raw <= real + U`, with
+constant `U-L = S` and nondecreasing reference time. An absolute error bound
+of `S/2` about one trusted reference is sufficient. Absolute error `S`
+would imply only pairwise `2*S`, and a changing contemporaneous pairwise
+raw bound alone does not establish the fixed-band premise. This is an
+explicitly stronger external premise; quorum, current offsets and peer
+agreement cannot prove common-mode or historical reference-clock bounds.
+
+If the previous logical value was at most `previous_real + U`, it is still
+at most `current_real + U`. The accepted current raw value supplies both
+the current lower bound and its own upper bound. Their maximum therefore
+stays in the same band. Fresh logical observations retain pairwise bound
+`S`, so the existing issuer/holder/participant argument still uses `A+2*S`.
+Neither the configured skew nor drift allowance is widened. A cached old
+logical sample has no current lower-band guarantee until another accepted
+observation; peer interval/TTL validity and historical issuer bounds remain
+separate trusted obligations. Logical certificate checks retain their
+existing `S` allowance and may refuse a pair after clamping.
+
+The finite fixture has reference/monotonic time 0–8, issuer timestamp
+0–2 issued before the record write, `A=2`, `S=2`, drift allowance 2 and
+maximum observation gap 3 in symbolic units. Holder/peer observations are
+asynchronous. GC and fresh admission require their respective current
+accepted samples. An accepted path includes raw 2 at time 0, then raw 1
+at time 1: logical time stays 2 while the raw/previous-logical drift is
+exactly -2. The positive checks `LogicalBand` and `NoFalseNO` in 85,476
+states, depth 19.
+
+Two controls retain the same local drift/gap checks but add an ungrounded
+post-check logical floor or violate the fixed raw reference band through
+finite accepted steps. Both reach actual receipt GC followed by a new
+abort/NO over committed data. They fail `NoFalseNO` in 134 states/depth 4
+and 4,028 states/depth 7; the intermediate band assertion is omitted in
+these controls so it does not stop their traces early. These are timing-
+contract boundary consequences, not complete Lua/runtime counterexamples
+or a claim that production peer certificates accept those clocks. The
+refinement also requires publication of the same accepted logical-wall/
+monotonic pair; a second unvalidated raw sample cannot certify it. Clock
+source quality, certification, rebaseline availability, native API/WAL
+semantics and runtime liveness are outside this bounded check.
+
+`RecordExpiryPolicy.tla` checks local protection after local GC. Persist an
+immutable policy and atomically advance a wall high-water mark with each
+destructive GC chunk. Fresh absent-record state creation uses
+`max(current_wall, persisted_high)`, the fixed age limit and current clock
+health. Recheck at final admission after planning may have yielded; an
+unknown or changed policy/health state cannot authorize a fresh YES or
+NO/tombstone. Existing durable receipts and decided finishing are outside
+fresh admission. The fixture retains the high-water mark across two
+restart/promotion actions and permits clock rollback and configured-age
+changes. Its four controls omit the watermark, accept a mutable age policy,
+check age only before the yield, or ignore uncertain health. The entry-only
+control retains final health/policy checks, forcing a trace that actually
+crosses expiry and GC while planning is paused.
+
+The runtime refines the model's trusted `healthy` guard with both the
+required clock coverage and current supported synchronous-replication and
+control-space settings. Fresh refusal records and every destructive GC
+chunk recheck that conjunction at their final transaction boundary. The
+model does not inspect Tarantool configuration or prove its eligibility
+checks; confirmed receipt lookup separately requires the fresh-quorum
+contract above and must preserve a borrowed ambient transaction if that
+lookup fails.
+
+These checks do not establish safe administrative reconfiguration. The
+quorum model fixes membership and quorum sizes, and the policy model
+assumes atomic native replication. Actual quorum intersection and selected
+WAL/synchronous durability must hold throughout every in-flight commit:
+weakening a write quorum while the native commit yields can confirm an
+already-submitted receipt or GC transaction. An entry/precommit eligibility
+check cannot undo that confirmation. Drain work or preserve the guarantees
+throughout overlapping configuration changes; arbitrary privileged changes
+are outside this refinement.
+
+The policy model assumes a valid immutable past-issued timestamp. It proves
+local rollback protection, not global clock certification, timestamp
+provenance, initial legacy-policy adoption, cross-shard high-water
+propagation or native atomic replication. The old-clock/future-input
+controls explain why those premises cannot be inferred from a role check,
+fresh read, local elapsed-time sample or per-call future-timestamp check.
+
+`CompletionRetention.tla` checks a separate terminal-update obligation.
+Finishing decided work remains allowed while clock health is unknown, but
+its receipt may have been written by a later good-clock leader. A floor
+from this node's finite raw sample, last valid observation, policy creation
+time and persisted high-water mark can still be below that inherited row.
+The terminal helper samples that floor once, uses
+`t = max(sampled_floor, existing.ts)` and
+`expires = max(existing.expires, t + A + 2*S)`. It never shortens either
+retained field.
+
+The fixture uses `A=10`, `S=2`, an immutable coordinator timestamp 1100,
+inherited receipt timestamps 1100–1102, two local raw-clock samples and two
+persisted high-water choices. It allows a crash before the volatile clock
+fault is persisted, then healthy-successor GC, another reboot retaining H,
+and a late conflicting PREPARE. The positive reaches 672 states, depth 25.
+Its control keeps all local clock floors but forgets both existing receipt
+fields. TLC reaches an actual contradictory reopen in 56 states, depth 6:
+1100/1114 becomes 1000/1014; a healthy successor at 1101 collects it and
+persists H=1101; after reboot, coordinator timestamp 1100 is still fresh,
+so a new abort/NO receipt is created over committed data. The control fails
+`NoContradictoryReopen`, rather than an early timestamp inequality. Keeping
+either an adequate old horizon or its timestamp would block this shortening;
+the implemented contract retains both.
+
+This refinement assumes the inherited receipt and coordinator timestamp
+were valid, the successor's clock/eligibility evidence is sound, and GC/H
+and user/protocol writes are atomically durable. It does not establish
+initial clock history, health certification, fault persistence before a
+crash, or native WAL semantics.
+
+The nine positive outcomes are:
+
+| Configuration | Distinct states | Depth | Principal invariant |
+|---|---:|---:|---|
+| `StrongReadFreshness` | 2,443,260 | 31 | `StrongReadsSeePriorAcks` |
+| `StrongStreamCertificate` | 24,180 | 19 | certificate provenance, exact ID, lifetime and capacity |
+| `StrongStreamCompletion` | 3,369 | 19 | `NoFracturedCommit`, `CollectedCoversStartAck` |
+| `LockReplyOwnership` | 184 | 12 | `ReturnedRowsLocked`, `ReplyKeepsEntryGeneration` |
+| `RecordExpiryClock` | 1,092 | 9 | `NoResurrectedPrepare` |
+| `RecordExpiryPolicy` | 1,368 | 23 | `NoUnsafeAdmission` |
+| `CompletionRetention` | 672 | 25 | `NoContradictoryReopen` |
+| `LogicalClockExpiry` | 85,476 | 19 | `LogicalBand`, `NoFalseNO` |
+| `DepartureDependencies` | 564 | 17 | `NoOrphanPrepared`, `NoOrphanStaging`, `NoNewDependencyAfterDrainACK` |
+
+All 42 focused configurations (nine positive and 33 expected controls) are
+generated and included in the default list. The first 36 belong to the
+validated 246-case union below; six departure checks passed separately
+through the registered checker with those prior inputs unchanged. This is
+not a claim that the entire runtime CI suite passed. Per-control states and violated invariants are
+in the generated [design results table](design.md#51-model-checking).
+Run only these checks with the same outcome checker as CI:
+
+```sh
+configs=(StrongReadFreshness StrongStreamCertificate StrongStreamCompletion LockReplyOwnership RecordExpiryClock RecordExpiryPolicy CompletionRetention LogicalClockExpiry DepartureDependencies)
+for family in StrongRead StrongStream StreamCompletion LockReply RecordExpiry RecordPolicy CompletionRetention LogicalClock Departure; do
+  for cfg in tla/Bug_${family}*.cfg; do
+    name=${cfg#tla/}
+    configs+=("${name%.cfg}")
+  done
+done
+tla/check.sh "${configs[@]}"
+```
+
 ### Recovery and garbage collection move on (issue #129)
 
 Recovery and garbage collection go through records in order: undecided
@@ -1314,6 +1625,7 @@ be acted on while a shard is down: a transaction that needs it cannot be
 resolved, and some records cannot be collected. `RecoveryFairness.tla`
 models the order of the passes (`lua/tarn.lua`, "Scheduling"), not what
 they do with a record, which `TarnCommit.tla` models:
+
 - a pass looks at no more than `Scan` records, and acts on no more than
   `Batch` of those it may act on now (`recovery_batch`, and five times as
   many; `gc_batch * 4`, and `gc_batch * 40`);
@@ -1326,6 +1638,24 @@ within ceil(N / Batch) + 1 passes, every record that is not stuck has been
 acted on. `BugPrefix` starts every pass from the first record, as both did
 before: TLC finds stuck records first that keep the others from being acted
 on (as many as a pass looks at, and no pass looks past them).
+
+The bound counts scheduled passes with a fixed stuck set, rather than wall
+time or arbitrary changes in availability. It does not establish clock
+certification, quorum availability or scheduler fairness. The freshness,
+expiry and persisted-policy refinements above still supply those separate
+admission and deletion obligations.
+
+Runtime GC also filters each record by its relevant writer-clock evidence
+before forming a batch's required-writer union. An unknown record remains
+retained without poisoning an unrelated eligible record in the same scan
+window. After remote status checks, the deletion transaction still rechecks
+current coverage, epoch and supported controls, and advances the persisted
+high-water mark atomically with deletion. Coverage lost after a status proof
+cannot authorize that deletion. These eligibility and final-guard premises
+compose with cursor ordering; `RecoveryFairness` does not prove their clock
+soundness. The recovery fault fixture exercises both the small mixed-health
+batch and coverage expiration after the status proof, followed by recovery
+once the missing writer resumes.
 
 ```sh
 tla/check.sh Fairness Bug_FairnessPrefix
@@ -1383,21 +1713,118 @@ TARN_NATIVE=0 tests/decision.sh
 ENGINE=vinyl tests/decision.sh
 ```
 
-`bench/decision_placement.py` makes repeated, matched placement measurements:
+The recorded `bench/decision_placement.py` results use repeated, matched placement measurements:
 new RF1/fsync clusters for each build/sample, disjoint rows per client and
 one write per shard per transaction. It checks all committed tuples and
 recorded identities, captures per-shard participant/decision records and
 WAL rows/file growth, then waits for the eligible records' GC and counts its
-deletions and WAL. The shorter retention and zero clock-skew allowance are
-confined to these owned single-host fixtures. This is a placement workload;
+deletions and WAL. Their shorter retention and zero clock-skew allowance
+were confined to owned single-host fixtures before the persisted timing
+policy. The current driver supplies matching timing environment variables
+before cluster startup and requires a matching gateway age limit. Adapting
+that setup does not rerun the historical measurements. This is a placement workload;
 it does not establish an RF3 performance or operational advantage.
+
+### Drain every dependency before removing a shard (issue #130)
+
+`DepartureDependencies.tla` checks the protocol boundary that permits a
+logical shard's storage to stop. A survivor's PREPARED or STAGING record
+can still name the retiring shard in its participant set even when another
+shard holds the decision. Moving its buckets and counting only records
+whose decision is the retiring shard does not establish that it is unneeded.
+Recovery still needs the absent participant to obtain a safe fence; an
+unreachable or removed peer is not a NO vote or an invented NONE receipt.
+
+The finite model has decision shard 1, retiring participant 2 and survivor 3,
+one delayed operation, and per-node draining publication. The operation
+creates either a survivor PREPARED receipt or a decision STAGING receipt.
+Participant 2 has no receipt. Every node must acknowledge draining before
+any zero-dependency gate is read. The gates count all confirmed PREPARED
+and STAGING references, including non-decision participants, and operation
+dependencies registered before the first yield and held through commit or
+rollback. Counts can conservatively overlap; only zero versus nonzero matters.
+
+New admission checks both current membership and its transaction's member
+read, including commit validation of that read. The network can deliver a
+request after a gate already returned zero. Closing new admission prevents
+that request from creating a dependency. An old already validated promise
+can instead be pending WAL when draining is acknowledged and confirm later;
+its in-flight registration must keep removal blocked until the receipt is
+visible and resolved. `NoNewDependencyAfterDrainACK` concerns first
+admission after all acknowledgements, rather than delayed confirmation or
+YES replies from an earlier admission. It is checked at actual durable
+receipt creation, not merely at an early boolean guard.
+
+The positive checks `NoOrphanPrepared`, `NoOrphanStaging` and that admission
+property in 564 distinct states, depth 17. With weak fairness of publication,
+gate, request and recovery actions, `HealthyDrainCompletes` also checks
+eventual removal when required clock health remains available.
+`DecidedCompletion` checks that an existing decision eventually releases
+its receipts even if the local clock faults. New absence-based fencing
+still requires health; persistent unknown health can intentionally prevent
+removal. Healthy needed peers, sound membership/MVCC/WAL semantics and
+balanced runtime counters remain premises, not conclusions of this model.
+
+The five controls reach these concrete consequences:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_DepartureDecisionOnly` | 301 | 14 | `NoOrphanPrepared`: a non-decision participant reference survives removal |
+| `Bug_DepartureLateAdmission` | 490 | 15 | `NoOrphanPrepared`: a delayed request creates its receipt after the peer stops |
+| `Bug_DepartureIgnoreStaging` | 301 | 14 | `NoOrphanStaging`: the unresolved decision still needs the stopped participant |
+| `Bug_DepartureUntrackedWal` | 341 | 14 | `NoOrphanPrepared`: an old pending promise confirms after an untracked gate passes |
+| `Bug_DepartureNoCommitCheck` | 208 | 9 | `NoNewDependencyAfterDrainACK`: an old transaction image creates a new durable promise after draining acknowledgements |
+
+In the first four traces participant 2 is actually offline, the survivor's
+receipt is durable, the missing participant has no receipt, and no decision
+exists. Recovery cannot fabricate its missing fence. The late-admission
+control omits the earlier admission assertion to reach this actual orphan.
+The commit-validation control creates an actual late durable promise;
+tracking can still prevent its removal, so it does not claim an orphan.
+
+Confirmed-row visibility and pending WAL/RPC lifetime are deliberately
+separate in this model. A runtime fresh-prefix wait may independently
+settle pending WAL; the model does not rely on it as a substitute for
+tracking the request. This conservative boundary is not a native WAL or
+full-runtime refinement proof. It leaves the existing no-vote/expiry,
+immutable decision identity and uncertain-outcome contracts unchanged.
+
+```sh
+tla/check.sh DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAdmission \
+  Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck
+```
 
 ### Configuration counts
 
-The default list contains 210 configurations, including 152 expected
-broken/trade-off outcomes. The 217 generated configurations reproduce from
-`gen_cfgs.sh`; six grouped-read and decision-placement configurations are
-maintained directly, for 223 total. Explicit check arguments override the default list.
+The default list contains 252 unique configurations: 67 positive
+outcomes and 185 expected broken/trade-off outcomes. The 259 generated
+configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
+placement configurations are maintained directly, for 265 total. Explicit
+check arguments override the default list.
+
+The premerge issue #130 list completed all 219 expected outcomes (57
+positive, 162 controls). A separate frozen merged 238-case run completed
+63 positive outcomes and 175 expected violations after the `MC` and
+decision-placement changes. The three additional stream-completion cases
+then passed the registered checker with one positive and two expected
+violations. The original 238 model/config inputs and module dispatch were
+checked unchanged, forming a validated 241-case union. Two completion-
+retention cases then passed separately with those 241 model/config inputs
+and dispatch unchanged, forming 243 cases. Three logical-clock expiry
+cases then passed through the current checker, with all 243 prior model/
+config bytes and dispatch checked unchanged. Their exact argument union
+was the 246-case default list. Six departure-dependency checks then passed
+the registered checker with all prior model/config bytes and module
+dispatch unchanged, forming the current 252-case input union. Its generator
+reproduced twice without changes. CI run
+[40827360444](https://github.com/cstheorist/tarn/actions/runs/40827360444)
+then executed all 252 cases with expected outcomes, including 67 positive
+checks and 185 sensitivity/tradeoff controls. All four jobs passed; Verus
+verified 140 bodies with zero errors. The actual checkout
+`5eeab61b3c6b724ed2c6bc5fe859ecb942a5cbde` has the same tree as runtime
+revision `554ef08`. The 317 proof inputs retain exact source bindings.
+The final report-head CI/validation attestation is a separate publication
+gate; a previous run is never represented as execution of changed models.
 
 ## Verus proofs
 
@@ -1405,6 +1832,16 @@ maintained directly, for 223 total. Explicit check arguments override the defaul
 builds it with the specifications and proofs erased, and the server uses the
 result. Verus proves:
 
+* **Native clock observation arithmetic** (`clock.rs`): `observation_ok`
+  exactly decides monotonic nondecrease, a bounded observation gap and
+  `abs((raw_wall - previous_logical_wall) - elapsed_mono) <= max_drift`,
+  including bounded raw backward corrections. All subtractions are free of
+  overflow/underflow for every `u64` input. `logical_wall` returns exactly
+  the maximum of the previous logical and raw values. A lemma preserves
+  one clock's absolute band around a nondecreasing reference; it does not
+  derive a pairwise bound from that error parameter. The executable bodies
+  are shared with native admission. These are arithmetic proofs, not clock
+  source, publication, remote-offset, persisted-policy, quorum or GC proofs.
 * **Native batch budgets** (`batch.rs`): `can_step` permits the next lookup
   exactly while work, rows and bytes each have room. `step` either rejects
   the whole native attempt or charges one work unit, one row for a present
@@ -1470,7 +1907,7 @@ rustup toolchain install 1.98.1
 curl -fsSL -o verus.zip https://github.com/verus-lang/verus/releases/download/release%2F0.2026.10.04.426d8b0/verus-0.2026.10.04.426d8b0-x86-linux.zip
 unzip -q verus.zip -d ~/verus
 cd crates/tarn-verified && ~/verus/verus-x86-linux/verus --crate-type=lib src/lib.rs
-# verification results:: 137 verified, 0 errors
+# verification results:: 140 verified, 0 errors
 ```
 
 `crates/tarn-verified/tests/erased.rs` exercises the erased code with
@@ -1502,10 +1939,14 @@ a `sb` user for the differential tests (or point `--ref` at any MariaDB
 
 The heap-watchdog fixture retains the 40 MiB garbage/64 MiB margin setup,
 then stops pressure near 2 MiB free, keeping at least 1 MiB for native-core
-work. It requires a node-triggered collection, successful calls and a live
-lazy worker without a manual recovery collection. An isolated control
-that cancels only the heap-watchdog fiber fails the collection assertion
-under the same bounded pressure. Earlier unbounded pressure reproduced a
+work. It requires restored heap headroom, successful calls and a live lazy
+worker without a manual recovery collection. The final clock/native
+eligibility preflight uses `PG.heap_available`, which observes free space
+without requesting a collection. An earlier-build
+isolated control that cancelled only the heap-watchdog fiber failed its
+collection assertion under the same bounded pressure. That historical
+control is not a sensitivity result for the current build. Earlier
+unbounded pressure reproduced a
 native `cfg_get('read_only')` panic in both native and Lua modes; active
 and stopped lazy-worker controls did not establish worker causation.
 Tarantool's pinned [`cfg_get` implementation](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/cfg.c#L40)
@@ -1513,6 +1954,49 @@ evaluates a Lua chunk and panics on a Lua error. The fixture verifies Tarn's
 near-limit garbage recovery with native-core headroom; it is not a proof
 that arbitrary privileged EVAL allocations can safely exhaust the hard
 Lua heap limit.
+
+### RF3 fixture readiness and copy diagnostics (issue #165)
+
+A confirmed mutation does not pin volatile lazy caches. The production
+`box.status` callback invalidates capture and quota even when the current
+role is unchanged. Capture is refreshed on entry; the separate quota worker
+rebuilds its confirmed cut even while shipping is paused. The RF3 fixture
+therefore drives an empty ordinary autocommit and waits under its original
+25-second readiness bound before applying the original exact quota,
+capture, tuple, reservation, sequence and floor assertions. Selected
+durable summaries are equal before and after those empty entries; this is
+not a byte comparison of every database payload.
+
+The UNKNOWN probe holds background quota rebuild across the strong-read
+barrier and observes `ready()` at the actual production `q.change` guard.
+It requires a nonempty set of false observations, error 1213, a live worker,
+and unchanged byte images of the selected base/outbox/reservation/counter/
+slot/floor spaces. The original guard still decides admission. Both test
+wrappers are restored before recovery continues.
+
+Engine copying keeps one original BUILD attempt. On the original
+30-second copy-hook deadline, diagnostics retain its return or exception,
+fiber state, job, capture epoch/tickets, source hash, shadow/receipt, native
+cache, queue, leader and clock state. Each diagnostic RPC has a separate
+one-second bound, after the original wait; a failed controller prints the
+last 80 lines from each of its three owned process logs before cleanup.
+No diagnostic resends BUILD. A live source-definition mismatch proves the
+real 1412 refusal is retained with unchanged source/job and no shadow or
+receipt. Exception and sleeping-worker controls are explicitly synthetic;
+they test observation, not a claimed reconstruction of the historical
+unlogged timeout.
+
+`lua/test/run.sh` runs the normal RF3 suites, all three copy diagnostics
+controls and a held-notification lazy regression in native and Lua-only
+modes. The latter delays the actual initial `box.status` callback until
+after confirmed PREPARE/CAS, then releases all initial callbacks and the
+restarted replica's callback before later process loss. Its test-only
+preload arms after configuration and before Tarn initialization. It uses
+the actual notification and invokes the original production callback,
+with no general worker liveness claim. Production Lua, native code, protocol and model
+inputs are unchanged. The original failed CI execution and every local
+control, including nonqualifying setup failures, are retained separately
+in the [evidence index](../tests/evidence/rf3-fixture-readiness/index.json).
 
 ## Continuous integration
 

@@ -1,0 +1,59 @@
+{
+  "source_commit": "554ef08dee261e7e9a4e109a7fc299e7fa7ce0ed",
+  "source_tree": "9dcc0715adf4c486e7a20aa9a2c5d85aa2836e35",
+  "read_contract": [
+    "strong_reads",
+    1
+  ],
+  "native_layout": 14,
+  "native_size": 392,
+  "phases": 72,
+  "pairs": 36,
+  "cells": 6,
+  "cost_run": 40827426428,
+  "cost_job": 123293568444,
+  "archive": {
+    "url": "https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/strong-read-freshness-130-linux-v2.tar.gz",
+    "bytes": 58955738,
+    "sha256": "3a9eb9d6ce65e828e7264386d8637a7f738d485c38898b293522b8fd0197c250",
+    "regular_members": 621
+  },
+  "downloaded_raw_artifact": {
+    "github_artifact": 12877197873,
+    "bytes": 161265004,
+    "sha256": "80d5cdac639a1c8a117a7b450b1d64415f143400bcd969a12780fec22aea037f"
+  },
+  "measured_source_ci": {
+    "run": 40827360444,
+    "status": "completed",
+    "conclusion": "success",
+    "actual_checkout": "5eeab61b3c6b724ed2c6bc5fe859ecb942a5cbde",
+    "tree_equals_source": true,
+    "registered_cases": 252,
+    "positive": 67,
+    "expected_controls": 185,
+    "proof_inputs": 317,
+    "verus_verified": 140,
+    "verus_errors": 0,
+    "scope": "Actual completed CI after the immutable data archive retained its earlier in-progress formal snapshot. Final report-head CI is a separate gate."
+  },
+  "final_ci_attestation": {
+    "url": "https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/validation-attestation.json",
+    "required_before_publication_and_merge": true,
+    "asserted_by_measurement_archive": false
+  },
+  "earlier_complete_checkpoint": {
+    "source": "62cf4c68018311f522a44a1dea71ea8362c0f950",
+    "url": "https://github.com/cstheorist/tarn/releases/download/bench-strong-read-freshness-130-v1/strong-read-freshness-130-linux-v1.tar.gz",
+    "bytes": 48388800,
+    "sha256": "a1aa3e0e8906831596097abc73c0f5da3156e6147c6280aebc96ec6a023e2f82",
+    "retained_verbatim_inside_current_archive": true,
+    "pooled_into_current_statistics": false
+  },
+  "files": {
+    "summary.json": "7163b3921bc98ba21b414a39832a69c3b5c2b71d4a7e9582e3bfe6ab306d92bf",
+    "phases.csv": "77f267080b7fa41fe31367987f6b95828596506d99590b58a3db75fa35b5b53d",
+    "pairs.csv": "578ca6cbe885880755ab4bb59348c7740fc171f671f240f5789d87b36f0fbc41"
+  },
+  "scope": "Instrumented short hot-corpus strong reads on one four-CPU Linux runner; CPU ratios are per-operation leader TX costs. No production-capacity, durable-write, physical-bandwidth or cross-database ranking."
+}

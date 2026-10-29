@@ -14,6 +14,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   frontier and floor proof checks remain unchanged
   ([#163](https://github.com/cstheorist/tarn/issues/163)).
 
+- RF3 storage fixtures refresh volatile lazy capture/quota readiness at an
+  ordinary empty entry before comparing exact durable totals
+  ([#165](https://github.com/cstheorist/tarn/issues/165)). The UNKNOWN probe
+  holds rebuild while observing the real admission guard. Engine-copy
+  timeouts retain the original single BUILD result or exception, fiber and
+  job/capture/queue state, and bounded owned-process logs. Live controls
+  preserve the original deadlines and never replay BUILD.
+
+- Shard withdrawal now drains every unresolved participant dependency
+  ([#130](https://github.com/cstheorist/tarn/issues/130)). New promises are
+  fenced when any dependency is draining, and removal counts in-flight,
+  PREPARED and STAGING references across all surviving shards. A participant
+  that released its own locks remains available while another participant
+  still needs it for recovery. Existing receipts and decided completion
+  remain finishable.
+
 - Recovery and garbage collection could be held up by what they cannot
   resolve ([#129](https://github.com/cstheorist/tarn/issues/129)). While a
   shard was down, 200 undecided transactions that needed it, the first ones
@@ -54,6 +70,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   invalidates plans by generation and reports MariaDB analyze status.
   `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
   count actual decoded storage tuples separately from RPCs.
+
+- Request-specific quorum freshness for default SQL and strong storage
+  reads ([#130](https://github.com/cstheorist/tarn/issues/130)). An empty
+  transaction establishes the confirmed prefix before data access; a first
+  stream read retains that transaction and its MVCC read set. Existing
+  unmarked ambient transactions are refused without a late refresh.
+  Both engines use the pinned empty-barrier/confirmed-view composition;
+  raw native reads retain local visibility and lazy indexes retain their
+  documented eventual semantics. Replicated transaction completion proves
+  another current prefix before validating the original read set. Immutable
+  clock bounds fence uncertain new votes and garbage collection; decided
+  completion preserves every receipt's timestamp and retention horizon.
+  New gateways require the storage
+  `strong_reads` V1 capability. See [the rollout and trusted
+  configuration boundary](docs/operations.md#strong-reads-and-storage-rollout).
 
 - Distributed transactions spread decision records across active writing
   participants using a stable hash of the transaction ID
@@ -558,6 +589,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHOW TARN STATUS` counts the detector's storage calls.
 
 ### Fixed
+
+- Native storage procedures retain their CALL arguments across the yielding
+  freshness barrier. ABI 14/392 enters current policy, space and exact
+  transaction guards through a protected public Lua C API shim, replacing
+  stored LuaJIT FFI callback addresses with reserved zero words. ABI 13/12/11
+  modules use the guarded Lua implementation. The later CI storage SIGSEGV
+  has no proven cause; this API correction is not a demonstrated crash fix.
+- Clock policy and the GC rejection floor persist with the receipt
+  transitions they protect. Retention uses two skew margins, timing policy
+  changes fail closed, and expiring work requires coverage of its relevant
+  logical writers. Clock uncertainty never prevents completion of an
+  already decided transaction. See [verification boundaries](docs/verification.md).
+- Small raw wall corrections within the unchanged drift allowance retain a
+  nondecreasing logical wall and exact nanosecond native mirror. Probes
+  publish one accepted pair; first-fault diagnostics distinguish raw and
+  logical samples. Exact drift/gap checks reject violations hidden by
+  epoch-scale double rounding. Retention assumes a fixed common historical
+  raw-clock band of width the configured skew; probes cannot prove it.
+- Uncertain PREPARE receipt checks return no vote and preserve a borrowed
+  stream. Fresh refusal and GC boundaries recheck current durability
+  eligibility; a concurrent confirmed YES cannot become a contradictory NO.
 
 - Database administration matches MariaDB affected-row counts and result
   metadata ([#149](https://github.com/cstheorist/tarn/issues/149)):
