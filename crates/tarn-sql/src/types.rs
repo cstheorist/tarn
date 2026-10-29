@@ -252,6 +252,20 @@ impl SqlType {
                 format!("Incorrect {} value: '{}' for column '{}'", what, shown, col),
             )
         };
+        let out_of_range = || {
+            SqlError::new(
+                1264,
+                "22003",
+                format!("Out of range value for column '{}' at row 1", col),
+            )
+        };
+        let exact_integer = |s: &str| {
+            let decimal = crate::decimal::Decimal::parse(s).ok_or_else(|| bad("integer"))?;
+            decimal
+                .rescale(0)
+                .and_then(|s| s.parse::<i128>().ok())
+                .ok_or_else(out_of_range)
+        };
         use BaseType::*;
         match self.base {
             TinyInt | SmallInt | MediumInt | Int | BigInt | Bool | Year => {
@@ -259,26 +273,20 @@ impl SqlType {
                     Value::Int(i) => *i as i128,
                     Value::UInt(u) => *u as i128,
                     Value::Float(f) => f.round() as i128,
-                    Value::Decimal(d) => parse_decimal_round(d).ok_or_else(|| bad("integer"))?,
+                    Value::Decimal(d) => exact_integer(d)?,
                     Value::Str(b) | Value::Bin(b) => {
                         let s = std::str::from_utf8(b).map_err(|_| bad("integer"))?.trim();
                         if let Ok(i) = s.parse::<i128>() {
                             i
-                        } else if let Ok(f) = s.parse::<f64>() {
-                            f.round() as i128
                         } else {
-                            return Err(bad("integer"));
+                            exact_integer(s)?
                         }
                     }
                     Value::Null => unreachable!(),
                 };
                 let (lo, hi) = int_range(self);
                 if i < lo || i > hi {
-                    return Err(SqlError::new(
-                        1264,
-                        "22003",
-                        format!("Out of range value for column '{}' at row 1", col),
-                    ));
+                    return Err(out_of_range());
                 }
                 Ok(if self.unsigned {
                     Value::UInt(i as u64)
@@ -320,7 +328,7 @@ impl SqlType {
                     .unwrap_or("")
                     .trim_start_matches('0')
                     .len();
-                if int_digits as u32 > precision.saturating_sub(scale) {
+                if int_digits as u32 > precision.saturating_sub(scale) || (self.unsigned && d.starts_with('-')) {
                     return Err(SqlError::new(
                         1264,
                         "22003",
@@ -329,10 +337,24 @@ impl SqlType {
                 }
                 Ok(Value::Decimal(d))
             }
-            Binary | VarBinary | Blob => Ok(match v {
-                Value::Str(b) | Value::Bin(b) => Value::Bin(b),
-                other => Value::Bin(other.to_text().unwrap_or_default()),
-            }),
+            Binary | VarBinary | Blob => {
+                let value = match v {
+                    Value::Str(b) | Value::Bin(b) => Value::Bin(b),
+                    other => Value::Bin(other.to_text().unwrap_or_default()),
+                };
+                if self.base == VarBinary
+                    && self
+                        .len
+                        .is_some_and(|max| value.to_text().unwrap_or_default().len() > max as usize)
+                {
+                    return Err(SqlError::new(
+                        1406,
+                        "22001",
+                        format!("Data too long for column '{}' at row 1", col),
+                    ));
+                }
+                Ok(value)
+            }
             Char | VarChar | Text | Json | Date | DateTime | Timestamp | Time => {
                 let b = match v {
                     Value::Str(b) | Value::Bin(b) => b,
@@ -382,71 +404,10 @@ pub fn int_range(t: &SqlType) -> (i128, i128) {
     }
 }
 
-fn parse_decimal_round(d: &str) -> Option<i128> {
-    d.trim().parse::<f64>().ok().map(|f| f.round() as i128)
-}
-
 /// Rewrite a decimal string to exactly `scale` fractional digits (rounding half
 /// away from zero), e.g. ("1.005", 2) -> "1.01", ("7", 2) -> "7.00".
 pub fn rescale_decimal(s: &str, scale: u32) -> Option<String> {
-    let s = s.trim();
-    let (neg, digits) = match s.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, s.strip_prefix('+').unwrap_or(s)),
-    };
-    let (ip, fp) = match digits.split_once('.') {
-        Some((a, b)) => (a, b),
-        None => (digits, ""),
-    };
-    if digits.contains('e') || digits.contains('E') {
-        let f: f64 = s.parse().ok()?;
-        return Some(format!("{:.*}", scale as usize, f));
-    }
-    if !ip.chars().all(|c| c.is_ascii_digit()) || !fp.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let ip = if ip.is_empty() { "0" } else { ip };
-    let scale = scale as usize;
-    let mut frac: Vec<u8> = fp.bytes().collect();
-    let round_up = frac.len() > scale && frac[scale] >= b'5';
-    frac.resize(scale, b'0');
-    let mut all: Vec<u8> = ip.bytes().chain(frac).collect();
-    if round_up {
-        let mut i = all.len();
-        loop {
-            if i == 0 {
-                all.insert(0, b'1');
-                break;
-            }
-            i -= 1;
-            if all[i] == b'9' {
-                all[i] = b'0';
-            } else {
-                all[i] += 1;
-                break;
-            }
-        }
-    }
-    let int_len = all.len() - scale;
-    let mut ints = String::from_utf8(all[..int_len].to_vec()).ok()?;
-    let trimmed = ints.trim_start_matches('0');
-    ints = if trimmed.is_empty() {
-        "0".to_string()
-    } else {
-        trimmed.to_string()
-    };
-    let fracs = String::from_utf8(all[int_len..].to_vec()).ok()?;
-    let zero = ints == "0" && fracs.chars().all(|c| c == '0');
-    let mut out = String::new();
-    if neg && !zero {
-        out.push('-');
-    }
-    out.push_str(&ints);
-    if scale > 0 {
-        out.push('.');
-        out.push_str(&fracs);
-    }
-    Some(out)
+    crate::decimal::Decimal::parse(s)?.rescale(scale)
 }
 
 /// A date or datetime literal, split into its parts.
@@ -701,6 +662,10 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         | (Value::Str(x), Value::Bin(y))
         | (Value::Bin(x), Value::Str(y)) => Some(x.as_ref().cmp(y.as_ref())),
         (Value::Decimal(x), Value::Decimal(y)) => Some(cmp_decimal_str(x, y)),
+        (Value::Decimal(x), Value::Int(y)) => Some(cmp_decimal_str(x, &y.to_string())),
+        (Value::Decimal(x), Value::UInt(y)) => Some(cmp_decimal_str(x, &y.to_string())),
+        (Value::Int(x), Value::Decimal(y)) => Some(cmp_decimal_str(&x.to_string(), y)),
+        (Value::UInt(x), Value::Decimal(y)) => Some(cmp_decimal_str(&x.to_string(), y)),
         _ if is_numeric_value(a) || is_numeric_value(b) => {
             let (x, y) = (to_num(a)?, to_num(b)?);
             x.partial_cmp(&y)
@@ -740,8 +705,8 @@ pub fn key_val_coll(v: &Value, coll: Collation) -> KeyVal {
 }
 
 fn cmp_decimal_str(a: &str, b: &str) -> Ordering {
-    match (a.parse::<f64>(), b.parse::<f64>()) {
-        (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
+    match (crate::decimal::Decimal::parse(a), crate::decimal::Decimal::parse(b)) {
+        (Some(x), Some(y)) => x.compare(&y),
         _ => a.cmp(b),
     }
 }
@@ -949,6 +914,7 @@ pub fn fmt_scaled(q: i128, scale: u32) -> String {
 /// Hashable/ordered key form of a value for GROUP BY / DISTINCT / joins.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KeyVal {
+    Decimal(String),
     Null,
     Int(i128),
     Float(u64),
@@ -967,10 +933,12 @@ pub fn key_val(v: &Value) -> KeyVal {
                 KeyVal::Float(f.to_bits())
             }
         }
-        Value::Decimal(d) => match d.parse::<f64>() {
-            Ok(f) if f.fract() == 0.0 && f.abs() < 1e18 => KeyVal::Int(f as i128),
-            Ok(f) => KeyVal::Float(f.to_bits()),
-            Err(_) => KeyVal::Bytes(Bytes::copy_from_slice(d.as_bytes())),
+        Value::Decimal(d) => match crate::decimal::Decimal::parse(d) {
+            Some(decimal) => match decimal.integer() {
+                Some(i) => KeyVal::Int(i),
+                None => KeyVal::Decimal(decimal.canonical()),
+            },
+            None => KeyVal::Bytes(Bytes::copy_from_slice(d.as_bytes())),
         },
         Value::Str(b) | Value::Bin(b) => KeyVal::Bytes(b.clone()),
     }
@@ -1050,6 +1018,68 @@ mod tests {
         assert_eq!(
             compare(&Value::UInt(u64::MAX), &Value::Int(-1)),
             Some(Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn exact_decimal_keys_above_double_precision() {
+        let d = |s: &str| Value::Decimal(s.into());
+        let a = d("9007199254740992.01");
+        let b = d("9007199254740992.02");
+        assert_eq!(compare(&a, &b), Some(Ordering::Less));
+        assert_ne!(key_val(&a), key_val(&b));
+        assert_eq!(key_val(&a), key_val(&d("09007199254740992.0100")));
+        assert_eq!(
+            compare(&d("18446744073709551614.9"), &Value::UInt(u64::MAX)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            compare(&Value::Int(i64::MIN), &d("-9223372036854775807.9")),
+            Some(Ordering::Less)
+        );
+        assert_eq!(key_val(&d("18446744073709551615.00")), key_val(&Value::UInt(u64::MAX)));
+        let int = SqlType::parse("BIGINT").unwrap();
+        assert_eq!(
+            int.coerce(d("9007199254740993.0"), "id").unwrap(),
+            Value::Int(9007199254740993)
+        );
+        assert_eq!(
+            int.coerce(Value::str("9007199254740993.0"), "id").unwrap(),
+            Value::Int(9007199254740993)
+        );
+        assert_eq!(rescale_decimal("9007199254740993e0", 2).unwrap(), "9007199254740993.00");
+        for (a, b, ordering) in [
+            ("-0.000", "0e99", Ordering::Equal),
+            ("0", "0.000001", Ordering::Less),
+            ("-0.000001", "0", Ordering::Less),
+            ("-99", "-100", Ordering::Greater),
+            ("1.000", "100e-2", Ordering::Equal),
+            ("1e1000", "9e999", Ordering::Greater),
+        ] {
+            assert_eq!(compare(&d(a), &d(b)), Some(ordering), "{a} vs {b}");
+            if ordering == Ordering::Equal {
+                assert_eq!(key_val(&d(a)), key_val(&d(b)));
+            }
+        }
+        for (value, scale, expected) in [
+            (".0005", 3, "0.001"),
+            ("-5e-3", 2, "-0.01"),
+            ("1e-999", 2, "0.00"),
+            ("9.995", 2, "10.00"),
+        ] {
+            assert_eq!(rescale_decimal(value, scale).unwrap(), expected);
+        }
+        for invalid in ["", ".", "NaN", "Inf", "1e", "--1", "1.2.3"] {
+            assert!(rescale_decimal(invalid, 2).is_none(), "{invalid}");
+        }
+        assert!(rescale_decimal("1e99999", 2).is_none());
+        let decimal = SqlType::parse("DECIMAL(38,2)").unwrap();
+        let key = crate::exec::coerce_key_part(&decimal, &d("9007199254740992.0100")).unwrap();
+        assert_eq!(key, d("9007199254740992.01"));
+        assert!(crate::exec::coerce_key_part(&decimal, &d("9007199254740992.011")).is_none());
+        assert_eq!(
+            crate::route::bucket_of(&[key], 30000),
+            crate::route::bucket_of(&[d("9007199254740992.01")], 30000)
         );
     }
 

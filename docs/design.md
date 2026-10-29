@@ -340,6 +340,13 @@ re-sends the request.
 
 ### 1.3 Collations
 
+The [bounded MYSQL key profile](key-semantics.md) explicitly admits
+`utf8mb4_0900_bin` with NO PAD and stored UTF-8 byte keys. It refuses
+the legacy families and aliases below before effects; selecting it never
+reinterprets stored keys. LEGACY remains the named default. Exact decimal
+comparison and scale-normalized index probes do not use binary floats;
+the routing core, stored scale and protocol actions are unchanged.
+
 Text compares under its column's collation (issue #13): `utf8mb4_bin`, or
 MariaDB's `utf8mb4_general_ci` and `utf8mb4_unicode_ci` and their NO PAD
 variants, reproduced from MariaDB 10.11's own weight tables

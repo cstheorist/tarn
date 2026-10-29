@@ -317,6 +317,7 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         } else {
             sv.collation_connection
         }),
+        "tarn_key_contract" => Value::str("LEGACY"),
         "collation_server" | "collation_database" => Value::str(sv.collation_server),
         "sql_mode" => Value::str("STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"),
         "time_zone" => Value::str("SYSTEM"),
@@ -387,6 +388,7 @@ pub const SHOWN_VARIABLES: &[&str] = &[
     "sql_mode",
     "system_time_zone",
     "tarn_tree_checks",
+    "tarn_key_contract",
     "tarn_lazy_read_your_writes",
     "tarn_lazy_wait_timeout",
     "tarn_isolation_contract",

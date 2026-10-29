@@ -379,13 +379,7 @@ pub fn coerce_key_part(ty: &SqlType, v: &Value) -> Option<Value> {
             Value::Int(i) => *i as i128,
             Value::UInt(u) => *u as i128,
             Value::Float(f) if f.fract() == 0.0 && f.is_finite() => *f as i128,
-            Value::Decimal(d) => {
-                let f: f64 = d.parse().ok()?;
-                if f.fract() != 0.0 {
-                    return None;
-                }
-                f as i128
-            }
+            Value::Decimal(d) => crate::decimal::Decimal::parse(d)?.integer()?,
             Value::Str(b) | Value::Bin(b) => {
                 let s = std::str::from_utf8(b).ok()?.trim();
                 match s.parse::<i128>() {
@@ -414,12 +408,16 @@ pub fn coerce_key_part(ty: &SqlType, v: &Value) -> Option<Value> {
     }
     match ty.base {
         BaseType::Float | BaseType::Double => to_num(v).map(Value::Float),
-        BaseType::Decimal => match v {
-            Value::Decimal(_) => Some(v.clone()),
-            Value::Int(i) => Some(Value::Decimal(i.to_string())),
-            Value::UInt(u) => Some(Value::Decimal(u.to_string())),
-            other => to_num(other).map(|f| Value::Decimal(format!("{}", f))),
-        },
+        BaseType::Decimal => {
+            let text = v.to_string();
+            let original = crate::decimal::Decimal::parse(&text)?;
+            let scaled = original.rescale(ty.scale.unwrap_or(0))?;
+            let candidate = crate::decimal::Decimal::parse(&scaled)?;
+            // Hash the declared scale, exactly as an inserted row does.
+            // Rounding a probe would select a different key; range callers
+            // drop an inexact bound and retain their residual predicate.
+            (original.compare(&candidate) == std::cmp::Ordering::Equal).then_some(Value::Decimal(scaled))
+        }
         BaseType::Binary | BaseType::VarBinary | BaseType::Blob => Some(Value::Bin(v.to_text().unwrap_or_default())),
         _ => Some(match v {
             Value::Str(b) | Value::Bin(b) => Value::Str(b.clone()),
@@ -1681,10 +1679,8 @@ impl<'a> Lookup<'a> {
             _ => None,
         }?;
         // Matching batches must distinguish the exact native index keys.
-        // The SQL comparator uses f64 for DECIMAL, so adjacent large values
-        // can compare equal and would be sent to the wrong outer row. Global
-        // lookups also deduplicate base PKs with that comparator. Preserve
-        // the per-row native lookup until exact association supports these.
+        // Keep the established per-row DECIMAL path. Exact comparison alone
+        // does not qualify batched association across mixed input types.
         let decimal = |cols: &[usize]| cols.iter().any(|&c| t.columns[c].ty().base == BaseType::Decimal);
         let idx = index_def(t, lookup.index);
         if decimal(&idx.cols[..lookup.len]) || (lookup.global && decimal(&t.indexes[0].cols)) {

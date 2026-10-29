@@ -556,6 +556,19 @@ impl<B: Backend> Conn<B> {
         };
         let body = p.slice(1..);
         self.questions += 1;
+        // The SQL parser consumes UTF-8. Lossy conversion can change a
+        // literal/key before the backend sees it. Validate the entire
+        // command before any statement of a multi-statement batch runs.
+        // Arbitrary bytes remain supported by hex literals and binary
+        // prepared parameters, whose codec does not pass through SQL text.
+        if matches!(cmd, COM_QUERY | COM_STMT_PREPARE) && std::str::from_utf8(&body).is_err() {
+            self.send_err(&SqlError::new(
+                1300,
+                "HY000",
+                "Invalid utf8mb4 SQL text; use hex literals or binary parameters",
+            ));
+            return Ok(true);
+        }
         match cmd {
             COM_QUIT => return Ok(false),
             COM_QUERY => {

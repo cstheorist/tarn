@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "oracle": {
+    "image": "mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7",
+    "version": "8.4.13",
+    "amd64_manifest": "sha256:5cf1e1293ea42e077e6a22114e6773b9aae3bb8f9933a2acd5a9721518ff8f5b",
+    "arm64_manifest": "sha256:8ab2115abe8ca3d2745962f4e75f2f86fb8182ae19908773cd4cce811f3c106e",
+    "source": "https://github.com/docker-library/mysql/tree/c92fbc392511086e6c1500f28a21421413f0bb51/8.4"
+  },
+  "scope": "Bounded key profile. Explicit refusal/legacy cases are intentional differences; other SQL shapes are unclassified. Complements issue 178, does not replace its isolation/protocol manifest.",
+  "contracts": [
+    {
+      "id": "keys_text_keys",
+      "classification": "equivalent-registered-shape",
+      "description": "NO PAD case/accent/combining distinctions, global uniqueness, NULLs, joins and keyset order",
+      "test": "tests/sql/key_semantics.py::text_keys"
+    },
+    {
+      "id": "keys_decimal_keys",
+      "classification": "equivalent-registered-shape",
+      "description": "Exact large decimal comparison/group identity, scale-normalized index probes, signed/unsigned boundaries",
+      "test": "tests/sql/key_semantics.py::decimal_keys"
+    },
+    {
+      "id": "keys_binary_keys",
+      "classification": "equivalent-registered-shape",
+      "description": "Opaque binary values, zero bytes, uniqueness, byte length and stable index order",
+      "test": "tests/sql/key_semantics.py::binary_keys"
+    },
+    {
+      "id": "keys_lazy_keys",
+      "classification": "equivalent-registered-shape",
+      "description": "Settled lazy membership and order under explicit session catch-up, not eventual equivalence",
+      "test": "tests/sql/key_semantics.py::lazy_keys"
+    },
+    {
+      "id": "keys_schema_keys",
+      "classification": "equivalent-registered-shape",
+      "description": "Appended physical columns and new indexes preserve keys; incompatible changes refused",
+      "test": "tests/sql/key_semantics.py::schema_keys"
+    },
+    {
+      "id": "keys_temporal_legacy",
+      "classification": "intentional-difference",
+      "description": "Legacy DATETIME spelling normalization control; temporal types refused by MYSQL key mode",
+      "test": "tests/sql/key_semantics.py::temporal_legacy"
+    },
+    {
+      "id": "keys_refusals",
+      "classification": "intentional-difference",
+      "description": "Unsupported exact declarations and expressions refuse before effects and preserve prior transaction work",
+      "test": "tests/sql/key_semantics.py::refusals"
+    }
+  ]
+}

@@ -454,6 +454,15 @@ intentional differences or explicit refusals. Their generated manifest is
 checked in CI alongside the existing MariaDB suites. Read its scope before
 interpreting general compatibility statements as exact equivalence.
 
+The opt-in [`tarn_key_contract=MYSQL` profile](key-semantics.md) refuses
+unsupported key collations/types/conversions before execution, including
+DDL's implicit commit. It adds exact `utf8mb4_0900_bin` (NO PAD), while
+the default named LEGACY mode preserves existing collation encodings.
+EXPLAIN reports the selected mode and declared/effective column collations.
+Decimal key comparisons, grouping and integer assignments are exact above
+2^53 in both modes. Invalid UTF-8 SQL text now fails with 1300/HY000; use
+hex literals or binary prepared parameters for arbitrary bytes.
+
 * **Isolation:** the default is strict serializability (MySQL's default is
   REPEATABLE READ, which Tarn runs strictly serializable). Conflicting
   serializable transactions abort with 1213 (`ER_LOCK_DEADLOCK`, SQLSTATE
