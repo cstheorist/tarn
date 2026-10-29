@@ -5262,6 +5262,36 @@ local function catalog_ver(name)
     return r and r.def.ver or 0
 end
 
+-- Optional optimizer hints, never a user/transaction read. Size is an
+-- estimate on vinyl; the first primary page is deliberately bounded and
+-- biased. Prepared intents, bucket copies and concurrent writes may make
+-- these hints stale. No read set or consistency guarantee relies on them.
+function tarn_analyze(space_id, ver, limit, fields)
+    local sp = box.space[space_id]
+    if sp == nil then return {'error', 1146, 'no such space'} end
+    if catalog_ver(sp.name) ~= ver then return {'error', 1412, STALE_DEF_MSG} end
+    if type(limit) ~= 'number' or limit < 1 or limit > 256 or limit ~= math.floor(limit)
+        or type(fields) ~= 'table' or #fields > 16 then
+        return {'error', 1235, 'ANALYZE sample budget exceeded'}
+    end
+    local format = sp:format()
+    for _, f in ipairs(fields) do
+        if type(f) ~= 'number' or f < 1 or f > #format or f ~= math.floor(f)
+            or (format[f].type ~= 'integer' and format[f].type ~= 'unsigned') then
+            return {'error', 1235, 'ANALYZE supports integer fields only'}
+        end
+    end
+    local size, rows = sp.index[0]:len(), {}
+    for _, tuple in sp.index[0]:pairs({}, {iterator = 'ALL'}) do
+        local row = {}
+        for i, f in ipairs(fields) do row[i] = tuple[f] or box.NULL end
+        rows[#rows + 1] = row
+        if #rows >= limit then break end
+    end
+    if catalog_ver(sp.name) ~= ver then return {'error', 1412, STALE_DEF_MSG} end
+    return {'ok', size, rows}
+end
+
 local function tmp_index_name(id) return TMP_PREFIX .. id end
 
 local function has_locks(sid, uix)
@@ -7666,6 +7696,7 @@ M.engine = require('tarn_engine').new{
 tarn_lock = M.engine.rpc_errors(tarn_lock, pl_failed)
 tarn_lock_range = M.engine.rpc_errors(tarn_lock_range, pl_failed)
 tarn_estimate = M.engine.rpc_errors(tarn_estimate)
+tarn_analyze = M.engine.rpc_errors(tarn_analyze)
 function tarn_engine_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()

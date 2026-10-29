@@ -184,6 +184,13 @@ def seed():
 
 # (sql, kind): 'q', 'rows', 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
 CASES = [
+    # Explicit optional optimizer statistics and reordered integer joins;
+    # status rows and logical SELECT * column order match MariaDB.
+    ("ANALYZE TABLE t1", "rows"),
+    ("ANALYZE TABLE t2", "rows"),
+    ("SELECT * FROM t1 a JOIN t2 b ON a.id=b.t1_id WHERE b.id=1 ORDER BY a.id,b.id", "q"),
+    ("SELECT b.*,a.* FROM t1 a JOIN t2 b ON a.id=b.t1_id WHERE b.id=2 ORDER BY a.id,b.id", "q"),
+    ("SELECT a.id,b.name FROM t1 a LEFT JOIN t2 b ON a.id=b.t1_id WHERE a.id=1 ORDER BY b.id", "q"),
     # Engine plans differ; compare the JSON result envelope and subsequent
     # exact data/transaction behavior, never cost or plan field equality.
     ("EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE id=1", "plan"),

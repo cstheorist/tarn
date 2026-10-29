@@ -49,9 +49,12 @@ if [ -z "${TEST:-}" ]; then
   [ "$r" -ne 0 ] && rc=$r
   freshness_native=${TARN_NATIVE:-$DIR/../target/release/libtarn_storage.so}
   if [ "$freshness_native" != 0 ] && [ -f "$freshness_native" ]; then
-    TARN_NATIVE="$freshness_native" TARANTOOL="$T" bash "$DIR/test/native_freshness.sh" "$WORK/native-freshness" 2>&1 | tee -a "$WORK/test.out"
-    r=${PIPESTATUS[0]}
-    [ "$r" -ne 0 ] && rc=$r
+    for control in native handback; do
+      NATIVE_FRESHNESS_CONTROL="$control" TARN_NATIVE="$freshness_native" TARANTOOL="$T" \
+        bash "$DIR/test/native_freshness.sh" "$WORK/native-freshness-$control" 2>&1 | tee -a "$WORK/test.out"
+      r=${PIPESTATUS[0]}
+      [ "$r" -ne 0 ] && rc=$r
+    done
   elif [ -n "${TARN_NATIVE:-}" ] && [ "$TARN_NATIVE" != 0 ]; then
     echo 'FAIL explicitly requested native freshness module is missing' | tee -a "$WORK/test.out"
     rc=1

@@ -1,7 +1,7 @@
 # Rolling upgrades
 
 The supported predecessor is exactly
-`21cd7082d9179a60841ed2324408a255d0d91b34` (the physical file backup merge, including the current freshness,
+`2e8aaeb772542968e503212a143b2e6f8d27b8ab` (the merged statistics/freshness release, including cluster backup and current
 persisted clock/retention, capture binding and engine-cut contracts). This contract introduces connection admission and a format marker;
 it does not change stored user tuples, transaction records, lock semantics,
 DDL/move/lazy metadata, or the native state layout. Other historical
@@ -129,7 +129,7 @@ With the pinned Rust toolchain, Tarantool 3.9.0, a C compiler, Python and
 PyMySQL installed, run on a dedicated Linux test machine:
 
 ```sh
-git fetch origin 21cd7082d9179a60841ed2324408a255d0d91b34
+git fetch origin 2e8aaeb772542968e503212a143b2e6f8d27b8ab
 bash tests/rolling_upgrade.sh
 ENGINE=vinyl bash tests/rolling_upgrade.sh
 ```

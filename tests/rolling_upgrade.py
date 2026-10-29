@@ -23,7 +23,7 @@ import pymysql  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from upgrade_build_receipt import verify as verify_build  # noqa: E402
 
-BASELINE = "21cd7082d9179a60841ed2324408a255d0d91b34"
+BASELINE = "2e8aaeb772542968e503212a143b2e6f8d27b8ab"
 ROOT = Path(__file__).resolve().parents[1]
 TARANTOOL = os.environ.get("TARANTOOL", "tarantool")
 

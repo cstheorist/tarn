@@ -827,6 +827,7 @@ mod tests {
     fn table(sql: &str) -> TableDef {
         let cat = Catalog::default();
         let cx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -853,6 +854,7 @@ mod tests {
     fn select_plan(t: TableDef, sql: &str) -> Arc<SelectPlan> {
         let cat = Catalog::new(1, vec!["d".into()], vec![t]);
         let cx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -891,6 +893,7 @@ mod tests {
     fn reject_unique_and_noncanonical_lazy_identity_only() {
         let cat = Catalog::default();
         let cx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],

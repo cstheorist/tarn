@@ -3,7 +3,7 @@
 # owned processes/data. Retain build logs and all source/binary identities.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BASELINE=21cd7082d9179a60841ed2324408a255d0d91b34
+BASELINE=2e8aaeb772542968e503212a143b2e6f8d27b8ab
 WORK=$(mktemp -d /tmp/tarn-upgrade-build.XXXXXX)
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-1}
 OLD_TARGET="$WORK/old-target"

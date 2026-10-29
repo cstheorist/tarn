@@ -7,7 +7,7 @@ function M.check()
     assert(runtime == '3.9.0', 'tarn: unsupported Tarantool ' .. tostring(runtime) .. '; see docs/upgrades.md')
     local meta = box.space._tarn_meta
     local marker = meta and meta:get{'storage_format'}
-    -- 21cd708 predates the marker and uses exactly format 1.
+    -- 2e8aaeb predates the marker and uses exactly format 1.
     assert(marker == nil or marker.value == M.format,
            'tarn: unsupported persisted storage_format; restore compatible binaries; see docs/upgrades.md')
 end
