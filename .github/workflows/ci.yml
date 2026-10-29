@@ -81,6 +81,8 @@ jobs:
           python-version: "3.12"
       - name: Install Python packages
         run: pip install PyMySQL
+      - name: Vinyl pressure scheduling and readback controls
+        run: python3 tests/sql/vinylpressure_phase_test.py
       # Restore and save separately, so that the (slow) Tarantool build is
       # cached even when a later step fails.
       - name: Restore Tarantool
@@ -220,6 +222,14 @@ jobs:
         with:
           name: integrity-${{ github.run_id }}-${{ github.run_attempt }}
           path: integrity-evidence
+          retention-days: 30
+      - name: Retain Vinyl pressure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vinyl-pressure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/tarn-vinylpressure-*/*
+          if-no-files-found: ignore
           retention-days: 30
       - name: Cluster logs
         if: failure()
