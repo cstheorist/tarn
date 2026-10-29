@@ -743,14 +743,29 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
                     self.record("known_committed_apply_under_forced_admission", txid=state["txid"], result=result, rows=rows)
 
     def prepare_compaction_fixture(self, tenant):
+        self.compaction_fixture = self.db + '.c'
+        self.compaction_expected = {}
+        self.compaction_unknown_ids = set()
+        try:
+            self._seed_compaction_fixture(tenant)
+        except BaseException:
+            # A failed seed never starts timed writers. Retain its bounded
+            # readback without resolving an uncertain INSERT from presence
+            # or absence, and keep its owned database for investigation.
+            self.pressure_preserve_database = bool(self.compaction_unknown_ids)
+            try:
+                self.record('compaction_seed_failed_readback', result=self.audit_compaction_fixture(tenant))
+            except BaseException:
+                traceback.print_exc()
+            raise
+
+    def _seed_compaction_fixture(self, tenant):
         """Two unequal immutable runs, bounded at 528 x 8 KiB, on the source.
 
         This is a separate native-work seed, not part of the 20,000 pressure
         attempts. SQL establishes it; no raw tuple or classifier mutation.
         Public checkpoints finish the two dumps before timed writer windows.
         """
-        self.compaction_fixture = self.db + '.c'
-        self.compaction_expected = {}
         with self.connect() as c:
             q(c, 'CREATE TABLE c (tenant_id INT NOT NULL,id INT NOT NULL,v VARBINARY(8192),'
                  'PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id) ENGINE=vinyl')
@@ -761,9 +776,11 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
                     # Preserve attempted identities before submission. No
                     # client exception causes these INSERTs to be replayed.
                     self.record('compaction_seed_submit', ids=[v[1] for v in values])
+                    self.compaction_unknown_ids.update(v[1] for v in values)
                     with c.cursor() as cur:
                         cur.executemany('INSERT INTO c VALUES (%s,%s,%s)', values)
                     self.compaction_expected.update((key, value.encode('ascii')) for _, key, value in values)
+                    self.compaction_unknown_ids.difference_update(v[1] for v in values)
                     self.record('compaction_seed_ack', ids=[v[1] for v in values])
                 receipt = ev(self.nodes[0], """
 local name=...
@@ -781,12 +798,15 @@ local s=assert(box.space[name]);return {engine=s.engine,index=s.index[0]:stat(),
         assert audit['status'] == 'complete' and audit['matches'], audit
 
     def audit_compaction_fixture(self, tenant):
-        result = {'status': 'failed', 'matches': False, 'row_limit': COMPACTION_SEED_ROWS + 1}
+        unknown = sorted(self.compaction_unknown_ids)
+        result = {'status': 'failed', 'matches': False, 'row_limit': COMPACTION_SEED_ROWS + 1,
+                  'unknown_ids': unknown}
         try:
             with self.connect() as c:
                 rows = q(c, 'SELECT id,v FROM c WHERE tenant_id=%s ORDER BY id LIMIT 529', (tenant,))
             actual = dict(rows)
-            result.update(status='complete', matches=actual == self.compaction_expected,
+            result.update(status='incomplete' if unknown else 'complete',
+                          matches=actual == self.compaction_expected if not unknown else None,
                           rows=len(rows), expected_rows=len(self.compaction_expected),
                           observed_sha256=hashlib.sha256(b''.join(str(key).encode()+b':'+value
                                                                  for key,value in rows)).hexdigest())
@@ -1088,7 +1108,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
         if (getattr(self, "pressure_preserve_database", False)
                 or any(thread.is_alive() for thread in getattr(self, "pressure_threads", []))):
             # Never DROP underneath a client whose outcome is still live.
-            self.record("cleanup", errors=[], preserved_database=self.db, reason="pressure writers still live")
+            self.record("cleanup", errors=[], preserved_database=self.db, reason="pressure or seed work remains unsettled")
             self.events.close()
             return
         if self.created:

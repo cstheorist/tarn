@@ -8,8 +8,10 @@ of the complete historical driver or a claim about its original CI failure.
 """
 import collections
 import copy
+from contextlib import nullcontext
 import json
 import unittest
+from unittest.mock import patch
 
 import vinylpressure as pressure
 
@@ -48,6 +50,38 @@ class CompactionControls(unittest.TestCase):
     def test_corrupt_seed_readback_fails_even_with_real_native_work(self):
         with self.assertRaises(AssertionError):
             pressure.compaction_witness(self.control, self.samples, dict(self.audit, matches=False))
+
+    def test_unknown_seed_remains_unsettled_whether_observed_or_absent(self):
+        test = pressure.Test.__new__(pressure.Test)
+        test.compaction_expected, test.compaction_unknown_ids = {1: b'a'}, {2}
+        test.nodes, test.compaction_fixture = ['source'], 'unit.c'
+        test.connect = lambda: nullcontext(None)
+        for rows in [((1, b'a'),), ((1, b'a'), (2, b'b'))]:
+            with patch.object(pressure, 'q', return_value=rows), patch.object(pressure, 'ev', return_value={}):
+                result = test.audit_compaction_fixture(77)
+            self.assertEqual(result['status'], 'incomplete')
+            self.assertEqual(result['unknown_ids'], [2])
+            self.assertIsNone(result['matches'])
+
+    def test_failed_seed_retains_readback_and_original_error_without_replay(self):
+        test = pressure.Test.__new__(pressure.Test)
+        test.db = 'unit'
+        events = []
+        failure = RuntimeError('lost seed reply')
+        def seed(tenant):
+            events.append('submit once')
+            test.compaction_unknown_ids.add(8)
+            raise failure
+        test._seed_compaction_fixture = seed
+        test.audit_compaction_fixture = lambda tenant: {'status': 'incomplete', 'unknown_ids': [8]}
+        test.record = lambda event, **data: events.append((event, data))
+        with self.assertRaises(RuntimeError) as caught:
+            test.prepare_compaction_fixture(77)
+        self.assertIs(caught.exception, failure)
+        self.assertTrue(test.pressure_preserve_database)
+        self.assertEqual(events[0], 'submit once')
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[1][0], 'compaction_seed_failed_readback')
 
 
 class VirtualWriters:

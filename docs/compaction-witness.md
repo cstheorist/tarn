@@ -49,11 +49,24 @@ outcomes and failure-time readback remain in place. No mutation is replayed.
 The seed is additional bounded setup, explicitly separate from that cap.
 The production SQL/native/Lua protocols and formal inputs are unchanged.
 
-Eighteen offline controls include missing/old queue observations, absent
-real completion, wrong I/O phase and corrupted seed readback. A small local
+Twenty offline controls include missing/old queue observations, absent
+real completion, wrong I/O phase, corrupted seed readback and lost seed replies. A failed
+seed retains bounded readback and preserves the owned database when an
+INSERT remains uncertain; presence or absence does not settle it. A small local
 native-engine mechanism probe observed two real runs and 4,338,872 queued
 bytes under the limiter; it is not a completed SQL pressure test.
 `compaction-witness.yml` runs three fresh fsync fixtures in each native/Lua
 mode, with the second fixture pinned to one available CPU. This is RF1
 mechanism qualification; ordinary full CI separately retains RF3 faults,
 SQL/storage tests, TLA+ and Verus. Final release results remain pending.
+
+The [first six release trials](https://github.com/cstheorist/tarn/actions/runs/40944706496)
+pass at head `997c049`. Their [audited receipt](../tests/evidence/compaction-witness/run-40944706496.json)
+retains exact source/file hashes, original phase schedules, every latency
+summary and per-trial counts. Each observes positive seed queue during
+limited I/O, exactly one completed seed compaction over 4,341,362 input
+bytes, and exact readback of all 528 seed rows and all pressure outcomes.
+Attempts range from 2,699 to 6,468, below the unchanged 20,000 cap. These
+are qualification of the revised workload, not a claim about unobserved
+instants in the original run. The later failure-path audit extension and
+full ordinary CI still require their own completed validation.
