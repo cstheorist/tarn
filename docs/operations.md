@@ -54,7 +54,7 @@ clients or on the storage machines.
 | `TARN_LISTEN_UNIX` | | optional Unix socket to listen on as well |
 | `TARN_WORKDIR` | `data` | data directory: WAL, snapshots and vinyl's files |
 | `TARN_INSTANCE_UUID`, `TARN_INSTANCE_NAME` | derived / unset | stable registered identity for a backup-seeded replica |
-| `TARN_ELECTION_MODE` | `candidate` with replicas | `candidate`, `voter`, or `off`; seeded copies require `voter` |
+| `TARN_ELECTION_MODE` | `candidate` with replicas | `candidate` or `voter` with replicas; `off` for a standalone instance; seeded copies require `voter` |
 | `TARN_REPLICAS` | `[]` | JSON list of every replica URI of this shard; more than one enables synchronous replication and elections |
 | `TARN_PEERS` | `{}` | JSON map of shard id to replica URIs for every shard (used by the recovery fiber; shards added with `TARN ADD SHARD` are found in the membership) |
 | `TARN_MAX_TXN_AGE` | `120` | immutable timing policy `A`, seconds; must match the gateway's `max_txn_age` |
@@ -1208,8 +1208,8 @@ closed WAL files selected by the API. It does not enumerate or dump SQL
 rows. The tool requires Python 3, a local Tarantool executable, administrative
 IPROTO access, and direct access to the source instance's data directory on
 the same host. Default Tarn directory layout is supported; absolute or
-external WAL/vinyl directory layouts are refused. Use the same tested Tarn,
-Tarantool and native-module release when restoring.
+external WAL/vinyl directory layouts are refused. Archive the deployment configuration and matching Tarn, Tarantool and
+native-module release alongside the backup; restore with those tested versions.
 
 A manifest records the source and replica-set UUIDs, Tarantool version,
 backup vclock, every file's length and SHA-256, elapsed copy time and rate.
@@ -1335,7 +1335,7 @@ Keep roughly six times the payload size free during population, checkpoints,
 backup and candidate recovery. Candidate directories belong to this fixture
 and are removed only after their process stops and the full digest matches.
 The work directory and raw failure logs are retained. A `seconds_per_100GB_payload_linear_normalization`
-field is a payload-based linear normalization is a throughput display from the actual measured
+field is a payload-based linear throughput display from the actual measured
 size, not an observed 100 GB result or validated scaling prediction. CI and
 reference hardware/settings have separate records; compare each study's
 paired samples without combining their rates. See [benchmark evidence](../bench/RESULTS.md).

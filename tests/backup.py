@@ -266,6 +266,10 @@ return {rows=n,sha256=require('digest').base64_encode(d:result()),uuid=tostring(
         check=json.loads(run([T,str(offline)]).stdout);assert (check['rows'],check['sha256'])==(expected['rows'],expected['sha256'])
         record['isolated_restore']=check;shutil.rmtree(restored)
         if args.functional:
+            denied=dict(os.environ,TARN_WORKDIR=str(work/'unsupported-election'),
+                        TARN_REPLICAS=json.dumps(uris),TARN_ELECTION_MODE='off')
+            refusal=run([T,str(ROOT/'lua/storage.lua')],env=denied,okay=False)
+            assert refusal.returncode and 'requires candidate or voter' in refusal.stderr
             # Refuse incomplete/corrupt/traversal manifests; never publish a restore marker.
             bad=work/'incomplete';bad.mkdir();(bad/'INCOMPLETE').touch()
             r=run([sys.executable,str(ROOT/'scripts/backup.py'),'restore','--backup',str(bad),'--output',str(work/'bad-out')],okay=False);assert r.returncode
@@ -273,7 +277,8 @@ return {rows=n,sha256=require('digest').base64_encode(d:result()),uuid=tostring(
             with corrupt.open('r+b') as f:f.seek(-1,2);old=f.read(1);f.seek(-1,2);f.write(bytes([old[0]^1]))
             r=run([sys.executable,str(ROOT/'scripts/backup.py'),'restore','--backup',str(backup),'--output',str(work/'corrupt-out')],okay=False);assert r.returncode and not (work/'corrupt-out'/'restore.json').exists()
             with corrupt.open('r+b') as f:f.seek(-1,2);f.write(old)
-            record['negative_controls']=['incomplete backup refused','corruption refused without complete marker']
+            record['negative_controls']=['replicated election-off config refused',
+                                         'incomplete backup refused','corruption refused without complete marker']
             manifest_path=backup/'manifest.json';saved=manifest_path.read_text()
             unsafe=json.loads(saved);unsafe['files'][0]['path']='../outside.snap';manifest_path.write_text(json.dumps(unsafe))
             r=run([sys.executable,str(ROOT/'scripts/backup.py'),'restore','--backup',str(backup),'--output',str(work/'traversal-out')],okay=False)

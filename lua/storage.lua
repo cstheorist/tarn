@@ -88,6 +88,8 @@ local replicated = #replicas > 1
 local election_mode = env('TARN_ELECTION_MODE', replicated and 'candidate' or 'off')
 assert(election_mode == 'candidate' or election_mode == 'voter' or election_mode == 'off',
        'TARN_ELECTION_MODE must be candidate, voter or off')
+assert(not replicated or election_mode ~= 'off',
+       'replicated Tarn requires candidate or voter election mode')
 local instance_uuid = env('TARN_INSTANCE_UUID', '')
 if instance_uuid ~= '' then
     assert(require('uuid').fromstr(instance_uuid) ~= nil, 'TARN_INSTANCE_UUID must be a UUID')
