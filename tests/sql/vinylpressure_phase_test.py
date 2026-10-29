@@ -7,10 +7,81 @@ The old global-cap adapter is a source-derived policy control, not execution
 of the complete historical driver or a claim about its original CI failure.
 """
 import collections
+import copy
+from contextlib import nullcontext
 import json
 import unittest
+from unittest.mock import patch
 
 import vinylpressure as pressure
+
+
+class CompactionControls(unittest.TestCase):
+    def setUp(self):
+        def index(queue, count, input_bytes):
+            return {'disk': {'compaction': {'queue': {'bytes': queue}, 'count': count,
+                                             'input': {'bytes': input_bytes}}}}
+        self.control = {'before': index(0, 2, 100), 'after': index(4096, 2, 100)}
+        self.samples = [{'snap_io_rate_limit': .5, 'compaction_fixture': index(4096, 2, 100)}]
+        self.audit = {'status': 'complete', 'matches': True, 'index': index(0, 3, 4196)}
+
+    def test_queue_and_completed_seed_work_are_required(self):
+        pressure.compaction_witness(self.control, self.samples, self.audit)
+        for field, value in [('count', 2), ('input', {'bytes': 100})]:
+            audit = copy.deepcopy(self.audit)
+            audit['index']['disk']['compaction'][field] = value
+            with self.assertRaises(AssertionError):
+                pressure.compaction_witness(self.control, self.samples, audit)
+
+    def test_historical_completed_work_without_sampled_queue_is_rejected(self):
+        samples = copy.deepcopy(self.samples)
+        samples[0]['compaction_fixture']['disk']['compaction']['queue']['bytes'] = 0
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, samples, self.audit)
+
+    def test_unlimited_or_missing_control_cannot_certify_pressure(self):
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(None, self.samples, self.audit)
+        samples = copy.deepcopy(self.samples)
+        samples[0]['snap_io_rate_limit'] = 0
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, samples, self.audit)
+
+    def test_corrupt_seed_readback_fails_even_with_real_native_work(self):
+        with self.assertRaises(AssertionError):
+            pressure.compaction_witness(self.control, self.samples, dict(self.audit, matches=False))
+
+    def test_unknown_seed_remains_unsettled_whether_observed_or_absent(self):
+        test = pressure.Test.__new__(pressure.Test)
+        test.compaction_expected, test.compaction_unknown_ids = {1: b'a'}, {2}
+        test.nodes, test.compaction_fixture = ['source'], 'unit.c'
+        test.connect = lambda: nullcontext(None)
+        for rows in [((1, b'a'),), ((1, b'a'), (2, b'b'))]:
+            with patch.object(pressure, 'q', return_value=rows), patch.object(pressure, 'ev', return_value={}):
+                result = test.audit_compaction_fixture(77)
+            self.assertEqual(result['status'], 'incomplete')
+            self.assertEqual(result['unknown_ids'], [2])
+            self.assertIsNone(result['matches'])
+
+    def test_failed_seed_retains_readback_and_original_error_without_replay(self):
+        test = pressure.Test.__new__(pressure.Test)
+        test.db = 'unit'
+        events = []
+        failure = RuntimeError('lost seed reply')
+        def seed(tenant):
+            events.append('submit once')
+            test.compaction_unknown_ids.add(8)
+            raise failure
+        test._seed_compaction_fixture = seed
+        test.audit_compaction_fixture = lambda tenant: {'status': 'incomplete', 'unknown_ids': [8]}
+        test.record = lambda event, **data: events.append((event, data))
+        with self.assertRaises(RuntimeError) as caught:
+            test.prepare_compaction_fixture(77)
+        self.assertIs(caught.exception, failure)
+        self.assertTrue(test.pressure_preserve_database)
+        self.assertEqual(events[0], 'submit once')
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[1][0], 'compaction_seed_failed_readback')
 
 
 class VirtualWriters:

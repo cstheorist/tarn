@@ -66,16 +66,17 @@ class Pace:
 
 
 class Bridge:
-    def __init__(self, tarantool, uri_env):
+    def __init__(self, tarantool, uri_env, timeout=40):
         env = dict(os.environ, TARN_BACKUP_URI=os.environ[uri_env])
         self.p = subprocess.Popen([tarantool, str(pathlib.Path(__file__).with_name("backup_rpc.lua"))],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
         self.pending = b""
+        self.timeout = timeout
 
     def call(self, op, *args):
-        self.p.stdin.write((json.dumps({"op": op, "args": args}) + "\n").encode())
+        self.p.stdin.write((json.dumps({"op": op, "args": args, "timeout": self.timeout - 10}) + "\n").encode())
         self.p.stdin.flush()
-        deadline = time.monotonic() + 40
+        deadline = time.monotonic() + self.timeout
         with selectors.DefaultSelector() as selector:
             selector.register(self.p.stdout, selectors.EVENT_READ)
             while b"\n" not in self.pending:
@@ -232,6 +233,14 @@ def restore(args):
         seen.add(str(rel))
         regular(root / "files", rel)
     out, pace, restored = begin(pathlib.Path(args.output)), Pace(args.rate_mib), []
+    if getattr(args, 'quarantine', None) is not None:
+        # The cluster controller installs its startup fence before the local
+        # INCOMPLETE marker can ever be removed, including after a crash.
+        with (out / 'tarn-maintenance.json').open('x') as f:
+            json.dump(args.quarantine, f)
+            f.flush()
+            os.fsync(f.fileno())
+        sync_dir(out)
     for item in files:
         rel = relative(item["path"])
         result = copy_file(regular(root / "files", rel), out / rel, pace, source_uuid, target_uuid)
