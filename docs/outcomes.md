@@ -104,8 +104,9 @@ delivery/deduplication contract.
 
 ## Supported KV and raw access
 
-The supported strong KV API under #181 is read-only: it has no mutation or
-ambient SQL transaction to replay. Its errors must retain their namespaces
+The public strong KV API is being developed under #181; this branch does
+not publish or certify that API. Its planned read-only scope has no mutation
+or ambient SQL transaction to replay. Its errors must retain their namespaces
 (contract, MySQL or Tarantool), cause/code and SQLSTATE when supplied; a native
 numeric code must not be relabeled as a MySQL code. A retry of an independent
 point/batch read may observe a newer image. Ownership rediscovery does not
