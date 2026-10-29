@@ -103,6 +103,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Optional bounded cardinality hints and conservative two-table inner-join
+  reordering ([#136](https://github.com/cstheorist/tarn/issues/136)).
+  `ANALYZE TABLE` now collects gateway-local integer-prefix statistics,
+  invalidates plans by generation and reports MariaDB analyze status.
+  `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
+  count actual decoded storage tuples separately from RPCs.
 - Physical per-shard file backups and verified restores with bounded copy
   rates, owned expiring GC leases and incomplete-directory refusal
   ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a

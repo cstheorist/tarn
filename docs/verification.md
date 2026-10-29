@@ -2293,6 +2293,21 @@ fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
 storage protocols, SQL, transaction and live-fault suites remain required;
 these models do not prove observer accuracy or performance.
 
+### Advisory cardinality hints and join order (issue #136)
+
+Statistics are untrusted plan hints: samples are biased, sizes approximate,
+and there is no coherent SQL snapshot across their collection. Neither
+`ANALYZE` nor its data participates in transaction validation. Both eligible
+join orders use the existing checked SELECT/multi-key paths, recording the
+actual ranges and preserving buffered writes. No commit action, lock rule,
+recovery decision or verified body changes; the existing read-model contracts
+apply. The TLA+ models do not prove expression remapping or SQL join algebra.
+Unit tests check the conservative eligibility and metadata permutation;
+`tests/sql/statisticstest.py` checks exact results, stale/missing hints,
+binary cache generations, own writes, point/phantom OCC, altered tuple layout
+and coherent joins under cross-table writes. Differential tests compare
+ANALYZE status rows and joins with MariaDB 10.11.
+
 ### IPROTO admission and retirement (issue #127)
 
 `PipelineAdmission.tla` models three connections, two shard scopes and a

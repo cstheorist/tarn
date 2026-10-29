@@ -1477,7 +1477,7 @@ async fn source_rows(
 }
 
 /// Outer rows whose inner rows one batched lookup reads (issue #84).
-const JOIN_BATCH: usize = 256;
+pub(crate) const JOIN_BATCH: usize = 256;
 
 /// How the inner table of a join is reached by equality on an index key or
 /// key prefix (the usual join): the lookups of a batch of outer rows can then
@@ -3762,6 +3762,7 @@ mod tests {
                   price DECIMAL(10,2), PRIMARY KEY (tenant_id, id), KEY st (tenant_id, closed_at, deleted))";
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3780,6 +3781,7 @@ mod tests {
         let cat = catalog();
         let n = normalize(sql, Mode::Literals).unwrap();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &n.params,
@@ -3938,6 +3940,7 @@ mod tests {
         .enumerate()
         {
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &c0,
                 db: Some("d"),
                 params: &[],
@@ -3952,6 +3955,7 @@ mod tests {
         }
         let cat = Catalog::new(1, vec!["d".into()], defs);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -4287,6 +4291,7 @@ mod tests {
     fn decimal_join_access(create: &str, index: &str, len: usize, point: bool) -> TableAccess {
         let cat = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
