@@ -624,6 +624,21 @@ the background. SQL readers still see strict serializability (they wait on
 the transaction's locks); direct key/value readers may briefly not see a
 just-acknowledged commit. The model checker covers both modes.
 
+### SQL resource limits
+
+The gateway's `resources` configuration bounds query materialization,
+transaction buffers, shared concurrent allocations and execution work.
+Defaults and tuning are documented in [SQL resource limits](resources.md).
+An admitted SQL statement that exceeds a limit returns **1041/HY000** with
+`Tarn resource limit:` in its message. This ends an explicit transaction;
+retry with a smaller operation or a suitable configured budget.
+
+`SHOW STATUS` exposes current/peak bytes and work, active query ownership,
+refusals, storage read deadlines and bounded top-K scans. Charges follow
+pending reads and slow-client results until their owners release them.
+These are logical accounting counters; use process/container metrics to
+measure actual resident memory.
+
 ## Online engine changes
 
 Move a whole table between RAM and disk with a separate statement:
@@ -870,19 +885,80 @@ scripts/cluster.sh add-shard [-d DIR] I           # storage for shard I; prints 
 over Unix sockets. Storage instance *j* of shard *i* listens on
 `BASE + 10·i + j` (default base 3300); SQL server *k* on `SQL_PORT + k − 1`.
 
+## Optional cardinality statistics
+
+`ANALYZE TABLE db.t` collects optional planning hints on this gateway and
+returns the MariaDB four-column analyze status. It commits the open
+transaction first. This version supports one existing table without options; column,
+partition, multi-table and persistent-statistics variants are rejected.
+Missing tables and collection failures return SQL errors; MariaDB
+failure/status-row compatibility is outside this initial scope.
+Each gateway has a non-queued collector and at most 32 cached tables.
+Statistics expire after five monotonic minutes, a restart or any catalog
+generation change. Collection/publication/expiry changes the generation of
+dependent join plans, including binary prepared plans. Single-table cache
+hits do not inspect statistics and survive unrelated ANALYZE publication. No background analysis is performed.
+
+Collection visits at most 512 live shards sequentially and samples at most
+512 tuples in total from their first primary-index pages (at most 256 per
+shard). It projects at most 16 integer fields, considering up to eight
+visible non-lazy indexes and their first three integer prefix columns.
+Replies above 128 KiB are rejected before sample decoding; this is not a
+transport-frame or gateway-RSS bound. Retained hints contain counts, not
+row values. Publication follows successful collection and a catalog-version
+recheck. A concurrent collector gets 1205/HY000; failure or cancellation
+publishes no partial hints. Older storage without `tarn_analyze` can still
+serve ordinary queries, but ANALYZE fails explicitly.
+
+`SHOW TARN STATISTICS` exposes estimated table size, prefix cardinalities,
+observed distinct counts, sample size, age and generation. Sizes use native
+index length (approximate on vinyl). Leading-page samples are biased;
+distinct extrapolation is a heuristic. Concurrent writes, prepared images,
+bucket copies and skew can distort them. These are local hints, neither a
+transaction snapshot nor a freshness/consistency guarantee. Run ANALYZE on
+each gateway after significant data changes if these hints are useful.
+
+A narrowly eligible two-table INNER JOIN may reverse its physical order
+when the alternative estimated cost is over 20% lower. Predicates must be
+integer equalities; selected values must be columns/literals, with optional
+simple-column ordering. LEFT JOIN, aggregates, DISTINCT, locking, LIMIT,
+OFFSET, noninteger/unknown predicates and volatile expressions retain the
+existing plan. A fixed shard-key root also retains its order to preserve
+potential grouped-read execution. Missing, expired or schema-mismatched
+statistics retain written order. Both orders use the same checked read,
+OCC validation and buffered-write overlay paths. Logical `SELECT *` order,
+column metadata and collation are preserved by expression remapping.
+
+EXPLAIN reports per-probe row estimates and, when considered, both join
+costs and the selected order. Cost is estimated nested-loop tuple work plus 256
+per read RPC, with average prefix selectivity and batched probes. It is
+not a latency prediction and excludes validation/retries and batch-key
+deduplication. Tuple work includes repeated logical join candidates; it is
+not the decoded storage-tuple counter. The [paired component
+measurements](../bench/RESULTS.md#cardinality-guided-inner-join-components-issue-136)
+record actual reductions in decoded tuples/read attempts and their timing
+limits. Parameter values
+never specialize selectivity in a shared normalized plan. Unbound parameter
+diagnostic plans conservatively retain written order. Eligible binary
+executions with bound integer parameters use a type-keyed plan with unchanged
+projection metadata; different parameter values share that plan. Compare these hints with
+`SHOW TARN QUERIES`' actual `Storage_rows` and `Read_attempts`, whose distinct
+coverage is documented below. A stale hint may choose a slower valid plan;
+it cannot replace SQL predicates, reads or transaction validation.
+
 ## Query plans and fanout
 
 `EXPLAIN FORMAT=JSON SELECT ...` returns one MySQL result column named
 `EXPLAIN`, containing a `tarn-plan-v1` JSON object. Physical SELECT, INSERT,
-UPDATE and DELETE plans are supported. Plain EXPLAIN query plans, ANALYZE,
+UPDATE and DELETE plans are supported. Plain EXPLAIN query plans, EXPLAIN ANALYZE,
 other formats, execution options and complex queries outside the physical
 planner are rejected explicitly. Existing `EXPLAIN table` remains DESCRIBE.
 
 Planning uses the gateway's cached catalog and bucket map. It makes no
 user-data reads, allocates no AUTO_INCREMENT values, takes no row locks and
 does not start or commit a transaction. `planned_catalog_version` and each
-table's `definition_version` identify the metadata. Counts are routing
-constraints or upper bounds, not observed rows or transaction participants.
+table's `definition_version` identify the metadata. Routing counts are constraints or upper bounds, not observed transaction
+participants. Optional cardinality hints are separate advisory estimates.
 Unknown counts are JSON `null`, with a reason; a broadcast names every
 current live shard and bucket. Dependent join keys, global-index base-row
 lookups, defaults and unbound parameters can leave routes unknown. Eligible
@@ -940,6 +1016,10 @@ count successful coordinator outcomes with one or multiple commit
 participants, while `Commit_errors` counts errors after commit was
 attempted. Explicit transactions attribute their commit to COMMIT rather
 than a preceding statement. `Total_us` sums observed wall-clock duration.
+`Storage_rows` counts successfully decoded tuples returned by ordinary,
+multi-key and grouped SELECT requests, including repeated attempts. It is
+not index entries examined, lock-acquisition response tuples, COUNT work,
+bytes, or final result rows.
 
 The registry holds at most 256 digests with least-recently-completed eviction;
 SHOW uses only in-memory observations and does not clear them. Status exposes
@@ -1182,7 +1262,7 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 | 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |
-| 1041 | HY000 | lazy-index encoded outbox or PREPARE capacity exhausted, or exact sequence space exhausted | restore delivery or capacity before retrying; draining does not clear sequence exhaustion |
+| 1041 | HY000 | SQL resource envelope, lazy-index outbox/PREPARE capacity, or sequence space exhausted | a `Tarn resource limit:` error rolls back the explicit transaction; reduce the operation or tune its budget. For outbox errors, restore delivery/capacity; draining does not clear sequence exhaustion |
 | 1264 | 22003 | value out of range for the column | |
 | 1235 | 42000 | not supported | |
 | 1105 | HY000 | under `tarn_tree_checks = 'ERROR'`: a declared [table tree](sql-compatibility.md#table-trees) does not line up (otherwise a warning) | fix the keys or `PARTITION BY KEY` |

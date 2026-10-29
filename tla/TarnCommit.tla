@@ -1,6 +1,9 @@
 ------------------------------ MODULE TarnCommit ------------------------------
 (***************************************************************************)
 (* Tarn's transaction protocol over Tarantool shards.                      *)
+(* Resource refusal is confined to execution before these commit actions. *)
+(* QueryBudget checks admission/retained-output ownership separately; it   *)
+(* does not prove Rust allocation sizes or refine the complete executor.  *)
 (*                                                                         *)
 (* Query fanout diagnostics (issue #133) observe existing actions only.    *)
 (* They do not add protocol state, storage calls, retries or lock changes. *)

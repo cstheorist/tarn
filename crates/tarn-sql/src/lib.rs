@@ -9,6 +9,7 @@
 pub mod admin;
 pub mod alter;
 pub mod buckets;
+pub mod budget;
 pub mod catalog;
 pub mod cluster;
 pub mod collation;
@@ -32,6 +33,7 @@ pub mod route;
 mod rpcs;
 pub use rpcs::RpcConfig;
 pub mod session;
+pub mod statistics;
 pub mod txn;
 pub mod types;
 pub mod vinyl;

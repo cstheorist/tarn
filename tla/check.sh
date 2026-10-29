@@ -75,6 +75,7 @@ DEFAULT="$DEFAULT StrongStreamCompletion Bug_StreamCompletionSkipFinalPrefix Bug
 DEFAULT="$DEFAULT LockReplyOwnership Bug_LockReplyRelabelGeneration Bug_LockReplyIgnoreDisconnect"
 DEFAULT="$DEFAULT WaiterAllocation WaiterAllocationEager Bug_WaiterLateAllocation"
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
+DEFAULT="$DEFAULT QueryBudget Bug_QueryEarlyWireRelease Bug_QueryEarlyResultRelease Bug_QueryPostDecisionRefusal"
 DEFAULT="$DEFAULT Fairness Bug_FairnessPrefix"
 DEFAULT="$DEFAULT DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect
 Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry"

@@ -12,6 +12,21 @@ kind of mistake:
 What each layer found, and how the findings were fixed, is described in the
 [design document](design.md#23-what-tlc-found) (§2.3, §2.4, §2.5, §2.8 and §2.9).
 
+## Resource ownership
+
+`QueryBudget.tla` checks two concurrent queries sharing an admission cap,
+wire ownership after caller cancellation, result ownership through output
+flush, validation before successful output, and refusal only before a DML
+commit decision. Three negative controls remove wire ownership, release
+results before delivery, or refuse after decision; each violates its
+corresponding invariant. `TarnCommit`'s execution/commit boundary is unchanged.
+
+The Rust resource meter and heap implementation are ordinary tested Rust,
+not Verus-proved allocation bounds. The model abstracts allocation units and
+RPC completion; it does not prove the concrete multipliers, Tokio scheduling,
+allocator RSS, or socket/kernel behavior. The live and differential controls
+and measured boundaries are recorded in [SQL resource limits](resources.md).
+
 ## TLA+ model
 
 `tla/TarnCommit.tla` specifies the protocol: shards, keys with owners, three
@@ -1328,6 +1343,36 @@ tla/check.sh EngineAlias EngineAlias_Existing Bug_EngineAliasNoMutex
 
 ### Strong-read freshness, stream provenance and locking replies (issue #130)
 
+`native_freshness.sh` runs two explicit callback schedules (#170). Both
+hold the actual initial production `box.status` callback, retain the real
+RF3/fsync quorum barrier, pause only an owned replica, recycle large CALL
+ports, and check exact native argument/transaction ownership. The `native`
+schedule delivers that callback after the native witnesses. The `handback`
+schedule delivers it while the first stream barrier is pending: the real
+callback changes ready buckets to stale with the same PID, writable role
+and term, and the native read must return only `lua`, reclaiming its newly
+owned transaction/certificate. An explicit Lua read on the same IPROTO
+stream then checks exact committed values and the subsequent read-set
+conflict. Neither schedule refreshes caches while its native call is pending
+or replaces a production cache flag, barrier or guard. The original native
+read-set, final-prefix/no-op, ambient-transaction and failed-barrier
+no-Lua-retry checks run in both schedules.
+
+The old unconditional native-success assertion fails with this actual
+callback delivery and the same `served=2`, `to_lua=1`, `stale_buckets=1`
+counters retained in [the original failed job](https://github.com/cstheorist/tarn/actions/runs/40871992223/job/123441115757).
+That historical job exported neither its per-round event file nor its
+native binary hash, so the exact historical notification is unproven. The
+controlled counterexample establishes a sufficient legal invalidation,
+not retrospective identification of that event. A separate unchanged-main
+ordinary pass remains separate evidence. The original observer also read
+the watch key as its payload; the fixture now records both callback
+arguments. Current runs export actual production callback entry/exit,
+pre-pause/pending/post-yield snapshots, source/module/Tarantool hashes,
+version and owned process/cleanup records in CI artifacts and job logs.
+These are runtime controls outside the models below; no production
+behavior, ABI, verified body or protocol transition changes.
+
 `StrongReadFreshness.tla` refines the replica-freshness premise that the
 commit model's atomic failover does not express. Three replicas retain
 their own observed term, writable role, WAL evidence and settled effects.
@@ -1893,10 +1938,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 278 unique configurations: 73 positive
-outcomes and 205 expected broken/trade-off outcomes. The 285 generated
-configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 291 total. Explicit
+The default list contains 282 unique configurations: 74 positive
+outcomes and 208 expected broken/trade-off outcomes. The 285 generated
+configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
+placement and query-budget configurations are maintained directly, for 295 total. Explicit
 check arguments override the default list.
 
 The three waiter-allocation configurations precede the #186 optimization.
@@ -1941,9 +1986,10 @@ The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
 formed the 263-case union. The five file-backup cases then completed
 separately with one positive and four expected violations; the combined
-registry contains all 268 inputs. This is an input union, not a claim that
+registry contained all 268 inputs. Four query-budget configurations add one
+positive and three expected ownership/decision violations, yielding 272. This is an input union, not a claim that
 a previous CI run executed changed models. The generator reproduces
-without changes. The current proof inventory is 336 files: 320 TLA+
+without changes. The current proof inventory is 341 files: 325 TLA+
 model/config files, 11 verified-crate source/test/manifest files and five
 formal runner/inspection scripts. Verus bodies are unchanged.
 
@@ -2271,6 +2317,21 @@ eviction, and an exact-result join whose aligned shard keys reduce observed
 fanout. Existing GroupedTables/GroupedRead positive and sensitivity models,
 storage protocols, SQL, transaction and live-fault suites remain required;
 these models do not prove observer accuracy or performance.
+
+### Advisory cardinality hints and join order (issue #136)
+
+Statistics are untrusted plan hints: samples are biased, sizes approximate,
+and there is no coherent SQL snapshot across their collection. Neither
+`ANALYZE` nor its data participates in transaction validation. Both eligible
+join orders use the existing checked SELECT/multi-key paths, recording the
+actual ranges and preserving buffered writes. No commit action, lock rule,
+recovery decision or verified body changes; the existing read-model contracts
+apply. The TLA+ models do not prove expression remapping or SQL join algebra.
+Unit tests check the conservative eligibility and metadata permutation;
+`tests/sql/statisticstest.py` checks exact results, stale/missing hints,
+binary cache generations, own writes, point/phantom OCC, altered tuple layout
+and coherent joins under cross-table writes. Differential tests compare
+ANALYZE status rows and joins with MariaDB 10.11.
 
 ### IPROTO admission and retirement (issue #127)
 
