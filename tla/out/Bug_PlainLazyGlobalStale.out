@@ -1,0 +1,226 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 20 and seed -6780356263914850992 with 2 workers on 16 cores with 736MB heap and 64MB offheap memory [pid: 19305] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue161/tla/PlainLazyBinding.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9214714159455486008/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PlainLazyBinding
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PlainLazyBinding
+Starting... (2026-10-29 08:26:35)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 08:26:35.
+Error: Invariant UnrelatedOneCommit is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ changed = FALSE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 0,
+  bound |-> FALSE,
+  ids |-> {},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 0, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = FALSE
+/\ globalStale = FALSE
+/\ phase = "before"
+/\ userTracked = TRUE
+/\ bPublished = FALSE
+/\ tracksDeclared = {}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {}
+/\ initialTx = 0
+
+State 2: <Bind line 65, col 5 to line 80, col 78 of module PlainLazyBinding>
+/\ changed = FALSE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 1,
+  bound |-> TRUE,
+  ids |-> {"A"},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 0, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = TRUE
+/\ globalStale = FALSE
+/\ phase = "bound"
+/\ userTracked = TRUE
+/\ bPublished = FALSE
+/\ tracksDeclared = {"A"}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {"A"}
+/\ initialTx = 0
+
+State 3: <Change line 83, col 5 to line 101, col 90 of module PlainLazyBinding>
+/\ changed = TRUE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 1,
+  bound |-> TRUE,
+  ids |-> {"A"},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 0, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = TRUE
+/\ globalStale = TRUE
+/\ phase = "bound"
+/\ userTracked = TRUE
+/\ bPublished = FALSE
+/\ tracksDeclared = {"A"}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {"A"}
+/\ initialTx = 0
+
+State 4: <InitialImages line 104, col 5 to line 107, col 80 of module PlainLazyBinding>
+/\ changed = TRUE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 1,
+  bound |-> TRUE,
+  ids |-> {"A"},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 0, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = TRUE
+/\ globalStale = TRUE
+/\ phase = "initial"
+/\ userTracked = TRUE
+/\ bPublished = FALSE
+/\ tracksDeclared = {"A"}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {"A"}
+/\ initialTx = 1
+
+State 5: <TentativeWrite line 110, col 5 to line 116, col 80 of module PlainLazyBinding>
+/\ changed = TRUE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 1,
+  bound |-> TRUE,
+  ids |-> {"A"},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 1, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = TRUE
+/\ globalStale = TRUE
+/\ phase = "written"
+/\ userTracked = TRUE
+/\ bPublished = FALSE
+/\ tracksDeclared = {"A"}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {"A"}
+/\ initialTx = 1
+
+State 6: <Finish line 128, col 5 to line 138, col 83 of module PlainLazyBinding>
+/\ changed = TRUE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 1,
+  bound |-> TRUE,
+  ids |-> {"A"},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 1, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = TRUE
+/\ globalStale = TRUE
+/\ phase = "finished"
+/\ userTracked = TRUE
+/\ bPublished = FALSE
+/\ tracksDeclared = {"A"}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {"A"}
+/\ initialTx = 1
+
+State 7: <PublishDrain line 141, col 5 to line 146, col 90 of module PlainLazyBinding>
+/\ changed = TRUE
+/\ metadata = [A |-> {}, C |-> {}]
+/\ proof = [ identity |-> [A |-> 0, C |-> 0],
+  tx |-> 1,
+  bound |-> TRUE,
+  ids |-> {"A"},
+  hard |-> 0 ]
+/\ membership = [A |-> 0, C |-> 0]
+/\ tentative = [A |-> 1, C |-> 0]
+/\ ourAck = FALSE
+/\ tx = 1
+/\ externalAck = FALSE
+/\ identity = [A |-> 0, C |-> 0]
+/\ tracksPending = TRUE
+/\ globalStale = TRUE
+/\ phase = "drained"
+/\ userTracked = TRUE
+/\ bPublished = TRUE
+/\ tracksDeclared = {"A"}
+/\ data = [A |-> 0, C |-> 0]
+/\ conflict = FALSE
+/\ writes = {"A"}
+/\ kind = "unrelated"
+/\ hardEpoch = 0
+/\ tracksCapture = {"A"}
+/\ initialTx = 1
+
+22 states generated, 15 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-10-29 08:26:35)
+Trace exploration spec path: ./PlainLazyBinding_TTrace_1793276795.tla
