@@ -10,7 +10,7 @@
 use crate::locks;
 
 /// The version of this layout; the Lua module checks it.
-pub const LAYOUT: u32 = 11;
+pub const LAYOUT: u32 = 14;
 
 /// The slots of `space_locks`.
 pub const SPACES: u32 = 65536;
@@ -128,6 +128,23 @@ pub struct State {
     /// Why the procedures handed requests back (fallback.rs), for
     /// tarn_info().
     pub fallbacks: unsafe extern "C" fn(*mut u8, usize) -> usize,
+    /// Freshness configuration: 0 unknown, 1 standalone, 2 synchronous
+    /// replication, 3 unsupported. Revalidated through the Lua API guard at
+    /// each native read; this cached value is not a quorum certificate.
+    pub fresh_mode: u8,
+    pub fresh_clock_ok: u8,
+    pub fresh_reserved: [u8; 6],
+    /// Final timeout of an owned empty autocommit barrier. Stream reads
+    /// retain their existing sixty-second transaction timeout instead.
+    pub read_timeout: f64,
+    /// Nanosecond clock-health observation and its conservative lifetime.
+    pub clock_mono: u64,
+    pub clock_wall: u64,
+    pub clock_max_gap: u64,
+    pub clock_max_drift: u64,
+    /// ABI13 stored LuaJIT FFI callback pointers here. ABI14 enters the
+    /// public protected Lua API instead; never invoke those old pointers.
+    pub fresh_guard_reserved: [u64; 4],
 }
 
 impl Default for State {
@@ -186,6 +203,15 @@ impl State {
             locks_sizes: locks::locks_sizes,
             locks_range: locks::locks_range,
             fallbacks: crate::fallback::fallbacks,
+            fresh_mode: 0,
+            fresh_clock_ok: 0,
+            fresh_reserved: [0; 6],
+            read_timeout: 0.0,
+            clock_mono: 0,
+            clock_wall: 0,
+            clock_max_gap: 0,
+            clock_max_drift: 0,
+            fresh_guard_reserved: [0; 4],
         }
     }
 
@@ -335,7 +361,15 @@ mod tests {
         assert_eq!(offset_of!(State, locks_sizes), 288);
         assert_eq!(offset_of!(State, locks_range), 296);
         assert_eq!(offset_of!(State, fallbacks), 304);
-        assert_eq!(std::mem::size_of::<State>(), 312);
+        assert_eq!(offset_of!(State, fresh_mode), 312);
+        assert_eq!(offset_of!(State, fresh_clock_ok), 313);
+        assert_eq!(offset_of!(State, read_timeout), 320);
+        assert_eq!(offset_of!(State, clock_mono), 328);
+        assert_eq!(offset_of!(State, clock_wall), 336);
+        assert_eq!(offset_of!(State, clock_max_gap), 344);
+        assert_eq!(offset_of!(State, clock_max_drift), 352);
+        assert_eq!(offset_of!(State, fresh_guard_reserved), 360);
+        assert_eq!(std::mem::size_of::<State>(), 392);
     }
 
     #[test]

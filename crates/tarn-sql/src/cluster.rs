@@ -280,6 +280,46 @@ struct Pool {
     next: AtomicUsize,
 }
 
+/// A storage version is not eligible for SQL merely because it is writable.
+/// This capability describes code, not readiness or a reusable read barrier.
+fn strong_read_contract(data: &[u8]) -> bool {
+    let mut rd = Rd::new(data);
+    (|| -> SqlResult<bool> {
+        Ok(rd.array()? == 1
+            && rd.array()? == 2
+            && matches!(rd.value()?, Value::Str(s) if s.as_ref() == b"strong_reads")
+            && matches!(rd.value()?, Value::Int(1) | Value::UInt(1))
+            && rd.buf.is_empty())
+    })()
+    .unwrap_or(false)
+}
+
+async fn require_strong_reads(client: &Client, completion: bool) -> SqlResult<()> {
+    // Discovery for an existing completion must preserve its reserved lane
+    // through capability negotiation as well as the writable-node probe.
+    let response = tokio::time::timeout(Duration::from_secs(5), async {
+        if completion {
+            client.call_control(0, "tarn_read_contract", &[0x90]).await
+        } else {
+            client.call(0, "tarn_read_contract", &[0x90]).await
+        }
+    })
+    .await;
+    let valid = match response {
+        Ok(Ok(r)) => r.data().is_some_and(|data| strong_read_contract(&data)),
+        _ => false,
+    };
+    if valid {
+        return Ok(());
+    }
+    // In particular retire a timed-out capability request rather than leave
+    // its cancelled waiter on a socket that will never be used by the pool.
+    client.close();
+    Err(SqlError::unsupported(
+        "SQL requires storage strong-read protocol V1; upgrade the storage Lua module before this gateway",
+    ))
+}
+
 impl Pool {
     fn pick(&self) -> Option<Client> {
         let n = self.clients.len();
@@ -481,10 +521,20 @@ impl Shard {
                 last_err = format!("{} is read-only", addr);
                 continue;
             }
+            if let Err(e) = require_strong_reads(&c, completion).await {
+                last_err = format!("{}: {}", addr, e);
+                continue;
+            }
             let mut clients = vec![c.clone()];
             for _ in 1..cluster.cfg.pool_size.max(1) {
                 match Client::connect(&opts).await {
-                    Ok(x) => clients.push(x),
+                    Ok(x) => {
+                        if let Err(e) = require_strong_reads(&x, completion).await {
+                            tracing::warn!(shard = self.id, "extra storage connection is incompatible: {}", e);
+                            break;
+                        }
+                        clients.push(x);
+                    }
                     Err(e) => {
                         tracing::warn!(shard = self.id, "extra connection to {}: {}", addr, e);
                         break;
@@ -2437,12 +2487,214 @@ impl Cluster {
 }
 
 #[cfg(test)]
+pub(crate) mod wire_test {
+    use super::{Mp, Rd};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    pub async fn request(sock: &mut TcpStream) -> (u64, u64, u64, Vec<u8>) {
+        assert_eq!(sock.read_u8().await.unwrap(), 0xce);
+        let size = sock.read_u32().await.unwrap();
+        assert!(size < 64 * 1024);
+        let mut packet = vec![0; size as usize];
+        sock.read_exact(&mut packet).await.unwrap();
+        let mut rd = Rd::new(&packet);
+        let (mut kind, mut sync, mut stream) = (0, 0, 0);
+        for _ in 0..rd.map().unwrap() {
+            let key = rd.value().unwrap().as_i64().unwrap();
+            let value = rd.value().unwrap().as_i64().unwrap() as u64;
+            match key {
+                0 => kind = value,
+                1 => sync = value,
+                10 => stream = value,
+                _ => {}
+            }
+        }
+        (kind, sync, stream, rd.buf.to_vec())
+    }
+
+    pub async fn reply(sock: &mut TcpStream, sync: u64, code: u64, body: &[u8]) {
+        let mut packet = Mp::new();
+        packet.map(2).uint(0).uint(code).uint(1).uint(sync).raw(body);
+        sock.write_u8(0xce).await.unwrap();
+        sock.write_u32(packet.0.len() as u32).await.unwrap();
+        sock.write_all(&packet.0).await.unwrap();
+    }
+
+    pub async fn accept(listener: &TcpListener) -> TcpStream {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut greeting = [b' '; 128];
+        let first = b"Tarantool 3.9.0 (Binary)";
+        greeting[..first.len()].copy_from_slice(first);
+        greeting[63] = b'\n';
+        greeting[64..108].copy_from_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        greeting[127] = b'\n';
+        sock.write_all(&greeting).await.unwrap();
+        let (kind, sync, stream, _) = request(&mut sock).await;
+        assert_eq!((kind, stream), (73, 0));
+        let mut body = Mp::new();
+        body.map(2).uint(0x54).uint(6).uint(0x55).arr(2).uint(0).uint(1);
+        reply(&mut sock, sync, 0, &body.0).await;
+        sock
+    }
+}
+#[cfg(test)]
 #[path = "cluster_fallback_tests.rs"]
 mod fallback_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strong_read_capability_requires_supported_complete_contract() {
+        let mut good = Mp::new();
+        good.arr(1).arr(2).str("strong_reads").uint(1);
+        assert!(strong_read_contract(&good.0));
+        for n in 0..good.0.len() {
+            assert!(!strong_read_contract(&good.0[..n]));
+        }
+        good.nil();
+        assert!(!strong_read_contract(&good.0));
+        for version in [0, 2] {
+            let mut other = Mp::new();
+            other.arr(1).arr(2).str("strong_reads").uint(version);
+            assert!(!strong_read_contract(&other.0));
+        }
+        let mut old = Mp::new();
+        old.arr(1).arr(1).str("lua");
+        assert!(!strong_read_contract(&old.0));
+        let mut wrong_type = Mp::new();
+        wrong_type.arr(1).arr(2).str("strong_reads").str("1");
+        assert!(!strong_read_contract(&wrong_type.0));
+    }
+
+    #[tokio::test]
+    async fn strong_read_contract_is_negotiated_over_tcp_and_retires_rejected_sockets() {
+        use super::wire_test::{accept, reply, request};
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        // Supported, missing procedure, unsupported version, wrong shape,
+        // transport loss, and a capability RPC that never replies.
+        for case in 0..6 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let mut sock = accept(&listener).await;
+                let (kind, sync, stream, body) = request(&mut sock).await;
+                assert_eq!((kind, stream), (10, 0));
+                let mut rd = Rd::new(&body);
+                assert_eq!(rd.map().unwrap(), 2);
+                assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+                assert_eq!(rd.string().unwrap(), "tarn_read_contract");
+                assert_eq!(rd.value().unwrap().as_i64(), Some(0x21));
+                assert_eq!(rd.array().unwrap(), 0);
+                assert!(rd.buf.is_empty());
+                if case == 4 {
+                    return; // no response: discovery cannot infer support
+                }
+                if case != 5 {
+                    let mut body = Mp::new();
+                    let code = if case == 1 {
+                        body.map(1).uint(0x31).str("missing tarn_read_contract");
+                        0x8000 | tarn_iproto::errcode::ER_NO_SUCH_PROC as u64
+                    } else {
+                        body.map(1)
+                            .uint(0x30)
+                            .arr(if case == 3 { 2 } else { 1 })
+                            .arr(2)
+                            .str("strong_reads")
+                            .uint(if case == 2 { 2 } else { 1 });
+                        if case == 3 {
+                            body.nil();
+                        }
+                        0
+                    };
+                    reply(&mut sock, sync, code, &body.0).await;
+                }
+                assert!(tokio::time::timeout(Duration::from_secs(7), sock.read_u8())
+                    .await
+                    .unwrap()
+                    .is_err());
+            });
+            let client = Client::connect(&Opts::new(addr.to_string())).await.unwrap();
+            let result = require_strong_reads(&client, false).await;
+            assert_eq!(result.is_ok(), case == 0);
+            if case == 0 {
+                assert!(!client.is_closed());
+                client.close();
+            } else {
+                assert!(client.is_closed());
+                assert!(result.unwrap_err().message.contains("strong-read protocol V1"));
+            }
+            tokio::time::timeout(Duration::from_secs(8), peer)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn completion_discovery_negotiates_capability_through_reserved_admission() {
+        use super::wire_test::{accept, reply, request};
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let peer = tokio::spawn(async move {
+            let mut sock = accept(&listener).await;
+            let (kind, held_sync, stream, _) = request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let (kind, sync, stream, body) = request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let mut rd = Rd::new(&body);
+            assert_eq!(rd.map().unwrap(), 2);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+            assert_eq!(rd.string().unwrap(), "tarn_read_contract");
+            let mut body = Mp::new();
+            body.map(1).uint(0x30).arr(1).arr(2).str("strong_reads").uint(1);
+            reply(&mut sock, sync, 0, &body.0).await;
+            let mut body = Mp::new();
+            body.map(1).uint(0x30).arr(0);
+            reply(&mut sock, held_sync, 0, &body.0).await;
+            assert!(tokio::time::timeout(Duration::from_secs(3), sock.read_u8())
+                .await
+                .unwrap()
+                .is_err());
+        });
+        let limits = tarn_iproto::Limits {
+            requests: 2,
+            bytes: 4096,
+            reserved_requests: 1,
+            reserved_bytes: 512,
+        };
+        let budget = tarn_iproto::Budget::new("gateway", limits).unwrap();
+        let opts = Opts {
+            request_limits: limits,
+            admission: vec![budget.clone()],
+            ..Opts::new(addr.to_string())
+        };
+        let client = Client::connect(&opts).await.unwrap();
+        let held = client.call(0, "held", &[0x90]);
+        tokio::pin!(held);
+        assert!(futures::poll!(held.as_mut()).is_pending());
+        assert_eq!(budget.stats().normal_pending, 1);
+        assert!(matches!(
+            client.call(0, "ordinary", &[0x90]).await,
+            Err(tarn_iproto::Error::Admission { .. })
+        ));
+        tokio::time::timeout(Duration::from_secs(2), require_strong_reads(&client, true))
+            .await
+            .unwrap()
+            .unwrap();
+        held.await.unwrap();
+        assert_eq!(budget.stats().pending, 0);
+        assert!(!client.is_closed());
+        client.close();
+        peer.await.unwrap();
+    }
 
     #[test]
     fn space_allocations_never_wrap_or_reuse_an_incarnation() {

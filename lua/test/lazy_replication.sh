@@ -40,7 +40,7 @@ owned() {
   [ "$identity" = "$$:${STARTS[$i]:-missing}" ]
 }
 cleanup() {
-  local i p
+  local i p failed=0
   for i in 1 2 3; do
     if owned "$i"; then kill -TERM "${PIDS[$i]}" 2>/dev/null || true; fi
   done
@@ -55,13 +55,24 @@ cleanup() {
     if owned "$i"; then kill -KILL "$p" 2>/dev/null || true; fi
     if [ -n "$p" ]; then
       if ! kill -0 "$p" 2>/dev/null || owned "$i"; then wait "$p" 2>/dev/null || true
-      else echo "FAIL cleanup refused changed process identity for node$i pid$p" >&2; fi
+      else
+        echo "FAIL cleanup refused changed process identity for node$i pid$p" >&2
+        failed=1
+      fi
     fi
     unset 'PIDS[i]'
     unset 'STARTS[i]'
   done
+  return "$failed"
 }
-trap cleanup EXIT
+finish() {
+  local status=$? cleanup_status=0
+  cleanup || cleanup_status=$?
+  [ "$status" -ne 0 ] || status=$cleanup_status
+  trap - EXIT
+  exit "$status"
+}
+trap finish EXIT
 start() {
   local i=$1 port=$((BASE + $1))
   TARN_SHARD_ID=1 TARN_LISTEN="127.0.0.1:$port" TARN_WORKDIR="$RUNTIME/s$i" \

@@ -315,7 +315,7 @@ local function exercise(engine)
         and box.space[t.name].engine == t.args.def.engine
         and box.space[t.new_id].index[7]:count{10} == 1
         and box.space[t.new_id].index[7]:get{10}[1] == 129)
-    local retired_read = tarn_select(t.old_id, 0, {256}, 'EQ', 1, box.NULL, false, false, box.NULL, false)
+    local retired_read = tarn_select(t.old_id, 0, {256}, 'EQ', 1, box.NULL, false, true, box.NULL, false)
     check(label('a read with the retired physical SID requests catalog refresh instead of missing data'),
         retired_read[1] == 'error' and retired_read[2] == 1412, retired_read)
     local valid = stream:call('tarn_validate', {'engine-old-stream-' .. t.old_id,
@@ -494,6 +494,7 @@ end
 local yes, err = xpcall(function()
     wait('schema and quota ready', function()
         return box.space._tarn_part ~= nil and tarn.lazy.quota.ready() and tarn.engine ~= nil
+            and tarn.clock.status().read_ready
             and (native == nil or native == '0' or (tarn_info().native or {}).ready == 1)
     end)
     ok(tarn_bucket_init(16, {{1, 16}}))
@@ -501,9 +502,9 @@ local yes, err = xpcall(function()
     if native ~= nil and native ~= '0' then
         local ffi = require('ffi')
         layout = tonumber(ffi.cast('struct tarn_ns *', box.func['tarn_storage.ts_state']:call()).layout)
-        assert(ni and ni.ready == 1 and layout == tarn.NS_LAYOUT and layout == 11
-               and ffi.sizeof('struct tarn_ns') == 312 and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304,
-               'actual native ABI11/size312/fallbacks304 required')
+        assert(ni and ni.ready == 1 and layout == tarn.NS_LAYOUT and layout == 14
+               and ffi.sizeof('struct tarn_ns') == 392 and ffi.offsetof('struct tarn_ns', 'fallbacks') == 304,
+               'actual native ABI14/size392/fallbacks304 required')
     else assert(tarn.cfg.native == false and ni == false, 'explicit Lua mode required') end
     print('IDENTITY ' .. json.encode{version = box.info.version, native = ni, layout = layout,
         sync = tarn.cfg.sync, wal = box.cfg.wal_mode})

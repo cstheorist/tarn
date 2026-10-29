@@ -1,3 +1,5 @@
+-- Protocol streams start with the first-read quorum contract. Raw IPROTO
+-- BEGIN refusal and unchanged ambient read sets are tested separately.
 -- Bucket moves (issue #24): the bucket map, the refusals of requests routed
 -- by buckets a shard does not own, and the steps of a move, on two
 -- single-node shards. Run via lua/test/run.sh (after storage_test.lua, on
@@ -24,6 +26,14 @@ local function wait_for(cond, secs)
     end
     return cond()
 end
+local function ready(i, required)
+    assert(wait_for(function()
+        return c[i]:eval([[local ids = ...
+            return not box.info.ro and tarn.clock.read_check() == nil
+                and (ids == nil or tarn.clock.check(ids) == nil)]], {required})
+    end, 10), 'shard ' .. i .. ' did not become ready')
+end
+for i = 1, 2 do ready(i, {i}) end
 local function cfg(i, k, v)
     return c[i]:eval('local t = package.loaded.tarn.cfg local o = t[...] t[...] = select(2, ...) return o', {k, v})
 end
@@ -56,7 +66,7 @@ local function upd(i, id, b, v)
 end
 local function prepare(i, txid, writes, rpoints, rranges, wb, stream)
     local s = stream or c[i]:new_stream()
-    if not stream then s:begin() end
+    if not stream then s:eval('tarn.fresh.begin_stream()') end
     return s:call('tarn_prepare', {txid, i, {i}, writes, rpoints or {}, rranges or {}, fiber.time(), box.NULL,
                                    box.NULL, wb})
 end
@@ -126,10 +136,10 @@ r = c[1]:call('tarn_select_projected', {sid, 0, {}, 'ALL', box.NULL, box.NULL, t
 check('typed projection: refused on the wrong owner', r[1] == 'moved', r)
 r = c[1]:call('tarn_count', {sid, 0, {}, 'ALL', box.NULL, true, {}, {}, true, false, {e = 1}})
 check('... at the epoch: served', r[1] == 'ok', r)
-local st = c[1]:new_stream(); st:begin()
+local st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 r = st:call('tarn_commit_local', {'BK1', {{'replace', sid, {100, 0, 'x', 12}}}, {}, {}, box.NULL, box.NULL, {12}})
 check('commit_local writing it: refused', r[1] == 'moved', r)
-st = c[1]:new_stream(); st:begin()
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 st.space['test.bk']:get{1}
 r = st:call('tarn_commit_local', {'BK2', {{'replace', sid, {1, 1, 'a1', 5}}}, {{sid, 0, {21}, 12}}, {}, box.NULL,
                                   box.NULL, {5}})
@@ -137,7 +147,7 @@ check('commit_local whose read was routed by it: refused', r[1] == 'moved', r)
 r = prepare(1, 'BK3', {{'replace', sid, {100, 0, 'x', 12}}}, {}, {}, {12})
 check('PREPARE writing it: refused (a NO vote)', r[1] == 'moved' and r[2] == 1213, r)
 check('... that leaves a tombstone', c[1]:call('tarn_part_status', {'BK3'}) == 'aborted')
-st = c[1]:new_stream(); st:begin()
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 st.space['test.bk']:get{1}
 r = st:call('tarn_validate', {'BK4', {{sid, 0, {1}, 5}, {sid, 0, {21}, 12}}, {}, true, box.NULL})
 check('validation of a read routed by it: refused', r[1] == 'moved', r)
@@ -239,7 +249,7 @@ r = c[1]:call('tarn_lock', {'BK12', {{sid, 0, {1}, 5}}, 'S', {}})
 check('... and takes no row locks', r[1] == 'moved', r)
 r = prepare(1, 'BK13', {}, {{sid, 0, {1}, 5}}, {}, {})
 check('... nor a PREPARE that reads it', r[1] == 'moved', r)
-st = c[1]:new_stream(); st:begin()
+st = c[1]:new_stream(); st:eval('tarn.fresh.begin_stream()')
 st.space['test.bk']:get{1}
 r = st:call('tarn_validate', {'BK14', {{sid, 0, {1}, 5}}, {}, true, box.NULL})
 check('a read-only validation of a read of it succeeds', r[1] == 'ok', r)
@@ -308,7 +318,7 @@ check('the bucket stays fenced', upd(1, 13, 6, 0)[1] == 'moved')
 -- rebuilt from _tarn_locks, which names the bucket of each lock.
 c[1]:eval('box.cfg{read_only = true}')
 c[1]:eval('box.cfg{read_only = false}')
-wait_for(function() return c[1]:eval('return box.info.ro') == false end)
+ready(1, {1})
 r = c[1]:call('tarn_bucket_fence', {6, 'M3', 0.3})
 check('after a leader change: still waiting for P6', r[1] == 'timeout', r)
 c[1]:call('tarn_apply', {'P6'})
@@ -451,13 +461,15 @@ print('the map read again while a step waits for its quorum: bucket 2')
 local function quorum(i, n) c[i]:eval('box.cfg{replication_synchro_quorum = ...}', {n}) end
 local function flip(i)   -- read-only and back: the shard reads its map again
     c[i]:eval('box.cfg{read_only = true}'); fiber.sleep(0.1)
-    c[i]:eval('box.cfg{read_only = false}'); fiber.sleep(0.1)
+    c[i]:eval('box.cfg{read_only = false}')
+    ready(i) -- local health only: peer certificates wait for pending sync work
 end
 for i = 1, 2 do
     c[i]:eval([[box.ctl.promote()
         box.space._tarn_buckets:alter{is_sync = true} box.space._tarn_recv:alter{is_sync = true}
         box.cfg{replication_synchro_timeout = 30}]])
 end
+for i = 1, 2 do ready(i, {i}) end
 for id = 71, 73 do c[1].space['test.bk']:replace{id, id, 'f' .. id, 2} end
 c[2]:call('tarn_bucket_recv_begin', {2, 1, 'M7'})
 gen = c[1]:call('tarn_bucket_send_begin', {2, 2, 'M7', 5})[2]
@@ -481,14 +493,20 @@ st:call('tarn_select', {sid, 1, {'g74'}, 'EQ', box.NULL, box.NULL, false, false,
 r = st:call('tarn_validate', {'T7', {}, {{sid, 1, {'g74'}, {'g74'}, true, true}}, true, box.NULL})
 check('a scan of R covering the row of the last copy fails its validation (the hold has it)', r[1] ~= 'ok', r)
 pcall(st.rollback, st)
+-- First-read barriers must settle pending synchronous work. Open these
+-- observers before the steps wait for quorum, then retain the route oracle
+-- across the map reload without trying to refresh an existing snapshot.
+local send_reader = c[1]:new_stream()
+send_reader:eval('tarn.fresh.begin_stream()')
 quorum(1, 2)
 f = c[1]:call('tarn_bucket_send', {2, 'M7'}, {is_async = true})
 fiber.sleep(0.2)
 check('the send waits for its quorum', not f:is_ready())
 flip(1)
-r = sel(1, 71, 2)
+r = send_reader:call('tarn_select', {sid, 0, {71}, 'EQ', 1, box.NULL, true, true, box.NULL, false, box.NULL, 2})
 check('... meanwhile a read of the bucket on S is refused, also after the map was read again',
-      r[1] == 'moved', r)
+      not f:is_ready() and r[1] == 'moved', r)
+pcall(send_reader.rollback, send_reader)
 quorum(1, 1)
 r = f:wait_result(5)[1]
 check('the send is made', r[1] == 'ok', r)
@@ -497,13 +515,17 @@ check('... and S refuses the bucket', r[1] == 'moved', r)
 local m = c[1]:call('tarn_buckets')
 check('... its epoch in memory is the stored one', c[1]:call('tarn_info').bucket_epoch == m[3]
       and c[1]:eval("return box.space._tarn_meta:get{'buckets'}.value.epoch") == m[3], m)
+local recv_reader = c[2]:new_stream()
+recv_reader:eval('tarn.fresh.begin_stream()')
 quorum(2, 2)
 f = c[2]:call('tarn_bucket_recv', {2, 'M7'}, {is_async = true})
 fiber.sleep(0.2)
 check('the receive waits for its quorum', not f:is_ready())
 flip(2)
-r = sel(2, 71, 2)
-check('... meanwhile R does not serve the bucket, also after the map was read again', r[1] == 'moved', r)
+r = recv_reader:call('tarn_select', {sid, 0, {71}, 'EQ', 1, box.NULL, true, true, box.NULL, false, box.NULL, 2})
+check('... meanwhile R does not serve the bucket, also after the map was read again',
+      not f:is_ready() and r[1] == 'moved', r)
+pcall(recv_reader.rollback, recv_reader)
 quorum(2, 1)
 r = f:wait_result(5)[1]
 check('the receive is made', r[1] == 'ok', r)

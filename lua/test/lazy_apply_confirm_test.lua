@@ -6,7 +6,8 @@ package.path = here .. '../?.lua;' .. package.path
 local native = os.getenv('TARN_NATIVE')
 if native ~= nil and native ~= '0' then package.cpath = fio.dirname(native) .. '/lib?.so;' .. package.cpath end
 local work = assert(arg[1]); fio.mktree(work)
-box.cfg{work_dir = work, memtx_use_mvcc_engine = true, memtx_memory = 128 * 1024 * 1024,
+box.cfg{work_dir = work, listen = 'unix/:' .. fio.pathjoin(work, 'iproto.sock'),
+        memtx_use_mvcc_engine = true, memtx_memory = 128 * 1024 * 1024,
         vinyl_memory = 32 * 1024 * 1024, vinyl_cache = 0, wal_mode = 'fsync',
         txn_isolation = 'read-confirmed', replication_synchro_quorum = 1,
         replication_synchro_timeout = .5, election_mode = 'off', log_level = 3}
@@ -27,11 +28,13 @@ local function wait(label, fn)
     error(label .. ' timed out')
 end
 wait('schema and quota ready', function()
-    return box.space._tarn_part ~= nil and tarn.lazy.quota.ready()
+    return box.space._tarn_part ~= nil and tarn.lazy.quota.ready() and tarn.clock.status().read_ready
         -- (and the native procedures, which the schema's setup makes last)
         and (native == nil or native == '0' or (tarn_info().native or {}).ready == 1)
 end)
 ok(tarn_bucket_init(16, {{1, 16}}))
+wait('clock policy after initial membership discovery', function() return tarn.clock.status().read_ready end)
+wait('role-certified local writer clock', function() return tarn.clock.check({1}) == nil end)
 ok(tarn_autocommit({}, {}))
 local ni, layout = tarn_info().native
 if native ~= nil and native ~= '0' then

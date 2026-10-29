@@ -5,6 +5,15 @@ local fiber = require('fiber')
 local json = require('json')
 local c = net.connect(os.getenv('S1'), {user = 'tarn', password = 'tarn', wait_connected = 5})
 assert(c:is_connected(), 'cannot connect to shard')
+local function ready()
+    local deadline = fiber.clock() + 10
+    repeat
+        if c:eval('return not box.info.ro and tarn.clock.read_check() == nil') then return end
+        fiber.sleep(0.05)
+    until fiber.clock() >= deadline
+    error('shard did not become ready')
+end
+ready()
 local pass, fail, names, supported = 0, 0, {}, true
 local function check(name, cond, extra)
     if cond then pass = pass + 1; print('  ok   ' .. name)
@@ -285,6 +294,7 @@ for _, engine in ipairs({'memtx', 'vinyl'}) do
         hook('alter_backfill_apply', 'release')
         local first = result(f)
         c:eval('box.cfg{read_only = false}')
+        ready()
         check(label('a role change after publication can leave only journal cleanup pending'),
               reached[2] == 1 and first[1] ~= 'ok' and #tuples(t)[1] == 4 and undo_count(t, 1) == 2, first)
         local r = call('apply', t, a, 2)

@@ -1046,6 +1046,8 @@ class T:
         once, while schema changes on another table keep bumping the catalog
         version (a statement meets the catalog it was planned with replaced
         by a newer one: it must run again, not fail)."""
+        import json
+
         c = self.c()
         q(c, "DROP TABLE IF EXISTS fr_churn")
         q(c, "CREATE TABLE fr_churn (id INT PRIMARY KEY, v INT)")
@@ -1067,22 +1069,75 @@ class T:
         t.start()
         a, b = self.c(0), self.c(1)
         errors = []
+        outcomes = {"committed_ack": 0, "known_abort": 0, "rolled_back": 0, "unknown": 0}
+
+        def error_record(e):
+            number = e.args[0] if e.args else None
+            return {"code": number, "message": str(e), "type": type(e).__name__,
+                    "status": "unknown" if number in (UNKNOWN, 0, 2006, 2013, 2055) else "definite_error"}
+
         try:
             for i in range(100):
                 q(a, "DROP TABLE IF EXISTS fr")
                 q(a, "CREATE TABLE fr (id INT PRIMARY KEY, v INT)")
                 q(a, "INSERT INTO fr VALUES (1, 1)")
+                trace = {"iteration": i, "gateway": self.servers[1 % len(self.servers)], "phases": []}
+                phase = "SELECT"
                 try:
-                    q(b, "SELECT * FROM fr WHERE id = 1")
-                    q(b, "BEGIN")
-                    q(b, "UPDATE fr SET v = v + 1 WHERE id = 1")
-                    q(b, "COMMIT")
+                    for phase, sql in (("SELECT", "SELECT * FROM fr WHERE id = 1"),
+                                       ("BEGIN", "BEGIN"),
+                                       ("UPDATE", "UPDATE fr SET v = v + 1 WHERE id = 1"),
+                                       ("COMMIT", "COMMIT")):
+                        result = q(b, sql)
+                        trace["phases"].append({"phase": phase, "status": "ack", "result": result})
+                        if phase == "SELECT" and result != ((1, 1),):
+                            errors.append(f"{i} SELECT returned {result}, expected ((1, 1),)")
+                        if phase == "UPDATE" and result != 1:
+                            errors.append(f"{i} UPDATE affected {result}, expected 1")
+                    trace["outcome"] = "committed_ack"
                 except pymysql.MySQLError as e:
-                    errors.append(f"{i}: {e}")
-                    code(lambda: q(b, "ROLLBACK"))
+                    failure = error_record(e)
+                    trace["phases"].append({"phase": phase, **failure})
+                    errors.append(f"{i} {phase} ({failure['status']}): {e}")
+                    # Preserve the original failure even if cleanup or its
+                    # independent audit fails. A lost COMMIT response remains
+                    # unknown after ROLLBACK; no mutation is replayed here.
+                    try:
+                        trace["rollback"] = {"status": "ack", "result": q(b, "ROLLBACK")}
+                    except pymysql.MySQLError as cleanup:
+                        trace["rollback"] = error_record(cleanup)
+                    if failure["status"] == "unknown":
+                        trace["outcome"] = "unknown"
+                    elif failure["code"] in (1213, 1412):
+                        trace["outcome"] = "known_abort"
+                    elif trace["rollback"]["status"] == "ack":
+                        trace["outcome"] = "rolled_back"
+                    else:
+                        trace["outcome"] = "unknown"
+                outcomes[trace["outcome"]] += 1
+                try:
+                    rows = q(a, "SELECT id, v FROM fr ORDER BY id")
+                    trace["audit"] = {"status": "ack", "rows": rows}
+                    if trace["outcome"] == "committed_ack":
+                        allowed = (((1, 2),),)
+                    elif trace["outcome"] in ("known_abort", "rolled_back"):
+                        allowed = (((1, 1),),)
+                    else:
+                        # This is only an observation of an unresolved
+                        # operation, not proof that its outcome has settled.
+                        allowed = (((1, 1),), ((1, 2),))
+                        trace["audit"]["settled"] = False
+                    if rows not in allowed:
+                        errors.append(f"{i} audit after {trace['outcome']}: {rows}, expected one of {allowed}")
+                except pymysql.MySQLError as audit:
+                    trace["audit"] = error_record(audit)
+                    errors.append(f"{i} audit after {trace['outcome']}: {audit}")
+                print("    FRESH_TABLE_TRACE " + json.dumps(trace, sort_keys=True, separators=(",", ":")), flush=True)
         finally:
             stop.set()
             t.join(30)
+        print("    fresh table outcomes: " + json.dumps(outcomes, sort_keys=True)
+              + f"; churn thread alive after join: {t.is_alive()}")
         self.check(not errors, f"statements on a fresh table: {errors[:5]}")
         self.check(not churn_errors, f"schema changes: {churn_errors[:5]}")
 

@@ -57,7 +57,7 @@ read them as **key/value**.
   (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
   reads per second on two vCPUs.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and model-checked with TLC (216 default configurations, including 157
+  and checked with TLC (269 default configurations, including 199
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -157,6 +157,12 @@ by half or more, and autocommit writes by 71% to 76%, at 29% to 44% of the
 shard's CPU per statement
 ([Where a shard's time goes](bench/RESULTS.md#where-a-shards-time-goes)).
 
+The [strong-read cost study](bench/STRONG_READ_FRESHNESS.md) compares the
+Lua and native batch paths at its pinned checkpoint with the same freshness
+guarantee across
+RF1, RF3 and SQL: 72 accepted phases and 36 balanced pairs. It covers hot
+read components; the older throughput tables retain their original scope.
+
 ## Correctness
 
 * **TLA+** ([`tla/TarnCommit.tla`](tla/TarnCommit.tla)): strict
@@ -166,10 +172,10 @@ shard's CPU per statement
   moves between shards. TLC found a real design flaw early on: single-shard
   reads could break strict serializability. It later caught a flaw in a fix
   too.
-* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 137 verified
+* **Verus** ([`crates/tarn-verified`](crates/tarn-verified)): 140 verified
   functions and lemmas for routing, coordinator decisions, global index
   maintenance, the MySQL wire codec, and the native procedures' MessagePack
-  and lock checks.
+  and lock checks, plus native clock-observation arithmetic.
 * **Tests**: 874 storage-protocol checks, 967 SQL cases compared exactly
   with MariaDB plus 2,000 random queries, transaction-anomaly tests, failover
   and fault-injection tests. An independent code review found five bugs

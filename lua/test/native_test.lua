@@ -91,12 +91,25 @@ for id = 1, 50 do
 end
 
 local function stats() local i = c:call('tarn_info').native return i.served, i.to_lua end
+local function read_ready()
+    local deadline = fiber.clock() + 5
+    repeat
+        if c:eval('return not box.info.ro and tarn.clock.status().read_ready') then return end
+        fiber.sleep(.01)
+    until fiber.clock() >= deadline
+    error('local read policy did not become ready after role transition')
+end
 -- tarn_select's arguments (route: b unless given; box.NULL: none)
 local function args(o)
     local route = o.route
     if rawequal(route, nil) then route = b end
     return {o.sid or sid, o.index or 0, o.key, o.iter or 0, o.limit, o.end_key, o.end_incl ~= false,
             o.lock_check ~= false, o.offset, o.begin or false, o.after, route}
+end
+-- Protocol streams establish freshness before any data statement. A raw
+-- IPROTO BEGIN alone has no first-read quorum proof.
+local function fresh_stream()
+    local st = c:new_stream(); st:eval('tarn.fresh.begin_stream()'); return st
 end
 -- The native reply must be the Lua one (served), or ["lua"] (handed back);
 -- `via`: a stream to call both in (default: no stream).
@@ -148,7 +161,10 @@ same('rows before a key (LT)', {key = {20}, iter = 3, limit = 4}, true)
 same('rows to a key (LE)', {key = {20}, iter = 4, limit = 4}, true)
 same('every row (ALL), a limit', {key = {}, iter = 2, limit = 6}, true)
 same('every row, no limit (one page)', {key = box.NULL, iter = 2}, true)
-same('a read without the lock check', {key = {11}, limit = 1, lock_check = false}, true)
+do local fresh = fresh_stream()
+    same('a fresh stream read without the lock check', {key = {11}, limit = 1, lock_check = false}, true, fresh)
+    fresh:rollback()
+end
 same('a read routed by no bucket', {key = {12}, limit = 1, route = box.NULL}, true)
 same('a read routed by buckets this shard owns', {key = {13}, limit = 1, route = {b, b}}, true)
 same('a read of every shard with the current epoch', {key = {14}, limit = 1, route = {e = epoch}}, true)
@@ -216,7 +232,7 @@ c:eval('tarn.cfg.scan_page_bytes = 4 * 1024 * 1024; tarn.ns_sync()')
 
 print('reads in a stream\'s transaction')
 local st = c:new_stream()
-st:begin()
+st:eval('tarn.fresh.begin_stream()')
 same('a point read', {key = {7}, limit = 1, lock_check = false}, true, st)
 same('rows to an end key', {key = {10}, iter = 5, end_key = {20}, lock_check = false}, true, st)
 same('rows with no limit', {index = 2, key = {3}, lock_check = false}, true, st)
@@ -232,7 +248,7 @@ st:rollback()
 -- MVCC tracks the native reads of a transaction: one that read a row that
 -- was replaced since cannot commit a write
 st = c:new_stream()
-st:begin()
+st:eval('tarn.fresh.begin_stream()')
 n = st:call('tarn_storage.ts_select', args({key = {7}, limit = 1, lock_check = false}))
 c.space['test.nat']:replace{7, 100, 'changed', b}
 local ok = pcall(function()
@@ -243,7 +259,7 @@ check('a transaction whose native read of a row was overwritten cannot commit', 
 pcall(st.rollback, st)
 c.space['test.nat']:replace(row(7))
 st = c:new_stream()
-st:begin()
+st:eval('tarn.fresh.begin_stream()')
 n = st:call('tarn_storage.ts_select', args({key = {8}, limit = 1, lock_check = false}))
 c.space['test.nat']:replace{7, 100, 'changed', b}
 ok = pcall(function()
@@ -257,7 +273,7 @@ c.space['test.nat']:delete{60}
 -- a prepared transaction's locks: W on the row it writes, and on that row's
 -- keys in the other indexes (index 3 is vid, unique: (v, id))
 local ps = c:new_stream()
-ps:begin()
+ps:eval('tarn.fresh.begin_stream()')
 local txid = 'NAT-' .. require('uuid').str()
 local r = ps:call('tarn_prepare', {txid, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(),
                                    box.NULL, box.NULL, {b}})
@@ -270,7 +286,10 @@ local function handed(name, o)
     check(name .. ': handed to the Lua procedure', l1 == l0 + 1 and n[1] == 'lua', n)
 end
 handed('then a point read of the row it writes, with the lock check', {key = {20}, limit = 1})
-same('... but not one without', {key = {20}, limit = 1, lock_check = false}, true)
+do local fresh = fresh_stream()
+    same('... but not a fresh stream read without it', {key = {20}, limit = 1, lock_check = false}, true, fresh)
+    fresh:rollback()
+end
 same('... a point read of another row', {key = {7}, limit = 1}, true)
 same('... of a key of another index that it does not write', {index = 3, key = {0, 7}, limit = 1}, true)
 handed('... of the key it gives the row there', {index = 3, key = {1, 20}, limit = 1})
@@ -313,7 +332,7 @@ same('... of a range', {key = {1}, iter = 5, limit = 3}, true)
 -- R locks: a prepared transaction that read rows of the table, a range of it
 -- (and wrote another table)
 ps = c:new_stream()
-ps:begin()
+ps:eval('tarn.fresh.begin_stream()')
 txid = 'NAT-' .. require('uuid').str()
 r = ps:call('tarn_prepare', {txid, 1, {1}, {{'replace', vsid, {20, 1, 'x', b}}}, {{sid, 0, {7}, b}},
                              {{sid, 2, {1}, {3}, true, true, b}}, fiber.time(), box.NULL, box.NULL, {b}})
@@ -322,7 +341,7 @@ same('then a point read of one of them', {key = {7}, limit = 1}, true)
 same('... a read of the range it read', {index = 2, key = {2}, limit = 20}, true)
 c:call('tarn_abort', {txid, 1, {1}})
 ps = c:new_stream()
-ps:begin()
+ps:eval('tarn.fresh.begin_stream()')
 local txid2 = 'NAT-' .. require('uuid').str()
 r = ps:call('tarn_prepare', {txid2, 1, {1}, {{'replace', vsid, {21, 1, 'x', b}}}, {}, {}, fiber.time(),
                              box.NULL, box.NULL, {b}})
@@ -338,6 +357,7 @@ check('on a read-only node: handed to the Lua procedure', n[1] == 'lua', n)
 c:eval('box.cfg{read_only = false}')
 local deadline = fiber.clock() + 5
 while c:eval('return box.info.ro') and fiber.clock() < deadline do fiber.sleep(0.05) end
+read_ready()
 because('read', 'stale_locks', function() n = c:call('tarn_storage.ts_select', args({key = {7}, limit = 1})) end)
 check('then, until the lock index is made again, too', n[1] == 'lua', n)
 c:call('tarn_select', args({key = {7}, limit = 1}))
@@ -353,7 +373,10 @@ c:eval('box.space._tarn_meta:replace{..., {op = "TRUNCATE", ver = 0, label = "NA
        {hold})
 c:call('tarn_select', args({key = {7}, limit = 1}))
 same('while a TRUNCATE or DROP TABLE holds a table, a read with the lock check', {key = {7}, limit = 1}, false)
-same('... but not one without', {key = {7}, limit = 1, lock_check = false}, true)
+do local fresh = fresh_stream()
+    same('... but not a fresh stream read without it', {key = {7}, limit = 1, lock_check = false}, true, fresh)
+    fresh:rollback()
+end
 c:eval('box.space._tarn_meta:delete{...} tarn.stale_fences()', {hold})
 c:call('tarn_select', args({key = {7}, limit = 1}))
 same('once it ends, a read with the lock check', {key = {7}, limit = 1}, true)
@@ -503,7 +526,7 @@ wsame('... of a row of such a bucket', {{'insert', {7, 0, 'x', other or 1000000}
 -- (tarn_autocommit waits for those its writes meet: the native procedure
 -- alone is called then)
 local wps = c:new_stream()
-wps:begin()
+wps:eval('tarn.fresh.begin_stream()')
 local wtx = 'NAT-' .. require('uuid').str()
 r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', wa, trow(40)}}, {{wa, 2, {6}, b}}, {}, fiber.time(),
                                box.NULL, box.NULL, {b}})
@@ -523,7 +546,7 @@ c:call('tarn_abort', {wtx, 1, {1}})
 -- keys a write gives each index are compared with the ranges of the
 -- index's locks (range_locked, every bound taken as included)
 wps = c:new_stream()
-wps:begin()
+wps:eval('tarn.fresh.begin_stream()')
 wtx = 'NAT-' .. require('uuid').str()
 local function rl(iid, lo, hi, lo_incl) return {wa, iid, lo, hi, lo_incl ~= false, true, b} end
 r = wps:call('tarn_prepare', {wtx, 1, {1}, {{'replace', sid, {21, 1, 'x', b}}}, {},
@@ -648,6 +671,7 @@ check('... then the lock is granted', rl ~= nil and rl[1][1] == 'ok', rl)
 c:call('tarn_unlock', {'NAT-SYNC'})
 -- a PREPARE that waits for its quorum (its records synchronous): its locks
 -- are in the lock index, and its copy, from the step that took them
+local qr = fresh_stream() -- first-read proof predates the pending entry
 c:eval([[box.space._tarn_locks:alter{is_sync = true} box.space._tarn_part:alter{is_sync = true}
          box.cfg{replication_synchro_quorum = 2}]])
 local qtx = 'NAT-' .. require('uuid').str()
@@ -655,15 +679,22 @@ local fp = c:call('tarn_prepare', {qtx, 1, {1}, {{'replace', wa, trow(5)}}, {}, 
                                    box.NULL, {b}}, {is_async = true})
 fiber.sleep(0.2)
 check('a PREPARE that waits for its quorum', not fp:is_ready())
-because('read', 'w_lock', function() n = c:call('tarn_storage.ts_select', args({sid = wa, key = {5}, limit = 1})) end)
+because('read', 'w_lock', function() n = qr:call('tarn_storage.ts_select', args({sid = wa, key = {5}, limit = 1})) end)
 check('... then a read of the row it writes: handed to the Lua procedure', n[1] == 'lua', n)
-n = c:call('tarn_storage.ts_select', args({sid = wa, key = {1}, limit = 1}))
+n = qr:call('tarn_storage.ts_select', args({sid = wa, key = {1}, limit = 1}))
 check('... a read of another row: served', n[1] == 'ok' and #n[2] == 1, n)
-because('write', 'lock', function() n = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'replace', trow(5)}})) end)
-check('... a write of the row it writes: handed to the Lua procedure', n[1] == 'lua', n)
+qr:rollback()
+local locks_before = fallbacks('write', 'lock')
+local waiting_write = c:call('tarn_storage.ts_autocommit', wargs(wa, {{'replace', trow(5)}}), {is_async = true})
+fiber.sleep(.03)
+check('... a new autocommit waits at its own freshness barrier', not waiting_write:is_ready() and not fp:is_ready())
 c:eval('box.cfg{replication_synchro_quorum = 1}')
 local rp = fp:wait_result(5)
 check('... it is prepared once its quorum is', rp ~= nil and rp[1][1] == 'yes', rp)
+local waiting_result = waiting_write:wait_result(5)
+check('... the fresh native write then observes the confirmed prepared lock and hands back',
+      waiting_result ~= nil and waiting_result[1][1] == 'lua' and fallbacks('write', 'lock') == locks_before + 1,
+      waiting_result)
 c:call('tarn_abort', {qtx, 1, {1}})
 c:eval('box.space._tarn_locks:alter{is_sync = false} box.space._tarn_part:alter{is_sync = false}')
 c:eval('box.cfg{replication_synchro_timeout = 5}')
@@ -737,6 +768,7 @@ local function new_term()
     check('a new election term', c:eval('return box.info.election.term') > t0)
     local deadline = fiber.clock() + 5
     while c:eval('return box.info.ro') and fiber.clock() < deadline do fiber.sleep(0.05) end
+read_ready()
     -- (a Lua read with the lock check reads the lock index again: the state
     -- is fresh)
     c:call('tarn_select', args({key = {7}, limit = 1}))
@@ -869,7 +901,7 @@ check('... (which the TRUNCATE doomed, as the Lua procedure\'s twin: a conflict)
 -- refuses, what meets them: the native procedure alone is called then.)
 unique_rows()
 local ups = c:new_stream()
-ups:begin()
+ups:eval('tarn.fresh.begin_stream()')
 local utx = 'NAT-' .. require('uuid').str()
 r = ups:call('tarn_prepare', {utx, 1, {1}, {{'replace', wa, {2, 1, 'r2', b, 6}}, {'replace', wa, {9, 1, 'r9', b, box.NULL}}},
                               {}, {}, fiber.time(), box.NULL, box.NULL, {b, b}})
@@ -911,7 +943,7 @@ if b2 ~= nil then   -- (a bucket being sent: the Lua procedure notes its writes 
     csame('... once its move was given up', {{'insert', {92, 1, 'x', b2}}}, nil, {wb = {b2}}, true)
 end
 local cps = c:new_stream()
-cps:begin()
+cps:eval('tarn.fresh.begin_stream()')
 local ctx = 'NAT-' .. require('uuid').str()
 r = cps:call('tarn_prepare', {ctx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(), box.NULL,
                               box.NULL, {b}})
@@ -1069,7 +1101,7 @@ end
 because('validate', 'stream', function() n, l = vsame('reads without a stream', {{7}}, {no_stream = true}, false) end)
 check('... (which the Lua procedure refuses)', l[1] == 'conflict', l)
 local vps = c:new_stream()
-vps:begin()
+vps:eval('tarn.fresh.begin_stream()')
 local vtx = 'NAT-' .. require('uuid').str()
 local r = vps:call('tarn_prepare', {vtx, 1, {1}, {{'replace', sid, {20, 1, 'x', b}}}, {}, {}, fiber.time(), box.NULL,
                                     box.NULL, {b}})

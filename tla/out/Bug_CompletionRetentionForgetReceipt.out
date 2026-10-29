@@ -1,0 +1,106 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 19 and seed -7964970713620912442 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 69183] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue130-retention-4d_lb2pu/registered/CompletionRetention.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5978179577159881183/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module CompletionRetention
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module CompletionRetention
+Starting... (2026-10-28 17:29:19)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 24 distinct states generated at 2026-10-28 17:29:19.
+Error: Invariant NoContradictoryReopen is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ row = [expires |-> 1114, ts |-> 1100, state |-> "prepared"]
+/\ volatileFault = TRUE
+/\ decisionCommitted = TRUE
+/\ healthy = FALSE
+/\ goodNow = 1101
+/\ outcome = "none"
+/\ phase = "prepared"
+/\ high = 0
+/\ dataCommitted = FALSE
+/\ raw = 900
+
+State 2: <FinishDecided line 49, col 5 to line 59, col 52 of module CompletionRetention>
+/\ row = [expires |-> 1014, ts |-> 1000, state |-> "applied"]
+/\ volatileFault = TRUE
+/\ decisionCommitted = TRUE
+/\ healthy = FALSE
+/\ goodNow = 1101
+/\ outcome = "none"
+/\ phase = "completed"
+/\ high = 0
+/\ dataCommitted = TRUE
+/\ raw = 900
+
+State 3: <CrashPromote line 62, col 5 to line 66, col 87 of module CompletionRetention>
+/\ row = [expires |-> 1014, ts |-> 1000, state |-> "applied"]
+/\ volatileFault = FALSE
+/\ decisionCommitted = TRUE
+/\ healthy = TRUE
+/\ goodNow = 1101
+/\ outcome = "none"
+/\ phase = "healthy"
+/\ high = 0
+/\ dataCommitted = TRUE
+/\ raw = 900
+
+State 4: <CollectTerminal line 74, col 5 to line 79, col 52 of module CompletionRetention>
+/\ row = [expires |-> 1014, ts |-> 1000, state |-> "absent"]
+/\ volatileFault = FALSE
+/\ decisionCommitted = TRUE
+/\ healthy = TRUE
+/\ goodNow = 1101
+/\ outcome = "none"
+/\ phase = "collected"
+/\ high = 1101
+/\ dataCommitted = TRUE
+/\ raw = 900
+
+State 5: <RebootAfterGC line 82, col 5 to line 85, col 52 of module CompletionRetention>
+/\ row = [expires |-> 1014, ts |-> 1000, state |-> "absent"]
+/\ volatileFault = FALSE
+/\ decisionCommitted = TRUE
+/\ healthy = TRUE
+/\ goodNow = 1101
+/\ outcome = "none"
+/\ phase = "fresh"
+/\ high = 1101
+/\ dataCommitted = TRUE
+/\ raw = 900
+
+State 6: <LatePrepare line 88, col 5 to line 97, col 43 of module CompletionRetention>
+/\ row = [expires |-> 1115, ts |-> 1101, state |-> "aborted"]
+/\ volatileFault = FALSE
+/\ decisionCommitted = TRUE
+/\ healthy = TRUE
+/\ goodNow = 1101
+/\ outcome = "no"
+/\ phase = "done"
+/\ high = 1101
+/\ dataCommitted = TRUE
+/\ raw = 900
+
+76 states generated, 56 distinct states found, 12 states left on queue.
+The depth of the complete state graph search is 6.
+Finished in 00s at (2026-10-28 17:29:19)
+Trace exploration spec path: ./CompletionRetention_TTrace_1793222959.tla
