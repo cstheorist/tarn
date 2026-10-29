@@ -381,7 +381,13 @@ def activate(root, tarantool):
     for n in plan_nodes(m['plan']):
         target = root / n['name']
         (target / MARKER).unlink(); backup.sync_dir(target)
-    write(root / 'activated.json', {'format': FORMAT, 'cluster_sha256': sha(m)})
+    # Mere file existence is not a completion receipt. Publish only after the
+    # entire receipt and every marker removal have reached durable storage.
+    write(root / 'activated.json.partial', {'format': FORMAT, 'cluster_sha256': sha(m),
+        'instances': {n['name']: m['nodes'][n['name']]['uuid']
+                      for n in plan_nodes(m['plan'])}})
+    (root / 'activated.json.partial').rename(root / 'activated.json')
+    backup.sync_dir(root)
     return {'activated': True, 'restart_required': True}
 
 

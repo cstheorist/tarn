@@ -72,9 +72,18 @@ assert(not fio.path.exists(fio.pathjoin(workdir, 'INCOMPLETE')),
 fio.mktree(workdir)
 local maintenance = require('tarn_backup').read_marker(workdir)
 local restore_parent = fio.dirname(fio.abspath(workdir))
+local activation_uuid
 if fio.path.exists(fio.pathjoin(restore_parent, 'cluster-source.json')) and not maintenance then
-    assert(fio.path.exists(fio.pathjoin(restore_parent, 'activated.json')),
-           'cluster restore activation is incomplete')
+    local f = assert(io.open(fio.pathjoin(restore_parent, 'activated.json')),
+                     'cluster restore activation is incomplete')
+    local text = f:read(262145); f:close()
+    assert(#text <= 262144, 'oversized cluster activation receipt')
+    local activation = json.decode(text)
+    assert(activation.format == require('tarn_backup').format and type(activation.instances) == 'table',
+           'invalid cluster activation receipt')
+    activation_uuid = activation.instances[fio.basename(fio.abspath(workdir))]
+    assert(type(activation_uuid) == 'string' and require('uuid').fromstr(activation_uuid),
+           'cluster activation receipt omits this replica')
 end
 
 -- Vinyl reads a page that misses its cache on one of vinyl_read_threads,
@@ -97,6 +106,10 @@ assert(election_mode == 'candidate' or election_mode == 'voter' or election_mode
 assert(maintenance or not replicated or election_mode ~= 'off',
        'replicated Tarn requires candidate or voter election mode')
 local instance_uuid = env('TARN_INSTANCE_UUID', '')
+if activation_uuid then
+    assert(instance_uuid == '' or instance_uuid == activation_uuid, 'cluster activation identity mismatch')
+    instance_uuid = activation_uuid
+end
 if instance_uuid ~= '' then
     assert(require('uuid').fromstr(instance_uuid) ~= nil, 'TARN_INSTANCE_UUID must be a UUID')
 end

@@ -124,6 +124,7 @@ return true
         for i in (0,3):
             # Publish once. A known post-publication readiness error is inspected,
             # never treated as permission to resend the administrative mutation.
+            wait(i,"return not box.info.ro and tarn.clock.check({1,2})==nil")
             r = rpc(i, 'local m=require("json").decode(' + json.dumps(json.dumps(members)) + ');return tarn_members_set(m)')
             assert r[0]=='ok' or (r[0]=='error' and r[1]==1180),r
             wait(i,"return box.space._tarn_meta:get{'members'}[2].ver==1 and tarn.clock.check({1,2})==nil")
@@ -294,10 +295,20 @@ return true
         cb.restore(work/'backup', work/'restore', 0)
         assert (work/'restore'/'INCOMPLETE').exists()
         checked('physical restore stays quarantined until whole-cluster validation')
+        start(0, work/'restore'/'n0')
+        wait(0,"return box.info.ro and next(box.cfg.replication or {})==nil and rawget(_G,'tarn')==nil")
+        stop(0)
+        checked('quarantined startup has no replication, writable service or application initialization')
         verified = cb.verify_restore(work/'restore', T)
         record['restore_copy_verify_s'] = time.monotonic()-start_time
         record['verified_spaces'] = {name: audit['spaces'] for name,audit in verified['verified'].items()}
         checked('every user row, schema and persisted protocol space matches the cut')
+        marker = work/'restore'/'n0'/cb.MARKER
+        contents = marker.read_bytes(); marker.unlink()
+        start(0, work/'restore'/'n0')
+        assert procs[0].wait(timeout=10) != 0
+        stop(0); marker.write_bytes(contents)
+        checked('interrupted activation refuses startup when a child marker is already removed')
         cb.activate(work/'restore', T)
         for i in range(6):
             start(i, work/'restore'/nodes[i]['name'])
@@ -315,7 +326,14 @@ return true
         record['restore_to_verified_writes_s'] = time.monotonic()-start_time
         record['status']='passed'; save()
     except BaseException as e:
-        record['status']='failed'; record['error']=str(e); save(); raise
+        record['status']='failed'; record['error']=str(e)
+        record['failure_nodes']={}
+        for i in procs:
+            try:
+                record['failure_nodes'][str(i)] = rpc(i,'return {ro=box.info.ro,election=box.info.election,synchro=box.info.synchro,replication=box.info.replication}',3)
+            except (RuntimeError,subprocess.TimeoutExpired) as diagnostic:
+                record['failure_nodes'][str(i)] = str(diagnostic)
+        save(); raise
     finally:
         for p in controllers:
             if p.poll() is None:
