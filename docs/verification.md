@@ -1824,12 +1824,63 @@ tla/check.sh DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAd
   Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck
 ```
 
+### Plain lazy-source binding in an existing stream (issue #161)
+
+`PlainLazyBinding.tla` checks a narrow negative certificate for an existing
+marked `READ_CONFIRMED` stream. Before any initial source image or physical
+write, the original transaction observes every actual write source's catalog
+identity/version and empty lazy declaration, absent/empty capture point,
+and absence of nonretired pending definitions. These reads remain in the
+same native transaction as its earlier user history. Coverage, transaction
+and source identity must still match through capture and the final guard;
+a mismatch refuses the request rather than rebinding it to a new registry.
+
+The bounded model has two possible written sources, one original user read,
+one metadata/history change and an unrelated nonlazy publisher. Publication
+may still be pending or already complete. That unrelated change can dirty
+the global cache while the original plain write commits its one increment.
+Relevant point/range changes and previous user-history conflicts remain
+sticky and prevent acknowledgement. A full pending-definition scan may
+conservatively conflict with unrelated lazy DDL; progress for that case is
+not promised. Global native exclusion stays unknown throughout the dirty
+interval, and engine, role, fence, clock and lock guards remain mandatory.
+
+The positive check explores 115 distinct states to depth 7. Six controls
+reach data consequences rather than failing only a certificate flag:
+
+| Configuration | Distinct states | Depth | Expected violation |
+|---|---:|---:|---|
+| `Bug_PlainLazyDeclared` | 10 | 7 | `NoMissingMembership`: an acknowledged row lacks required membership after publication/drain |
+| `Bug_PlainLazyCapture` | 10 | 7 | `NoMissingMembership`: an omitted capture-point obligation leaves the same missing membership |
+| `Bug_PlainLazyPending` | 10 | 7 | `NoMissingMembership`: a pending-generation obligation is incorrectly exempted |
+| `Bug_PlainLazyFirstWriteOnly` | 10 | 7 | `NoMissingMembership`: the second actual write source was not proved plain |
+| `Bug_PlainLazyReplaceReadset` | 9 | 6 | `NoStaleReadCommit`: a new transaction overwrites an acknowledged value using the original stale read |
+| `Bug_PlainLazyGlobalStale` | 15 | 7 | `UnrelatedOneCommit`: unrelated nonlazy publication incorrectly prevents the original increment |
+
+Metadata shapes are independent local admission inputs, including partial
+or malformed state; the model does not derive their complete DDL lifecycle.
+Its pending-forward case has already sampled a baseline, so an incorrectly
+exempted write has no outbox obligation to repair the missing membership.
+Native confirmed visibility, point/range tracking, sticky MVCC conflict and
+ordinary commit validation remain runtime refinement premises. This is not
+a proof of native MVCC or all DDL scheduling. It grants no exemption to
+autocommit/RW, `CommitRC`, PREPARE, unmarked streams, active/pending lazy
+sources or mixed packets. Ineligible packets retain the original strict
+guards. In particular, read-committed prepared-delete/retirement visibility
+and rollback coverage are outside this certificate's scope.
+
+```sh
+tla/check.sh PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture \
+  Bug_PlainLazyPending Bug_PlainLazyFirstWriteOnly \
+  Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale
+```
+
 ### Configuration counts
 
-The default list contains 252 unique configurations: 67 positive
-outcomes and 185 expected broken/trade-off outcomes. The 259 generated
+The default list contains 259 unique configurations: 68 positive
+outcomes and 191 expected broken/trade-off outcomes. The 266 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 265 total. Explicit
+placement configurations are maintained directly, for 272 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -1845,7 +1896,7 @@ cases then passed through the current checker, with all 243 prior model/
 config bytes and dispatch checked unchanged. Their exact argument union
 was the 246-case default list. Six departure-dependency checks then passed
 the registered checker with all prior model/config bytes and module
-dispatch unchanged, forming the current 252-case input union. Its generator
+dispatch unchanged, forming the then-current 252-case input union. Its generator
 reproduced twice without changes. CI run
 [40827360444](https://github.com/cstheorist/tarn/actions/runs/40827360444)
 then executed all 252 cases with expected outcomes, including 67 positive
@@ -1855,6 +1906,13 @@ verified 140 bodies with zero errors. The actual checkout
 revision `554ef08`. The 317 proof inputs retain exact source bindings.
 The final report-head CI/validation attestation is a separate publication
 gate; a previous run is never represented as execution of changed models.
+The seven plain lazy-binding cases subsequently completed the registered
+checker with the outcomes above. The original 252-case prefix, model/config
+bytes and module dispatch remain unchanged. This forms the current 259-case
+union; it is not a claim that a new full 259-case CI run has completed. The
+generator reproduces twice without changes. The current proof inventory is
+325 files: 309 TLA+ model/config files, 11 verified-crate source/test/manifest
+files and five formal runner/inspection scripts. Verus bodies are unchanged.
 
 ## Verus proofs
 
@@ -2027,6 +2085,42 @@ with no general worker liveness claim. Production Lua, native code, protocol and
 inputs are unchanged. The original failed CI execution and every local
 control, including nonqualifying setup failures, are retained separately
 in the [evidence index](../tests/evidence/rf3-fixture-readiness/index.json).
+
+### Plain-table commits during unrelated DDL (issue #161)
+
+An unrelated ALTER can invalidate the global lazy registry while a yielding
+Vinyl write runs in a serializable stream. A definite 1412 rollback is safe
+but unnecessary when every written source has no lazy index. CommitLocal
+now reads each source's catalog identity/version, declared lazy list and
+capture row or absence, plus the pending-definition scan, in the original
+marked READ_CONFIRMED transaction before its first row image. The private
+request-local binding covers the complete write packet and exact native
+transaction ID. Its later checks refuse any identity or coverage mismatch.
+It never refreshes or clears global lazy/native exclusion state.
+
+Applicable metadata publications and earlier user reads remain in that
+transaction's MVCC read set through commit. This relies on Tarantool's
+point-hole and iterator tracking, including conflicts before the first
+write, across memtx and Vinyl. It is a storage-engine premise rather than
+a Verus proof of Tarantool. The full pending-definition scan may conflict
+conservatively with unrelated lazy DDL and has cost proportional to that
+registry. Active or pending lazy sources, unmarked transactions,
+autocommit, READ COMMITTED and PREPARE retain the existing strict path.
+Engine, ownership, source-version, role, clock and lock checks still apply.
+No caller transaction is replaced and no SQL COMMIT is replayed.
+
+`lazy_registry_test.lua` uses real unrelated ALTER publication both before
+and during the original writer's completion. `lazy_metadata_mvcc_test.lua`
+checks the point, hole, pending-phantom and earlier-user-read premises in
+both isolation levels and both engines; its READ COMMITTED primitive
+results do not broaden production eligibility. `lazy_plain_binding_test.lua`
+checks public CommitLocal packet eligibility, relevant metadata conflicts,
+retained earlier reads, source fencing and an owned read-only fault. Direct
+fixture metadata mutations isolate MVCC tracking and do not represent a
+complete lazy DDL protocol. The original RF3 and live-fault suites remain
+required. SQL fresh-table diagnostics retain the failed phase, commit ACK,
+cleanup and independent row observation; an unknown outcome stays unknown.
+These checks establish no benchmark improvement or general DDL liveness.
 
 ## Continuous integration
 

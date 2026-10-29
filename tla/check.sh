@@ -82,6 +82,8 @@ Bug_PipelineBypassShard Bug_PipelineBypassGlobal Bug_PipelineNormalUsesReserve
 Bug_PipelineForgetCancelledDeadline Bug_PipelineRefuseAfterEnqueue"
 DEFAULT="$DEFAULT DepartureDependencies Bug_DepartureDecisionOnly Bug_DepartureLateAdmission
 Bug_DepartureIgnoreStaging Bug_DepartureUntrackedWal Bug_DepartureNoCommitCheck"
+DEFAULT="$DEFAULT PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture Bug_PlainLazyPending
+Bug_PlainLazyFirstWriteOnly Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

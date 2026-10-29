@@ -15,6 +15,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   records the real status payload, and exports source/module/process and
   pre-pause/pending/post-yield evidence from CI on success or failure.
 
+- An unrelated ALTER could invalidate the lazy registry while an existing
+  serializable stream committed a plain table, causing a definite 1412
+  refusal ([#161](https://github.com/cstheorist/tarn/issues/161)). CommitLocal
+  now binds catalog, capture and pending-definition evidence for every
+  written table inside the original marked transaction before its first
+  write. Applicable metadata changes still conflict through MVCC; active
+  or pending lazy indexes keep the strict path. The global registry stays
+  stale, and SQL COMMIT is never replayed.
+
 - RF3 storage fixtures refresh volatile lazy capture/quota readiness at an
   ordinary empty entry before comparing exact durable totals
   ([#165](https://github.com/cstheorist/tarn/issues/165)). The UNKNOWN probe

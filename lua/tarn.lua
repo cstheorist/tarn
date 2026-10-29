@@ -2778,8 +2778,8 @@ end
 -- refuses (TUPLE_FOUND) is tried again after the others: a transaction may
 -- move a unique value from one row to another, and the row giving it up may
 -- come later. Returns the plans in the order of `writes`.
-function write_steps(writes, deadline)
-    local plans, todo = {lazy_initial = M.lazy.initial(writes, write_target)}, {}
+function write_steps(writes, deadline, plain)
+    local plans, todo = {lazy_plain = plain, lazy_initial = M.lazy.initial(writes, write_target, plain)}, {}
     for i = 1, #writes do todo[#todo + 1] = i end
     while true do
         local again, err = {}, nil
@@ -2930,7 +2930,8 @@ end
 -- transaction that read every shard was routed with (see "Membership").
 function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, mver)
     writable()
-    if box.is_in_txn() then M.fresh.fence_stream() else M.fresh.barrier() end
+    local stream = box.is_in_txn() and tostring(ffi.cast('uint64_t', ffi.C.box_txn_id())) or nil
+    if stream then M.fresh.fence_stream() else M.fresh.barrier() end
     BK.fresh_spaces(writes, rpoints, rranges)
     writable()
     local seq = inflight_begin()
@@ -2952,7 +2953,11 @@ function tarn_commit_local(txid, writes, rpoints, rranges, lock_gen, fence, wb, 
         if engine then box.rollback(); return engine end
         local throttle, write_deadline = M.vinyl.guard(writes)
         if throttle then return throttle end
-        local plans, n = write_steps(writes, write_deadline), 0
+        -- Only an existing, marked READ_CONFIRMED stream can bind this
+        -- negative proof. Read its metadata before the first row image,
+        -- retaining the original stream's MVCC read set through commit.
+        local plain = stream and M.lazy.prove_plain(writes, fence, stream) or nil
+        local plans, n = write_steps(writes, write_deadline, plain), 0
         M.lazy.capture(plans)
         for i = 1, #plans do
             if plans[i][P_RES] ~= nil then n = n + 1 end
@@ -7608,6 +7613,10 @@ M.fresh.set_clock(M.clock)
 M.vinyl = require('tarn_vinyl').new{cfg = M.cfg, key_def = index_key_def}
 M.lazy = require('tarn_lazy').new{
     cfg = M.cfg, bk = BK, rw = RW, failure = failure, writable = writable,
+    plain_stream = function()
+        local id = ffi.C.box_txn_id()
+        if M.fresh.ok(id) == 1 then return tostring(ffi.cast('uint64_t', id)) end
+    end,
     inflight_begin = inflight_begin, inflight_writes = inflight_writes, inflight_end = inflight_end,
     atomic = atomic, hook = yield_point, exclude = BK.ns_lazy, call = on_shard,
     quota_mark = function()

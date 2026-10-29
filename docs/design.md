@@ -2321,6 +2321,12 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_PipelineRefuseAfterEnqueue | violates NoEffectBeforeEnqueue | 9 | 16 | 3 | 00s | 3 |
 | Bug_PlacementFenceAfterExpiry | violates NoAbortAfterCommit | 113729 | 570826 | 14 | 13s | 14 |
 | Bug_PlacementNoTombstone | violates AppliedOnlyIfCommitted | 6621 | 18469 | 9 | 02s | 9 |
+| Bug_PlainLazyCapture | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyDeclared | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyFirstWriteOnly | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyGlobalStale | violates UnrelatedOneCommit | 15 | 22 | 7 | 00s | 7 |
+| Bug_PlainLazyPending | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
+| Bug_PlainLazyReplaceReadset | violates NoStaleReadCommit | 9 | 12 | 6 | 00s | 6 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
@@ -2419,6 +2425,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Placement_Failover | no errors | 516733 | 2823296 | 21 | 01min 37s |  |
 | Placement_RC | no errors | 1153174 | 8224685 | 26 | 03min 23s |  |
 | Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
+| PlainLazyBinding | no errors | 115 | 137 | 7 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
