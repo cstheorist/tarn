@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0 msgpack==1.1.2
-      - run: python3 scripts/check_outcomes.py
+      - run: python3 scripts/check_contracts.py --check && python3 scripts/check_outcomes.py
       - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@v2
       - uses: actions/cache@v5

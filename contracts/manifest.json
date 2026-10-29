@@ -165,5 +165,12 @@
       "description": "Tarn supports max_error_count=64/DEFAULT and refuses other limits with 1235/42000 without changing the limit; MySQL supports a configurable limit.",
       "test": "tests/sql/contracts.py::case_warning_limit_refusal"
     }
+  ],
+  "extensions": [
+    {
+      "id": "outcomes",
+      "manifest": "contracts/outcomes.json",
+      "test_file": "tests/sql/outcomes.py"
+    }
   ]
 }

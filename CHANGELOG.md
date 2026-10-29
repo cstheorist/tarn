@@ -29,6 +29,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before retry/fallback so a plausible prefix cannot replay an increment.
   Register the cross-client outcome contract and RF3/fsync fault histories,
   including statement/transaction rollback, pending APPLY and operation IDs.
+  The primary contract manifest includes SQL/public-KV/Rust-SDK outcome
+  histories with preserved error domains and exact strong/raw visibility.
 
 - Lazy-index owner hints now expire immediately when the local bucket map
   changes. A completed handoff can no longer leave immediate garbage

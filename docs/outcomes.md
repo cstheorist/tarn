@@ -104,15 +104,28 @@ delivery/deduplication contract.
 
 ## Supported KV and raw access
 
-The public strong KV API is being developed under #181; this branch does
-not publish or certify that API. Its planned read-only scope has no mutation
-or ambient SQL transaction to replay. Its errors must retain their namespaces
-(contract, MySQL or Tarantool), cause/code and SQLSTATE when supplied; a native
-numeric code must not be relabeled as a MySQL code. A retry of an independent
-point/batch read may observe a newer image. Ownership rediscovery does not
-silently refresh a stale schema handle or authorize writes. A bounded batch
-must fail explicitly rather than acknowledge a clipped prefix as complete.
-That API's executable integration is gated on #181's published version.
+The registered `tarn_kv_v1` API and `StrongKvClient` SDK support read-only
+independent points/batches. They have no mutation or ambient SQL transaction
+to replay. Errors retain their contract, MySQL or Tarantool domain, cause and
+numeric code. SQLSTATE is preserved when supplied; the registered procedures
+currently supply none, including for a MySQL-domain 1213 refusal. Consumers
+must not fabricate SQLSTATE or classify native numbers as MySQL errors.
+
+A retry of an independent read may observe a newer image. Bounded ownership
+rediscovery preserves the frozen schema handle; schema changes require an
+explicit new handle. A bounded batch fails as a whole rather than returning
+a clipped prefix. The outcome suite checks stale schema/ownership, bounds,
+Tarantool access denial through the public RPC and actual SDK, and isolation
+from a caller's buffered SQL work. With APPLY held after SQL COMMIT succeeds,
+SQL returns 1213/40001 while public KV and the SDK return MySQL-domain 1213
+without SQLSTATE. None authorizes replaying the committed transaction. After
+APPLY, all strong interfaces observe the exact committed increments.
+
+These checks use the published #181 API and #178 manifest dependencies. They
+cover the registered outcome histories, not the broader API's performance,
+movement, DDL or deployment certification. SDK wire tests separately verify
+preservation of a server-supplied SQLSTATE and distinguish equal numeric codes
+in different domains.
 
 Raw GET/SELECT can observe replica lag or the interval between a logical
 COMMIT and physical APPLY. Raw writes bypass SQL constraints, captures and
@@ -121,7 +134,8 @@ Do not infer safe mutation retries from a successful raw read of an old row.
 
 ## Executable release gate and proof boundary
 
-`contracts/outcomes.json` registers the cases in `tests/sql/outcomes.py` and
+`contracts/manifest.json` registers `contracts/outcomes.json` as an extension.
+The latter registers the cases in `tests/sql/outcomes.py` and
 names the existing transport/decision fault gates. The runner exercises
 PyMySQL text and Connector/Python text/binary prepared SQL on two RF3 groups
 with fsync, independently for memtx/vinyl and native/Lua storage. It records

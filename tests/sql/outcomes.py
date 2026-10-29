@@ -6,6 +6,9 @@ Every mutation has one application attempt. Faults consume a real matching
 storage success before changing/losing its reply. Receipts retain failures.
 """
 import argparse
+import copy
+import os
+import tempfile
 import importlib.metadata
 import json
 from pathlib import Path
@@ -15,6 +18,7 @@ import pymysql
 import mysql.connector
 
 from outcome_client import Client
+from kvtest import Test as KvFixture, ev as kv_admin
 from lazytest import ev, rpc
 from lazyfaults import Lease, Worker, wait_for, decision_node
 from movetest import bucket_of
@@ -44,6 +48,7 @@ class Fixture:
         self.bucket_count = count
         self.space = self.db + '.t'
         self.identities = [ev(node, "return {id=tarn.cfg.shard_id,uuid=box.info.uuid}") for node in self.nodes]
+        self.kv = OutcomeKv(self)
 
     def connect(self, database=True, timeout=10):
         c = Client(self.args.tarn, self.mode, self.db if database is True else database, timeout)
@@ -93,8 +98,101 @@ class Fixture:
 
     def close(self):
         self.disarm()
+        self.kv.private.cleanup()
         for c in self.connections:
             c.close()
+
+
+class OutcomeKv(KvFixture):
+    """Reuse #181's authenticated public RPC/SDK transports on this fixture.
+
+    Only public(), sdk() and grant() are inherited; the independent fixture
+    owns setup, receipts and lifetime. No reader credential is retained.
+    """
+    def __init__(self, fixture):
+        self.fixture, self.args = fixture, fixture.args
+        self.db, self.nodes = fixture.db, fixture.nodes
+        self.user = 'outcome_' + uuid.uuid4().hex[:12]
+        password = uuid.uuid4().hex
+        self.private = tempfile.TemporaryDirectory(prefix='tarn-outcome-kv-')
+        self.credentials = Path(self.private.name) / 'credentials.json'
+        self.credentials.write_text(json.dumps({'user': self.user, 'password': password}))
+        os.chmod(self.credentials, 0o600)
+        self.seeds = Path(self.private.name) / 'seeds.json'
+        self.seeds.write_text(json.dumps([{'id': i['id'], 'replicas': [n]}
+                                         for i, n in zip(fixture.identities, self.nodes)]))
+        for node in self.nodes:
+            kv_admin(node, """
+local user,password=...; assert(not box.schema.user.exists(user))
+box.schema.user.create(user,{password=password})
+for _,name in ipairs({'tarn_kv_v1.meta','tarn_kv_v1.get','tarn_kv_v1.get_many'}) do
+ box.schema.user.grant(user,'execute','function',name)
+end
+return true
+""", [self.user, password], sensitive=(password,))
+        self.grant('t')
+
+    def record(self, event, **values):
+        self.fixture.record(event, **values)
+
+    def observe(self, event, fn, **values):
+        self.record(event + '_invoke', **values)
+        try:
+            result = fn()
+        except Exception as error:
+            self.record(event, error=repr(error), **values)
+            raise
+        self.record(event, result=result, **values)
+        return result, None
+
+    def request(self, shard, key):
+        meta = self.public(self.nodes[shard], 'meta', {'version': 1, 'db': self.db, 'name': 't'})
+        assert meta['status'] == 'ok', meta
+        return {'version': 1, 'consistency': 'independent_points', 'table': meta['table'],
+                'ownership': meta['ownership'], 'key': [key]}
+
+
+def kv_error(reply, kind, domain, code):
+    assert reply.get('status') == 'error' and 'rows' not in reply and 'slots' not in reply, reply
+    error = reply['error']
+    assert [error['kind'], error['domain'], error['code']] == [kind, domain, code], reply
+    # These registered procedures supply no SQLSTATE. Never fabricate one
+    # from a numeric code; supplied SQLSTATE is covered by SDK wire tests.
+    assert error.get('sqlstate') is None, reply
+    return error
+
+
+def case_kv_errors(f):
+    f.reset()
+    request = f.kv.request(0, f.key)
+    cases = []
+    for label, change, kind, code in (
+            ('schema', {'table': {**request['table'], 'ver': request['table']['ver'] + 1}}, 'schema_changed', 1412),
+            ('owner', {'ownership': {**request['ownership'], 'bucket_epoch': request['ownership']['bucket_epoch'] + 1}}, 'moved', 0),
+            ('unsupported', {'consistency': 'snapshot'}, 'unsupported', 0)):
+        reply = f.kv.public(f.nodes[0], 'get', {**request, **change})
+        cases.append({'case': label, 'error': kv_error(reply, kind, 'contract', code)})
+    many = copy.deepcopy(request)
+    del many['key']
+    many['keys'] = [[f.key]] * 129
+    reply = f.kv.public(f.nodes[0], 'get_many', many)
+    cases.append({'case': 'bounded_batch', 'error': kv_error(reply, 'limit_exceeded', 'contract', 0)})
+    f.c.query('CREATE TABLE kv_denied (id INT PRIMARY KEY) ENGINE=' + f.args.engine)
+    denied_code = ev(f.nodes[0], 'return box.error.ACCESS_DENIED')
+    for client, reply in (
+            ('rpc', f.kv.public(f.nodes[0], 'meta', {'version': 1, 'db': f.db, 'name': 'kv_denied'})),
+            ('sdk', f.kv.sdk('kv_denied', [[f.key]]))):
+        cases.append({'case': 'access_denied', 'client': client,
+                      'error': kv_error(reply, 'access_denied', 'tarantool', denied_code)})
+    # A KV read has no ambient SQL transaction. It cannot expose or discard
+    # this caller's buffered write, and retrying it cannot commit the write.
+    f.c.query('BEGIN')
+    f.c.query('UPDATE t SET v=9 WHERE id=%s', (f.key,))
+    reply = f.kv.sdk('t', [[f.key]])
+    assert reply['status'] == 'ok' and reply['rows'][0]['v'] == 0 and f.c.active(), reply
+    f.c.query('ROLLBACK')
+    assert f.value() == 0
+    return {'errors': cases, 'independent_read': reply, 'sql_transaction_rolled_back': True}
 
 
 def case_statement_rollback(f):
@@ -221,6 +319,14 @@ def case_pending_apply(f):
         assert state['state'] == 'prepared' and state['row'][2] == 0, state
         error = f.observer.error('SELECT v FROM t WHERE id=%s', (remote,))
         assert error == [1213, '40001'], error
+        request = f.kv.request(1, remote)
+        kv_rpc = f.kv.public(f.nodes[1], 'get', request)
+        kv_sdk = f.kv.sdk('t', [[remote]])
+        for reply in (kv_rpc, kv_sdk):
+            cause = kv_error(reply, 'unavailable', 'mysql', 1213)
+            assert state['txid'] in cause['message'], cause
+        held = lease.snapshot()
+        assert held['state'] == 'prepared' and held['row'][2] == 0, held
         # The raw native tuple is still the previous committed row. This is
         # not a failed COMMIT and cannot justify re-executing either update.
         lease.release()
@@ -228,7 +334,9 @@ def case_pending_apply(f):
             result = rpc(node, 'tarn_apply', [state['txid']])
             assert result[:2] in (['ok', 'applied'], ['ok', 'none']), result
         assert f.value() == f.value(remote) == 1
-    return {'commit': 'ok', 'raw_before_apply': 0, 'strong_before_apply': error,
+        after = f.kv.sdk('t', [[f.key], [remote]])
+        assert after['status'] == 'ok' and [r['v'] for r in after['rows']] == [1, 1], after
+    return {'kv_before_apply': [kv_rpc, kv_sdk], 'kv_after_apply': after, 'commit': 'ok', 'raw_before_apply': 0, 'strong_before_apply': error,
             'after_apply': [1, 1], 'txid': state['txid']}
 
 
@@ -309,6 +417,7 @@ def case_operation_id(f):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--tarn', required=True)
+    ap.add_argument('--sdk', required=True, help='compiled strong_kv Rust example')
     ap.add_argument('--shards', required=True)
     ap.add_argument('--engine', choices=('memtx', 'vinyl'), default='memtx')
     ap.add_argument('--plan', type=Path, required=True)

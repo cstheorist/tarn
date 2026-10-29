@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARN=${TARN_BIN:-$ROOT/target/release/tarn-server}
 T=${TARANTOOL:-tarantool}
+KV_SDK=${KV_SDK:-$ROOT/target/release/examples/strong_kv}
 W=${OUTCOME_DIR:-$(mktemp -d /tmp/tarn-outcomes.XXXX)}
 BASE=${BASE:-6200}; PORT=${PORT:-6300}; PP=${PP:-6240}
 ENGINE=${ENGINE:-memtx}; R=${R:-3}
@@ -57,24 +58,24 @@ for _ in $(seq 100); do
   sleep .1
 done
 [ "$ready" = 1 ] || { cat "$W/gateway.log"; exit 1; }
-python3 - "$ROOT" "$W" "$TARN" "$ENGINE" "$R" <<'PY'
+python3 - "$ROOT" "$W" "$TARN" "$ENGINE" "$R" "$KV_SDK" <<'PY'
 import hashlib, json, os, pathlib, subprocess, sys
 root, dest, binary = map(pathlib.Path, sys.argv[1:4])
 native = pathlib.Path(os.environ.get('TARN_NATIVE', str(root/'target/release/libtarn_storage.so')))
 hashfile = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
-files = ['contracts/outcomes.json','tests/outcome_proxy.py','tests/sql/outcomes.py','tests/sql/outcome_client.py',
+files = ['contracts/manifest.json','lua/tarn_kv.lua','crates/tarn-sql/src/kv.rs','tests/sql/kvtest.py','tests/sql/kvrpc.lua','contracts/outcomes.json','tests/outcome_proxy.py','tests/sql/outcomes.py','tests/sql/outcome_client.py',
          'lua/tarn.lua','crates/tarn-sql/src/mpw.rs','crates/tarn-sql/src/txn.rs','crates/tarn-sql/src/session.rs']
 receipt = {'source': subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip(),
            'diff_sha256': hashlib.sha256(subprocess.check_output(['git','-C',str(root),'diff','HEAD'])).hexdigest(),
            'files': {p:hashfile(root/p) for p in files}, 'binary_sha256':hashfile(binary),
            'native': str(native), 'native_sha256':hashfile(native) if native.is_file() else None,
            'rustc':subprocess.check_output(['rustc','--version'],text=True).strip(),
-           'engine':sys.argv[4], 'replicas':int(sys.argv[5]), 'wal_mode':'fsync',
+           'kv_sdk_sha256':hashfile(pathlib.Path(sys.argv[6])), 'engine':sys.argv[4], 'replicas':int(sys.argv[5]), 'wal_mode':'fsync',
            'configuration':json.loads((dest/'cluster.json').read_text())}
 (dest/'source.json').write_text(json.dumps(receipt,indent=2)+'\n')
 PY
 extra=(); [ -z "${OUTCOME_MODE:-}" ] || extra=(--mode "$OUTCOME_MODE")
 python3 "$ROOT/tests/sql/outcomes.py" --tarn "127.0.0.1:$PORT" --shards "${nodes[0]},${nodes[1]}" \
-  --engine "$ENGINE" --plan "$W/plan.json" --proxy-log "$W/proxy.jsonl" --evidence "$W/results" "${extra[@]}"
+  --sdk "$KV_SDK" --engine "$ENGINE" --plan "$W/plan.json" --proxy-log "$W/proxy.jsonl" --evidence "$W/results" "${extra[@]}"
 if grep -h 'lock copy differs\|yielded inside' "$W"/*.log; then exit 1; fi
 echo 'OUTCOME CONTRACT PASSED'

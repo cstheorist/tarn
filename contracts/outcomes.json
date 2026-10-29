@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "scope": "Tarn extension: outcome codes, transaction state and retry permissions. PyMySQL text plus MySQL Connector/Python text and binary prepared execution. The pinned MySQL equivalence manifest (#178) remains separate; storage faults are Tarn-specific.",
+  "scope": "Registered Tarn outcome extension: error namespaces, transaction state and retry permissions across PyMySQL text, MySQL Connector/Python text and binary prepared SQL, registered strong KV v1 and the Rust SDK. Equivalent/difference entries describe the stated SQL behavior; Tarn-specific storage faults and KV histories are not paired MySQL oracle claims.",
   "contracts": [
     {
       "id": "statement_rollback",
@@ -36,7 +36,7 @@
       "id": "pending_apply",
       "classification": "extension",
       "test": "tests/sql/outcomes.py::case_pending_apply",
-      "description": "Confirmed logical COMMIT can precede physical APPLY; raw native reads can lag while strong reads refuse the unfinished row."
+      "description": "Confirmed logical COMMIT can precede physical APPLY; raw native reads lag while SQL, registered KV and the Rust SDK refuse the unfinished row, then agree after APPLY."
     },
     {
       "id": "prepare_outcomes",
@@ -49,6 +49,12 @@
       "classification": "extension",
       "test": "tests/sql/outcomes.py::case_operation_id",
       "description": "A unique operation record committed with the effect resolves a lost local COMMIT reply without a second increment."
+    },
+    {
+      "id": "kv_errors",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_kv_errors",
+      "description": "Strong KV retains contract/MySQL/Tarantool error namespaces, rejects stale schema/ownership and oversized batches, and cannot inherit or commit buffered SQL work."
     }
   ],
   "existing_release_gates": [
