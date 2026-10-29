@@ -1923,10 +1923,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 268 unique configurations: 70 positive
-outcomes and 198 expected broken/trade-off outcomes. The 275 generated
+The default list contains 275 unique configurations: 71 positive
+outcomes and 204 expected broken/trade-off outcomes. The 282 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 281 total. Explicit
+placement configurations are maintained directly, for 288 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2346,3 +2346,35 @@ Live tests recover real vinyl files and compare every tuple byte, including
 post-backup WAL and negative lease/copy/restore controls. The startup voter
 marker prevents accidental candidate startup until an operator clears it;
 it does not make the operator's catch-up decision automatically.
+
+
+### Quiescent cluster backup and restore (issue #137)
+
+`ClusterBackup.tla` models a distributed decision, independent replica APPLY,
+complete replica fencing, restart, certification, per-node copying, controller
+failure, publication and quarantined restore/activation. The positive bounded
+configuration explores 52,164 distinct states at depth 30. Six controls remove
+all-replica fencing, draining, replica completeness, durable restart fencing,
+complete restore verification or metadata retention. Each violates its named
+invariant; the early-copy and no-drain controls expose incoherent copied rows
+and loss of an acknowledged effect, respectively. This is a separate backup
+contract; it does not modify or prove a refinement of `TarnCommit`.
+
+The runtime additionally checks published membership, catalogs, exact bucket
+coverage, equal WAL vectors and per-replica tuple/schema digests. Its drain
+refuses PREPARED/STAGING, unfinished DDL/movement and unshipped lazy obligations;
+it does not remove them. Tarantool 3.9.0's
+[read-only transition](https://github.com/tarantool/tarantool/blob/3.9.0/src/box/box.cc#L449)
+aborts in-progress persistent nonlocal writes. Settled synchronous queues,
+replica catch-up, stable before/after WAL vectors and the pinned immutable
+checkpoint/file contract remain trusted storage premises. Persistent local
+spaces are refused because read-only mode does not fence them. The live drill
+holds an actual uncommitted mutation across acquisition and checks its refusal.
+
+Filesystem fsync/rename, hash collision resistance, Tarantool's checkpoint/WAL
+and replication implementation, complete honest inventory, exclusive administrative
+access and isolated restored networking remain trusted. No unbounded theorem,
+online-backup guarantee, arbitrary-time PITR, whole-code refinement or automatic
+liveness/restart bound follows. The [operations contract](cluster-backup.md)
+and [live evidence index](../tests/evidence/cluster-backup/index.json) retain
+these boundaries and all source-bound outcomes.
