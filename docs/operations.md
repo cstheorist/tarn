@@ -1264,7 +1264,10 @@ Validate an isolated restore with no replication and read-only access first.
 Existing clock-policy/high-water and transaction-recovery fences remain in
 force; restoring files does not reset them or certify clock health. This is
 a **per-shard physical backup**, not a coordinated multi-shard SQL snapshot.
-A cluster-consistent backup/restore protocol is tracked separately in #137.
+For a maintenance-window cluster cut, use the
+[cluster-consistent backup and restore workflow](cluster-backup.md) (#137).
+It inventories and fences every replica, requires settled distributed work,
+and validates all restored user/protocol data before activation.
 
 ### Add a replica from a recent file backup
 

@@ -3,6 +3,13 @@ local json, net = require('json'), require('net.box')
 local uri = assert(os.getenv('TARN_BACKUP_URI'), 'TARN_BACKUP_URI is required')
 local c = net.connect(uri, {wait_connected = 10, reconnect_after = 0})
 local scripts = {
+    cluster = [[
+local op,args=...
+local m=require('tarn_backup')
+assert(op=='inspect' or op=='fence' or op=='audit' or op=='checkpoint' or op=='release',
+       'unknown cluster backup operation')
+return m[op](unpack(args or {}))
+]],
     start = [[
 local token,ttl,seed=...
 assert(type(box.backup.info)=='function','file backups require Tarantool 3.9')
@@ -40,7 +47,9 @@ io.stdout:setvbuf('no')
 for line in io.lines() do
     local good, result = pcall(function()
         local request=json.decode(line)
-        return c:eval(assert(scripts[request.op], 'unknown backup operation'), request.args or {}, {timeout=30})
+        local timeout=request.timeout or 30
+        assert(type(timeout)=='number' and timeout>0 and timeout<=3600, 'invalid RPC deadline')
+        return c:eval(assert(scripts[request.op], 'unknown backup operation'), request.args or {}, {timeout=timeout})
     end)
     print(json.encode(good and {ok=true,result=result} or {ok=false,error=tostring(result)}))
 end
