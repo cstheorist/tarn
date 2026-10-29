@@ -19,6 +19,7 @@ after a connection error or ambiguous outcome.
 import argparse
 import base64
 import collections
+import copy
 import hashlib
 import importlib.metadata
 import json
@@ -44,6 +45,289 @@ FIELDS = (
     "compaction_queue", "run_count", "range_count", "runs_per_range",
     "admitted", "rejected", "quota_timeouts",
 )
+PRESSURE_ATTEMPT_CAP = 20000
+PRESSURE_PHASES = ("native_io_uncapped", "native_io_limited", "native_io_released")
+
+
+class PressureSchedule:
+    """Bounded phase-local slots; a fast worker parks instead of ending early."""
+    def __init__(self, writers, pressure_seconds):
+        self.writers = writers
+        durations = (3, pressure_seconds, 3)
+        total = sum(durations)
+        budgets = [PRESSURE_ATTEMPT_CAP * seconds // total for seconds in durations[:2]]
+        budgets.append(PRESSURE_ATTEMPT_CAP - sum(budgets))
+        self.phases = [
+            {"name": name, "duration_seconds": seconds, "slot_budget": budget,
+             "opened_monotonic": None, "deadline_monotonic": None, "closed_monotonic": None,
+             "close_reason": None, "io_receipts": None,
+             "workers": [{"reserved": 0, "skipped": 0, "expired": 0, "dispatched": 0, "completed": 0,
+                          "inflight": 0, "first_dispatch_monotonic": None, "last_dispatch_monotonic": None,
+                          "outcomes": {}} for _ in range(writers)]}
+            for name, seconds, budget in zip(PRESSURE_PHASES, durations, budgets)]
+        self.lock = threading.Lock()
+        self.active = None
+        self.next_phase = 0
+        self.next_slots = list(range(writers))
+        self.pending = {}
+        self.inflight = {}
+        self.dispatched = 0
+        self.finished = False
+        self.finish_reason = None
+
+    def open_phase(self, name, now, receipts=None):
+        with self.lock:
+            assert not self.finished and self.active is None and self.next_phase < len(self.phases)
+            phase = self.phases[self.next_phase]
+            assert phase["name"] == name
+            phase.update(opened_monotonic=now, deadline_monotonic=now + phase["duration_seconds"],
+                         io_receipts=receipts)
+            self.active = self.next_phase
+            self.next_slots = list(range(self.writers))
+
+    def close_phase(self, name, now, reason="completed"):
+        with self.lock:
+            assert self.active is not None and self.phases[self.active]["name"] == name
+            phase = self.phases[self.active]
+            phase.update(closed_monotonic=now, close_reason=reason, workers_at_close=copy.deepcopy(phase["workers"]))
+            self.active = None
+            self.next_phase += 1
+
+    def claim(self, worker, now):
+        with self.lock:
+            if self.finished:
+                return {"kind": "done"}
+            if self.active is None:
+                return {"kind": "wait", "seconds": .05}
+            phase = self.phases[self.active]
+            if now >= phase["deadline_monotonic"]:
+                return {"kind": "wait", "seconds": .05}
+            assert worker not in self.pending and worker not in self.inflight
+            ordinal = self.next_slots[worker]
+            if ordinal >= phase["slot_budget"]:
+                return {"kind": "wait", "seconds": phase["deadline_monotonic"] - now}
+            step = phase["duration_seconds"] / phase["slot_budget"]
+            target = phase["opened_monotonic"] + ordinal * step
+            if now < target:
+                return {"kind": "wait", "seconds": target - now}
+            # Permit one overdue slot, then skip missed successors. A slow
+            # SQL call never earns a catch-up burst or another phase's slots.
+            following = ordinal + self.writers
+            first_future = math.floor((now - phase["opened_monotonic"]) / step) + 1
+            first_future += (worker - first_future) % self.writers
+            next_slot = max(following, first_future)
+            remaining = lambda slot: max(0, (phase["slot_budget"] - 1 - slot) // self.writers + 1)
+            stats = phase["workers"][worker]
+            stats["skipped"] += remaining(following) - remaining(next_slot)
+            stats["reserved"] += 1
+            self.next_slots[worker] = next_slot
+            ticket = {"kind": "permit", "worker": worker, "phase": phase["name"],
+                      "phase_index": self.active, "ordinal": ordinal, "scheduled_monotonic": target,
+                      "window_start_monotonic": phase["opened_monotonic"],
+                      "window_deadline_monotonic": phase["deadline_monotonic"]}
+            self.pending[worker] = ticket
+            return ticket
+
+    def cancel(self, ticket):
+        with self.lock:
+            assert self.pending.pop(ticket["worker"]) is ticket
+            self.phases[ticket["phase_index"]]["workers"][ticket["worker"]]["expired"] += 1
+
+    def dispatch(self, ticket, now):
+        with self.lock:
+            worker = ticket["worker"]
+            assert self.pending.pop(worker) is ticket
+            phase = self.phases[ticket["phase_index"]]
+            stats = phase["workers"][worker]
+            if (self.finished or self.active != ticket["phase_index"]
+                    or not phase["opened_monotonic"] <= now < phase["deadline_monotonic"]):
+                stats["expired"] += 1
+                return None
+            # Payload work may have taken time after claim(). Advance the
+            # successor against actual dispatch too, so it cannot already
+            # be overdue immediately after this call completes.
+            step = phase["duration_seconds"] / phase["slot_budget"]
+            first_future = math.floor((now - phase["opened_monotonic"]) / step) + 1
+            first_future += (worker - first_future) % self.writers
+            following = self.next_slots[worker]
+            next_slot = max(following, first_future)
+            remaining = lambda slot: max(0, (phase["slot_budget"] - 1 - slot) // self.writers + 1)
+            stats["skipped"] += remaining(following) - remaining(next_slot)
+            self.next_slots[worker] = next_slot
+            self.dispatched += 1
+            assert self.dispatched <= PRESSURE_ATTEMPT_CAP
+            stats["dispatched"] += 1
+            stats["inflight"] += 1
+            if stats["first_dispatch_monotonic"] is None:
+                stats["first_dispatch_monotonic"] = now
+            stats["last_dispatch_monotonic"] = now
+            dispatch = {**ticket, "attempt": self.dispatched, "started_monotonic": now}
+            self.inflight[worker] = dispatch
+            return dispatch
+
+    def complete(self, dispatch, now, result):
+        with self.lock:
+            worker = dispatch["worker"]
+            assert self.inflight.pop(worker) is dispatch
+            stats = self.phases[dispatch["phase_index"]]["workers"][worker]
+            stats["completed"] += 1
+            stats["inflight"] -= 1
+            stats["outcomes"][result] = stats["outcomes"].get(result, 0) + 1
+            if self.active is not None and now < self.phases[self.active]["deadline_monotonic"]:
+                return self.phases[self.active]["name"]
+            return "between_phases"
+
+    def finish(self, now, reason="completed"):
+        with self.lock:
+            if self.active is not None:
+                phase = self.phases[self.active]
+                phase.update(closed_monotonic=now, close_reason=reason, workers_at_close=copy.deepcopy(phase["workers"]))
+                self.active = None
+            self.finished, self.finish_reason = True, reason
+
+    def snapshot(self):
+        with self.lock:
+            return copy.deepcopy({"attempt_cap": PRESSURE_ATTEMPT_CAP, "attempts": self.dispatched,
+                                  "finished": self.finished, "finish_reason": self.finish_reason,
+                                  "phases": self.phases, "pending_slots": list(self.pending.values()),
+                                  "inflight_dispatches": list(self.inflight.values())})
+
+
+def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lambda *a, **kw: None,
+                        prepare_limited=lambda: None, opened=lambda name: None):
+    """Real controller path, with injectable time/I/O only for offline controls."""
+    result = {"receipts": {}, "controls": [], "primary": None, "restore_errors": []}
+    active = None
+    stage = "uncapped I/O control"
+    def apply(name, limit):
+        timing = {"phase": name, "limit": limit, "started_monotonic": now(), "returned_monotonic": None}
+        result["controls"].append(timing)
+        try:
+            receipt = io_limit(limit)
+        except BaseException as error:
+            timing["error"] = repr(error)
+            raise
+        timing["returned_monotonic"] = now()
+        return receipt
+    try:
+        for name, limit in zip(PRESSURE_PHASES[:2], (0, .5)):
+            if name == PRESSURE_PHASES[1]:
+                stage = "compaction run preparation"
+                prepare_limited()
+            stage = name + " I/O control"
+            receipt = apply(name, limit)
+            result["receipts"][name] = receipt
+            schedule.open_phase(name, now(), receipt)
+            active = name
+            record("real_pressure_phase_open", phase=name, timing=schedule.snapshot())
+            stage = name + " opening control"
+            opened(name)
+            stage = name + " window"
+            remaining = schedule.phases[schedule.active]["deadline_monotonic"] - now()
+            assert remaining > 0, "phase setup exhausted its bounded window"
+            if wait(remaining):
+                raise AssertionError("pressure writers stopped during " + name)
+            schedule.close_phase(name, now())
+            active = None
+            record("real_pressure_phase_close", phase=name, timing=schedule.snapshot())
+    except BaseException as error:
+        result["primary"] = (stage, error, error.__traceback__)
+    finally:
+        if active is not None:
+            schedule.close_phase(active, now(), "aborted")
+        # Release actual engine I/O before draining any client call, even
+        # after a missing witness, worker error or control exception.
+        try:
+            receipt = apply(PRESSURE_PHASES[2], 0)
+            result["receipts"][PRESSURE_PHASES[2]] = receipt
+        except BaseException as error:
+            result["restore_errors"].append(repr(error))
+            if result["primary"] is None:
+                result["primary"] = ("released I/O control", error, error.__traceback__)
+        if result["primary"] is None:
+            name = PRESSURE_PHASES[2]
+            try:
+                schedule.open_phase(name, now(), receipt)
+                record("real_pressure_phase_open", phase=name, timing=schedule.snapshot())
+                if wait(3):
+                    raise AssertionError("pressure writers stopped during " + name)
+                schedule.close_phase(name, now())
+                record("real_pressure_phase_close", phase=name, timing=schedule.snapshot())
+            except BaseException as error:
+                result["primary"] = (name + " window", error, error.__traceback__)
+        schedule.finish(now(), "completed" if result["primary"] is None else "aborted")
+    return result
+
+
+def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=q):
+    """One bounded read-only observation; it never settles/replays unknown work."""
+    success = {row["id"] for row in records if row["result"] == "ok"}
+    refused = {row["id"] for row in records if row["result"] == "error" and row.get("error", [None])[0] == 1205}
+    unknown = {row["id"] for row in records if row["id"] not in success | refused}
+    pending = {row["id"] for row in inflight}
+    result = {"status": "failed", "attempted": True, "row_limit": PRESSURE_ATTEMPT_CAP + 1,
+              "started_monotonic": time.monotonic(),
+              "unknown_ids": sorted(unknown), "inflight_ids": sorted(pending),
+              "workers_live": workers_live, "stored_ids_match_acknowledgements": None, "refused_ids_absent": None}
+    try:
+        with connect() as connection:
+            rows = query(connection, "SELECT id FROM p WHERE tenant_id=%s ORDER BY id LIMIT 20001", (tenant,))
+        actual = {row[0] for row in rows}
+        clipped = len(rows) > PRESSURE_ATTEMPT_CAP
+        unsettled = bool(workers_live or pending or unknown or clipped)
+        result.update(status="incomplete" if unsettled else "complete", observed_ids=sorted(actual),
+                      row_count=len(rows), limit_reached=clipped,
+                      acknowledged_ids_missing=None if clipped else sorted(success - actual),
+                      refused_ids_present=sorted(actual & refused),
+                      unexpected_ids=sorted(actual - success - unknown - pending),
+                      unknown_ids_observed=sorted(actual & unknown),
+                      inflight_ids_observed=sorted(actual & pending),
+                      stored_ids_match_acknowledgements=actual == success if not unsettled else None,
+                      refused_ids_absent=not bool(actual & refused) if not clipped else None)
+    except BaseException as error:
+        result["error"] = repr(error)
+    result["finished_monotonic"] = time.monotonic()
+    return result
+
+
+def finalize_pressure(summary, *, audit, persist, check):
+    """Read back and retain evidence before any sustained-pressure assertion."""
+    try:
+        summary["readback"] = audit()
+    except BaseException as error:
+        summary["readback"] = {"status": "failed", "attempted": True, "error": repr(error)}
+    summary["stored_ids_match_acknowledgements"] = summary["readback"].get("stored_ids_match_acknowledgements")
+    summary["refused_ids_absent"] = summary["readback"].get("refused_ids_absent")
+    evidence_errors = summary.setdefault("evidence_errors", [])
+    first_persist_error = None
+    def save(attempt):
+        nonlocal first_persist_error
+        try:
+            persist(summary)
+        except BaseException as error:
+            evidence_errors.append({"stage": "summary persist", "attempt": attempt,
+                                    "type": type(error).__name__, "message": str(error)})
+            if first_persist_error is None:
+                first_persist_error = (error, error.__traceback__)
+    save(1)
+    checked, check_error = None, None
+    try:
+        checked = check(summary)
+    except BaseException as error:
+        summary["check_failure"] = {"type": type(error).__name__, "message": str(error)}
+        if summary.get("primary_failure") is None:
+            summary["primary_failure"] = {"stage": summary.get("check_stage", "witness"),
+                                          **summary["check_failure"]}
+        check_error = (error, error.__traceback__)
+    if check_error is None and first_persist_error is not None and summary.get("primary_failure") is None:
+        error = first_persist_error[0]
+        summary["primary_failure"] = {"stage": "summary persist", "type": type(error).__name__, "message": str(error)}
+    save(2)
+    if check_error is not None:
+        raise check_error[0].with_traceback(check_error[1])
+    if first_persist_error is not None:
+        raise first_persist_error[0].with_traceback(first_persist_error[1])
+    return checked
 
 
 def wait_for(fn, seconds, what):
@@ -443,19 +727,32 @@ return {id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),version=box.info.versi
         assert identity["vinyl_cache"] == 0, "real-pressure fixture requires cache zero"
         assert 0 < identity["vinyl_timeout"] <= .5, "real-pressure fixture requires the short native quota wait"
         tenant = self.keys[0][0]
-        records, samples, errors = [], [], []
+        seed_tenant = self.keys[0][1]
+        # A bounded, separately identified tenant supplies disk input even
+        # when the paced warmup is too small to finish several memory dumps.
+        # These writes precede the measured ledger and are never replayed.
+        def seed(first, count):
+            with self.connect() as c:
+                for start in range(first, first + count, 16):
+                    rows = [(seed_tenant, key, base64.b64encode(os.urandom(6144)).decode("ascii"))
+                            for key in range(start, min(start + 16, first + count))]
+                    sql = "INSERT INTO p VALUES " + ",".join(["(%s,%s,%s)"] * len(rows))
+                    assert q(c, sql, tuple(value for row in rows for value in row)) == len(rows)
+        seed(1, 512)
+        live_records, live_samples, live_errors = [], [], []
+        inflight = {}
         lock = threading.Lock()
         stop = threading.Event()
         sampling_stop = threading.Event()
         ready = threading.Barrier(self.args.writers + 1)
-        phase = ["native_io_uncapped"]
-        attempts = [0]
+        schedule = PressureSchedule(self.args.writers, self.args.pressure_seconds)
 
-        def sample():
-            while not sampling_stop.is_set():
-                try:
-                    value = ev(self.nodes[0], """
-local space=assert(box.space[...]);local indices={}
+        def native_sample(compact=False):
+            value = ev(self.nodes[0], """
+local name,compact=...;local space=assert(box.space[name]);local indices={}
+if compact then
+    for iid,index in pairs(space.index) do if type(iid)=='number' then index:compact() end end
+end
 for iid,index in pairs(space.index) do if type(iid)=='number' then
     local s=index:stat();indices[#indices+1]={id=iid,run_count=s.run_count,range_count=s.range_count,
         run_avg=s.run_avg,run_histogram=s.run_histogram,compaction=s.disk.compaction} end end
@@ -463,14 +760,56 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
     public=tarn_vinyl_stats(),indices=indices,vinyl_timeout=box.cfg.vinyl_timeout,
     vinyl_memory=box.cfg.vinyl_memory,vinyl_cache=box.cfg.vinyl_cache,
     snap_io_rate_limit=box.cfg.snap_io_rate_limit or 0,engine=space.engine}
-""", [self.db + ".p"])
+""", [self.db + ".p", compact])
+            value["observed_monotonic"] = time.monotonic()
+            value["compaction_requested"] = compact
+            return value
+
+        def sample():
+            while not sampling_stop.is_set():
+                try:
+                    value = native_sample()
                     with lock:
-                        samples.append(value)
+                        live_samples.append(value)
                 except Exception as error:
                     with lock:
-                        errors.append("native sample: " + repr(error))
+                        live_errors.append("native sample: " + repr(error))
                     return
                 sampling_stop.wait(.2)
+
+        compaction = {}
+        def prepare_limited():
+            # Writers are parked between phase windows. Compact the old
+            # image once, then add a much smaller run at a new LSM level.
+            # Equal-sized runs can auto-compact before a periodic sampler
+            # sees them. Keep all real I/O uncapped during this preparation.
+            before = ev(self.nodes[0], """
+local space=assert(box.space[...]);box.snapshot()
+for iid,index in pairs(space.index) do if type(iid)=='number' then index:compact() end end
+return box.stat.vinyl().scheduler
+""", [self.db + ".p"])
+            def settled():
+                value = native_sample()
+                return value if all(i["run_count"] == i["range_count"] > 0 for i in value["indices"]) else None
+            old = wait_for(settled, 15, "single old compaction run")
+            seed(513, 32)
+            ev(self.nodes[0], "box.snapshot();return true")
+            prepared = native_sample()
+            compaction.update(seed_tenant=seed_tenant, seed_rows=544, before=before, old=old, prepared=prepared)
+            self.record("real_pressure_compaction_prepared", **compaction)
+
+        def opened(name):
+            if name == PRESSURE_PHASES[1]:
+                # This supported operation and its native receipt happen
+                # in the active writer window, after the actual I/O cap.
+                # Read the queue in the same RPC before fast compaction can
+                # disappear between periodic samples; never synthesize it.
+                value = native_sample(compact=True)
+                value["phase"] = name
+                compaction["trigger"] = value
+                with lock:
+                    live_samples.append(value)
+                self.record("real_pressure_compaction_requested", receipt=value)
 
         def writer(index):
             c = None
@@ -479,131 +818,258 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                 ready.wait(timeout=10)
                 sequence = 0
                 while not stop.is_set():
-                    with lock:
-                        if attempts[0] >= 20000:
-                            return
-                        attempts[0] += 1
-                    sequence += 1
-                    key = (index + 1) * 1000000 + sequence
+                    ticket = schedule.claim(index, time.monotonic())
+                    if ticket["kind"] == "done":
+                        return
+                    if ticket["kind"] == "wait":
+                        stop.wait(min(.05, ticket["seconds"]))
+                        continue
                     # ASCII text preserves the same 8192 payload bytes while
                     # avoiding driver-specific bytes-to-hex SQL formatting.
                     payload = base64.b64encode(os.urandom(6144)).decode("ascii")
-                    entry = {"worker": index, "id": key, "started_phase": phase[0], "started_realtime": time.time()}
-                    started = time.monotonic()
+                    if stop.is_set():
+                        schedule.cancel(ticket)
+                        return
+                    # Payload generation can span a boundary. A late permit
+                    # is discarded, never charged/transferred into a phase.
+                    key = (index + 1) * 1000000 + sequence + 1
+                    with lock:
+                        # Same ledger→schedule order as the frozen snapshot.
+                        # Counting a dispatch and registering its actual key
+                        # are one observation; no drain snapshot can see a
+                        # counted call with no identity in the ledger.
+                        started = time.monotonic()
+                        dispatch = schedule.dispatch(ticket, started)
+                        if dispatch is not None:
+                            sequence += 1
+                            entry = {**dispatch, "id": key, "started_phase": dispatch["phase"],
+                                     "started_realtime": time.time()}
+                            inflight[key] = entry.copy()
+                    if dispatch is None:
+                        continue
                     try:
                         q(c, "INSERT INTO p VALUES (%s,%s,%s)", (tenant, key, payload))
                         entry["result"] = "ok"
                     except pymysql.MySQLError as error:
                         entry["result"] = "error"
-                        entry["error"] = list(error.args)
-                    entry["latency_ms"] = (time.monotonic() - started) * 1000
-                    entry["completed_phase"] = phase[0]
-                    with lock:
-                        records.append(entry)
+                        entry["error"] = list(error.args) or [None, repr(error)]
+                    except BaseException as error:
+                        # The call may have sent bytes before a local/client
+                        # exception. Retain it as unresolved; never resend.
+                        entry["result"], entry["error"] = "error", [None, repr(error)]
+                    finally:
+                        finished = time.monotonic()
+                        entry["completed_monotonic"] = finished
+                        entry["latency_ms"] = (finished - started) * 1000
+                        entry["completed_phase"] = schedule.complete(dispatch, finished, entry["result"])
+                        with lock:
+                            inflight.pop(key)
+                            live_records.append(entry)
                     if entry["result"] == "error" and entry["error"][0] != 1205:
                         # Never resend this potentially uncertain mutation.
                         stop.set()
                         return
             except BaseException as error:
                 with lock:
-                    errors.append("SQL writer: " + repr(error))
+                    live_errors.append("SQL writer: " + repr(error))
+                stop.set()
             finally:
                 if c is not None:
-                    c.close()
+                    try:
+                        c.close()
+                    except BaseException as error:
+                        with lock:
+                            live_errors.append("SQL writer close: " + repr(error))
+                        stop.set()
 
         sampler = threading.Thread(target=sample, daemon=True)
         writers = [threading.Thread(target=writer, args=(index,), daemon=True) for index in range(self.args.writers)]
-        with Controls(self) as control:
-            sampler.start()
-            for thread in writers:
-                thread.start()
+        primary, phase_result, restore_errors, drain_errors = None, None, [], []
+        self.pressure_threads = writers
+        try:
+            with Controls(self) as control:
+                try:
+                    sampler.start()
+                    for thread in writers:
+                        thread.start()
+                    ready.wait(timeout=10)
+                    self.record("real_pressure_begin", source=self.nodes[0], tenant=tenant,
+                                note="paced native I/O control; no forced classifier override; call-entry times "
+                                     "are observations, not physical network-arrival promises", identity=identity)
+                    phase_result = run_pressure_phases(schedule, control.io_limit, stop.wait, record=self.record,
+                                                       prepare_limited=prepare_limited, opened=opened)
+                    primary = phase_result["primary"]
+                    restore_errors.extend(phase_result["restore_errors"])
+                except BaseException as error:
+                    primary = ("pressure stage", error, error.__traceback__)
+                finally:
+                    if phase_result is None:
+                        try:
+                            control.io_limit(0)
+                        except BaseException as error:
+                            restore_errors.append(repr(error))
+                            if primary is None:
+                                primary = ("released I/O control", error, error.__traceback__)
+                    stop.set()
+                    ready.abort()
+                    schedule.finish(time.monotonic(), "aborted" if primary else "completed")
+                    deadline = time.monotonic() + 10
+                    for thread in writers:
+                        if thread.ident is not None:
+                            thread.join(max(0, deadline - time.monotonic()))
+                    sampling_stop.set()
+                    if sampler.ident is not None:
+                        sampler.join(12)
+        except BaseException as error:
+            restore_errors.append("control lease restore: " + repr(error))
+            if primary is None:
+                primary = ("control lease restore", error, error.__traceback__)
+        workers_live = any(thread.is_alive() for thread in writers)
+        self.pressure_preserve_database = workers_live
+        if workers_live or sampler.is_alive():
+            drain_errors.append("pressure worker exceeded drain cap")
+        # Freeze under the ledger lock. A late result after the drain cap
+        # cannot rewrite this observation or justify settled equality.
+        with lock:
+            records, samples, errors = copy.deepcopy(live_records), copy.deepcopy(live_samples), list(live_errors)
+            pending = copy.deepcopy(list(inflight.values()))
+            timing = schedule.snapshot()
+            frozen_monotonic = time.monotonic()
+        evidence_errors = []
+        for filename, rows in (("pressure-attempts.jsonl", records), ("pressure-native-samples.jsonl", samples)):
             try:
-                ready.wait(timeout=10)
-                self.record("real_pressure_begin", source=self.nodes[0], tenant=tenant,
-                            note="native I/O control; no forced classifier override", identity=identity)
-                time.sleep(3)
-                phase[0] = "native_io_limited"
-                limited = control.io_limit(.5)
-                time.sleep(self.args.pressure_seconds)
-            finally:
-                # Release real engine I/O before draining any client call.
-                control.io_limit(0)
-                phase[0] = "native_io_released"
-                time.sleep(3)
-                stop.set()
-                deadline = time.monotonic() + 10
-                for thread in writers:
-                    thread.join(max(0, deadline - time.monotonic()))
-                sampling_stop.set()
-                sampler.join(12)
-                # Preserve a failed overload witness as well as a passing one.
-                (self.evidence / "pressure-attempts.jsonl").write_text("".join(json.dumps(row) + "\n" for row in records))
-                (self.evidence / "pressure-native-samples.jsonl").write_text("".join(json.dumps(row) + "\n" for row in samples))
+                (self.evidence / filename).write_text("".join(json.dumps(row) + "\n" for row in rows))
+            except BaseException as error:
+                evidence_errors.append({"stage": "raw evidence write", "file": filename,
+                                        "type": type(error).__name__, "message": str(error)})
+                if primary is None:
+                    primary = ("raw evidence write", error, error.__traceback__)
         success = {row["id"] for row in records if row["result"] == "ok"}
         refused = {row["id"] for row in records if row["result"] == "error" and row["error"][0] == 1205}
         unexpected = [row for row in records if row["result"] == "error" and row["error"][0] != 1205]
-        queue = max((row["native"]["scheduler"]["compaction_queue"] for row in samples), default=0)
-        blocked = max((row["native"]["regulator"]["blocked_writers"] for row in samples), default=0)
-        level0 = max((row["native"]["memory"]["level0"] for row in samples), default=0)
-        source_limit = next(row["result"] for row in limited if row["node"] == self.nodes[0])
-        rates = [row["native"]["regulator"]["rate_limit"] for row in samples]
-        control_rate = source_limit["native"]["regulator"]["rate_limit"]
-        control_limit, periodic_limit = native_limit_witness(source_limit, samples)
+        def metric(row, *keys):
+            try:
+                for key in keys:
+                    row = row[key]
+                return row
+            except (KeyError, TypeError):
+                return None
+        def maximum(*keys):
+            values = [metric(row, *keys) for row in samples]
+            return max((value for value in values if isinstance(value, (int, float))), default=None)
+        queue = maximum("native", "scheduler", "compaction_queue")
+        blocked = maximum("native", "regulator", "blocked_writers")
+        level0 = maximum("native", "memory", "level0")
+        receipts = phase_result["receipts"] if phase_result else {}
+        source_limit = next((row["result"] for row in receipts.get(PRESSURE_PHASES[1], [])
+                             if row["node"] == self.nodes[0]), None)
+        rates = [metric(row, "native", "regulator", "rate_limit") for row in samples]
+        rates = [value for value in rates if isinstance(value, (int, float))]
+        control_rate = metric(source_limit, "native", "regulator", "rate_limit")
+        control_limit, periodic_limit, metric_error = False, False, None
+        if source_limit is not None:
+            try:
+                control_limit, periodic_limit = native_limit_witness(source_limit, samples)
+            except (KeyError, TypeError) as error:
+                metric_error = repr(error)
         outcomes = {}
         for result in ("ok", "error"):
             values = [row["latency_ms"] for row in records if row["result"] == result]
             outcomes[result] = {"count": len(values), **quantiles(values)}
-        summary = {"attempts": attempts[0], "completed": len(records),
+        summary = {"attempts": timing["attempts"], "completed": len(records),
+                   "compaction_setup": compaction,
                    "acknowledged": len(success), "refused_1205": len(refused),
                    "stored_ids_match_acknowledgements": None, "refused_ids_absent": None,
                    "by_outcome": outcomes, "worker_errors": errors,
                    "compaction_queue_max_bytes": queue, "blocked_writers_max": blocked,
                    "memory_level0_max_bytes": level0, "unexpected_errors": unexpected,
-                   "rate_limit_witness": {"control_node": self.nodes[0], "control_realtime": source_limit["realtime"],
-                                          "configured_mib_per_second": source_limit["limit"],
+                   "rate_limit_witness": {"control_node": self.nodes[0], "control_realtime": metric(source_limit, "realtime"),
+                                          "configured_mib_per_second": metric(source_limit, "limit"),
                                           "control_native_rate_limit": control_rate,
                                           "control_observed_limit": control_limit,
                                           "periodic_min": min(rates, default=None),
                                           "periodic_max": max(rates, default=None),
                                           "periodic_observed_limit": periodic_limit},
+                   "schedule": timing, "control_timings": phase_result["controls"] if phase_result else [],
+                   "workers_live": workers_live, "sampler_live": sampler.is_alive(),
+                   "inflight": pending, "diagnostics_frozen_monotonic": frozen_monotonic,
+                   "restore_errors": restore_errors, "drain_errors": drain_errors, "metric_error": metric_error,
+                   "evidence_errors": evidence_errors,
+                   "primary_failure": {"stage": primary[0], "type": type(primary[1]).__name__,
+                                       "message": str(primary[1])} if primary else None,
                    "error_counts": dict(collections.Counter(str(row.get("error")) for row in records if row["result"] == "error"))}
         summary_path = self.evidence / "pressure-summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2) + "\n")
-        assert not any(thread.is_alive() for thread in writers) and not sampler.is_alive(), "pressure worker exceeded drain cap"
-        assert not errors, errors
-        assert len(records) == attempts[0] and records and samples, (len(records), attempts, len(samples))
-        assert attempts[0] < 20000, "attempt cap reached before sustained pressure completed"
-        assert success and refused and not unexpected, (len(success), len(refused), unexpected)
-        with self.connect() as c:
-            actual = {row[0] for row in q(c, "SELECT id FROM p WHERE tenant_id=%s", (tenant,))}
-        summary.update(stored_ids_match_acknowledgements=actual == success,
-                       refused_ids_absent=not bool(actual & refused))
-        summary_path.write_text(json.dumps(summary, indent=2) + "\n")
-        assert actual == success and not (actual & refused), "acknowledged/refused key identities differ from stored rows"
-        assert all(row["engine"] == "vinyl" and row["vinyl_memory"] == identity["vinyl_memory"]
-                   and row["vinyl_cache"] == 0 and row["vinyl_timeout"] == identity["vinyl_timeout"] for row in samples)
-        assert any(row["snap_io_rate_limit"] == .5 for row in samples), "native I/O control was not sampled"
-        assert source_limit["limit"] == .5
-        # The setting's immediate raw receipt and the independent periodic
-        # pressure samples have different jobs. Tarantool can recompute the
-        # regulator after a dump; do not require the setting's initial value
-        # to persist until the periodic sampler happens to run.
-        assert control_limit or periodic_limit, "real regulator limit was not observed"
-        assert queue > 0, "no actual queued compaction input; pressure fixture did not exercise compaction"
-        assert blocked > 0 or level0 >= .75 * identity["vinyl_memory"] or queue >= identity["vinyl_memory"], "no actual native pressure witness"
-        assert any(index["run_count"] > index["range_count"] > 0 for row in samples for index in row["indices"]), "no real run amplification"
-        for result in ("ok", "error"):
-            assert outcomes[result]["max_ms"] < self.args.max_latency_ms, (result, outcomes[result])
+        def persist(value):
+            summary_path.write_text(json.dumps(value, indent=2) + "\n")
+        def check(value):
+            if primary:
+                raise primary[1].with_traceback(primary[2])
+            value["check_stage"] = "restore"
+            assert not restore_errors, restore_errors
+            value["check_stage"] = "drain"
+            assert not drain_errors, drain_errors
+            value["check_stage"] = "workers"
+            assert not errors, errors
+            assert len(records) == timing["attempts"] and records and samples, (len(records), timing["attempts"], len(samples))
+            value["check_stage"] = "phase coverage"
+            assert timing["attempts"] <= PRESSURE_ATTEMPT_CAP, "hard attempt cap exceeded"
+            assert timing["finished"] and timing["finish_reason"] == "completed"
+            for window in timing["phases"]:
+                assert (window["close_reason"] == "completed" and window["opened_monotonic"] is not None
+                        and window["closed_monotonic"] >= window["deadline_monotonic"]), window
+                assert all(worker["dispatched"] > 0 for worker in window["workers"]), window
+                assert sum(worker["reserved"] + worker["skipped"] for worker in window["workers"]) <= window["slot_budget"], window
+            value["check_stage"] = "outcomes"
+            assert success and refused and not unexpected, (len(success), len(refused), unexpected)
+            value["check_stage"] = "readback"
+            assert value["readback"]["status"] == "complete", value["readback"]
+            assert (value["stored_ids_match_acknowledgements"] and value["refused_ids_absent"]), \
+                "acknowledged/refused key identities differ from stored rows"
+            value["check_stage"] = "native pressure witness"
+            assert metric_error is None, metric_error
+            assert all(row["engine"] == "vinyl" and row["vinyl_memory"] == identity["vinyl_memory"]
+                       and row["vinyl_cache"] == 0 and row["vinyl_timeout"] == identity["vinyl_timeout"] for row in samples)
+            assert any(row["snap_io_rate_limit"] == .5 for row in samples), "native I/O control was not sampled"
+            assert source_limit is not None and source_limit["limit"] == .5, "no confirmed limited-I/O receipt"
+            # A completed dump may recompute the native regulator before
+            # the periodic sampler; either genuine observation can witness it.
+            assert control_limit or periodic_limit, "real regulator limit was not observed"
+            assert queue is not None and queue > 0, "no actual queued compaction input; pressure fixture did not exercise compaction"
+            trigger = compaction.get("trigger")
+            window = timing["phases"][1]
+            assert trigger and (window["opened_monotonic"] <= trigger["observed_monotonic"]
+                                < window["deadline_monotonic"]), "missing in-window native compaction receipt"
+            assert metric(trigger, "native", "scheduler", "compaction_queue") > 0, \
+                "same-call native compaction receipt has no queued input"
+            prior = {i["id"]: i["compaction"]["count"] for i in compaction["prepared"]["indices"]}
+            assert any(i["compaction"]["count"] > prior[i["id"]]
+                       for row in samples for i in row["indices"]), "no completed native compaction of the fixture"
+            assert (blocked is not None and blocked > 0 or level0 is not None and level0 >= .75 * identity["vinyl_memory"]
+                    or queue >= identity["vinyl_memory"]), "no actual native pressure witness"
+            assert any(index["run_count"] > index["range_count"] > 0 for row in samples for index in row["indices"]), "no real run amplification"
+            value["check_stage"] = "latency"
+            for result in ("ok", "error"):
+                assert outcomes[result]["max_ms"] < self.args.max_latency_ms, (result, outcomes[result])
+            value["check_stage"] = "complete"
+        finalize_pressure(summary,
+                          audit=lambda: audit_pressure_keys(self.connect, tenant, records, pending, workers_live),
+                          persist=persist, check=check)
         self.record("real_pressure_completed", summary=summary)
         print("  pressure " + json.dumps({
             "attempts": summary["attempts"], "acknowledged": len(success), "refused_1205": len(refused),
             "success_latency_ms": outcomes["ok"], "refusal_latency_ms": outcomes["error"],
             "compaction_queue_bytes": queue, "blocked_writers": blocked,
-            "acknowledged_and_refused_ids_verified": actual == success and not bool(actual & refused),
+            "acknowledged_and_refused_ids_verified": summary["stored_ids_match_acknowledgements"] and summary["refused_ids_absent"],
         }, sort_keys=True), flush=True)
 
     def cleanup(self):
         errors = []
+        if (getattr(self, "pressure_preserve_database", False)
+                or any(thread.is_alive() for thread in getattr(self, "pressure_threads", []))):
+            # Never DROP underneath a client whose outcome is still live.
+            self.record("cleanup", errors=[], preserved_database=self.db, reason="pressure writers still live")
+            self.events.close()
+            return
         if self.created:
             try:
                 with self.connect(database=False) as c:
@@ -617,6 +1083,7 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
             raise AssertionError("; ".join(errors))
 
     def run(self):
+        failed = False
         try:
             self.setup()
             for name in ("test_telemetry", "test_unknown_metric_is_null",
@@ -634,8 +1101,18 @@ return {realtime=require('clock').realtime(),native=box.stat.vinyl(),
                 self.test_real_native_pressure()
                 self.completed += 1
                 print("  ok  test_real_native_pressure", flush=True)
+        except BaseException:
+            failed = True
+            raise
         finally:
-            self.cleanup()
+            try:
+                self.cleanup()
+            except BaseException:
+                if not failed:
+                    raise
+                # cleanup() already retained its own error. Keep the
+                # original stage/witness exception as the run's failure.
+                traceback.print_exc()
 
 
 def main():

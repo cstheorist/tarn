@@ -360,44 +360,74 @@ function M.new(c)
         return t
     end
     function E.build(name, a, gen, deadline)
+        -- E.body's registry refresh may have yielded since its entry cut.
+        -- Reacquire only before entering a stage, never by retrying a
+        -- transaction/commit that raised or may still have native effects.
+        ready(deadline)
         local r = start(name, a, gen, deadline)
-        if r.phase == 'prepared' or r.phase == 'applying' or r.phase == 'published' then return {'ok', 'applied'} end
+        local function certified(v)
+            return v.phase == 'prepared' or v.phase == 'applying' or v.phase == 'published'
+        end
+        if certified(r) then return {'ok', 'applied'} end
         local x, restarts = bound(a), 0
+        local function current(v, t, epoch)
+            return q.ready() and (epoch == nil or q.epoch == epoch)
+                   and capture_valid(t) and E.tracks[x.old_id] == t and t.token == v.capture
+        end
         repeat
+            -- A cut may be lost between successful stages. Nothing sampled
+            -- below survives this wait: reread ownership, phase and capture
+            -- only after the terminal-ticket/native prefix is current.
+            ready(deadline)
             r = read(function() return owned(a, gen) end)
+            if certified(r) then return {'ok', 'applied'} end
+            if r.phase ~= 'resetting' and r.phase ~= 'copying' and r.phase ~= 'copied'
+               and r.phase ~= 'preparing' then fail(1412, 'Engine copy phase changed') end
             local t = E.tracks[x.old_id]
             if r.phase == 'resetting' or not capture_valid(t) or t.token ~= r.capture then
                 restarts = restarts + 1
                 if restarts > 8 then fail(1205, 'Engine copy repeatedly lost its capture; retry the ALTER') end
                 t = reset(a, gen, deadline)
                 r = read(function() return owned(a, gen) end)
+                if certified(r) then return {'ok', 'applied'} end
             end
-            if r.phase == 'copied' then return {'ok'} end
-            if r.phase ~= 'copying' then fail(1412, 'Engine copy phase changed') end
-            local rows, cursor = read(function()
-                local sp = check_source(a)
-                local out, bytes, last = {}, 0, r.cursor
-                local opts, from = {iterator = 'ALL'}, {}
-                if not nilish(last) then opts.iterator, from = 'GT', last end
-                for _, tuple in sp.index[0]:pairs(from, opts) do
-                    if #out > 0 and (#out >= (c.cfg.engine_copy_rows or 128)
-                       or bytes + tuple:bsize() > 1024 * 1024) then break end
-                    out[#out + 1], bytes = tuple, bytes + tuple:bsize()
-                    last = c.key_def(sp.id, 0):extract_key(tuple):totable()
+            -- reset() can return a confirmed copying receipt after a
+            -- status callback invalidated its volatile cut/capture. Do not
+            -- enter even the first page transaction with that old state.
+            if current(r, t) then
+                if r.phase == 'copied' then return {'ok'} end
+                if r.phase ~= 'copying' then fail(1412, 'Engine copy phase changed') end
+                local epoch = q.epoch
+                local rows, cursor = read(function()
+                    local sp = check_source(a)
+                    local out, bytes, last = {}, 0, r.cursor
+                    local opts, from = {iterator = 'ALL'}, {}
+                    if not nilish(last) then opts.iterator, from = 'GT', last end
+                    for _, tuple in sp.index[0]:pairs(from, opts) do
+                        if #out > 0 and (#out >= (c.cfg.engine_copy_rows or 128)
+                           or bytes + tuple:bsize() > 1024 * 1024) then break end
+                        out[#out + 1], bytes = tuple, bytes + tuple:bsize()
+                        last = c.key_def(sp.id, 0):extract_key(tuple):totable()
+                    end
+                    return {out, last}
+                end)
+                cursor, rows = rows[2], rows[1]
+                -- A confirmed Vinyl page read can yield too. If its
+                -- lease/cut was lost, discard the page and cursor before
+                -- re-entry; never relabel old payload under a new capture.
+                if current(r, t, epoch) then
+                    transaction(function()
+                        local v = owned(a, gen, {copying = true})
+                        if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end
+                        local shadow = box.space[v.new_id]
+                        for _, tuple in ipairs(rows) do shadow:replace(tuple) end
+                        v.cursor, v.copied = cursor, v.copied + #rows
+                        if #rows == 0 then v.phase = 'copied' end
+                        replace_record(v)
+                    end, function() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end)
+                    if #rows > 0 then c.hook('engine_copy') end
                 end
-                return {out, last}
-            end)
-            cursor, rows = rows[2], rows[1]
-            transaction(function()
-                local v = owned(a, gen, {copying = true})
-                if not capture_valid(t) or E.tracks[x.old_id] ~= t then fail(1213, 'Engine capture was lost') end
-                local shadow = box.space[v.new_id]
-                for _, tuple in ipairs(rows) do shadow:replace(tuple) end
-                v.cursor, v.copied = cursor, v.copied + #rows
-                if #rows == 0 then v.phase = 'copied' end
-                replace_record(v)
-            end, function() if not capture_valid(t) then fail(1213, 'Engine capture was lost') end end)
-            if #rows > 0 then c.hook('engine_copy') end
+            end
             fiber.sleep(0)
         until false
     end
