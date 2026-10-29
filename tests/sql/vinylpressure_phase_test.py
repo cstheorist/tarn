@@ -139,6 +139,54 @@ class PhaseControls(unittest.TestCase):
         self.assertEqual(len(clients.calls), pressure.PRESSURE_ATTEMPT_CAP)
         self.assertEqual({x['phase'] for x in clients.calls}, {pressure.PRESSURE_PHASES[0]})
 
+    def test_compaction_preparation_parks_writers_and_receipt_keeps_original_deadline(self):
+        schedule = pressure.PressureSchedule(8, 5)
+        clients = VirtualWriters(schedule, 8)
+        prepared, requested = [], []
+        def prepare():
+            self.assertIsNone(schedule.active)
+            self.assertEqual({x['phase'] for x in clients.calls}, {pressure.PRESSURE_PHASES[0]})
+            for worker in range(8):
+                self.assertEqual(schedule.claim(worker, clients.now)['kind'], 'wait')
+            prepared.append(clients.now)
+        def opened(name):
+            if name == pressure.PRESSURE_PHASES[1]:
+                self.assertEqual(len(prepared), 1)
+                for worker in range(8):
+                    clients.serve(worker)
+                requested.append(clients.now)
+                clients.now += .5  # Native receipt latency consumes the existing window.
+        result = pressure.run_pressure_phases(schedule, clients.io_limit, clients.wait,
+                                             now=lambda: clients.now, prepare_limited=prepare, opened=opened)
+        self.assertIsNone(result['primary'])
+        self.assertEqual(len(requested), 1)
+        limited = schedule.snapshot()['phases'][1]
+        self.assertEqual(limited['closed_monotonic'], limited['opened_monotonic'] + 5)
+        self.assertTrue(all(w['dispatched'] > 0 for w in limited['workers']))
+
+    def test_compaction_preparation_failure_restores_io_without_opening_limited_window(self):
+        schedule = pressure.PressureSchedule(2, 5)
+        clients = VirtualWriters(schedule, 2)
+        def fail():
+            raise RuntimeError('native disk runs unavailable')
+        result = pressure.run_pressure_phases(schedule, clients.io_limit, clients.wait,
+                                             now=lambda: clients.now, prepare_limited=fail)
+        self.assertEqual(result['primary'][0], 'compaction run preparation')
+        self.assertEqual([x[1] for x in clients.receipts], [0, 0])
+        self.assertIsNone(schedule.snapshot()['phases'][1]['opened_monotonic'])
+
+    def test_compaction_receipt_failure_still_closes_window_and_restores_io(self):
+        schedule = pressure.PressureSchedule(2, 5)
+        clients = VirtualWriters(schedule, 2)
+        def fail(name):
+            if name == pressure.PRESSURE_PHASES[1]:
+                raise RuntimeError('native compaction receipt lost')
+        result = pressure.run_pressure_phases(schedule, clients.io_limit, clients.wait,
+                                             now=lambda: clients.now, opened=fail)
+        self.assertEqual(result['primary'][0], pressure.PRESSURE_PHASES[1] + ' opening control')
+        self.assertEqual([x[1] for x in clients.receipts], [0, .5, 0])
+        self.assertEqual(schedule.snapshot()['phases'][1]['close_reason'], 'aborted')
+
     def test_missed_slots_do_not_create_catchup_burst(self):
         schedule = pressure.PressureSchedule(2, 20)
         schedule.open_phase(pressure.PRESSURE_PHASES[0], 0)

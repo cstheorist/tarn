@@ -2267,6 +2267,29 @@ the complete release SQL and live-fault matrix remains required.
 
 ## Continuous integration
 
+### Bounded real compaction input (issue #195)
+
+The retained zero-queue run had multiple disk runs but no queued bytes.
+Tarantool's per-level compaction eligibility is separate from run count;
+memory-quota pressure alone does not force a suitable merge. The pressure
+fixture now seeds 512 random 8 KiB rows under a separate, collocated tenant.
+Between the warmup and limited windows, with writers parked and I/O uncapped,
+it checkpoints and compacts the old image, waits at most 15 seconds for one
+run per range, then checkpoints 32 small additional rows into a new level.
+The measured writers retain their 20,000-attempt bound and separate exact
+acknowledged/refused/unknown-key audit; setup mutations are never replayed.
+
+In the active limited writer window, a supported `index:compact()` request
+and actual native statistics are collected in one RPC. The queue must be
+positive in that receipt and a later native index compaction count must
+advance. Periodic raw samples, actual I/O/regulator/quota refusals, every
+writer's phase coverage, bounded deadlines and failure-time exact readback
+remain required. This establishes actual compaction work without relying
+on a 200 ms sampler catching a short natural-eligibility window. It does
+not prove that compaction caused a particular refusal or establish latency
+or production capacity. [Original summary and native primitive control](../tests/evidence/vinyl-pressure-195/)
+retain their narrower evidence boundaries.
+
 `.github/workflows/ci.yml` runs on every push and pull request:
 
 * **lint**: `cargo fmt --check` and `cargo clippy -D warnings`;
