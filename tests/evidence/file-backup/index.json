@@ -1,0 +1,172 @@
+{
+  "format": "tarn-file-backup-evidence-v1",
+  "studies": [
+    {
+      "label": "reference",
+      "path": "bench/results_file_backup_reference.json",
+      "sha256": "0ae88cc95f5b09a2ffbfc1181d5bf59e497a8077cf78aa7052689e14bd3f5a64",
+      "source_revision": "ec1401ecd706c4c0254c0854d13b056db20a67db",
+      "completed": true,
+      "scope": "Completed 10 GiB acceptance, three backups and three matched candidate pairs; confirmed fixture reused after controller failure."
+    },
+    {
+      "label": "ci",
+      "path": "bench/results_file_backup_ci.json",
+      "sha256": "0c685b53155e6eca88c8fcfea3eff8878a50e501d75b18598e2737da5874f510",
+      "source_revision": "ec1401ecd706c4c0254c0854d13b056db20a67db",
+      "completed": true,
+      "scope": "Completed 2 GiB scale job; wider Tests job failed Vinyl concurrent-DDL test_online on one 1205 write deadline, with acknowledged sums preserved.",
+      "workflow_run": "https://github.com/cstheorist/tarn/actions/runs/40897427899"
+    },
+    {
+      "label": "ci_serial",
+      "path": "bench/results_file_backup_ci_serial.json",
+      "sha256": "6c0666dddd02c801f41edea34685e5ed9e48f70fde512802255fc4e1fc9bb612",
+      "source_revision": "900e71f16f57384e6bb0a5739c7cc169f6e8929f",
+      "completed": true,
+      "scope": "Completed 2 GiB scale job; wider run superseded by next validation ref dispatch.",
+      "workflow_run": "https://github.com/cstheorist/tarn/actions/runs/40891371139"
+    },
+    {
+      "label": "ci_ordered",
+      "path": "bench/results_file_backup_ci_ordered.json",
+      "sha256": "df622c30d5cb03ba2e28e8473385016b571ff65eed053a9d14cd26e5bf82bbfb",
+      "source_revision": "a487471b004d790b8b6045476e6028f3b18dab6f",
+      "completed": true,
+      "scope": "Completed 2 GiB scale job; entire ordinary CI run passed.",
+      "workflow_run": "https://github.com/cstheorist/tarn/actions/runs/40888068812"
+    },
+    {
+      "label": "ci_initial",
+      "path": "bench/results_file_backup_ci_initial.json",
+      "sha256": "38324ee0bf1b4eb05f0cc9e9210a2d7151b5b0589dbee8665fe5fbb5ee647cb3",
+      "source_revision": "a87201ca017f85fbb6d6394bbe40690db49732e9",
+      "completed": true,
+      "scope": "Completed 2 GiB scale job; ordinary CI cancelled by next original-branch dispatch.",
+      "workflow_run": "https://github.com/cstheorist/tarn/actions/runs/40885381400"
+    },
+    {
+      "label": "read_rehearsal",
+      "path": "bench/results_file_backup_read_rehearsal.json",
+      "sha256": "e914df4a57b7d3896312141f806d9f8a5f3522fe52b7ffff85877f80efd29aee",
+      "source_revision": "3a44e4d",
+      "completed": true,
+      "scope": "Completed 512 MiB development rehearsal from a working tree; not a clean final performance comparison."
+    },
+    {
+      "label": "write_failure",
+      "path": "bench/results_file_backup_write_failure.json",
+      "sha256": "48faff7c781be80968368df34bb4e95e2b4b4b23105a03f6ee7cb5d722d390b7",
+      "source_revision": "64055d5",
+      "completed": false,
+      "scope": "Failed 512 MiB write-active rehearsal: full-join candidate timed out creating first checkpoint. Driver interrupted after owned candidate death; empty KeyboardInterrupt error does not mean success."
+    },
+    {
+      "label": "load_failure_initial",
+      "path": "bench/results_file_backup_load_failure_initial.json",
+      "sha256": "a6b1d987d5388dd11d56a8d11ce58485e41b4dd7734ccd1696073bbf3b42a548",
+      "source_revision": "a87201ca017f85fbb6d6394bbe40690db49732e9",
+      "completed": false,
+      "scope": "Incomplete 10 GiB load after pre-registration raised automatic quorum; READONLY after replication timeouts. Retained, not a completed size result."
+    },
+    {
+      "label": "load_failure_clock",
+      "path": "bench/results_file_backup_load_failure_clock.json",
+      "sha256": "b4b2c26d6b8bef8f65e24397ee22323f4ca9a56b2ac060e4d5340c09c8108196",
+      "source_revision": "a487471b004d790b8b6045476e6028f3b18dab6f",
+      "completed": false,
+      "scope": "Incomplete 10 GiB load on clock-readiness serialization refusal; no guard weakened. Later loader bounded only matched no-effect refusals."
+    },
+    {
+      "label": "controller_failure",
+      "path": "bench/results_file_backup_controller_failure.json",
+      "sha256": "7c92557fa642e1fdf5f8c6bf55828401d579c6b4fc4eac6a71dafac997231ce1",
+      "source_revision": "900e71f16f57384e6bb0a5739c7cc169f6e8929f",
+      "completed": false,
+      "scope": "10 GiB load completed, controller failed by repeatedly running full count with a two-second RPC bound. No backup/timing acceptance. Confirmed fixture reused by reference without replaying inserts."
+    },
+    {
+      "label": "safety_native",
+      "path": "tests/evidence/file-backup/safety_native.json",
+      "sha256": "9fb18e1204b6e0b4da7ed2c77621efd2952f7b49eea4b145656dff898104f773",
+      "source_revision": "ec1401ecd706c4c0254c0854d13b056db20a67db",
+      "completed": true,
+      "scope": "Completed native final election-off/incomplete/corruption/path/lease/death/seed controls; source_revision names ec1401e plus uncommitted rejection guard; per-file source hashes identify actual tested code."
+    },
+    {
+      "label": "safety_lua",
+      "path": "tests/evidence/file-backup/safety_lua.json",
+      "sha256": "fcf7251e386a099b76fb1f12f303d71cd644b839099278e891c67186cdbdc83e",
+      "source_revision": "ec1401ecd706c4c0254c0854d13b056db20a67db",
+      "completed": true,
+      "scope": "Completed Lua-only controls on the same final rejection guard; not a timing study."
+    },
+    {
+      "label": "integrated_native",
+      "path": "tests/evidence/file-backup/integrated_native.json",
+      "sha256": "a103db192ee34eb80e2f036431a7c7aea07d2fbe9e4fe19934db56a1895d79d5",
+      "source_revision": "66a4c41",
+      "completed": true,
+      "scope": "Final main-integrated implementation at 66a4c41, all recorded source hashes verified against that commit. Real RF3 recovery and all negative controls; one small pair is correctness evidence, not a benchmark."
+    },
+    {
+      "label": "integrated_lua",
+      "path": "tests/evidence/file-backup/integrated_lua.json",
+      "sha256": "d84b02f4ed8dcc8213dc2573a722079c97ffb6c31ad364ea4539b48de86a3f61",
+      "source_revision": "66a4c41",
+      "completed": true,
+      "scope": "Final main-integrated implementation at 66a4c41, all recorded source hashes verified against that commit. Real RF3 recovery and all negative controls; one small pair is correctness evidence, not a benchmark."
+    }
+  ],
+  "bounded_log_excerpts": [
+    {
+      "path": "tests/evidence/file-backup/backup-scale-rehearsal3-node0-5864bf9119d545de92f6bd257d526781.log.txt",
+      "sha256": "265486d485ac1af024b2587a34cd1a92fc128ff8972d5c2c8e679d25eddce33a"
+    },
+    {
+      "path": "tests/evidence/file-backup/backup-scale-rehearsal3-node1-f11e0338d65442d88105d9f6ef6f26d3.log.txt",
+      "sha256": "9b135ab0b5219650a9eefa6ff57bb5a446f95af76262585f62ade7e91ff4599d"
+    },
+    {
+      "path": "tests/evidence/file-backup/backup-scale-rehearsal3-node2-84ccbcdf26e64b0a9f9ef5af8260b691.log.txt",
+      "sha256": "2484de32e4f559459c3c1804caf0269cf91347d6339c196fea83344124ee2812"
+    },
+    {
+      "path": "tests/evidence/file-backup/backup-scale-rehearsal3-node3-5570132021744492aa3c38e464ef1d6c.log.txt",
+      "sha256": "f982f79cc098ec9ea474a563f04c02a1645bbe61446a6f38a8294bb4a5545d69"
+    },
+    {
+      "path": "tests/evidence/file-backup/ci-40897427899-ddl-failure.txt",
+      "sha256": "474403028a232325e08f3e994e14763e0bf13461ece22cd1a0153bc9178af4a9"
+    },
+    {
+      "path": "tests/evidence/file-backup/clock-readiness-load-failure-node0-aec1510292144c6fb79f50aa93b6a0a9.log.txt",
+      "sha256": "1e8a35399b0ba5fd8ec5c8c5eea5bdc9a282cf014d131b0a4f2a24fe4f0be39a"
+    },
+    {
+      "path": "tests/evidence/file-backup/clock-readiness-load-failure-node1-b1f6674639de48c690b7b906fe6a6825.log.txt",
+      "sha256": "6daeef64a2ea759812cbfc1338b10243d60421e1da31b8fdc4d3d1c2c1ee83d1"
+    },
+    {
+      "path": "tests/evidence/file-backup/clock-readiness-load-failure-node2-5a9f9da847324316a99d1e3e000137e6.log.txt",
+      "sha256": "56255e1b3ef4c804a4a83ec5e221874b40e363c915c2d94b03ef95ab0af41515"
+    },
+    {
+      "path": "tests/evidence/file-backup/tarn-backup-reference-10g-node0-78d787dae6724334a07ab727e9cb38c2.log.txt",
+      "sha256": "f7d582d5384816eb9fba65b1fc97b01b8837da06e61a1f717e6fd137d8f2f8db"
+    },
+    {
+      "path": "tests/evidence/file-backup/tarn-backup-reference-10g-node1-f6309fcd960f442189fc17a1eb8453a7.log.txt",
+      "sha256": "d84bf66edccb5a96ac69f5f3f7af5b0885c797e1f2aff29504dfd31911f68439"
+    },
+    {
+      "path": "tests/evidence/file-backup/tarn-backup-reference-10g-node2-67751641c8c248388e55336bd050749f.log.txt",
+      "sha256": "5a6e60fd4f6616e24172f11029162d31a3564bc12056ec421d0b5079254a0a91"
+    },
+    {
+      "path": "tests/evidence/file-backup/integrated-models.txt",
+      "sha256": "20cf7f0edab9e2840a0283f658093a3e6b66afb9814ce0712eacb299f7691524"
+    }
+  ],
+  "limits": "Manifests and whole study records, not payload/WAL. CI artifacts retain complete owned logs for 30 days. Development and failed attempts remain separate from final comparisons."
+}
