@@ -6,7 +6,7 @@ Only the registered histories/shapes are classified. Existing MariaDB differenti
 
 Primary InnoDB oracle: MySQL **8.4.13**, `mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7`.
 
-Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8mb4_bin` `+00:00` and `max_error_count=64`. Receipts retain the actual version, settings, client capability flags, protocol mode, manifest hash and every result/failure. These fixtures classify their explicit histories; they do not certify all SQL modes, collations or query shapes.
+Connections pin `STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION`, `utf8mb4` / `utf8mb4_bin`, `+00:00` and `max_error_count=64`. Receipts retain the actual version, settings, client capability flags, protocol mode, manifest hash and every result/failure. These fixtures classify their explicit histories; they do not certify all SQL modes, collations or query shapes.
 
 | Contract/test ID | Classification | Guaranteed scope / observed difference |
 |---|---|---|
