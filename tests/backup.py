@@ -127,7 +127,6 @@ return true
         seeded_uuid=str(uuid.uuid4());candidate=args.replicas
         candidate_name='shard1_127_0_0_1_'+str(ports[candidate])
         assert leader==0,'fixture pins one leader; all other sources are voters'
-        rpc(leader,"box.space._cluster:auto_increment{%s,%s};return true"%(json.dumps(seeded_uuid),json.dumps(candidate_name)))
         for i in range(args.replicas):rpc(i,'box.cfg{checkpoint_interval=2,checkpoint_count=1};return true')
         rpc(leader,"""
 local function good(r) assert(r[1]=='ok',require('json').encode(r)) end
@@ -182,6 +181,10 @@ box.snapshot();return {rows=box.space[88001].index[0]:count(),version=box.info.v
             for i in range(args.replicas):rpc(i,'box.snapshot();return true')
         source=work/('source'+str(leader))
         for i in range(args.replicas):await_rpc(i,'return box.space[88001]~=nil and box.space[88001].index[0]:count()=='+str(args.rows))
+        # Populate the existing RF3 first. Registering a dormant fourth member
+        # before bulk load raises quorum to three and removes its spare voter.
+        registration=rpc(leader,"local r=box.space._cluster:auto_increment{%s,%s};box.snapshot();return {id=r[1],uuid=r[2],quorum=box.info.synchro.quorum}"%(json.dumps(seeded_uuid),json.dumps(candidate_name)))
+        record['registration']=registration
         digest_code="""
 local d=require('crypto').digest.sha256.new();local n=0
 for _,t in box.space[88001]:pairs() do d:update(require('msgpack').encode(t:totable()));n=n+1; if n%128==0 then require('fiber').sleep(0);collectgarbage('step',256) end end

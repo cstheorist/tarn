@@ -1345,3 +1345,10 @@ Tarantool 3.9 full-join first-checkpoint timeout. The matched timing studies
 therefore use the same read-only point workload on both paths. Write-active
 bootstrap capacity is not established by those studies; the failed run and
 its source/settings remain part of the retained evidence.
+
+The scale fixture fills the existing RF3 before registering its dormant
+fourth member. An earlier 10 GiB setup registered it before filling and
+failed during ingestion after replication timeouts/temporary read-only
+fencing: that configuration required all three live replicas for every
+synchronous write. The failure is retained; fixture setup order changed,
+with quorum, durability and failure-detection settings preserved.
