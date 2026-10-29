@@ -370,6 +370,7 @@ mod tests {
     fn mysql_declarations_refuse_approximation_without_reinterpreting_legacy() {
         let cat = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
