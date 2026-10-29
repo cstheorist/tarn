@@ -23,6 +23,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Register the cross-client outcome contract and RF3/fsync fault histories,
   including statement/transaction rollback, pending APPLY and operation IDs.
 
+- Lazy-index owner hints now expire immediately when the local bucket map
+  changes. A completed handoff can no longer leave immediate garbage
+  collection contacting the old source owner until the cache TTL expires;
+  frontier and floor proof checks remain unchanged
+  ([#163](https://github.com/cstheorist/tarn/issues/163)).
+- The native RF3 freshness fixture distinguishes a controlled native-path
+  witness from a legitimate post-barrier stale-bucket handback (#170).
+  It schedules the actual production status callback without replacing
+  freshness/cache checks, preserves stream/read-set and no-replay assertions,
+  records the real status payload, and exports source/module/process and
+  pre-pause/pending/post-yield evidence from CI on success or failure.
 - The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
   across the warmup, limited-I/O and release windows, so fast writers cannot
   consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).
@@ -98,6 +109,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Optional bounded cardinality hints and conservative two-table inner-join
+  reordering ([#136](https://github.com/cstheorist/tarn/issues/136)).
+  `ANALYZE TABLE` now collects gateway-local integer-prefix statistics,
+  invalidates plans by generation and reports MariaDB analyze status.
+  `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
+  count actual decoded storage tuples separately from RPCs.
 - Physical per-shard file backups and verified restores with bounded copy
   rates, owned expiring GC leases and incomplete-directory refusal
   ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a

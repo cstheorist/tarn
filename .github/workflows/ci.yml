@@ -142,6 +142,8 @@ jobs:
           ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
       - name: Query plans and bounded routing diagnostics
         run: ci/annotate.sh explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
+      - name: Bounded statistics and inner-join reordering
+        run: ci/annotate.sh statisticstest python3 tests/sql/statisticstest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
       - name: Transaction tests
         run: ci/annotate.sh txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
       - name: READ COMMITTED tests
@@ -169,6 +171,7 @@ jobs:
           ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh vinyl-explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
+          ci/annotate.sh vinyl-statisticstest python3 tests/sql/statisticstest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
           ci/annotate.sh vinyl-rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
           ci/annotate.sh vinyl-ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
@@ -249,6 +252,24 @@ jobs:
             [ -f "$f" ] && { echo "::group::$f"; tail -n 60 "$f"; echo "::endgroup::"; }
           done
           true
+      - name: Retain native freshness evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-freshness-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          path: |
+            /tmp/tarn-lua-test.*/native-freshness-*/events.jsonl
+            /tmp/tarn-lua-test.*/native-freshness-*/source.sha256
+            /tmp/tarn-lua-test.*/native-freshness-*/native.sha256
+            /tmp/tarn-lua-test.*/native-freshness-*/tarantool.sha256
+            /tmp/tarn-lua-test.*/native-freshness-*/tarantool-version.txt
+            /tmp/tarn-lua-test.*/native-freshness-*/control
+            /tmp/tarn-lua-test.*/native-freshness-*/cleanup.txt
+            /tmp/tarn-lua-test.*/native-freshness-*/s*.process-identity
+            /tmp/tarn-lua-test.*/native-freshness-*/s*.pid
+            /tmp/tarn-lua-test.*/native-freshness-*/s*.log
+            /tmp/tarn-lua-test.*/native-freshness-*/s*/status-events.jsonl
 
   tla:
     if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost

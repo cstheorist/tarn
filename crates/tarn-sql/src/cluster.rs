@@ -582,12 +582,14 @@ pub struct Stats {
 }
 
 pub struct CachedPlan {
+    pub(crate) statistics_generation: Option<u64>,
     pub version: u64,
     pub stmt: crate::plan::Stmt,
     pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
+    pub statistics: crate::statistics::Statistics,
     pub(crate) rpc_global: tarn_iproto::Budget,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
@@ -954,6 +956,7 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            statistics: crate::statistics::Statistics::default(),
             rpc_global,
             cfg,
             shards,
@@ -1455,7 +1458,10 @@ impl Cluster {
             .read()
             .get(&(db.to_string(), template.to_string()))
             .cloned()?;
-        if p.version == v {
+        if p.version == v
+            && p.statistics_generation
+                .is_none_or(|g| self.statistics.snapshot(v).generation == g)
+        {
             self.stats.plan_cache_hits.fetch_add(1, Ordering::Relaxed);
             Some(p)
         } else {

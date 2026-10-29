@@ -50,6 +50,13 @@ specifies capture, delivery, session catch-up, bootstrap and topology rules.
 | `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads, writes and commits without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec, their lock checks through the Verus-verified counts of a copy of the lock index. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
+Optional [cardinality hints](operations.md#optional-cardinality-statistics)
+can reorder eligible two-table integer-equality inner joins. A bounded,
+explicit ANALYZE samples index prefixes; schema/expiry generations invalidate
+plans. Estimates affect physical order only: predicates, read sets, OCC and
+buffered-write overlays retain their existing contracts. SQL column layout
+and metadata are preserved through the physical permutation.
+
 ### 1.1 Data layout and routing
 
 * Table `db.t` is the Tarantool space `"db.t"` with one field per column (same

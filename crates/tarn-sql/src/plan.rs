@@ -139,6 +139,7 @@ pub struct AggPlan {
 
 #[derive(Clone, Debug)]
 pub struct SelectPlan {
+    pub join_estimate: Option<serde_json::Value>,
     pub source: Source,
     pub filter: Option<Expr>,
     pub agg: Option<AggPlan>,
@@ -246,6 +247,17 @@ pub enum Stmt {
 }
 
 impl Stmt {
+    /// Statistics only influence join plans. Point/single-table cache hits
+    /// must not inspect hints or churn when another table is analyzed.
+    pub(crate) fn uses_statistics(&self) -> bool {
+        match self {
+            Stmt::Select(p) => matches!(p.source, Source::Join { .. }),
+            Stmt::Insert(p) => matches!(&p.source,InsertSource::Select(s,_) if matches!(s.source,Source::Join { .. })),
+            Stmt::Explain { statement, .. } => statement.uses_statistics(),
+            _ => false,
+        }
+    }
+
     pub fn is_read_only(&self) -> bool {
         matches!(self, Stmt::Select(_) | Stmt::Explain { .. })
     }

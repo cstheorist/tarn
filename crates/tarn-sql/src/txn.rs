@@ -1675,6 +1675,9 @@ fn join_rows_of(d: &Bytes, reads: &[JoinRead<'_>]) -> SqlResult<JoinedRead> {
     if !rd.buf.is_empty() || (complete && n != reads.len()) || (!complete && n != 0) {
         return Err(crate::mpw::proto("partial or malformed co-located read reply"));
     }
+    if complete {
+        crate::observe::storage_rows(out.iter().map(|s| s.rows.len()).sum());
+    }
     Ok(if complete {
         JoinedRead::Complete(out)
     } else {
@@ -1696,6 +1699,7 @@ fn page_of(d: &Bytes, t: &TableDef) -> SqlResult<Page> {
     } else {
         Some(rd.raw_value()?.to_vec())
     };
+    crate::observe::storage_rows(out.len());
     Ok((out, next))
 }
 
@@ -1753,6 +1757,7 @@ pub async fn select_keys(
             Ok(r) => {
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no native batch data"))?;
                 if let Some(page) = native_batch_reply(&d, t, keys.len())? {
+                    crate::observe::storage_rows(page.0.len());
                     return Ok(page);
                 }
             }
@@ -1981,6 +1986,7 @@ pub async fn select_rows(
                     Some(last) if tuples.len() == n as usize && Some(n) != limit => Some(last.to_vec()),
                     _ => None,
                 };
+                crate::observe::storage_rows(out.len());
                 return Ok((out, next));
             }
             Err(tarn_iproto::Error::Server {
@@ -2315,6 +2321,12 @@ mod tests {
                 let (status, version) = status.unwrap();
                 packet.map(1).uint(0x30).arr(1);
                 match (status, version) {
+                    ("rows", _) => {
+                        packet.arr(2).str("ok").arr(2);
+                        for _ in 0..2 {
+                            packet.vals(&[Value::str("tenant"), Value::Int(7), Value::str("label"), Value::UInt(1)]);
+                        }
+                    }
                     ("bad-page", _) => {
                         packet.arr(4).str("ok").arr(0).nil().bool(false);
                     }
@@ -2461,7 +2473,7 @@ mod tests {
                             names.push("lua");
                             reply(&mut sock, sync, 0, Some(("ok", None))).await;
                         } else {
-                            reply(&mut sock, sync, 0, Some(("ok", None))).await;
+                            reply(&mut sock, sync, 0, Some(("rows", None))).await;
                         }
                     }
                 }
@@ -2482,22 +2494,27 @@ mod tests {
                     }
                 })
                 .collect();
+            let metrics = crate::observe::Metrics::default();
             for _ in 0..2 {
                 let result = timeout(
                     Duration::from_secs(3),
-                    select_keys(
-                        &client,
-                        if case == 6 { 73 } else { 0 },
-                        &table,
-                        0,
-                        &keys,
-                        None,
-                        case != 6,
-                        false,
-                        None,
-                        &Route::Buckets(vec![1, 1, 1]),
-                        case != 4,
-                    ),
+                    crate::observe::track(&metrics, async {
+                        crate::observe::describe(crate::observe::Descriptor::new(None, "SELECT native_batch"));
+                        select_keys(
+                            &client,
+                            if case == 6 { 73 } else { 0 },
+                            &table,
+                            0,
+                            &keys,
+                            None,
+                            case != 6,
+                            false,
+                            None,
+                            &Route::Buckets(vec![1, 1, 1]),
+                            case != 4,
+                        )
+                        .await
+                    }),
                 )
                 .await
                 .unwrap();
@@ -2505,9 +2522,14 @@ mod tests {
                     assert!(result.is_err());
                 } else {
                     let page = result.unwrap();
-                    assert!(page.0.is_empty() && page.1.is_none());
+                    assert_eq!(page.0.len(), if case == 0 { 2 } else { 0 });
+                    assert!(page.1.is_none());
                 }
             }
+            assert_eq!(
+                metrics.rows()[0].last(),
+                Some(&Value::UInt(if case == 0 { 4 } else { 0 }))
+            );
             if case == 1 {
                 assert!(!client.marked(MARK_NO_NATIVE_SELECT));
             }
@@ -2809,6 +2831,7 @@ mod tests {
 
         let catalog = Catalog::default();
         let cx = PlanCtx {
+            statistics: None,
             catalog: &catalog,
             db: Some("d"),
             params: &[],
