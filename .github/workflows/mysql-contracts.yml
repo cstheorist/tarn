@@ -103,16 +103,16 @@ jobs:
           TARN_BIN: /tmp/contract-build/tarn-server
           TARN_CHECK_LOCKS: '1'
           TARN_TEST_HOOKS: '1'
-          DIR: /tmp/tarn-contract-cluster
         run: |
-          scripts/cluster.sh start -n 2 -r 3 -p 4000 -s 2 -e '${{ matrix.engine }}'
+          scripts/cluster.sh start -d /tmp/tarn-contract-cluster -n 2 -r 3 -p 4000 -s 2 -m 256 -e '${{ matrix.engine }}'
           mkdir -p /tmp/contract-results
           tarantool --version > /tmp/contract-results/tarantool.txt
           python3 tests/sql/contracts.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 \
             --engine '${{ matrix.engine }}' --output /tmp/contract-results/results.json
+          tarantool tests/sql/contract_runtime.lua '${{ matrix.native }}' /tmp/contract-results/storage.json
       - name: Stop owned fixture
         if: always()
-        run: DIR=/tmp/tarn-contract-cluster KEEP=1 scripts/cluster.sh stop
+        run: KEEP=1 scripts/cluster.sh stop -d /tmp/tarn-contract-cluster
       - uses: actions/upload-artifact@v4
         if: always()
         with:

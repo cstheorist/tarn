@@ -382,7 +382,7 @@ def main():
     manifest_path = ROOT / "contracts/manifest.json"
     manifest = json.loads(manifest_path.read_text())
     assert {x["id"] for x in manifest["contracts"]} == {n[5:] for n in globals() if n.startswith("case_")}
-    report = {"manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "engine":args.engine, "oracle":args.oracle, "cases":[]}
+    report = {"schema":1, "complete":not bool(args.only), "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "engine":args.engine, "oracle":args.oracle, "cases":[]}
     args.output.parent.mkdir(parents=True,exist_ok=True)
     failures = 0
     for prepared in (False,True):
