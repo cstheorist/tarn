@@ -100,6 +100,22 @@
       "source_revision": "ec1401ecd706c4c0254c0854d13b056db20a67db",
       "completed": true,
       "scope": "Completed Lua-only controls on the same final rejection guard; not a timing study."
+    },
+    {
+      "label": "integrated_native",
+      "path": "tests/evidence/file-backup/integrated_native.json",
+      "sha256": "a103db192ee34eb80e2f036431a7c7aea07d2fbe9e4fe19934db56a1895d79d5",
+      "source_revision": "66a4c41",
+      "completed": true,
+      "scope": "Final main-integrated implementation at 66a4c41, all recorded source hashes verified against that commit. Real RF3 recovery and all negative controls; one small pair is correctness evidence, not a benchmark."
+    },
+    {
+      "label": "integrated_lua",
+      "path": "tests/evidence/file-backup/integrated_lua.json",
+      "sha256": "d84b02f4ed8dcc8213dc2573a722079c97ffb6c31ad364ea4539b48de86a3f61",
+      "source_revision": "66a4c41",
+      "completed": true,
+      "scope": "Final main-integrated implementation at 66a4c41, all recorded source hashes verified against that commit. Real RF3 recovery and all negative controls; one small pair is correctness evidence, not a benchmark."
     }
   ],
   "bounded_log_excerpts": [
@@ -146,6 +162,10 @@
     {
       "path": "tests/evidence/file-backup/tarn-backup-reference-10g-node2-67751641c8c248388e55336bd050749f.log.txt",
       "sha256": "5a6e60fd4f6616e24172f11029162d31a3564bc12056ec421d0b5079254a0a91"
+    },
+    {
+      "path": "tests/evidence/file-backup/integrated-models.txt",
+      "sha256": "20cf7f0edab9e2840a0283f658093a3e6b66afb9814ce0712eacb299f7691524"
     }
   ],
   "limits": "Manifests and whole study records, not payload/WAL. CI artifacts retain complete owned logs for 30 days. Development and failed attempts remain separate from final comparisons."

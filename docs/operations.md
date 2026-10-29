@@ -1319,6 +1319,22 @@ records every sample and exact tuple digest, and retains foreground native read-
 latencies (20 ms think time, no SQL/network or strong-read quorum barrier). Its fixture pins one candidate leader and leaves the other
 source replicas as voters; it is not a failover-capacity benchmark.
 
+Completed measurements (three copies and three matched full-join/seed pairs):
+
+| Profile | Actual payload / physical files | File-copy cap | Median backup / full join / seed, s |
+|---|---|---|---|
+| M4 Max Docker ARM64, two CPUs / 1.5 GiB | 10 GiB / 20,480,274,298 B | uncapped | 26.654 / 124.100 / 26.583 |
+| Ubuntu x86_64 CI 40897427899 | 2 GiB / 4,083,396,802 B | 128 MiB/s | 31.623 / 77.246 / 31.759 |
+
+Expressed **only as a linear normalization per 100 GB of row payload**, the
+same median backup / full join / seed times are 248.236 / 1,155.771 / 247.571 s
+for the reference and 1,472.558 / 3,597.027 / 1,478.872 s for CI. These are not
+observed 100 GB runs. Seed timing includes copying and validating an existing
+backup plus startup and WAL catch-up; backup creation and final full-data
+validation have separate timing. The reference's 4.67× median seed advantage
+is specific to that uncapped local profile; capped earlier CI also includes
+a slower seed result. See [all samples, failures and measurement boundaries](../bench/RESULTS.md#physical-file-backup-and-replica-seeding-56).
+
 The opt-in `File backup scale study` workflow records Linux CI evidence;
 apply `backup-scale` to a PR touching these files to run its 2 GiB study.
 After merge, `workflow_dispatch` defaults to 10 GiB and accepts an explicit
@@ -1327,7 +1343,7 @@ size, repetition count and cap. A reference 10 GiB study uses:
 ```sh
 TARN_NATIVE=target/release/libtarn_storage.so python3 tests/backup.py \
   --work /tmp/tarn-backup-reference --rows 163840 --payload 65536 \
-  --min-backup-bytes 10737418240 --repetitions 3 --rate-mib 128 \
+  --min-backup-bytes 10737418240 --repetitions 3 --rate-mib 0 \
   --output bench/results_file_backup_reference.json
 ```
 

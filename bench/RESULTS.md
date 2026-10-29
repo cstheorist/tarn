@@ -672,6 +672,10 @@ recipe for production membership rollback or origin-ID reuse.
 `seconds_per_100GB_payload_linear_normalization` is elapsed seconds ×
 100,000,000,000 / actual payload bytes. It is a linear throughput display,
 not an observed 100 GB run or evidence that performance scales linearly.
+For reference backup/full-join/seed medians this yields 248.236 / 1,155.771 /
+247.571 s per 100 GB payload; for CI 40897427899 it yields 1,472.558 /
+3,597.027 / 1,478.872 s. These two profiles have different hardware, sizes
+and copy caps; their normalized rates are not a hardware comparison.
 
 The [evidence index](../tests/evidence/file-backup/index.json) records hashes,
 scope and workflow links for every retained study, including failures:
