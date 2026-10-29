@@ -1,0 +1,35 @@
+{
+  "format": "tarn-integrity-contract-v1",
+  "reference": "MySQL 8.4.4 (InnoDB, strict mode); MariaDB 10.11 is a separate repository reference",
+  "scope": "DDL rejection is intentional divergence. DECLARATION_POLICY is provenance, never certification of legacy rows. Only SQL mutations are supported for integrity; privileged raw IPROTO writes are outside the contract.",
+  "families": {
+    "FOREIGN KEY": {"status": "rejected", "error": [1235, "42000"], "actions": ["RESTRICT", "NO ACTION", "CASCADE", "SET NULL", "SET DEFAULT"], "partitioned_tables": "also rejected; MySQL's own partition/FK refusal remains separate"},
+    "CHECK": {"status": "rejected", "error": [1235, "42000"], "null_semantics": "no CHECK truth evaluation is advertised; both ENFORCED and NOT ENFORCED declarations/ALTER enforcement are refused"},
+    "ENUM/SET": {"status": "rejected", "error": [1235, "42000"], "legacy": "old lists were normalized to TEXT and cannot be reconstructed"},
+    "NOT NULL": {"status": "supported SQL gate", "null_write_error": [1048, "23000"], "existing_data": "validated by ALTER before publication; no legacy data certification from provenance"},
+    "UNIQUE": {"status": "supported local/global SQL indexes", "duplicate_error": [1062, "23000"], "null_semantics": "multiple keys containing NULL are allowed; non-NULL duplicates are refused; existing data is checked before publishing a new index"}
+  },
+  "rejections": [
+    {"id":"create_fk", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,FOREIGN KEY(v) REFERENCES p(id))"},
+    {"id":"create_fk_cascade", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,CONSTRAINT fk FOREIGN KEY(v) REFERENCES p(id) ON DELETE CASCADE ON UPDATE CASCADE)"},
+    {"id":"create_fk_restrict", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,FOREIGN KEY(v) REFERENCES p(id) ON DELETE RESTRICT ON UPDATE NO ACTION)"},
+    {"id":"create_fk_null", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,FOREIGN KEY(v) REFERENCES p(id) ON DELETE SET NULL)"},
+    {"id":"create_inline_reference", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT REFERENCES p(id))"},
+    {"id":"create_partition_fk", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,FOREIGN KEY(v) REFERENCES p(id)) PARTITION BY KEY(id)", "mysql_error":1506, "mariadb_error":1506},
+    {"id":"create_check", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,CONSTRAINT ck CHECK(v>0))"},
+    {"id":"create_column_check", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT CHECK(v>0))"},
+    {"id":"create_check_not_enforced", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v INT,CHECK(v>0) NOT ENFORCED)", "mariadb_error":1064},
+    {"id":"create_enum", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v ENUM('a','b'))"},
+    {"id":"create_set", "sql":"CREATE TABLE denied(id INT PRIMARY KEY,v SET('a','b'))"},
+    {"id":"alter_fk", "sql":"ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY(v) REFERENCES p(id)"},
+    {"id":"alter_check", "sql":"ALTER TABLE t ADD CONSTRAINT ck CHECK(v>0)"},
+    {"id":"alter_check_enforced", "sql":"ALTER TABLE t ALTER CHECK ck ENFORCED", "mysql_error":3821, "mariadb_error":1064},
+    {"id":"alter_check_not_enforced", "sql":"ALTER TABLE t ALTER CHECK ck NOT ENFORCED", "mysql_error":3821, "mariadb_error":1064},
+    {"id":"alter_enum", "sql":"ALTER TABLE t MODIFY v ENUM('a','b')"},
+    {"id":"alter_set", "sql":"ALTER TABLE t CHANGE v v SET('a','b')"},
+    {"id":"alter_inline_check", "sql":"ALTER TABLE t ADD n INT CHECK(n>0)"},
+    {"id":"alter_combined", "sql":"ALTER TABLE t ADD safe INT, ADD CONSTRAINT ck CHECK(v>0)"},
+    {"id":"alter_combined_type", "sql":"ALTER TABLE t ADD safe INT, ADD n SET('a','b')"}
+  ],
+  "controls": ["text/binary/named prepared rejection", "no schema/data effect on rejected combined ALTER", "single/multi-row constraints", "NULL/UNIQUE", "ON DUPLICATE KEY UPDATE", "INSERT IGNORE", "savepoint/statement rollback", "existing-data validation", "concurrent unique conflicts", "legacy metadata inspection/removal"]
+}

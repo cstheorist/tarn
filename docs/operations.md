@@ -1196,3 +1196,15 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
   in the process list); without any, every login is accepted.
 * The storage user `tarn`/`tarn` has full privileges on the storage nodes.
 * See [SECURITY.md](../SECURITY.md) to report a vulnerability.
+
+
+## Integrity admission and legacy schemas
+
+Unsupported FOREIGN KEY/CHECK/ENUM/SET declarations are refused on CREATE/ALTER.
+Upgrade every gateway before relying on this gate. Old catalogs have incomplete
+integrity history; their SQL writes now require an explicit session opt-in.
+`SHOW TARN INTEGRITY [FROM db]` and SHOW CREATE expose that status.
+See [the integrity contract and migration procedure](integrity.md), including
+`SET SESSION tarn_legacy_integrity='ALLOW'` / DEFAULT, bounded copy/validation,
+rollback boundaries, and privileged raw-write exclusions. No legacy data is
+certified by a schema-provenance marker or a successful metadata-only ALTER.

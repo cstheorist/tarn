@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
+  schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
+  and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
+  old catalog decoding and provide inspection/migration and pinned-reference
+  mutation/refusal controls. Declaration provenance does not certify old data.
+
 ### Fixed
 
 - An engine BUILD could return 1213 after a status notification revoked its
