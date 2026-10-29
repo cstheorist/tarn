@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TASK = "tarn-strong-read-cost-ci"
 RUST = "rust:1.98.1-slim-bookworm@sha256:dacc9e51f252243eb59d2fb4cb4ad8b0d3f607b6a82c398cf8a321e59ff778a7"
 TARANTOOL = "tarantool/tarantool@sha256:5cce83352071ee90732a7c2812e9c5e53e97e692a6e9d8eb60a6c4bf618be7e6"
+# The pinned AMD64 build uses a longer Git abbreviation than the ARM64 build.
+TARANTOOL_VERSION = "3.9.0-0-g8b9a0f59a95b"
 CASES = [{"workers": 1, "batch": 1, "shape": "hits", "route": "buckets"},
          {"workers": 64, "batch": 128, "shape": "hits", "route": "buckets"}]
 
@@ -231,7 +233,7 @@ def measure(out):
             for checkpoint in ("native_ready_before", "native_ready_after"):
                 assert len(fixture[checkpoint]) == replicas
                 for node in fixture[checkpoint]:
-                    assert node["version"] == "3.9.0-0-g8b9a0f59a9"
+                    assert node["version"] == TARANTOOL_VERSION
                     assert node["layout"] == 14 and node["size"] == 392 and node["lock_copy_errors"] == 0
                     assert node["test_hooks"] is False and node["check_locks"] is True
                     assert node["sync"] == (replicas == 3) and node["wal"] == ("fsync" if replicas == 3 else "write")
