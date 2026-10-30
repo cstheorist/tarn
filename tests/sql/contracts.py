@@ -414,11 +414,28 @@ def case_bounded_warnings(s):
     assert literal_cleared==[] and comment_cleared==[], (literal_cleared,comment_cleared)
     s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
     q(c,"SET @saved_warning_count=@@warning_count")
+    set_cleared=q(c,"SHOW WARNINGS")
+    set_count=q(c,"SELECT @@warning_count")
     saved=q(c,"SELECT @saved_warning_count")
     s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
     expression=q(c,"SELECT @@warning_count+0")
+    expression_cleared=q(c,"SHOW WARNINGS")
+    expression_count=q(c,"SELECT @@warning_count")
     assert saved==[[1]] and expression==[[1]], (saved,expression)
-    return [affected,total,len(messages),cleared,rows,literal_cleared,comment_cleared,saved,expression]
+    assert set_cleared==[] and set_count==[[0]], (set_cleared,set_count)
+    assert expression_cleared==[] and expression_count==[[0]], (expression_cleared,expression_count)
+    # A new DML statement captures the prior count but publishes only its
+    # own diagnostics. Variable-bearing administration is text in both modes.
+    s.sql(c,"INSERT IGNORE INTO t VALUES "+",".join("(1,99,99)" for _ in range(70)))
+    inserted=q(c,"INSERT IGNORE INTO t VALUES (3,@@warning_count,33),(1,99,99)")
+    dml_messages=q(c,"SHOW WARNINGS")
+    dml_count=q(c,"SELECT @@warning_count")
+    captured=q(c,"SELECT v FROM t WHERE id=3")
+    assert inserted==1 and captured==[[70]] and dml_count==[[1]], (inserted,captured,dml_count)
+    assert len(dml_messages)==1 and dml_messages[0][:2]==["Warning",1062], dml_messages
+    return [affected,total,len(messages),cleared,rows,literal_cleared,comment_cleared,saved,expression,
+            set_cleared,set_count,expression_cleared,expression_count,inserted,captured,dml_count,
+            [row[:2] for row in dml_messages]]
 
 
 def case_rc_paged_snapshot(s):
