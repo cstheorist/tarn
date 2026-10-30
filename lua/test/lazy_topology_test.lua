@@ -16,14 +16,14 @@ local function wait(fn)
     return false
 end
 local sid, gen, name = 62001, 62002, 'test.lazy_topology'
-local spec = {gen = gen, base_space_id = sid, local_index_id = 2, route_parts = 1,
-              key_fields = {2}, key_types = {'string'}, pk_fields = {1}, pk_native_fields = {1},
+local spec = {gen = gen, base_space_id = sid, local_index_id = 2, route_parts = 2,
+              key_fields = {2,1}, key_types = {'string','unsigned'}, pk_fields = {1}, pk_native_fields = {1},
               pk_types = {'unsigned'}, bucket_field = 3}
 local def = {id = sid, name = name, ver = 0, engine = 'memtx', json = '{}', lazy = {spec},
     format = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'string'}, {name = 'bucket_id', type = 'unsigned'}},
     indexes = {{name = 'primary', unique = true, parts = {{1, 'unsigned'}}},
                {name = 'bucket_id', unique = false, parts = {{3, 'unsigned'}}},
-               {name = 'v', unique = false, parts = {{2, 'string'}}}}}
+               {name = 'v', unique = false, parts = {{2, 'string'},{1,'unsigned'}}}}}
 local a = {def = def, timeout = 5}
 for i = 1, 2 do
     ok(call(i, 'tarn_bucket_init', 16, {{(i - 1) * 8 + 1, i * 8}}))
@@ -34,7 +34,7 @@ end
 local key, target
 for i = 1, 100 do
     local k = 'target-' .. i
-    local b = c[1]:eval('local s,k=... return tarn.lazy.bucket(s,{k})', {spec, k})
+    local b = c[1]:eval('local s,k=... return tarn.lazy.bucket(s,{k,1})', {spec, k})
     if b > 8 then key, target = k, b; break end
 end
 assert(key)
@@ -84,7 +84,7 @@ check('new source owner increments rather than resets sequence', wait(function()
 local other
 for i = 101, 1000 do
     local k = 'target-' .. i
-    if c[2]:eval('local s,k=... return tarn.lazy.bucket(s,{k})', {spec, k}) == target then other = k; break end
+    if c[2]:eval('local s,k=... return tarn.lazy.bucket(s,{k,1})', {spec, k}) == target then other = k; break end
 end
 assert(other)
 ok(call(2, 'tarn_lazy_control', 'pause'))
@@ -98,7 +98,19 @@ local floor = c[2]:eval('local g,b=... return box.space._tarn_lazy_floor:get{g,b
 local moved = ok(call(2, 'tarn_bucket_send_begin', target, 1, 'lazy-target', 5))
 ok(call(1, 'tarn_bucket_recv_begin', target, 2, 'lazy-target'))
 copy_rows(2, 1, target, 'lazy-target'); ok(call(1, 'tarn_bucket_hold', target, 'lazy-target'))
+local function prefix_count(i, value)
+    local map = ok(call(i, 'tarn_buckets'))
+    local after, count, pages = box.NULL, 0, 0
+    repeat
+        local page = ok(call(i, 'tarn_lazy_select', gen, {value}, 'EQ', 1, after, {e=map[3],m=map[6]}))
+        count, pages, after = count + #page[3], pages + 1, page[4]
+        assert(pages <= 10, 'prefix cursor failed to advance')
+    until after == box.NULL
+    return count
+end
+check('receiving copies are excluded from composite prefix pages', prefix_count(1,other)==0 and prefix_count(2,other)==1)
 finish_move(2, 1, target, 'lazy-target', moved[2])
+check('sent copies cannot duplicate composite prefix results', prefix_count(2,other)==0 and prefix_count(1,other)==1)
 local imported = c[1]:eval('local g,b=... return box.space._tarn_lazy_floor:get{g,b,1}.seq', {gen, target})
 check('target handoff copies typed live rows and durable acceptance floors', imported == floor and lives(1, other) == 1)
 -- The old-key delete at seq3 is harmless after the floor moved, as is a
@@ -125,7 +137,7 @@ c[3]:eval([[for i,name in ipairs{'_tarn_lazy_counter','_tarn_lazy_version','_tar
     s:create_index('bucket_id',{parts={'bucket_id'},unique=false})
 end]])
 local export = ok(call(1, 'tarn_schema_export'))[2]
-check('lazy schema export starts with the authoritative V1 metadata tag', export[1].lazy_v1.version == 1
+check('lazy schema export starts with the authoritative composite metadata tag', export[1].lazy_v1.version == 2
       and #export[1].lazy_v1.active == 1 and #export[1].lazy_v1.retired == 1)
 local old_importer = pcall(function()
     local want = {}; for _, t in ipairs(export) do want[t.name] = true end
@@ -135,11 +147,11 @@ local rejected = call(3, 'tarn_schema_import', export)
 check('an old coordinator without the V1 token cannot import lazy metadata', rejected[1] == 'error' and rejected[2] == 1412
       and c[3]:eval('return box.space[...] == nil', {sid}), rejected)
 local mp = require('msgpack')
-local malformed = mp.decode(mp.encode(export)); malformed[1].lazy_v1.version = 2
+local malformed = mp.decode(mp.encode(export)); malformed[1].lazy_v1.version = 3
 rejected = call(3, 'tarn_schema_import', malformed, 1)
 check('unknown lazy envelope version fails before any imported native table', rejected[1] == 'error'
       and c[3]:eval('return box.space[...] == nil', {sid}), rejected)
-ok(call(3, 'tarn_schema_import', export, 1)); ok(call(3, 'tarn_schema_import', export, 1))
+ok(call(3, 'tarn_schema_import', export, 2)); ok(call(3, 'tarn_schema_import', export, 2))
 check('candidate join retries install only committed active generations and retired fences',
     c[3]:eval([[local sid,g,ret=... return box.space[sid]:len()==0 and box.space[g].index.ordered~=nil
       and box.space._tarn_lazy_capture:get{sid}.specs[1].gen==g
@@ -169,17 +181,18 @@ check('a joined shard can authoritatively ACK old retired-generation frames', re
       and tostring(retired_ack[2][1])==tostring(obsolete[1]) and c[3]:eval('return box.space[...] == nil',{retired_gen}), retired_ack)
 -- Old destinations must fail before the source starts noting a move.
 c[3]:eval([[rawset(_G,'__lazy_saved_caps',tarn_lazy_capabilities)
-    tarn_lazy_capabilities=function() return {'ok',1,{max_entries=128,max_bytes=1048576,max_seq=9007199254740991}} end]])
+    tarn_lazy_capabilities=function() return {'ok',1,{max_entries=128,max_bytes=1048576,max_seq=9007199254740991,aux_names=1}} end]])
 local legacy_move=call(2,'tarn_bucket_send_begin',1,3,'old-aux-receiver',5)
 c[3]:eval('tarn_lazy_capabilities=__lazy_saved_caps __lazy_saved_caps=nil')
 local source_before=c[2]:eval('return box.space._tarn_buckets:get{1}.state')
-check('an old receiver without aux_names fails before move effects',legacy_move[1]=='error' and legacy_move[2]==1412
+check('an old receiver without composite routing fails before move effects',legacy_move[1]=='error' and legacy_move[2]==1412
       and source_before=='active',legacy_move)
 local source_move=ok(call(2,'tarn_bucket_send_begin',1,3,'heterogeneous-source',5))
 ok(call(3,'tarn_bucket_recv_begin',1,2,'heterogeneous-source'))
 local unknown_ok,unknown_error=pcall(call,3,'tarn_bucket_recv_rows',1,'heterogeneous-source',{{'_tarn_lazy_unknown',{1}}})
-check('unknown auxiliary names fail rather than silently discard bucket data',not unknown_ok
-      and unknown_error.code==1210 and c[3]:eval('return box.space._tarn_recv:count{1}')==0)
+check('unknown auxiliary names fail rather than silently discard bucket data',unknown_ok
+      and unknown_error[1]=='error' and unknown_error[2]==1210
+      and c[3]:eval('return box.space._tarn_recv:count{1}')==0,unknown_error)
 copy_rows(2,3,1,'heterogeneous-source')
 -- Keep the old owner's hint live across the entire move. Membership and
 -- leadership stay fixed; the local bucket-map revision must invalidate it.
@@ -198,7 +211,7 @@ finish_move(2,3,1,'heterogeneous-source',source_move[2])
 local aux=c[3]:eval([[local sid=... return {box.space._tarn_lazy_counter.id,box.space._tarn_lazy_version.id,
     box.space._tarn_lazy_floor.id,box.space._tarn_lazy_counter:get{1}.seq,
     box.space._tarn_lazy_version.index.bucket_id:count{1}}]],{sid})
-check('heterogeneous-ID copy, counter delta and version deletion use stable auxiliary names',
+check('heterogeneous-ID copy and counter delta use stable auxiliary names; writes keep no row versions',
       aux[1]==9051 and aux[2]==9052 and aux[3]==9053 and aux[4]==5 and aux[5]==0,aux)
 check('completed source handoff refreshes owner hints without waiting for TTL',
       c[3]:eval('return tarn.lazy.owners({1})[1]')==3)

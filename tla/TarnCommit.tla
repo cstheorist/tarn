@@ -246,7 +246,7 @@ Fenced(s, K) == MKeys # {} /\ s = MFrom /\ mv \in {"fencing", "fenced"} /\ K \ca
 \* already be gone from the sender, and are not here yet).
 HoldOK(t, s) ==
     \/ BugMoveNoHold
-    \/ ~(MKeys # {} /\ s = MTo /\ mv \in {"fencing", "fenced", "sent"} /\ s \in scanned[t])
+    \/ ~(MKeys # {} /\ s = MTo /\ mv \in {"fencing", "fenced", "reclaiming", "sent", "installing"} /\ s \in scanned[t])
 
 \* A transaction that scanned names the membership it was routed with; a
 \* shard that has a newer one refuses it (its scan may have missed a shard
@@ -343,7 +343,7 @@ Read(t, k) ==
 \* A read routed with a stale map to the sender after it sent the bucket,
 \* which the sender serves (BugMoveServeStale): the row is gone there.
 StaleRead(t, k) ==
-    /\ BugMoveServeStale /\ k \in MKeys /\ mv \in {"sent", "done"}
+    /\ BugMoveServeStale /\ k \in MKeys /\ mv \in {"reclaiming", "sent", "installing", "done"}
     /\ t \notin RC
     /\ coord[t] = "exec" /\ local[t] = "none"
     /\ ~(SingleShard(t) /\ ReadOnly(t))
@@ -386,6 +386,9 @@ InsertsFree(S) == BugInsertNoExistCheck \/ \A k \in S : data[k] = NoVal
 \* is simply not enabled in that state.  A scan reads one shard here when
 \* its server knows one (a transaction routed before MTo joined).
 SnapshotRead(t) ==
+    \* Typed projection/reduction (#135) uses the same full read footprint:
+    \* rejected rows are not removed from RSet/SSet or commit validation.
+    \* TypedRead.tla checks its bounded result/overlay/page refinement.
     LET at == {place[k] : k \in RSet[t]} \cup (IF SSet[t] # {} THEN KnownShards(t) ELSE {})
         s  == CHOOSE x \in at : TRUE
     IN
@@ -447,7 +450,7 @@ CommitLocal(t) ==
 \* bucket, which the sender serves (BugMoveServeStale): its writes of the
 \* moving rows land where no row lives any more, and nobody reads them.
 StaleCommitLocal(t) ==
-    /\ BugMoveServeStale /\ mv \in {"sent", "done"}
+    /\ BugMoveServeStale /\ mv \in {"reclaiming", "sent", "installing", "done"}
     /\ t \notin RC /\ SSet[t] = {}
     /\ coord[t] = "exec" /\ local[t] = "none"
     /\ ~ReadOnly(t) /\ ReadsDone(t) /\ WSet[t] \cap MKeys # {}
@@ -945,18 +948,29 @@ MoveDrained ==
     /\ UNCHANGED <<place, plocks, mver>>
     /\ UNCHANGED Others
 
-\* The sender deletes the rows: from now on it refuses the bucket.  Until
-\* the receiver takes them over, the rows are nowhere.
+\* Logical ownership is withdrawn before bounded physical reclamation.
+\* Supported reads refuse partial physical states; BoundedMove checks the
+\* chunk/visibility premise. Until publication the logical rows are nowhere.
 MoveSendFlip ==
     /\ mv = "fenced"
-    /\ mv' = "sent"
+    /\ mv' = "reclaiming"
     /\ place' = [k \in Keys |-> IF k \in MKeys THEN Nowhere ELSE place[k]]
     /\ UNCHANGED <<staged, plocks, mver>>
     /\ UNCHANGED Others
 
-\* The receiver inserts the copy, owns the bucket and releases the hold.
+\* Physical batch completion changes no logical row or ownership.
+MoveReclaimed ==
+    /\ mv = "reclaiming" /\ mv' = "sent"
+    /\ UNCHANGED <<place, staged, plocks, mver>>
+    /\ UNCHANGED Others
+MoveInstalling ==
+    /\ mv = "sent" /\ mv' = "installing"
+    /\ UNCHANGED <<place, staged, plocks, mver>>
+    /\ UNCHANGED Others
+
+\* All chunks are installed behind the hold before one publication.
 MoveRecvFlip ==
-    /\ mv = "sent"
+    /\ mv = "installing"
     /\ mv' = "done"
     /\ place' = [k \in Keys |-> IF k \in MKeys THEN MTo ELSE place[k]]
     /\ data' = [k \in Keys |-> IF k \in MKeys THEN staged[k] ELSE data[k]]
@@ -1029,6 +1043,8 @@ RCAbortH(t) == RCAbort(t) /\ M /\ T /\ H
 MoveFenceH == MoveFence /\ H
 MoveDrainedH == MoveDrained /\ H
 MoveSendFlipH == MoveSendFlip /\ H
+MoveReclaimedH == MoveReclaimed /\ H
+MoveInstallingH == MoveInstalling /\ H
 MoveRecvFlipH == MoveRecvFlip /\ H
 MoveAbortH == MoveAbort /\ H
 MemberJoinH(s) == MemberJoin(s) /\ H
@@ -1066,7 +1082,7 @@ Next ==
     \/ \E t \in Txns, k \in Keys : RCLockH(t, k)
     \/ \E t \in Txns : CommitRCH(t)
     \/ \E t \in Txns : RCAbortH(t)
-    \/ MoveFenceH \/ MoveDrainedH \/ MoveSendFlipH \/ MoveRecvFlipH \/ MoveAbortH
+    \/ MoveFenceH \/ MoveDrainedH \/ MoveSendFlipH \/ MoveReclaimedH \/ MoveInstallingH \/ MoveRecvFlipH \/ MoveAbortH
     \/ \E s \in Shards : MemberJoinH(s)
 
 Spec == Init /\ [][Next]_vars
@@ -1091,7 +1107,7 @@ TypeOK ==
     /\ place \in [Keys -> Shards \cup {Nowhere}]
     /\ loc \in [Txns -> [Keys -> Shards \cup {Nowhere}]]
     /\ \A t \in Txns : sobs[t] \in [Keys -> SUBSET [s : Shards, v : Vals]]
-    /\ mv \in {"idle", "fencing", "fenced", "sent", "done", "aborted"}
+    /\ mv \in {"idle", "fencing", "fenced", "reclaiming", "sent", "installing", "done", "aborted"}
     /\ mver \in [Shards -> {0, 1}]
 
 \* Atomicity: writes reach a plain space only for committed transactions ...

@@ -1,0 +1,20 @@
+BoundedMove                  no errors                                     6230 distinct states found   depth=28       1s
+Bug_BoundedMoveDrain         Invariant AcknowledgedEffects is violated     7914 distinct states found   depth=17       0s
+Bug_BoundedMoveDelta         Invariant AcknowledgedEffects is violated     6893 distinct states found   depth=19       1s
+Bug_BoundedMovePublish       Invariant CompletePublication is violated     4748 distinct states found   depth=13       0s
+Bug_BoundedMoveVisibility    Invariant NoPartialReads is violated          4773 distinct states found   depth=13       0s
+Bug_BoundedMoveReclaim       Invariant NoPartialReads is violated          2396 distinct states found   depth=9        1s
+Bug_BoundedMoveBatch         Invariant BoundedWork is violated             1867 distinct states found   depth=9        0s
+Bug_BoundedMoveLatePage      Invariant CancelledResources is violated      89 distinct states found     depth=4        0s
+Bug_BoundedMoveSnapshot      Invariant NoPartialReads is violated          5673 distinct states found   depth=18       1s
+Move_Scan                    no errors                                     1746444 distinct states found depth=27      96s
+Move_RC                      no errors                                     1531251 distinct states found depth=31     101s
+Move_ScanFailover            no errors                                     1012888 distinct states found depth=27      59s
+Bug_MoveNoDrain              Invariant StrictSerializable is violated      16448 distinct states found  depth=12       1s
+Bug_MoveNoHold               Invariant StrictSerializable is violated      4424 distinct states found   depth=10       1s
+Bug_MoveServeStale           Invariant StrictSerializable is violated      15863 distinct states found  depth=13       2s
+Join_Scan                    no errors                                     83949 distinct states found  depth=26       5s
+Join_ScanFailover            no errors                                     58935 distinct states found  depth=26       4s
+Join3_Scan                   no errors                                     3881646 distinct states found depth=32     439s
+Join3_ScanPrepare            no errors                                     2150603 distinct states found depth=35     145s
+all outcomes as expected

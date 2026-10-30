@@ -73,6 +73,15 @@ local M = {
         -- per call; the SQL server continues it after the last one (issue #77).
         scan_page_rows = 4096,
         scan_page_bytes = 4 * 1024 * 1024,
+        move_batch_rows = 512,
+        move_batch_bytes = 1024 * 1024,
+        move_slots = 4,
+        move_staging_bytes = 16 * 1024 * 1024 * 1024,
+        move_total_staging_bytes = 32 * 1024 * 1024 * 1024,
+        move_delta_keys = 16384,
+        move_delta_bytes = 4 * 1024 * 1024,
+        move_total_delta_bytes = 8 * 1024 * 1024,
+        move_disk_reserve_bytes = 1024 * 1024 * 1024,
         -- The rebalancer's load of each bucket covers the requests of the
         -- last one or two windows of this many seconds (tarn_bucket_stats).
         load_window = 60,
@@ -99,12 +108,25 @@ local RW = {txn_isolation = 'read-committed'}
 -- limit of 200 locals). Declared here because the key definitions and the
 -- lock index use it: the lock index counts the locks of prepared
 -- transactions on each bucket's rows (nl[bucket] = n).
-local BK = {nl = {}, state = {}, peer = {}, move = {}, held = 0, staged = {}, count = 0, epoch = 0,
+local BK = {nl = {}, state = {}, peer = {}, move = {}, held = 0, partial = 0, physical_gen = 0, staged = {}, count = 0, epoch = 0,
             stale = true, track = {}, track_n = 0, fields = {}}
 
 -------------------------------------------------------------------------------
 -- Schema
 -------------------------------------------------------------------------------
+
+-- Every replica configured for this shard has joined and follows this node.
+local function replicas_follow()
+    local cfg = box.cfg.replication
+    local want = type(cfg) == 'table' and #cfg - 1 or 0   -- the list names this node too
+    local n = 0
+    for id, r in pairs(box.info.replication) do
+        if id ~= box.info.id and r.downstream ~= nil and r.downstream.status == 'follow' then
+            n = n + 1
+        end
+    end
+    return n >= want
+end
 
 local function ensure_schema()
     local sync = M.cfg.sync
@@ -114,6 +136,17 @@ local function ensure_schema()
     end
     local meta = space('_tarn_meta', {{'key', 'string'}, {'value', 'any', is_nullable = true}})
     meta:create_index('pk', {parts = {'key'}, if_not_exists = true})
+
+    if meta:get{'shard_id'} == nil then
+        -- The first synchronous write must wait until joining replicas can
+        -- acknowledge it. Keep shard_id as the completed-schema signal below.
+        local deadline = clock.monotonic() + 60
+        while M.cfg.sync and not replicas_follow() and clock.monotonic() < deadline do
+            fiber.sleep(0.1)
+        end
+    end
+    -- The synchronous format marker must precede any format-2 DDL/data.
+    M.compatibility.persist()
 
     local cat = space('_tarn_catalog', {{'name', 'string'}, {'def', 'map'}})
     cat:create_index('pk', {parts = {'name'}, if_not_exists = true})
@@ -161,9 +194,7 @@ local function ensure_schema()
         {'bucket', 'unsigned'}, {'state', 'string'}, {'peer', 'unsigned', is_nullable = true},
         {'move', 'string', is_nullable = true}})
     buckets:create_index('pk', {parts = {'bucket'}, if_not_exists = true})
-    local recv = space('_tarn_recv', {
-        {'bucket', 'unsigned'}, {'space_id', 'unsigned'}, {'key', 'string'}, {'tuple', 'array'}})
-    recv:create_index('pk', {parts = {'bucket', 'space_id', 'key'}, if_not_exists = true})
+    M.move.schema()
 
     -- ts: time of the last state change; expires: see "Record lifecycle".
     local part = space('_tarn_part', {
@@ -380,7 +411,8 @@ end
 local function writable()
     if box.info.ro then box.error(box.error.READONLY) end
 end
-M.fresh = require('tarn_fresh').new{cfg = M.cfg, writable = writable}
+M.fresh = require('tarn_fresh').new{cfg = M.cfg, writable = writable,
+    movement = function() return BK.physical_gen, BK.partial > 0 end}
 
 -- All lock records visible under one isolation level (no yields: memtx
 -- scans and a read-only commit do not yield).
@@ -653,7 +685,7 @@ function BK.read_view(isolation)
     box.begin({txn_isolation = isolation})
     for _, t in box.space._tarn_buckets:pairs() do
         v.state[t.bucket], v.peer[t.bucket], v.move[t.bucket] = t.state, t.peer, t.move
-        if t.state == 'held' then v.staged[t.bucket] = BK.load_staged(t.bucket) end
+
     end
     local m = box.space._tarn_meta:get{'buckets'}
     box.commit()
@@ -663,7 +695,9 @@ function BK.read_view(isolation)
 end
 
 -- How much of a bucket a state serves (a bucket in no state here: 2).
-BK.SERVES = {active = 4, sending = 4, fenced = 3, receiving = 2, sent = 2, held = 1}
+BK.SERVES = {active = 4, sending = 4, fenced = 3, receiving = 2, sent = 2, aborting = 2, held = 1, installing = 1, reclaiming = 1}
+function BK.is_held(s) return s == 'held' or s == 'installing' or s == 'reclaiming' end
+function BK.is_partial(s) return s == 'installing' or s == 'reclaiming' end
 
 -- Rebuild the state in memory from the stored one. A step whose commit
 -- waits for the WAL or the quorum may have changed the state in memory
@@ -689,21 +723,14 @@ function BK.rebuild()
             end
         end
     end
-    BK.held = 0
-    for b, s in pairs(st) do
-        if s == 'held' then
-            local rows = {}
-            for _, v in ipairs({a, c}) do
-                for sid, l in pairs(v.staged[b] or {}) do
-                    rows[sid] = rows[sid] or {}
-                    for key, t in pairs(l) do rows[sid][key] = t end
-                end
-            end
-            held[b] = rows
-            BK.held = BK.held + 1
-        end
+    local old_partial = BK.partial
+    BK.held, BK.partial = 0, 0
+    for b, state in pairs(st) do
+        if BK.is_held(state) then held[b] = true; BK.held = BK.held + 1 end
+        if BK.is_partial(state) then BK.partial = BK.partial + 1 end
     end
     BK.state, BK.peer, BK.move, BK.staged = st, peer, mv, held
+    if BK.partial > 0 or old_partial > 0 then BK.physical_gen = BK.physical_gen + 1 end
     BK.count = math.max(a.count, c.count)
     BK.epoch = math.max(a.epoch, c.epoch)
     BK.load_members()
@@ -876,13 +903,20 @@ end
 -- epoch} for a read of every shard outside a transaction. The status that
 -- refuses it, or nil.
 function BK.check_read(route)
-    if route == nil or route == box.NULL then return nil end
     BK.fresh()
     return BK.check_now(route)
 end
 
 -- BK.check_read without reading the map again (does not yield).
 function BK.check_now(route)
+    if not M.fresh.move_safe() then
+        return {'moved', 1213, 'Read snapshot crossed bounded physical movement', box.NULL}
+    end
+    if BK.partial > 0 and (route == nil or route == box.NULL or
+       (type(route) == 'table' and (route.e ~= nil or route.m ~= nil or #route == 0))) then
+        return {'moved', 1213, 'Unscoped read refused during bounded physical movement', box.NULL}
+    end
+    if route == nil or route == box.NULL then return nil end
     if type(route) == 'table' and route.m ~= nil then
         local r = BK.member_refused(route.m)
         if r then return r end
@@ -908,9 +942,13 @@ end
 -- 'ok' is returned as it is.
 function BK.recheck(fn, i)
     return function(...)
+        local physical_gen = BK.physical_gen
         local r = fn(...)
         local route = select(i, ...)
-        if type(r) == 'table' and r[1] == 'ok' and route ~= nil and route ~= box.NULL then
+        if type(r) == 'table' and r[1] == 'ok' then
+            if physical_gen ~= BK.physical_gen then
+                return {'moved', 1213, 'Read crossed bounded physical movement', box.NULL}
+            end
             if BK.stale then   -- (a leader change: the map is read again on the next request)
                 M.stats.moved = M.stats.moved + 1
                 return {'moved', 1213, 'shard leadership changed during the read', box.NULL}
@@ -1373,6 +1411,7 @@ function BK.ns_sync()
     ns.load_until = BK.load.t0 + M.cfg.load_window
     ns.pl_n = PL_N
     ns.held = BK.held
+    BK.ns_hooks()
     ns.term_txn, ns.ddl_txn = TERM_TXN, BK.ddl_last or 0
     local sc = box.space._tarn_scratch
     ns.scratch = sc ~= nil and sc.id or 0
@@ -1495,48 +1534,14 @@ function BK.ns_init()
     log.info('tarn: native procedures loaded')
 end
 
--- The rows kept aside for held bucket b, by space: staged[sid] = {tuple, ...}
--- (for BK.held_conflict, which runs inside the checks of commit steps and
--- must not read _tarn_recv there).
-function BK.load_staged(b)
-    local out = {}
-    for _, t in box.space._tarn_recv:pairs({b}, {iterator = 'EQ'}) do
-        local l = out[t.space_id]
-        if l == nil then l = {}; out[t.space_id] = l end
-        l[t.key] = box.tuple.new(t.tuple)
-    end
-    return out
-end
-
--- Whether a read of every shard (it names no bucket) in a read set covers
--- a row of a bucket held here, which the move will insert: the read may
--- have missed the row (TarnCommit: HoldOK). Once the sender has sent the
--- bucket, the rows kept aside are all of its rows. Does not yield.
+-- A coarse predicate hold replaces the unbounded Lua copy of staged rows.
+-- Unscoped validations may conservatively conflict even for a disjoint range.
 function BK.held_conflict(rpoints, rranges)
     if BK.held == 0 then return nil end
-    local function covers(staged, sid, iid, lo, hi, lo_incl, hi_incl)
-        local rows = staged[sid]
-        local sp = box.space[sid]
-        if rows == nil or sp == nil or sp.index[iid] == nil then return false end
-        local kd = index_key_def(sid, iid)
-        if lo == box.NULL then lo = nil end
-        if hi == box.NULL then hi = nil end
-        for _, t in pairs(rows) do
-            if in_range(kd, kd:extract_key(t):totable(), lo, hi, lo_incl, hi_incl) then return true end
-        end
-        return false
+    for b in pairs(BK.staged) do
+        for _, r in ipairs(rpoints or {}) do if type(r[4]) ~= 'number' then return b end end
+        for _, r in ipairs(rranges or {}) do if type(r[7]) ~= 'number' then return b end end
     end
-    for b, staged in pairs(BK.staged) do
-        for _, r in ipairs(rpoints or {}) do
-            if type(r[4]) ~= 'number' and covers(staged, r[1], r[2], r[3], r[3], true, true) then return b end
-        end
-        for _, r in ipairs(rranges or {}) do
-            if type(r[7]) ~= 'number' and covers(staged, r[1], r[2], r[3], r[4], r[5] ~= false, r[6] ~= false) then
-                return b
-            end
-        end
-    end
-    return nil
 end
 
 -- The bucket_id field of a data space (nil if it has none).
@@ -1562,10 +1567,7 @@ function BK.note(sp, old, new)
     if tr == nil then return end
     local pk = index_key_def(sp.id, 0):extract_key(t):totable()
     local id = sp.id .. '\0' .. kbin(pk)
-    if not tr.keys[id] then
-        tr.keys[id] = true
-        tr.list[#tr.list + 1] = {sp.id, pk}
-    end
+    M.move.note(tr, sp.id, pk, id)
 end
 
 local function range_locked(txid, sid, iid, key)
@@ -1846,6 +1848,9 @@ function BK.commit_check(wb, rpoints, rranges, fence_reads, plans, mver)
     local r = BK.member_refused(mver)
     if r then return r end
     if BK.count == 0 then return nil end
+    if not M.fresh.move_safe() and (#(rpoints or {}) > 0 or #(rranges or {}) > 0) then
+        return conflict('Read snapshot crossed bounded physical movement')
+    end
     local b = BK.refused(wb, true) or BK.reads_refused(rpoints, rranges, fence_reads) or BK.rows_refused(plans)
     if b then return BK.moved(b) end
     b = BK.held_conflict(rpoints, rranges)
@@ -1989,7 +1994,7 @@ end
 -- ones, whose steps it holds.
 function BK.ns_hooks()
     if BK.ns == nil then return end
-    local n = 0
+    local n = BK.partial > 0 and 1 or 0
     for _ in pairs(YIELD_HOOKS) do n = n + 1 end
     BK.ns.hooks = n
 end
@@ -3730,7 +3735,68 @@ local function count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse
     return n
 end
 
-function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin, route)
+-- Typed partials preserve SQL NULLs and exact signed/unsigned integers.
+-- DECIMAL/DOUBLE expressions and collation-sensitive extrema stay in Rust.
+-- A guard below 38 decimal digits refuses a partial before arithmetic could
+-- round; the caller discards every partial and repeats only read-only work.
+do
+local SUM_GUARD = decimal.new('1000000000000000000000000000000000000') -- 10^36
+local EXACT = 2 ^ 52
+local function add(a, b)
+    if type(a) == 'number' and type(b) == 'number' and math.abs(a) < EXACT and math.abs(b) < EXACT then
+        return a + b
+    end
+    return decimal.new(a) + decimal.new(b)
+end
+function PG.reduce_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude, aggs)
+    local in_txn = box.is_in_txn()
+    if not in_txn then fiber.set_slice(LONG_SCAN_SLICE) end
+    local pk, omitted = box.space[space_id].index[0], {}
+    local pkd = index_key_def(space_id, 0)
+    for _, k in ipairs(exclude) do
+        local t = pk:get(k)
+        if t ~= nil then omitted[msgpack.encode(pkd:extract_key(t))] = true end
+    end
+    local out = {}
+    for i, a in ipairs(aggs) do out[i] = (a[1] == 'count' or a[1] == 'countstar') and 0ULL or box.NULL end
+    local seen = 0
+    for _, t in idx:pairs(key, {iterator = it}) do
+        seen = seen + 1
+        if in_txn and seen % SCAN_CHUNK == 0 then fiber.yield() end
+        if end_key ~= nil then
+            local c = kd:compare_with_key(t, end_key)
+            if (reverse and (c < 0 or (c == 0 and not end_incl)))
+                or (not reverse and (c > 0 or (c == 0 and not end_incl))) then break end
+        end
+        if (next(omitted) == nil or not omitted[msgpack.encode(pkd:extract_key(t))]) and preds_match(t, preds) then
+            for i, a in ipairs(aggs) do
+                local op, field = a[1], a[2]
+                local v
+                if field <= #t then v = t[field] else v = a[3] end
+                if op == 'countstar' or (op == 'count' and v ~= nil) then out[i] = out[i] + 1ULL
+                elseif v ~= nil and op ~= 'count' then
+                    if op == 'sum' then
+                        local s = out[i] == nil and 0 or out[i]
+                        if s > SUM_GUARD or s < -SUM_GUARD then return {}, false end
+                        out[i] = add(s, v)
+                    elseif out[i] == nil or (op == 'min' and int_lt(v, out[i])) or (op == 'max' and int_lt(out[i], v)) then
+                        out[i] = v
+                    end
+                end
+            end
+        end
+    end
+    yield_point('reduce_scan')
+    for i, a in ipairs(aggs) do
+        if a[1] == 'sum' and out[i] ~= nil then
+            out[i] = tostring(decimal.new(out[i]))
+        end
+    end
+    return out, true
+end
+end
+
+function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds, exclude, lock_check, begin, route, aggs)
     M.fresh.read(begin, lock_check)
     local mv = BK.check_read(route)
     if mv then return mv end
@@ -3751,6 +3817,9 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
     local kd = index_key_def(space_id, index_id)
     local reverse = (it == 'LT' or it == 'LE' or it == 'REQ')
     local function scan()
+        if aggs ~= nil then
+            return PG.reduce_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude, aggs)
+        end
         return count_scan(space_id, idx, kd, it, key, end_key, end_incl, reverse, preds, exclude)
     end
     if lock_check ~= true then return {OK, scan()} end
@@ -3762,10 +3831,10 @@ function tarn_count(space_id, index_id, key, iterator, end_key, end_incl, preds,
     -- memtx: count and check without a yield in between observe one state.
     local deadline = clock.monotonic() + M.cfg.lock_wait
     while true do
-        local n = scan()
-        if NLOCK == 0 and DDL_N == 0 then return {OK, n} end
+        local n, complete = scan()
+        if NLOCK == 0 and DDL_N == 0 then return aggs and {OK, n, complete} or {OK, n} end
         local h = select_locked(space_id, index_id, idx, kd, it, key, nil, end_key, reverse, nil, nil)
-        if h == nil then return {OK, n} end
+        if h == nil then return aggs and {OK, n, complete} or {OK, n} end
         if clock.monotonic() > deadline then
             return conflict('row locked by prepared transaction ' .. h)
         end
@@ -3777,6 +3846,35 @@ end
 -- (A count holds no rows; it fails with 1041 like a read if the heap runs
 -- out anyway.)
 tarn_count = PG.bounded(BK.recheck(tarn_count, 11))
+
+-- Optional procedure names let old storage refuse before beginning a stream.
+-- Reuse the count scan's exact MVCC/lock-history/DDL/routing boundary.
+tarn_reduce = tarn_count
+
+-- A page is captured and checked by the ordinary SELECT before immutable
+-- tuples are filtered/projected. Its continuation and coverage describe the
+-- original page, including rows the residual predicate rejected. This keeps
+-- empty qualifying pages from truncating the scan or weakening validation.
+function tarn_select_projected(space_id, index_id, key, iterator, limit, end_key, end_incl,
+                               lock_check, offset, begin, after, route, fields, preds, boundary)
+    local r = tarn_select(space_id, index_id, key, iterator, limit, end_key, end_incl,
+                          lock_check, offset, begin, after, route)
+    if r[1] ~= OK then return r end
+    local function project(t, fs)
+        local row = {}
+        for i, f in ipairs(fs) do
+            if f[1] <= #t then row[i] = t[f[1]] else row[i] = f[2] end
+        end
+        return row
+    end
+    local rows, out = r[2], {}
+    for _, t in ipairs(rows) do
+        if preds_match(t, preds) then out[#out + 1] = project(t, fields) end
+    end
+    return {OK, out, r[3] or box.NULL, #rows, #rows > 0 and project(rows[#rows], boundary) or box.NULL}
+end
+
+tarn_select_projected = PG.bounded(BK.recheck(tarn_select_projected, 12))
 
 -- tarn_estimate: row counts that choose the access path of an ordered read
 -- with LIMIT (issue #81). Range A, the equality prefix `a_key` of index
@@ -6575,6 +6673,7 @@ function BK.spaces(include_lazy)
     if include_lazy ~= false then
         for _, id in ipairs(M.lazy.spaces()) do ids[#ids + 1] = id end
     end
+    if #ids > 4096 then error(box.error.new{code=1041,reason='Movement space inventory exceeds 4096'}) end
     table.sort(ids)
     return ids
 end
@@ -6597,13 +6696,17 @@ function BK.store(b, state, peer, move, bump)
 end
 
 function BK.applied(b, state, peer, move, epoch)
-    if BK.state[b] == 'held' and state ~= 'held' then
-        BK.staged[b] = nil
-        BK.held = BK.held - 1
-    elseif state == 'held' and BK.state[b] ~= 'held' then
-        BK.staged[b] = BK.load_staged(b)
-        BK.held = BK.held + 1
+    local old = BK.state[b]
+    if old ~= state and (BK.is_partial(old) or BK.is_partial(state)) then
+        BK.physical_gen = BK.physical_gen + 1
     end
+    if BK.is_held(old) and not BK.is_held(state) then
+        BK.staged[b] = nil; BK.held = BK.held - 1
+    elseif BK.is_held(state) and not BK.is_held(old) then
+        BK.staged[b] = true; BK.held = BK.held + 1
+    end
+    if BK.is_partial(old) then BK.partial = BK.partial - 1 end
+    if BK.is_partial(state) then BK.partial = BK.partial + 1 end
     BK.state[b], BK.peer[b], BK.move[b] = state, peer, move
     if epoch ~= nil then BK.epoch = epoch end
     BK.ns_serve(b)
@@ -6684,11 +6787,20 @@ function BK.early(b, state, peer, move, epoch)
     end)
 end
 
--- Delete the rows of bucket b kept aside, in the current transaction.
-function BK.clear_recv(b)
-    local keys = {}
-    for _, t in box.space._tarn_recv:pairs({b}, {iterator = 'EQ'}) do keys[#keys + 1] = {b, t.space_id, t.key} end
-    for _, k in ipairs(keys) do box.space._tarn_recv:delete(k) end
+-- One physical batch per modern RPC. Legacy private callers may run the
+-- repeatable batches to completion; every transaction remains bounded.
+function BK.move_loop(fn, once)
+    repeat
+        writable(); BK.fresh()
+        local ok, r = pcall(function() return BK.locked(fn) end)
+        if not ok then
+            if box.is_in_txn() then box.rollback() end
+            BK.stale = true; BK.ns_sync(); reraise_readonly(r)
+            return failure(r)
+        end
+        if r[1] ~= 'more' or once then return r end
+        fiber.yield()
+    until false
 end
 
 -- Bucket b is not in the state a step expects (for move `move`).
@@ -6780,10 +6892,7 @@ end
 -- change shows once the step made it, as BK.early does), and builds the
 -- report once per change: reading 15,000 buckets from _tarn_buckets takes
 -- about 11 ms, and SQL servers read the map after every move.
-function tarn_buckets()
-    M.fresh.barrier()
-    writable()
-    BK.fresh()
+function BK.bucket_report()
     if BK.count == 0 then return {OK, 0, #BK.spaces(false)} end
     local r = BK.report
     if r ~= nil and r.ver == BK.ver then return r.reply end
@@ -6807,22 +6916,39 @@ function tarn_buckets()
     BK.report = {ver = BK.ver, reply = {OK, BK.count, BK.epoch, owned, others, BK.mver}}
     return BK.report.reply
 end
-
--- R: receive bucket b from shard `from` in move `move`.
-function tarn_bucket_recv_begin(b, from, move)
+function tarn_buckets()
+    M.fresh.barrier()
     writable()
     BK.fresh()
-    return BK.locked(function()
-        local s = BK.state[b]
-        if (s == 'receiving' or s == 'held') and BK.move[b] == move then return {OK} end
-        if BK.count == 0 or (s ~= nil and s ~= 'sent') then return BK.unexpected(b, 'receive') end
+    return BK.bucket_report()
+end
+
+-- R: receive bucket b from shard `from` in move `move`.
+function tarn_bucket_recv_begin(b, from, move, protocol)
+    writable(); BK.fresh()
+    if BK.move[b] ~= move or (BK.state[b] ~= 'receiving' and BK.state[b] ~= 'held') then
+        M.move.capable(from); M.move.capable(M.cfg.shard_id)
+    end
+    M.move.headroom(0)
+    return BK.move_loop(function()
+        local state = BK.state[b]
+        if (state == 'receiving' or state == 'held') and BK.move[b] == move then
+            if protocol == 2 and M.move.record(b,move).progress.protocol ~= 2 then
+                return {'error',1412,'Cancel legacy movement before using durable page receipts'}
+            end
+            return {OK}
+        end
+        if BK.count == 0 or (state ~= nil and state ~= 'sent') then return BK.unexpected(b, 'receive') end
+        if box.space._tarn_recv.index[0]:min({b}) ~= nil then
+            local row = box.space._tarn_recv.index[0]:min({b})
+            if row.bucket == b then return {'error', 1412, 'Previous staging must be reclaimed first'} end
+        end
         box.begin(RW)
-        BK.clear_recv(b)   -- (what a move given up may have left)
+        M.move.reserve(b, move, 'receiver', protocol)
         BK.store(b, 'receiving', from, move)
-        BK.commit()
-        BK.applied(b, 'receiving', from, move)
+        BK.commit(); BK.applied(b, 'receiving', from, move)
         return {OK}
-    end)
+    end, true)
 end
 
 -- S: send bucket b to shard `to` in move `move`. The writes to its rows
@@ -6832,24 +6958,30 @@ end
 function tarn_bucket_send_begin(b, to, move, timeout)
     writable()
     BK.fresh()
+    if BK.move[b] ~= move or (BK.state[b] ~= 'sending' and BK.state[b] ~= 'fenced') then
+        M.move.capable(to); M.move.capable(M.cfg.shard_id)
+    end
     local lazy = M.lazy.move_ready(to)
     if lazy then return lazy end
     -- Capability discovery may yield or refresh a remote leader.
     writable()
     BK.fresh()
-    local r = BK.locked(function()
+    local r = BK.move_loop(function()
         local s = BK.state[b]
         if not ((s == 'sending' or s == 'fenced') and BK.move[b] == move) then
             if s ~= 'active' then return BK.unexpected(b, 'send') end
-            BK.set(b, 'sending', to, move)
+            box.begin(RW)
+            M.move.reserve(b, move, 'sender')
+            BK.store(b, 'sending', to, move)
+            BK.commit(); BK.applied(b, 'sending', to, move)
         end
         if BK.track[b] == nil then
-            BK.track[b] = {keys = {}, list = {}}
+            BK.track[b] = {keys = {}, list = {}, bytes = 0}
             BK.track_n = BK.track_n + 1
         end
-        return nil
-    end)
-    if r ~= nil then return r end
+        return {OK}
+    end, true)
+    if r[1] ~= OK then return r end
     if not wait_commits(clock.monotonic() + (tonumber(timeout) or 10)) then
         M.stats.lock_timeouts = M.stats.lock_timeouts + 1
         return {'timeout', 1205, LOCK_TIMEOUT_MSG}
@@ -6861,14 +6993,14 @@ end
 -- the page before): {'ok', {{space_id, tuple}, ...}, next} (next: nil at
 -- the end). Read-confirmed: only rows a quorum has.
 function tarn_bucket_rows(b, after)
-    M.fresh.barrier()
-    writable()
-    yield_point('bucket_rows')   -- (tests: a move held while it copies)
+    M.fresh.barrier(); writable()
+    yield_point('bucket_rows')
     local start, pos
     if after ~= nil and after ~= box.NULL then start, pos = after[1], after[2] end
-    local out, n, bytes = {}, 0, 0
+    local nr, nb = M.move.limits()
+    local out, bytes, last = {}, 0, box.NULL
     box.begin({txn_isolation = 'read-confirmed'})
-    local ok, nxt = pcall(function()
+    local ok, nxt = pcall(M.move.copy_batch, b, function()
         for _, sid in ipairs(BK.spaces()) do
             if start == nil or sid >= start then
                 M.fresh.space(box.space[sid])
@@ -6876,10 +7008,12 @@ function tarn_bucket_rows(b, after)
                 local opts = {iterator = 'EQ'}
                 if sid == start and pos ~= nil and pos ~= box.NULL then opts.after = pos end
                 for _, t in idx:pairs({b}, opts) do
-                    n = n + 1
-                    out[n] = {M.lazy.wire_space(sid), t}
-                    bytes = bytes + t:bsize()
-                    if PG.full(n, bytes) then return {sid, idx:tuple_pos(t)} end
+                    local cost = t:bsize() + #msgpack.encode(index_key_def(sid, 0):extract_key(t)) + 128
+                    if cost > nb then error(box.error.new{code=1041,reason='Movement row exceeds batch budget'}) end
+                    if #out >= nr or bytes + cost > nb then return last end
+                    out[#out + 1] = {M.lazy.wire_space(sid), t}
+                    bytes, last = bytes + cost, {sid, idx:tuple_pos(t)}
+                    if #out >= nr then return last end
                 end
             end
         end
@@ -6892,74 +7026,66 @@ end
 
 -- R: rows of bucket b copied from the sender, kept aside: {space_id,
 -- tuple}, or {space_id, nil, primary key} for a row deleted since.
-function tarn_bucket_recv_rows(b, move, rows)
-    writable()
-    BK.fresh()
-    return BK.locked(function()
-        local s = BK.state[b]
-        if (s ~= 'receiving' and s ~= 'held') or BK.move[b] ~= move then
+function tarn_bucket_recv_rows(b, move, rows, checkpoint)
+    writable(); BK.fresh()
+    local bytes, hash = M.move.page(rows, checkpoint)
+    M.move.headroom(bytes)
+    return BK.move_loop(function()
+        local state = BK.state[b]
+        if (state ~= 'receiving' and state ~= 'held') or BK.move[b] ~= move then
             return BK.unexpected(b, 'receive rows')
         end
         box.begin(RW)
-        local changed = {}   -- {space id, key, tuple or nil}
-        local ok, err = pcall(function()
-            for _, r in ipairs(rows) do
-                local sid = M.lazy.resolve_space(r[1])
-                if box.space[sid] ~= nil then
-                    local tuple = r[2] ~= box.NULL and r[2] or nil
-                    local key
-                    if tuple ~= nil then
-                        tuple = box.tuple.new(tuple)
-                        key = kbin(index_key_def(sid, 0):extract_key(tuple):totable())
-                        box.space._tarn_recv:replace{b, sid, key, tuple}
-                    else
-                        key = kbin(r[3])
-                        box.space._tarn_recv:delete{b, sid, key}
-                    end
-                    changed[#changed + 1] = {sid, key, tuple}
-                end
+        local progress = M.move.record(b, move)
+        if progress.progress.clearing then box.rollback(); return {'error', 1412, 'Staging reset in progress'} end
+        if M.move.checkpoint(progress, checkpoint, hash) then box.rollback(); return {OK, 'duplicate'} end
+        local delta, count = 0, 0
+        local _, limit = M.move.limits()
+        for _, r in ipairs(rows) do
+            local sid = M.lazy.resolve_space(r[1])
+            local space = box.space[sid]
+            if space == nil then error(box.error.new{code=1412,reason='Movement space disappeared: '..tostring(r[1])}) end
+            local tuple = r[2] ~= box.NULL and r[2] or nil
+            if tuple and index_key_def(sid, space.index.bucket_id.id):extract_key(box.tuple.new(tuple))[1] ~= b then
+                error(box.error.new{code=1412,reason='Movement row belongs to another bucket'})
             end
-        end)
-        -- Held: the rows the checks use (BK.held_conflict) change before the
-        -- commit, and again after it (a rebuild meanwhile may have read them
-        -- before).
-        local function stage()
-            local staged = BK.state[b] == 'held' and BK.staged[b] or nil
-            if staged == nil then return end
-            for _, ch in ipairs(changed) do
-                local l = staged[ch[1]]
-                if l == nil then l = {}; staged[ch[1]] = l end
-                l[ch[2]] = ch[3]
-            end
+            local key = tuple and kbin(index_key_def(sid, 0):extract_key(box.tuple.new(tuple)):totable()) or kbin(r[3])
+            local old = box.space._tarn_recv:get{b, sid, key}
+            if old then delta, count = delta - old:bsize(), count - 1 end
+            if tuple then
+                local staged = box.tuple.new{b, sid, key, tuple}
+                if staged:bsize() + 32 > limit then error(box.error.new{code=1041,reason='Movement row exceeds batch budget'}) end
+                box.space._tarn_recv:replace(staged)
+                delta, count = delta + staged:bsize(), count + 1
+            else box.space._tarn_recv:delete{b, sid, key} end
         end
-        if ok then
-            stage()
-            ok, err = pcall(BK.commit)
-        else
-            box.rollback()
-        end
-        if not ok then
-            if BK.state[b] == 'held' then BK.staged[b] = BK.load_staged(b) end
-            error(err)
-        end
-        stage()
+        M.move.account(progress, delta, count, checkpoint, hash)
+        BK.commit(); M.move.observed(#rows, bytes)
         return {OK}
-    end)
+    end, true)
 end
 
 -- R: drop the rows of bucket b kept aside (the move copies them again).
-function tarn_bucket_recv_clear(b, move)
-    writable()
-    BK.fresh()
-    return BK.locked(function()
-        local s = BK.state[b]
-        if (s ~= 'receiving' and s ~= 'held') or BK.move[b] ~= move then return BK.unexpected(b, 'clear') end
+function tarn_bucket_recv_clear(b, move, once, seq)
+    return BK.move_loop(function()
+        local state = BK.state[b]
+        if (state ~= 'receiving' and state ~= 'held') or BK.move[b] ~= move then return BK.unexpected(b, 'clear') end
         box.begin(RW)
-        BK.clear_recv(b)
+        local r = M.move.record(b, move)
+        if r.progress.protocol == 2 and not seq then box.rollback(); return {'error', 1412, 'Staging reset receipt required'} end
+        if seq and r.progress.reset_seq == seq and not r.progress.clearing then box.rollback(); return {OK} end
+        if not r.progress.clearing then
+            if seq and seq ~= r.progress.seq + 1 then box.rollback(); return {'error', 1412, 'Stale staging reset'} end
+            box.space._tarn_move:replace{b, move, r.side, r.bytes, r.rows,
+                {seq = r.progress.seq + 1, clearing = true, protocol = r.progress.protocol, reset_seq = seq}}
+        elseif seq and r.progress.reset_seq ~= seq then
+            box.rollback(); return {'error', 1412, 'Another staging reset is in progress'}
+        end
+        local done = M.move.clear_batch(b, move)
+        if done then M.move.reset_progress(b, move) end
         BK.commit()
-        if BK.staged[b] ~= nil then BK.staged[b] = {} end
-        return {OK}
-    end)
+        return {done and OK or 'more'}
+    end, once)
 end
 
 -- R: hold bucket b (see "Buckets").
@@ -7021,145 +7147,171 @@ end
 -- {'lost'} when the notes are not that generation's (a leader change):
 -- the move copies the bucket again.
 function tarn_bucket_delta(b, move, gen, from)
-    M.fresh.barrier()
-    writable()
-    BK.fresh()
-    local s = BK.state[b]
-    if (s ~= 'sending' and s ~= 'fenced') or BK.move[b] ~= move then return BK.unexpected(b, 'delta') end
+    M.fresh.barrier(); writable(); BK.fresh()
+    local state = BK.state[b]
+    if (state ~= 'sending' and state ~= 'fenced') or BK.move[b] ~= move then return BK.unexpected(b, 'delta') end
     local tr = BK.track[b]
-    if tr == nil or gen ~= BK.gen then return {'lost'} end
-    local i = tonumber(from) or 1
-    local out, n, bytes = {}, 0, 0
+    if tr == nil or tr.lost or gen ~= BK.gen then return {'lost'} end
+    local i, out, bytes = tonumber(from) or 1, {}, 0
+    local nr, nb = M.move.limits()
     box.begin({txn_isolation = 'read-confirmed'})
-    local ok, err = pcall(function()
-        while i <= #tr.list and not PG.full(n, bytes) do
+    local ok, err = pcall(M.move.copy_batch, b, function()
+        while i <= #tr.list do
             local k = tr.list[i]
             local sp = box.space[k[1]]
             if sp ~= nil then M.fresh.space(sp) end
             local t = sp ~= nil and sp:get(k[2]) or nil
-            n = n + 1
-            if t ~= nil then
-                out[n] = {M.lazy.wire_space(k[1]), t}
-                bytes = bytes + t:bsize()
-            else
-                out[n] = {M.lazy.wire_space(k[1]), box.NULL, k[2]}
-            end
-            i = i + 1
+            local cost = (t and t:bsize() or 0) + #msgpack.encode(k[2]) * 2 + 128
+            if cost > nb then error(box.error.new{code=1041,reason='Movement delta row exceeds batch budget'}) end
+            if #out >= nr or bytes + cost > nb then break end
+            out[#out + 1] = t and {M.lazy.wire_space(k[1]), t} or {M.lazy.wire_space(k[1]), box.NULL, k[2]}
+            bytes, i = bytes + cost, i + 1
         end
     end)
     if box.is_in_txn() then box.commit() end
     if not ok then error(err) end
+    if tr.lost or BK.track[b] ~= tr or gen ~= BK.gen then return {'lost'} end
     return {OK, out, i <= #tr.list and i or box.NULL}
 end
 
--- S: send bucket b: delete its rows, in one local transaction (MVCC fails
--- the validation of the streams that read them), and refuse it from now
--- on -- from before the deletes are visible (BK.early).
-function tarn_bucket_send(b, move)
-    writable()
-    yield_point('bucket_send')   -- (tests: a move held after its flip, before its send)
-    BK.fresh()
-    return BK.locked(function()
-        local s = BK.state[b]
-        if s == 'sent' and BK.move[b] == move then return {OK, 'sent'} end
+-- Withdraw serving ownership first, then reclaim one bounded physical
+-- transaction at a time. Unscoped reads are fenced until reclamation ends.
+function tarn_bucket_send(b, move, once)
+    writable(); yield_point('bucket_send'); BK.fresh()
+    return BK.move_loop(function()
+        local state = BK.state[b]
+        if state == 'sent' and BK.move[b] == move then return {OK, 'sent'} end
         if BK.move[b] ~= move then
-            -- Not in this move: it was given up here (see Cluster::flip).
-            local r = BK.unexpected(b, 'send')
-            r[1] = 'not_moving'
-            return r
+            local r = BK.unexpected(b, 'send'); r[1] = 'not_moving'; return r
         end
-        if s ~= 'fenced' then return BK.unexpected(b, 'send') end
-        if M.lazy.bucket_obligations(b) ~= 0 then return {'timeout', 1205, 'bucket lazy obligations remain'} end
-        local peer = BK.peer[b]
-        local epoch
+        if state ~= 'fenced' and state ~= 'reclaiming' then return BK.unexpected(b, 'send') end
+        if state == 'fenced' then
+            if M.lazy.bucket_obligations(b) ~= 0 then return {'timeout', 1205, 'Bucket lazy obligations remain'} end
+            BK.set(b, 'reclaiming', BK.peer[b], move, true)
+        end
+        yield_point('move_reclaim_batch')
         box.begin(RW)
-        local ok, err = pcall(function()
-            for _, sid in ipairs(BK.spaces()) do
-                local sp = box.space[sid]
-                local kd = index_key_def(sid, 0)
-                local keys = {}
-                for _, t in sp.index.bucket_id:pairs({b}, {iterator = 'EQ'}) do keys[#keys + 1] = kd:extract_key(t) end
-                for _, k in ipairs(keys) do sp:delete(k) end
+        local bytes, count = 0, 0
+        local nr, nb = M.move.limits()
+        for _, sid in ipairs(BK.spaces()) do
+            local sp, keys = box.space[sid], {}
+            for _, row in sp.index.bucket_id:pairs({b}, {iterator='EQ'}) do
+                local cost = row:bsize() + 32
+                if cost > nb then error(box.error.new{code=1041,reason='Reclamation row exceeds batch budget'}) end
+                if count >= nr or bytes + cost > nb then break end
+                keys[#keys + 1] = index_key_def(sid, 0):extract_key(row)
+                count, bytes = count + 1, bytes + cost
             end
-            epoch = BK.store(b, 'sent', peer, move, true)
-            BK.early(b, 'sent', peer, move, epoch)
-        end)
-        if not ok then
-            box.rollback()
-            error(err)
+            for _, key in ipairs(keys) do sp:delete(key) end
+            if count > 0 then break end
         end
-        BK.commit()
-        BK.applied(b, 'sent', peer, move, epoch)   -- (and after it: see BK.rebuild)
-        M.stats.bucket_sends = M.stats.bucket_sends + 1
-        return {OK}
-    end)
+        local peer = BK.peer[b]
+        if count == 0 then
+            BK.store(b, 'sent', peer, move); M.move.forget(b, move)
+        end
+        BK.commit(); M.move.observed(count, bytes)
+        if count == 0 then
+            BK.applied(b, 'sent', peer, move)
+            M.stats.bucket_sends = M.stats.bucket_sends + 1
+            return {OK}
+        end
+        return {'more'}
+    end, once)
 end
 
--- R: take bucket b over: insert the rows kept aside, in one local
--- transaction (MVCC fails the validation of the streams whose reads they
--- fall in), own it and release the hold. The epoch changes before the rows
--- are visible, the state once they are (BK.early).
-function tarn_bucket_recv(b, move)
-    writable()
-    yield_point('bucket_recv')   -- (tests: a move held between its send and its receive)
-    BK.fresh()
-    return BK.locked(function()
-        local s = BK.state[b]
-        if s == 'active' and BK.move[b] == move then return {OK, 'received'} end
-        if s ~= 'held' or BK.move[b] ~= move then return BK.unexpected(b, 'take over') end
-        local epoch
-        box.begin(RW)
-        local ok, err = pcall(function()
-            for _, t in box.space._tarn_recv:pairs({b}, {iterator = 'EQ'}) do
-                local sp = box.space[t.space_id]
-                if sp ~= nil then M.lazy.import(sp, t.tuple) end
+-- Install behind a durable visibility hold; only the empty staging tail
+-- publishes ownership. Stage deletion and target insertion share a commit.
+function tarn_bucket_recv(b, move, once)
+    writable(); yield_point('bucket_recv'); BK.fresh()
+    return BK.move_loop(function()
+        local state = BK.state[b]
+        if state == 'active' and BK.move[b] == move then return {OK, 'received'} end
+        if (state ~= 'held' and state ~= 'installing') or BK.move[b] ~= move then return BK.unexpected(b, 'take over') end
+        if state == 'held' then
+            local p = M.move.record(b, move).progress
+            if p.protocol == 2 and (not p.done or (p.phase ~= 'delta' and p.phase ~= 'frozen')) then
+                return {'error', 1412, 'Movement copy has not completed'}
             end
-            BK.clear_recv(b)
-            epoch = BK.store(b, 'active', nil, move, true)
-            BK.early(b, nil, nil, nil, epoch)
-        end)
-        if not ok then
-            box.rollback()
-            log.error('tarn: taking bucket %d over failed: %s', b, tostring(err))
-            error(err)
+            BK.set(b, 'installing', BK.peer[b], move, true)
         end
-        BK.commit()
-        BK.applied(b, 'active', nil, move, epoch)
-        M.stats.bucket_recvs = M.stats.bucket_recvs + 1
-        return {OK}
-    end)
+        yield_point('move_install_batch')
+        local _, maxbytes = M.move.limits()
+        M.move.headroom(maxbytes)
+        box.begin(RW)
+        local progress = M.move.record(b, move)
+        local rows, bytes = M.move.staged_page(b)
+        local removed = 0
+        for _, t in ipairs(rows) do
+            local sp = box.space[t.space_id]
+            if not sp then error(box.error.new{code=1412,reason='Movement target space disappeared'}) end
+            M.lazy.import(sp, t.tuple)
+            box.space._tarn_recv:delete{b, t.space_id, t.key}
+            removed = removed + t:bsize()
+        end
+        M.move.account(progress, -removed, -#rows)
+        if #rows == 0 then
+            assert(progress.rows == 0 and progress.bytes == 0, 'Incomplete movement accounting')
+            BK.store(b, 'active', nil, move); M.move.forget(b, move)
+        end
+        BK.commit(); M.move.observed(#rows, bytes)
+        if #rows == 0 then
+            BK.applied(b, 'active', nil, move)
+            M.stats.bucket_recvs = M.stats.bucket_recvs + 1
+            return {OK}
+        end
+        return {'more'}
+    end, once)
 end
 
 -- S: give the send of bucket b up (before tarn_bucket_send).
 function tarn_bucket_send_abort(b, move)
     writable()
     BK.fresh()
-    return BK.locked(function()
+    return BK.move_loop(function()
         local s = BK.state[b]
         if BK.move[b] ~= move then return {OK} end   -- (not this move's)
-        if s == 'sent' then return {'error', 0, string.format('bucket %d was sent already', b)} end
-        if s == 'sending' or s == 'fenced' then BK.set(b, 'active', nil, nil) end
+        if s == 'sent' or s == 'reclaiming' then return {'error', 0, string.format('bucket %d was sent already', b)} end
+        if s == 'sending' or s == 'fenced' then
+            box.begin(RW); M.move.forget(b, move); BK.store(b, 'active')
+            BK.commit(); BK.applied(b, 'active', nil, nil)
+        end
         return {OK}
-    end)
+    end, true)
 end
 
 -- R: give the receive of bucket b up (before tarn_bucket_recv).
-function tarn_bucket_recv_abort(b, move)
-    writable()
-    BK.fresh()
-    return BK.locked(function()
-        local s = BK.state[b]
+function tarn_bucket_recv_abort(b, move, once)
+    return BK.move_loop(function()
+        local state = BK.state[b]
         if BK.move[b] ~= move then return {OK} end
-        if s == 'active' then return {'error', 0, string.format('bucket %d was taken over already', b)} end
-        if s == 'receiving' or s == 'held' then
-            box.begin(RW)
-            BK.clear_recv(b)
-            BK.store(b, nil)
-            BK.commit()
-            BK.applied(b, nil, nil, nil)
+        if state == 'active' or state == 'installing' then
+            return {'error', 0, string.format('bucket %d was taken over already', b)}
         end
-        return {OK}
-    end)
+        if state ~= 'receiving' and state ~= 'held' and state ~= 'aborting' then return BK.unexpected(b, 'abort') end
+        if state ~= 'aborting' then BK.set(b, 'aborting', BK.peer[b], move) end
+        box.begin(RW)
+        local done = M.move.clear_batch(b, move)
+        if done then BK.store(b, nil); M.move.forget(b, move) end
+        BK.commit()
+        if done then BK.applied(b, nil, nil, nil) end
+        return {done and OK or 'more'}
+    end, once)
+end
+
+function tarn_move_capabilities()
+    if M.compatibility.current() ~= 2 or not box.space._tarn_move or
+       not box.space._tarn_recv or box.space._tarn_recv.engine ~= 'vinyl' then
+        return {'error', 1412, 'Bounded movement storage migration incomplete'}
+    end
+    local ok, err = pcall(M.move.headroom, 0)
+    if not ok then return failure(err) end
+    return {OK, 2}
+end
+function tarn_bucket_progress(b, move)
+    M.fresh.barrier(); writable(); BK.fresh()
+    local r = box.space._tarn_move:get{b}
+    if r == nil or r.move ~= move then return {'error', 1412, 'Movement progress identity differs'} end
+    return {OK, r.progress, r.bytes, r.rows, BK.state[b]}
 end
 
 -- Membership (see BK.load_members) ------------------------------------------
@@ -7442,6 +7594,7 @@ function tarn_info()
             ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
             schema_version = box.info.schema_version or 0, vinyl = M.vinyl.stats(), clock = M.clock.status(),
+            movement = M.move.info(),
             recovery = M.recovery_info(),
             native = BK.ns ~= nil and {ready = BK.ns.ready, served = tonumber(BK.ns.served),
                                        to_lua = tonumber(BK.ns.to_lua), writes = tonumber(BK.ns.w_served),
@@ -7455,19 +7608,6 @@ end
 
 -------------------------------------------------------------------------------
 
--- Every replica configured for this shard has joined and follows this node.
-local function replicas_follow()
-    local cfg = box.cfg.replication
-    local want = type(cfg) == 'table' and #cfg - 1 or 0   -- the list names this node too
-    local n = 0
-    for id, r in pairs(box.info.replication) do
-        if id ~= box.info.id and r.downstream ~= nil and r.downstream.status == 'follow' then
-            n = n + 1
-        end
-    end
-    return n >= want
-end
-
 -- Users and spaces, created by the writable node; replicas get them by
 -- replication. Every step is idempotent and writes nothing when its object
 -- exists.
@@ -7476,6 +7616,7 @@ local function setup_schema()
     box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
     box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
     ensure_schema()
+    M.kv.register()
     if M.cfg.native then
         for _, f in ipairs({'tarn_storage.ts_state', 'tarn_storage.ts_select', 'tarn_storage.ts_autocommit',
                             'tarn_storage.ts_commit_local', 'tarn_storage.ts_validate'}) do
@@ -7483,23 +7624,7 @@ local function setup_schema()
         end
     end
     if box.space._tarn_meta:get{'shard_id'} == nil then
-        -- The new shard's first synchronous write. Made while the replicas
-        -- are still joining, it cannot reach its quorum (they cannot
-        -- acknowledge it yet): it times out after replication_synchro_timeout,
-        -- and so does the first checkpoint of a joining replica that
-        -- received it, which waits for its confirmation and stops the
-        -- replica when it fails (Tarantool 3.9). So first let the replicas
-        -- join (for up to a minute).
-        local deadline = clock.monotonic() + 60
-        while M.cfg.sync and not replicas_follow() and clock.monotonic() < deadline do
-            fiber.sleep(0.1)
-        end
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
-    end
-    -- Keep shard_id as the first synchronous metadata write: the joining
-    -- replicas must be able to acknowledge it before any marker is added.
-    if box.space._tarn_meta:get{'storage_format'} == nil then
-        box.space._tarn_meta:replace{'storage_format', M.compatibility.format}
     end
     migrate_legacy_job()
     M.engine.fresh()
@@ -7536,6 +7661,7 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    M.move.limits() -- validate on every replica, before setup or admission
     BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')
     pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
     if not M.cfg.sync and not box.info.ro then
@@ -7656,6 +7782,14 @@ M.clock_sampler, M.clock_sampler_close = require('tarn_clock').sampler{
 M.clock = require('tarn_clock').new{
     cfg = M.cfg, required_peers = BK.clock_required, certifier = M.clock_sampler, publish = BK.ns_sync,
     can_run = PG.heap_available,
+    can_install = function()
+        -- Called inside the clock loader's own read-confirmed transaction.
+        -- The shard marker confirms completion of initial schema setup.
+        -- Its historical presence alone does not prove current join readiness.
+        local meta = box.space._tarn_meta
+        return meta ~= nil and meta:get{'shard_id'} ~= nil
+               and (not M.cfg.sync or replicas_follow())
+    end,
 }
 M.fresh.set_clock(M.clock)
 
@@ -7681,6 +7815,7 @@ M.lazy = require('tarn_lazy').new{
         return mark == nil or BK.ns == nil or BK.ns.oldest_inflight > mark
     end,
 }
+M.move = require('tarn_move').new{cfg = M.cfg, bk = BK, shard_uris = shard_uris}
 M.engine = require('tarn_engine').new{
     cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
     key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,
@@ -7730,5 +7865,48 @@ function tarn_lazy_gc(gen, bucket, route) return M.lazy.gc(gen, bucket, route) e
 function tarn_lazy_stats() return M.lazy.stats() end
 function tarn_lazy_control(action, arg) return M.lazy.control(action, arg) end
 function tarn_vinyl_stats() return {OK, M.vinyl.stats()} end
+
+-- Private adapter callbacks retain the ordinary strong point path. The
+-- public KV functions expose neither its raw/stream knobs nor control RPCs.
+M.kv = require('tarn_kv').new{
+    cfg = M.cfg, fresh = M.fresh,
+    prepare = function()
+        M.fresh.barrier()
+        lk_fresh(); fence_fresh(); BK.fresh()
+    end,
+    point = function(sid, key, bucket)
+        return tarn_select(sid, 0, key, 'EQ', 1, nil, nil, true, nil, false, nil, bucket)
+    end,
+    guard = function(sid, ver)
+        writable()
+        M.fresh.clock_check(); M.fresh.controls()
+        if LK_STALE or FENCE_STALE or BK.stale then
+            error(box.error.new{code = box.error.TRANSACTION_CONFLICT,
+                                reason = 'Strong KV metadata became stale during the read'})
+        end
+        local stale = stale_definition({sid, ver})
+        if stale or DDL_HELD[sid] ~= nil then
+            error({kv_v1 = true, kind = 'schema_changed', domain = 'contract', code = 1412,
+                   message = 'Table definition is fenced; explicitly open a new table handle'}, 0)
+        end
+        return DDL_GEN
+    end,
+    topology = function()
+        if BK.stale then error('Strong KV bucket metadata is stale') end
+        local report = BK.bucket_report()
+        if report[1] ~= OK then error('Strong KV bucket report is unavailable') end
+        local members = BK.members.shards or {}
+        if #members == 0 then
+            members = {}
+            for id, replicas in pairs(M.cfg.peers) do
+                members[#members + 1] = {id = tonumber(id), replicas = replicas, state = 'active'}
+            end
+            table.sort(members, function(a, b) return a.id < b.id end)
+        end
+        return {shard_id = M.cfg.shard_id, count = report[2], epoch = BK.epoch, mver = BK.mver,
+                owned = report[4] or {}, others = report[5] or {}, members = members}
+    end,
+}
+rawset(_G, 'tarn_kv_v1', {meta = M.kv.meta, get = M.kv.get, get_many = M.kv.get_many})
 
 return M

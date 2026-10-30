@@ -218,6 +218,12 @@ if native ~= '0' then
     end
 end
 
+local function move_limit(name, default)
+    local value = tonumber(env(name, default))
+    assert(value ~= nil, 'Invalid movement limit: ' .. name)
+    return value
+end
+
 require('tarn').init{
     shard_id = shard_id,
     peers = peers,
@@ -234,5 +240,14 @@ require('tarn').init{
     -- change (lua/tarn.lua "Native procedures").
     check_locks = env('TARN_CHECK_LOCKS', '') ~= '',
     load_window = tonumber(env('TARN_LOAD_WINDOW', '60')),
+    move_batch_rows = move_limit('TARN_MOVE_BATCH_ROWS', '512'),
+    move_batch_bytes = move_limit('TARN_MOVE_BATCH_BYTES', '1048576'),
+    move_slots = move_limit('TARN_MOVE_SLOTS', '4'),
+    move_staging_bytes = move_limit('TARN_MOVE_STAGING_BYTES', '17179869184'),
+    move_total_staging_bytes = move_limit('TARN_MOVE_TOTAL_STAGING_BYTES', '34359738368'),
+    move_delta_keys = move_limit('TARN_MOVE_DELTA_KEYS', '16384'),
+    move_delta_bytes = move_limit('TARN_MOVE_DELTA_BYTES', '4194304'),
+    move_total_delta_bytes = move_limit('TARN_MOVE_TOTAL_DELTA_BYTES', '8388608'),
+    move_disk_reserve_bytes = move_limit('TARN_MOVE_DISK_RESERVE_BYTES', '1073741824'),
     native = native ~= '0' and native or false,
 }

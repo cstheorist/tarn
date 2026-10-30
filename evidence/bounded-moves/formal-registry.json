@@ -1,0 +1,9 @@
+{
+  "default": 293,
+  "positive": 74,
+  "expected_broken": 219,
+  "generated": 296,
+  "maintained": 10,
+  "total": 306,
+  "generated_files_exact": true
+}

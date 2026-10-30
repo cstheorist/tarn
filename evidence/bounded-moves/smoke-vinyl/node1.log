@@ -1,0 +1,11 @@
+2026-10-30 11:54:00.111 [9076] main/113/applier/tarn@127.0.0.1:60303 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-30 11:54:00.111 [9076] main/113/applier/tarn@127.0.0.1:60303 coio.c:207 E> connect, called on fd 18, aka 127.0.0.1:52414: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-30 11:54:00.621 [9076] main/104/storage.lua replication.cc:1568 C> failed to synchronize with 2 out of 3 replicas
+2026-10-30 11:54:59.834 [9076] relay/127.0.0.1:41080/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_60303 (id = 1, addr: 127.0.0.1:41080) disconnected. Self: shard1_127_0_0_1_58329 (id = 3, addr: 127.0.0.1:58329)
+2026-10-30 11:54:59.834 [9076] relay/127.0.0.1:41080/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
+2026-10-30 11:54:59.835 [9076] relay/127.0.0.1:41094/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_47107 (id = 2, addr: 127.0.0.1:41094) disconnected. Self: shard1_127_0_0_1_58329 (id = 3, addr: 127.0.0.1:58329)
+2026-10-30 11:54:59.835 [9076] relay/127.0.0.1:41094/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
+2026-10-30 11:54:59.835 [9076] main/113/applier/tarn@127.0.0.1:60303 applier.cc:121 E> Applier to shard1_127_0_0_1_60303 (id = 1, addr: 127.0.0.1:60303) disconnected. Self: shard1_127_0_0_1_58329 (id = 3, addr: 127.0.0.1:52492)
+2026-10-30 11:54:59.835 [9076] main/113/applier/tarn@127.0.0.1:60303 coio.c:491 E> unexpected EOF when reading from socket, called on fd 24, aka 127.0.0.1:52486, peer of 127.0.0.1:60303: Broken pipe {"type":"SocketError","errno":32,"trace":[{"file":"./src/lib/core/coio.c","line":491}]}
+2026-10-30 11:54:59.835 [9076] main/115/applier/tarn@127.0.0.1:47107 applier.cc:121 E> Applier to shard1_127_0_0_1_47107 (id = 2, addr: 127.0.0.1:47107) disconnected. Self: shard1_127_0_0_1_58329 (id = 3, addr: 127.0.0.1:37160)
+2026-10-30 11:54:59.835 [9076] main/115/applier/tarn@127.0.0.1:47107 coio.c:491 E> unexpected EOF when reading from socket, called on fd 20, aka 127.0.0.1:37146, peer of 127.0.0.1:47107: Broken pipe {"type":"SocketError","errno":32,"trace":[{"file":"./src/lib/core/coio.c","line":491}]}
