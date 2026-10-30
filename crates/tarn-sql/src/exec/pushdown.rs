@@ -156,49 +156,53 @@ pub(super) async fn reduce(
         }
     }
     let mut requests = Vec::new();
-    for c in &calls {
-        let (client, id, begin) = match mode {
-            ReadMode::Txn(txn) => {
-                let st = txn.stream(cluster, c.shard).await?;
-                (st.client, st.id, st.begin)
-            }
-            _ => (read_client(cluster, c.shard).await?, 0, false),
-        };
-        requests.push((client, id, begin));
+    if let ReadMode::Txn(txn) = mode {
+        crate::topology::check_pinned_reads(
+            &cluster.cfg.topology,
+            txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+        )?;
+        for c in &calls {
+            let st = txn.stream(cluster, c.shard).await?;
+            requests.push(Some((st.client, st.id, st.begin)));
+        }
+    } else {
+        requests.resize_with(calls.len(), || None);
     }
-    let futs = calls
-        .iter()
-        .zip(&routes)
-        .zip(&requests)
-        .map(|((c, route), (client, id, begin))| {
-            let exclude: Vec<_> = written
-                .iter()
-                .filter(|(s, _)| *s == c.shard)
-                .map(|(_, k)| k.as_slice())
-                .collect();
-            let preds = &preds;
-            let aggs = &aggs;
-            async move {
-                reduce_rows(
-                    client,
-                    *id,
-                    t,
-                    path_index(&ta.path),
-                    &c.key,
-                    c.iter,
-                    c.end.as_ref().map(|(k, i)| (k.as_slice(), *i)),
-                    preds,
-                    &exclude,
-                    !in_stream,
-                    *begin,
-                    route,
-                    aggs,
-                )
-                .await
-            }
-        });
+    let futs = calls.iter().zip(&routes).zip(&requests).map(|((c, route), request)| {
+        let exclude: Vec<_> = written
+            .iter()
+            .filter(|(s, _)| *s == c.shard)
+            .map(|(_, k)| k.as_slice())
+            .collect();
+        let preds = &preds;
+        let aggs = &aggs;
+        async move {
+            // Non-stream pool discovery belongs to the admitted fanout task;
+            // queued reductions must not pin/open every shard in advance.
+            let (client, id, begin) = match request {
+                Some((client, id, begin)) => (client.clone(), *id, *begin),
+                None => (read_client(cluster, c.shard).await?, 0, false),
+            };
+            reduce_rows(
+                &client,
+                id,
+                t,
+                path_index(&ta.path),
+                &c.key,
+                c.iter,
+                c.end.as_ref().map(|(k, i)| (k.as_slice(), *i)),
+                preds,
+                &exclude,
+                !in_stream,
+                begin,
+                route,
+                aggs,
+            )
+            .await
+        }
+    });
     let mut fallback = false;
-    for (c, result) in calls.iter().zip(futures::future::join_all(futs).await) {
+    for (c, result) in calls.iter().zip(cluster.read_fanout(futs).await) {
         let result = match result {
             Ok(r) => r,
             Err(e) => {

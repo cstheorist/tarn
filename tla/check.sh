@@ -5,7 +5,7 @@
 # docs/verification.md. Arguments override the list of configurations.
 set -u
 cd "$(dirname "$0")"
-DEFAULT="Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
+DEFAULT="GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned Bug_GatewayReserve Bug_GatewayResponseRelease Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
 Bug_LocalReadsIgnoreWLocks Bug_ROValidateNoWLockCheck Bug_ROValidateNoReadCheck Bug_ValidateLostStream
 Bug_GCIgnoresDecision Bug_GCNoExpiry Bug_FenceAfterExpiry
 Tradeoff_DirectReadAtomic Tradeoff_AckOnPrepare_DirectRYW

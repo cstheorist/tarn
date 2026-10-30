@@ -630,9 +630,9 @@ pub(crate) async fn fetch_keys(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
-                let client = read_client(cluster, *s).await?;
                 let route = &routes[s];
                 futs.push(async move {
+                    let client = read_client(cluster, *s).await?;
                     keys_pages(
                         &client,
                         0,
@@ -650,11 +650,15 @@ pub(crate) async fn fetch_keys(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 rows.extend(r?);
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(per_shard.keys().copied()),
+            )?;
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
@@ -666,7 +670,7 @@ pub(crate) async fn fetch_keys(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 match r {
                     Ok(v) => rows.extend(v),
                     Err(e) => {
@@ -1019,18 +1023,22 @@ async fn read_calls(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
-                let client = read_client(cluster, c.shard).await?;
-                futs.push(
-                    async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await },
-                );
+                futs.push(async move {
+                    let client = read_client(cluster, c.shard).await?;
+                    scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await
+                });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 let s = r?;
                 read += s.read;
                 out.push(s);
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -1041,7 +1049,7 @@ async fn read_calls(
                     .await
                 });
             }
-            let results = futures::future::join_all(futs).await;
+            let results = cluster.read_fanout(futs).await;
             // A call that a limit cut short read its range only up to the
             // last row it returned: record that much (issue #41), so that
             // writes to the unread rest of the range do not conflict.
@@ -2526,18 +2534,22 @@ async fn storage_count(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
-                let client = read_client(cluster, c.shard).await?;
                 let preds = &preds;
                 futs.push(async move {
+                    let client = read_client(cluster, c.shard).await?;
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
                     count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false, route).await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 n += r?;
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -2550,7 +2562,7 @@ async fn storage_count(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 match r {
                     Ok(k) => n += k,
                     Err(e) => {
