@@ -168,6 +168,21 @@ prepared transaction with an explicit 1205 admission refusal. The profile
 does not override this failure, certify the full release, or qualify a
 production optimization.
 
+The repeated [run 41060171963](https://github.com/cstheorist/tarn/actions/runs/41060171963)
+also completes all four modes at compiled merge source
+`3bbb3f893327cfa9930d9e018b17cdd59f7b3450` (PR head `88ac124`). Its independent
+audits reconcile 388,946 baseline acknowledgements and six refusals, plus
+635,610 paired-pilot acknowledgements with no refusals/unknowns. The 132
+baseline and 240 paired samples remain separate from the earlier source.
+Every one of its twelve goodput-ratio ranges also crosses one. An extreme
+native-memtx unrelated-key pair falls to 0.053, with p99 increasing from
+13.9 ms to 401.9 ms; that sample remains valid exact-accounting evidence
+and is retained without trimming or attributing its cause to the host.
+The [complete archives and audit](rc-evidence/run-41060171963/manifest.json)
+preserve these regressions. This reinforces the decision to keep the
+condition-allocation candidate experimental. It contains no plan-guard
+batching measurements.
+
 ## Further allocation census
 
 `rc_guard_probe.lua` measures unchanged public freshness helpers on one
