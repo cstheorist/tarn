@@ -1,0 +1,173 @@
+{
+  "source_files": {
+    "lua/storage.lua": "2ba5ce15c67b5a6470fab46a946e0516bf127c0ee7ae57c743a5cccb8b570b2c",
+    "lua/tarn.lua": "3301c192767645bb83ca87ce6edac22a4ccc228d382e624d9963465fbe80f289",
+    "lua/tarn_backup.lua": "6553ee7d54755680a79247929f12b21cfc81a55b6972f85b435c68437d9f20f3",
+    "lua/tarn_clock.lua": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9",
+    "lua/tarn_compat.lua": "c77c0765d173251c4459fcbb4ea6d9d95f97f33c057d0bb2b8b08643ad4b2005",
+    "lua/tarn_engine.lua": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f",
+    "lua/tarn_fresh.lua": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2",
+    "lua/tarn_lazy.lua": "ff90c7c126b4e6626457d08fed147a4a66192ac3906bd8c1e3bd3c85ecb16615",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd",
+    "lua/test/alter_backfill_restart_test.lua": "efc104802ecd729944951821276ce51cd744f3e549c3adbd7504df59dc32018a",
+    "lua/test/alter_backfill_test.lua": "2bcd6aeffe8a093812d2cf064470c3e6661f61c093e5b093e1783e914784802d",
+    "lua/test/alter_rename_restart_test.lua": "d4e2086de2a0cd3e186197e0d4ac5b484125bea71784deab2bc33527d7cfe2fc",
+    "lua/test/alter_upgrade_test.lua": "0ed1435eabb0686e74d2b1c4c117a5b1133095f394a57dea5dd1d09e4bd1ed0e",
+    "lua/test/bucket_test.lua": "b6ff6765a89192ccbca65e3821936c60f5d0cc72a9e5596f94616f28e4f66f15",
+    "lua/test/clock_completion_test.lua": "59ec44b613222fbf6c1c5853c4f415f389b65b3239086cdb70360b459fd87b49",
+    "lua/test/clock_guard_test.lua": "5c84d99d58c82f78c21137bd034e90108ac255b936c8e11865a2e1b72187c1a2",
+    "lua/test/clock_initialization_test.lua": "7028a4e9b9bd089c5b90bc1e147c3721ec7a99164fc0e4894ba8d8316b5a681f",
+    "lua/test/clock_integration_node.lua": "2c5b1a7d941c7f52d4773b6f4443f7e05a9e8fa8f3e447b7d35a932d29799880",
+    "lua/test/clock_integration_test.lua": "b436e6c44fb20acf48d3bf1c83f5d6ac277dcf926f0899829ab1d6743437b27f",
+    "lua/test/clock_protocol_test.lua": "53131d22f79bebc424dc20dab4206d463d0d7a3add92aca272d8b0dc47900ad3",
+    "lua/test/compat_test.lua": "148e8ddbeaf45b69da0f9cc11d91e5ac1a51160e4e12787e33b4c2987fb6e351",
+    "lua/test/engine_alias_test.lua": "11ec42f368dbaff2af0eb45bbea546cce0a853fbeff5da70acc4c1589bb82eb4",
+    "lua/test/engine_cut_test.lua": "fa25b865ccdbcfa6cd1fd8afeab0995ffbca33cc00d646ebe02dee0f7d6eda0b",
+    "lua/test/engine_read_error_test.lua": "fdf5c0714d2c88765a31ec434b27f40fb164212d8b3818b3e5187e6b1a936f80",
+    "lua/test/engine_replication_diagnostics_test.lua": "694d225c78ed3bbe7dfa4f58063ac104113f628c2d81e33aa8a5ce144b11c450",
+    "lua/test/engine_replication_test.lua": "bc0acab3192a1c7927ba3d3b7c1444a7cf7d0a0a8ffdebd86a4166a9082e0cdd",
+    "lua/test/engine_restart_test.lua": "ac8e85c7749d098b11a0b8641aa64b3c16e70db4d4c2542c7b7c5a7ec175397f",
+    "lua/test/engine_terminal_test.lua": "40d3659e3968d92be5c3db0e5bc26cd3d70b17ba5d1f8d77a05572b761ce5134",
+    "lua/test/engine_test.lua": "23dccec69c936787711b8caaaed3990b5d5dfe5af57d7f6a60df8f7860150b52",
+    "lua/test/join_test.lua": "80cfe20a0fd8d07687091645e3ad592849e9a406581619ffe23c1940ba32cc56",
+    "lua/test/lazy_apply_confirm_test.lua": "2e5d17ee4a4ae7f8476569a11d4e3d553a84af655c965ce3659e88a9746e79b4",
+    "lua/test/lazy_bucket_count_test.lua": "027aeee09893e44658487962a4d65451be8ff5ea3a64623dbe7f6130a416ffc8",
+    "lua/test/lazy_clear_restart_test.lua": "3cb0c2e2d660652147cbe25e641ca18583a00cb33a458f86b8ad7ff9afc3e4e7",
+    "lua/test/lazy_codec_test.lua": "a59263c47dc9c39fbbec0304a3c7dfa912e06398529a055b160fe43c914ad353",
+    "lua/test/lazy_concurrency_test.lua": "f087c0426f90dbf47a19073c8a5e10f1b104172aa39a83f726c6738ed97ad34f",
+    "lua/test/lazy_create_restart_test.lua": "b52170b2854598350044a5736eb99328bf6db3a61fa868a7b699b0edbc217cef",
+    "lua/test/lazy_join_restart_test.lua": "3e3a8e6d59a6d9babfd459ecbe2e38424fb74a96155685d70ccfe4134b11a73b",
+    "lua/test/lazy_lifecycle_test.lua": "4b53d2982da4544b1a34a1f8078c371706586caa3d20799cace02f0ee3f62659",
+    "lua/test/lazy_metadata_mvcc_test.lua": "f1a09344f866726646bd76ea08157e41a6469dd06082e58014b71119d0e02808",
+    "lua/test/lazy_meter_test.lua": "cc8a3e94a22260ffc845d83109db1539ca3c1562cc4d18023e9dc078ea054652",
+    "lua/test/lazy_native_commit_test.lua": "d471ae361b159ec0268d387873c928c05e6606ee6a66c3eb661933685327124e",
+    "lua/test/lazy_plain_binding_test.lua": "644ac6cd206840173abe8cd52499323048e28fa4faf464738265c7e906b8bf72",
+    "lua/test/lazy_readiness_control.lua": "ee469c8fecd9a95e09d8b8d0bb0c2fa30629f99a6a4e46e8a46c04b42a7fbcda",
+    "lua/test/lazy_registry_test.lua": "d097384fbd3c3f04d90f1c21edb449d9ba3a8cc14b93b486c19fbfa5cd9003a6",
+    "lua/test/lazy_replication_test.lua": "f3211a8dae37d6a10f4bc25eb58e1b69500720045caff73c1246ef94d55d9285",
+    "lua/test/lazy_restart_test.lua": "e465dde3bcf72831456ea0249c5f12f0b08109cbf699913dee8325ee78e3261f",
+    "lua/test/lazy_shipper_test.lua": "a991338e25e8ba332e8596a608a8d5bcffecba024a3fdfedbbb3dd18851fc4ab",
+    "lua/test/lazy_slice_test.lua": "b640a725343c87ddf03bb8ba396c79f2f861eb634a8cf4bfb5134c1a0dfe8622",
+    "lua/test/lazy_target_confirm_test.lua": "9ab9bfdfbb41c65cd1ba0068f046d4fd3c4cda273973eaee600c928953c9bdab",
+    "lua/test/lazy_topology_test.lua": "47b129cc6e78154b8cf909603fbad0f13ced9a6e7696461a2e67be7a5c540b88",
+    "lua/test/member_dependency_test.lua": "ea670f4a60eca39fb684fb05cde6d53768a00a303dbbd5c02df26b614992063d",
+    "lua/test/member_test.lua": "7144b9beadc1871364aa57cd1ac3ada5858dff73dd41a1e2784fd48e31f25e93",
+    "lua/test/membership_freshness_test.lua": "32b8b3b2f959266c97111965d2605b94f9a71a8e8e7dee9def35ed0e443167f5",
+    "lua/test/native_freshness_control.lua": "8d455b2b2b2e2d4e2ca55f46479f01a21c7612867b49a839b8d9e31d96d757d0",
+    "lua/test/native_freshness_test.lua": "acd626c807cb00fb537922bb439f610ee109b8496594388957ad68bb9d36deb2",
+    "lua/test/native_key_batch_test.lua": "b79fc5049879eceed1402f8ab65255a8a8830c4f0d174eb79000679216cc2841",
+    "lua/test/native_lua_guard_test.lua": "9e757c89b417fcb181a80b8559388908f0aa8dab5ec0a1797b83dfe99b49f643",
+    "lua/test/native_test.lua": "b9171d0d481d7c8fa07f509e2fb6956095fec7f62453f185743e03cc7a169445",
+    "lua/test/prepare_confirm_test.lua": "0ecb5d76d1ebca2a54cb6dc4fb2e00c585102a2efbb32fdd5c4b35844f37cf50",
+    "lua/test/read_freshness_test.lua": "f450fc0e8dd646305bd40539c72ee4e0769f0c3769f194afb0f0004dd9243634",
+    "lua/test/rebalance_test.lua": "6ec996918659745f93c4f8d063fb1bbc1ea1ac7303f9fb9932b1a23503327489",
+    "lua/test/recovery_faults_test.lua": "73f9fe223ceb05042385e8eee57d7a466468c748dc6526ca064c9202add71d41",
+    "lua/test/storage_test.lua": "41b878833a25c6e8a809972fcee59497dc1a60f6bbca41ce52967fb0ae087d97",
+    "lua/test/vinyl_admission_test.lua": "7218f0e9523287067bfd2db950c765ce0c38636df513f6be44097379531636c8"
+  },
+  "runtime": [
+    {
+      "address": "127.0.0.1:3851",
+      "info": {
+        "version": "3.9.0-0-g8b9a0f59a9",
+        "quorum": "N / 2 + 1",
+        "wal": "fsync",
+        "shard": 1,
+        "ro": false,
+        "replicas": [
+          "tarn:tarn@127.0.0.1:3851",
+          "tarn:tarn@127.0.0.1:3852",
+          "tarn:tarn@127.0.0.1:3853"
+        ],
+        "native": false,
+        "sync": true
+      }
+    },
+    {
+      "address": "127.0.0.1:3852",
+      "info": {
+        "version": "3.9.0-0-g8b9a0f59a9",
+        "quorum": "N / 2 + 1",
+        "wal": "fsync",
+        "shard": 1,
+        "ro": true,
+        "replicas": [
+          "tarn:tarn@127.0.0.1:3851",
+          "tarn:tarn@127.0.0.1:3852",
+          "tarn:tarn@127.0.0.1:3853"
+        ],
+        "native": false,
+        "sync": true
+      }
+    },
+    {
+      "address": "127.0.0.1:3853",
+      "info": {
+        "version": "3.9.0-0-g8b9a0f59a9",
+        "quorum": "N / 2 + 1",
+        "wal": "fsync",
+        "shard": 1,
+        "ro": true,
+        "replicas": [
+          "tarn:tarn@127.0.0.1:3851",
+          "tarn:tarn@127.0.0.1:3852",
+          "tarn:tarn@127.0.0.1:3853"
+        ],
+        "native": false,
+        "sync": true
+      }
+    },
+    {
+      "address": "127.0.0.1:3861",
+      "info": {
+        "version": "3.9.0-0-g8b9a0f59a9",
+        "quorum": "N / 2 + 1",
+        "wal": "fsync",
+        "shard": 2,
+        "ro": false,
+        "replicas": [
+          "tarn:tarn@127.0.0.1:3861",
+          "tarn:tarn@127.0.0.1:3862",
+          "tarn:tarn@127.0.0.1:3863"
+        ],
+        "native": false,
+        "sync": true
+      }
+    },
+    {
+      "address": "127.0.0.1:3862",
+      "info": {
+        "version": "3.9.0-0-g8b9a0f59a9",
+        "quorum": "N / 2 + 1",
+        "wal": "fsync",
+        "shard": 2,
+        "ro": true,
+        "replicas": [
+          "tarn:tarn@127.0.0.1:3861",
+          "tarn:tarn@127.0.0.1:3862",
+          "tarn:tarn@127.0.0.1:3863"
+        ],
+        "native": false,
+        "sync": true
+      }
+    },
+    {
+      "address": "127.0.0.1:3863",
+      "info": {
+        "version": "3.9.0-0-g8b9a0f59a9",
+        "quorum": "N / 2 + 1",
+        "wal": "fsync",
+        "shard": 2,
+        "ro": true,
+        "replicas": [
+          "tarn:tarn@127.0.0.1:3861",
+          "tarn:tarn@127.0.0.1:3862",
+          "tarn:tarn@127.0.0.1:3863"
+        ],
+        "native": false,
+        "sync": true
+      }
+    }
+  ]
+}

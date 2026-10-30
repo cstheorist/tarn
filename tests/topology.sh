@@ -18,6 +18,7 @@ export TARN_CHECK_YIELDS=1 TARN_CHECK_LOCKS=1
   -b "${BASE:-25000}" -d "$W/storage" -w fsync -m 32 > "$OUT/start.log" 2>&1
 args=()
 [ -z "${BASELINE_BIN:-}" ] || args+=(--baseline "$BASELINE_BIN")
+[ -z "${INCOMPATIBLE_BASELINE_BIN:-}" ] || args+=(--incompatible-baseline "$INCOMPATIBLE_BASELINE_BIN")
 python3 "$ROOT/tests/sql/topologytest.py" --config "$W/storage/cluster.json" \
   --gateway "${TARN_BIN:-$ROOT/target/release/tarn-server}" --out "$OUT" \
   --port "${SQL_PORT:-26400}" --pairs "${PAIRS:-5}" --seconds "${SECONDS_PER_RUN:-2}" \

@@ -54,6 +54,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--gateway", required=True)
     ap.add_argument("--baseline")
+    ap.add_argument("--incompatible-baseline", help="format-1 gateway that must refuse format-2 storage; not a performance sample")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pairs", type=int, default=5)
     ap.add_argument("--seconds", type=float, default=2)
@@ -65,6 +66,7 @@ def main():
     ap.add_argument("--idle-seconds", type=float, default=2)
     args = ap.parse_args()
     assert args.pairs > 0 and args.seconds > 0 and args.rate > 0
+    assert not (args.baseline and args.incompatible_baseline), "choose a compatible comparison or an admission control"
     out = pathlib.Path(args.out); out.mkdir(parents=True, exist_ok=True)
     cfg = json.loads(pathlib.Path(args.config).read_text())
     groups = len(cfg["shards"])
@@ -91,7 +93,8 @@ def main():
                                 for root in ("crates", "tests", "lua")
                                 for p in pathlib.Path(root).rglob("*") if p.is_file() and p.suffix in (".rs", ".py", ".sh", ".lua", ".toml")},
                   binaries={label: hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
-                            for label, path in [("candidate", args.gateway), ("baseline", args.baseline)] if path})
+                            for label, path in [("candidate", args.gateway), ("baseline", args.baseline),
+                                                ("incompatible_baseline", args.incompatible_baseline)] if path})
     report_path = out / "report.json"
 
     def save(): report_path.write_text(json.dumps(report, indent=2))
@@ -111,6 +114,18 @@ def main():
                 time.sleep(.02)
 
     try:
+        if args.incompatible_baseline:
+            # A frozen format-1 gateway cannot be a matched performance sample
+            # against format-2 storage. Preserve its real admission refusal.
+            with (out / "incompatible-baseline.log").open("w") as log:
+                r = subprocess.run([args.incompatible_baseline, "--config", str(config),
+                                    "--listen", f"127.0.0.1:{args.port}", "--node-id", "800",
+                                    "--threads", "2", "--allow-all"],
+                                   stdout=log, stderr=log, timeout=90)
+            refusal = (out / "incompatible-baseline.log").read_text()
+            assert r.returncode != 0 and "incompatible Tarn storage" in refusal and "format=2" in refusal, refusal
+            report["checks"].append(dict(format1_gateway="refused_format2", returncode=r.returncode))
+            save()
         for pair in range(args.pairs):
             modes = [("candidate", args.gateway)]
             if args.baseline:

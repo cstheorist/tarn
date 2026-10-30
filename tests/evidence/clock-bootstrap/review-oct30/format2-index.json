@@ -1,0 +1,8 @@
+{
+  "boundary": "Same delayed-join and established-policy restart checks on the combined format-2 storage source; five controls per mode, exact memtx/Vinyl tuples, no performance or general checkpoint/Raft proof.",
+  "files": {
+    "format2-lua.json": "f5f1ad3c61339809cd78a6d4aa8207e275473f6870a731f7d39e60326b68767c",
+    "format2-native.json": "d7b0a76c3f5bc26e9099742530b4526c86ac4bc60a84264f40a1cc14e7dbeccd",
+    "format2.out": "2a73bc987af9041156a8ceb691a113e6dc38294cf6a8eaa54460ca8f0949e823"
+  }
+}

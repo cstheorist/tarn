@@ -1,0 +1,30 @@
+{"event": "prepare_attempt_started", "txid": "upgrade-admission-1", "attempt": 0, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-1", "node": "127.0.0.1:3851", "result": {"state": "aborted", "reply": ["no", 1205, "Vinyl write exceeds the current pressure burst allowance"]}}
+{"event": "prepare_refusal_cleanup_started", "txid": "upgrade-admission-1"}
+{"event": "prepare_refusal_cleanup_verified", "txid": "upgrade-admission-1", "evidence": [{"node": "127.0.0.1:3851", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "aborted", "locks": 0, "range_locks": 0}}, {"node": "127.0.0.1:3861", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "none", "locks": 0, "range_locks": 0}}]}
+{"event": "prepare_attempt_started", "txid": "upgrade-admission-1-admission-1", "attempt": 1, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-1-admission-1", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-1-admission-1", "node": "127.0.0.1:3861", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "durable_YES_before_restart", "txid": "upgrade-admission-1-admission-1"}
+{"event": "focused_follower_stopped", "node": "s1.2", "pid": 6478}
+{"event": "focused_follower_restarted", "node": "1.2"}
+{"event": "focused_follower_stopped", "node": "s2.2", "pid": 6536}
+{"event": "focused_follower_restarted", "node": "2.2"}
+{"event": "prepared_applied_once_after_restart", "txid": "upgrade-admission-1-admission-1"}
+{"event": "admission_refusal_control_passed", "participant": 1, "txid": "upgrade-admission-1-admission-1"}
+{"event": "prepare_attempt_started", "txid": "upgrade-admission-2", "attempt": 0, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-2", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-2", "node": "127.0.0.1:3861", "result": {"state": "aborted", "reply": ["no", 1205, "Vinyl write exceeds the current pressure burst allowance"]}}
+{"event": "prepare_refusal_cleanup_started", "txid": "upgrade-admission-2"}
+{"event": "prepare_refusal_cleanup_verified", "txid": "upgrade-admission-2", "evidence": [{"node": "127.0.0.1:3851", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "aborted", "locks": 0, "range_locks": 0}}, {"node": "127.0.0.1:3861", "abort": ["ok", "aborted"], "state": {"value": 0, "participant": "aborted", "decision": "none", "locks": 0, "range_locks": 0}}]}
+{"event": "prepare_attempt_started", "txid": "upgrade-admission-2-admission-1", "attempt": 1, "nodes": ["127.0.0.1:3851", "127.0.0.1:3861"]}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-2-admission-1", "node": "127.0.0.1:3851", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "prepare_attempt_reply", "txid": "upgrade-admission-2-admission-1", "node": "127.0.0.1:3861", "result": {"state": "prepared", "reply": ["yes"]}}
+{"event": "durable_YES_before_restart", "txid": "upgrade-admission-2-admission-1"}
+{"event": "focused_follower_stopped", "node": "s1.2", "pid": 6806}
+{"event": "focused_follower_restarted", "node": "1.2"}
+{"event": "focused_follower_stopped", "node": "s2.2", "pid": 6846}
+{"event": "focused_follower_restarted", "node": "2.2"}
+{"event": "prepared_applied_once_after_restart", "txid": "upgrade-admission-2-admission-1"}
+{"event": "admission_refusal_control_passed", "participant": 2, "txid": "upgrade-admission-2-admission-1"}
+{"result": "pass", "scope": "two RF3/fsync shards; native disabled; first/second real admission NO, confirmed abort and exact zero effects/locks, fresh YES across four follower restarts, duplicate APPLY exact value=1"}

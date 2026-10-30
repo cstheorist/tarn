@@ -1,0 +1,266 @@
+[
+  {
+    "directory": "tarn176-final-vinyl-r1-128-1",
+    "settings": {
+      "work": "/tmp/tarn176-final-vinyl-r1-128-1",
+      "engine": "vinyl",
+      "mib": 128,
+      "moves": 1,
+      "fault": "none"
+    },
+    "source_revision": "7d70930",
+    "binaries": {
+      "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+      "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+    },
+    "limits": {
+      "vinyl_memory": 16777216,
+      "vinyl_cache": 0,
+      "batch_rows": 512,
+      "batch_bytes": 1048576,
+      "delta_keys": 64,
+      "delta_bytes": 65536,
+      "total_delta_bytes": 131072,
+      "slots": 2,
+      "staging_bytes": 268435456,
+      "total_staging_bytes": 536870912
+    },
+    "elapsed_seconds": 62.101241403026506,
+    "throughput_mib_s": 2.061150423214598,
+    "receiver_hwm_mib": 143.96484375,
+    "staging_mib": 128.31177139282227,
+    "disk_mib": 1270.1171875,
+    "wal_mib": 1.0165729522705078,
+    "intervals": {
+      "2": {
+        "write_fence": 57.502884740009904,
+        "unavailable": 57.49835757003166,
+        "source_reclamation": 4.505248209985439,
+        "target_install_and_cleanup": 52.99299590004375
+      }
+    },
+    "passed": true
+  },
+  {
+    "directory": "tarn176-final-vinyl-r1-32-1",
+    "settings": {
+      "work": "/tmp/tarn176-final-vinyl-r1-32-1",
+      "engine": "vinyl",
+      "mib": 32,
+      "moves": 1,
+      "fault": "none"
+    },
+    "source_revision": "7d70930",
+    "binaries": {
+      "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+      "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+    },
+    "limits": {
+      "vinyl_memory": 16777216,
+      "vinyl_cache": 0,
+      "batch_rows": 512,
+      "batch_bytes": 1048576,
+      "delta_keys": 64,
+      "delta_bytes": 65536,
+      "total_delta_bytes": 131072,
+      "slots": 2,
+      "staging_bytes": 268435456,
+      "total_staging_bytes": 536870912
+    },
+    "elapsed_seconds": 6.169903628004249,
+    "throughput_mib_s": 5.186466747188221,
+    "receiver_hwm_mib": 134.8203125,
+    "staging_mib": 32.077396392822266,
+    "disk_mib": 342.99609375,
+    "wal_mib": 1.0165719985961914,
+    "intervals": {
+      "2": {
+        "write_fence": 4.642557710001711,
+        "unavailable": 4.638619670004118,
+        "source_reclamation": 0.9106550900032744,
+        "target_install_and_cleanup": 3.727840709965676
+      }
+    },
+    "passed": true
+  },
+  {
+    "directory": "tarn176-final-vinyl-r1-32-2",
+    "settings": {
+      "work": "/tmp/tarn176-final-vinyl-r1-32-2",
+      "engine": "vinyl",
+      "mib": 32,
+      "moves": 2,
+      "fault": "none"
+    },
+    "source_revision": "7d70930",
+    "binaries": {
+      "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+      "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+    },
+    "limits": {
+      "vinyl_memory": 16777216,
+      "vinyl_cache": 0,
+      "batch_rows": 512,
+      "batch_bytes": 1048576,
+      "delta_keys": 64,
+      "delta_bytes": 65536,
+      "total_delta_bytes": 131072,
+      "slots": 2,
+      "staging_bytes": 268435456,
+      "total_staging_bytes": 536870912
+    },
+    "elapsed_seconds": 12.078170589054935,
+    "throughput_mib_s": 5.298815704589889,
+    "receiver_hwm_mib": 162.95703125,
+    "staging_mib": 64.15479278564453,
+    "disk_mib": 692.96484375,
+    "wal_mib": 1.0165719985961914,
+    "intervals": {
+      "2": {
+        "write_fence": 9.941643800004385,
+        "unavailable": 9.935525090026204,
+        "source_reclamation": 1.7970147500163876,
+        "target_install_and_cleanup": 8.138368209998589
+      },
+      "3": {
+        "write_fence": 9.759117300040089,
+        "unavailable": 9.752758390037343,
+        "source_reclamation": 1.795459960005246,
+        "target_install_and_cleanup": 7.957151430018712
+      }
+    },
+    "passed": true
+  },
+  {
+    "directory": "tarn176-final-vinyl-r2-128-1",
+    "settings": {
+      "work": "/tmp/tarn176-final-vinyl-r2-128-1",
+      "engine": "vinyl",
+      "mib": 128,
+      "moves": 1,
+      "fault": "none"
+    },
+    "source_revision": "7d70930",
+    "binaries": {
+      "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+      "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+    },
+    "limits": {
+      "vinyl_memory": 16777216,
+      "vinyl_cache": 0,
+      "batch_rows": 512,
+      "batch_bytes": 1048576,
+      "delta_keys": 64,
+      "delta_bytes": 65536,
+      "total_delta_bytes": 131072,
+      "slots": 2,
+      "staging_bytes": 268435456,
+      "total_staging_bytes": 536870912
+    },
+    "elapsed_seconds": 62.97683469601907,
+    "throughput_mib_s": 2.032493386144909,
+    "receiver_hwm_mib": 129.1328125,
+    "staging_mib": 128.31177139282227,
+    "disk_mib": 1449.19921875,
+    "wal_mib": 1.0165729522705078,
+    "intervals": {
+      "2": {
+        "write_fence": 58.36043510999298,
+        "unavailable": 58.35547335998854,
+        "source_reclamation": 4.5485242899740115,
+        "target_install_and_cleanup": 53.806741359992884
+      }
+    },
+    "passed": true
+  },
+  {
+    "directory": "tarn176-final-vinyl-r2-32-1",
+    "settings": {
+      "work": "/tmp/tarn176-final-vinyl-r2-32-1",
+      "engine": "vinyl",
+      "mib": 32,
+      "moves": 1,
+      "fault": "none"
+    },
+    "source_revision": "7d70930",
+    "binaries": {
+      "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+      "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+    },
+    "limits": {
+      "vinyl_memory": 16777216,
+      "vinyl_cache": 0,
+      "batch_rows": 512,
+      "batch_bytes": 1048576,
+      "delta_keys": 64,
+      "delta_bytes": 65536,
+      "total_delta_bytes": 131072,
+      "slots": 2,
+      "staging_bytes": 268435456,
+      "total_staging_bytes": 536870912
+    },
+    "elapsed_seconds": 6.418434420018457,
+    "throughput_mib_s": 4.985639473108145,
+    "receiver_hwm_mib": 130.48046875,
+    "staging_mib": 32.077396392822266,
+    "disk_mib": 361.67578125,
+    "wal_mib": 1.0165719985961914,
+    "intervals": {
+      "2": {
+        "write_fence": 4.784232250007335,
+        "unavailable": 4.7787280400516465,
+        "source_reclamation": 0.9068142100004479,
+        "target_install_and_cleanup": 3.871775620034896
+      }
+    },
+    "passed": true
+  },
+  {
+    "directory": "tarn176-final-vinyl-r2-32-2",
+    "settings": {
+      "work": "/tmp/tarn176-final-vinyl-r2-32-2",
+      "engine": "vinyl",
+      "mib": 32,
+      "moves": 2,
+      "fault": "none"
+    },
+    "source_revision": "7d70930",
+    "binaries": {
+      "/tmp/tarn176-artifacts-v4/tarn-server": "73915ae60f7f546daba802359420561d95ce7d1be77fcf6e0fe8d8609a6913c9",
+      "/tmp/tarn176-artifacts-v4/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+    },
+    "limits": {
+      "vinyl_memory": 16777216,
+      "vinyl_cache": 0,
+      "batch_rows": 512,
+      "batch_bytes": 1048576,
+      "delta_keys": 64,
+      "delta_bytes": 65536,
+      "total_delta_bytes": 131072,
+      "slots": 2,
+      "staging_bytes": 268435456,
+      "total_staging_bytes": 536870912
+    },
+    "elapsed_seconds": 12.350346338993404,
+    "throughput_mib_s": 5.182040911511492,
+    "receiver_hwm_mib": 142.39453125,
+    "staging_mib": 64.15479278564453,
+    "disk_mib": 632.47265625,
+    "wal_mib": 1.0165719985961914,
+    "intervals": {
+      "2": {
+        "write_fence": 10.130424800037872,
+        "unavailable": 10.124342430033721,
+        "source_reclamation": 1.9797729600104503,
+        "target_install_and_cleanup": 8.144462970027234
+      },
+      "3": {
+        "write_fence": 9.940665250003804,
+        "unavailable": 9.9340729599935,
+        "source_reclamation": 1.9782955800183117,
+        "target_install_and_cleanup": 7.955654089979362
+      }
+    },
+    "passed": true
+  }
+]
