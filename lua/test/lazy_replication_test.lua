@@ -207,6 +207,11 @@ local function main()
         write(l,'insert',ids[1],'old')
         -- The decision shard creates STAGING atomically with its YES. A
         -- pre-existing decision record correctly fences a fresh PREPARE.
+        -- Empty/local entry readiness does not establish the distributed
+        -- clock-peer certificate. Wait for that before the one-shot PREPARE.
+        await('prepared transaction clock peer ready', function()
+            return ev(l, 'return tarn.clock.check({1}) == nil')
+        end)
         local r=call(l,'tarn_prepare',txid,1,{1},{{'insert',sid,{ids[2],'prepared',bucket}}},{},{},require('clock').realtime(),box.NULL,{sid,0},{bucket})
         assert(r[1]=='yes',json.encode(r))
         assert(call(l,'tarn_txn_cas',txid,'staging','committed',{1})=='committed')

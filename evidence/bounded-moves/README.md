@@ -78,6 +78,7 @@ exercise those changes; the earlier scale timings are not relabeled as new runs.
 | Format-1 to format-2 maintenance migration | [memtx and Vinyl matrices passed](checks/format-migration.out), including both mixed-component admission directions, interrupted/prepared refusal, old-binary downgrade refusal and reopen; full artifacts in development archive |
 | Cluster backup and isolated restore | Four RF3/fsync combinations passed on `cd1ad67`: memtx/Vinyl × native/Lua; exact rows, schemas and protocol spaces, interrupted capture/restore, quarantine and late lazy-frame checks |
 | Broad failover workload | Two 60-second RF3/fsync runs passed on `cd1ad67`; 39 memtx and 42 Vinyl moves under transfers, increments, predicate audits and RC locks; handoff plus both shard-leader crashes; every acknowledged commit retained, no duplicate increments or unfinished move |
+| Complete native storage suite | Passed; [combined native/Lua output](checks/storage-matrix-before-clock-readiness.out.gz) also retains the subsequent Lua-only setup refusal described below |
 
 The [restore/failover index](restore-and-failover-index.json),
 [complete result/config/process-log archive](restore-and-failover-runs.tar.gz)
@@ -86,6 +87,25 @@ Failover runs intentionally contain availability refusals during elections;
 passing means exact effect reconciliation and resumed progress, not zero errors
 or uninterrupted service. Backup captures a frozen cut: later source writes are
 outside its documented recovery point.
+
+Two final fixture corrections preserve the format and clock guards. The topology
+CI originally tried its frozen format-1 gateway against format-2 storage and was
+correctly refused ([original job output](checks/topology-first-ci-failure.out.gz)).
+It now records that refusal explicitly and runs the candidate's full topology
+checks. An eight-group/two-gateway functional control passed twice. It supplies
+no new cross-format baseline performance claim; historical topology measurements
+retain their original source boundary.
+
+The Lua-only full storage run passed its other suites but the held-status lazy
+fixture received a safe clock-peer refusal before its one-shot PREPARE. The
+fixture now waits for that required peer certificate before submitting PREPARE;
+it neither weakens clock checks nor retries the mutation. The corrected control
+passed for both engines ([output](checks/lazy-clock-readiness.out)). A first
+focused invocation used a relative controller path and was refused by the
+fixture's ownership wrapper; those startup logs are retained too. The
+[control index](final-fixture-controls-index.json) and [hashed archive](final-fixture-controls.tar.gz)
+retain successful runs and the original diagnostics. Full CI remains the check
+of the integrated final revision.
 
 The migration predecessor is exactly `8b12c4525bd677499a91b973afbc86cbcbb0cafd`.
 Migration run source `265ed5e` and its separately built binaries are recorded in

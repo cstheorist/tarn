@@ -118,9 +118,18 @@ observations and high-water counters. Exact point reads cover every group;
 successful scatter results must equal the complete expected set. Runtime
 scaling on one host is not independent-host performance evidence. The CI
 matrix includes RF1 at 8/32/128 groups, RF3 at eight groups and pool maxima
-of one and four. It compares a frozen baseline under the same release
+of one and four. Compatible baseline comparisons use the same release
 profile, durability and paced load. Missed scheduled slots and actual
 elapsed time are retained; a slow run is not reported as full admitted load.
+
+Format 2 changes the current CI comparison boundary: the frozen `8b12c45`
+gateway expects format 1 and must refuse the new storage. CI supplies it as
+`INCOMPATIBLE_BASELINE_BIN`, records that actual refusal, then runs all
+candidate topology checks and repeated samples. It does not treat the old
+gateway as a performance sample, patch its admission guard, or infer a new
+baseline speedup. The historical matched results below retain their original
+source boundary. `BASELINE_BIN` remains available for a separately verified
+compatible baseline.
 
 `simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps`
 exercises the actual lazy discovery, response accounting, membership decode
