@@ -272,14 +272,21 @@ class FaultTest(Test):
                 # cached former-leader socket. Record each refusal, and
                 # retry only this read, before any BEGIN or mutation.
                 assert c.get_autocommit() and not c.server_status & 1
+                readonly_routes = {
+                    f"shard {self.identities[0]['id']} has no reachable leader ({node['endpoint']} is read-only)"
+                    for node in self.group_nodes(0)
+                }
                 for attempt in range(8):
                     try:
                         rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
                         break
                     except pymysql.OperationalError as error:
-                        if (error.args[0] != 1213 or "shard leader changed" not in str(error)
-                                or attempt == 7):
+                        message = error.args[1] if len(error.args) > 1 else ""
+                        changed = error.args[0] == 1213 and "shard leader changed" in message
+                        readonly = error.args[0] == 2003 and message in readonly_routes
+                        if not (changed or readonly) or attempt == 7:
                             raise
+                        assert c.get_autocommit() and not c.server_status & 1
                         self.record("known_ro_read_retry", attempt=attempt + 1, error=list(error.args),
                                     scope="independent autocommit read before BEGIN; no mutation replay")
                         time.sleep(.05)

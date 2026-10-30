@@ -1,0 +1,243 @@
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.020s
+
+OK
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.002s
+
+OK
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+cluster up: 2 shard(s) x 3 replica(s); SQL on 127.0.0.1:6800..6800; dir /tmp/tarn176-traffic-failover-memtx
+13:59:31 box.ctl.promote() on s1.2 (port 5812), attempt 1; the leader on 5811 will be demoted with its connections open
+The term is outdated: old - 3, new - 4
+13:59:36 box.ctl.promote() on s1.3 (port 5813), attempt 1; the leader on 5811 will be demoted with its connections open
+The term is outdated: old - 5, new - 6
+13:59:36 shard 1 leader is now 5812; 5811 still running: yes
+13:59:43 killing shard 1 leader on port 5812 (s1.2)
+13:59:51 shard 1 new leader on 5811 after 7.493 s
+13:59:55 killing shard 2 leader on port 5821 (s2.1)
+13:59:57 shard 2 new leader on 5823 after 2.104 s
+    bank: 13296 commits, 4094 conflicts, 26 audits, 11456 other errors (4 commits with unknown outcome, 0 of them committed), final sum 64000
+    counters: 12889 acknowledged increments, 703 with unknown outcome
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: audit: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    commits per 3 s: 590 529 558 569 487 514 545 608 54 44 528 797 423 1001 1019 1024 954 996 1037 1013 6
+ok   test_bank (60.2s)
+1 tests, 0 failures
+    bank (READ COMMITTED): 4924 commits, 53 deadlocks, 3 lock timeouts, 5 unknown outcomes, 0 other errors
+ok   test_zz_bank (60.1s)
+1 tests, 0 failures
+1 SQL server(s), shards [1, 2], 30000 buckets; moving the 24 buckets of the rows for 60 s
+  39 buckets moved (122 moves failed); 4644 transfers, 594 conflicts; 5850 READ COMMITTED increments; 264 audits, 2149 READ COMMITTED reads of every shard; 14488 other errors
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    move failed: (1213, 'Deadlock found when trying to get lock; try restarting transaction (strong read unavailable: Clock safety unavailable: local clock policy not ready)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: rc counter: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+  ok   buckets moved under load (39)
+  ok   serializable ordered reads committed under load
+  ok   READ COMMITTED ordered reads completed under load
+  ok   reads saw every row once, and the sum unchanged: []
+  ok   final balance sum
+  ok   balances match the ledger: []
+  ok   every acknowledged COMMIT is in the ledger (0 missing)
+  ok   no COMMIT that failed with 1213 committed: []
+  ok   no increment lost or applied twice (id, n, ok, unknown): []
+  ok   transfers and increments committed
+  ok   no move left half done: []
+PASSED
+direct KV sum on new leaders: 64000
+shard 1 leader, native procedures:	{"validations_to_lua":8336,"commits_to_lua":2565,"served":33516,"to_lua":2099,"validations":0,"commits":0,"ready":1,"fallbacks":{"read":{"page":1,"bucket":5,"stale_buckets":177,"stale_locks":14,"read_only":6,"w_lock":1616,"load_window":1,"test_hooks":263,"stale_fences":16},"commit":{"freshness":2565},"validate":{"freshness":8336},"write":{"stale_locks":4,"read_only":2,"row_lock":839,"stale_buckets":30,"stale_fences":3,"test_hooks":191,"bucket":18}},"writes":9768,"writes_to_lua":1087}
+shard 2 leader, native procedures:	{"validations_to_lua":5514,"commits_to_lua":1595,"served":20019,"to_lua":1283,"validations":0,"commits":0,"ready":1,"fallbacks":{"read":{"stale_buckets":131,"w_lock":1151,"page":1},"commit":{"freshness":1595},"validate":{"freshness":5514},"write":{"stale_buckets":22,"row_lock":407}},"writes":6632,"writes_to_lua":429}
+2026-10-30 13:59:55.568 [31955] main/11857/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-7fba3fd5-37754 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 2
+2026-10-30 13:59:31.818 [32013] main/5944/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-7fba3fd5-6757 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 1
+2026-10-30 13:59:43.854 [32013] main/11909/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-7fba3fd5-16324 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 1
+2026-10-30 13:59:45.868 [32013] main/12292/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-7fba3fd5-17962 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 1
+FAILOVER TEST PASSED
+cluster up: 2 shard(s) x 3 replica(s); SQL on 127.0.0.1:6800..6800; dir /tmp/tarn176-traffic-failover-vinyl
+14:00:44 box.ctl.promote() on s1.2 (port 5812), attempt 1; the leader on 5811 will be demoted with its connections open
+The term is outdated: old - 3, new - 4
+14:00:45 shard 1 leader is now 5813; 5811 still running: yes
+14:00:56 killing shard 1 leader on port 5813 (s1.3)
+14:01:04 shard 1 new leader on 5811 after 7.849 s
+14:01:08 killing shard 2 leader on port 5821 (s2.1)
+14:01:15 shard 2 new leader on 5823 after 7.397 s
+    bank: 10795 commits, 3381 conflicts, 18 audits, 17429 other errors (8 commits with unknown outcome, 2 of them committed), final sum 64000
+    counters: 11336 acknowledged increments, 1084 with unknown outcome
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+      error: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    commits per 3 s: 655 603 606 577 562 554 613 547 98 36 291 773 54 48 477 938 929 891 829 707 7
+ok   test_bank (60.2s)
+1 tests, 0 failures
+    bank (READ COMMITTED): 5272 commits, 50 deadlocks, 4 lock timeouts, 3 unknown outcomes, 0 other errors
+ok   test_zz_bank (60.2s)
+1 tests, 0 failures
+1 SQL server(s), shards [1, 2], 30000 buckets; moving the 24 buckets of the rows for 60 s
+  42 buckets moved (124 moves failed); 3944 transfers, 910 conflicts; 6748 READ COMMITTED increments; 227 audits, 1687 READ COMMITTED reads of every shard; 17063 other errors
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813: tarantool i/o error: Connection refused (os error 111))')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813: tarantool i/o error: Connection refused (os error 111))')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813: tarantool i/o error: Connection refused (os error 111))')
+    move failed: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813: tarantool i/o error: Connection refused (os error 111))')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: rc counter: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+    error: increment: (2003, 'shard 1 has no reachable leader (127.0.0.1:5813 is read-only)')
+  ok   buckets moved under load (42)
+  ok   serializable ordered reads committed under load
+  ok   READ COMMITTED ordered reads completed under load
+  ok   reads saw every row once, and the sum unchanged: []
+  ok   final balance sum
+  ok   balances match the ledger: []
+  ok   every acknowledged COMMIT is in the ledger (0 missing)
+  ok   no COMMIT that failed with 1213 committed: []
+  ok   no increment lost or applied twice (id, n, ok, unknown): []
+  ok   transfers and increments committed
+  ok   no move left half done: []
+PASSED
+direct KV sum on new leaders: 64000
+shard 1 leader, native procedures:	{"validations_to_lua":5723,"commits_to_lua":0,"served":0,"to_lua":0,"validations":0,"commits":0,"ready":1,"fallbacks":{"validate":{"freshness":5723}},"writes":0,"writes_to_lua":0}
+shard 2 leader, native procedures:	{"validations_to_lua":3526,"commits_to_lua":0,"served":0,"to_lua":0,"validations":0,"commits":0,"ready":1,"fallbacks":{"validate":{"freshness":3526}},"writes":0,"writes_to_lua":0}
+2026-10-30 14:01:08.488 [33106] main/9695/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-73542751-35617 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 2
+2026-10-30 14:01:12.015 [33106] main/10133/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-73542751-37920 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 2
+2026-10-30 14:00:56.989 [33164] main/12661/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-73542751-16918 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 1
+2026-10-30 14:00:57.494 [33164] main/12778/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-73542751-16720 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 1
+2026-10-30 14:01:00.507 [33164] main/13495/tarn_recovery_w/tarn tarn.lua:5086 W> tarn recovery of 1-73542751-18237 failed (1 times): /work/lua/tarn.lua:4759: no writable node for shard 1
+FAILOVER TEST PASSED

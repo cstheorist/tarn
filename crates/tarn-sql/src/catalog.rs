@@ -203,15 +203,28 @@ pub struct LazyDef {
     pub ready: bool,
 }
 
-fn lazy_annotation(comment: &str) -> SqlResult<bool> {
-    let mut found = false;
+pub const MAX_LAZY_ROUTE_PARTS: u32 = 16;
+
+fn lazy_annotation(comment: &str) -> SqlResult<Option<u32>> {
+    let mut found = None;
     for token in comment.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';')) {
-        if token.eq_ignore_ascii_case("tarn:lazy") {
-            found = true;
-        } else if token.to_ascii_lowercase().starts_with("tarn:lazy=") {
-            return Err(SqlError::unsupported(
-                "tarn:lazy does not take a routing or uniqueness option",
-            ));
+        let token = token.to_ascii_lowercase();
+        let parts = if token == "tarn:lazy" {
+            Some(1)
+        } else if let Some(n) = token.strip_prefix("tarn:lazy=") {
+            Some(
+                n.parse::<u32>()
+                    .ok()
+                    .filter(|n| (1..=MAX_LAZY_ROUTE_PARTS).contains(n))
+                    .ok_or_else(|| SqlError::unsupported("tarn:lazy=N requires 1..16 routing columns"))?,
+            )
+        } else {
+            None
+        };
+        if let Some(parts) = parts {
+            if found.replace(parts).is_some() {
+                return Err(SqlError::unsupported("duplicate lazy routing annotation"));
+            }
         }
     }
     Ok(found)
@@ -391,8 +404,13 @@ impl TableDef {
     pub fn declare_lazy(&mut self, old: Option<&TableDef>) -> SqlResult<()> {
         for ix in &mut self.indexes {
             let is_new = old.is_none_or(|t| !t.indexes.iter().any(|o| o.id == ix.id));
-            if is_new && lazy_annotation(&ix.comment)? {
-                ix.lazy = Some(LazyDef::requested());
+            if is_new {
+                if let Some(route_parts) = lazy_annotation(&ix.comment)? {
+                    ix.lazy = Some(LazyDef {
+                        route_parts,
+                        ..LazyDef::requested()
+                    });
+                }
             }
         }
         self.validate_lazy()
@@ -404,7 +422,8 @@ impl TableDef {
             if ix.id == 0 || ix.unique || ix.global.is_some() || ix.cols.is_empty() {
                 return Err(SqlError::unsupported("tarn:lazy requires a non-unique secondary index"));
             }
-            if lazy.route_parts != 1
+            if !(1..=MAX_LAZY_ROUTE_PARTS).contains(&lazy.route_parts)
+                || lazy.route_parts as usize > ix.cols.len()
                 || lazy.space_id as u64 > crate::cluster::MAX_SPACE_ID
                 || (lazy.ready && lazy.space_id == 0)
             {
@@ -427,6 +446,14 @@ impl TableDef {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn lazy_route_parts(&self) -> u32 {
+        self.indexes
+            .iter()
+            .filter_map(|i| i.lazy.as_ref().map(|l| l.route_parts))
+            .max()
+            .unwrap_or(1)
     }
 
     pub fn space_name(&self) -> String {

@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Explicit composite lazy-index routing with `COMMENT 'tarn:lazy=N'`,
+  bounded typed merging for partial prefixes, single-destination complete
+  keys, routing diagnostics and guarded incarnation migration (#185).
+
 - A versioned, read-only strong Key/Value API for full-primary-key points
   and bounded independent-point batches, with dedicated-reader grants,
   ownership/schema handles and a generic Rust client. Complete responses
@@ -42,6 +46,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including statement/transaction rollback, pending APPLY and operation IDs.
   The primary contract manifest includes SQL/public-KV/Rust-SDK outcome
   histories with preserved error domains and exact strong/raw visibility.
+
+- Initial timing-policy installation waits for the confirmed shard marker and
+  configured replicas to finish joining, avoiding an early synchronous write
+  that can block a joining replica's first checkpoint. Existing confirmed
+  policies can still load during restart with an unavailable voter (#209).
 
 - Gateway sockets now grow on demand and share a hard physical-connection
   budget with completion capacity. Idle eviction preserves transaction and

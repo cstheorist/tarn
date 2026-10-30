@@ -1,0 +1,10 @@
+2026-10-30 11:54:00.058 [9077] main/114/applier/tarn@127.0.0.1:58329 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-30 11:54:00.058 [9077] main/114/applier/tarn@127.0.0.1:58329 coio.c:207 E> connect, called on fd 19, aka 127.0.0.1:41002: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-30 11:54:00.058 [9077] main/113/applier/tarn@127.0.0.1:60303 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-30 11:54:00.058 [9077] main/113/applier/tarn@127.0.0.1:60303 coio.c:207 E> connect, called on fd 18, aka 127.0.0.1:52392: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-30 11:54:00.567 [9077] main/114/applier/tarn@127.0.0.1:58329 applier.cc:121 E> Applier to d53f0a94-0a1c-483f-9be5-4a33a7d1a496 (id = 0, addr: 127.0.0.1:58329) disconnected. Self: shard1_127_0_0_1_47107 (id = 2, addr: 127.0.0.1:41066)
+2026-10-30 11:54:00.567 [9077] main/114/applier/tarn@127.0.0.1:58329 box.cc:4520 E> Instance bootstrap hasn't finished yet {"type":"ClientError","code":116,"name":"LOADING","trace":[{"file":"./src/box/box.cc","line":4520}]}
+2026-10-30 11:54:59.834 [9077] relay/127.0.0.1:37146/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_58329 (id = 3, addr: 127.0.0.1:37146) disconnected. Self: shard1_127_0_0_1_47107 (id = 2, addr: 127.0.0.1:47107)
+2026-10-30 11:54:59.834 [9077] relay/127.0.0.1:37146/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
+2026-10-30 11:54:59.834 [9077] relay/127.0.0.1:37186/101/main relay.cc:1157 E> Relay to shard1_127_0_0_1_60303 (id = 1, addr: 127.0.0.1:37186) disconnected. Self: shard1_127_0_0_1_47107 (id = 2, addr: 127.0.0.1:47107)
+2026-10-30 11:54:59.835 [9077] relay/127.0.0.1:37186/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
