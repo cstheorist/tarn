@@ -5,6 +5,10 @@ prototype: read [Security](#security) and the limitations in the
 [design document](design.md#6-limitations) before exposing it to anything
 that matters.
 
+[Rolling upgrades](upgrades.md) defines the supported predecessor, component
+matrix, connection admission, health gates and rollback boundary. Storage
+runtime admission currently requires Tarantool 3.9.0.
+
 ## Topology
 
 ```mermaid

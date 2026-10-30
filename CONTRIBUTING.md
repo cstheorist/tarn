@@ -9,7 +9,7 @@ issue first so that we can agree on the approach.
 | Tool | Notes |
 |---|---|
 | Rust | via [rustup](https://rustup.rs); `rust-toolchain.toml` pins the version (1.98.1), add `rustfmt` and `clippy` |
-| Tarantool 3.x | on `PATH`, or point `TARANTOOL` at the binary |
+| Tarantool 3.9.0 | on `PATH`, or point `TARANTOOL` at the binary; see `docs/upgrades.md` |
 | Python 3 + MySQL clients | SQL/fault suites: `pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0 msgpack==1.1.2` |
 | MariaDB 10.11 | reference server for the differential tests (`bench/baselines.sh start mariadb`, or any instance) |
 | Java 11+ and `tla2tools.jar` | only if you touch the protocol (see below) |
