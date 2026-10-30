@@ -12,14 +12,14 @@ import concurrent.futures
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 from pathlib import Path
 import random
-import subprocess
-import threading
 import time
 
 from lazytest import connect, ev, q, wait_empty
+from movetest import bucket_of, crc32c, mp_uint
 
 INSTALL = r'''
 local lease = ...
@@ -91,13 +91,15 @@ def percentile(values, fraction):
     return sorted(values)[min(len(values)-1, math.ceil(len(values)*fraction)-1)] if values else None
 
 
-def process_sample(directory):
+def process_sample(directory, extra=None):
     result = {}
-    for f in sorted(Path(directory).glob('*.pid')):
-        pid = int(f.read_text())
+    processes={f.stem:int(f.read_text()) for f in sorted(Path(directory).glob('*.pid'))}
+    processes['load_generator']=os.getpid()
+    processes.update(extra or {})
+    for name,pid in processes.items():
         fields = Path(f'/proc/{pid}/stat').read_text().split(') ', 1)[1].split()
         io = {k: int(v) for k, v in (line.split(':') for line in Path(f'/proc/{pid}/io').read_text().splitlines())}
-        result[f.stem] = dict(pid=pid, start_ticks=int(fields[19]),
+        result[name] = dict(pid=pid, start_ticks=int(fields[19]),
                              cpu_seconds=(int(fields[11])+int(fields[12]))/os.sysconf('SC_CLK_TCK'),
                              rss_bytes=int(fields[21])*os.sysconf('SC_PAGE_SIZE'), io=io)
     return result
@@ -116,6 +118,7 @@ def main():
     ap.add_argument('--pairs', type=int, default=5)
     ap.add_argument('--seconds', type=float, default=10)
     ap.add_argument('--threads', type=int, default=16)
+    ap.add_argument('--processes', type=int, default=2)
     ap.add_argument('--batch', type=int, default=8)
     ap.add_argument('--write-every', type=int, default=1, help='write plus causal recheck every N requests; others recheck a previously written row')
     ap.add_argument('--prefix-every', type=int, default=10)
@@ -131,7 +134,8 @@ def main():
     output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True)
     report = dict(arguments=vars(args), source=args.source,
                   binaries={p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in (args.binary,args.native)},
-                  host=dict(uname=list(os.uname()), cpu_count=os.cpu_count()),
+                  host=dict(uname=list(os.uname()), cpu_count=os.cpu_count(),
+                            cgroup={name: Path('/sys/fs/cgroup',name).read_text() for name in ('cpu.max','cpuset.cpus.effective','memory.max') if Path('/sys/fs/cgroup',name).exists()}),
                   source_files={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in
                                 [Path(__file__),Path('lua/tarn_lazy.lua'),Path('crates/tarn-sql/src/lazy.rs'),
                                  Path(args.cluster_dir)/'cluster.json']},
@@ -145,12 +149,31 @@ def main():
     save()
     c = connect(args.tarn, db=None)
     q(c,'CREATE DATABASE IF NOT EXISTS routing185'); q(c,'USE routing185')
+    count=status(c)['Tarn_buckets']
+    groups=len(nodes)
+    owner=lambda bucket: (bucket-1)*groups//count
+    hot_owner=owner(bucket_of(7,count))
+    tenants=[]
+    for worker_id in range(args.threads):
+        desired=(worker_id//groups)%groups
+        candidate=1
+        while candidate in tenants or owner(bucket_of(candidate,count))!=desired: candidate+=1
+        tenants.append(candidate)
+    report['base_tenants']=tenants
+    report['base_owners']=[owner(bucket_of(t,count)) for t in tenants]
+    report['lane_contract']='explicit stored lane values chosen to balance k=7 owners; base/target owner cross-product for 16 writers on 4 shards'
     try:
         for shape in args.shapes.split(','):
             for lanes in map(int,args.lanes.split(',')):
+                lane_values=[]
+                for lane_id in range(lanes):
+                    desired=(hot_owner+lane_id)%groups
+                    candidate=0
+                    while candidate in lane_values or owner(crc32c(mp_uint(7)+mp_uint(candidate))%count+1)!=desired: candidate+=1
+                    lane_values.append(candidate)
                 for pair in range(args.pairs):
                     for parts in ([1,2] if pair%2==0 else [2,1]):
-                        sample = dict(shape=shape,lanes=lanes,pair=pair,route_parts=parts)
+                        sample = dict(shape=shape,lanes=lanes,lane_values=lane_values,pair=pair,route_parts=parts)
                         report['samples'].append(sample); save()
                         q(c,'DROP TABLE IF EXISTS t')
                         q(c,"CREATE TABLE t(tenant_id INT,id BIGINT,k INT,lane INT,n INT,v VARBINARY(64),"
@@ -167,13 +190,17 @@ def main():
                             sample['process_before']=process_sample(args.cluster_dir)
                             sample['status_before']=status(c)
                             sample['native_before']=[ev(node,SNAPSHOT) for node in nodes]
-                            ready=threading.Barrier(args.threads+1); start_event=threading.Event()
+                            mp=multiprocessing.get_context('fork')
+                            ready=mp.Barrier(args.threads+1); start_event=mp.Event(); finish_event=mp.Event()
+                            timing=mp.Array('d',2); results=mp.Queue()
                             def worker(worker_id):
                                 conn=connect(args.tarn,db='routing185'); lat=[]; errors=[]; skipped=0; op=0; written=0
                                 rng=random.Random(185+worker_id)
                                 try:
                                     q(conn,'SET tarn_lazy_read_your_writes=ON')
                                     ready.wait(timeout=20); start_event.wait(timeout=20)
+                                    begin,deadline=timing[:]
+                                    time.sleep(max(0,begin-time.monotonic()))
                                     slot=worker_id
                                     while time.monotonic()<deadline:
                                         if args.rate:
@@ -184,10 +211,10 @@ def main():
                                         write=op==1 or op%args.write_every==0
                                         if write:
                                             key=7 if shape=='skewed' and rng.random()<.95 else rng.randrange(128)
-                                            lane=worker_id%lanes
+                                            lane=lane_values[worker_id%lanes]
                                             last=(worker_id+1)*1000000000+op*args.batch+args.batch-1
                                             number=op
-                                            rows=[(worker_id+1,last-args.batch+1+j,key,lane,number,b'x'*64) for j in range(args.batch)]
+                                            rows=[(tenants[worker_id],last-args.batch+1+j,key,lane,number,b'x'*64) for j in range(args.batch)]
                                         try:
                                             if write:
                                                 with conn.cursor() as cur:
@@ -208,14 +235,39 @@ def main():
                                             while begin+slot/args.rate<min(deadline,time.monotonic()):
                                                 skipped+=1; slot+=args.threads
                                 finally: conn.close()
-                                return dict(latencies=lat,errors=errors,skipped=skipped,rows_inserted=written)
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as pool:
-                                tasks=[pool.submit(worker,i) for i in range(args.threads)]
-                                ready.wait(timeout=20); begin=time.monotonic()+.05; deadline=begin+args.seconds
-                                start_event.set(); runs=[t.result() for t in tasks]
-                            elapsed=time.monotonic()-begin
-                            wait_empty(nodes,timeout=30)
-                            sample['process_after']=process_sample(args.cluster_dir)
+                                return dict(worker_id=worker_id,latencies=lat,errors=errors,skipped=skipped,rows_inserted=written)
+                            def group(indices):
+                                try:
+                                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(indices)) as pool:
+                                        runs=[task.result() for task in [pool.submit(worker,i) for i in indices]]
+                                    results.put(dict(runs=runs))
+                                except BaseException as error:
+                                    results.put(dict(failure=repr(error)))
+                                finish_event.wait(timeout=args.seconds+90)
+                            children=[]
+                            try:
+                                for group_id in range(min(args.processes,args.threads)):
+                                    child=mp.Process(target=group,args=(list(range(group_id,args.threads,args.processes)),))
+                                    child.start(); children.append(child)
+                                ready.wait(timeout=30)
+                                extra={f'load_worker{i}':child.pid for i,child in enumerate(children)}
+                                sample['process_before']=process_sample(args.cluster_dir,extra)
+                                begin=time.monotonic()+.05; deadline=begin+args.seconds; timing[:]=[begin,deadline]
+                                start_event.set()
+                                runs=[]
+                                for _ in children:
+                                    result=results.get(timeout=args.seconds+60)
+                                    assert 'failure' not in result,result
+                                    runs.extend(result['runs'])
+                                runs.sort(key=lambda r:r['worker_id'])
+                                elapsed=time.monotonic()-begin
+                                wait_empty(nodes,timeout=30)
+                                sample['process_after']=process_sample(args.cluster_dir,extra)
+                            finally:
+                                finish_event.set()
+                                for child in children:
+                                    child.join(timeout=5)
+                                    if child.is_alive(): child.terminate(); child.join(timeout=5)
                             sample['status_after']=status(c)
                             sample['native_after']=[ev(node,SNAPSHOT) for node in nodes]
                             values=[x[1] for r in runs for x in r['latencies']]

@@ -583,7 +583,12 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
                         Ok((n, rows, next, d.len()))
                     });
                 }
-                for read in cluster.read_fanout(reads).await {
+                let replies = if reads.len() == 1 {
+                    vec![reads.into_iter().next().unwrap().await]
+                } else {
+                    cluster.read_fanout(reads).await
+                };
+                for read in replies {
                     let (n, rows, next, size) = read?;
                     scanned += rows.len();
                     if scanned > SCAN_ENTRIES {
