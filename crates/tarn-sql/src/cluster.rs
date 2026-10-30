@@ -64,6 +64,10 @@ pub struct ClusterConfig {
     /// remain enabled when this is false, for isolated profiling.
     #[serde(default)]
     pub native_batch_reads: bool,
+    /// Opt into exact projected scans and integer partial aggregates after
+    /// measuring the workload. Narrow-row scans can regress; isolation is unchanged.
+    #[serde(default)]
+    pub query_pushdown: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
     pub node_id: u32,
@@ -621,6 +625,8 @@ pub struct Stats {
     pub deadlock_calls: AtomicU64,
     /// COUNTs the shards computed without returning rows (issue #52).
     pub storage_counts: AtomicU64,
+    pub storage_reductions: AtomicU64,
+    pub storage_projections: AtomicU64,
     /// Rows read from storage by SELECT, UPDATE and DELETE.
     pub rows_read: AtomicU64,
     /// Storage reads (pages) of index scans and multi-key lookups that

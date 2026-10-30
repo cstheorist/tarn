@@ -15,6 +15,7 @@
 #                TARN_DUMP_EVERY=N (checkpoint every N s, putting vinyl rows on disk: tests),
 #                TARN_LOAD_WINDOW=SECS (the seconds of requests a bucket's load counts),
 #                TARN_NATIVE=PATH|0 (the native procedures' libtarn_storage.so; default: target/release's),
+#                TARN_QUERY_PUSHDOWN=true|false (opt-in typed reads; default false),
 #                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests),
 #                TARN_BUCKET_COUNT=N (bucket_count in cluster.json: buckets of a new cluster)
 #                TARN_RESOURCE_LIMITS=JSON (gateway SQL resource budgets: load fixtures)
@@ -48,6 +49,8 @@ while getopts "n:r:d:p:s:w:m:t:ab:i:uP:I:e:" o; do
   esac
 done
 shift $((OPTIND - 1))
+PUSHDOWN=${TARN_QUERY_PUSHDOWN:-false}
+case "$PUSHDOWN" in true|false) ;; *) echo 'TARN_QUERY_PUSHDOWN must be true or false' >&2; exit 2;; esac
 
 port_of() { echo $((BASE + 10 * $1 + $2)); }
 
@@ -111,6 +114,7 @@ write_config() {
     out+="]}"; sep=","
   done
   out+="]"
+  out+=",\"query_pushdown\":$PUSHDOWN"
   [ -n "${TARN_DDL_JOB_STALE:-}" ] && out+=",\"ddl_job_stale\":$TARN_DDL_JOB_STALE"
   [ -n "${TARN_BUCKET_COUNT:-}" ] && out+=",\"bucket_count\":$TARN_BUCKET_COUNT"
   [ -n "${TARN_TOPOLOGY_LIMITS:-}" ] && out+=",\"topology\":$TARN_TOPOLOGY_LIMITS"

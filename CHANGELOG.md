@@ -122,6 +122,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Exact integer SUM/MIN/MAX partials and filtered column projections over
+  eligible range scans ([#135](https://github.com/cstheorist/tarn/issues/135)).
+  Preserve NULLs, buffered writes, physical-layout defaults, full scanned
+  ranges and the existing snapshot/lock/routing checks. Unsupported SQL
+  shapes and missing optional storage procedures retain ordinary execution.
+  Opt in with `query_pushdown: true` after measuring the workload; the
+  default `false` retains ordinary execution because narrow-row cases can
+  regress. New status counters
+  expose reduction RPCs and projected scan attempts.
 - Add a pinned MySQL 8.4 executable compatibility manifest and RF3 native/Lua,
   memtx/vinyl release controls for text/binary protocols. Expose effective,
   active and pending isolation, refuse an exact MySQL-isolation mode, and

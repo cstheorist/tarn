@@ -65,9 +65,13 @@ elseif action == 'lazy_pending' then
 elseif action == 'lazy_drain' then
     local saved=ev(1,"return box.space._tarn_meta:get{'test.backup.lazy'}[2]")
     ok(call(1,'tarn_lazy_control','resume')); await(function() return depth(1)==0 end)
-    ok(call(1,'tarn_autocommit',{{'replace',sid,{1,saved.keys[2],1}}},{fence={sid,0},wb={1}}))
+    -- Background lazy delivery/GC can win an MVCC conflict. Only this
+    -- atomic known-aborted operation may repeat; never replay the stage.
+    ok(retry('lazy_drain.tarn_autocommit', function()
+        return call(1,'tarn_autocommit',{{'replace',sid,{1,saved.keys[2],1}}},{fence={sid,0},wb={1}})
+    end))
     await(function() return depth(1)==0 end)
-    ok(call(2,'tarn_lazy_gc',gen,2,{2}))
+    ok(retry('lazy_drain.tarn_lazy_gc', function() return call(2,'tarn_lazy_gc',gen,2,{2}) end))
     assert(ev(2,'local g=...;return box.space._tarn_lazy_floor:get{g,2,1}.seq',{gen})>=2)
 elseif action == 'move_begin' then
     local r=ok(call(1,'tarn_bucket_send_begin',1,2,'backup-move',5))
