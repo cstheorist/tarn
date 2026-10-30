@@ -606,6 +606,7 @@ fn capability(d: &[u8]) -> SqlResult<()> {
 impl Cluster {
     pub(crate) async fn lazy_capabilities_on(&self, replicas: &[String]) -> SqlResult<()> {
         for addr in replicas {
+            self.reclaim_connections(false).await;
             let client = tarn_iproto::Client::connect(&self.opts(addr))
                 .await
                 .map_err(crate::mpw::from_iproto)?;
@@ -761,13 +762,14 @@ fn decode_stats(d: &[u8]) -> SqlResult<StatsSample> {
 pub fn start_stats(cluster: &Arc<Cluster>) {
     let weak = Arc::downgrade(cluster);
     tokio::spawn(async move {
+        let mut cursor = 0usize;
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let Some(c) = weak.upgrade() else { break };
             if !c.catalog().all().any(|t| t.has_lazy()) {
                 continue;
             }
-            for s in c.live_shards().collect::<Vec<_>>() {
+            for s in crate::topology::poll_shards(&c, &mut cursor) {
                 let sample = tokio::time::timeout(Duration::from_secs(3), c.call(s, "tarn_lazy_stats", &[0x90]))
                     .await
                     .ok()

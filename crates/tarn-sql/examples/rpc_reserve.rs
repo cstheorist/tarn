@@ -58,6 +58,8 @@ async fn main() {
     .expect("two admitted ordinary requests did not reach storage");
     assert!(matches!(client.ping().await, Err(Error::Admission { scope: "global" })));
     let old_id = client.stats().id;
+    let sockets = opts.connections.as_ref().unwrap();
+    let discovered = sockets.stats().opened;
     cluster.shards[0].invalidate();
     let mut args = Mp::new();
     args.arr(1).str(&cluster.new_txid());
@@ -71,8 +73,13 @@ async fn main() {
         2,
         "ordinary blockers finished before the completion witness"
     );
-    let fresh = cluster.shards[0].client(&cluster).await.unwrap();
-    assert_ne!(old_id, fresh.stats().id);
+    assert!(
+        sockets.stats().opened > discovered,
+        "completion reused the invalidated pool"
+    );
+    // The completion-only socket is not donated to ordinary work. Its fresh
+    // discovery must still respect normal RPC admission while blockers live.
+    assert_eq!(cluster.shards[0].client(&cluster).await.unwrap_err().code, 1205);
     println!(
         "completion: fresh connection discovered and status received in {:?} with both normal slots occupied",
         start.elapsed()
@@ -88,6 +95,8 @@ async fn main() {
     })
     .await
     .unwrap();
+    let fresh = cluster.shards[0].client(&cluster).await.unwrap();
+    assert_ne!(old_id, fresh.stats().id);
     fresh.ping().await.unwrap();
     println!("COMPLETION RESERVE TEST PASSED");
 }

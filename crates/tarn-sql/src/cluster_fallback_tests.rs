@@ -17,6 +17,13 @@ async fn setup(n: usize) -> (common::Tarantool, Arc<Cluster>, Client, Session) {
     }))
     .unwrap();
     let c = Cluster::connect(cfg).await.unwrap();
+    // Exercise the complete configured pool despite lazy creation: external
+    // owners keep each existing socket busy while the next one is requested.
+    let mut pinned = Vec::new();
+    for _ in 0..n {
+        pinned.push(c.shards[0].client(&c).await.unwrap());
+    }
+    drop(pinned);
     let mut s = Session::new(c.clone(), 1);
     for sql in [
         "CREATE DATABASE f",
@@ -94,7 +101,8 @@ async fn warmed_unavailable_autocommit_uses_every_connection() {
                 p.next.store(i, Ordering::Relaxed);
                 affected(s.query("UPDATE t SET v = v + 1 WHERE id = 1").await.unwrap());
             }
-            assert!(p.clients.iter().all(|c| c.marked(MARK)));
+            assert_eq!(p.clients.lock().len(), n);
+            assert!(p.clients.lock().iter().all(|(c, _)| c.marked(MARK)));
             eval(
                 &control,
                 "fallback_log = {native = {}, lua = {}, active = {}}; fallback_hold = true",
@@ -153,7 +161,8 @@ async fn matched_handback_keeps_its_physical_client() {
         .await;
         let p = pool(&c);
         // Identify the selected client by its server session, without a pick.
-        let r = p.clients[0].eval(0, "return box.session.id()", &[0x90]).await.unwrap();
+        let client = p.clients.lock()[0].0.clone();
+        let r = client.eval(0, "return box.session.id()", &[0x90]).await.unwrap();
         let selected = common::decode_array(&r.data().unwrap())[0].as_i64().unwrap() as u64;
         p.next.store(0, Ordering::Relaxed);
         affected(s.query("UPDATE t SET v = v + 1 WHERE id = 1").await.unwrap());
@@ -163,7 +172,7 @@ async fn matched_handback_keeps_its_physical_client() {
             if mode == "missing" { vec![] } else { vec![selected] }
         );
         assert_eq!(ids(&got, "lua"), if mode == "ok" { vec![] } else { vec![selected] });
-        assert_eq!(p.clients[0].marked(MARK), matches!(mode, "all" | "missing"));
+        assert_eq!(p.clients.lock()[0].0.marked(MARK), matches!(mode, "all" | "missing"));
         assert_eq!(value(&mut s).await, 1);
     }
 }
