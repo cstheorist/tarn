@@ -884,10 +884,18 @@ impl TreeChecks {
 /// Statements that read the last statement's diagnostics, which they must
 /// not clear: SHOW WARNINGS / ERRORS / COUNT(*) ..., @@warning_count.
 pub fn reads_diagnostics(sql: &str) -> bool {
-    matches!(
-        recognize(sql),
-        Ok(Some(Admin::ShowWarnings { .. } | Admin::SelectVars(_)))
-    )
+    let expanded = crate::prep::expand_comments(sql);
+    if matches!(recognize(&expanded), Ok(Some(Admin::ShowWarnings { .. }))) {
+        return true;
+    }
+    let mut diagnostic = false;
+    crate::prep::substitute_vars(&expanded, false, &mut |reference| {
+        if let crate::prep::VarRef::System(name) = reference {
+            diagnostic |= matches!(sysvar_name(name).as_str(), "warning_count" | "error_count");
+        }
+        None
+    });
+    diagnostic
 }
 
 pub(crate) fn bad_value(var: &str, v: &str) -> SqlError {
@@ -1252,6 +1260,9 @@ mod tests {
             "SHOW ERRORS",
             "SELECT @@warning_count",
             "SELECT @@autocommit,@@warning_count",
+            "SET @wc=@@warning_count",
+            "SELECT @@warning_count+0",
+            "/*!80000 SELECT @@warning_count */",
         ] {
             assert!(reads_diagnostics(sql), "{sql}");
         }
