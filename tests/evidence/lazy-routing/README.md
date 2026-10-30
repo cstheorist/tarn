@@ -5,6 +5,12 @@ comparison, accounting and uncertainty. `index.json` hashes the retained
 artifacts; `provenance.json` records source, local build limits and failed
 attempts. No failed or incomplete attempt is counted as qualification.
 
+The final local runtime measurements and 307-model manifest are bound to
+`a20867b`; later integration of main `8960b9b` preserves the routing code but
+adds other runtime changes and expands the default registry to 319 models.
+Historical measurements and model outputs are not relabeled as current-source
+validation. Their recorded input hashes remain the audit boundary.
+
 * `bound-{uniform,skewed}-{1,4,16}.tar.gz`: six local cases, each with five
   alternating baseline/composite pairs, ten seconds per arm, four RF3/fsync
   groups, 32 client threads/four processes and a twelve-CPU quota. Each
@@ -23,16 +29,88 @@ attempts. No failed or incomplete attempt is counted as qualification.
   read-heavy/prefix and scheduled low-load work on four x86_64 CPUs.
   It retains the measured regressions. This archive predates the `KEEP=1`
   cleanup correction and therefore lacks the cluster node logs.
-* `validation-local.tar.gz`: 60 native lifecycle checks; source/target
+* `validation-local.tar.gz`: 60 Lua lifecycle checks; source/target
   movement and JOIN/restart controls; composite RF3/fsync leader-death and
   recovery on MemTX and Vinyl; ordered SQL merge, stale-key rechecks,
   failed-owner refusal and incarnation migration; both full lazy SQL
   suites against MariaDB (11 tests each, zero failures/skips); the final
   1,092-case differential pass and earlier failed attempts.
 * `development-attempts.tar.gz`: exploratory workload/resource probes,
-  compiler failures and the raw-retention OOM attempt. Probes differ in
+  compiler failures and the raw-retention SIGKILL attempt. Probes differ in
   CPU quota, client processes, base/target distribution and reader version;
   they must not be pooled with qualification.
+* `isolated-{uniform,skewed}-{1,4,16}.tar.gz` and
+  `summary-isolated-final.json`: the complete sixty-arm matrix rebuilt from
+  isolated source `841aee2`. The skewed sixteen-lane case uses a fresh fixture
+  after two unsuccessful attempts. Every qualifying arm has its own raw
+  samples, counters and source/binary hashes. Four-lane improvement repeats;
+  sixteen-lane improvement is within uncertainty in this later run.
+* `isolated-interrupted-attempt.tar.gz`,
+  `integrated-first-cluster-logs.tar.gz`, `integrated-r2-clock-refusal.tar.gz`
+  and `isolated-r3-cluster-logs.tar.gz`: the interrupted three-pair attempt,
+  original cluster logs, pre-measurement clock refusal, and successful fresh
+  fixture logs respectively. "Integrated" here means main's MySQL contracts
+  merged with #185 at `841aee2`; none of these measurements use the externally
+  combined `caf39e6` branch.
+* `validation-isolated.tar.gz`: the `841aee2` build, all 330 workspace tests
+  passing, workspace clippy, and commands/configuration for the final study.
+  `sql-final-cluster-logs.tar.gz` retains the fresh cluster used for the full
+  1,092-case SQL differential pass already recorded in `validation-local`.
+* `ci-41077514469-{uniform,skewed}-1.tar.gz` and corresponding summaries:
+  completed cases from the cancelled predecessor workflow on source
+  `841aee2`, including the unqualified uniform write-heavy latency result.
+* `ci-41092212161-{uniform,skewed}-{1,4,16}.tar.gz` and
+  `summary-ci-41092212161.json`: the complete standard-release CI matrix,
+  180 qualifying arms across write-heavy, read-heavy and low-load work.
+  All archives include the node logs. Source `3f6bd03` has the same tree as
+  `841aee2`; the retained results include 13–14% write-heavy and 6–8%
+  read-heavy regressions in the skewed four- and sixteen-lane fixtures.
+* `validation-b107cbb.tar.gz`: after merging reviewed main `b3317b3`, all
+  334 workspace tests, workspace clippy, both 11-test lazy SQL suites,
+  1,122 differential cases on each engine, and composite RF3/fsync leader
+  failures/recovery pass. Commands and full fixture logs are retained.
+  `validation-b107cbb-setup-refusal.tar.gz` preserves the initial invalid
+  fixture attempt: incorrect cleanup left the previous cluster listening.
+  The successful rerun used explicit-directory cleanup and verified every
+  process identity and the rebuilt gateway executable before testing.
+
+* `final-point-{uniform,skewed}-{1,4,16}.tar.gz` and
+  `summary-final-ledger.json`: sixty qualifying single-row arms on final
+  runtime `a20867b`. All six throughput intervals include one. These results
+  supersede earlier gains for claims about this runtime.
+* `final-point-interruptions.tar.gz` retains both unqualified interruptions
+  and full node logs. The first composite sixteen-lane arm of the second
+  attempt lost its raw worker samples because attachment followed a failed
+  drain RPC; this gap is explicit and cannot qualify. The final fresh
+  sixteen-lane case uses the corrected retention path.
+* `final-batch-{uniform,skewed}-{1,4,16}.tar.gz`,
+  `summary-batch-final.json` and `batch-final-cluster-logs.tar.gz`: the separate
+  sixty-arm holdout on the same runtime, with a fresh cluster per case and
+  exact eight-row lookup validation. Skewed four/sixteen lanes improve
+  16.1%/23.4%, with intervals excluding one and distributed target reads.
+  Uniform and single-lane intervals include one. `final-batch-pilot.tar.gz`
+  contains the preceding two-pair exploration, excluded from qualification.
+* `validation-a20867b.tar.gz`: 353 workspace tests, clippy, both 11-test lazy
+  suites, 1,122 differential cases per engine, native composite RF3 recovery,
+  Lua movement/JOIN/restart faults, full fixture logs, qualification scripts,
+  and the live post-workload failure-retention probe and unit controls.
+* `formal-final-307.{json,tar.gz}` maps every default model to its exact
+  config and parsed local module hashes and retained output: 279 unchanged
+  inputs reuse the completed baseline, 28 changed/new configs were rerun.
+  All 77 positive and 230 negative expectations pass. The independent CI
+  run also passes all 307; its output is in `ci-41101768716-formal.tar.gz`.
+* `ci-41101768716-strong-kv-failure.tar.gz` retains the final-runtime CI
+  failure before the fixture correction: an independent pre-BEGIN read
+  received a cached no-leader discovery refusal after a fresh leader was
+  observed. The existing eight-attempt read-only warmup now accepts that
+  explicit refusal as well as leader-changed; uncertainty and mutations
+  are never retried. Unit controls and the corrected full live suites are
+  recorded separately in `kv-fixture-final.tar.gz`.
+* `ci-41101768733-{uniform,skewed}-{1,4,16}.tar.gz` and its summary retain all
+  180 final-runtime standard-release arms. Sixteen of eighteen workload
+  cases qualify. Uniform single-lane write-heavy and low-load cases miss
+  the p99 ceiling; the low-load case also misses eight scheduled slots.
+  Skewed multi-lane prefix/write-heavy regressions remain visible.
 
 The new `LazyRouting` model and six expected-failure outputs are retained
 under `tla/`. They cover a finite frozen generation, not unbounded SQL,

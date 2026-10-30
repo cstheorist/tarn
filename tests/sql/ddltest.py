@@ -1182,10 +1182,9 @@ class T:
         self.check(not churn_errors, f"schema changes: {churn_errors[:5]}")
 
     def test_index_build_ahead(self):
-        """ADD INDEX on a vinyl table builds the index before it fences the
-        table's writes: writes go on during the build and wait only for the
-        short switch at the end. (A memtx table builds behind the fence, at
-        memory speed: there only the outcome is checked.)"""
+        """ADD INDEX on a vinyl table completes BUILD before it fences writes.
+        A held BUILD reply witnesses acknowledged writes on every shard.
+        Memtx builds behind the fence; there only the outcome is checked."""
         c = self.c()
         q(c, "DROP TABLE IF EXISTS bigt")
         q(c, "CREATE TABLE bigt (id INT PRIMARY KEY, k INT, v INT, pad VARCHAR(100))")
@@ -1210,24 +1209,102 @@ class T:
                     errors.append(str(e))
                 lat.append((t0, time.time()))
 
+        nodes = self.args.kv.split(",") if vinyl and self.args.kv else []
+        installed, ddl_errors = [], []
+        ddl_finished = threading.Event()
+
+        def alter():
+            connection = self.c(read_timeout=30)
+            try:
+                q(connection, "ALTER TABLE bigt ADD INDEX kk (k)")
+            except Exception as error:
+                ddl_errors.append(repr(error))
+            finally:
+                connection.close()
+                ddl_finished.set()
+
+        if nodes:
+            from lazytest import ev
         t = threading.Thread(target=writer, daemon=True)
-        t.start()
-        time.sleep(0.5)
-        a0 = time.time()
-        q(c, "ALTER TABLE bigt ADD INDEX kk (k)")
-        a1 = time.time()
-        time.sleep(0.2)
-        done.set()
-        t.join(30)
+        ddl = threading.Thread(target=alter, daemon=True)
+        a0, a1 = time.monotonic(), time.monotonic()
+        try:
+            for node in nodes:
+                ev(node, """assert(tarn.cfg.test_hooks and not __index_build_review)
+local h={old=tarn_alter_build, reached=false, release=false}; __index_build_review=h
+function tarn_alter_build(name,a,gen)
+ local r=h.old(name,a,gen)
+ if name=='ddltest.bigt' and r[1]=='ok' and #(a.builds or {})>0 then
+  local sp=assert(box.space[name]); h.built=true
+  for _,b in ipairs(a.builds) do h.built=h.built and sp.index[b[1]]~=nil end
+  h.no_drop_hold=box.space._tarn_meta:get{'hold:'..sp.id}==nil
+  h.key=require('key_def').new(sp.index[0].parts):extract_key(sp.index[0]:min())[1]
+  h.reached=true
+  local deadline=require('clock').monotonic()+15
+  while not h.release and require('clock').monotonic()<deadline do require('fiber').sleep(.01) end
+  h.timed_out=not h.release
+ end
+ return r
+end
+return true""")
+                installed.append(node)
+            t.start()
+            time.sleep(0.5)
+            a0 = time.time()
+            ddl.start()
+            if nodes:
+                # Hold the real completed BUILD before its PREPARE reply.
+                # No generic yield hook is held: native writes remain enabled.
+                deadline = time.monotonic() + 10
+                witnesses = []
+                for node in nodes:
+                    state = None
+                    while time.monotonic() < deadline and not ddl_finished.is_set():
+                        state = ev(node, "local h=assert(__index_build_review); return {reached=h.reached,built=h.built,no_drop_hold=h.no_drop_hold,key=h.key}")
+                        if state['reached']:
+                            break
+                        time.sleep(.01)
+                    assert state and state['reached'] and state['built'] and state['no_drop_hold'], (node,state,ddl_errors)
+                    witnesses.append(state)
+                for state in witnesses:
+                    for _ in range(10):
+                        q(c, "UPDATE bigt SET v=v+1 WHERE id=%s", (state['key'],))
+                        assert not ddl_finished.is_set(), "write completed after the held BUILD phase ended"
+                    assert q(c, "SELECT v FROM bigt WHERE id=%s", (state['key'],))[0][0] >= 10
+                assert not ddl_finished.is_set(), ddl_errors
+                print(f"    completed BUILD before PREPARE and ten acknowledged writes on each of {len(nodes)} shards")
+            for node in installed:
+                ev(node, "__index_build_review.release=true; return true")
+            ddl.join(30)
+            a1 = time.time()
+            assert not ddl.is_alive() and not ddl_errors, ddl_errors
+        finally:
+            cleanup_errors = []
+            for node in installed:
+                try:
+                    ev(node, "local h=__index_build_review; if h then h.release=true; tarn_alter_build=h.old end; return true")
+                except Exception as error:
+                    cleanup_errors.append((node, repr(error)))
+            if ddl.ident is not None:
+                ddl.join(30)
+            done.set()
+            if t.ident is not None:
+                t.join(30)
+            for node in installed:
+                try:
+                    state = ev(node, "local h=__index_build_review; __index_build_review=nil; return {timed_out=h and h.timed_out or false}")
+                    self.check(not state['timed_out'], "build witness released before its safety deadline")
+                except Exception as error:
+                    cleanup_errors.append((node, repr(error)))
+            self.check(not cleanup_errors, f"every build witness restored: {cleanup_errors}")
         within = sum(1 for (s0, s1) in lat if a0 <= s0 and s1 <= a1)
         worst = max((s1 - s0 for (s0, s1) in lat if s0 <= a1 and s1 >= a0), default=0.0)
         print(f"    ADD INDEX on {rows} {'vinyl' if vinyl else 'memtx'} rows: {a1 - a0:.2f} s; "
-              f"{within} writes during it, the slowest overlapping one {worst * 1000:.0f} ms")
-        self.check(not errors, f"writes during the index build: {errors[:3]}")
+              f"{within} writes during it, the slowest overlapping one {worst * 1000:.0f} ms "
+              "(observational; includes the controlled BUILD hold when enabled)")
+        self.check(not errors and not t.is_alive(), f"writes during the index build: {errors[:3]}")
         if vinyl:
             self.check(within >= 10, f"writes went on during the index build ({within})")
-            self.check(worst < max(0.3, (a1 - a0) / 2),
-                       f"no write waited for the build ({worst:.2f} s of {a1 - a0:.2f} s)")
         self.check(q(c, "SELECT COUNT(*) FROM bigt WHERE k = 7919")[0][0] == 1, "the new index answers")
         q(c, "DROP TABLE bigt")
 

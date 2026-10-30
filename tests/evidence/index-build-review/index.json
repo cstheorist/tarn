@@ -1,0 +1,31 @@
+{
+  "original_failure": {
+    "run": 41110785622,
+    "job": 124252347419,
+    "source": "fc44c47bc0cbfa4865236f7891ecbd648e68451b",
+    "observation": "381 writes completed during 0.81-second ALTER; one 430ms overlapping write failed half-duration heuristic. No cause established."
+  },
+  "rust_runtime": "0d7734727f331c0a981ac83471054cecea131e2f",
+  "final_harness": "b219feb37d18ac7af13f1a7a96158d6cdce0c72f",
+  "positive": "Fresh native and Lua Vinyl/fsync fixtures each verify actual built indexes, ten acknowledged writes on every shard before PREPARE, final index result and bounded cleanup.",
+  "negative": "Actual PREPARE before BUILD on both shards returns OK but blocks writes until the held BUILD safety deadline; final witness rejects with a specific phase error. The first negative attempt rejected but its classifier was too narrow; retained unqualified.",
+  "setup_failures": "A 64MiB/8MiB initial fixture refused preload with confirmed Vinyl throttling. A reused Lua fixture later refused setup for wall/monotonic drift. Both outputs retained; fresh final fixtures pass without relaxed guards. Earlier cluster data was removed by the helper default stop; final positive cluster logs/state retained separately.",
+  "profile": "Linux ARM64, dev opt0 debug0, local two-shard RF1 fsync 192MiB memory setting; correctness controls, not CI/production performance. Full current-head CI remains required.",
+  "files": {
+    "negative.json": "7282d7490c9a87d2b15e12ec06eb5ae9cb232922cf3d1942b938b23d7719a16d",
+    "clusters.tar.gz": "40cbb54b6711c2a7cb990a4ec4a300a0516c091855d090fe1aa30b1806826e41",
+    "small-pool-preload-refusal.out": "9dd1502e2d6640968bf84f87b4327c305717928105278feb6e761626657523ff",
+    "negative-initial-unqualified.json": "38f66f103c0c0b5c3a1057484af85016475bb6d867be427ca9f8d086751e3475",
+    "negative-control.py": "ff2abecdb4bc025e155d22be24bc7d35c9891aeca669dfef1c9787655b5272fd",
+    "inputs.json": "3a88185083467bb42bde1c00d57293ab7d09bd6b1bae9f8ed42bc7514ce9af92",
+    "original-41110785622-job124252347419.out.gz": "ca700be5612e1ba642ccfa4061a1a1e78b2b32812007d32d891ea696dcf4c3e8",
+    "clock-setup-refusal.out": "a683d2293f871edd5a2fe4e39c1aa8a99883bd1feca695391f38c9d17f31fac4",
+    "negative-initial-unqualified.out": "94f7e797bf12d90b39f62b073dcbce68575a098b1355b66f6202d515fa4fb636",
+    "positive-lua.out": "253ada5fe756c0daad3c7168284ac675b32656c20f2cb3cbef213e11fa23458b",
+    "negative.out": "07dffed488a71ee71667adabe53c4fe43d4fcf2bf121647631979b6fcf3ed51d",
+    "positive-lua-before-cleanup.out": "f8ad492061c4ef9c6a4173a29a9d38aadbc49915e6bb46b1698493aa80593515",
+    "positive-native.out": "2e8f057fc9a925f932ebf57546bee5bc0f85c002e1ab34bc15a1c170ceb44965"
+  },
+  "negative_harness": "830c8a72566f535ffb9194d0c31f50ae55035d09",
+  "source_label_boundary": "The retained negative controller used a placeholder source label; index.json identifies its actual harness revision. The final positive cohorts use b219feb. Only cleanup handling changed between those harnesses; no original receipt is relabeled."
+}

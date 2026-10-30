@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'tests/sql/lazy_routing_cost.py'
+      - 'tests/sql/lazy_routing_cost_test.py'
       - '.github/workflows/lazy-routing.yml'
   workflow_dispatch:
 permissions:
@@ -27,6 +28,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install PyMySQL
+      - name: Measurement failure retention controls
+        run: python3 tests/sql/lazy_routing_cost_test.py
       - uses: actions/cache@v6
         with:
           path: ~/.local/tarantool
