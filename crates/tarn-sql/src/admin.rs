@@ -884,11 +884,10 @@ impl TreeChecks {
 /// Statements that read the last statement's diagnostics, which they must
 /// not clear: SHOW WARNINGS / ERRORS / COUNT(*) ..., @@warning_count.
 pub fn reads_diagnostics(sql: &str) -> bool {
-    let up = sql.trim_start().to_ascii_uppercase();
-    let words: Vec<&str> = up.split_whitespace().take(2).collect();
-    matches!(words.as_slice(), ["SHOW", w] if w.starts_with("WARNINGS") || w.starts_with("ERRORS") || w.starts_with("COUNT"))
-        || up.contains("WARNING_COUNT")
-        || up.contains("ERROR_COUNT")
+    matches!(
+        recognize(sql),
+        Ok(Some(Admin::ShowWarnings { .. } | Admin::SelectVars(_)))
+    )
 }
 
 pub(crate) fn bad_value(var: &str, v: &str) -> SqlError {
@@ -1245,6 +1244,25 @@ fn parse_select_vars(t: &mut Toks) -> Option<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_lifetime_uses_statement_kind_not_substring() {
+        for sql in [
+            "SHOW WARNINGS",
+            "SHOW ERRORS",
+            "SELECT @@warning_count",
+            "SELECT @@autocommit,@@warning_count",
+        ] {
+            assert!(reads_diagnostics(sql), "{sql}");
+        }
+        for sql in [
+            "SELECT 'warning_count'",
+            "INSERT INTO warning_count VALUES(1)",
+            "SELECT 1 /* error_count */",
+        ] {
+            assert!(!reads_diagnostics(sql), "{sql}");
+        }
+    }
 
     #[test]
     fn isolation_contract_preserves_scope_and_reports_active_mode() {

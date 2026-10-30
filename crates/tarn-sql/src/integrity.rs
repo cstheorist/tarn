@@ -52,7 +52,6 @@ mod tests {
             params: &[],
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
-            statistics: None,
         };
         let Stmt::CreateTable { def, .. } =
             planner::plan("CREATE TABLE t(id INT PRIMARY KEY,v INT)", &context(&empty)).unwrap()
@@ -99,7 +98,6 @@ mod tests {
             params: &[],
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
-            statistics: None,
         };
         let Stmt::CreateTable { def, .. } =
             planner::plan("CREATE TABLE t(id INT PRIMARY KEY,v TEXT)", &context(&empty)).unwrap()

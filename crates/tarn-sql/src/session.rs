@@ -148,6 +148,7 @@ pub struct Session {
     /// Warnings and notes of the last statement (SHOW WARNINGS).
     warnings: Vec<Warning>,
     omitted_warnings: usize,
+    warning_bytes: u64,
     lazy_history: crate::lazy::History,
     lazy_read_your_writes: bool,
     lazy_wait_timeout: u64,
@@ -162,22 +163,36 @@ pub struct Warning {
 }
 
 /// Keep diagnostic storage bounded while preserving the full warning count.
-#[derive(Default)]
 struct DmlWarnings {
     messages: Vec<Warning>,
     total: usize,
+    retained: crate::budget::Account,
 }
 
 impl DmlWarnings {
-    fn duplicate(&mut self, error: SqlError) {
-        self.total += 1;
+    fn new(pool: &Arc<crate::budget::Pool>, available: u64) -> Self {
+        Self {
+            messages: Vec::new(),
+            total: 0,
+            retained: pool.account(available),
+        }
+    }
+
+    fn duplicate(&mut self, bytes: u64, error: impl FnOnce() -> SqlError) -> SqlResult<()> {
         if self.messages.len() < admin::MAX_ERROR_COUNT {
+            // Both admissions precede formatting and COMMIT. Failed attempts
+            // drop this account; a successful one transfers it without refusal.
+            self.retained.charge(bytes)?;
+            crate::budget::charge(bytes)?;
+            let error = error();
             self.messages.push(Warning {
                 level: "Warning",
                 code: error.code,
                 message: error.message,
             });
         }
+        self.total += 1;
+        Ok(())
     }
 }
 
@@ -478,6 +493,7 @@ impl Session {
             client_collation: cluster.cfg.default_collation.clone(),
             warnings: Vec::new(),
             omitted_warnings: 0,
+            warning_bytes: 0,
             lazy_history: crate::lazy::History::default(),
             lazy_read_your_writes: false,
             lazy_wait_timeout: 5,
@@ -896,8 +912,7 @@ impl Session {
     async fn query_budgeted(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !admin::reads_diagnostics(sql) {
-            self.warnings.clear();
-            self.omitted_warnings = 0;
+            self.clear_warnings();
         }
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
@@ -1144,8 +1159,7 @@ impl Session {
             .get(&id)
             .is_some_and(|p| matches!(&p.admin, Some(Admin::ShowWarnings { .. }) | Some(Admin::SelectVars(_))))
         {
-            self.warnings.clear();
-            self.omitted_warnings = 0;
+            self.clear_warnings();
         }
         let rp = self.restart_point();
         let mut retry = StaleRetry::new(self.lock_wait_timeout);
@@ -1249,11 +1263,10 @@ impl Session {
         let plans = self.prepared.values().fold(0u64, |n, p| {
             n.saturating_add(4096 + (p.template.len() as u64).saturating_mul(128))
         });
-        self.sql_prepared
-            .iter()
-            .fold(vars.saturating_add(plans), |n, (name, (sql, _))| {
-                n.saturating_add(4096 + (name.len() as u64 + sql.len() as u64).saturating_mul(128))
-            })
+        self.sql_prepared.iter().fold(
+            vars.saturating_add(plans).saturating_add(self.warning_bytes),
+            |n, (name, (sql, _))| n.saturating_add(4096 + (name.len() as u64 + sql.len() as u64).saturating_mul(128)),
+        )
     }
 
     fn set_user_value(&mut self, name: String, value: Value) -> SqlResult<()> {
@@ -1681,7 +1694,14 @@ impl Session {
                 return Err(error);
             }
             let snapshot = txn.writes.clone();
-            let mut warnings = DmlWarnings::default();
+            let mut warnings = DmlWarnings::new(
+                &self.cluster.resources,
+                self.cluster
+                    .cfg
+                    .resources
+                    .query_bytes
+                    .saturating_sub(self.retained.used()),
+            );
             let res = match check_defs(&txn, stmt_tables(stmt)) {
                 Err(e) => Err(e),
                 Ok(()) => self.dml_in_txn(&mut txn, stmt, params, &now, None, &mut warnings).await,
@@ -1709,7 +1729,14 @@ impl Session {
         let mut attempt = 0;
         loop {
             let mut txn = self.new_txn(false);
-            let mut warnings = DmlWarnings::default();
+            let mut warnings = DmlWarnings::new(
+                &self.cluster.resources,
+                self.cluster
+                    .cfg
+                    .resources
+                    .query_bytes
+                    .saturating_sub(self.retained.used()),
+            );
             let res = match self
                 .dml_in_txn(&mut txn, stmt, params, &now, pre.as_ref(), &mut warnings)
                 .await
@@ -1747,7 +1774,17 @@ impl Session {
         }
     }
 
+    fn clear_warnings(&mut self) {
+        self.warnings.clear();
+        self.omitted_warnings = 0;
+        let retained = self.retained.used() - self.warning_bytes;
+        self.retained.resize(retained).expect("shrinking diagnostic ownership");
+        self.warning_bytes = 0;
+    }
+
     fn note_dml_warnings(&mut self, warnings: DmlWarnings) {
+        self.warning_bytes += warnings.retained.used();
+        self.retained.absorb(warnings.retained);
         self.omitted_warnings += warnings.total - warnings.messages.len();
         for warning in warnings.messages {
             self.note_warning(warning);
@@ -2507,8 +2544,17 @@ impl Session {
                             } else {
                                 &t.indexes[uniq[0].0]
                             };
-                            let shown: Vec<String> = idx.cols.iter().map(|&c| row[c].to_string()).collect();
-                            warnings.duplicate(SqlError::dup_key(&shown.join("-"), &idx.name));
+                            let bytes = idx
+                                .cols
+                                .iter()
+                                .fold(256 + idx.name.len() as u64, |n, &c| {
+                                    n.saturating_add(crate::budget::value_bytes(&row[c]))
+                                })
+                                .saturating_mul(8);
+                            warnings.duplicate(bytes, || {
+                                let shown: Vec<String> = idx.cols.iter().map(|&c| row[c].to_string()).collect();
+                                SqlError::dup_key(&shown.join("-"), &idx.name)
+                            })?;
                         }
                         Some(_) => {
                             return Err(match (&pk_row, uniq.first()) {
@@ -3386,8 +3432,7 @@ impl Session {
                 }
                 // SELECT @@warning_count reads the previous total, then
                 // clears the message list. SHOW WARNINGS preserves it.
-                self.warnings.clear();
-                self.omitted_warnings = 0;
+                self.clear_warnings();
                 rows_out(columns.into(), vec![row])
             }
             Admin::ShowDatabases { like } => {
@@ -4336,6 +4381,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn duplicate_diagnostics_admit_before_formatting_and_keep_retained_ownership() {
+        let pool = crate::budget::Pool::new(crate::budget::Limits {
+            query_bytes: 1000,
+            server_bytes: 2000,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut session = pool.account(1000);
+        session.charge(600).unwrap();
+        let query = pool.query();
+        let mut warnings = DmlWarnings::new(&pool, 400);
+        crate::budget::scope_sync(query.clone(), || {
+            warnings.duplicate(300, || SqlError::dup_key("x", "PRIMARY")).unwrap();
+            assert!(crate::budget::is_exhausted(
+                &warnings
+                    .duplicate(101, || {
+                        panic!("refused diagnostics must not format or reach commit")
+                    })
+                    .unwrap_err()
+            ));
+        });
+        assert_eq!((warnings.total, warnings.messages.len()), (1, 1));
+        // Completing a query releases temporary bytes, while its retained
+        // diagnostic owner survives. Publication performs no admission.
+        drop(query);
+        assert_eq!(pool.stats()[0], 900);
+        session.absorb(warnings.retained);
+        assert_eq!((session.used(), pool.stats()[0]), (900, 900));
+        assert!(session.charge(101).is_err());
+        session.resize(600).unwrap();
+        assert_eq!(pool.stats()[0], 600);
+        drop(session);
+        assert_eq!(pool.stats()[0], 0);
+    }
+
+    #[test]
     fn autocommit_ack_requires_exact_count_and_terminal_envelope() {
         let mut ok = Mp::new();
         ok.arr(1).arr(2).str("ok").uint(2);
@@ -4464,7 +4545,6 @@ mod tests {
             params: &[],
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
-            statistics: None,
         };
         let Stmt::CreateTable { mut def, .. } = planner::plan("CREATE TABLE t(id INT PRIMARY KEY)", &ctx).unwrap()
         else {
