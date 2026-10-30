@@ -1,0 +1,3139 @@
+{
+  "source": "a20867b98a772503a89c01d6ee33f929e291ce34",
+  "doc_only_head": "f06a2bd4052e4e1e9038f2446aa711e1c7e49502",
+  "positive": 77,
+  "negative": 230,
+  "unchanged_inputs_from_full_baseline": 279,
+  "changed_or_new_rerun": 28,
+  "tla_tools_sha256": "d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f",
+  "checks": [
+    {
+      "configuration": "GatewayResources",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "GatewayResources.cfg": "259d3eb26d2bc285ab73f7d6515675828c6dd8ffd0dafbb1f233ed96981a1fef",
+        "GatewayResources.tla": "58d82a041a989069e982e5a429da5cbf7533e0eade18db1f90c2ca18cfa20ac5"
+      },
+      "output_sha256": "1c1a6e6663a2683a581062c6ffacd38e3b376df799c2ff5087ddc79494c3818b"
+    },
+    {
+      "configuration": "Bug_GatewayEarlyRelease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GatewayEarlyRelease.cfg": "19b42f38cf22edc2c43be9459a54bec3bf007ad4c04cd52238d440318c2f7136",
+        "GatewayResources.tla": "58d82a041a989069e982e5a429da5cbf7533e0eade18db1f90c2ca18cfa20ac5"
+      },
+      "output_sha256": "2884597170dbd89456f945f4e4c820794fd42b7588f7054e42b4f15d779bbb83"
+    },
+    {
+      "configuration": "Bug_GatewayEvictPinned",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GatewayEvictPinned.cfg": "4a9662825ad6db674b8237b4e30835a5cd927a2e820198590bd5241bbec8b93d",
+        "GatewayResources.tla": "58d82a041a989069e982e5a429da5cbf7533e0eade18db1f90c2ca18cfa20ac5"
+      },
+      "output_sha256": "45caa96bc765f512502dd6a08922d8977bc48efcfed049a299465d110e6d2e8b"
+    },
+    {
+      "configuration": "Bug_GatewayReserve",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GatewayReserve.cfg": "2628e2825ef7336db1341161b72180f2a4884f2c7beecb613351f8a62ee08a11",
+        "GatewayResources.tla": "58d82a041a989069e982e5a429da5cbf7533e0eade18db1f90c2ca18cfa20ac5"
+      },
+      "output_sha256": "deede451bb568fcdc91cf9e9dc23a41eeeddf9798aa19131f2b2bba485f92109"
+    },
+    {
+      "configuration": "Bug_GatewayResponseRelease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GatewayResponseRelease.cfg": "14078395626c7f20f7c69baf9fc350f45ba27f55b42e1910ea1b4fd907be8986",
+        "GatewayResources.tla": "58d82a041a989069e982e5a429da5cbf7533e0eade18db1f90c2ca18cfa20ac5"
+      },
+      "output_sha256": "c0c6653cddd796d1c6b9ac05063b27bcc0c827ae819b2b1367b0fffaeec13378"
+    },
+    {
+      "configuration": "Bug_NoReadLocks",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_NoReadLocks.cfg": "16319cc90b6435b337f0eb2d9136bb86ddf0ac8dc35b8141a50846332ad662f6",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "1c9233cd095c53265b02e2f7718a4c96bb3f7bd50a60f50098ad298f4c5ac4e1"
+    },
+    {
+      "configuration": "Bug_LocalIgnoresRLocks",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LocalIgnoresRLocks.cfg": "0283783dd7f60ff2e78bf7835ef2fd93ac5a41fd820b659690303d9ebebc4a20",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "cbc35cd14f7b792d99ad1958d6cc6499c46cde471df186873110be77379b65f5"
+    },
+    {
+      "configuration": "Bug_NoWLockCheckOnRead",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_NoWLockCheckOnRead.cfg": "0ad66ad5a2402bf8efb457ce031e1d2cb06f88e8fc7290db184b4171776ff409",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "c5066b2d9aff3f9db4dfd04ba5b6205b0566f989eb7d4b4c56a7b548fe738d02"
+    },
+    {
+      "configuration": "Bug_NoTombstone",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_NoTombstone.cfg": "5d50d055ee4b700bf9069b2f45f3c40c7827058864ac2776d6149a5b4f37c0ea",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "96bad71c68bdb5a30b0ad1398365bdcda3c0a5878a0a7b2fcfbda4462de64d15"
+    },
+    {
+      "configuration": "Bug_LocalReadsIgnoreWLocks",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LocalReadsIgnoreWLocks.cfg": "586fec9e842e7279535183a9bb172faf2d36d1d79fa3a5cb0ebad4137e377c57",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "0ea502d24621e63b7b17c1eb350bfbc34400dd6d6b09f9c55721fc840824b74b"
+    },
+    {
+      "configuration": "Bug_ROValidateNoWLockCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ROValidateNoWLockCheck.cfg": "422ab399dd0fbec5408bbcc61fab004c3534ac55274daf671b533fa96cc8e16f",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "95cee1be3aa2b59c253a9b701663acb209fa9093df22f3adf0e36e6bc2f44495"
+    },
+    {
+      "configuration": "Bug_ROValidateNoReadCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ROValidateNoReadCheck.cfg": "c4174d43efce064ae67720cbf386ad9889abced4f99b84d09023fe1e99a60a01",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "cd4c7f3316d3ebf99ba0bba54c846765dd2d2ff9429009e88a4eed2756d492a7"
+    },
+    {
+      "configuration": "Bug_ValidateLostStream",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ValidateLostStream.cfg": "2cf918fc04e5c990dbf5a06267d3a1bea6058b9339a88a54bf8edb88d02530e4",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "33f82907fc24bab4b2060539bac0c60e9a8831e96bf43087f4be69528f4bd4c0"
+    },
+    {
+      "configuration": "Bug_GCIgnoresDecision",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GCIgnoresDecision.cfg": "e24d014e4a07ee0a5b49864a8bad5d511ea164d2eb17f974f5f922b9fd608592",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "872e0151d1c273e3b96a37e88d773d6f3d35ceffe7d4f8bd3d57ce5cee337e88"
+    },
+    {
+      "configuration": "Bug_GCNoExpiry",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GCNoExpiry.cfg": "60212676f87e4ea2a4933e18a8b4b411fada8cfa0683100476cb02b5fad910b4",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "76391252c6762131d4dd4d03d711eaddd0fbb9d454eee070f2b001bac40a861c"
+    },
+    {
+      "configuration": "Bug_FenceAfterExpiry",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_FenceAfterExpiry.cfg": "9f9bcf4e368b8fe33927fdd70cd96d79f5aa761422bd17f920d57549ee74ae13",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "13d87f851be7f9a356b17bb95a570b3c3e3d834658093fd227b40efd114f312d"
+    },
+    {
+      "configuration": "Tradeoff_DirectReadAtomic",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Tradeoff_DirectReadAtomic.cfg": "5cbe3bf636188c3c19cf0b24a036c5fc930fd429f7108de6068ee6dcb0e6f87f",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "18d094e89e10ae9e70738f4cf21a207855fa37a90ea1a56e998b6fb138cb528e"
+    },
+    {
+      "configuration": "Tradeoff_AckOnPrepare_DirectRYW",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Tradeoff_AckOnPrepare_DirectRYW.cfg": "4e162608bedb96284a87dba17423203614419c9eff03d38931c32dee19222578",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "3e0e16c444aa6a0c825a98c846c573e802df4edb37ec00515e9f63d9b9dcf5b5"
+    },
+    {
+      "configuration": "Recov",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Recov.cfg": "b746f1c72ad6c6c6592413a9a235abe31160a89b8556966b8c4c83064f5842bf",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "a64971ecd40115cec17801fe2a9be6d8a41ff153cfd9bc2cc3c66e9f1b0dfc98"
+    },
+    {
+      "configuration": "RecovReaders",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RecovReaders.cfg": "f531b84c8c6efe15c413f3b1b52e287d8af4e1c1105b1a53dc4c1df09b022090",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "fcb69b81c368ac5e9ef27c42a36cf48630b154eac3a22c95c3ab060313d9d295"
+    },
+    {
+      "configuration": "Recov_AckOnPrepare",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Recov_AckOnPrepare.cfg": "5a5f6e06ba5eb4e15158127e83ca08a604f0a9db73e23b9337b850b6d31aa51d",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "e85c7070d8d82f53b36eb6de771e5b6fc99e5e3d56f8e16b45ce898a7fd1c4f9"
+    },
+    {
+      "configuration": "Local_ROValidate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Local_ROValidate.cfg": "033d466b65e5407ed95d1a70386e7a3d79b36a92b17dcf45e13c656f380afe59",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "f3ed88e9ac02562194b8eba69e30597ead7e4891908e944616dcd265877b9534"
+    },
+    {
+      "configuration": "Frac_ROValidate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Frac_ROValidate.cfg": "e122b89c8cc502ecf4b3d94b51569ed4cd0ab2e6fa1c0a4b4cb50c6639a985c6",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "50a653265df3f53d8eb3375b1f2f66ef999a97c7dd31b003c0dfb90ce17bdff3"
+    },
+    {
+      "configuration": "LocalFailover_ROValidate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LocalFailover_ROValidate.cfg": "4e812301c4c2897fa96aacb1cc22fdffd25807634f021fa095467f5a9db67305",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "b1b48895aebc46a40e34977bef89a62633b57e2fa3e1c82d2698c4390d971c90"
+    },
+    {
+      "configuration": "FracFailover_ROValidate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "FracFailover_ROValidate.cfg": "6743c347c6940f92861f51969131b3e86309e9643b59896cd45dfdfeb693a966",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "22a8a8f092f744cc276ed3fa8d7e25f1c2b1c1ccd609317c47cd3192b4b06812"
+    },
+    {
+      "configuration": "Recov_GC",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Recov_GC.cfg": "56170ed1f3ecec1e5c689d9520c0dff4fff3066f227592cdbc22642accd27f5c",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "834154800fd79cc49a1b41fdb7f5e4eb9c48bb9de829deeecc503770ec1c2149"
+    },
+    {
+      "configuration": "Local_GC_ROValidate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Local_GC_ROValidate.cfg": "4c1d59aae4612e2b6dc5be62a7ce634f170634ee4943518fbb2b170c651c9ce6",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "8122706426597b144e0b449ebefc945bc9ece579a71b1b6e4754e43b6e8ea959"
+    },
+    {
+      "configuration": "Frac_GC_ROValidate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Frac_GC_ROValidate.cfg": "96334ba78f14a7d4cfbd3dce6a0d8ad263070d61bd7871e379d1e77c38a8493e",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "3ab6477f82492e8aa6787d7543ad868aa0493792d1af4e45a8a9f7e4bcb1ab3c"
+    },
+    {
+      "configuration": "Bug_RCNoLockCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RCNoLockCheck.cfg": "184f847bb777792cc8d2d05e9ae4908523c4b661a12a3756a445a9f3bd7392a2",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "cefc85786fcbd943116ef1d127070a391c16176407ac418970be401b54cd9809"
+    },
+    {
+      "configuration": "Bug_RCLockIgnoresWLocks",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RCLockIgnoresWLocks.cfg": "637d00dfe98eb3a99afb6c9b2504055bcddaf1d24ccf37552ed53d8ff54c4b1a",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "2ed8876727c4498655d6e1ff2ee38cb71c6a80aa32327939ed31e6e6c6b8f625"
+    },
+    {
+      "configuration": "Bug_RCReadBeforeLock",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RCReadBeforeLock.cfg": "075f16e22e0dc32c448aef10fca6a005e5b9b174025d714b41f0a6a412b4f6a6",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "e6f9d47919a7958e3820a7413d15556837377bd057ac70709705d0dc5780106f"
+    },
+    {
+      "configuration": "Bug_IgnorePLocks",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_IgnorePLocks.cfg": "70dd1e936de9a4f81b1df81a49022f7b5b513c4a55dcfc82ab947879fc2ca8eb",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "bba2fa669081e7075969ce85ab202adc8e35be80941fba1a3365431abe3589a1"
+    },
+    {
+      "configuration": "Bug_RCLockReadsInFlight",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RCLockReadsInFlight.cfg": "5b9dd4f196796c803e156ed1d6bdbcf635063bca3440dc345d5a541d3c74e771",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "5b7b19698bb05fbcf5d9779e1581879d0bf99be484e7f8a7ddc8a2ae062ab61a"
+    },
+    {
+      "configuration": "RC_Counter",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RC_Counter.cfg": "a1b1821c2201ff43036a5ee3956b6044ff9ac853efb06577503c2b17b9ca95f0",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "79ed2f38af995605b56dc108d6abe603cc1a09fa02c7befa87c529148ffc1bdf"
+    },
+    {
+      "configuration": "RC_CounterFailover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RC_CounterFailover.cfg": "a373c399189c0506e7ee6ca80f6dca276eab13f549d4a583008561611b010c36",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "4bedb39a18ddebbce146de38de7d4ed1f6a297ced5f83f029359ba4ed7d41728"
+    },
+    {
+      "configuration": "RC_Counter_AckOnPrepare",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RC_Counter_AckOnPrepare.cfg": "faf72e384ec6d199dd0077cb201ace6d25fa7fd038c6219951a52e5853b006d0",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "94271987428f96d97deb8e2cf29c568090df5d716474ae7b7c259be99b05d476"
+    },
+    {
+      "configuration": "RC_Mixed",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RC_Mixed.cfg": "be421d2a3ef778281089867f25626e98da8969c4054f3e6d9564303b9a663d08",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "6e1c65dcd46da1951cb1edfc6f02a9bc13246d7431774bd656918234b70cae5e"
+    },
+    {
+      "configuration": "RC_MixedFailover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RC_MixedFailover.cfg": "63732681adfdddcb552156453aeda5d31284f3d5fbdf422aed77c205ab50f70f",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "8cde39d13ce78bf173ad8b31ca86f56cda14becbb4f696cd48cec8f026417c74"
+    },
+    {
+      "configuration": "RC_Local",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RC_Local.cfg": "48ecefbd6cf2191a49b0ec21ad60c61f3d7182036c10f8bfa202214a3aede18c",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "7c171c9d7b00b97d93008c35549e6b3395dd14a90040fc545e7243467d64b722"
+    },
+    {
+      "configuration": "Uniq",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Uniq.cfg": "6b64748fa15e9e0357214f22dcc171edba95e9ee2f203f8dd0938bb638615f3e",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "638b9e8d4c84ac20bba0578d26078fd26f2a448a32ec6007b1c18b36d1750b37"
+    },
+    {
+      "configuration": "UniqFailover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "UniqFailover.cfg": "d9d784c994363950a502cae55a06e3652d69b1e578802c219d5099b9dc152b07",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "f95e3efe0ae48147e529d8e292e33a78757dc44fe64a499555a4b38d710ea70b"
+    },
+    {
+      "configuration": "Uniq_RC",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Uniq_RC.cfg": "5797a29a1d07d1f4c2e48f5f224406d61884a4b4fe247f690b33238f9e81a0f6",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "a6f783c69b7012de345dba32eef1e8fbd8fb41145a4c30f37da819d37ee4cee1"
+    },
+    {
+      "configuration": "Bug_InsertNoExistCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_InsertNoExistCheck.cfg": "3451a22eaff73ef50c47560127b7d5c48c9e0b000fb3d4f9990abaea525f8f2b",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "c93b8585460cef72e77d0c7599b70cf6aa0cfa574f853f607fa522ac519c16b6"
+    },
+    {
+      "configuration": "Bug_MoveNoDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_MoveNoDrain.cfg": "b7b5fe4a433dde8e8f4d71239d59d1c35ab50e0e09c42330b09c22af33073a22",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "a716e9e9d28cd658ed8f668db622517f8a794ad8b211d7001a47943d1a5c014d"
+    },
+    {
+      "configuration": "Bug_MoveNoHold",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_MoveNoHold.cfg": "a24bb9f7f4ebed652f829bc7821e21868d9826ce3d5943d74b5f2c7f4a997b75",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "51a448c43401baaca9118d2ad68c841643f7b35dffc4913eabac04fc37cded3a"
+    },
+    {
+      "configuration": "Bug_MoveServeStale",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_MoveServeStale.cfg": "e62f1387f08745c1b668e939bef0d9e2d8344de7d382df9e4a8d05faeeb1be37",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "f45bef2d8c93e4baebaaeb264c3cf6b2d3609979450e3950affd37466026d79d"
+    },
+    {
+      "configuration": "Move_Scan",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Move_Scan.cfg": "9e85601cfa1e51d0d749576f536b563830559fcf0bd947a972a23168c73caea8",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "f61ae6356d557bbc41bcd95d0386006f8d86f434f327e12a491f4bdccc68972f"
+    },
+    {
+      "configuration": "Move_RC",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Move_RC.cfg": "10d6287be32fad7083a563e57acca08dd69ca137a7b370245ec714a5422c6298",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "2b741328af077d9d68784e8894a24562c66d537557cc375556d2f891eab23e62"
+    },
+    {
+      "configuration": "Move_ScanFailover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Move_ScanFailover.cfg": "27d9c7697b2cf46d688a2a7a41fdd43342247a5243987f11cb559ef245cc85da",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "430f528fc0b6d0d0fde5a460e0369f600f3bb3337a39d69c0d47abe2871ec45e"
+    },
+    {
+      "configuration": "Bug_JoinNoCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_JoinNoCheck.cfg": "0ddf636773723ac97aa0a0080386031ace7b34660d36e149d02759376c0091bf",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "3859245aae483d435d84fd26518358f26d96b116c1844c1d223526207be8b387"
+    },
+    {
+      "configuration": "Bug_JoinNoCheck3",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_JoinNoCheck3.cfg": "5307281d744892951b2d2abc0598d88c5558efd38891d39648f7c60bc0e80b52",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "3551f6b5b33fae9065308bc54e8140e19ebee60246f385145152966db783ff78"
+    },
+    {
+      "configuration": "Bug_JoinNoCheck3Prepare",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_JoinNoCheck3Prepare.cfg": "d48e3072364ccb91a4eed33411f7e1191da913b1e8922daa0100029ea5a6dd3f",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "ae5be557fabf61b987226f097edeebeaa8d1a722addcd58077bf8f8497b09dd7"
+    },
+    {
+      "configuration": "Join_Scan",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Join_Scan.cfg": "c82c4e36ca4183d0fce2d649d6c44ccd535f6d2d1eefb2b395d1e4ff4e569873",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "16ad2eb093b02f068b71b6072ff8b699fcad9c92c57acb32a39513fd3cd42655"
+    },
+    {
+      "configuration": "Join_ScanFailover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Join_ScanFailover.cfg": "5d6ed5b6656ef8bfcde5c4da1b647981e06f090006cae254d422caf68be65004",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "220b143a786686310d953e5bc14747930669088805850f8854877e5301e50fbf"
+    },
+    {
+      "configuration": "Join3_Scan",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Join3_Scan.cfg": "c4f2c0dc9adc3dc1aeef3ba3eb1fef51ddeaf888249676479c50ad0610aba72f",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "e06f813f7692de1067728c179821b928a45a5464f930b91a0687910a5fd8c8e9"
+    },
+    {
+      "configuration": "Join3_ScanPrepare",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Join3_ScanPrepare.cfg": "6537a7c9752d975454a4922fec8ddc0dda8d8eb3f91c98d452efb892b0bbd831",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "3f1de0ffd04611931befcb65ab5ab28f995e282af7067b913403e45710e915a0"
+    },
+    {
+      "configuration": "GroupedTables",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "GroupedTables.cfg": "20bd1fcbe6db3bd2645e79d4a708a9fdba1d65422d2d4ef4ed3e4c62c45ac6a4",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "12f12cc63d6b8b018018bf5531ed37f00c0d3a02c8dcc538a96f22ec2e424ba1"
+    },
+    {
+      "configuration": "Bug_GroupedTablesNoWLockCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GroupedTablesNoWLockCheck.cfg": "6655dcbf12e0c9faee69b218e426d09d37c58538cae684e201cb07ad3142f371",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "2349a7dd32cd57c149e1371aae6650436411830e0ca77dce2a63776909830425"
+    },
+    {
+      "configuration": "GroupedRead",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "GroupedRead.cfg": "2e69ab43cea17cf74c172558dd65fb5a3b68b82c81f515ada13b5e9c8fe1d65a",
+        "GroupedRead.tla": "75fd3b04ef2feb0d66aec927958ee78ede0a0ba70182584bd7e3d6e7936da1b2"
+      },
+      "output_sha256": "64cd2e1bf7200b9ab33d05332224667e964f3c6950b7aebe1817ffd55f88d9b7"
+    },
+    {
+      "configuration": "Bug_GroupedReadSeparateSnapshots",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GroupedReadSeparateSnapshots.cfg": "de71cf3cf6baa1da1cdb6c13aea5c42650e280fcd69d120883b482aead60930b",
+        "GroupedRead.tla": "75fd3b04ef2feb0d66aec927958ee78ede0a0ba70182584bd7e3d6e7936da1b2"
+      },
+      "output_sha256": "51594cfcc217502d680153a6b6339d87d714910f596177a4126546d4c13951a0"
+    },
+    {
+      "configuration": "GroupedDDL",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "GroupedDDL.cfg": "719e5d978be6983107ccc1cf2dba63e587152cc88f3761ad885d64056861341d",
+        "GroupedDDL.tla": "82a48133d89866a2b7c12365ce5c14b1046d15c73b0ec400a16911cb956938af"
+      },
+      "output_sha256": "0cc4e5e062873811a59fe2badb3f26896f55cea8c838c31b8c074de83b9eef04"
+    },
+    {
+      "configuration": "Bug_GroupedDDLIgnoreGeneration",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GroupedDDLIgnoreGeneration.cfg": "fd65126d167b3d086d6841c195e6206eb722920b5189fefb7849b5fe5f706716",
+        "GroupedDDL.tla": "82a48133d89866a2b7c12365ce5c14b1046d15c73b0ec400a16911cb956938af"
+      },
+      "output_sha256": "409ac68697078dcb5b2a9a06107378fbd1ffc9a09f926b4c3e52650c31efa035"
+    },
+    {
+      "configuration": "Bug_GroupedDDLIgnoreStale",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_GroupedDDLIgnoreStale.cfg": "1e4d0e6107f69bc2f42ac1b617a3b041133b5db854cf1612a3f092847dadc748",
+        "GroupedDDL.tla": "82a48133d89866a2b7c12365ce5c14b1046d15c73b0ec400a16911cb956938af"
+      },
+      "output_sha256": "05660f9843753b9a3f1bd12dc0ee42a0b2ec556373756cd3869b0343eed9c07d"
+    },
+    {
+      "configuration": "Backfill",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Backfill.cfg": "3327111c17aa4f9b0a2b95be4b7fcdf9f48b2d2454b1239b2395c474fb137565",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "9e8e694473f39f37f8be93984ca723ceefda232b2181a3cf55aee1f60085273a"
+    },
+    {
+      "configuration": "Bug_BackfillNoPersistentFence",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillNoPersistentFence.cfg": "0850ad179ebe08601ecc30fbfe07fe1d3e9fc21371a9a805ff5b1f5f144a4e29",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "d934afc19a7bb7e644b6e4a75fa7e777360bd8092a5ecdce85443607525c5fb6"
+    },
+    {
+      "configuration": "Bug_BackfillSkipDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillSkipDrain.cfg": "d622549a0305047d4698ae6ae403e39b18c35f796eb5dcca15a9566ab45c65b2",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "7cec68b4825e3833407d134ef16577f5feff3144a50b82f019d746e0fd22147d"
+    },
+    {
+      "configuration": "Bug_BackfillLoseUndo",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillLoseUndo.cfg": "7449de32696ee0093acd98f20f10f5b2e8835a8d4bec5be81fdaf83323b6fbd7",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "2814dd08a08886aab2917f65971e7149153a3542d1babafaf3918e98237318f0"
+    },
+    {
+      "configuration": "Bug_BackfillOverwriteUndo",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillOverwriteUndo.cfg": "46db1fbd5133a1e92831a8536e86cd2bd8b5e9c8646a8239febe6436cb8b0918",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "e14ece7fce210957586e3ea20b7c3020d88174485f8f86fa359ce1b4a62695e2"
+    },
+    {
+      "configuration": "Bug_BackfillPublishEarly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillPublishEarly.cfg": "c6b5ac00f4af6bb66ec725ca3b73055fbc70547acae1207e41d5e4e83862f714",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "1e04f0c91395650ec10b99fde4cb2c9d37b0971003e587f61bf6d4d9bdd26cf7"
+    },
+    {
+      "configuration": "Bug_BackfillReleaseEarly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillReleaseEarly.cfg": "af4fc97863f3b6c5351d0b14304e5aa7fffa0a0682fbfead69118b511e3879aa",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "06f084720fdacf4ca7576967329d72b7edc16389d77890802425ac6671829429"
+    },
+    {
+      "configuration": "Bug_BackfillStaleBatch",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillStaleBatch.cfg": "ac28df7d78f00f62aa078f1c317a59bf301aa3cef4d28aee699a85dec219e9e8",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "755b0cc70fa68c412f634f7f31d1ad96590f9cfb6823acada444995e8bf4c4bd"
+    },
+    {
+      "configuration": "Bug_BackfillWrongOldPad",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillWrongOldPad.cfg": "78503b4416fd01321eac706bb47b5239c73157f17bdeca518ea311e91973d81e",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "d81837b31d6098720f750e1569baa9905e1a2af8663e9da6ac75eced367e1fb7"
+    },
+    {
+      "configuration": "Bug_BackfillAbortAfterApply",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillAbortAfterApply.cfg": "86f235d91e400c94e4c156ab20d0bf80d2fc6607b82ffa9b1ec87b3f5d2f97b0",
+        "InstantBackfill.tla": "acbce53e38c9f20e790b2ef2e00b516a06e91824d525b92e372ab938b4e7ceb6"
+      },
+      "output_sha256": "10df5401df887bd602ff9211f402bec365457a389804258d644ab5b3ae7ccda5"
+    },
+    {
+      "configuration": "BackfillDDL",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "BackfillDDL.cfg": "ed68540021803f72e23592abd191e10bbfe41d5637f4a0bcb2e43f5918f1efce",
+        "BackfillDDL.tla": "d9aa033fdcfc0d2e3f4adf89bbc0b2cd2a284e3104c9b535157c5295bd38c1c9"
+      },
+      "output_sha256": "9aa92203195f0c45619e6176b6308e77cc1d4b075e30908640334f0f7445e5ba"
+    },
+    {
+      "configuration": "Bug_BackfillDDLNoQuiescence",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillDDLNoQuiescence.cfg": "3bf0ce9b57fe48e3bbfad531978eb98b18d59e6f658e738b28948cd3f2c551a9",
+        "BackfillDDL.tla": "d9aa033fdcfc0d2e3f4adf89bbc0b2cd2a284e3104c9b535157c5295bd38c1c9"
+      },
+      "output_sha256": "560cd6405b99d10541d8011ade91679e3a294254fd47c5e58a4eb4b022c83160"
+    },
+    {
+      "configuration": "Bug_BackfillDDLNoFinisherSerialization",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillDDLNoFinisherSerialization.cfg": "d08d88ffe5504d2bce110c446ef847284e942b842bfb04df3309ae4e48efacb7",
+        "BackfillDDL.tla": "d9aa033fdcfc0d2e3f4adf89bbc0b2cd2a284e3104c9b535157c5295bd38c1c9"
+      },
+      "output_sha256": "2e63abb4b929e8a0917d2e38ba64417d4d9b77770ce2cdfa67ca61d68ee681b0"
+    },
+    {
+      "configuration": "Bug_BackfillDDLWrongSpace",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_BackfillDDLWrongSpace.cfg": "41c069486155924aacd697164b729d7f545844fad4ea166b2ad8b9e634fcecd4",
+        "BackfillDDL.tla": "d9aa033fdcfc0d2e3f4adf89bbc0b2cd2a284e3104c9b535157c5295bd38c1c9"
+      },
+      "output_sha256": "027d8523313b62cf999191481dc7af8c80c32b93c4f17b5e823ee9f8c4120871"
+    },
+    {
+      "configuration": "LazyIndex",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyIndex.cfg": "b7688f25d16d3086d16a4f4702489358bc3cfe33b3ab2236a247ff7b9f86dd51",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "e4cebf97405579e6b4641d90caf094ece9fac176e110da2453f7c7213b3f0435"
+    },
+    {
+      "configuration": "LazyCapacity",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyCapacity.cfg": "b169613d8de7d735aeb2de9aa4b47e6389ac773b48ef5954b67ea0522794eb7e",
+        "LazyCapacity.tla": "2049fec593dda527edfbf77865ec2a34198202bc50a74436aa36c3aa2d050da7"
+      },
+      "output_sha256": "185cf54e585940d87b41dcba4cf7eeabdf7eb5f689ed27734074ccf2205c4726"
+    },
+    {
+      "configuration": "LazyBarrier",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyBarrier.cfg": "aa2890278503bf2555469b3a600a9db3f97e25eaacf72c30148f266bf4e56315",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "aa6c37e5a8e15811b8ed2d331911b769b505bbff110a62370f9ed318b2148a02"
+    },
+    {
+      "configuration": "LazyHandoff",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "LazyHandoff.cfg": "eca2c74fe0de5c45d2d4a3df0621672369053b66deac049eff51eb285250271e",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "c69e80212ab116986cac6ede57fe92c4033993f1b2c2a69267efc19f1ca8c421"
+    },
+    {
+      "configuration": "LazyHandoffLive",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "LazyHandoffLive.cfg": "9d1fa77ee9275c7c43ba09ef6ecf3541bd4d0def36f15fd33b9aa60ec52752de",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "ef3b13577c644bf134e6ec6508279f28cd97fac3cd458e9e93884caf88c113fb"
+    },
+    {
+      "configuration": "Bug_LazyBarrierForgetUnresolved",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierForgetUnresolved.cfg": "65de76e879322af8807a49e84c943bef61baa26f72d6abf83c19a1fb264826c3",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "4c65c7b8514fce367a10a24ede4ab73d052ea34e4c6e80e6973afc7d50400b54"
+    },
+    {
+      "configuration": "Bug_LazyBarrierLastOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierLastOnly.cfg": "681ada75123a62d5c78db41aa71bf0547b93d0f1aab693114f802ae362b07a50",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "d54737cb0344b3de81efe9dc38c281b4002c915e3fd7db3dca0d46b938e69787"
+    },
+    {
+      "configuration": "Bug_LazyBarrierMaxAck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierMaxAck.cfg": "fe108d341789642da6ea45b168e2659a09712a69d908bf0814418570e5019110",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "062eea368df628a5008fe9cad9b215e154756b0280721100776e4128cb6134ac"
+    },
+    {
+      "configuration": "Bug_LazyBarrierSkipApplyWait",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierSkipApplyWait.cfg": "0c49b28786698d6c4163d4e9a2bab00d0794dfb87bfbdab548fad0a70b52b52b",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "570b0f0eebe9c4639985f5869e096ec252ed81d79f6892b9a7934d20d13251dc"
+    },
+    {
+      "configuration": "Bug_LazyBarrierSplitFrontierView",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierSplitFrontierView.cfg": "e615f5d0a0813c44d9635c405cbdede03270d800465d71d769f5ca1c4d883d25",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "bed0164ceef210c938c3ccab79ad0e5e6ece37003b12122c49b95ffeda526948"
+    },
+    {
+      "configuration": "Bug_LazyBarrierTrackOnlyWhenEnabled",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierTrackOnlyWhenEnabled.cfg": "b7b1a3369f3d0c85d4f9f62a29bd8b95874c0b230b2d90d8dff6cbe42b3a0e98",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "204488f4a827b856d0e6e1500fa0a09fe33ce610bba191a2d2089128b4d7fee1"
+    },
+    {
+      "configuration": "Bug_LazyBarrierWaitAfterSnapshot",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyBarrierWaitAfterSnapshot.cfg": "4f64d507200e8ec66906ac4f204155be6e6c99977512e5085082a6c0e2d27ceb",
+        "LazyBarrier.tla": "07c8c2a5f43b097e5a7507209e856543e89ce3a2e52c24af2186e8c59221dd23"
+      },
+      "output_sha256": "936868e50b55ab47dcb121d7e9441df7d122bca07c302f2f5fc63878cd2f50f8"
+    },
+    {
+      "configuration": "Bug_LazyCapacityAbortLeaks",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyCapacityAbortLeaks.cfg": "19d52105b8e0491e660cdef9f995ec9af57cdbd95a194144371cc4f348c0960c",
+        "LazyCapacity.tla": "2049fec593dda527edfbf77865ec2a34198202bc50a74436aa36c3aa2d050da7"
+      },
+      "output_sha256": "7e9701f9a6bc9d0fd99f43f818fd3bf287bee9cb86ece1f1bcd5517b57a0c348"
+    },
+    {
+      "configuration": "Bug_LazyCapacityNoByteReserve",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyCapacityNoByteReserve.cfg": "848ce21c95a8162aaef17060e330c8ea1a619dcff4d891ed8b6cc57e324f11ab",
+        "LazyCapacity.tla": "2049fec593dda527edfbf77865ec2a34198202bc50a74436aa36c3aa2d050da7"
+      },
+      "output_sha256": "f2a89386815825c7e74e80f3bfe5d64ea77852cf6f21eba3310fe45268cf6d7d"
+    },
+    {
+      "configuration": "Bug_LazyCapacityNoEntryReserve",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyCapacityNoEntryReserve.cfg": "5a2993ab46c8ca0faefd54b34fdad4bbd1aa3c8ea9936a44c6befbe131369b1b",
+        "LazyCapacity.tla": "2049fec593dda527edfbf77865ec2a34198202bc50a74436aa36c3aa2d050da7"
+      },
+      "output_sha256": "b6ec9e1213217b39bcd96bbb8c9904693c88d65aa3640db74f70d4e7a5004848"
+    },
+    {
+      "configuration": "Bug_LazyCapacityNoSeqReserve",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyCapacityNoSeqReserve.cfg": "08b50aed9726d3243ce43c5f93fd627bff238140fd776d269d2a4fe99c9c4054",
+        "LazyCapacity.tla": "2049fec593dda527edfbf77865ec2a34198202bc50a74436aa36c3aa2d050da7"
+      },
+      "output_sha256": "7af776e365fa6f3672a83c9fac247d2019c3ada50f1288f88bf1358c7a2cc939"
+    },
+    {
+      "configuration": "Bug_LazyHandoffDropFloors",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffDropFloors.cfg": "23889a73f62edd8e1cf77420ae93f4ba2d447ca27f3c1a6293407e4217ba81b3",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "54873a2517388dc80e026d510cd1c4e8d5ff9c503b12fa4172e9e023c9c922ff"
+    },
+    {
+      "configuration": "Bug_LazyHandoffDropMarkers",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffDropMarkers.cfg": "f853f3d90b59410f0f6c5151f29099ce11cb35c930307475c804b0d916274076",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "bf6ae89d30571160b32958a2d1016d589c146f3f296f6eba7bc2bd0311997640"
+    },
+    {
+      "configuration": "Bug_LazyHandoffNoTargetDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffNoTargetDrain.cfg": "77ccb781888ab48886f7b971ba05c3e405dd763b9474620084552a9647a87920",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "da74dbfb026a2c8b4feacbf9922bfa3f476a3599b6f77c45432e9243bf4c30fc"
+    },
+    {
+      "configuration": "Bug_LazyHandoffNoTargetFence",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffNoTargetFence.cfg": "71ae66e763fa2a0c42967389efbf9ccffd40686f5cf974b01768b74ac588f2fd",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "bad63c0396d40f10c2f58914d0d2c73f0b093e3d7179255b0681d280b4774ac6"
+    },
+    {
+      "configuration": "Bug_LazyHandoffNoTargetNote",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffNoTargetNote.cfg": "575dc71aba6229af07e7092accc53c3882607e058dad398788024ea55b1e11c8",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "32f82a427afd9781a2a9510be11afb1c4305f196b4ac5a90b26659ca9b1c56fc"
+    },
+    {
+      "configuration": "Bug_LazyHandoffRemovePending",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffRemovePending.cfg": "251335fcff67ecc829dba06babb9cb025d41544c15dfaa5973a475574b417d56",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "f5c8a6849ea28490d43f8ebe3c548296681a678a895db7c4f972d71730e51dc7"
+    },
+    {
+      "configuration": "Bug_LazyHandoffResetCounter",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffResetCounter.cfg": "8d4fb8e640e78f6fa5e9dc818d1d5566a716f009077dd752f2ac6948ffadca48",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "f6e01a17c3c80452db3defdf298ba7f0e308c3d2ea4d614df2cd43286af737db"
+    },
+    {
+      "configuration": "Bug_LazyHandoffSourceNoFlush",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyHandoffSourceNoFlush.cfg": "795129125412f7cf9b9f9ddd9a0fa8ea8984001566b0fe363c3f8465419357a4",
+        "LazyHandoff.tla": "3fe2b4ebee5d56b53f1ef5ecabb15223059ec15d6e34bd26a051504aebba47f5"
+      },
+      "output_sha256": "11ee73cd2844c03bf03b33f4d9044539365af470e1ba5725d2ea403253035dc2"
+    },
+    {
+      "configuration": "Bug_LazyIndexAckMissingTarget",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexAckMissingTarget.cfg": "6b2e2e52f54c55997e2a991feb6c3bbcbcae5db311a2b7b2189f2da800acfa74",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "778a7c94396788bab00cdd910faa92d9aabc63f8e5cb42d6d6591f6c4315ef97"
+    },
+    {
+      "configuration": "Bug_LazyIndexCaptureFailOpen",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexCaptureFailOpen.cfg": "6e34f91fd91b16a7c775db9eef1476abd46a30b78ebf1adcf379644589ce46bb",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "371ea26df2a549af7310c3dfcb5a2895ca64e2476747a945b91d7a09d9f8b261"
+    },
+    {
+      "configuration": "Bug_LazyIndexFloorFromMaxAck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexFloorFromMaxAck.cfg": "311330c4b7326398ad60c8839dc2281e37e9826451bcf57169df617395275e6a",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "c9a08a2a501eeeeca63cc2cfd6aa4fefe9b4656d091961287f2cc80b7157c661"
+    },
+    {
+      "configuration": "Bug_LazyIndexForgetBeforeAck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexForgetBeforeAck.cfg": "fdeb4980a76ff448a9be5711e864a84f665b1cde5a6c753f907ef7db1daddca8",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "b440a30255b3f318df486475c86909a19d6c2b677ab19601c18b97b791fd9881"
+    },
+    {
+      "configuration": "Bug_LazyIndexForwardBeforeCapture",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexForwardBeforeCapture.cfg": "ac1d510100afd91969ba4cdf40c97427c0d10a2ee1657ff8c13e50e542738adf",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "51c186542812c27447bfde28cc8e7f400018b804dddf2114398a0a08994a5847"
+    },
+    {
+      "configuration": "Bug_LazyIndexGcBeforeFloor",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexGcBeforeFloor.cfg": "48026535fa50382c6dcf344ab114e83ae0eba6172485843e03e163bf1954c15d",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "1e244430025c179d9bc13fb46a71c8573b381d6c433bd6c2ee5a6fae60fdb9fd"
+    },
+    {
+      "configuration": "Bug_LazyIndexIgnoreGeneration",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexIgnoreGeneration.cfg": "81e424db49f3113e6428bc8179b578c013c46c0139110ac591c01c773f8f4037",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "411bd045abe1bd7cd315531ffb17ddbfde56763d4affa77ca64dcd448d093fd1"
+    },
+    {
+      "configuration": "Bug_LazyIndexNoBaseRecheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexNoBaseRecheck.cfg": "f0b926085cd37f895aa35eeace29614d89723e5b8344e91e5b9dac0bb54bbf7f",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "5c4b3058757f1ce6646026747bf0706cbf2b767a09dfe3b01110d0fc29331c6f"
+    },
+    {
+      "configuration": "Bug_LazyIndexNoKeyRecheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexNoKeyRecheck.cfg": "a3f13f88d351477a240cb612cff2c6d82f48c3436cd9ffd65445af7b92dba396",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "598c43dd9af4198ca25fadd3cf179d41b73e943b594e5f5682787b38d223e239"
+    },
+    {
+      "configuration": "Bug_LazyIndexShipBeforeCommit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexShipBeforeCommit.cfg": "93b2f8372a7c38daa3f3459e96014a763c0b2ae8d39a9eb7f6ef98e78f325d0e",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "677d4199323c76fc0c840efaf88713190b32e4eec7599c9696ad6a0f4ee2f5a7"
+    },
+    {
+      "configuration": "Bug_LazyIndexSplitOutbox",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexSplitOutbox.cfg": "ba7a0763796a59a58def3daa43e3945c88f22b8654999c6329c8e55f4dcafba8",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "fc4890562c4bf2492b5ef156cd30008de383385aa6406130d76355a8f4221e7d"
+    },
+    {
+      "configuration": "Bug_LazyIndexStaleOverwrite",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyIndexStaleOverwrite.cfg": "b2ad6484dce3fa08940639eeb33a9ed266384c54007fba6f40bcdc9433377a88",
+        "LazyIndex.tla": "5cb98e090b9993bf348bf3f2ddc7bd37eef3b0fb373d45da4ac9acadca536676"
+      },
+      "output_sha256": "8fb2deb220ae0b908a7a14217b604b3eaf1bf1bb1d3180febc4e451efcae463f"
+    },
+    {
+      "configuration": "LazyMeter",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyMeter.cfg": "76e5572c760f86f420b39cc67672ba9b36a3aaa541fe1be508333fd5011e02cc",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "46d9853fdd51f6e30c765a9bc12fa1d72348eec16dc1f4661d9df71dd6337a73"
+    },
+    {
+      "configuration": "Bug_LazyMeterNoPrecharge",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterNoPrecharge.cfg": "88d1b492a3180917fb417e4e035ac3093f5913ad2d44139235cfa0caa0661769",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "2b5bd98b849ac9562d0c3f4a1fd22192e915eb07f874717a1afdb7b424160943"
+    },
+    {
+      "configuration": "Bug_LazyMeterEarlyRelease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterEarlyRelease.cfg": "20084bc9d4956c91022014fd6a54591a11cb423f0a27c14b522d0090788577ba",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "2d17ed219a4a2f21789b616bac0e944d145d8fab137cd493979960241102fa69"
+    },
+    {
+      "configuration": "Bug_LazyMeterRefundUncertain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterRefundUncertain.cfg": "318f749b9e19ba193bd700dc01224ceb014d04ccda16b1469911f8421e14d6e5",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "5055bb936e29bbbfeca9388eac12972284da28e35a1201511ba6dcfca509dd0a"
+    },
+    {
+      "configuration": "Bug_LazyMeterMutateUnknown",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterMutateUnknown.cfg": "32e073db98792b460b71acb6d4bf3a53aa78efc2900c4a4d45acc2c8e33d6170",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "7583e12afb8a5784469258c5eeecd1fb039bf73bcc7b977db1bba469729f1960"
+    },
+    {
+      "configuration": "Bug_LazyMeterNoDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterNoDrain.cfg": "d72029b0e8c3799b9f90f71efe28a161a566fd9353a7766407c6c8ba4c3af630",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "f2af0ca5137f6590aafdd22f55f75fe1d214dfa93f9d8c38803aabf3ce8fb581"
+    },
+    {
+      "configuration": "Bug_LazyMeterNoQueueCut",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterNoQueueCut.cfg": "94e19e1d0d591fcca737a0322b37c5cb0dc9227400829eccea482e66a2551e6a",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "a05938f55ee3b52f36e31f651ebf6dcdb61f1ac0caccdcc8162a2f9abaa3b61e"
+    },
+    {
+      "configuration": "Bug_LazyMeterStaleInstall",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterStaleInstall.cfg": "091c599b10a2f81562b0074e4a23a2b285e6283d30a6dc952dce5db1c5374da5",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "346093a6814a3f5e697b995ff2c81355f81a5778cc8dc15ca2cf3dee5ec9113f"
+    },
+    {
+      "configuration": "Bug_LazyMeterStaleCallback",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterStaleCallback.cfg": "ca1ef09788b4b409def160cc77e25d08b7ee56e35ae3128f62059898d490bfb2",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "b5438853f7532e041960f92a16e74eb2f2d674f683e5778a621c9e5f319e9433"
+    },
+    {
+      "configuration": "Bug_LazyMeterApplyCap",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyMeterApplyCap.cfg": "b03cb69b4515e1b72c9f7f06caa8fa723f9b0eadd1591490a544d57c0a5b3e4d",
+        "LazyMeter.tla": "fd08cee456c5793a1bd0b2bd9b7ebcc6ba07ff9c63f69bee326ddbd9685c22de"
+      },
+      "output_sha256": "d66ec5f892d5676140d972b931aece7865b91045e948565b847663ab492bbbe7"
+    },
+    {
+      "configuration": "LazyTargetConfirm",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyTargetConfirm.cfg": "2005efeb621b3e8fa033022f2639beac494bda84472602a786a92259cb60a8d5",
+        "LazyTargetConfirm.tla": "6dba198db2dc9639ecd7e840e64c481463c3f68744cdd855039e7450079d9382"
+      },
+      "output_sha256": "7c16af35999f817597cc18ba1e0fcb18f208fe09f742cfad6cf99d73885ccfdf"
+    },
+    {
+      "configuration": "Bug_UnconfirmedAck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_UnconfirmedAck.cfg": "992aab8b460477331b1d643fd695f914227cceb50b9ffc2d8e5725379c477654",
+        "LazyTargetConfirm.tla": "6dba198db2dc9639ecd7e840e64c481463c3f68744cdd855039e7450079d9382"
+      },
+      "output_sha256": "c1f1e35037dd70ddc93dbe1879ba2280a33bc9cd7331bf08d348f247b3448d9b"
+    },
+    {
+      "configuration": "LazyApplyConfirm",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyApplyConfirm.cfg": "d182150717ae0886388057f40067f036cc2fc26912a589296ab2c148d7d984df",
+        "LazyApplyConfirm.tla": "2f32273f93b8812eeafed6f2bcbf3d35a8ae3c540bcb4045391ebe17b26f0ea1"
+      },
+      "output_sha256": "7df4b1c8ed16b8d3b6cae5be5a643493026712ae6fbdf6def5b3b2200f352a93"
+    },
+    {
+      "configuration": "Bug_UnconfirmedApply",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_UnconfirmedApply.cfg": "29fddced2ab5c4d177c9858b2a8dbe928ade30120f3b2c80f809f33fa7e206b8",
+        "LazyApplyConfirm.tla": "2f32273f93b8812eeafed6f2bcbf3d35a8ae3c540bcb4045391ebe17b26f0ea1"
+      },
+      "output_sha256": "e0290d79e7b3256dceecea0c5bcf961f0fd4d2b03d7641ea3a31a170d47a7cf9"
+    },
+    {
+      "configuration": "BootstrapCount",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "BootstrapCount.cfg": "ff49b06f5e861aba1f6682a9b421c90a6d5ca3c0e07b1276702ee26a9d43617e",
+        "BootstrapCount.tla": "b5246776dcd8029f13e26342c0ab27d000e4b59515eb7592e72b031d58e83bd3"
+      },
+      "output_sha256": "d03ac389412b862db81976392f5a6c7f474f21814c87f854d8eb98fd93ada1a4"
+    },
+    {
+      "configuration": "Bug_CountsAuxMetadata",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_CountsAuxMetadata.cfg": "d6f17c3b43819fb878ef0b8f2ffec4c8e05ef6d17dbba04da2dd69a69424a3f9",
+        "BootstrapCount.tla": "b5246776dcd8029f13e26342c0ab27d000e4b59515eb7592e72b031d58e83bd3"
+      },
+      "output_sha256": "637e5afa84c368c6b41581e220864623b26361ca00831706266705da2b7d2ae9"
+    },
+    {
+      "configuration": "VinylAdmission",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "VinylAdmission.cfg": "fb8f44144c60dcc3d1d31dd3902bec3fcb2d90082a283160f3f23cb3e3b96d2b",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "5781bfef92a70af3ff3c1c7f9ce0603c15736e16a5980fa8bdb6ae624bc84198"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionPerGatewayBudget",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionPerGatewayBudget.cfg": "a10b082b6579cb1a5d401d537348def4089bd3811a589a8a6a3bbc25812e0032",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "87c9d60252f97ff11f0f8ca9ff4aff6da27adaef763968e735bdebdc3a82648b"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionGateAfterEffect",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionGateAfterEffect.cfg": "536d88cb996a9cdbc5066a525feefcb99d2e3d0cc759519b7e990eefdded5c36",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "2ebe6970a069a50f4debc19a56f62c3da30ac8e51376972bb19e82f5e09f6d6b"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionNegativeCredit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionNegativeCredit.cfg": "bab2ae77e68a4c9a1a681cbf2ee5bf6cd6da3313e7fa5eaf76a29f05e7af3dc2",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "d03829b32bc58053b706a392adeed85062dbaf8fa33256ce093643064638ae14"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionThrottleExistingYes",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionThrottleExistingYes.cfg": "aa0ec42757df02d6a842840fcda72477790392df1560d01543b61b04bfed8869",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "6e2967b4c2070ab25676e85fc535807c502919bec210465f2ab7080be4dbad41"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionThrottleDecidedApply",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionThrottleDecidedApply.cfg": "e15fca0a922dbee301f7088455d1b0f85c1dee8ae0b62ca6dee44927f35f3b76",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "d42a0c4157cf798f32f8f1fc5640dc70a99b68ba26dd94cf6d07b8ed9c9d3f74"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionReplayUnknown",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionReplayUnknown.cfg": "d9d718f47f04dc83d30a45d9712816bc6b6b4f57ae46600e4a10b3a6f889a639",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "70227f52b3690d07e56eff5db5665cf3b0eae1fe03cc664588a2cfcdab6dd3cc"
+    },
+    {
+      "configuration": "Bug_VinylAdmissionResetFullBurst",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_VinylAdmissionResetFullBurst.cfg": "acd533b4bd08ff74cb8d63d33dd75ed7d99cf9c2b97481f70fb6f545a1b0578a",
+        "VinylAdmission.tla": "42e75e273d6c4f63a11f9b9da9945689cc2a62693c2ce997ffcf50cbcfbeb9ea"
+      },
+      "output_sha256": "d1c4b147675b6a7aa8f361a48a47c978c3f90c8aba2018ee7ab49ac75d2efece"
+    },
+    {
+      "configuration": "PrepareConfirm",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "PrepareConfirm.cfg": "6778bf28ea32bc0999456d84418f544d0bb90bb178195bb366baf45b7f7eab54",
+        "PrepareConfirm.tla": "d3ec248859881ce98f8dcf0c8b8b9e2387d142568d360ce6478a673c5093f172"
+      },
+      "output_sha256": "b654a6fbd3d4fda43cbc226656dad92db357ae28c9bb471bc718e516aa96a94e"
+    },
+    {
+      "configuration": "Bug_UnconfirmedPrepare",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_UnconfirmedPrepare.cfg": "5f927ea9f19fde32cde9306c79730dea87e6027f60131c6c4f1825c015f143e0",
+        "PrepareConfirm.tla": "d3ec248859881ce98f8dcf0c8b8b9e2387d142568d360ce6478a673c5093f172"
+      },
+      "output_sha256": "1473214c2009b47b30a7ef0f2913bd279d3c5e790f10a3411896b20001730643"
+    },
+    {
+      "configuration": "StreamMarks",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "StreamMarks.cfg": "59388d989f3253274c998cb07cd7448570ab63731d6b228a891ef62c533c59d0",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "760129030b49327e8595a456090d92dbf321946718c5ad64995d6369aed3a858"
+    },
+    {
+      "configuration": "Bug_StreamMarksRoAfterTermChange",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksRoAfterTermChange.cfg": "cc7804b667e42c280cc339a48cd7619e2d6423f2bc7eb79aa66b0342f5919b62",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "855362870ae5ffab4e8a5d4de30fd0ef3ea9af3700beb7631821dcbddc6581f2"
+    },
+    {
+      "configuration": "Bug_StreamMarksWritableBeforeTrigger",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksWritableBeforeTrigger.cfg": "1730ecfe83526209b03ea76e6b259f93c8576de54020c173ed957e189dc2be27",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "2d0b8309c48203243f0145921e9b3c9a3bab08bf651bc5f0ac2676242713e354"
+    },
+    {
+      "configuration": "Bug_StreamMarksNativeNoTermCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksNativeNoTermCheck.cfg": "4a7e170f116ed056ab5d35abda264307b5d83f1153f0cd41036726cda138652b",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "f0489f0f77db08d18a5dff8ff86c86427e1b52004a11048d01b0593149f682cb"
+    },
+    {
+      "configuration": "Bug_StreamMarksNativeIgnoresLkStale",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksNativeIgnoresLkStale.cfg": "b394432dec4d71b92afe403c032acf9c4c47aaba2b6274ecaa78bc776d741385",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "9729eb4163104bf48ee882b899e34f709b6758257e7546fc3f56886eb721d017"
+    },
+    {
+      "configuration": "Bug_StreamMarksLuaNoTermCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksLuaNoTermCheck.cfg": "9af69f7bf48a378796fcef9437fbe7d2c0059a9e38272bb650c1f93281c1acda",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "c68aafecf8f84b180cec2c42e281318eed69cfb54dd440d72de8f5db771d455d"
+    },
+    {
+      "configuration": "Bug_StreamMarksLuaTermCheckEarly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksLuaTermCheckEarly.cfg": "113d2d795f878236d25220a0f6f482e343e388f123076ba6ac3312ef010e07ed",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "0bd5a8c006b95e591acd1f83f8d2e2b471fdbd39baef35fffd7483b4d36c127d"
+    },
+    {
+      "configuration": "Bug_StreamMarksValidateNoFenceFresh",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksValidateNoFenceFresh.cfg": "eacbf6c6d7a3abd6dddf56833577265141357fa8da02cbe3b3f51eab54f7875b",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "44adaa6cce8c9e94891684353e4500b78880402769c2c697ca4a477670b7bcd3"
+    },
+    {
+      "configuration": "Bug_StreamMarksCommitInNewTxn",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksCommitInNewTxn.cfg": "ddaa52e27cbc434e02738e5db2dab65a01ce7c0e4f638cd890f00e8687787f67",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "641e2cd255984ef35f3369c4cdd739b8097fa893c0878bd13a09f24c3c66680a"
+    },
+    {
+      "configuration": "Bug_StreamMarksDoomBeforeClear",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksDoomBeforeClear.cfg": "2ccf683db18929e21284d4d4b61ef02851d883217a16f8de2eaf0819e8f1f05b",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "2532962698b5b94907deb0107c9190b469987b030f71f9a2377fe0867e64e80b"
+    },
+    {
+      "configuration": "Bug_StreamMarksDoomAfterCommit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamMarksDoomAfterCommit.cfg": "9703546921177ec2b421cd2892c5bea048f0c766ee8564ae40d2bfd066c60b07",
+        "StreamMarks.tla": "96eceb03a2ce22a8b656f615413676c9f56756436901eac89eba2b2bbf0f5205"
+      },
+      "output_sha256": "ba594ec551354aaf993b8d92f65c3ad7049be6889ff7693d7619655a36ef3b3d"
+    },
+    {
+      "configuration": "Handback",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Handback.cfg": "2601fe367bc402961aa1bc2400dae6ea20b07dc0fba663cb334cfe9ed35d9836",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "58bed3f8136ef74117f1e9fa2813d6a5f34ae80cc8b3db4ae4241ca6f9a5d4fc"
+    },
+    {
+      "configuration": "Handback_Autocommit",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Handback_Autocommit.cfg": "3047526d3287395a35f127f323268005378a119f256b946c9fb0b60a62ecc2c4",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "3f9964ef3b004396239b9fc677177389f6b62b774d9835c445057b8768330e1c"
+    },
+    {
+      "configuration": "Bug_HandbackKeepsWrites",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackKeepsWrites.cfg": "64f7e53c999f8d1c0aa80b9df5e0cb3db1c8b13ef24b475c02199f7c03aadaaa",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "446232f9141f401829668d9706ba87e68290dff179394ad824b42946f56b2137"
+    },
+    {
+      "configuration": "Bug_HandbackAfterCommitBegan",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackAfterCommitBegan.cfg": "bf8b59a7a86d4ff4a81df4c77329636f1fa2d31bf5046c406fb1ecf664788e1c",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "6c048ac23ea58351c43d5d7f4619ed994b6216fe19efb3a47b42a02fa3f91641"
+    },
+    {
+      "configuration": "Bug_HandbackAfterCommitBegan_Autocommit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackAfterCommitBegan_Autocommit.cfg": "630bbc7ce9d8803afdf8adf3fdbe62a0980ec4a5e4f092359d3f7593d102e6da",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "0bdf0247e69e3fb65ecde9fede24f47a618c7a7d12329e9bc0dd04bc8f16863e"
+    },
+    {
+      "configuration": "Bug_HandbackResendAfterLoss",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackResendAfterLoss.cfg": "3ed0955e94324bdc582991537414ecb4dd537240b821a34b30b69a6abf707d1f",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "2d85edb7c10e585c416036943c0cb58cb81764e109a103dbbbd2768818b67ff5"
+    },
+    {
+      "configuration": "Bug_HandbackResendAfterLoss_Autocommit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackResendAfterLoss_Autocommit.cfg": "ce6d09526757045bb740523dd1de152634fbcc00d28d9b13f1227886d6feee0e",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "317c516d9a23507b757b0c9daf891470ed97aeaa974cc43bafd26b64a899ed7e"
+    },
+    {
+      "configuration": "Bug_HandbackMalformedReply",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackMalformedReply.cfg": "e76e2d65637de798878fee51232a23fe46244baffe1a6a4ed673a47dd6703c87",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "471cf1a5bd33750e13dd0542f57429af23ac8066aeb8ae0b7156d7741519551a"
+    },
+    {
+      "configuration": "Bug_HandbackMalformedReply_Autocommit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_HandbackMalformedReply_Autocommit.cfg": "f0b3af1e44c128de8e62e03d76ed992b65e2178bc82ec13477be072faa57f8b4",
+        "NativeHandback.tla": "6647d70b4403928283634da8c2cae450e310abe30ae7ca90aa9bd6a023fbd0a3"
+      },
+      "output_sha256": "56c225bd7871c47b3b7a5ec0e1cfff0ad7a84fb46809bdba6816506f1aa78d3b"
+    },
+    {
+      "configuration": "EngineCopy",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "EngineCopy.cfg": "95e57b1130915f75953a9553f9524696af24818709b30f516d3cd272311815a8",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "399a22f4fecc4dd1d747a3ec36bde32101ef6f4dae653b45a44a63003ccab2a9"
+    },
+    {
+      "configuration": "Bug_EngineCopyBeforeCapture",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyBeforeCapture.cfg": "34562238edbc47bfdc47471c089887f7345dd987c125c4b1fe9ef50634dca970",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "e3bd190eecad3c71da6df1e9cc08c45df039f3efebd982807d24389ba629cafb"
+    },
+    {
+      "configuration": "Bug_EngineCopySkipPrefixDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopySkipPrefixDrain.cfg": "60079cc1e48c08522b3c871d2432f586f6694fe189fb2a40e7e712a17fc51ea9",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "c84cada9df04e3175ed51a55c1a7e6d8e38563f379f187ef6e258005c9c4a19a"
+    },
+    {
+      "configuration": "Bug_EngineCopyCaptureOnlyNewKeys",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyCaptureOnlyNewKeys.cfg": "00bc1eece3d02e449f01b9aa7b779637fe6a23a73cfc6e612aefe01c849fb480",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "9f017510882e6403dbdccfd743ee07bf7a990be2e305313ac34ef280597f830a"
+    },
+    {
+      "configuration": "Bug_EngineCopyUnconfirmedSource",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyUnconfirmedSource.cfg": "f551c1a9c66bd1534370c3467483c652d216677ee27ec3f1335c06d8417adf70",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "cdc3879eeae5ce69e61d65d58ea02df677a4d2f13fa6ee7ab967ff3dbd368d19"
+    },
+    {
+      "configuration": "Bug_EngineCopyTailIgnoresDeletes",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyTailIgnoresDeletes.cfg": "01b3acb75b08b34166453cd0224bc6b9e0b234a2f9d0bf2a622436dae061e4e3",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "2f5d7bafa0eb23d531231c8ae4d0c16e3d009907e342c9759b331096844d4575"
+    },
+    {
+      "configuration": "Bug_EngineCopySkipFinalDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopySkipFinalDrain.cfg": "d1019fdea5e16fd3ca81f3f46d286a129bd0c6c7c6635f8cf51380ff6a1a43f7",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "174b5f308b808831f84b22e76c9025e41a8fdc92154b5c31b8f080e51d01c36b"
+    },
+    {
+      "configuration": "Bug_EngineCopyLostCaptureContinues",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyLostCaptureContinues.cfg": "218760df0d3a32b3d6b66c3662f0d37aed08470bcb43ec22a173d3d33054c9bf",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "4aa8f883aea018dde151d14fd1f7b02fd32c428578428229531bff6e4b11bfdd"
+    },
+    {
+      "configuration": "Bug_EngineCopyStaleBatch",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyStaleBatch.cfg": "cfe2f7ee30af8f5e71779cceb9055795ec1098bfe4e459d00b00df8b556b20cd",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "f7a508dcfaaed719b424a5f5c38e62b739cffb614acabd0829f292dc56b7207e"
+    },
+    {
+      "configuration": "Bug_EngineCopyRebuildPrepared",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyRebuildPrepared.cfg": "789094d3fccf7f5833298bd85307448b44469a64c90e11da4d56fdbcb84c7316",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "79d004031898fafde02abafc9e73b2db7cd8d646678e1863d7aa06c16a43ba4a"
+    },
+    {
+      "configuration": "Bug_EngineCopyPrepareWithoutIndexes",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyPrepareWithoutIndexes.cfg": "062ad6868c8e8aba42256ba0bb6e98b01eb801c8edd0179ff893ea34e6791836",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "e89364748e41b6042cfebf3ee259c214219762c7b8eeb9ad2a9690d48c6c99b8"
+    },
+    {
+      "configuration": "Bug_EngineCopyLosePersistentFence",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCopyLosePersistentFence.cfg": "1bdecb63108bced309d36998aa603b092709ef4d6a108b30194b50e4e1500867",
+        "EngineCopy.tla": "5c4a0fedfc50f8aa6b859173eb9f805ff97a47a2071057e76ea893eceb717ad9"
+      },
+      "output_sha256": "21a2198b61a40d5cb591fcb2c535f42be851fd2857e343f6c1e4d92eda93339b"
+    },
+    {
+      "configuration": "EngineCutover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "EngineCutover.cfg": "e51b24a8209800a594dd7cdb8bf41f00098a12da462af2f408e35ca4e7448290",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "4972c28d71ef9a7feacfc95c49feabf4989f29beac5c086e39b0a25c6d51c20a"
+    },
+    {
+      "configuration": "Bug_EngineCutoverPublishBeforeDecision",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverPublishBeforeDecision.cfg": "57da03073ccd43ca19d6583484c0d403fd6c475c41d12473d82a63b25b772b0c",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "b5c0bb73f535da3c69906a108934c669cbf5ea3b174faf046fbfcdcbf324a1e7"
+    },
+    {
+      "configuration": "Bug_EngineCutoverPublishBeforeAuxReady",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverPublishBeforeAuxReady.cfg": "6432c36dd498c7f37e9b916f99ec039d007cf7a71a978fe00f5e196ec4da3484",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "dd042cb931c1c9500e752a7cc78104aceb7983e2d36c4a9dbcb94fe320a66134"
+    },
+    {
+      "configuration": "Bug_EngineCutoverDropBeforePublish",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverDropBeforePublish.cfg": "aea912a3bcde09f7601219b707c7ed78c2ad0357767e48ca22c153422458f95b",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "45682834278c85a7c4efa77d179739562132c017120e13a2bb7a0646c8d4dfa3"
+    },
+    {
+      "configuration": "Bug_EngineCutoverAbortAfterDecision",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverAbortAfterDecision.cfg": "4ba126bf63a0f4d5b357a415ae6f3daaf01eb93cc60922161583cf0c0bec2147",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "d50184b405a1d675ffde7f37fdeaafba4cbe930527fb26895ed2113622502fde"
+    },
+    {
+      "configuration": "Bug_EngineCutoverApplyAfterAbort",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverApplyAfterAbort.cfg": "757eb55143b306e2f840eb159baf83c46a1ae496b0d71cf264cd847049fd6e24",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "d1c7e8aaf21c0aa935ddd8142399dc533d3fe9f8132b66f97be02971e44b721b"
+    },
+    {
+      "configuration": "Bug_EngineCutoverOldStreamValidates",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverOldStreamValidates.cfg": "b5dd2e3495691ab4d6d2dcc4082b52b50d8d4d881e8ef294d61bb74df24d7ef6",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "92cc01126f5a0a032f3566a3dd659f30e6d77f10c9fb245177ab54d480f51a84"
+    },
+    {
+      "configuration": "Bug_EngineCutoverForgetOldObligations",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverForgetOldObligations.cfg": "890c736219f0180e640cd50d08258875baff16891d2c4ad670342fb7a26913fa",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "edbb025045311c49c290869ae2038fb66730034c929ad3df97307d7a56644e56"
+    },
+    {
+      "configuration": "Bug_EngineCutoverResetCounterIdentity",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverResetCounterIdentity.cfg": "a6c1fb270669a4880b3140ffbc48a5e2b7a355532161c031d52785ea45351676",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "307fa1ab209abd3b4ebd9a687e8fdd96d71a179577495db59d92b1eab76fc935"
+    },
+    {
+      "configuration": "Bug_EngineCutoverRenameLosesOriginalIdentity",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverRenameLosesOriginalIdentity.cfg": "78f745e1fefc881becfe5f68b249c1e2a0e560a518927500027bc4ed963c2928",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "304e076eddaacf664e757853b3b3471d2f3ebf63917da4a6018d38dae4008bd6"
+    },
+    {
+      "configuration": "Bug_EngineCutoverCatalogByName",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverCatalogByName.cfg": "a5647fcf26167b29110360b7325041b56f9e8483329fdf0020d7cab26f479f7d",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "ead710a32464bbdcaf1e8786b6862a7e93c7a124f34eb5690de564eefee4fd7c"
+    },
+    {
+      "configuration": "Bug_EngineCutoverAuxStreamOmitted",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineCutoverAuxStreamOmitted.cfg": "06d3a77552ddba86313cc5ba3def9d7a97222e1311c92a4fe180abbb73b8652c",
+        "EngineCutover.tla": "1df7977634423f239088a5574aaefd23221004f87c833160a741089508f86791"
+      },
+      "output_sha256": "d6599ce6e990e68c6a9ea22fd63501fd2c9c574af1fe1c7ade480884eee73b30"
+    },
+    {
+      "configuration": "EngineSourceDrain",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "EngineSourceDrain.cfg": "9e00f9e1bee4451ed5a3570daa7313a1cd4e177825e6218a3b5f5251632ba954",
+        "EngineSourceDrain.tla": "be703f2165ce296a6d9cb5f5f07e75c52d743f39041a89ed49e5c81e2814b098"
+      },
+      "output_sha256": "8baea82af0900b9ed9f52cc65f3ce78d2df141ddb51aef2ad669ae856817b15b"
+    },
+    {
+      "configuration": "Bug_EngineSourceDrainCallerOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineSourceDrainCallerOnly.cfg": "d570e1a0671e3e6ee1666ddd9aeb74bb8d947027fd406486bb20d2cbe37d6cf7",
+        "EngineSourceDrain.tla": "be703f2165ce296a6d9cb5f5f07e75c52d743f39041a89ed49e5c81e2814b098"
+      },
+      "output_sha256": "156399c99802b9c2ad0184e7e00586303c8fa4264971e7f7c70a15678e8c4683"
+    },
+    {
+      "configuration": "EngineAlias",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "EngineAlias.cfg": "f401707e9c879de4962b4f91bdeec09f199ffdf57dbfe53de48b8921d015ccb1",
+        "EngineAlias.tla": "2c31bfa6af60dbf19c29c6b288197718c81b152414f04fcc74d890c51c3e16a2"
+      },
+      "output_sha256": "9efef0b958d28f749e3bab42a4a77a2d38d7edda8248f9b8aa5407924d68fe86"
+    },
+    {
+      "configuration": "EngineAlias_Existing",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "EngineAlias_Existing.cfg": "838fc6efeb34b8d4eb437230685f4b3b3836ba8d3ed0df1f2dc26ebfb326b1d6",
+        "EngineAlias.tla": "2c31bfa6af60dbf19c29c6b288197718c81b152414f04fcc74d890c51c3e16a2"
+      },
+      "output_sha256": "398df5196d88bfb4e8d5621a64f1df934b48dcfdfdbfc4549b2a315134d449fd"
+    },
+    {
+      "configuration": "Bug_EngineAliasNoMutex",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineAliasNoMutex.cfg": "565141f6dd40b56a8fcae940ecd0071c6acdd72284446c95018d792594296c54",
+        "EngineAlias.tla": "2c31bfa6af60dbf19c29c6b288197718c81b152414f04fcc74d890c51c3e16a2"
+      },
+      "output_sha256": "883ce330ce68e973c3d8d009ca3e5f13c938630f6b7d6cff7adce36adb5e06bb"
+    },
+    {
+      "configuration": "NativeKeyBatch",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "NativeKeyBatch.cfg": "2562bfbd64b0b64baafc37a29888a4b86315728bb4de24f421f9292322083faf",
+        "NativeKeyBatch.tla": "5d0db60969b3692466bc32be5946a5105dab2d4c90f8453446c191ed4e13b39e"
+      },
+      "output_sha256": "25889afe71dd761c12a59928864160155061802ac17885df9f54094b2d223d45"
+    },
+    {
+      "configuration": "Bug_KeyBatchMissingClaim",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_KeyBatchMissingClaim.cfg": "e8aab637cf23e996fdcd0e5b3143d5d22d3c639a5fa2b4ef1d339c38e5152d8d",
+        "NativeKeyBatch.tla": "5d0db60969b3692466bc32be5946a5105dab2d4c90f8453446c191ed4e13b39e"
+      },
+      "output_sha256": "a569bc276ffdff88cee98b082f9dd0d924adb82962db9f9dec230041a506d14b"
+    },
+    {
+      "configuration": "Bug_KeyBatchMixedSnapshots",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_KeyBatchMixedSnapshots.cfg": "12dfae00e8803552a7469301974516f738757e79f29a3bb759717e30fc60937a",
+        "NativeKeyBatch.tla": "5d0db60969b3692466bc32be5946a5105dab2d4c90f8453446c191ed4e13b39e"
+      },
+      "output_sha256": "6cb0b9562e41f7f626d588511517594f13e1fd37951ab8c0183d9eaa0c7ba6ce"
+    },
+    {
+      "configuration": "Bug_KeyBatchTruncatedComplete",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_KeyBatchTruncatedComplete.cfg": "cea398ec78f48b6e4c896debdd46f92ecf70569f7b99f13d21815af6a9c94d40",
+        "NativeKeyBatch.tla": "5d0db60969b3692466bc32be5946a5105dab2d4c90f8453446c191ed4e13b39e"
+      },
+      "output_sha256": "75d60675c460f52b2302e2f86d06375bfa7a06aba390ee1b901b51abd8a8aa8c"
+    },
+    {
+      "configuration": "StrongReadFreshness",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "StrongReadFreshness.cfg": "33c4803a4e980db18a90220bf2d00240e3e93ace60487a2229c8f34791ef2acf",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "05f19fb659f8ff4568c79be86e21ff8cafff5957d97b107e8516f300bc336e99"
+    },
+    {
+      "configuration": "Bug_StrongReadRoleOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongReadRoleOnly.cfg": "2944cd7c9635d277cfa2eef7e0061119447553c03e29045a0d888445c8c17bc9",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "c18e386ede8d43001aa53c3ea1d3014c4225bc821eeef4f8306f58b573be310d"
+    },
+    {
+      "configuration": "Bug_StrongReadReuseBarrier",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongReadReuseBarrier.cfg": "f4498747ef593e279f9bc446da96f8c6f427ab438786842632aeb576dce5f8d6",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "945a1722a90d68dc821082d7f1e5d45f1bd45bb3d363ca1c4482d682df3cba78"
+    },
+    {
+      "configuration": "Bug_StrongReadSnapshotBeforeBarrier",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongReadSnapshotBeforeBarrier.cfg": "2079e28163c027339d9a44643c618b3c7a91d7a7518a704ef0e12e5090a4c7b3",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "6f255e9f029ba15c13eb93614fbc674af526ff808a8db810b3de93af73971d90"
+    },
+    {
+      "configuration": "Bug_StrongReadSkipCatchup",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongReadSkipCatchup.cfg": "8362b75aa8758367c93d3cfd2598ad0dd4cb30ae475082061f2b8904fc1664c5",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "b06fe54358ec77172bf1b8d27bb55aaa7e75fd420955ac9710b9ee59608c6f9d"
+    },
+    {
+      "configuration": "Bug_StrongReadSkipSettlement",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongReadSkipSettlement.cfg": "6d45ced31f0d6b10f41b0b45ceb06a5b06878defd3300ef3080d673ae7a31671",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "827773159ff5145c5802241c447b2d7f258e72b81e58c10a05a6ebce23b27329"
+    },
+    {
+      "configuration": "Bug_StrongReadNoIntersection",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongReadNoIntersection.cfg": "c7aa68b1e829578d920d2b734345da6390a8943bfd0dfd7951c42f8fda6d2105",
+        "StrongReadFreshness.tla": "7d547446a5683e7a8c97eda824cabb34f9a02cfbc122d0ba1e30c2ac9cd10c54"
+      },
+      "output_sha256": "b51d335a63b62ce76d9dc52fa218549dc40c324ba7f5b05b390e9d40b739d491"
+    },
+    {
+      "configuration": "RecordExpiryClock",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RecordExpiryClock.cfg": "5b7257590b271b0d475a1e468d2bb9f761cd8eaeb5530801a38b85b81a3ce4c1",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "1e8666f16d10ee20a9149217cea5950db15383527b3536713f0252e7ebde5387"
+    },
+    {
+      "configuration": "Bug_RecordExpirySingleMargin",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordExpirySingleMargin.cfg": "8c48ec9a99b8c32bc299c0456b05501dc55683d30a8d12165f23319af7779be9",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "598e9960685fb36416f9e82930006b976a05f9ec1c717b210d7b88e1406e4998"
+    },
+    {
+      "configuration": "Bug_RecordExpiryExcessSkew",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordExpiryExcessSkew.cfg": "1b6f93f1d8c0a415087e3370b12bd08a26f713fd9825178f9b0631576c4e5376",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "b292c656a259398c133397f5e2ea2a861a50d53c6d3b5d2b5d371a0fa37e6602"
+    },
+    {
+      "configuration": "Bug_RecordExpiryClockBackward",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordExpiryClockBackward.cfg": "504200ad21e47b3e79fddbe74bc33b814657b97705fe8dae8460631cb06050c9",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "4d663739b820880657d5b8b544d26ede607cce1226acc59bf5fd30651ee4f20c"
+    },
+    {
+      "configuration": "Bug_RecordExpiryRaiseMaxAge",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordExpiryRaiseMaxAge.cfg": "d092685a1baccec4dafa6e47ec154c53b761199da08fd4e71600e990bd44cade",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "03e2248b6be2d1264f7cbd2d6587cc8ebb0558366719dc05ede12d16db6387d0"
+    },
+    {
+      "configuration": "Bug_RecordExpiryFutureTimestamp",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordExpiryFutureTimestamp.cfg": "b7d879a6af92fe14b60f337acf51ca3fbd04884ac7148ef6ec33364d7edf13dd",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "1825fdcf68f913c774b734af5fd0ad736429bdc18c366342932557b60893c8d8"
+    },
+    {
+      "configuration": "Bug_RecordExpiryMissingTimestamp",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordExpiryMissingTimestamp.cfg": "1b62615cd845bf3820df047a0981ca19e102ff796b761f5f37c90b1232ba476d",
+        "RecordExpiryClock.tla": "d5f7bf6016b27e9a1a4fc3c07098d2d2417174de98bcca7d8806abea13dbb7c0"
+      },
+      "output_sha256": "1738a35dc1c5d708cb749280f0014271266dcad25af93add9de7dc8eb3adbf29"
+    },
+    {
+      "configuration": "RecordExpiryPolicy",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "RecordExpiryPolicy.cfg": "db990b2523ddb1238aeee0a2495735b13787aa6a62859c69f0ecfa6b5f40967b",
+        "RecordExpiryPolicy.tla": "a9f6791b351d0e464cdc301794f1b087ed0decb3e74378a9c85a495cb650c378"
+      },
+      "output_sha256": "99c8a900778ad38e28a2ec35d597f5da645615624deeed36a50f19501d1cfd75"
+    },
+    {
+      "configuration": "Bug_RecordPolicyNoWatermark",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordPolicyNoWatermark.cfg": "b1ab8c78cc7a59bacbb3bfb0f74666a1fec4f0795086b6caa76cb7e018267d6a",
+        "RecordExpiryPolicy.tla": "a9f6791b351d0e464cdc301794f1b087ed0decb3e74378a9c85a495cb650c378"
+      },
+      "output_sha256": "bfaa2dc20f7ae0c4a63fa038e518d924344daeb8345bf85144dd7c89b2fe3204"
+    },
+    {
+      "configuration": "Bug_RecordPolicyMutablePolicy",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordPolicyMutablePolicy.cfg": "258a6497c574baf36a00c6bb18cceedb2e13e4eed9e91319ba92a92df5ef0301",
+        "RecordExpiryPolicy.tla": "a9f6791b351d0e464cdc301794f1b087ed0decb3e74378a9c85a495cb650c378"
+      },
+      "output_sha256": "267e9d423feb33e47dc399b76a5da73a0da38774757deca979bd18d2a2b06e75"
+    },
+    {
+      "configuration": "Bug_RecordPolicyEntryOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordPolicyEntryOnly.cfg": "3f4e30e6476a74d2051021b210d936050cc02d85af184f0fbd7d5609b210b742",
+        "RecordExpiryPolicy.tla": "a9f6791b351d0e464cdc301794f1b087ed0decb3e74378a9c85a495cb650c378"
+      },
+      "output_sha256": "4572959b7f4962fbdf1f34949006f09ab335f82f1ca13e5ce3a43dfa975f4179"
+    },
+    {
+      "configuration": "Bug_RecordPolicyIgnoreHealth",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_RecordPolicyIgnoreHealth.cfg": "ca7666d9402028ce7691efdffd8cca34e1bf8dfd8547cc1ed1964312fd80b68a",
+        "RecordExpiryPolicy.tla": "a9f6791b351d0e464cdc301794f1b087ed0decb3e74378a9c85a495cb650c378"
+      },
+      "output_sha256": "a0b167227d9ed6b628e6223023c3ccdec9dfb59c3bc4da800ebb961bbcc3eecd"
+    },
+    {
+      "configuration": "CompletionRetention",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "CompletionRetention.cfg": "1f7d100192f1a0fbeaf7acd359578df1172b1757e5f159a722845151b7d75419",
+        "CompletionRetention.tla": "88bd05c8e3979b86fb9b1a85edb6658d55104a700a70e2e4e996019801fafa81"
+      },
+      "output_sha256": "6145e139880423709b07e8ef1a0718d58d29dcc9dff14280333a2ce9b96ef5cb"
+    },
+    {
+      "configuration": "Bug_CompletionRetentionForgetReceipt",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_CompletionRetentionForgetReceipt.cfg": "f6b801a722e59118810d81bdd345f988fe894714a0c11f840e2a36422c9d7bdc",
+        "CompletionRetention.tla": "88bd05c8e3979b86fb9b1a85edb6658d55104a700a70e2e4e996019801fafa81"
+      },
+      "output_sha256": "5936de4515f9fd0bde4a8829a5d0a7680d97393ef8a13931735cbcc73b4de70f"
+    },
+    {
+      "configuration": "LogicalClockExpiry",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LogicalClockExpiry.cfg": "a39409e9f0b6dcf7458062f526ce5e7f4ad78cffdf80d872df5b46df469895e9",
+        "LogicalClockExpiry.tla": "95397ae672b84fb6220dc03cc7b2505f60c1688dfa06675d782e6c7f60a72d8c"
+      },
+      "output_sha256": "bfb822aca42028529c2cb2dcba1391fe24cd17798e5d5d689f989941efbfd1c0"
+    },
+    {
+      "configuration": "Bug_LogicalClockFloorAdvance",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LogicalClockFloorAdvance.cfg": "e34427f05e448c23b9c8a0e64665be7dcf757dbae571fbf1808035b006c18b49",
+        "LogicalClockExpiry.tla": "95397ae672b84fb6220dc03cc7b2505f60c1688dfa06675d782e6c7f60a72d8c"
+      },
+      "output_sha256": "c429e5f52afc1a04ffaf66959d6b4f47e2f674537190e1c1f633804a0cad01a2"
+    },
+    {
+      "configuration": "Bug_LogicalClockRawBound",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LogicalClockRawBound.cfg": "68249c02406ae7dfd1c998179701e64094d67b7dd2dcc1adec6c2d76330093c3",
+        "LogicalClockExpiry.tla": "95397ae672b84fb6220dc03cc7b2505f60c1688dfa06675d782e6c7f60a72d8c"
+      },
+      "output_sha256": "8675ec3d6f2200fa523973268e744d3a333b5898aa30d5a3a068a61a363c6dba"
+    },
+    {
+      "configuration": "StrongStreamCertificate",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "StrongStreamCertificate.cfg": "49cfe572639ddb6f1fb65ca9c3b9fa7f9c4d77b2f5a9e0499057d0a7f34dafb2",
+        "StrongStreamCertificate.tla": "3aaa02291aae232085564137b708caa663e849caae1983056193a0cd95446814"
+      },
+      "output_sha256": "b17acb425728b7aa298421cba9588ba3fb34083677419937c8d103760206f6da"
+    },
+    {
+      "configuration": "Bug_StrongStreamCertifyLateSnapshot",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongStreamCertifyLateSnapshot.cfg": "f1d603cd53b4438e9406a09148fdaa78f6676b55fe1d3b375d3f4446909f135c",
+        "StrongStreamCertificate.tla": "3aaa02291aae232085564137b708caa663e849caae1983056193a0cd95446814"
+      },
+      "output_sha256": "339b2dcefb852a2256e0376099ff68783420bdccb98920bcfe06050f7410e89c"
+    },
+    {
+      "configuration": "Bug_StrongStreamMarkBeforeBarrier",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongStreamMarkBeforeBarrier.cfg": "51b6067991e86b7f1b711b5731b805d64ff698ab850fba5efad819c5dafba0d3",
+        "StrongStreamCertificate.tla": "3aaa02291aae232085564137b708caa663e849caae1983056193a0cd95446814"
+      },
+      "output_sha256": "888eb3e83d65c829d520fc6d69c72d3d4290b463d2451c0e0789840ed61303e0"
+    },
+    {
+      "configuration": "Bug_StrongStreamWrongTxnID",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongStreamWrongTxnID.cfg": "0f1e43b9d23f7906c70a72c9cbec321d4e2a74d456a3fee2ac27c44cf7c7568b",
+        "StrongStreamCertificate.tla": "3aaa02291aae232085564137b708caa663e849caae1983056193a0cd95446814"
+      },
+      "output_sha256": "68ecaa91a93afe70ab7a8fa82e14db46f2047244196b4a46d672e89cc163b91c"
+    },
+    {
+      "configuration": "Bug_StrongStreamNoCleanup",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongStreamNoCleanup.cfg": "c81b80397f4386ca00967e68149afc5709f83bea732097305db79211e89f4f1d",
+        "StrongStreamCertificate.tla": "3aaa02291aae232085564137b708caa663e849caae1983056193a0cd95446814"
+      },
+      "output_sha256": "5bee32cfc1dd19188b540f72ebe893c3587f5719a379c2180b66f75e5bd065cb"
+    },
+    {
+      "configuration": "Bug_StrongStreamIgnoreCap",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StrongStreamIgnoreCap.cfg": "e3bfa2ecee6b87788f0086467866b23cbc745aeb556cc19cd558b131a1b85bf4",
+        "StrongStreamCertificate.tla": "3aaa02291aae232085564137b708caa663e849caae1983056193a0cd95446814"
+      },
+      "output_sha256": "555fc78f9e6000d80822d34e77dd787db01643a84b8b6da42dfed426d3c246c4"
+    },
+    {
+      "configuration": "StrongStreamCompletion",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "StrongStreamCompletion.cfg": "990434889288147ea681ca9d33ef07f0f5581afa608cb9ad7117d0eb06e02e00",
+        "StrongStreamCompletion.tla": "74c4d025725fdbdd6135ed876625c110b21231419d9b39524c118fc491d0962c"
+      },
+      "output_sha256": "c6676b6800f10f79280cb4c5689cab809b80ee18030e23a05b80d3e494147e1a"
+    },
+    {
+      "configuration": "Bug_StreamCompletionSkipFinalPrefix",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamCompletionSkipFinalPrefix.cfg": "9dbe5174935a6a736ea31442a0e198d62b17854934c75ff68456350da6d703eb",
+        "StrongStreamCompletion.tla": "74c4d025725fdbdd6135ed876625c110b21231419d9b39524c118fc491d0962c"
+      },
+      "output_sha256": "2a788b0cedfbcf16aaf31b0bbd7a3c0cf5932a6eb3aad170b9c117866a0d3d73"
+    },
+    {
+      "configuration": "Bug_StreamCompletionDropReadset",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_StreamCompletionDropReadset.cfg": "1c09137b83774700d02604d89d727ac74c356fed70849194bc661e48464f8156",
+        "StrongStreamCompletion.tla": "74c4d025725fdbdd6135ed876625c110b21231419d9b39524c118fc491d0962c"
+      },
+      "output_sha256": "734835dd0f18944283bf8538162c73d8910d9b9b3ed013a481f1cae3b370dc01"
+    },
+    {
+      "configuration": "LockReplyOwnership",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LockReplyOwnership.cfg": "31b94b3b0003e7cf79947536cbcd05159ef5870626ebd6870608a03e0c3880c3",
+        "LockReplyOwnership.tla": "3ea1a643f3fb93b694abecf76be3187f2d9d2164f0eb717198348483a51d85b7"
+      },
+      "output_sha256": "cca7afd726b39a7ebfcd568cb1d62e2f9a3331c0bc771a5059760d35cc74566c"
+    },
+    {
+      "configuration": "Bug_LockReplyRelabelGeneration",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LockReplyRelabelGeneration.cfg": "a54ec1985439bf34c0af3de7c95e9ce64ed1cd8d2842825371295cb9886c864d",
+        "LockReplyOwnership.tla": "3ea1a643f3fb93b694abecf76be3187f2d9d2164f0eb717198348483a51d85b7"
+      },
+      "output_sha256": "9298a207f802f7a520cbac086562fab31ba05d7f8c0cfab56b92cc6ae600b959"
+    },
+    {
+      "configuration": "Bug_LockReplyIgnoreDisconnect",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LockReplyIgnoreDisconnect.cfg": "766a2042e62e26386641a17fa0f7e30aa810c5c8e4f282149528b60b758f4e91",
+        "LockReplyOwnership.tla": "3ea1a643f3fb93b694abecf76be3187f2d9d2164f0eb717198348483a51d85b7"
+      },
+      "output_sha256": "c7c5765ec92eb77e1cea30159bed4ca4c603c29dd92faac36c4c67ab619401f4"
+    },
+    {
+      "configuration": "LockCopy",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LockCopy.cfg": "dfa6af88ce142a6e8badd1da452d66306ac31b771d3768d4ed4634f5ffc3d0f5",
+        "NativeLockCopy.tla": "a124d094c946cbf9d36c1329058d3708826f4beb2ee5111acfeedb68c3e4f0b3"
+      },
+      "output_sha256": "12060083b05eb93c246b7edabea033f15f7991a6d02fb21a59d945b93733e2ca"
+    },
+    {
+      "configuration": "Bug_LockCopyAfterYield",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LockCopyAfterYield.cfg": "ebafa9ea2aa8c0c4b4bf5fd122d589aa4c34291df53a5daf88b153190392eb9d",
+        "NativeLockCopy.tla": "a124d094c946cbf9d36c1329058d3708826f4beb2ee5111acfeedb68c3e4f0b3"
+      },
+      "output_sha256": "6eafe064fd494cbb0b171b90faf05b48ba54b7d922b32fe5551b9e707484ab75"
+    },
+    {
+      "configuration": "Bug_LockCopyReleaseFirst",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LockCopyReleaseFirst.cfg": "62973036fb6cfb318bc64bfc359e81afb73c00e486d9cc4222fadc718ef0100e",
+        "NativeLockCopy.tla": "a124d094c946cbf9d36c1329058d3708826f4beb2ee5111acfeedb68c3e4f0b3"
+      },
+      "output_sha256": "8c30ad7876a9dcf01342e39141f4755cd0991e4b6ae9ac2ea942e46cd281bd4a"
+    },
+    {
+      "configuration": "Bug_LockCopyOnQuorum",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LockCopyOnQuorum.cfg": "0ecf032fca9a961f63ffe396bad66a4fa8c7703f6d8eba7ed61164158191e9eb",
+        "NativeLockCopy.tla": "a124d094c946cbf9d36c1329058d3708826f4beb2ee5111acfeedb68c3e4f0b3"
+      },
+      "output_sha256": "6c136b7438cbff006856ab530e606ca8ccf6be1eae2ac8f2548e0931ce798d99"
+    },
+    {
+      "configuration": "Bug_LockReloadNoCopy",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LockReloadNoCopy.cfg": "100ffeb6d2ad2da0d5cb82537561032d861ebeb9dbe9dc80896d0b655dfa5d75",
+        "NativeLockCopy.tla": "a124d094c946cbf9d36c1329058d3708826f4beb2ee5111acfeedb68c3e4f0b3"
+      },
+      "output_sha256": "ef523f834e2b102e4a3d10cadb086a46506613935785194e2352a56b180e6e91"
+    },
+    {
+      "configuration": "QueryBudget",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "QueryBudget.cfg": "b3572d89280ecfee08c57743694b6eea1a85a02e38a5867c7140db92df2ba30a",
+        "QueryBudget.tla": "e30fa1b549b8da94accd391985016a32ff74be78f56d9628b4427e07108ed770"
+      },
+      "output_sha256": "9f3198c2c0d06bef3fb460ebfe8ba7aaeb1831be89d3ec20bd7d7423c0ce8a15"
+    },
+    {
+      "configuration": "Bug_QueryEarlyWireRelease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_QueryEarlyWireRelease.cfg": "1369956548bb77d38034e071c3143777a185fdc9826333244df5fcac25be1285",
+        "QueryBudget.tla": "e30fa1b549b8da94accd391985016a32ff74be78f56d9628b4427e07108ed770"
+      },
+      "output_sha256": "64e34f1b302823ebdcf4141fa747abced1de1019bea620e241a2fceacf1843fc"
+    },
+    {
+      "configuration": "Bug_QueryEarlyResultRelease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_QueryEarlyResultRelease.cfg": "49d5b0325d973308dde5db32a64186de648e671bfe1e5103751e8d67090159a5",
+        "QueryBudget.tla": "e30fa1b549b8da94accd391985016a32ff74be78f56d9628b4427e07108ed770"
+      },
+      "output_sha256": "249fd60a6e461ac6b1c65106b4d8384a6eac8d552db9beb58c264a260c2b0d52"
+    },
+    {
+      "configuration": "Bug_QueryPostDecisionRefusal",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_QueryPostDecisionRefusal.cfg": "e923fb447133aefbe1625d9cae8fbcea57664053b5cdad7b1f11c3e5c5292b72",
+        "QueryBudget.tla": "e30fa1b549b8da94accd391985016a32ff74be78f56d9628b4427e07108ed770"
+      },
+      "output_sha256": "d13ebd4e2b8fe3e6c0c154a8ccdbd523a19793dd141bb47d52a4539d0c24462c"
+    },
+    {
+      "configuration": "Fairness",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Fairness.cfg": "ec32f9c9613d4a6f94174411afd515eda017f93d970386979dc9755e5ecb413f",
+        "RecoveryFairness.tla": "a93dec2206f49095bbc042baf85a47ade403903802fe9fe0fe303c74fa984759"
+      },
+      "output_sha256": "028186d465b06f68fc141eca368eccedb0893c93f48bcb9b5566ec8385dd04af"
+    },
+    {
+      "configuration": "Bug_FairnessPrefix",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_FairnessPrefix.cfg": "453033e0b0afcb9e9655bf0ec65a7928f51a5c6cfbbf6d2046147ff31fe8b639",
+        "RecoveryFairness.tla": "a93dec2206f49095bbc042baf85a47ade403903802fe9fe0fe303c74fa984759"
+      },
+      "output_sha256": "6309f295473f88fb61a101783aa63d7af963453ed9dd13edb62b302ebebb20de"
+    },
+    {
+      "configuration": "LazyBaseline",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "LazyBaseline.cfg": "47d2b1d657bf73b1af7e8482d09b9f20d8d190b018372b3912606d5f4fca5016",
+        "LazyBaseline.tla": "9c3939860427a8e5ea0412db859b955084eabe5406340395c90a05691663c926"
+      },
+      "output_sha256": "1125749a569bc24c267551dc45951318b81ffdc307933aef33a5c65a1cc1ff4a"
+    },
+    {
+      "configuration": "Bug_LazyBaselineAboveCounter",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_LazyBaselineAboveCounter.cfg": "82534efaae32fecce64355bcba38e46d99847aa1ba0e592b436b534ac72043c5",
+        "LazyBaseline.tla": "9c3939860427a8e5ea0412db859b955084eabe5406340395c90a05691663c926"
+      },
+      "output_sha256": "47975ab9b51449f8328a42ae9952838a92734f9c8daaf9dc6edec82266a1a7ed"
+    },
+    {
+      "configuration": "DecisionPlacement",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "DecisionPlacement.cfg": "60434c4ba60f46c1f601995526b358226f28dc8aeb953a6d0b23e66e01e14003",
+        "DecisionPlacement.tla": "23b9447476e68bc8892930ba951dfd3ff5cb9e391220b30fdb45c1ac7fa50bb3"
+      },
+      "output_sha256": "dcb9e9487c7502bf55905fcd904c0af4f3f6f0142b112787fbaec715ec5f03f8"
+    },
+    {
+      "configuration": "Bug_DecisionReadOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DecisionReadOnly.cfg": "75e3c41768ac03bd09a990feb4c59b4a63aa1ffc60574f527efbf39fa0e4364b",
+        "DecisionPlacement.tla": "23b9447476e68bc8892930ba951dfd3ff5cb9e391220b30fdb45c1ac7fa50bb3"
+      },
+      "output_sha256": "2feee1b095d11c029bebd9c447d5a24abe4255be2c54a62d4780bf1900a6243a"
+    },
+    {
+      "configuration": "Bug_DecisionIgnoreLeaving",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DecisionIgnoreLeaving.cfg": "c379139ec98fb2182ae4145bb9990af7efde2281d919cb29407b19ab862710f2",
+        "DecisionPlacement.tla": "23b9447476e68bc8892930ba951dfd3ff5cb9e391220b30fdb45c1ac7fa50bb3"
+      },
+      "output_sha256": "2bbc9dc05e37257df9ca71d6a0becda80d3cbc6cb999bad8d8804b46bc247a3b"
+    },
+    {
+      "configuration": "Bug_DecisionReselect",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DecisionReselect.cfg": "925085788bfc4fcdb55ff3d405fdb542c122b0dc38cd7c6ac40b0acac5c6b241",
+        "DecisionPlacement.tla": "23b9447476e68bc8892930ba951dfd3ff5cb9e391220b30fdb45c1ac7fa50bb3"
+      },
+      "output_sha256": "2df482b23e3e7c7ba5a2b1292feb67cf56b21afe94e39ba0d0c9f231a829d226"
+    },
+    {
+      "configuration": "Placement_Recov",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Placement_Recov.cfg": "2b5271c4236d7781faff5d28576f1ba59f76241907fa295b3dc0acae6af5ad9c",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "aca6e8759a21268f62b7adc2f00581ac0611f6b54d214a1e486bca7cb257d5a6"
+    },
+    {
+      "configuration": "Placement_Failover",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Placement_Failover.cfg": "6560762c8f6864a96ec8340439b5d0bfc01a19c445da64fc0c1420632236a80d",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "69a50ed088109bed3782cb93be442e17450035de72ad15978b895b3a81f4d915"
+    },
+    {
+      "configuration": "Placement_RC",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Placement_RC.cfg": "dacfadbce576a619a623a6c816b277aabab41d56cfcdc508f752f25578a86153",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "a4e0bb619c4d6e59b5cc72fad0141ed9031d1ab8f9d0b757baeac7d26eb17bfc"
+    },
+    {
+      "configuration": "Bug_PlacementNoTombstone",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlacementNoTombstone.cfg": "352325c6b02641ac875d85bd8f590a140b57217a8289ed3abf12a750232a0efb",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "30b67bc462a839ba6d8e727825ebe832a43dce0ce3ac262cb9d4c35f67aae7b6"
+    },
+    {
+      "configuration": "Bug_PlacementFenceAfterExpiry",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlacementFenceAfterExpiry.cfg": "729d90d371136ed90414f8366de308b4b0c8883121ae66ca72601426301f26f2",
+        "MC.tla": "3b598867a3de2971cf15f5bd0f909900d264d9ce0977b70c9a4f65d3ade67d36",
+        "TarnCommit.tla": "8d30c1e7495fd4dd578bb5524dd676ed84d2850f86c72384f2c426ff59368517"
+      },
+      "output_sha256": "01a3ce481e25fa4775a22174a5ce93dacbb4d0db0535d08dabb42d2b0d4971bb"
+    },
+    {
+      "configuration": "PipelineAdmission",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "PipelineAdmission.cfg": "0ea9fec0e6bb62b27246e051704a99d8290d95d8701631a976c46f97795c5518",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "13c549b535020852951ea2c1d849e246cb81b77f82a818357e8e700f98780447"
+    },
+    {
+      "configuration": "Bug_PipelineFreeOnCancel",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineFreeOnCancel.cfg": "aca89b731906d43d39305d498edd59375d8da4f961af6f95d0698093d16b67f9",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "03c21d933b7a59934ac4154fa2ffcc8029acf7a2b78ebd95be9091bfef57bbfa"
+    },
+    {
+      "configuration": "Bug_PipelineEarlyRetireRelease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineEarlyRetireRelease.cfg": "33a763cd50c6607f6b68e604131d1cf3334c1016359e8a26b5e77f72f386e768",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "0c53cda9850761a58a09f21fbd044599709a6e55243f98537f2b9c4baaa2556b"
+    },
+    {
+      "configuration": "Bug_PipelineBypassShard",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineBypassShard.cfg": "d8daf09e7fcdb4a1a011be5acad22754990f5757debaab205869e5c6dba3ac59",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "2d9fb01dc94f6d4a95ab0c25a43c7c97a625881dec5919119de48cd267c73c02"
+    },
+    {
+      "configuration": "Bug_PipelineBypassGlobal",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineBypassGlobal.cfg": "6451d284f2c23adef90342735fc75f53d32faf4ba19ccd4f1c565005ea9bdb0f",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "14109d7a020add2029ad278317f5e849586b82226f7d73492d8f579971478f45"
+    },
+    {
+      "configuration": "Bug_PipelineNormalUsesReserve",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineNormalUsesReserve.cfg": "627c9902307bb0e25a7586f6d60e9a359e2ec163891aeaa68368b714ceb73078",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "7ea1771fc738f046c00219c61f99ef257673fd5851323c0a7ba141116cdcd77f"
+    },
+    {
+      "configuration": "Bug_PipelineForgetCancelledDeadline",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineForgetCancelledDeadline.cfg": "edf9091f152b7a8329ff66f46c8a1e8e800399d568b6321dce1c4186beea1220",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "8a4501b94ff220b30f9f4179bee014501038729a146c50438ea73ff3bcaac160"
+    },
+    {
+      "configuration": "Bug_PipelineRefuseAfterEnqueue",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PipelineRefuseAfterEnqueue.cfg": "bdc647d254061fd1c0d0bfc62b264a7f9dd650137f06c740f113dd8be949fb36",
+        "PipelineAdmission.tla": "4a110402537b3648349335fcd22f4f92c547bf4997e6413d0a4826e96d604aa7"
+      },
+      "output_sha256": "17ec9e7d6980a18946e15b46147f594413f3103744fd7af7c9fa074b4159814a"
+    },
+    {
+      "configuration": "TypedRead",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "TypedRead.cfg": "664bb0d9546c1858b3f5e0e70239ed7741749489e03e3d43a0fd9fb3acf5648b",
+        "TypedRead.tla": "a21cf383f12c8cc9c4a406ddabed21e11dabe9053f2a35ef6d0c5ceb3819a40c"
+      },
+      "output_sha256": "b5d84ade872152904b8609f25b429c9f0a7ee5872553ca0cccd48f48107f5b92"
+    },
+    {
+      "configuration": "Bug_TypedReadOverlay",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_TypedReadOverlay.cfg": "cc3eb2f34f4dde499068ce52bf50df652c433cd631c21b2acf71affdc981352a",
+        "TypedRead.tla": "a21cf383f12c8cc9c4a406ddabed21e11dabe9053f2a35ef6d0c5ceb3819a40c"
+      },
+      "output_sha256": "133d4b4b4c943e596e7c27f50796f784de73240157d340c039677eeb6949765f"
+    },
+    {
+      "configuration": "Bug_TypedReadCoverage",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_TypedReadCoverage.cfg": "1f9ceb967482502da179f9e5c907030dd58cd2a5739c6dff77d046133d9feb5d",
+        "TypedRead.tla": "a21cf383f12c8cc9c4a406ddabed21e11dabe9053f2a35ef6d0c5ceb3819a40c"
+      },
+      "output_sha256": "100233d3b99a155ec8082ba2da2d7843fa1e89b1293a2c489c562157544a02dc"
+    },
+    {
+      "configuration": "Bug_TypedReadEmptyPage",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_TypedReadEmptyPage.cfg": "a382845f75b9bff4313fe98080392b5f7110886a3c11800c6761b6893d45e483",
+        "TypedRead.tla": "a21cf383f12c8cc9c4a406ddabed21e11dabe9053f2a35ef6d0c5ceb3819a40c"
+      },
+      "output_sha256": "bc8537d49340c9c7d5ea95693f6a04eec49d1b349da4beef095e89d687fe41b8"
+    },
+    {
+      "configuration": "Bug_TypedReadPartial",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_TypedReadPartial.cfg": "71661b88fea1b6ba5e68d67f7ad372610c3f784bb576404f6aec02dff4410b1d",
+        "TypedRead.tla": "a21cf383f12c8cc9c4a406ddabed21e11dabe9053f2a35ef6d0c5ceb3819a40c"
+      },
+      "output_sha256": "d078477ea03141085fa786bf53050d0f79da7bac7cd731f9fa5daaf6dce79394"
+    },
+    {
+      "configuration": "Bug_TypedReadMixedSnapshots",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_TypedReadMixedSnapshots.cfg": "47c3d575d3ccbb885778b33bba5ef7da7d327e726263699df2289a48ff2458cf",
+        "TypedRead.tla": "a21cf383f12c8cc9c4a406ddabed21e11dabe9053f2a35ef6d0c5ceb3819a40c"
+      },
+      "output_sha256": "fb2ac28a08f11fa6de5a6485218ecf157ee9c31a9c9528462ff20ad9b99d56ff"
+    },
+    {
+      "configuration": "DepartureDependencies",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "DepartureDependencies.cfg": "edd728dcc9db7cc05087589598d4c6200a6634cb6046acecdb856623a2c1b4f3",
+        "DepartureDependencies.tla": "bbb180ec8c4a430f6595cbe77dda96a6a87a688d4f1c4044ad37d126d2cddf19"
+      },
+      "output_sha256": "eb53a64c48d2772f070a64b4c199a71d4c7b7dc9567ff632b0a5a8c8d70feac0"
+    },
+    {
+      "configuration": "Bug_DepartureDecisionOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DepartureDecisionOnly.cfg": "9713dbf8320291dbe0b0396b7588fe51ebcddfb71bfc2d0a73a98b1a4a49c257",
+        "DepartureDependencies.tla": "bbb180ec8c4a430f6595cbe77dda96a6a87a688d4f1c4044ad37d126d2cddf19"
+      },
+      "output_sha256": "ca0dd39d3effc0229ed1887940f6c6ef29131464d9d3191c775f1f667f1267df"
+    },
+    {
+      "configuration": "Bug_DepartureLateAdmission",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DepartureLateAdmission.cfg": "0f66fc20b556d09cae6efe975a10611b0d9cf8e21fba6891a1aa31dbd67091a4",
+        "DepartureDependencies.tla": "bbb180ec8c4a430f6595cbe77dda96a6a87a688d4f1c4044ad37d126d2cddf19"
+      },
+      "output_sha256": "c19bf281291c58ec3a41be5c74cc902e520a97bde2b1836f27db0c7395cc8c93"
+    },
+    {
+      "configuration": "Bug_DepartureIgnoreStaging",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DepartureIgnoreStaging.cfg": "909de7c7c444923b9ddd24d3dc39872096a1e0cada110a734d833397a4d31882",
+        "DepartureDependencies.tla": "bbb180ec8c4a430f6595cbe77dda96a6a87a688d4f1c4044ad37d126d2cddf19"
+      },
+      "output_sha256": "c89bd298e4755eb52e9d825a235bbd634dba57dc42a87afc0f7087eefb330b22"
+    },
+    {
+      "configuration": "Bug_DepartureUntrackedWal",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DepartureUntrackedWal.cfg": "a36b29b5438e864a250f7945327c027aab52d0ce6ad60fca75297c3f2cbfe0ee",
+        "DepartureDependencies.tla": "bbb180ec8c4a430f6595cbe77dda96a6a87a688d4f1c4044ad37d126d2cddf19"
+      },
+      "output_sha256": "15c7697744faf748378b27e8f170dccb301c5459a4676c892adaa82639c1d9df"
+    },
+    {
+      "configuration": "Bug_DepartureNoCommitCheck",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_DepartureNoCommitCheck.cfg": "fe1b184027e8cc513c5f8aa950ac5237b90f22f38d972d2d8323d2de52db4ba2",
+        "DepartureDependencies.tla": "bbb180ec8c4a430f6595cbe77dda96a6a87a688d4f1c4044ad37d126d2cddf19"
+      },
+      "output_sha256": "5d18d3a0b19d0a4463a04ba1317f07e11322bb88b7c642c0b6e2da1422ddb9c7"
+    },
+    {
+      "configuration": "FileBackup",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "FileBackup.cfg": "a5aeb2a81b6834ac49b1e19b8d1b9644dd550e82f9eeed16c4ddf3863bfa7a59",
+        "FileBackup.tla": "94b0ab45af60c8423205b3e94939ac8fc6dcdaeea6b761e9185652b7c13a5611"
+      },
+      "output_sha256": "74d214cd23d68090f5170b13ebf4a4eea287c7552eafa96c9d23fc30ccf4550d"
+    },
+    {
+      "configuration": "Bug_FileBackupPartial",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_FileBackupPartial.cfg": "d39b389b97e210ae3b1a64588a91ad80673fb60565e2ea5a4966dace11cf2351",
+        "FileBackup.tla": "94b0ab45af60c8423205b3e94939ac8fc6dcdaeea6b761e9185652b7c13a5611"
+      },
+      "output_sha256": "2d419b3e83baa811390ca8b50cb30249a37429f9a56c53c6a102933804192057"
+    },
+    {
+      "configuration": "Bug_FileBackupHash",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_FileBackupHash.cfg": "b4e9bce6fff81259e5a319635bcff89e923531d5b9cbc58d527d4e0db0f336f3",
+        "FileBackup.tla": "94b0ab45af60c8423205b3e94939ac8fc6dcdaeea6b761e9185652b7c13a5611"
+      },
+      "output_sha256": "6944bd12c92753fd38c8539e60aa66e8ba000dddaeb626806fc19286dceacccb"
+    },
+    {
+      "configuration": "Bug_FileBackupIdentity",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_FileBackupIdentity.cfg": "f8df4cbb075f0930ee6f8ed08bfa0214c476655931b8a1dcd21b0a7cd12ac652",
+        "FileBackup.tla": "94b0ab45af60c8423205b3e94939ac8fc6dcdaeea6b761e9185652b7c13a5611"
+      },
+      "output_sha256": "77a0ed3b7fe5297b7973a3f2edbbacb442d72e2756db3f4aac032be814cd8804"
+    },
+    {
+      "configuration": "Bug_FileBackupLease",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_FileBackupLease.cfg": "575b9ed419cfd9bc8d24723a204b8e68814487b2e77915b364368124a2da2f86",
+        "FileBackup.tla": "94b0ab45af60c8423205b3e94939ac8fc6dcdaeea6b761e9185652b7c13a5611"
+      },
+      "output_sha256": "3ecb6a88c741eef02109b208c0b644e38f5e767c51b24d8f40bc9900cebfe73f"
+    },
+    {
+      "configuration": "ClusterBackup",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "ClusterBackup.cfg": "da3f5f2fe3ebdb0875aa9545f2801e75ccc84e727a9e745a60177f0bd7d12295",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "bbcbce99a25ef42c8c76ac21bc0d84bff8a2dac0e5463f7f3dabd4339c8dd377"
+    },
+    {
+      "configuration": "Bug_ClusterBackupEarlyCopy",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ClusterBackupEarlyCopy.cfg": "8efa3b813a94fef065830d879e685fea95cb97266332699d5af11decd70b5b60",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "f327093e8f317432398eeacd91d237090b578249ff74d638facd4b076a2df6d2"
+    },
+    {
+      "configuration": "Bug_ClusterBackupDrain",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ClusterBackupDrain.cfg": "eeb3cd7dfcf9f699c497f93566497a51057306ba41a12a92f2491febfa58ddd8",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "283ad1f06f264ba7b4559a48b1fa12506cfd0633a4da05ca3212a8cd91472afe"
+    },
+    {
+      "configuration": "Bug_ClusterBackupReplica",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ClusterBackupReplica.cfg": "71b45f177a8b1d43b86c7dbb2d5d6976346f2fa41bb910503b36740a48adcaf2",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "a8a48f4a26795b263be723d228b44daddded301f6e41bc6525ace34347536d17"
+    },
+    {
+      "configuration": "Bug_ClusterBackupRestart",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ClusterBackupRestart.cfg": "ee10d03a1c68fbb0738cac016f2639572a0fb544873149020bb83f709a3228e7",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "eb4028feb6fd516064c204e724314d7fe559ef1774facd6867b6a783d2701469"
+    },
+    {
+      "configuration": "Bug_ClusterBackupPartialRestore",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ClusterBackupPartialRestore.cfg": "4a59cc4cc3f23506732a2c5c8c87c419f4997a07f682259601ed96ce614d1fd4",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "3f4142a6b47d26407c5f45211e9e9db25d2bab559583c3f2ca1343e4e4c0edd8"
+    },
+    {
+      "configuration": "Bug_ClusterBackupMetadata",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_ClusterBackupMetadata.cfg": "87e63d0434ccad8208f3d971d9d60fe3e47aae0584c12ce8bce47b12c7592b19",
+        "ClusterBackup.tla": "7c9c368703a7b0f4014714bf2467ac571b4ae6ebd8df4465a1514c34ee4f1694"
+      },
+      "output_sha256": "af81acb64d904f34b8b301e56ea857700eb65963c0dd46db5ce3cc6cfbb93231"
+    },
+    {
+      "configuration": "PlainLazyBinding",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "PlainLazyBinding.cfg": "0f35d9c4803969197e846ea0562193d20add62801757c6476819110c29f45728",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "a6d41034f40f328f8e780fe02b88f62c28a3077f9439640dba98528a7872ee61"
+    },
+    {
+      "configuration": "Bug_PlainLazyDeclared",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlainLazyDeclared.cfg": "cbc4115a6f8e01741f9778ebba452bce5fceec21a3a2bfab4996e920f1dc1f67",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "d658821ba1d4620e74a2053848954d2b3bd69339ca7bead05b2a71273142ac72"
+    },
+    {
+      "configuration": "Bug_PlainLazyCapture",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlainLazyCapture.cfg": "9b916b834cd17e8c5410537276d2ebfa9a22f95b3fecacb167ff88c078ef679f",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "48f345645bf6b68feb81e4106e631266245f6225dd8248d5c15d5ad42acbd5e4"
+    },
+    {
+      "configuration": "Bug_PlainLazyPending",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlainLazyPending.cfg": "3244e63e30d97cda0a6dc14b57a8a1e2b90cde96dc756144776222df4ca8a978",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "d3da789c2c4f02563344963a00b50dbf6a0c83b91ee64572690952693cad72fd"
+    },
+    {
+      "configuration": "Bug_PlainLazyFirstWriteOnly",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlainLazyFirstWriteOnly.cfg": "b4ae8456fed5aedfe0175d9d6e3e485c0d5c3b98d3dc4c7d2b43af4d0e3d4153",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "601c7dc2ec1d8cf508af4c10ebcbcaf2d24df390cfbae6cd5a777045fe5cf214"
+    },
+    {
+      "configuration": "Bug_PlainLazyReplaceReadset",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlainLazyReplaceReadset.cfg": "e63b614c07a9571804d78a3de190608763eb425350270dc7bf3225c4f803999d",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "47adc5c4f12c942c83a809b8e4da3b21523887bde6f3f3409342b5046feadbec"
+    },
+    {
+      "configuration": "Bug_PlainLazyGlobalStale",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_PlainLazyGlobalStale.cfg": "c7f4ecb7939003a08b52996c3e57885650424e7c44719e8b741026853c8457b4",
+        "PlainLazyBinding.tla": "4494996a9c84619047f5b70cf771cf98597d5144cbc6a928e40ad50718b9b7a3"
+      },
+      "output_sha256": "5e5b5775eaa78c69dcfe18233bf99cd4e18ba27fac49eb15aab368e3dc32213f"
+    },
+    {
+      "configuration": "EngineBuildReentry",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "EngineBuildReentry.cfg": "937ff15e8a81af1e7d8436b8bf353031c10e72c23b4bca181b3e6fd1c7984c65",
+        "EngineBuildReentry.tla": "ee05162d1ca7bda95e15019c26fab8e8a43c41311faa50a3ecfabe601aa3c043"
+      },
+      "output_sha256": "d71732f893520827e1324ba24a232eeb475bf43749c1e7f447ff856de1b69555"
+    },
+    {
+      "configuration": "Bug_EngineBuildReusePage",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineBuildReusePage.cfg": "dc6ad110999d500300a8ea0244be8238a6b7ae6fb6bed4b12a563f5651d6a8e3",
+        "EngineBuildReentry.tla": "ee05162d1ca7bda95e15019c26fab8e8a43c41311faa50a3ecfabe601aa3c043"
+      },
+      "output_sha256": "a005b8378e8a2986494cd5e01db56dd116f33cf6f945d61a417b47fa90fe1e9d"
+    },
+    {
+      "configuration": "Bug_EngineBuildCallerOnlyCut",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineBuildCallerOnlyCut.cfg": "7571bd25f490d1e533b19607387a92feebbbf1e5a021b2f0a7ce423e61bfc4d3",
+        "EngineBuildReentry.tla": "ee05162d1ca7bda95e15019c26fab8e8a43c41311faa50a3ecfabe601aa3c043"
+      },
+      "output_sha256": "a79d21a91ee57cc214cc2c27e95bb29c25ae8aa683bd79d532aa7dfe972ed4b6"
+    },
+    {
+      "configuration": "Bug_EngineBuildKeepPrefix",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_EngineBuildKeepPrefix.cfg": "a0e6e66c2c4a340ee29e62220399e8e46a042bb1525dc1b67ce592b20a6be883",
+        "EngineBuildReentry.tla": "ee05162d1ca7bda95e15019c26fab8e8a43c41311faa50a3ecfabe601aa3c043"
+      },
+      "output_sha256": "9ad5144196ef58adf32d9feba1861b896d47540ccc2505bd98149a02cdfc101a"
+    },
+    {
+      "configuration": "LazyRouting",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "LazyRouting.cfg": "6fed54d25e6ff5731d3eb0577819c33a752f9b3a4f3ea87682c160f4383e5e6d",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "5cd0404ec1b31d88553e628fd9fd35e800f79d895c8b2cffb5763304b5f70369"
+    },
+    {
+      "configuration": "Bug_LazyRoutingCapability",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyRoutingCapability.cfg": "695572fb1b14ddfc26f9b5ff06f8dcaa78304c1cd49162b244ba75005e4c06a5",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "06ccbf2badce097c9a6a3a81f783ce32f2324682ab2d4314057896d597aaf55a"
+    },
+    {
+      "configuration": "Bug_LazyRoutingRewrite",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyRoutingRewrite.cfg": "e1f853fdb2475566b4379edf60e03fecc8bd13ccd5546493456385937c9196dc",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "70e648699fab6deefd00096a68fcf6e2c66de7ca4dcbc7e838b84616f884b90e"
+    },
+    {
+      "configuration": "Bug_LazyRoutingMissingOwner",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyRoutingMissingOwner.cfg": "e9f73ef5a4c06d9fcfb1b31feb241b473ab200429b23557a712fcef5a4b7f41a",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "df6f00114c637e8b20dc29113a4d73fb97b74590f02f84ad130cbd29236c0556"
+    },
+    {
+      "configuration": "Bug_LazyRoutingLexical",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyRoutingLexical.cfg": "32d013e06d7b10417ebb8debea72e43991ac61b599f5d504e473810ccbf385c0",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "eaf5042643b5dad0be2ba9597f1ce67305f59ca82386beae79a3bc315c8b1c5d"
+    },
+    {
+      "configuration": "Bug_LazyRoutingEarlyLimit",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyRoutingEarlyLimit.cfg": "6579cb8e399cf1f04932a88c88a6fc53e749e2fc67da285d53e953c160e3eeba",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "d677d8d89d0f8cff328aa2c2cd1b8f65a47903e8847cd4421bb60a797a328095"
+    },
+    {
+      "configuration": "Bug_LazyRoutingEpoch",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-b107cbb",
+      "inputs": {
+        "Bug_LazyRoutingEpoch.cfg": "7ca8138a4249b6c8dff654b28555f48a15ae7c57aa7d5605291b046c018528a8",
+        "LazyRouting.tla": "3c85cbd4a6e9ec7f01ea6563874227f7b2bf2f95f17ebff76f2721374dbb530e"
+      },
+      "output_sha256": "161f9788acca899b29f2d848d3cdf2f7e95f8edbacf4faf112a84b902bc7c81d"
+    },
+    {
+      "configuration": "ExternalStrongKV",
+      "expected": "pass",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "ExternalStrongKV.cfg": "e08a363d654bedf776e7c6d7094eea97b96687a9af1cc62b7b50ca2928e1d752",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "20f7ebed8c13bc9173559e4fba5b20af9c0a41ac09195b6d5a5c5d2f0c48214d"
+    },
+    {
+      "configuration": "Bug_KVOwnerFence",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_KVOwnerFence.cfg": "a74b1f9ece70b23dc3e511d20919ae74aa2b149e122c4e89f13201364217c110",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "a77cff069984902c99bdb588e5561dbeefa35d6b204d20aac5241d002ebfa663"
+    },
+    {
+      "configuration": "Bug_KVIncarnation",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_KVIncarnation.cfg": "a5d770df5238bc56196bd167970ea08d00fc6931d6a05b6b2b1f3641696a23c4",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "b3f1537858516fbfe85f6e2760042b3ef00310f87110331e30c03dcb24016d83"
+    },
+    {
+      "configuration": "Bug_KVSchemaAsOwner",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_KVSchemaAsOwner.cfg": "3fcc01d2a8c84455bf8f58e59540f8a7c8850c1139c71e9fbc90c0f07b1308b9",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "356894a36aefc1f95e51b8abf9141bf56596a91a25203b05cc3002be05c7f5a5"
+    },
+    {
+      "configuration": "Bug_KVClippedComplete",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_KVClippedComplete.cfg": "edb8cc10f3edc8a0f0cb8f4f836842deee8a728843233510d8d4028bb2f97771",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "8ed796338a716391a0cead375c6ec61b72273bfaf6c7238dbf9ec2b74506c212"
+    },
+    {
+      "configuration": "Bug_KVMissingClaim",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_KVMissingClaim.cfg": "351ff397f8a00c247b65caf9561e42449dde49cdc75bb08468f4a3bec307a193",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "9979958b9b880b2646daeb18d1ee398173e4715dda8018d6005395bd17de7a57"
+    },
+    {
+      "configuration": "Bug_KVFalseAtomic",
+      "expected": "violation",
+      "run": "tarn-issue185-formal-a20867b",
+      "inputs": {
+        "Bug_KVFalseAtomic.cfg": "63c05d37b587def6299e5f90e39f0b08eef1ea6f9f934effdebc58b2d600f199",
+        "ExternalStrongKV.tla": "ade28f81fa70c3a9e5dd4c6fb757cc428f4173312a9c07b5dbabb632dc98ae12"
+      },
+      "output_sha256": "60d6a599e2fd00a4f36c95b03c6093001b38205081d0d9a8ecfda0fa7cff16fa"
+    }
+  ]
+}

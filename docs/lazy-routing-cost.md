@@ -27,50 +27,107 @@ measurement of the standard release profile. CI uses the normal release profile
 and a separate host configuration. Comparisons are within each fixture;
 results from different configurations are never pooled.
 
-The final isolated-source matrix (`841aee2`, including main's MySQL contract
-changes) has 60 successful arms with zero workload errors, each below the
-fixed p99 ceiling. Results are medians across five arms per
-configuration; the paired interval is calculated separately and is not a
-ratio of those medians.
+## Final runtime: single-row lookups
+
+The final runtime is `a20867b`, including only reviewed changes already merged
+into main (MySQL contracts, typed reads, outcome handling and the lazy ledger).
+Its sixty successful single-row arms have zero workload errors and satisfy
+the fixed p99 ceiling. No throughput interval excludes one. Earlier gains
+must not be attributed to this final runtime.
 
 | Shape | Lanes | Baseline / composite ops/s (median) | Paired ratio (95% interval) | Baseline / composite p99 ms (median) |
 |---|---:|---:|---:|---:|
-| uniform | 1 | 14,514 / 14,551 | 1.009 (0.953–1.068) | 17.80 / 17.81 |
-| uniform | 4 | 13,467 / 13,546 | 1.003 (0.967–1.042) | 17.85 / 18.14 |
-| uniform | 16 | 14,632 / 14,495 | 1.002 (0.960–1.047) | 17.69 / 17.66 |
-| skewed | 1 | 11,240 / 11,407 | 1.010 (0.986–1.036) | 17.82 / 17.91 |
-| skewed | 4 | 11,173 / 15,097 | 1.355 (1.325–1.385) | 17.99 / 12.19 |
-| skewed | 16 | 15,982 / 16,084 | 1.036 (0.969–1.108) | 14.23 / 12.02 |
+| uniform | 1 | 16,221 / 15,800 | 0.998 (0.931–1.069) | 17.07 / 17.56 |
+| uniform | 4 | 15,000 / 14,950 | 1.013 (0.975–1.053) | 17.60 / 17.36 |
+| uniform | 16 | 14,761 / 15,010 | 1.024 (0.966–1.085) | 17.60 / 17.47 |
+| skewed | 1 | 10,700 / 10,878 | 1.009 (0.987–1.031) | 18.63 / 18.56 |
+| skewed | 4 | 16,352 / 16,461 | 1.005 (0.966–1.045) | 12.38 / 11.79 |
+| skewed | 16 | 16,661 / 16,604 | 1.006 (0.954–1.061) | 12.49 / 11.75 |
 
-The skewed four-lane case improved in every pair, with its largest target's
-median index-read share falling from 96.5% to 26.2%. The sixteen-lane case
-also distributed reads (96.4% to 25.2%), but its throughput interval includes
-one, as do the uniform and single-lane controls. Only the four-lane case
-supports improvement beyond measured uncertainty in this final matrix.
+The first four cases share one fixture. Skewed four and sixteen lanes each
+use a fresh complete five-pair run after an interruption. The first skewed
+four-lane attempt failed in the post-workload outage verification with a
+leader-change refusal. The second fixture completed four lanes, then timed
+out collecting lazy statistics after the first composite sixteen-lane arm.
+Both histories show replica relay timeouts and leadership changes; their
+root causes remain unresolved, and the cgroup OOM counters were zero.
+No clock, quorum or timeout guard was relaxed. Failed cases are unqualified;
+partial runs are never spliced into the successful comparisons.
 
-The first sixteen-lane attempt stopped after three complete pairs when a
-leader statistics call timed out amid replica leadership churn. A fresh
-fixture then refused CREATE DATABASE because clock safety was unavailable,
-before any timed arm. Neither attempt qualifies. The table's sixteen-lane
-case is a new complete five-pair run after all four leaders reported healthy
-clock safety; it does not splice together partial runs. The root cause of
-the first interruption was not established. No timeout or clock guard was
-relaxed. Full node logs and failed attempts are retained.
+The second interruption exposed a retention bug: worker results were not
+attached to the report until after the drain RPC. That failed composite
+arm's raw samples are unavailable. Its failure, earlier complete arm and
+full node logs remain retained. The harness now attaches received results
+before post-workload RPCs, attempts every installed-hook cleanup even when
+one fails, and persists raw samples in a finally block. Unit controls and a
+live RF3 post-workload timeout injection verify retention and hook restoration.
+The successful fresh sixteen-lane run uses this correction.
 
-The earlier `d233805` matrix, also retained, found 1.296 (1.208–1.390) at four
-lanes and 1.345 (1.288–1.405) at sixteen. The later sixteen-lane result does
-not reproduce that advantage. These separate runs are not pooled; routing
-distribution alone is insufficient to predict throughput on a shared host.
+## Final runtime: eight-row lookups
 
-The improvement consumes more storage CPU per completed operation:
-0.405 to 0.436 ms at four lanes and 0.362 to 0.401 ms at sixteen. Median
-process physical writes increased from 720 to 749 bytes/op and 716 to
-741 bytes/op respectively. Gateway RPCs remained about 2.04/op. Encoded
-apply traffic was about 5 bytes/op, amortized over the read-heavy mix.
-Median observed maximum source lag was 91.7 to 84.8 ms at four lanes and
-39.1 to 86.5 ms at sixteen; median outage catch-up stayed near one second,
-including control overhead. Full per-arm counters and extrema are in the
-[machine-readable summary](../tests/evidence/lazy-routing/summary-isolated-final.json).
+After the single-row study, a separate two-pair, five-second pilot tested
+`--lookup-batch`: each lookup returns and verifies all eight rows of the
+client's most recent inserted batch, ordered by id. A per-worker unique
+batch number prevents another client's rows from satisfying the lookup.
+The pilot's four-lane ratios were 1.162 and 1.198; it is retained as
+exploration and is not qualification.
+
+The subsequent holdout fixed five ten-second pairs for all six cases,
+with a fresh RF3/fsync cluster per case, the same final runtime binaries,
+32 clients/four processes and the resource envelope above. Both arms use
+identical queries and data generation. All sixty arms completed without
+workload errors, missing raw samples or a p99-ceiling violation.
+
+| Shape | Lanes | Baseline / composite ops/s (median) | Paired ratio (95% interval) | Baseline / composite p99 ms (median) |
+|---|---:|---:|---:|---:|
+| uniform | 1 | 13,670 / 13,109 | 1.018 (0.958–1.082) | 17.86 / 17.50 |
+| uniform | 4 | 14,037 / 13,845 | 0.985 (0.967–1.004) | 17.33 / 17.53 |
+| uniform | 16 | 14,017 / 14,127 | 0.991 (0.961–1.022) | 17.12 / 17.55 |
+| skewed | 1 | 12,549 / 12,730 | 1.000 (0.926–1.081) | 16.07 / 15.77 |
+| skewed | 4 | 10,022 / 11,639 | 1.161 (1.113–1.211) | 19.08 / 16.71 |
+| skewed | 16 | 9,396 / 11,549 | 1.234 (1.160–1.313) | 20.27 / 15.88 |
+
+Composite routing is faster in every skewed four- and sixteen-lane pair.
+The largest target's median index-read share falls from 96.4% to 25.3–25.4%.
+These cases support a throughput improvement beyond measured uncertainty
+for this declared eight-row workload. Uniform and single-lane intervals
+include one. Medians are descriptive; the paired interval is calculated
+from the five pair ratios, not from the ratio of medians.
+
+The gain consumes more storage CPU: 0.460 to 0.510 ms/op at four lanes and
+0.469 to 0.516 ms/op at sixteen. Process physical writes rise from about
+680 to 748 bytes/op. Gateway RPCs remain about 2.04/op, encoded apply bytes
+about 5.1/op, and controlled outage catch-up about one second. Median
+observed maximum source lag is 71 to 63 ms at four lanes and 48 to 62 ms
+at sixteen. These are whole-operation measurements with capture, shipping,
+apply, session catch-up and current base-row rechecks enabled.
+
+The [batch summary](../tests/evidence/lazy-routing/summary-batch-final.json)
+and [single-row summary](../tests/evidence/lazy-routing/summary-final-ledger.json)
+retain every arm and cost. They are distinct experiments and are never
+pooled. Selecting the batch workload after the pilot limits the claim to
+that declared workload; this is not a general speedup or independent-host
+replication. Earlier interruptions also prevent an availability claim.
+
+
+## Earlier runtime comparisons
+
+The retained `d233805` single-row matrix found skewed ratios of 1.296
+(1.208–1.390) at four lanes and 1.345 (1.288–1.405) at sixteen. The subsequent
+`841aee2` matrix found 1.355 (1.325–1.385) at four and 1.036 (0.969–1.108)
+at sixteen. These source-specific results are historical; the final
+single-row study above does not reproduce them. Every uniform and
+single-lane interval in those earlier matrices included one.
+
+The `841aee2` sixteen-lane case also required a fresh complete fixture after
+an interrupted three-pair attempt with a statistics timeout and a separate
+pre-measurement clock-safety refusal. All unsuccessful attempts and node
+logs remain separate. Distributed routing alone does not predict throughput
+on this shared host. The machine-readable summaries retain per-arm CPU,
+RPCs, physical and encoded bytes, target shares, backlog and outage catch-up
+for every historical and final case.
+
+## Workload definition
 
 Every case uses five paired ten-second arms in alternating AB/BA order.
 The fixed latency ceiling is 250 ms at p99; any workload error or an arm
@@ -78,7 +135,8 @@ above that ceiling gives zero qualifying goodput. The fully bound fixture
 writes an eight-row batch on its first operation and every 100th operation.
 Each write includes commit, session-frontier catch-up, the lazy lookup and
 a current base-row recheck. Other operations repeat a fully bound lookup
-of the client's most recently written row. There are no prefix-only reads
+of the client's most recently written row (single-row study) or eight-row
+batch (batch study). There are no prefix-only reads
 in this fixture. Thus this is approximately 99% reads, not a write-heavy
 capacity claim. Payloads are 64 bytes per row; the working set fits memory.
 
@@ -95,8 +153,9 @@ lane values always balance a real workload.
 
 ## Accounting and failure controls
 
-The harness retains all operation latencies, errors and missed scheduled
-slots. Raw latencies are streamed to hashed compressed sidecars after
+Successful studies retain all operation latencies, errors and missed scheduled
+slots. The failed-arm retention gap described above is explicitly excluded
+from qualification. Raw latencies are streamed to hashed compressed sidecars after
 measurement, so earlier arms do not accumulate in the load generator's
 heap. The first full attempt was killed during raw-sample retention;
 its incomplete record remains separate from qualification.
@@ -216,3 +275,36 @@ retains per-arm CPU, RPCs, bytes, lag, catch-up, latency extrema and offered
 load; each archive now also contains all cluster node logs. These
 measurements describe their recorded source revisions, not later main
 integrations or a universal performance guarantee.
+
+## Final-runtime standard-release matrix
+
+The complete final-runtime workflow
+[`41101768733`](https://github.com/cstheorist/tarn/actions/runs/41101768733)
+measured merge candidate `9950f4f`, whose tree exactly matches `f06a2bd`;
+its production source is unchanged from `a20867b`. All 180 arms completed
+without workload errors. Three arms exceeded 250 ms p99, making two of the
+eighteen five-pair workload cases unqualified. CI job success means the
+measurements completed, not that every performance case qualified.
+
+| Shape | Lanes | Write-heavy paired ratio (95% interval) | Read-heavy paired ratio (95% interval) |
+|---|---:|---:|---:|
+| uniform | 1 | **Unqualified** | 0.915 (0.807–1.038) |
+| uniform | 4 | 0.982 (0.933–1.034) | 0.955 (0.945–0.965) |
+| uniform | 16 | 0.988 (0.975–1.001) | 0.957 (0.933–0.981) |
+| skewed | 1 | 1.016 (0.960–1.075) | 0.970 (0.904–1.041) |
+| skewed | 4 | 0.859 (0.827–0.892) | 0.923 (0.917–0.930) |
+| skewed | 16 | 0.864 (0.844–0.884) | 0.929 (0.906–0.953) |
+
+Uniform single-lane write-heavy work had one composite arm at 395 ms p99.
+Uniform single-lane low-load work is also **unqualified**: two composite
+arms reached 266 and 322 ms p99 and missed three and five scheduled slots.
+Every other low-load case qualified near its offered schedule. No positive
+ratio is assigned to either unqualified case. These observations preserve
+the single-lane and low-load limitations alongside the eight-row benefit.
+
+The [complete final CI summary](../tests/evidence/lazy-routing/summary-ci-41101768733.json)
+and all six archives retain raw samples, source and executable hashes,
+node logs and per-arm costs. The four-CPU prefix/write-heavy fixture and
+the twelve-CPU fully bound fixtures answer different workload questions.
+They are not pooled, and none is an independent-host durability or
+production-scale capacity claim.

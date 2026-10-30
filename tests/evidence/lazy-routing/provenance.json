@@ -72,5 +72,107 @@
     "qualified_arms": 180,
     "summary": "summary-ci-41092212161.json",
     "cluster_logs_retained": true
+  },
+  "final_runtime": {
+    "source": "a20867b98a772503a89c01d6ee33f929e291ce34",
+    "documentation_corrected_head": "f06a2bd4052e4e1e9038f2446aa711e1c7e49502",
+    "reviewed_main_base": "6a120f1b7ce2f59672100039b8b93dbec1c6a40f",
+    "scope": "Only reviewed main integrations; externally combined branch caf39e6 remains untouched.",
+    "validation": {
+      "workspace_tests": 353,
+      "clippy": "pass",
+      "format": "pass",
+      "lazy_sql_per_engine": {
+        "tests": 11,
+        "failures": 0,
+        "skips": 0
+      },
+      "differential_per_engine": {
+        "cases": 1122,
+        "failures": 0,
+        "warnings": 0
+      },
+      "native_composite_rf3": "MemTX and Vinyl fsync durable YES/APPLY, two leader deaths, restart and catch-up pass",
+      "lua_movement": "source/target movement, JOIN restart and shipper progress/faults pass"
+    },
+    "formal": {
+      "default": 307,
+      "positive": 77,
+      "negative": 230,
+      "local_unchanged_exact_inputs": 279,
+      "local_changed_new_rerun": 28,
+      "manifest": "formal-final-307.json",
+      "independent_full_ci": 41101768716,
+      "ci_model_job": 124220089763,
+      "ci_model_conclusion": "success"
+    },
+    "single_row": {
+      "summary": "summary-final-ledger.json",
+      "qualified_arms": 60,
+      "result": "Every throughput interval includes one; earlier gains are not claimed for this runtime.",
+      "harness": "f06a2bd default workload; fresh skewed-16 uses the subsequent worker-attachment and cleanup-retention correction; lookup-batch mode is not enabled."
+    },
+    "eight_row": {
+      "summary": "summary-batch-final.json",
+      "qualified_arms": 60,
+      "pilot": "two five-second pairs, retained separately and excluded from qualification",
+      "holdout": "fixed five ten-second AB/BA pairs in all six cases, fresh cluster per case, declared after pilot",
+      "skewed_four_ratio": 1.1607,
+      "skewed_four_95": [
+        1.1126,
+        1.2108
+      ],
+      "skewed_sixteen_ratio": 1.2342,
+      "skewed_sixteen_95": [
+        1.1603,
+        1.3127
+      ],
+      "scope": "single shared host, in-memory working set, local optimized profile, approximately 99% reads, explicit balanced lane values; no production capacity or availability claim"
+    },
+    "interruptions": [
+      "First attempt: skewed-4 post-workload outage verification returned leader-changed/read-only after the four preceding cases passed. Whole failed case excluded.",
+      "Second attempt: fresh skewed-4 completed; skewed-16 first composite post-workload statistics/drain RPC timed out. Received worker results were not yet attached, so that failed arm raw data was lost. Whole failed case excluded. Node logs and the complete first baseline arm retained.",
+      "Both interruptions show relay timeouts and leadership churn; cgroup OOM counters were zero. Root causes unresolved. No clock, quorum, timeout or uncertainty guard was weakened.",
+      "Fresh skewed-16 five-pair run passed with retention correction. Live timeout injection preserves all four workers raw latencies, exact hashes and restores all installed hooks. Cleanup failure controls attempt every node and preserve the original failure."
+    ],
+    "standard_release_ci": {
+      "run": 41101768733,
+      "merge_candidate": "9950f4fc2502e0355c0be4aac5dd5d5b654bebdb",
+      "tree": "5337442f9fba823bb69473d95a94b9a7c24a3303",
+      "same_tree_as": "f06a2bd4052e4e1e9038f2446aa711e1c7e49502",
+      "completed_arms": 180,
+      "workload_errors": 0,
+      "arms_over_p99": 3,
+      "qualified_cases": 16,
+      "total_cases": 18,
+      "unqualified": "uniform single-lane write-heavy (one composite p99 395 ms); uniform single-lane low-load (composite p99 266/322 ms, missed slots 3/5)",
+      "summary": "summary-ci-41101768733.json"
+    },
+    "ci_fixture_failure": {
+      "run": 41101768716,
+      "job": 124220089816,
+      "failure": "2003 no reachable leader on the independent SELECT before BEGIN; fresh leader witnessed before and after the refusal; gateway discovery failures cached 100 ms",
+      "correction": "Existing eight-attempt read-only warmup also retries explicit shard no-leader discovery refusal. Other errors and active transactions are terminal; no mutation replay. Four focused controls pass.",
+      "live_validation": {
+        "native": {
+          "functional_checks": 68,
+          "fault_checks": 94,
+          "result": "pass"
+        },
+        "lua": {
+          "functional_checks": 68,
+          "fault_checks": 94,
+          "result": "pass"
+        },
+        "owned_processes_reaped": true,
+        "archive": "kv-fixture-final.tar.gz"
+      }
+    },
+    "harness_files": {
+      "lazy_routing_cost.py": "6637cd4606b77c33157c5587e47d501310f0c41c1a411b6a63ee9bb9d4fa53d2",
+      "lazy_routing_cost_test.py": "2b766ee4d52b195292c474f619a9396b30d51790f25419713113f6045480f5d5",
+      "kvfaults.py": "370d017aa2ca09baca1d9ae3fd3c7680ea854dc3a31ad0a21812bcffc49ccd92",
+      "kvfaults_test.py": "a6800b3439ed5d79fc6e30cb437e82ad6c69d63a7a12921a83a0586d83afc0e7"
+    }
   }
 }

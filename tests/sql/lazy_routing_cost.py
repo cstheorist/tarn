@@ -139,6 +139,26 @@ def retain_latencies(sample, output):
                                                 p99=percentile(values,.99))
 
 
+def finish_sample(sample, output, installed, save):
+    """Attempt every restore and preserve measurements even when cleanup fails."""
+    failures = []
+    for node in installed:
+        try:
+            ev(node, "if __lazy185 then __lazy185.restore() end return true")
+        except Exception as error:
+            failures.append(dict(node=node, error=repr(error)))
+    if failures:
+        sample['cleanup_failures'] = failures
+        sample['complete'] = False
+        sample.setdefault('failure', 'measurement cleanup failed')
+    try:
+        retain_latencies(sample, output)
+    finally:
+        save()
+    if failures:
+        raise RuntimeError('measurement cleanup failed: %r' % failures)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--tarn', default='127.0.0.1:4000')
@@ -150,6 +170,8 @@ def main():
     ap.add_argument('--threads', type=int, default=16)
     ap.add_argument('--processes', type=int, default=2)
     ap.add_argument('--batch', type=int, default=8)
+    ap.add_argument('--lookup-batch', action='store_true',
+                    help='recheck the complete most recent inserted batch instead of its last row')
     ap.add_argument('--write-every', type=int, default=1, help='write plus causal recheck every N requests; others recheck a previously written row')
     ap.add_argument('--prefix-every', type=int, default=10)
     ap.add_argument('--rate', type=float, default=0, help='scheduled complete operations/s; 0 measures saturation')
@@ -243,15 +265,21 @@ def main():
                                             key=7 if shape=='skewed' and rng.random()<.95 else rng.randrange(128)
                                             lane=lane_values[worker_id%lanes]
                                             last=(worker_id+1)*1000000000+op*args.batch+args.batch-1
-                                            number=op
+                                            number=op*args.threads+worker_id if args.lookup_batch else op
                                             rows=[(tenants[worker_id],last-args.batch+1+j,key,lane,number,b'x'*64) for j in range(args.batch)]
                                         try:
                                             if write:
                                                 with conn.cursor() as cur:
                                                     cur.executemany('INSERT INTO t VALUES(%s,%s,%s,%s,%s,%s)',rows)
                                                 written+=args.batch
-                                            got=q(conn,'SELECT id FROM t WHERE k=%s AND lane=%s AND n=%s AND id=%s LIMIT 1',(key,lane,number,last))
-                                            assert got==((last,),),got
+                                            if args.lookup_batch:
+                                                got=q(conn,'SELECT id FROM t WHERE k=%s AND lane=%s AND n=%s ORDER BY id',
+                                                      (key,lane,number))
+                                                expected_rows=tuple((i,) for i in range(last-args.batch+1,last+1))
+                                                assert got==expected_rows,(got,expected_rows)
+                                            else:
+                                                got=q(conn,'SELECT id FROM t WHERE k=%s AND lane=%s AND n=%s AND id=%s LIMIT 1',(key,lane,number,last))
+                                                assert got==((last,),),got
                                             kind='write_recheck' if write else 'read_recheck'
                                             if args.prefix_every and op%args.prefix_every==0:
                                                 got=q(conn,'SELECT lane,n,id FROM t WHERE k=%s ORDER BY lane,n,id LIMIT 16',(key,))
@@ -285,12 +313,16 @@ def main():
                                 begin=time.monotonic()+.05; deadline=begin+args.seconds; timing[:]=[begin,deadline]
                                 start_event.set()
                                 runs=[]
+                                # Attach results before any post-workload RPC:
+                                # drain/metrics failures must retain collected samples.
+                                sample['workers']=runs
                                 for _ in children:
                                     result=results.get(timeout=args.seconds+60)
                                     assert 'failure' not in result,result
                                     runs.extend(result['runs'])
                                 runs.sort(key=lambda r:r['worker_id'])
                                 elapsed=time.monotonic()-begin
+                                sample['elapsed']=elapsed
                                 wait_empty(nodes,timeout=30)
                                 sample['process_after']=process_sample(args.cluster_dir,extra)
                             finally:
@@ -327,10 +359,7 @@ def main():
                         except Exception as e:
                             sample['failure']=repr(e); save(); raise
                         finally:
-                            for node in installed:
-                                ev(node,"if __lazy185 then __lazy185.restore() end return true")
-                            retain_latencies(sample, output)
-                            save()
+                            finish_sample(sample, output, installed, save)
     finally: c.close()
 
 

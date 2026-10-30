@@ -68,6 +68,44 @@ attempts. No failed or incomplete attempt is counted as qualification.
   The successful rerun used explicit-directory cleanup and verified every
   process identity and the rebuilt gateway executable before testing.
 
+* `final-point-{uniform,skewed}-{1,4,16}.tar.gz` and
+  `summary-final-ledger.json`: sixty qualifying single-row arms on final
+  runtime `a20867b`. All six throughput intervals include one. These results
+  supersede earlier gains for claims about this runtime.
+* `final-point-interruptions.tar.gz` retains both unqualified interruptions
+  and full node logs. The first composite sixteen-lane arm of the second
+  attempt lost its raw worker samples because attachment followed a failed
+  drain RPC; this gap is explicit and cannot qualify. The final fresh
+  sixteen-lane case uses the corrected retention path.
+* `final-batch-{uniform,skewed}-{1,4,16}.tar.gz`,
+  `summary-batch-final.json` and `batch-final-cluster-logs.tar.gz`: the separate
+  sixty-arm holdout on the same runtime, with a fresh cluster per case and
+  exact eight-row lookup validation. Skewed four/sixteen lanes improve
+  16.1%/23.4%, with intervals excluding one and distributed target reads.
+  Uniform and single-lane intervals include one. `final-batch-pilot.tar.gz`
+  contains the preceding two-pair exploration, excluded from qualification.
+* `validation-a20867b.tar.gz`: 353 workspace tests, clippy, both 11-test lazy
+  suites, 1,122 differential cases per engine, native composite RF3 recovery,
+  Lua movement/JOIN/restart faults, full fixture logs, qualification scripts,
+  and the live post-workload failure-retention probe and unit controls.
+* `formal-final-307.{json,tar.gz}` maps every default model to its exact
+  config and parsed local module hashes and retained output: 279 unchanged
+  inputs reuse the completed baseline, 28 changed/new configs were rerun.
+  All 77 positive and 230 negative expectations pass. The independent CI
+  run also passes all 307; its output is in `ci-41101768716-formal.tar.gz`.
+* `ci-41101768716-strong-kv-failure.tar.gz` retains the final-runtime CI
+  failure before the fixture correction: an independent pre-BEGIN read
+  received a cached no-leader discovery refusal after a fresh leader was
+  observed. The existing eight-attempt read-only warmup now accepts that
+  explicit refusal as well as leader-changed; uncertainty and mutations
+  are never retried. Unit controls and the corrected full live suites are
+  recorded separately in `kv-fixture-final.tar.gz`.
+* `ci-41101768733-{uniform,skewed}-{1,4,16}.tar.gz` and its summary retain all
+  180 final-runtime standard-release arms. Sixteen of eighteen workload
+  cases qualify. Uniform single-lane write-heavy and low-load cases miss
+  the p99 ceiling; the low-load case also misses eight scheduled slots.
+  Skewed multi-lane prefix/write-heavy regressions remain visible.
+
 The new `LazyRouting` model and six expected-failure outputs are retained
 under `tla/`. They cover a finite frozen generation, not unbounded SQL,
 hash distribution or production-scale performance. Existing version,
