@@ -36,6 +36,43 @@ movement scale measurements.
 
 ## Current revision c654eae
 
+The complete current-head CI and release matrices passed. The tested merge
+`11aeba6fefee84441175bc225f9686c6f9ed0249` has the same tree
+(`b5dded087c6ec4ce071373d32413e35489478aa7`) as `c654eae`; its parents are
+`6a120f1b7ce2f59672100039b8b93dbec1c6a40f` and `c654eae`.
+`current-checks.json` retains the completed check snapshot, including the four
+typed-read cells, four MySQL cells, four outcome cells, six topology cells and
+six routing-cost cells. Conditional skipped jobs remain labeled skipped.
+
+The complete hosted formal log (`124223627947`, run `41102681469`) contains
+all 319 expected outcomes: 79 positive configurations and 240 intentional
+violations. The audit checks the exact registry order and outcome for each.
+Verus (`124223628557`) completed with 140 verified and zero errors. The duplicate
+local model run was intentionally stopped once this hosted result was verified;
+its partial log is retained and is not a complete local model pass.
+
+All 18 current-source hosted movement cases pass. The independent exact-ledger
+audit reconciles 3,182 acknowledged effects with 3,182 committed effects,
+excludes 728 confirmed aborts, and records two unknown outcomes, neither committed.
+All recorded source hashes match the tested tree. Native/Lua modes, memtx/Vinyl/
+mixed engines, and source/receiver/coordinator/disk/reply/lazy cases are retained.
+
+Both maintenance-migration artifacts pass. Each audit verifies 295 new-source
+inputs, 239 guarded-predecessor inputs and four actual binary hashes, plus ten
+SQL/DDL/move/lazy canaries and five native-admission modes. Durable YES identities
+match the later apply-once identities: one memtx pair and three Vinyl pairs.
+Both Vinyl admission refusals prove cleanup on both participants before fresh
+transaction identities. The old-binary format-2 refusal, snapshot reopen and
+unfinished-work refusal before marker publication remain required and passed.
+The raw CI logs and migration manifests/events are retained here; the complete
+binary artifacts are CI artifact IDs `13005035000` (memtx) and `13002914430`
+(Vinyl), with archive hashes in `hosted-c654-audit.json`.
+
+`audit-current-ci.py` reproduces these checks from a checkout containing the
+tested Git objects, the three downloaded artifact ZIPs, and the retained logs.
+Its `--help` lists the input paths. These are correctness checks, not additional
+performance or whole-process memory measurements.
+
 The current-source follow-up archive contains native and Lua source/receiver
 restart controls during mixed-engine RF3/fsync movement. Exact acknowledgements,
 confirmed aborts, duplicate exclusion, post-move progress and reclaimed resources
@@ -51,4 +88,6 @@ three current-source cases. This comparison does not explain the original failur
 or establish its cause. It is not relabeled as a passing suite or claimed fixed.
 Its result, node logs, snapshots and WAL are retained for investigation.
 
-The final release gates and integration review remain required before merge.
+The current-head release gates are complete. The independent integration review
+remains required before merge. Its broader changes are not implied by these
+source-bound results, and the original local bootstrap failure remains unexplained.

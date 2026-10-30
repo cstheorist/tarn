@@ -1,0 +1,151 @@
+{
+  "implementation_head": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+  "tested_revision": "11aeba6fefee84441175bc225f9686c6f9ed0249",
+  "tested_tree": "b5dded087c6ec4ce071373d32413e35489478aa7",
+  "tested_tree_equals_implementation": true,
+  "ci_run": 41102681469,
+  "formal": {
+    "total": 319,
+    "positive": 79,
+    "expected_violations": 240
+  },
+  "verus": {
+    "verified": 140,
+    "errors": 0
+  },
+  "movement": {
+    "artifact_id": 13002269804,
+    "artifact_sha256": "61c691c218c2c370d9bfc27141d1a223a07add276eeebddfe514354d09b03ca5",
+    "results": 18,
+    "exact_ledger_audit": {
+      "acknowledged": 3182,
+      "aborted": 728,
+      "unknown": 2,
+      "committed": 3182,
+      "unknown_committed": 0
+    },
+    "modes": [
+      [
+        "tarn-bounded-lua-coordinator",
+        "mixed",
+        "coordinator"
+      ],
+      [
+        "tarn-bounded-lua-disk",
+        "mixed",
+        "disk"
+      ],
+      [
+        "tarn-bounded-lua-lazy",
+        "mixed",
+        "lazy"
+      ],
+      [
+        "tarn-bounded-lua-memtx",
+        "memtx",
+        "none"
+      ],
+      [
+        "tarn-bounded-lua-mixed",
+        "mixed",
+        "none"
+      ],
+      [
+        "tarn-bounded-lua-receiver",
+        "mixed",
+        "receiver"
+      ],
+      [
+        "tarn-bounded-lua-reply",
+        "mixed",
+        "reply"
+      ],
+      [
+        "tarn-bounded-lua-source",
+        "mixed",
+        "source"
+      ],
+      [
+        "tarn-bounded-lua-vinyl",
+        "vinyl",
+        "none"
+      ],
+      [
+        "tarn-bounded-native-coordinator",
+        "mixed",
+        "coordinator"
+      ],
+      [
+        "tarn-bounded-native-disk",
+        "mixed",
+        "disk"
+      ],
+      [
+        "tarn-bounded-native-lazy",
+        "mixed",
+        "lazy"
+      ],
+      [
+        "tarn-bounded-native-memtx",
+        "memtx",
+        "none"
+      ],
+      [
+        "tarn-bounded-native-mixed",
+        "mixed",
+        "none"
+      ],
+      [
+        "tarn-bounded-native-receiver",
+        "mixed",
+        "receiver"
+      ],
+      [
+        "tarn-bounded-native-reply",
+        "mixed",
+        "reply"
+      ],
+      [
+        "tarn-bounded-native-source",
+        "mixed",
+        "source"
+      ],
+      [
+        "tarn-bounded-native-vinyl",
+        "vinyl",
+        "none"
+      ]
+    ]
+  },
+  "upgrades": [
+    {
+      "engine": "memtx",
+      "passed": true,
+      "archive_sha256": "a7fb825fef306a6bb7a5f742b2ca8fd406f72bd8dea99a0f5e76c1b9c5e2609c",
+      "source_inputs_checked": {
+        "old": 239,
+        "new": 295
+      },
+      "binaries_checked": 4,
+      "canaries": 10,
+      "native_modes": 5,
+      "durable_yes_apply_once_pairs": 1,
+      "admission_refusal_cleanups": 0
+    },
+    {
+      "engine": "vinyl",
+      "passed": true,
+      "archive_sha256": "cc68939d4733bc91c09713814b75a0716cf99c42ed9f68dea34e79012c2be841",
+      "source_inputs_checked": {
+        "old": 239,
+        "new": 295
+      },
+      "binaries_checked": 4,
+      "canaries": 10,
+      "native_modes": 5,
+      "durable_yes_apply_once_pairs": 3,
+      "admission_refusal_cleanups": 2
+    }
+  ],
+  "boundary": "Source-bound CI correctness and admission evidence; no new performance or whole-process memory claim. The separate local bootstrap failure remains unexplained."
+}

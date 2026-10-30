@@ -1,7 +1,15 @@
 {
   "README.md": {
-    "bytes": 3052,
-    "sha256": "5d3e4820ca39d35dbd3b08d9827acdc2bc3aa2d9c8b6282bce769b7d5e5959b8"
+    "bytes": 5628,
+    "sha256": "df1c887ff5330de0c7ab897f89dbf12b07a1fb18d0007e2d79b5752c2dde7640"
+  },
+  "audit-current-ci.py": {
+    "bytes": 7844,
+    "sha256": "ba76fd42f60242776dd95227b7437a7617f34195f9c0a4dcd02d4f9846e6b02b"
+  },
+  "current-checks.json": {
+    "bytes": 7295,
+    "sha256": "81bbfc36896cc4c0df43b824181ecc1da8b93291611c97858fa5427559d4c563"
   },
   "current-restart-index.json": {
     "bytes": 6995,
@@ -39,6 +47,26 @@
     "bytes": 12118,
     "sha256": "be9d94b05f9ab1e9540bee8ef4fca31908ff3a5b365f9cb63e0b4e7063a16e42"
   },
+  "final-ci-c654-formal.log.gz": {
+    "bytes": 14235,
+    "sha256": "34aac5c65667e04dd5e106da7953e730e8a0bda921f123492f52196608c30c59"
+  },
+  "final-ci-c654-tests.log.gz": {
+    "bytes": 223030,
+    "sha256": "ff8e68d90c863e8f1c72639f1eb4cac5d31789694d827bcb4a7be682b8e6b456"
+  },
+  "final-ci-c654-upgrade-memtx.log.gz": {
+    "bytes": 11945,
+    "sha256": "218f8379229aa74658138267e23ccc54a292d7d74bb821e4c31ffebc4f7daaad"
+  },
+  "final-ci-c654-upgrade-vinyl.log.gz": {
+    "bytes": 12140,
+    "sha256": "05271fb4391629bc3289d288241bab187cf2940da837f84be02d3e7be88ae20b"
+  },
+  "final-ci-c654-verus.log.gz": {
+    "bytes": 4925,
+    "sha256": "4d3274e970a0f169627e79e3a19685ba651e2be0b3ee495b66dec9e629c154f7"
+  },
   "final-integrated-workspace-4g.log.gz": {
     "bytes": 7026,
     "sha256": "161ea555693b427f1e4f6a8876ed4b392347e6733800f6d33a1b3dc0718048b2"
@@ -46,6 +74,10 @@
   "final-integrated-workspace.log.gz": {
     "bytes": 876,
     "sha256": "277ee63e41392313b74af8de30e73787aebb8b1cd1a5ddea9b915680981c1b63"
+  },
+  "hosted-c654-audit.json": {
+    "bytes": 3291,
+    "sha256": "cc31e1d16932cb3b0e22e3476ec75dc24caa5da7fb536db4df9fc3a389758892"
   },
   "hosted-movement-b3-audit.json": {
     "bytes": 1772,
@@ -55,9 +87,33 @@
     "bytes": 224124,
     "sha256": "31e7a968dcc891dadbb8bf19e3e3ab3cf8bd805ab853a4d4520216d9e4a1b0d5"
   },
+  "hosted-movement-c654.zip": {
+    "bytes": 224503,
+    "sha256": "61c691c218c2c370d9bfc27141d1a223a07add276eeebddfe514354d09b03ca5"
+  },
   "hosted-upgrade-b3-audit.json": {
     "bytes": 773,
     "sha256": "6ec0043ca4e17fb67a2a6a5ec93cf503649f12a33f002e05f943f26890b6bbfc"
+  },
+  "hosted-upgrade-memtx-c654-events.jsonl.gz": {
+    "bytes": 1936,
+    "sha256": "2d0228e3a41a591b418e224eff55079e3c98efd35af9ab5144b9e60385632254"
+  },
+  "hosted-upgrade-memtx-c654-manifest.json.gz": {
+    "bytes": 19780,
+    "sha256": "a197f198fec6000f253d779f73b553ca7c59ef43e2a4e650b7363a1006ebd102"
+  },
+  "hosted-upgrade-vinyl-c654-events.jsonl.gz": {
+    "bytes": 2410,
+    "sha256": "98dfae7cb83588cc2b4cbbf979d3e62538ce6f4a0b3695c9b6a1c3e587d0b22b"
+  },
+  "hosted-upgrade-vinyl-c654-manifest.json.gz": {
+    "bytes": 19775,
+    "sha256": "5f2c6fd4b90af4e01bc13aa7a42c8a2158d2232bd1fb0fbd10684d07896f2b9d"
+  },
+  "partial-local-models-c654.log.gz": {
+    "bytes": 3499,
+    "sha256": "6ba0fcc397513c8e287050b78ed0c31f9dda672f9cbe494b90bce41b8059f8be"
   },
   "tarn176-bootstrap-compare.sh": {
     "bytes": 603,
