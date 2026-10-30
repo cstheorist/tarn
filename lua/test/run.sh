@@ -115,7 +115,7 @@ for p in $P1 $P2 $P3; do
   done
 done
 # The files run in turn on the same shards (each uses its own tables).
-for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/alter_backfill_test.lua $DIR/test/join_test.lua $DIR/test/bucket_test.lua $DIR/test/member_test.lua $DIR/test/rebalance_test.lua $DIR/test/native_test.lua}; do
+for f in ${TEST:-$DIR/test/storage_test.lua $DIR/test/pushdown_test.lua $DIR/test/alter_backfill_test.lua $DIR/test/join_test.lua $DIR/test/bucket_test.lua $DIR/test/member_test.lua $DIR/test/rebalance_test.lua $DIR/test/native_test.lua}; do
   echo "storage test $(basename "$f")" | tee -a "$WORK/test.out"
   S1=127.0.0.1:$P1 S2=127.0.0.1:$P2 S3=127.0.0.1:$P3 timeout 120 $T "$f" < /dev/null 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
