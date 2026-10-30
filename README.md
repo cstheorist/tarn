@@ -53,9 +53,11 @@ read them as **key/value**.
   queues, lock wait timeouts and deadlock detection, `SKIP LOCKED` and
   `NOWAIT`, unique keys locked by value, savepoints. Hot-row updates wait
   instead of aborting, and commits stay atomic across shards.
-* **Key/value fast path.** Committed rows are ordinary tuples
-  (`box.space['demo.orders'].index.primary:get{42}`): about 260,000 direct
-  reads per second on two vCPUs.
+* **Native key/value access.** Committed rows are ordinary tuples
+  (`box.space['demo.orders'].index.primary:get{42}`). Raw GET/SELECT uses
+  local visibility and can lag. The [versioned strong-read API](docs/strong-kv.md)
+  adds freshness, ownership and write-claim checks; its measurements are
+  separate from raw-native read rates.
 * **Verified where it matters.** The commit protocol is specified in TLA+
   and checked with TLC (291 default configurations, including 217
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
