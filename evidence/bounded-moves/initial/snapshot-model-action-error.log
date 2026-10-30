@@ -1,0 +1,289 @@
+BoundedMove                  ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        0s
+UNEXPECTED: BoundedMove: error (expected pass)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:13)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319313.tla
+Bug_BoundedMoveDrain         ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        1s
+UNEXPECTED: Bug_BoundedMoveDrain: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:14)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319314.tla
+Bug_BoundedMoveDelta         ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        0s
+UNEXPECTED: Bug_BoundedMoveDelta: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:14)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319314.tla
+Bug_BoundedMovePublish       ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        0s
+UNEXPECTED: Bug_BoundedMovePublish: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:14)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319314.tla
+Bug_BoundedMoveVisibility    ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        1s
+UNEXPECTED: Bug_BoundedMoveVisibility: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:15)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319314.tla
+Bug_BoundedMoveReclaim       ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        0s
+UNEXPECTED: Bug_BoundedMoveReclaim: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:15)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319315.tla
+Bug_BoundedMoveBatch         ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        0s
+UNEXPECTED: Bug_BoundedMoveBatch: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:15)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319315.tla
+Bug_BoundedMoveLatePage      ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        1s
+UNEXPECTED: Bug_BoundedMoveLatePage: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:15)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319315.tla
+Bug_BoundedMoveSnapshot      ERROR: Error: Successor state is not completely specified by action Copy of the next-state relation. The following variable is not defined: partialSnapshot. 5 distinct states found      depth=2        0s
+UNEXPECTED: Bug_BoundedMoveSnapshot: error (expected violation)
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 66 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = null
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-29 20:15:16)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319316.tla
+some outcomes were not as expected

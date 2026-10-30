@@ -38,7 +38,8 @@ assert(ready(), 'native clock startup unavailable')
 local c = net.connect('tarn:tarn@127.0.0.1:3897', {wait_connected = 5})
 assert(c:is_connected())
 local idle, stream, committed = c:new_stream(), nil, nil
-local saved = {controls = F.native_controls, space = F.native_space, mark = F.native_mark, ok = F.native_ok}
+local saved = {controls = F.native_controls, space = F.native_space, mark = F.native_mark, ok = F.native_ok,
+               move_safe = F.move_safe}
 local hooks = {commit = box.on_commit, rollback = box.on_rollback}
 local sid = 96601
 local args = {sid, 0, {{1}}, 1, true, false, box.NULL, 1}
@@ -158,6 +159,21 @@ local ok, err = xpcall(function()
           and after.native.served == before.native.served and after.native.to_lua == before.native.to_lua + 200,
           'missing stream guard preserves the exact marked transaction across 200 handbacks')
     F.native_ok = saved.ok
+    F.move_safe = function() error('injected movement guard refusal') end
+    local guarded = stream:eval([[local previous=box.error.new{code=1213,reason='preserved error'}
+        box.error.set(previous)
+        local success,value=pcall(tarn.fresh.native_ok,box.txn_id())
+        local preserved=box.error.last()==previous
+        box.error.clear()
+        return {success,value==0,preserved}]])
+    check(guarded[1] and guarded[2] and guarded[3],
+          'movement guard errors return refusal and preserve the existing error', guarded)
+    before = census(stream)
+    local movement_reply = native_read(stream, next_read)
+    after = census(stream)
+    check(movement_reply[1]=='lua' and unchanged(before,after),
+          'movement guard error hands back without losing the marked snapshot', movement_reply)
+    F.move_safe = saved.move_safe
     c:eval('box.space[...]:replace{1,11,1}', {sid})
     local validation = stream:call('tarn_validate', {'native-lua-guard-readset', {{sid, 0, {1}, 1}}, {}, false})
     after = census(stream)
@@ -177,6 +193,7 @@ local ok, err = xpcall(function()
     check(tarn_info().stats.lock_copy_errors == 0, 'native lock mirrors remain exact')
 end, debug.traceback)
 F.native_controls, F.native_space, F.native_mark, F.native_ok = saved.controls, saved.space, saved.mark, saved.ok
+F.move_safe = saved.move_safe
 box.on_commit, box.on_rollback = hooks.commit, hooks.rollback
 for _, s in pairs({idle, stream, committed}) do
     pcall(s.eval, s, 'if box.is_in_txn() then box.rollback() end', {}, {timeout = 5})

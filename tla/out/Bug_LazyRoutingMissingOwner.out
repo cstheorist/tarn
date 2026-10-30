@@ -1,0 +1,85 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 4 and seed -2718452310883986070 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 32968] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue185/tla/LazyRouting.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-6849762951493511092/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyRouting
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyRouting
+Starting... (2026-10-30 09:30:07)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:30:07.
+Error: Invariant CompleteOrderedLimit is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ result = <<>>
+/\ epoch = 0
+/\ done = FALSE
+/\ examined = 0
+/\ started = FALSE
+/\ at = <<1, 1>>
+/\ routing = 2
+/\ admitted = FALSE
+/\ captured = 0
+
+State 2: <Start line 21, col 10 to line 23, col 69 of module LazyRouting>
+/\ result = <<>>
+/\ epoch = 0
+/\ done = FALSE
+/\ examined = 0
+/\ started = TRUE
+/\ at = <<1, 3>>
+/\ routing = 2
+/\ admitted = FALSE
+/\ captured = 0
+
+State 3: <Next line 42, col 13 to line 42, col 56 of module LazyRouting>
+/\ result = <<>>
+/\ epoch = 0
+/\ done = FALSE
+/\ examined = 1
+/\ started = TRUE
+/\ at = <<2, 3>>
+/\ routing = 2
+/\ admitted = FALSE
+/\ captured = 0
+
+State 4: <Next line 42, col 13 to line 42, col 56 of module LazyRouting>
+/\ result = <<10>>
+/\ epoch = 0
+/\ done = FALSE
+/\ examined = 2
+/\ started = TRUE
+/\ at = <<3, 3>>
+/\ routing = 2
+/\ admitted = FALSE
+/\ captured = 0
+
+State 5: <Finish line 36, col 11 to line 40, col 85 of module LazyRouting>
+/\ result = <<10>>
+/\ epoch = 0
+/\ done = TRUE
+/\ examined = 2
+/\ started = TRUE
+/\ at = <<3, 3>>
+/\ routing = 2
+/\ admitted = FALSE
+/\ captured = 0
+
+13 states generated, 11 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-30 09:30:07)
+Trace exploration spec path: ./LazyRouting_TTrace_1793367007.tla

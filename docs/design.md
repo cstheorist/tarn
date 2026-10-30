@@ -2241,6 +2241,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Backfill | no errors | 3757 | 7686 | 21 | 00s |  |
 | BackfillDDL | no errors | 33 | 42 | 11 | 00s |  |
 | BootstrapCount | no errors | 2160 | 2592 | 4 | 00s |  |
+| BoundedMove | no errors | 6230 | 17145 | 28 | 00s |  |
 | Bug_BackfillAbortAfterApply | violates PublishedIndexCorrect | 1249 | 2126 | 11 | 00s | 11 |
 | Bug_BackfillDDLNoFinisherSerialization | violates PublishedIndexMatches | 65 | 90 | 9 | 00s | 9 |
 | Bug_BackfillDDLNoQuiescence | violates NoLateAbortedIndex | 33 | 42 | 6 | 00s | 6 |
@@ -2253,6 +2254,16 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
+| Bug_BoundedMoveBatch | violates BoundedWork | 1867 | 4007 | 9 | 00s | 8 |
+| Bug_BoundedMoveDelta | violates AcknowledgedEffects | 6893 | 17991 | 19 | 00s | 19 |
+| Bug_BoundedMoveDrain | violates AcknowledgedEffects | 7914 | 21551 | 17 | 00s | 17 |
+| Bug_BoundedMoveLatePage | violates CancelledResources | 89 | 129 | 4 | 00s | 4 |
+| Bug_BoundedMovePublish | violates CompletePublication | 4748 | 12437 | 13 | 00s | 12 |
+| Bug_BoundedMoveReclaim | violates NoPartialReads | 2396 | 5335 | 9 | 00s | 9 |
+| Bug_BoundedMoveSnapshot | violates NoPartialReads | 5673 | 15579 | 18 | 00s | 17 |
+| Bug_BoundedMoveVisibility | violates NoPartialReads | 4773 | 12545 | 13 | 00s | 13 |
+| Bug_ClockBootstrapJoin | violates NoInitialCheckpointBlock | 5 | 5 | 3 | 00s | 3 |
+| Bug_ClockBootstrapMarker | violates PolicyAfterMarker | 9 | 14 | 4 | 00s | 4 |
 | Bug_ClusterBackupDrain | violates NoLostAcknowledgement | 40367 | 182089 | 12 | 00s | 12 |
 | Bug_ClusterBackupEarlyCopy | violates CoherentData | 43988 | 157326 | 9 | 00s | 9 |
 | Bug_ClusterBackupMetadata | violates MetadataRetained | 31165 | 142161 | 11 | 00s | 11 |
@@ -2374,6 +2385,12 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyMeterRefundUncertain | violates ReadyConservative | 45 | 76 | 6 | 00s | 6 |
 | Bug_LazyMeterStaleCallback | violates ReadyConservative | 1035 | 2281 | 10 | 00s | 10 |
 | Bug_LazyMeterStaleInstall | violates ReadyEpochCurrent | 25 | 38 | 5 | 00s | 5 |
+| Bug_LazyRoutingCapability | violates Capability | 2 | 2 | 2 | 00s | 2 |
+| Bug_LazyRoutingEarlyLimit | violates CompleteOrderedLimit | 11 | 13 | 5 | 00s | 5 |
+| Bug_LazyRoutingEpoch | violates StableMap | 16 | 20 | 7 | 00s | 7 |
+| Bug_LazyRoutingLexical | violates CompleteOrderedLimit | 14 | 17 | 6 | 00s | 6 |
+| Bug_LazyRoutingMissingOwner | violates CompleteOrderedLimit | 11 | 13 | 5 | 00s | 5 |
+| Bug_LazyRoutingRewrite | violates ImmutableRouting | 2 | 2 | 2 | 00s | 2 |
 | Bug_LocalIgnoresRLocks | violates StrictSerializable | 32672 | 133596 | 13 | 06s | 13 |
 | Bug_LocalReadsIgnoreWLocks | violates StrictSerializable | 3653 | 10348 | 10 | 02s | 10 |
 | Bug_LockCopyAfterYield | violates NativeFindsLocks | 16 | 20 | 3 | 00s | 3 |
@@ -2384,9 +2401,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LockReplyRelabelGeneration | violates ReturnedRowsLocked | 187 | 436 | 12 | 00s | 11 |
 | Bug_LogicalClockFloorAdvance | violates NoFalseNO | 134 | 194 | 4 | 00s | 4 |
 | Bug_LogicalClockRawBound | violates NoFalseNO | 4028 | 12533 | 7 | 00s | 7 |
-| Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
-| Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
-| Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
+| Bug_MoveNoDrain | violates StrictSerializable | 16448 | 57619 | 12 | 01s | 11 |
+| Bug_MoveNoHold | violates StrictSerializable | 4424 | 12727 | 10 | 00s | 10 |
+| Bug_MoveServeStale | violates StrictSerializable | 15863 | 52067 | 13 | 01s | 11 |
 | Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
 | Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
@@ -2463,6 +2480,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| ClockBootstrap | no errors | 23 | 65 | 9 | 00s |  |
 | ClusterBackup | no errors | 52164 | 255561 | 30 | 00s |  |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
@@ -2487,10 +2505,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
 | Handback | no errors | 46 | 96 | 7 | 00s |  |
 | Handback_Autocommit | no errors | 33 | 78 | 7 | 00s |  |
-| Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
-| Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
-| Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
-| Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
+| Join3_Scan | no errors | 3881646 | 27339272 | 32 | 07min 19s |  |
+| Join3_ScanPrepare | no errors | 2150603 | 17707410 | 35 | 02min 24s |  |
+| Join_Scan | no errors | 83949 | 431879 | 26 | 05s |  |
+| Join_ScanFailover | no errors | 58935 | 241904 | 26 | 03s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
 | LazyBaseline | no errors | 169572 | 1447512 | 25 | 13s |  |
@@ -2499,6 +2517,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LazyHandoffLive | no errors | 76 | 196 | 12 | 01s |  |
 | LazyIndex | no errors | 475615 | 6599566 | 38 | 09s |  |
 | LazyMeter | no errors | 1918745 | 7064587 | 30 | 20s |  |
+| LazyRouting | no errors | 16 | 19 | 7 | 00s |  |
 | LazyTargetConfirm | no errors | 19 | 24 | 5 | 00s |  |
 | Local | no errors | 710975 | 5545010 | 23 | 01min 30s |  |
 | LocalFailover | no errors | 1881011 | 14437776 | 25 | 04min 26s |  |
@@ -2508,9 +2527,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
 | LogicalClockExpiry | no errors | 85476 | 387918 | 19 | 01s |  |
-| Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
-| Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
-| Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
+| Move_RC | no errors | 1531251 | 11100418 | 31 | 01min 41s |  |
+| Move_Scan | no errors | 1746444 | 10990896 | 27 | 01min 36s |  |
+| Move_ScanFailover | no errors | 1012888 | 5683034 | 27 | 58s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
 | PipelineAdmission | no errors | 730752 | 2650849 | 26 | 21s |  |
