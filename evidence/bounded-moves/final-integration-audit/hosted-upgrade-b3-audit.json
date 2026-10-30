@@ -1,0 +1,26 @@
+[
+  {
+    "engine": "memtx",
+    "passed": true,
+    "archive_sha256": "22ef7da709a11c1ff31f330d6be2a5bbcf279f5bc92afafb92a118130474c964",
+    "new_revision": "5a79e046a2962e33f29fc3c1d68e3d903f672b33",
+    "source_inputs_checked": 294,
+    "binaries_checked": 4,
+    "canaries": 10,
+    "native_modes": 5,
+    "durable_yes_apply_once_pairs": 1,
+    "admission_refusal_cleanups": 0
+  },
+  {
+    "engine": "vinyl",
+    "passed": true,
+    "archive_sha256": "fca0e078632c0b2ce2c5ac4f90addf9f3614fcdd77e809faaf6baaeef898f7e9",
+    "new_revision": "5a79e046a2962e33f29fc3c1d68e3d903f672b33",
+    "source_inputs_checked": 294,
+    "binaries_checked": 4,
+    "canaries": 10,
+    "native_modes": 5,
+    "durable_yes_apply_once_pairs": 3,
+    "admission_refusal_cleanups": 2
+  }
+]

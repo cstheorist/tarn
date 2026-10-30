@@ -1,0 +1,186 @@
+{
+  "source_revision": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+  "compiled_rust_revision": "b90abdf8f5bcc8cd0f14298acca248b787266081",
+  "build_boundary": "Existing v7 dev binaries; Cargo, Rust toolchain and crates inputs are unchanged between these revisions. Current Lua source is loaded at runtime. No performance claim.",
+  "container_memory_bytes": 4294967296,
+  "binary_sha256": {
+    "libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf",
+    "tarn-server": "233a1b6aae575ad0364969b216e7aa1c26f3623a320bacd69328c004aef17912"
+  },
+  "archive": {
+    "path": "current-restart-runs.tar.gz",
+    "sha256": "eef5ae1ea08d77ef0b8fa7627a31bfc4155595975d7c9fc604add33fca0343b8",
+    "files": 118
+  },
+  "boundary": "Initial current-source startup failed before movement with leader changes and conflicting async schema replication. Both prior/current fresh source-restart controls and the other three current-source controls passed. The original failure is unexplained, not fixed or relabeled as passing.",
+  "runs": [
+    {
+      "directory": "tarn176-bootstrap-prior",
+      "passed": true,
+      "source_revision": "b90abdf8f5bcc8cd0f14298acca248b787266081",
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected source at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "errors": [],
+      "effects": [
+        {
+          "acked": 362,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": 362
+        },
+        {
+          "acked": 344,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": 344
+        }
+      ]
+    },
+    {
+      "directory": "tarn176-c654-native-source",
+      "passed": false,
+      "source_revision": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+      "checks": [],
+      "errors": [
+        "Traceback (most recent call last):\n  File \"/tmp/tarn176-c654-source/tests/bounded_moves.py\", line 176, in main\n    ls=[wait(lambda:leader(1) is not None and leader(1)+1)-1,wait(lambda:leader(2) is not None and leader(2)+1)-1]\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/tarn176-c654-source/tests/bounded_moves.py\", line 139, in wait\n    raise AssertionError('readiness timeout: '+str(last))\nAssertionError: readiness timeout: False\n"
+      ],
+      "effects": [
+        {
+          "acked": 0,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": null
+        },
+        {
+          "acked": 0,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": null
+        }
+      ]
+    },
+    {
+      "directory": "tarn176-c654-v2-native-source",
+      "passed": true,
+      "source_revision": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected source at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "errors": [],
+      "effects": [
+        {
+          "acked": 342,
+          "unknown": 0,
+          "aborted": 1,
+          "committed": 342
+        },
+        {
+          "acked": 336,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": 336
+        }
+      ]
+    },
+    {
+      "directory": "tarn176-c654-v2-native-receiver",
+      "passed": true,
+      "source_revision": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected receiver at move_install_batch",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "errors": [],
+      "effects": [
+        {
+          "acked": 267,
+          "unknown": 0,
+          "aborted": 1,
+          "committed": 267
+        },
+        {
+          "acked": 261,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": 261
+        }
+      ]
+    },
+    {
+      "directory": "tarn176-c654-v2-lua-source",
+      "passed": true,
+      "source_revision": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected source at bucket_rows",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "errors": [],
+      "effects": [
+        {
+          "acked": 44,
+          "unknown": 0,
+          "aborted": 1,
+          "committed": 44
+        },
+        {
+          "acked": 41,
+          "unknown": 1,
+          "aborted": 0,
+          "committed": 42
+        }
+      ]
+    },
+    {
+      "directory": "tarn176-c654-v2-lua-receiver",
+      "passed": true,
+      "source_revision": "c654eae90df29db2c5f8e8ac93fa8016c4117317",
+      "checks": [
+        "RF3/fsync runtime and requested native/Lua dispatch verified",
+        "RF3/fsync payload loaded through checked mutations",
+        "SER and RC ledger writers active on the moving bucket",
+        "injected receiver at move_install_batch",
+        "SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress",
+        "exact acknowledged rows and payloads present once on destination",
+        "owned staging and progress reclaimed; observed batch and aggregate bounds respected"
+      ],
+      "errors": [],
+      "effects": [
+        {
+          "acked": 23,
+          "unknown": 0,
+          "aborted": 1,
+          "committed": 23
+        },
+        {
+          "acked": 23,
+          "unknown": 0,
+          "aborted": 0,
+          "committed": 23
+        }
+      ]
+    }
+  ]
+}

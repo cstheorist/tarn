@@ -1,0 +1,107 @@
+{
+  "artifact_sha256": "31e7a968dcc891dadbb8bf19e3e3ab3cf8bd805ab853a4d4520216d9e4a1b0d5",
+  "source_revisions": [
+    "5a79e046a2962e33f29fc3c1d68e3d903f672b33"
+  ],
+  "results": 18,
+  "source_hashes_match_checkout": true,
+  "exact_ledger_audit": {
+    "acknowledged": 4596,
+    "committed": 4596,
+    "unknown": 0,
+    "unknown_committed": 0,
+    "aborted": 884
+  },
+  "modes": [
+    [
+      "tarn-bounded-lua-coordinator",
+      "mixed",
+      "coordinator"
+    ],
+    [
+      "tarn-bounded-lua-disk",
+      "mixed",
+      "disk"
+    ],
+    [
+      "tarn-bounded-lua-lazy",
+      "mixed",
+      "lazy"
+    ],
+    [
+      "tarn-bounded-lua-memtx",
+      "memtx",
+      "none"
+    ],
+    [
+      "tarn-bounded-lua-mixed",
+      "mixed",
+      "none"
+    ],
+    [
+      "tarn-bounded-lua-receiver",
+      "mixed",
+      "receiver"
+    ],
+    [
+      "tarn-bounded-lua-reply",
+      "mixed",
+      "reply"
+    ],
+    [
+      "tarn-bounded-lua-source",
+      "mixed",
+      "source"
+    ],
+    [
+      "tarn-bounded-lua-vinyl",
+      "vinyl",
+      "none"
+    ],
+    [
+      "tarn-bounded-native-coordinator",
+      "mixed",
+      "coordinator"
+    ],
+    [
+      "tarn-bounded-native-disk",
+      "mixed",
+      "disk"
+    ],
+    [
+      "tarn-bounded-native-lazy",
+      "mixed",
+      "lazy"
+    ],
+    [
+      "tarn-bounded-native-memtx",
+      "memtx",
+      "none"
+    ],
+    [
+      "tarn-bounded-native-mixed",
+      "mixed",
+      "none"
+    ],
+    [
+      "tarn-bounded-native-receiver",
+      "mixed",
+      "receiver"
+    ],
+    [
+      "tarn-bounded-native-reply",
+      "mixed",
+      "reply"
+    ],
+    [
+      "tarn-bounded-native-source",
+      "mixed",
+      "source"
+    ],
+    [
+      "tarn-bounded-native-vinyl",
+      "vinyl",
+      "none"
+    ]
+  ]
+}

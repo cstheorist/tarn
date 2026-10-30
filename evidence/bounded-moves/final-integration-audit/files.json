@@ -1,0 +1,78 @@
+{
+  "README.md": {
+    "bytes": 3052,
+    "sha256": "5d3e4820ca39d35dbd3b08d9827acdc2bc3aa2d9c8b6282bce769b7d5e5959b8"
+  },
+  "current-restart-index.json": {
+    "bytes": 6995,
+    "sha256": "5f9c74540b89047547ea6a86fafef823f46dc7503437863dffa9081365de52e6"
+  },
+  "current-restart-runs.tar.gz": {
+    "bytes": 198882,
+    "sha256": "eef5ae1ea08d77ef0b8fa7627a31bfc4155595975d7c9fc604add33fca0343b8"
+  },
+  "final-bootstrap-compare.log.gz": {
+    "bytes": 1982,
+    "sha256": "d3892046d80964eb76e12204e7d6a8a4513697971c523f45fb081695b06f2d93"
+  },
+  "final-c654-faults.log.gz": {
+    "bytes": 327,
+    "sha256": "8ce2e12d90712e4058a9313b140e69676d8ce553fb75d2ab298bef03f903548e"
+  },
+  "final-c654-remaining.log.gz": {
+    "bytes": 2244,
+    "sha256": "778d81e6eea0b92614dcb6dac65b2022e97edd3ff6fb1040d114ce892a1df7dd"
+  },
+  "final-ci-b3da8e6-formal.log.gz": {
+    "bytes": 6220,
+    "sha256": "72037493cb15a09c489df2b8ecc1258b104f15584242605e44237c83fa51e608"
+  },
+  "final-ci-b3da8e6-tests.log.gz": {
+    "bytes": 220707,
+    "sha256": "67de6f194bef60b71dab7c73c06ddda1a2ebc118b5378d1503709c96fe4ebacb"
+  },
+  "final-ci-b3da8e6-upgrade-memtx.log.gz": {
+    "bytes": 11941,
+    "sha256": "8993f1921cebf1bb472cd176b3bd4ee75043df2f29e0aef901c82e5ec02d399d"
+  },
+  "final-ci-b3da8e6-upgrade-vinyl.log.gz": {
+    "bytes": 12118,
+    "sha256": "be9d94b05f9ab1e9540bee8ef4fca31908ff3a5b365f9cb63e0b4e7063a16e42"
+  },
+  "final-integrated-workspace-4g.log.gz": {
+    "bytes": 7026,
+    "sha256": "161ea555693b427f1e4f6a8876ed4b392347e6733800f6d33a1b3dc0718048b2"
+  },
+  "final-integrated-workspace.log.gz": {
+    "bytes": 876,
+    "sha256": "277ee63e41392313b74af8de30e73787aebb8b1cd1a5ddea9b915680981c1b63"
+  },
+  "hosted-movement-b3-audit.json": {
+    "bytes": 1772,
+    "sha256": "d30477bc62ac4b4252c5946a28b457df4ea1434661913394a887bfb6ba34e175"
+  },
+  "hosted-movement-b3.zip": {
+    "bytes": 224124,
+    "sha256": "31e7a968dcc891dadbb8bf19e3e3ab3cf8bd805ab853a4d4520216d9e4a1b0d5"
+  },
+  "hosted-upgrade-b3-audit.json": {
+    "bytes": 773,
+    "sha256": "6ec0043ca4e17fb67a2a6a5ec93cf503649f12a33f002e05f943f26890b6bbfc"
+  },
+  "tarn176-bootstrap-compare.sh": {
+    "bytes": 603,
+    "sha256": "763638f7ead2c85504363420fe615c2d719c4345542eeb45880c383bb26e177a"
+  },
+  "tarn176-c654-faults.sh": {
+    "bytes": 532,
+    "sha256": "0e94f38f222545a4c37fb39bbc3660a98cae337257ddaa7291fc1222a04e69c7"
+  },
+  "tarn176-c654-remaining.sh": {
+    "bytes": 590,
+    "sha256": "685fdb2e03e7103cb995954771d320fd9fd4fc5f7743eb8d3a9634b113671cb7"
+  },
+  "tarn176-pack-final-audit.py": {
+    "bytes": 3771,
+    "sha256": "35bf9afb0a350a9c2f36894b9fff62c2aeb1601e4d576ab1a803c039b7e259f5"
+  }
+}
