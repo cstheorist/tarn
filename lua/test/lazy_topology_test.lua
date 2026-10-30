@@ -198,7 +198,7 @@ finish_move(2,3,1,'heterogeneous-source',source_move[2])
 local aux=c[3]:eval([[local sid=... return {box.space._tarn_lazy_counter.id,box.space._tarn_lazy_version.id,
     box.space._tarn_lazy_floor.id,box.space._tarn_lazy_counter:get{1}.seq,
     box.space._tarn_lazy_version.index.bucket_id:count{1}}]],{sid})
-check('heterogeneous-ID copy, counter delta and version deletion use stable auxiliary names',
+check('heterogeneous-ID copy and counter delta use stable auxiliary names; writes keep no row versions',
       aux[1]==9051 and aux[2]==9052 and aux[3]==9053 and aux[4]==5 and aux[5]==0,aux)
 check('completed source handoff refreshes owner hints without waiting for TTL',
       c[3]:eval('return tarn.lazy.owners({1})[1]')==3)

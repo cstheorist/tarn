@@ -580,6 +580,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Lazy indexes keep no per-row state on the source
+  ([#177](https://github.com/cstheorist/tarn/issues/177)). Every captured
+  write used to keep an entry for its row in `_tarn_lazy_version`, in
+  memtx even for vinyl tables, only for bootstrap to give the row's
+  baseline assignment its last sequence. A bootstrap now gives it the
+  bucket's counter, read in the same view as the row. Any sequence up to
+  the counter is correct, which `tla/LazyBaseline.tla` checks
+  (`Bug_LazyBaselineAboveCounter` must fail it). Storage nodes delete the
+  entries older releases left, in bounded batches, in the background. At
+  1,000,000 rows on one storage node, the ledger held 82 MB of memtx, 83
+  bytes a row; without it the process RSS falls from 410 to 329 MiB with a
+  memtx table, and from 324 to 244 MiB with a vinyl one. See
+  [the measurements](docs/lazy-indexes.md#memory-and-disk) and
+  `bench/lazy_footprint.py`.
 - The native storage procedures check locks key by key
   ([#28](https://github.com/cstheorist/tarn/issues/28)): a read with the
   lock check, a commit or a validation goes to Lua only when a prepared
