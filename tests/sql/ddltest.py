@@ -1411,9 +1411,11 @@ class T:
               f"SUM(x) {sums[1]} (acknowledged {st['x']})")
         kinds = {}
         for e in st["errors"]:
-            kinds.setdefault(e[:90], 0)
-            kinds[e[:90]] += 1
-        for e, n in sorted(kinds.items(), key=lambda x: -x[1])[:10]:
+            kinds.setdefault(e, 0)
+            kinds[e] += 1
+        # Preserve the actual storage cause; an ALTER prefix alone cannot
+        # distinguish a known refusal from an unresolved effect.
+        for e, n in sorted(kinds.items(), key=lambda x: -x[1]):
             print(f"      error x{n}: {e}")
         self.check(not st["errors"], f"{len(st['errors'])} errors")
         self.check(st["ddl"] >= 8 or self.args.no_ddl, "schema changes ran")

@@ -39,6 +39,13 @@ if stage == 'native' then
     local writes, wb = {}, {}
     for i = 1, 260 do writes[i], wb[i] = {'insert', sid, {i, 'old', 1}}, 1 end
     ok(tarn_autocommit(writes, {fence = {sid, 0}, wb = wb}))
+    -- Writes keep no per-row version (issue #177); DROP and TRUNCATE still
+    -- clear what an older release wrote.
+    assert(box.space._tarn_lazy_version:count{sid} == 0)
+    local vb, mpk = require('varbinary'), require('msgpack')
+    box.begin()
+    for i = 1, 260 do box.space._tarn_lazy_version:insert{sid, vb.new(mpk.encode({i})), 1, i} end
+    box.commit()
     a = {id = sid, ver = 1, timeout = 5, lazy_drop = {gen}}
     if op == 'truncate' then
         local nd = {}; for k, v in pairs(def) do nd[k] = v end

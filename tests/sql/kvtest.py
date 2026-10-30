@@ -248,10 +248,12 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
             self.user_created_origins.add(node)  # Creation origin is stable across leader retargeting.
             self.record("admin_reader_create", node=node, result=result)
 
-    def paired(self, c, table, keys, columns, where):
+    def paired(self, c, table, keys, columns, where, sql_keys=None):
         expected = []
         names = [x.strip() for x in columns.split(",")]
-        for key in keys:
+        sql_keys = keys if sql_keys is None else sql_keys
+        assert len(sql_keys) == len(keys), (keys, sql_keys)
+        for key in sql_keys:
             rows = self.sql(c, "SELECT " + columns + " FROM " + table + " WHERE " + where, tuple(key))
             assert len(rows) <= 1, rows
             if rows:
@@ -329,7 +331,11 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
         self.sql(c, f"CREATE TABLE {binary} (id VARBINARY(16) PRIMARY KEY,v VARCHAR(30)) ENGINE={engine}", mutation=True)
         self.sql(c, f"INSERT INTO {binary} VALUES (X'00ff','bytes')", mutation=True)
         self.grant(binary)
-        self.paired(c, binary, [[b"\x00\xff"], [b"missing"]], "id,v", "id=%s")
+        # COM_QUERY is UTF-8 SQL text. PyMySQL 1.1.2 embeds bytes as raw
+        # quoted text; use exact MySQL hex literals for the binary oracle.
+        binary_keys = [[b"\x00\xff"], [b"missing"]]
+        self.paired(c, binary, binary_keys, "id,v", "id=X%s",
+                    sql_keys=[[key[0].hex()] for key in binary_keys])
         self.reply_cap_fixture(c, engine)
 
     def reply_cap_fixture(self, c, engine):

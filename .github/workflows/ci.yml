@@ -103,7 +103,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python packages
-        run: pip install PyMySQL
+        run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
       - name: Strong KV administrative transport privacy controls
@@ -287,6 +287,7 @@ jobs:
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
       - name: Strong KV paired SQL histories and RF3 faults
         run: |
+          python3 tests/test_kv_control.py
           ci/annotate.sh strong-kv tests/kv.sh
           TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
           KV_CLOCK_FAULT=1 ci/annotate.sh strong-kv-clock tests/kv.sh

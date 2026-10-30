@@ -56,7 +56,8 @@ repeat
                 or not tostring(state.version):match('^3%.9%.') or state.queue.len ~= 0 then ready = false end
             if not state.ro then
                 counts[group] = counts[group] + 1; leaders[group] = endpoints[index]
-                -- RO followers have no published native fast-path state.
+                -- BK.ns_init publishes native fast-path state on actual leaders;
+                -- RO followers legitimately have no native state yet.
                 -- Require the ABI and ready flag on each actual leader.
                 if not state.read_ready or config.native and (type(state.native) ~= 'table'
                     or state.native_layout ~= 14 or state.native_size ~= 392 or state.native.ready ~= 1) then ready = false end

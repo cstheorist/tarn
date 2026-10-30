@@ -2312,11 +2312,13 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
 | Bug_GroupedTablesNoWLockCheck | violates StrictSerializable | 1194 | 5093 | 13 | 00s | 13 |
-| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 34 | 56 | 8 | 00s | 8 |
-| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 23 | 42 | 7 | 00s | 7 |
-| Bug_HandbackKeepsWrites | violates AtMostOnce | 32 | 52 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss | violates ReplyHolds | 35 | 66 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 29 | 55 | 7 | 00s | 7 |
+| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 57 | 107 | 8 | 00s | 8 |
+| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 34 | 69 | 7 | 00s | 7 |
+| Bug_HandbackKeepsWrites | violates AtMostOnce | 51 | 85 | 7 | 00s | 7 |
+| Bug_HandbackMalformedReply | violates ReplyHolds | 26 | 40 | 5 | 00s | 5 |
+| Bug_HandbackMalformedReply_Autocommit | violates ReplyHolds | 21 | 36 | 5 | 00s | 5 |
+| Bug_HandbackResendAfterLoss | violates ReplyHolds | 51 | 96 | 7 | 00s | 7 |
+| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 38 | 79 | 7 | 00s | 7 |
 | Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
 | Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
@@ -2338,19 +2340,19 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyBarrierSplitFrontierView | violates PrefixCovered | 197 | 400 | 13 | 00s | 13 |
 | Bug_LazyBarrierTrackOnlyWhenEnabled | violates OwnWritesCovered | 57 | 96 | 7 | 00s | 7 |
 | Bug_LazyBarrierWaitAfterSnapshot | violates OwnWritesCovered | 106 | 185 | 11 | 00s | 11 |
+| Bug_LazyBaselineAboveCounter | violates DrainedConverges | 587 | 1170 | 8 | 01s | 8 |
 | Bug_LazyCapacityAbortLeaks | violates AbortedReleased | 8 | 9 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoByteReserve | violates BytePromisesFit | 7 | 7 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoEntryReserve | violates EntryPromisesFit | 6 | 6 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoSeqReserve | violates SequencePromisesFit | 6 | 6 | 3 | 00s | 3 |
-| Bug_LazyHandoffDropFloors | violates DrainedProjection | 56 | 119 | 7 | 00s | 7 |
-| Bug_LazyHandoffDropLiveVersion | violates LiveVersionSurvives | 9 | 12 | 4 | 00s | 4 |
-| Bug_LazyHandoffDropMarkers | violates DrainedProjection | 18 | 30 | 5 | 00s | 5 |
-| Bug_LazyHandoffNoTargetDrain | violates DrainedProjection | 136 | 365 | 11 | 00s | 11 |
-| Bug_LazyHandoffNoTargetFence | violates DrainedProjection | 136 | 339 | 11 | 00s | 11 |
-| Bug_LazyHandoffNoTargetNote | violates DrainedProjection | 127 | 329 | 11 | 00s | 11 |
-| Bug_LazyHandoffRemovePending | violates SourceObligationsSurvive | 4 | 4 | 2 | 00s | 2 |
-| Bug_LazyHandoffResetCounter | violates CounterContinues | 10 | 13 | 4 | 00s | 4 |
-| Bug_LazyHandoffSourceNoFlush | violates SourceObligationsSurvive | 8 | 10 | 3 | 00s | 3 |
+| Bug_LazyHandoffDropFloors | violates DrainedProjection | 56 | 119 | 7 | 01s | 7 |
+| Bug_LazyHandoffDropMarkers | violates DrainedProjection | 18 | 30 | 5 | 01s | 5 |
+| Bug_LazyHandoffNoTargetDrain | violates DrainedProjection | 136 | 365 | 11 | 01s | 11 |
+| Bug_LazyHandoffNoTargetFence | violates DrainedProjection | 136 | 339 | 11 | 01s | 11 |
+| Bug_LazyHandoffNoTargetNote | violates DrainedProjection | 127 | 329 | 11 | 01s | 11 |
+| Bug_LazyHandoffRemovePending | violates SourceObligationsSurvive | 4 | 4 | 2 | 01s | 2 |
+| Bug_LazyHandoffResetCounter | violates CounterContinues | 10 | 13 | 4 | 01s | 4 |
+| Bug_LazyHandoffSourceNoFlush | violates SourceObligationsSurvive | 8 | 10 | 3 | 01s | 3 |
 | Bug_LazyIndexAckMissingTarget | violates DrainedConverges | 537216 | 5991884 | 21 | 09s | 21 |
 | Bug_LazyIndexCaptureFailOpen | violates DrainedConverges | 171 | 540 | 10 | 00s | 10 |
 | Bug_LazyIndexFloorFromMaxAck | violates DrainedConverges | 775423 | 7956003 | 22 | 12s | 22 |
@@ -2483,17 +2485,18 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
-| Handback | no errors | 28 | 48 | 7 | 00s |  |
-| Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
+| Handback | no errors | 46 | 96 | 7 | 00s |  |
+| Handback_Autocommit | no errors | 33 | 78 | 7 | 00s |  |
 | Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
 | Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
+| LazyBaseline | no errors | 169572 | 1447512 | 25 | 13s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
-| LazyHandoff | no errors | 156 | 432 | 13 | 00s |  |
-| LazyHandoffLive | no errors | 76 | 196 | 12 | 00s |  |
+| LazyHandoff | no errors | 156 | 432 | 13 | 01s |  |
+| LazyHandoffLive | no errors | 76 | 196 | 12 | 01s |  |
 | LazyIndex | no errors | 475615 | 6599566 | 38 | 09s |  |
 | LazyMeter | no errors | 1918745 | 7064587 | 30 | 20s |  |
 | LazyTargetConfirm | no errors | 19 | 24 | 5 | 00s |  |

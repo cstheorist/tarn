@@ -123,7 +123,7 @@ q=p/'lifecycle.json';q.write_text(json.dumps(v,indent=2)+'\n');q.chmod(0o600)
 PY
     echo "Strong KV exit $status; logs, identities, WAL and evidence retained at $WORK"
     if [ "$status" != 0 ]; then
-        for name in preflight.stderr functional.log faults.log; do
+        for name in preflight.stderr preflight.json functional.log faults.log; do
             if [ -f "$WORK/$name" ]; then echo "Retained $name (last 100 lines):"; tail -100 "$WORK/$name"; fi
         done
     fi

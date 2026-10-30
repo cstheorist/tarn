@@ -72,7 +72,7 @@ def read_manifest(path, platform=None):
                 "invalid process identity")
         require(n["pid"] > 1 and n["ppid"] == m["launcher_pid"] and n["pid"] != n["ppid"],
                 "node is not an original launcher child")
-        require(n.get("ownerNonce") == m["ownerNonce"]
+        require(("owner_marker" in n or n.get("owner_fd") == 9) and n.get("ownerNonce") == m["ownerNonce"]
                 and n.get("workdir") == str(parent / n["node_id"]), "node owner/workdir mismatch")
         require(n.get("shard_id") == int(n["node_id"][1])
                 and n.get("replica") == int(n["node_id"][3]), "invalid logical node identity")
@@ -120,8 +120,10 @@ def proc_snapshot(pid):
         s = fd.stat()
         info["owner_marker"] = {"fd": 9, "path": os.readlink(fd), "dev": s.st_dev, "ino": s.st_ino,
                                 "uid": s.st_uid, "mode": stat.S_IMODE(s.st_mode), "regular": stat.S_ISREG(s.st_mode)}
+        info["owner_file"] = (s.st_dev, s.st_ino)
     except OSError:
         info["owner_marker"] = None
+        info["owner_file"] = None
     return info
 
 
@@ -149,6 +151,11 @@ def verify_process(m, n, snapshot=proc_snapshot):
                 and (s.st_dev, s.st_ino) == (marker["dev"], marker["ino"])
                 and s.st_size in (32, 33) and path.read_text().rstrip("\n") == m["ownerNonce"],
                 "owner nonce file identity/content changed")
+    elif n.get("owner_fd") == 9:
+        # Upstream's receipt-FD format also survives argv/environ rewriting.
+        # Never use it as fallback when the stronger owner-marker was recorded.
+        owner = (Path(m["workdir"]) / "owner.json").stat()
+        require(p.get("owner_file") == (owner.st_dev, owner.st_ino), "node owner descriptor changed")
     else:
         for key, value in (("TARN_KV_OWNER_NONCE", m["ownerNonce"]), ("TARN_KV_NODE_ID", n["node_id"]),
                            ("TARN_KV_WORKDIR", n["workdir"])):

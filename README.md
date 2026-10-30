@@ -59,7 +59,7 @@ read them as **key/value**.
   adds freshness, ownership and write-claim checks; its measurements are
   separate from raw-native read rates.
 * **Verified where it matters.** The commit protocol is specified in TLA+
-  and checked with TLC (297 default configurations, including 222
+  and checked with TLC (300 default configurations, including 224
   broken or tradeoff cases that TLC must expose). Shard routing, commit decisions,
   the MySQL packet codec and the MessagePack of the native storage procedures are
   proven correct with [Verus](https://github.com/verus-lang/verus) and compiled
@@ -189,6 +189,10 @@ read components; the older throughput tables retain their original scope.
 covers and how to run it.
 
 ## Documentation
+
+[Outcomes and retry rules](docs/outcomes.md) cover known aborts, unknown
+mutations, pending APPLY and durable operation IDs.
+
 
 | | |
 |---|---|
