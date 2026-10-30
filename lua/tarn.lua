@@ -7840,6 +7840,7 @@ BK.production_functions = {
         'tarn_read_contract',
         'tarn_rebalance_get',
         'tarn_rebalance_put',
+        'tarn_reduce',
         'tarn_schema_export',
         'tarn_schema_import',
         'tarn_select',

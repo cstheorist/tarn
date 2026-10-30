@@ -49,3 +49,14 @@ TLS upstream client had different Nagle settings, and TLS acceptance also
 introduced a roughly 40 ms delayed-ACK handshake cost. They are retained to
 show why the matrix was corrected and repeated, not to support current cost
 claims. The final source-bound runs above supersede them.
+
+## Independent main-integration review
+
+The [October 30 review receipts](review-oct30/index.json) retain an actual TLS
+service denial for the newly merged optional `tarn_reduce` SQL RPC, followed by
+passing native-enabled and Lua fixtures after adding exactly that procedure.
+Both engines return exact aggregates and increment real reduction counters.
+All 28 local checks pass per mode, including retained EVAL/test-hook/raw-write
+denials, rotation, leader restart and witnessed 40003 with one exact effect.
+These debug-build functional runs cover PyMySQL; they do not replace the full
+release driver matrix or the historical source-bound cost observations above.

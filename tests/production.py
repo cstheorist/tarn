@@ -213,6 +213,10 @@ class Fixture:
         deploy.dump(self.work / "inventory.json", inv)
         self.config = self.work / "config"
         deploy.render(self.work / "inventory.json", self.config)
+        # Exercise the opt-in SQL read RPC through the actual service ACL.
+        config = json.loads((self.config / "cluster.json").read_text())
+        config["query_pushdown"] = True
+        deploy.dump(self.config / "cluster.json", config)
         self.result["versions"]["openssl"] = (
             run(["openssl", "version"]).stdout.decode().strip()
         )
@@ -524,9 +528,15 @@ class Fixture:
                 assert self.query(f"SELECT * FROM {engine}_t ORDER BY n", c) == (
                     (1, 11, 0),
                 )
+                before = int(self.query("SHOW GLOBAL STATUS LIKE 'Tarn_storage_reductions'", c)[0][1])
+                assert self.query(
+                    f"SELECT COUNT(*),SUM(n),MIN(n),MAX(n) FROM {engine}_t WHERE id>=0 AND n>=0", c
+                ) == ((1, 11, 11, 11),)
+                assert int(self.query("SHOW GLOBAL STATUS LIKE 'Tarn_storage_reductions'", c)[0][1]) > before
             self.record(
                 "authenticated TLS DDL, native data reads and transactions on memtx and vinyl"
             )
+            self.record("typed reductions execute through the service ACL on memtx and vinyl")
         # Drive storage directly through net.box over private sockets for
         # exact authorization checks; the mTLS network test follows below.
         probe = self.work / "acl.lua"
