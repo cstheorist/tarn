@@ -7,7 +7,7 @@ These controls mock SQL execution, start no services and perform no writes.
 """
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 import kvfaults
 import kvtest
@@ -33,6 +33,23 @@ def driver():
         return len(test.events)
 
     test.record = record
+    return test
+
+
+def quorum_driver(error=None, result=None):
+    test = driver()
+    test.tenant, test.values = 7, {"memtx": {1: 11, 2: 12, 99: None}}
+    test.paired_values = Mock()
+    test.leader = Mock(return_value=({"node_id": "s1r1", "endpoint": "owner"}, {"table": {}, "ownership": {}}))
+    test.configuration = Mock(return_value={"clock": {"fault": None}})
+    test.group_nodes = Mock(return_value=[{"node_id": "s1r" + str(i)} for i in (1, 2, 3)])
+    test.signal, test.restore, test.retarget, test.caught_up = Mock(), Mock(), Mock(), Mock()
+    test.public = Mock(return_value={"version": 1, "status": "error", "error": {
+        "kind": "unavailable", "domain": "tarantool", "code": 0, "message": "timed out"}})
+    test.state = Mock(return_value={"clock": {"fault": None}, "ro": True})
+    test.sdk = Mock(return_value={"version": 1, "status": "error", "error": {"kind": "transport"}})
+    test.connect = MagicMock()
+    test.sql = Mock(side_effect=error, return_value=result)
     return test
 
 
@@ -145,6 +162,63 @@ class ReadonlyRouteControls(unittest.TestCase):
         self.assertEqual(query.call_count, 1)
         self.assertEqual(test.completed, 0)
         self.assertEqual(test.ack, 42)
+
+    def test_quorum_timeout_namespace_cause_and_state_are_exact(self):
+        message = "Lost connection to MySQL server during query (timed out)"
+        self.assertEqual(kvfaults.quorum_sql_outcome(refusal(message, None, 2013)), "client_read_timeout")
+        self.assertEqual(kvfaults.quorum_sql_outcome(refusal()), "server_refusal")
+        for error in (refusal(message, "40003", 2013), refusal(message, "HY000", 2013),
+                      refusal(message + " unrelated", None, 2013), refusal("Lost connection", None, 2013),
+                      refusal(message, None, 1041), refusal(state="40003"),
+                      RuntimeError(2013, message), None):
+            with self.subTest(error=error):
+                self.assertIsNone(kvfaults.quorum_sql_outcome(error))
+
+    def test_actual_quorum_controller_records_one_timeout_without_guard_claim(self):
+        test = quorum_driver(refusal("Lost connection to MySQL server during query (timed out)", None, 2013))
+        test.scenario_quorum("memtx")
+        test.sql.assert_called_once()
+        test.restore.assert_called_once()
+        self.assertEqual(test.paired_values.call_count, 2)  # Mandatory before and healed positive paths.
+        event = next(e for e in test.events if e["event"] == "no_quorum_classification")
+        self.assertEqual(event["sql_outcome"]["kind"], "client_read_timeout")
+        self.assertIsNone(event["sql_outcome"]["error"]["sqlstate"])
+        self.assertFalse(event["sql_outcome"]["guard_coverage"])
+        self.assertFalse(event["sql_outcome"]["row_result_returned"])
+        self.assertEqual(event["sql_outcome"]["configured_client_read_timeout_seconds"], 15)
+        self.assertEqual(event["direct_outcome_origin"], "versioned_api_error_envelope")
+
+    def test_quorum_controller_rejects_successful_rows_and_always_restores(self):
+        test = quorum_driver(result=((11,),))
+        with self.assertRaises(AssertionError):
+            test.scenario_quorum("memtx")
+        test.sql.assert_called_once()
+        test.restore.assert_called_once()
+        self.assertEqual(test.paired_values.call_count, 1)
+        self.assertFalse(any(e["event"] == "no_quorum_classification" for e in test.events))
+
+    def test_shared_healed_path_requires_exact_sql_and_sdk_positives(self):
+        test = driver()
+        test.db, test.connect = "owned", MagicMock()
+        test.sdk = Mock(return_value={"status": "ok", "rows": [{"tenant": 7, "id": 1, "v": 11}, None],
+                                    "schema": {"db": "owned", "name": "t", "columns": [
+                                        {"name": "tenant"}, {"name": "id"}, {"name": "v"}]}})
+        with patch.object(kvtest, "q", side_effect=[refusal(), ((11,),), ((7, 1, 11),), (), ((11,),), ()]), \
+                patch.object(kvfaults.time, "sleep"):
+            test.paired_values("t", 7, {1: 11, 99: None})
+        test.sdk.assert_called_once_with("t", [[7, 1], [7, 99]])
+        self.assertEqual(test.completed, 5)
+        self.assertEqual(test.ack, 42)
+
+    def test_bad_healed_sql_image_cannot_proceed_to_sdk_or_count_success(self):
+        test = driver()
+        test.connect, test.sdk = MagicMock(), Mock()
+        with patch.object(kvtest, "q", return_value=((999,),)) as query:
+            with self.assertRaises(AssertionError):
+                test.paired_values("t", 7, {1: 11, 99: None})
+        query.assert_called_once()
+        test.sdk.assert_not_called()
+        self.assertEqual(test.completed, 0)
 
 
 if __name__ == "__main__":

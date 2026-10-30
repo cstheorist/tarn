@@ -36,6 +36,18 @@ def known_ro_serialization(error):
                        "(Can't modify data on a read-only instance)")
 
 
+def quorum_sql_outcome(error):
+    if not isinstance(error, pymysql.MySQLError) or len(error.args) < 2:
+        return None
+    state = getattr(error, "sqlstate", None)
+    if (isinstance(error, pymysql.OperationalError) and error.args[0] == 2013 and state is None
+            and error.args[1] == "Lost connection to MySQL server during query (timed out)"):
+        return "client_read_timeout"
+    if error.args[0] in (7, 97, 1180, 1205, 1213) and state not in ("40003", b"40003"):
+        return "server_refusal"
+    return None
+
+
 STATE = """
 assert(rawget(_G,'tarn')); local name=...; local s=assert(box.space[name])
 return {shard_id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),ro=box.info.ro,
@@ -360,6 +372,7 @@ class FaultTest(Test):
     def paired_values(self, table, tenant, expected):
         keys = [[tenant, key] for key in expected]
         with self.connect() as c:
+            self.warm_readonly_route(c, table, tenant, expected[1], "healthy SQL route has the exact expected value")
             self.paired(c, table, keys, "tenant,id,v", "tenant=%s AND id=%s")
             for key, value in expected.items():
                 rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=%s", (tenant, key))
@@ -393,7 +406,7 @@ class FaultTest(Test):
                 if time.monotonic() >= deadline:
                     raise
             else:
-                self.check(label, rows == ((expected,),), rows=rows, attempt=attempt,
+                self.check(label, rows == ((expected,),), rows=rows, attempt=attempt, table=table,
                            sql_pool_size=pool_size, max_attempts=max_attempts,
                            scope="exact positive SELECT required before the subsequent once-only mutation")
                 return rows
@@ -601,18 +614,32 @@ class FaultTest(Test):
             self.check("no-quorum actual SDK returns a typed whole error", sdk.get("status") == "error"
                        and "rows" not in sdk and sdk.get("error", {}).get("kind") in
                        ("moved", "unavailable", "deadline", "transport", "transport_server"), reply=sdk)
-            sql_error = None
+            sql_error, sql_kind, sql_result = None, None, None
+            query_started, query_finished, result_returned = None, None, False
             try:
                 with self.connect() as c:
-                    self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
+                    query_started = time.monotonic_ns()
+                    sql_result = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
+                    result_returned = True
             except pymysql.MySQLError as caught:
-                sql_error = list(caught.args)
-            self.check("no-quorum SQL returns a storage/refusal error", sql_error is not None
-                       and sql_error[0] in (7, 97, 1180, 1205, 1213), error=sql_error)
+                sql_kind = quorum_sql_outcome(caught)
+                sql_error = {"type": type(caught).__name__, "args": list(caught.args),
+                             "errno": caught.args[0] if caught.args and isinstance(caught.args[0], int) else None,
+                             "sqlstate": getattr(caught, "sqlstate", None)}
+            finally:
+                query_finished = time.monotonic_ns()
+            outcome = {"kind": sql_kind, "error": sql_error, "row_result_returned": result_returned,
+                       "configured_client_read_timeout_seconds": 15,
+                       "elapsed_ns": query_finished - query_started if query_started is not None else None,
+                       "guard_coverage": False}
+            self.check("no-quorum SQL yields a classified no-row outcome",
+                       query_started is not None and not result_returned and sql_kind is not None,
+                       outcome=outcome, unexpected_result=sql_result)
             self.record("no_quorum_classification", before=before, after=observed,
                         first_guard="role" if error.get("domain") == "tarantool" and error.get("code") == 7
-                        else "clock" if "clock" in error.get("message", "").lower() else "barrier_or_transport",
-                        direct_error=error,
+                        else "clock" if "clock" in error.get("message", "").lower() else "unspecified_api_error",
+                        direct_error=error, direct_outcome_origin="versioned_api_error_envelope",
+                        sdk_outcome_kind=sdk.get("error", {}).get("kind"), sql_outcome=outcome,
                         scope="known-RO if role fencing precedes barrier; no arbitrary partition claim")
         finally:
             self.restore()
