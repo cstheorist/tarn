@@ -1,0 +1,22 @@
+{
+  "failure_run": 41101768716,
+  "failure_job": 124220089816,
+  "failure_source": "9950f4fc2502e0355c0be4aac5dd5d5b654bebdb",
+  "reviewed_PR": 213,
+  "fix_parent": "f4a0a8f341c9c851f3001d964c08de70cc5ba388",
+  "sql_error": {
+    "args": [
+      2003,
+      "shard 1 has no reachable leader (127.0.0.1:57089 is read-only)"
+    ],
+    "errno": 2003,
+    "sqlstate": null,
+    "type": "OperationalError"
+  },
+  "history_sequence": 334,
+  "boundary": "Only a bounded independent autocommit SELECT before any BEGIN/mutation can repeat. Accept exact read-only discovery messages naming the known RF3 inventory, plus the existing known leader-change refusal. Unknowns, other 2003 errors and the eighth refusal stop. No production mutation or query retry changed.",
+  "files": {
+    "original-job.out.gz": "40daa9c3e8a11a1c8cb97c2ad0fa70e49ab08961d4f6e25c80a79186be12865f",
+    "original-41101768716.tar.gz": "58ebd0b9e0f6ceec1ba031de00c3c7356ab6974640050179299801b32a8a697b"
+  }
+}
