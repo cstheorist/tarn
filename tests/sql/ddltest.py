@@ -396,8 +396,35 @@ class T:
         q(c, "DROP TABLE IF EXISTS ec_online")
         q(c, "CREATE TABLE ec_online (tenant INT NOT NULL,id INT NOT NULL,n INT,tag VARCHAR(20),"
              "PRIMARY KEY(tenant,id)) PARTITION BY KEY(tenant) ENGINE=memtx")
-        expected = {(tenant, identity): [0, "seed"] for tenant in range(1, 17) for identity in range(128)}
-        for tenant in range(1, 17):
+        # An earlier movement suite may leave the first fixed tenant keys
+        # on one shard. Bind the seed to the current confirmed bucket map,
+        # then independently check the actual native rows below.
+        from movetest import bucket_of
+        maps = [rpc(node, "tarn_buckets", []) for node in nodes]
+        count = maps[0][1]
+        assert count > 0 and all(m[0] == "ok" and m[1] == count
+                                 and all(note[1] == "sent" for note in m[4]) for m in maps), maps
+        owners = {}
+        for shard, m in enumerate(maps):
+            for lo, hi in m[3]:
+                for bucket in range(lo, hi + 1):
+                    assert bucket not in owners, (bucket, maps)
+                    owners[bucket] = shard
+        assert len(owners) == count, "copy fixture requires a complete stable bucket map"
+        for shard, m in enumerate(maps):
+            assert all(owners[note[0]] != shard for note in m[4]), maps
+        selected = [[], []]
+        for tenant in range(1, count * 64 + 1):
+            shard = owners[bucket_of(tenant, count)]
+            if len(selected[shard]) < 8:
+                selected[shard].append(tenant)
+            if all(len(keys) == 8 for keys in selected):
+                break
+        assert all(len(keys) == 8 for keys in selected), ("no bounded two-shard tenant seed", selected)
+        tenants = sorted(key for keys in selected for key in keys)
+        print(f"    copy fixture tenants by current shard: {selected}")
+        expected = {(tenant, identity): [0, "seed"] for tenant in tenants for identity in range(128)}
+        for tenant in tenants:
             q(c, "INSERT INTO ec_online VALUES " + ",".join(f"({tenant},{identity},0,'seed')" for identity in range(128)))
 
         for engine in ("vinyl", "memtx"):
