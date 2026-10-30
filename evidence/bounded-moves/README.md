@@ -60,8 +60,8 @@ study; fault-case throughput is not presented as a performance comparison.
 ## Validation and source boundaries
 
 The [build receipt](build-receipt.json) binds the scale/fault binaries to all Rust
-inputs and verifies them through `cd1ad67`. A later catalog freshness correction
-changes the gateway; it does not change the movement protocol or native module.
+inputs and verifies them through `cd1ad67`. Later catalog freshness and rebalance-admission corrections
+change the gateway; neither changes the movement wire protocol or native module.
 The original timings remain bound to their original binary, not the later build.
 Later Lua changes protect native guard error state, reject invalid limits before
 initialization, and replace the backup drain check's estimated Vinyl length with
@@ -150,7 +150,7 @@ Vinyl index-build setup refused by admission at the movement study's smaller
 setting; the fixed-memory movement cohorts retain their original 16 MiB limit.
 
 The updated gateway's [build receipt](catalog-build-receipt.json) binds source
-`8c47d63` to the final local binaries. Both engines pass all 1,083 differential
+`8c47d63` to the catalog-corrected local binaries. Both engines pass all 1,083 differential
 cases and 21 concurrent DDL tests; Vinyl also passes ten lazy semantics and
 four lazy recovery cases. Four further RF3/fsync mixed-engine movement cases
 (source/coordinator crash × native/Lua) pass with exact effect reconciliation
@@ -192,3 +192,46 @@ unchanged. The [original failure](checks/kv-integration-before.out) and
 [complete corrected 210-check run](checks/kv-integration-after.out) are
 retained. All 27 lazy baseline checks and 66 bounded movement checks
 also pass on the combined storage source.
+
+## Joined shards and temporary movement admission
+
+Hosted revision `4054480` (tested merge `9819280`) passed the full 293 model
+outcomes (74 positive and 219 intended violations), both maintenance migrations,
+Verus, lint, all six topology configurations, and the main job through native/Lua
+storage, backup/restore, all 18 bounded RF3 cases, both SQL/transaction/DDL/lazy
+suites, Vinyl pressure, RPC limits, lost-mutation-reply checks, DDL faults and
+move-coordinator faults. Its later join-fault step failed: the new movement
+capability check consulted only startup configuration and missed a newly joined
+shard. This failure is retained in [the original CI output](checks/join-admission-ci-failure.out.gz).
+The fix uses the existing replica lookup, which falls back to durable membership,
+and still requires every listed replica to advertise protocol 2.
+
+The [complete formal output](checks/formal-full-4054480.out.gz) and
+[original hosted movement artifact](checks/hosted-movement-4054480.zip) are
+retained. All 18 result files report success: 5,055 acknowledged ledger effects,
+320 confirmed aborts excluded and one unknown outcome reconciled without replay.
+These are correctness runs using hosted release binaries, not replacements for
+the matched local scale measurements.
+
+Expanded local growth tests then exposed temporary slot refusals being counted
+as terminal rebalance failures when requested parallelism exceeded storage
+capacity. The rebalancer now reschedules only the two explicit temporary
+`1041` slot/copy-buffer refusals. It waits for the previous move's durable job
+and cleanup; hard byte/disk limits and `1180/40003` do not enter this new path.
+The default four-slot limit is unchanged. The pre-fix rate-limited control
+retained five refused moves; it is not relabeled as a successful run.
+
+The first local join restart was also blocked by zombie gateway processes owned
+by the test container's `sleep` PID 1. An external fixture subreaper corrects
+process collection without modifying production or test assertions. Both that
+initial restart failure and the later capacity failure remain in the evidence.
+
+All seven follow-up controls pass with the capacity fix: join fault recovery,
+join/removal under load with old-configuration restart, and growth/removal with
+rate limits, cancellation and coordinator takeover in both native and Lua modes;
+plus an RF3/fsync Vinyl join/removal workload. All 202 SQL units and SQL clippy
+pass. The [index](membership-followup-index.json), [hashed source/config/log archive](membership-followup-runs.tar.gz)
+and [build inputs](membership-build-receipt.json) retain the exact pre-integration
+source and binaries. A concurrent release-stack review independently added the
+same joined-shard lookup fix in `9eb7407`; these results precede that larger
+stack's integration and do not claim to qualify its unrelated features.
