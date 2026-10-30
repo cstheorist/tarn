@@ -76,6 +76,7 @@ class Test:
         self.stats = {"commit": 0, "conflict": 0, "acked": set(), "aborted": set(), "ambiguous": set(),
                       "err": [], "audits": 0, "rc_reads": 0, "bad": [], "moves": 0, "move_errs": [],
                       "rc_ok": 0, "rc_conflict": 0, "inc_ok": [], "inc_amb": []}
+        self.seqs = {}   # the last ledger id of each transfer thread, across workload windows
 
     def check(self, cond, what):
         print(f"  {'ok  ' if cond else 'FAIL'} {what}")
@@ -107,14 +108,15 @@ class Test:
 
     # ---- workload -------------------------------------------------------------
     def transfer(self, k, stop):
-        rnd = random.Random(k)
+        seq = self.seqs.get(k, 0)
+        rnd = random.Random(k if seq == 0 else k * 1000 + seq)
         c = connect(self.server(k))
-        seq = 0
         a = self.args
         while time.time() < stop:
             x, y = rnd.sample(range(a.accounts), 2)
             amt = rnd.randint(1, 50)
             seq += 1
+            self.seqs[k] = seq
             lid = k * 1_000_000 + seq
             stage = "body"
             try:
@@ -291,7 +293,27 @@ class Test:
             t.start()
         for t in th:
             t.join()
+        self.until_reads()
         return self.finish()
+
+    def until_reads(self):
+        """Serializable audits conflict with the concurrent transfers, and a
+        window can end before one commits (a few commit in 20 s). Until both
+        kinds of ordered read have completed, run the whole workload, moves
+        included, for further windows (at most three), so that their checks
+        in finish() hold under load and are never vacuous."""
+        extend = getattr(self.args, "extend", 10.0)
+        for _ in range(3):
+            missing = [name for name, key in (("serializable audit", "audits"), ("READ COMMITTED read", "rc_reads"))
+                       if self.stats[key] == 0]
+            if not missing:
+                return
+            print(f"  no {' or '.join(missing)} completed yet: the workload runs {extend:.0f} s more")
+            th = self.workload(time.time() + extend)
+            for t in th:
+                t.start()
+            for t in th:
+                t.join()
 
     def finish(self):
         """The checks once the workload stopped: the number of failures."""
@@ -362,6 +384,8 @@ def main():
     ap.add_argument("--counters", type=int, default=8)
     ap.add_argument("--move-pause", type=float, default=0.05)
     ap.add_argument("--min-moves", type=int, default=10)
+    ap.add_argument("--extend", type=float, default=10,
+                    help="seconds of each further window of the workload while no ordered read has completed")
     ap.add_argument("--no-moves", action="store_true", help="the same workload without moves (a baseline)")
     ap.add_argument("--settle", type=float, default=90,
                     help="seconds to wait at the end for moves left half done to be finished")
