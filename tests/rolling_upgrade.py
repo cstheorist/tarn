@@ -74,6 +74,7 @@ class Cluster:
                       for i in range(1, shards + 1) for j in range(1, replicas + 1)}
         self.gateway_ports = allocated
         self.processes, self.logs, self.expected = {}, {}, {i: 0 for i in range(1, 17)}
+        self.gateway_versions = {}
         self.stage = 0
         self.config = self.work / "cluster.json"
         self.config.write_text(json.dumps({"shards": [
@@ -182,6 +183,7 @@ return n >= ...
                 with self.sql(slot):
                     return True
             wait("SQL gateway", probe)
+            self.gateway_versions[slot] = version
 
     def sql(self, slot=0, db=None):
         return pymysql.connect(host="127.0.0.1", port=self.gateway_ports[slot], user="sb", password="",
@@ -210,6 +212,26 @@ return n >= ...
         nodes = self.leaders()
         for slot in slots:
             with self.sql(slot, "upgrade") as c:
+                if self.gateway_versions[slot] == "new":
+                    inspection = next(row for row in q(c, "SHOW TARN INTEGRITY FROM upgrade") if row[0] == "t")
+                    assert inspection[-1] == "NOT_CERTIFIED", inspection
+                    if inspection[1] == "LEGACY_UNENFORCED":
+                        # This exact fixture's predecessor DDL has no unsupported
+                        # declarations. Keep the production default and prove its
+                        # refusal before explicitly acknowledging the old schema.
+                        assert q(c, "SELECT @@tarn_legacy_integrity") == (("REJECT",),)
+                        try:
+                            q(c, "UPDATE t SET v=v+9999 WHERE id=1")
+                        except pymysql.MySQLError as error:
+                            assert error.args[0] == 1235, error
+                        else:
+                            raise AssertionError("legacy write accepted without explicit acknowledgment")
+                        assert q(c, "SELECT id,v FROM t ORDER BY id") == tuple(sorted(self.expected.items()))
+                        q(c, "SET SESSION tarn_legacy_integrity='ALLOW'")
+                        assert next(row for row in q(c, "SHOW TARN INTEGRITY FROM upgrade")
+                                    if row[0] == "t") == inspection
+                        self.event("legacy_integrity_acknowledged", slot=slot, inspection=list(inspection),
+                                   default_refusal=1235, unchanged_rows=True)
                 q(c, "BEGIN")
                 q(c, "UPDATE t SET v=v+9999 WHERE id=1")
                 assert q(c, "SELECT v FROM t WHERE id=1") == ((self.expected[1] + 9999,),)

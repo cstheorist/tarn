@@ -88,7 +88,15 @@ format and provides no format-conversion operation.
    tuples, prepared/decision cleanup and outbox progress. Check logs for
    native-copy differences, atomic-section yields, and new errors.
 5. Start one new gateway with a distinct node ID. It must negotiate every
-   live shard before binding its MySQL listener. Compare exact canary
+   live shard before binding its MySQL listener. Inspect legacy tables with
+   `SHOW TARN INTEGRITY`: the predecessor did not record declaration provenance,
+   so new gateways refuse their SQL writes by default. Migrate those schemas,
+   or deliberately acknowledge the old unenforced behavior with session-only
+   `SET tarn_legacy_integrity='ALLOW'` after inspecting the original declarations.
+   This never certifies rows or promotes unknown history; see the
+   [integrity migration contract](integrity.md). Predecessor gateways retain
+   their old behavior, so upgrade all gateways before relying on admission.
+   Compare exact canary
    results through old and new gateways, then replace the remaining
    gateways one at a time. Drain a gateway's sessions before stopping it;
    a lost COMMIT reply is still outcome-unknown and needs reconciliation,
@@ -102,8 +110,12 @@ The automated regression starts a fresh RF3 cluster and verifies schema,
 native initialization and SQL canaries before testing upgrades. It retains durable YES records during
 follower replacement and gateway replacement, then applies twice to check
 idempotence. It also runs DDL, moves and exact lazy-index comparisons in
-mixed storage stages and through both gateway versions. This is bounded
-functional evidence, not an availability or throughput guarantee under
+mixed storage stages and through both gateway versions. The new gateway's
+legacy-table canary first proves
+default refusal and unchanged exact rows, then explicitly acknowledges only
+the fixture's known predecessor schema; inspection must remain uncertified.
+The fixture does not automatically opt production sessions into legacy writes.
+This is bounded functional evidence, not an availability or throughput guarantee under
 arbitrary outages. RF1 has no rolling storage availability; stop traffic
 while restarting its only replica.
 
