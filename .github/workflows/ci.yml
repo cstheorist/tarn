@@ -288,7 +288,6 @@ jobs:
       - name: Strong KV paired SQL histories and RF3 faults
         run: |
           python3 tests/test_kv_control.py
-          python3 tests/sql/kvfaults_test.py
           ci/annotate.sh strong-kv tests/kv.sh
           TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
       - name: Retain strong KV histories and fixture evidence

@@ -5,6 +5,12 @@ comparison, accounting and uncertainty. `index.json` hashes the retained
 artifacts; `provenance.json` records source, local build limits and failed
 attempts. No failed or incomplete attempt is counted as qualification.
 
+The final local runtime measurements and 307-model manifest are bound to
+`a20867b`; later integration of main `8960b9b` preserves the routing code but
+adds other runtime changes and expands the default registry to 319 models.
+Historical measurements and model outputs are not relabeled as current-source
+validation. Their recorded input hashes remain the audit boundary.
+
 * `bound-{uniform,skewed}-{1,4,16}.tar.gz`: six local cases, each with five
   alternating baseline/composite pairs, ten seconds per arm, four RF3/fsync
   groups, 32 client threads/four processes and a twelve-CPU quota. Each
