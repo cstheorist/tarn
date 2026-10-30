@@ -235,3 +235,12 @@ and [build inputs](membership-build-receipt.json) retain the exact pre-integrati
 source and binaries. A concurrent release-stack review independently added the
 same joined-shard lookup fix in `9eb7407`; these results precede that larger
 stack's integration and do not claim to qualify its unrelated features.
+
+The capacity change was then applied to the integrated release source
+(`b90abdf` over `ad3aeb6`) without replacing the independent review's fixes.
+All 231 SQL unit tests and strict SQL clippy pass. Native and Lua growth/removal
+with rate limits, cancellation and coordinator takeover pass again, as does
+the RF3/fsync Vinyl join/removal and old-configuration restart. The
+[integrated source/build index](integrated-capacity-index.json) and
+[hashed logs/configuration archive](integrated-capacity-runs.tar.gz) bind these
+results to the combined source. Full release CI remains an independent gate.
