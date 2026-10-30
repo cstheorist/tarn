@@ -1,0 +1,2121 @@
+{
+  "complete": false,
+  "source": "9c38f9b69e13aeb18152d5205974bb158db84483",
+  "modes": [
+    {
+      "engine": "memtx",
+      "native": "disabled",
+      "totals": {
+        "samples": 60,
+        "attempts": 139402,
+        "acknowledged": 139402,
+        "refused": 0
+      },
+      "groups": [
+        {
+          "shape": "uncontended",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 378.1629180192796,
+                "latency": {
+                  "ok": {
+                    "p50": 0.002591831000017919,
+                    "p99": 0.0034455240000283993
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41721.211416490485,
+                "tx_cpu_seconds_per_ack": 0.0011257928118393234
+              },
+              "batched": {
+                "goodput": 382.28066650258313,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0025636210000357096,
+                    "p99": 0.0032211989999950674
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36742.97489539749,
+                "tx_cpu_seconds_per_ack": 0.0010930962343096234
+              },
+              "goodput_ratio": 1.0108888214235052,
+              "lua_allocation_ratio": 0.8806785241349602,
+              "tx_cpu_ratio": 0.9709568428703321
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 380.06287453107103,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0025703499999849555,
+                    "p99": 0.003479683999955796
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41716.186217780116,
+                "tx_cpu_seconds_per_ack": 0.0011309836927932667
+              },
+              "batched": {
+                "goodput": 383.11095643204175,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0025556240000241814,
+                    "p99": 0.003344314999992548
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36495.16127348643,
+                "tx_cpu_seconds_per_ack": 0.0011116910229645094
+              },
+              "goodput_ratio": 1.0080199411866564,
+              "lua_allocation_ratio": 0.8748441452189031,
+              "tx_cpu_ratio": 0.982941690537457
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 382.3921548740542,
+                "latency": {
+                  "ok": {
+                    "p50": 0.002563149000025078,
+                    "p99": 0.003335278000008657
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41757.38159958181,
+                "tx_cpu_seconds_per_ack": 0.0011134343962362781
+              },
+              "batched": {
+                "goodput": 379.6417341945605,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0025690999999596897,
+                    "p99": 0.0035876670000334343
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36485.9831490258,
+                "tx_cpu_seconds_per_ack": 0.0011163770405476568
+              },
+              "goodput_ratio": 0.9928073297413762,
+              "lua_allocation_ratio": 0.873761278877486,
+              "tx_cpu_ratio": 1.0026428537876373
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 378.0263186808798,
+                "latency": {
+                  "ok": {
+                    "p50": 0.002587215999938053,
+                    "p99": 0.00344509299998208
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41677.084611316764,
+                "tx_cpu_seconds_per_ack": 0.0011316763617133792
+              },
+              "batched": {
+                "goodput": 376.88882819781264,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0025743239999656,
+                    "p99": 0.004005722999977479
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36378.446684350136,
+                "tx_cpu_seconds_per_ack": 0.0011087533156498672
+              },
+              "goodput_ratio": 0.9969909754245778,
+              "lua_allocation_ratio": 0.8728644775328679,
+              "tx_cpu_ratio": 0.9797441681747191
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 377.7389534566344,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0025957119999020506,
+                    "p99": 0.0033807539999770597
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41997.98994176813,
+                "tx_cpu_seconds_per_ack": 0.001111699311805188
+              },
+              "batched": {
+                "goodput": 359.26103976982205,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0026846649999470173,
+                    "p99": 0.004634629000065615
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36616.79020589872,
+                "tx_cpu_seconds_per_ack": 0.00114079020589872
+              },
+              "goodput_ratio": 0.9510828483064199,
+              "lua_allocation_ratio": 0.8718700646547451,
+              "tx_cpu_ratio": 1.0261679518774676
+            }
+          ],
+          "median_goodput_ratio": 0.9969909754245778,
+          "goodput_ratio_range": [
+            0.9510828483064199,
+            1.0108888214235052
+          ]
+        },
+        {
+          "shape": "unrelated",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 932.6821848782946,
+                "latency": {
+                  "ok": {
+                    "p50": 0.00842374500001597,
+                    "p99": 0.012930471999993642
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43232.898050974516,
+                "tx_cpu_seconds_per_ack": 0.0008395802098950524
+              },
+              "batched": {
+                "goodput": 933.2608774517698,
+                "latency": {
+                  "ok": {
+                    "p50": 0.00848913499999071,
+                    "p99": 0.01264203600004521
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38250.94905821918,
+                "tx_cpu_seconds_per_ack": 0.0008261986301369863
+              },
+              "goodput_ratio": 1.0006204606272722,
+              "lua_allocation_ratio": 0.8847648615440658,
+              "tx_cpu_ratio": 0.9840615826810176
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 934.5380946429775,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008456760000001395,
+                    "p99": 0.012968970000031277
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43251.85250106883,
+                "tx_cpu_seconds_per_ack": 0.000837964942283027
+              },
+              "batched": {
+                "goodput": 941.7459024088975,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008377407000011772,
+                    "p99": 0.012792082000032678
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38048.07529162248,
+                "tx_cpu_seconds_per_ack": 0.0008186638388123012
+              },
+              "goodput_ratio": 1.007712695509404,
+              "lua_allocation_ratio": 0.8796866051155207,
+              "tx_cpu_ratio": 0.9769666933581491
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 931.7111124014167,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008477855999956319,
+                    "p99": 0.013347805999956108
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43366.93697749196,
+                "tx_cpu_seconds_per_ack": 0.000842443729903537
+              },
+              "batched": {
+                "goodput": 935.6000583079991,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008467527999982849,
+                    "p99": 0.012655787000085184
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 37963.99167378309,
+                "tx_cpu_seconds_per_ack": 0.0008176771989752349
+              },
+              "goodput_ratio": 1.0041739825304423,
+              "lua_allocation_ratio": 0.8754132599562411,
+              "tx_cpu_ratio": 0.9706015606156413
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 923.5462484717244,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008535381000001507,
+                    "p99": 0.01335786000004191
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43205.89662629758,
+                "tx_cpu_seconds_per_ack": 0.0008304498269896194
+              },
+              "batched": {
+                "goodput": 941.6658767890741,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008385815999986335,
+                    "p99": 0.01288168099995346
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 37951.65874867445,
+                "tx_cpu_seconds_per_ack": 0.0008207847295864263
+              },
+              "goodput_ratio": 1.0196196220247051,
+              "lua_allocation_ratio": 0.8783907223805858,
+              "tx_cpu_ratio": 0.9883616118769883
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 895.7324486536136,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008692325999959394,
+                    "p99": 0.014325708000001214
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43533.80936454849,
+                "tx_cpu_seconds_per_ack": 0.0008405797101449275
+              },
+              "batched": {
+                "goodput": 881.8962365285664,
+                "latency": {
+                  "ok": {
+                    "p50": 0.008914990999983274,
+                    "p99": 0.014227487999960431
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38052.11707427536,
+                "tx_cpu_seconds_per_ack": 0.0008197463768115942
+              },
+              "goodput_ratio": 0.984553186449989,
+              "lua_allocation_ratio": 0.8740819521588405,
+              "tx_cpu_ratio": 0.9752155172413793
+            }
+          ],
+          "median_goodput_ratio": 1.0041739825304423,
+          "goodput_ratio_range": [
+            0.984553186449989,
+            1.0196196220247051
+          ]
+        },
+        {
+          "shape": "hot",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 446.1393240596966,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017636475000017526,
+                    "p99": 0.022595186999978978
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45211.846291331545,
+                "tx_cpu_seconds_per_ack": 0.0010813226094727436
+              },
+              "batched": {
+                "goodput": 451.0571799517912,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017493832000013754,
+                    "p99": 0.02145372999996198
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40067.88461538462,
+                "tx_cpu_seconds_per_ack": 0.0010654288240495137
+              },
+              "goodput_ratio": 1.0110231392457047,
+              "lua_allocation_ratio": 0.8862253568942797,
+              "tx_cpu_ratio": 0.9853015323234758
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 444.1414384501929,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017648191999967366,
+                    "p99": 0.022616244999994706
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45257.67280071813,
+                "tx_cpu_seconds_per_ack": 0.001104129263913824
+              },
+              "batched": {
+                "goodput": 445.0174417956908,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017640442000015355,
+                    "p99": 0.022638095000047542
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40147.89023297491,
+                "tx_cpu_seconds_per_ack": 0.0010797491039426523
+              },
+              "goodput_ratio": 1.0019723522050874,
+              "lua_allocation_ratio": 0.8870957729036801,
+              "tx_cpu_ratio": 0.9779191071480606
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 447.8545043547473,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017601726999998846,
+                    "p99": 0.022122176000038962
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45265.32131731197,
+                "tx_cpu_seconds_per_ack": 0.001081441922563418
+              },
+              "batched": {
+                "goodput": 450.03141504409297,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017515821999950276,
+                    "p99": 0.02197968299992681
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 39845.91360212672,
+                "tx_cpu_seconds_per_ack": 0.0010722197607443509
+              },
+              "goodput_ratio": 1.0048607542587566,
+              "lua_allocation_ratio": 0.8802746217751343,
+              "tx_cpu_ratio": 0.9914723466636033
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 442.03814580601335,
+                "latency": {
+                  "ok": {
+                    "p50": 0.01783557299995664,
+                    "p99": 0.022644975000048362
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45206.7050067659,
+                "tx_cpu_seconds_per_ack": 0.0010915651781686964
+              },
+              "batched": {
+                "goodput": 448.229170115827,
+                "latency": {
+                  "ok": {
+                    "p50": 0.017594878000068093,
+                    "p99": 0.021907756000018708
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40033.95864828813,
+                "tx_cpu_seconds_per_ack": 0.001071587372165407
+              },
+              "goodput_ratio": 1.0140056336055001,
+              "lua_allocation_ratio": 0.885575682684602,
+              "tx_cpu_ratio": 0.9816980182193005
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 397.73535890279805,
+                "latency": {
+                  "ok": {
+                    "p50": 0.019120072999953663,
+                    "p99": 0.03256199600002674
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45679.5984962406,
+                "tx_cpu_seconds_per_ack": 0.0012080200501253134
+              },
+              "batched": {
+                "goodput": 432.7886643557812,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0180846969999493,
+                    "p99": 0.023601612999982535
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 39903.89226519337,
+                "tx_cpu_seconds_per_ack": 0.0011003683241252304
+              },
+              "goodput_ratio": 1.0881322333264056,
+              "lua_allocation_ratio": 0.8735604860554418,
+              "tx_cpu_ratio": 0.9108858118795994
+            }
+          ],
+          "median_goodput_ratio": 1.0110231392457047,
+          "goodput_ratio_range": [
+            1.0019723522050874,
+            1.0881322333264056
+          ]
+        }
+      ],
+      "complete": true
+    },
+    {
+      "engine": "memtx",
+      "native": "enabled",
+      "complete": false,
+      "failure": "TimeoutExpired(['bash', '/tmp/rc186-paired-_ygcyq95/scalar/scripts/cluster.sh', 'start', '-d', '/tmp/rc186-paired-_ygcyq95/cluster-0-scalar', '-n', '2', '-r', '3', '-w', 'fsync', '-p', '4000', '-s', '1', '-m', '256', '-e', 'memtx'], 179.99997790900005)"
+    },
+    {
+      "engine": "vinyl",
+      "native": "disabled",
+      "totals": {
+        "samples": 60,
+        "attempts": 152899,
+        "acknowledged": 152899,
+        "refused": 0
+      },
+      "groups": [
+        {
+          "shape": "uncontended",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 427.95623813658926,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020297830000117756,
+                    "p99": 0.010448567999958414
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42108.478037383175,
+                "tx_cpu_seconds_per_ack": 0.0009205607476635514
+              },
+              "batched": {
+                "goodput": 300.43892912241597,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0019837859999825014,
+                    "p99": 0.060490479000009145
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 37203.43169761273,
+                "tx_cpu_seconds_per_ack": 0.0009018567639257295
+              },
+              "goodput_ratio": 0.7020318956690286,
+              "lua_allocation_ratio": 0.8835140435278656,
+              "tx_cpu_ratio": 0.9796819669040919
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 361.7200644234326,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020036739999795827,
+                    "p99": 0.018984914000043318
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42219.15588723052,
+                "tx_cpu_seconds_per_ack": 0.0009286898839137645
+              },
+              "batched": {
+                "goodput": 450.2924388252639,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020123670000202765,
+                    "p99": 0.006201886999974704
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 37346.83214920071,
+                "tx_cpu_seconds_per_ack": 0.0008925399644760212
+              },
+              "goodput_ratio": 1.2448644217262654,
+              "lua_allocation_ratio": 0.8845944776573925,
+              "tx_cpu_ratio": 0.9610742831768586
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 399.9679287316195,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0019861470000250847,
+                    "p99": 0.007209826999996949
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42366.0455,
+                "tx_cpu_seconds_per_ack": 0.000905
+              },
+              "batched": {
+                "goodput": 365.86375892172504,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0019724859999996625,
+                    "p99": 0.019272224999895116
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 37072.80546448087,
+                "tx_cpu_seconds_per_ack": 0.000907103825136612
+              },
+              "goodput_ratio": 0.914732738902227,
+              "lua_allocation_ratio": 0.8750593789661315,
+              "tx_cpu_ratio": 1.0023246686592397
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 306.332551698768,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020025709999345054,
+                    "p99": 0.02133732599997984
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 44043.96736292428,
+                "tx_cpu_seconds_per_ack": 0.0009268929503916448
+              },
+              "batched": {
+                "goodput": 464.70195522973825,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0019842069999640444,
+                    "p99": 0.003598426999928961
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36641.271514629945,
+                "tx_cpu_seconds_per_ack": 0.0008864027538726334
+              },
+              "goodput_ratio": 1.5169852261952976,
+              "lua_allocation_ratio": 0.8319248630057372,
+              "tx_cpu_ratio": 0.9563162105161087
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 326.1372732355086,
+                "latency": {
+                  "ok": {
+                    "p50": 0.002051253999979963,
+                    "p99": 0.02120674999991934
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43130.96934396076,
+                "tx_cpu_seconds_per_ack": 0.000944206008583691
+              },
+              "batched": {
+                "goodput": 384.52605771553624,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0019985039999710352,
+                    "p99": 0.009786534999989271
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 36995.55798231929,
+                "tx_cpu_seconds_per_ack": 0.0009048361934477379
+              },
+              "goodput_ratio": 1.1790313137188224,
+              "lua_allocation_ratio": 0.8577492818973577,
+              "tx_cpu_ratio": 0.9583037866969224
+            }
+          ],
+          "median_goodput_ratio": 1.1790313137188224,
+          "goodput_ratio_range": [
+            0.7020318956690286,
+            1.5169852261952976
+          ]
+        },
+        {
+          "shape": "unrelated",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 1202.0828604015883,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006356910000022253,
+                    "p99": 0.013179496999953244
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43253.15824468085,
+                "tx_cpu_seconds_per_ack": 0.0006499335106382979
+              },
+              "batched": {
+                "goodput": 1186.4177394682986,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006253221999998004,
+                    "p99": 0.015566217000014149
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38071.49208487706,
+                "tx_cpu_seconds_per_ack": 0.0006214213539912428
+              },
+              "goodput_ratio": 0.9869683518089124,
+              "lua_allocation_ratio": 0.8802014379969348,
+              "tx_cpu_ratio": 0.9561306561665771
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 1013.0538112272335,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006453358000044318,
+                    "p99": 0.05628490200001579
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43365.30564325178,
+                "tx_cpu_seconds_per_ack": 0.0006550907655880031
+              },
+              "batched": {
+                "goodput": 1058.7952139299261,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006582172999969771,
+                    "p99": 0.02575552000001835
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38767.17965653897,
+                "tx_cpu_seconds_per_ack": 0.0006378561992828835
+              },
+              "goodput_ratio": 1.0451519970565835,
+              "lua_allocation_ratio": 0.8939676333763292,
+              "tx_cpu_ratio": 0.9736913307125463
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 1145.951270089726,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0064029769999933706,
+                    "p99": 0.021833694000065407
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43514.03156059285,
+                "tx_cpu_seconds_per_ack": 0.0006346992153443766
+              },
+              "batched": {
+                "goodput": 1089.047161004121,
+                "latency": {
+                  "ok": {
+                    "p50": 0.00633461800009627,
+                    "p99": 0.03488715800006048
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38133.78760088041,
+                "tx_cpu_seconds_per_ack": 0.0006309611151870873
+              },
+              "goodput_ratio": 0.9503433430627907,
+              "lua_allocation_ratio": 0.8763561139532543,
+              "tx_cpu_ratio": 0.9941104383510839
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 779.1379704791489,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006493648000059693,
+                    "p99": 0.16250898500004496
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43758.61518793148,
+                "tx_cpu_seconds_per_ack": 0.0006673485042188698
+              },
+              "batched": {
+                "goodput": 802.8076487603043,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006390359999954853,
+                    "p99": 0.13494769500005077
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38298.460676953706,
+                "tx_cpu_seconds_per_ack": 0.0006396217023394723
+              },
+              "goodput_ratio": 1.030379315574364,
+              "lua_allocation_ratio": 0.8752210396163618,
+              "tx_cpu_ratio": 0.9584522903638607
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 971.0422996273502,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006566383999938807,
+                    "p99": 0.03728971199996067
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 44106.329218107,
+                "tx_cpu_seconds_per_ack": 0.0006460905349794239
+              },
+              "batched": {
+                "goodput": 1103.9419032078347,
+                "latency": {
+                  "ok": {
+                    "p50": 0.00636023300000943,
+                    "p99": 0.029244280999932926
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 38067.430691277594,
+                "tx_cpu_seconds_per_ack": 0.0006225117625769091
+              },
+              "goodput_ratio": 1.1368628365947462,
+              "lua_allocation_ratio": 0.863083175728207,
+              "tx_cpu_ratio": 0.9635054669184007
+            }
+          ],
+          "median_goodput_ratio": 1.030379315574364,
+          "goodput_ratio_range": [
+            0.9503433430627907,
+            1.1368628365947462
+          ]
+        },
+        {
+          "shape": "hot",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 491.4603136042258,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014068239999971865,
+                    "p99": 0.03980251899997711
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45471.94205834684,
+                "tx_cpu_seconds_per_ack": 0.0008752025931928688
+              },
+              "batched": {
+                "goodput": 505.29359565215196,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013769845000012992,
+                    "p99": 0.0459917509999741
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40210.53094589334,
+                "tx_cpu_seconds_per_ack": 0.0008485792137018296
+              },
+              "goodput_ratio": 1.0281473023660384,
+              "lua_allocation_ratio": 0.8842932394287807,
+              "tx_cpu_ratio": 0.969580323803757
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 549.9456599032626,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013734081000052356,
+                    "p99": 0.025403889000017443
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45322.59013420384,
+                "tx_cpu_seconds_per_ack": 0.0008596300326441785
+              },
+              "batched": {
+                "goodput": 544.0556920288881,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013780121999957373,
+                    "p99": 0.026770879000025616
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40805.642464246426,
+                "tx_cpu_seconds_per_ack": 0.0008507517418408506
+              },
+              "goodput_ratio": 0.9892899093422965,
+              "lua_allocation_ratio": 0.9003378302832568,
+              "tx_cpu_ratio": 0.9896719629768882
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 516.2332873425258,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014189912000006188,
+                    "p99": 0.033141013000090425
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46436.97913446677,
+                "tx_cpu_seconds_per_ack": 0.0008809891808346212
+              },
+              "batched": {
+                "goodput": 491.7324017323064,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013942469000085111,
+                    "p99": 0.05518287899997176
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40297.753446877534,
+                "tx_cpu_seconds_per_ack": 0.0008637469586374695
+              },
+              "goodput_ratio": 0.9525391209537349,
+              "lua_allocation_ratio": 0.8677944646267367,
+              "tx_cpu_ratio": 0.9804285653306014
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 354.8858490078156,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014108856000007108,
+                    "p99": 0.21231288499996026
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46752.434269662925,
+                "tx_cpu_seconds_per_ack": 0.0008932584269662921
+              },
+              "batched": {
+                "goodput": 394.8433240779038,
+                "latency": {
+                  "ok": {
+                    "p50": 0.01402165900003638,
+                    "p99": 0.2018932710000172
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40666.79277471149,
+                "tx_cpu_seconds_per_ack": 0.0008881083793276467
+              },
+              "goodput_ratio": 1.112592472147877,
+              "lua_allocation_ratio": 0.8698326281825215,
+              "tx_cpu_ratio": 0.9942345378636548
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 437.93003060582055,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014472477999902367,
+                    "p99": 0.08389666700009002
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46409.63462414579,
+                "tx_cpu_seconds_per_ack": 0.0008929384965831434
+              },
+              "batched": {
+                "goodput": 516.3057494267533,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013824985000042034,
+                    "p99": 0.04511972299997069
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40236.38292117465,
+                "tx_cpu_seconds_per_ack": 0.000857805255023184
+              },
+              "goodput_ratio": 1.1789685870880102,
+              "lua_allocation_ratio": 0.8669834021972811,
+              "tx_cpu_ratio": 0.9606543544774944
+            }
+          ],
+          "median_goodput_ratio": 1.0281473023660384,
+          "goodput_ratio_range": [
+            0.9525391209537349,
+            1.1789685870880102
+          ]
+        }
+      ],
+      "complete": true
+    },
+    {
+      "engine": "vinyl",
+      "native": "enabled",
+      "totals": {
+        "samples": 60,
+        "attempts": 161940,
+        "acknowledged": 161940,
+        "refused": 0
+      },
+      "groups": [
+        {
+          "shape": "uncontended",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 398.29802311986265,
+                "latency": {
+                  "ok": {
+                    "p50": 0.002042762000002085,
+                    "p99": 0.015009032999984129
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46274.867469879515,
+                "tx_cpu_seconds_per_ack": 0.0009337349397590362
+              },
+              "batched": {
+                "goodput": 282.3066455398427,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020511660000011034,
+                    "p99": 0.0407071559999963
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41906.04745042493,
+                "tx_cpu_seconds_per_ack": 0.0009490084985835695
+              },
+              "goodput_ratio": 0.7087824421736739,
+              "lua_allocation_ratio": 0.9055897886190972,
+              "tx_cpu_ratio": 1.0163574888056293
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 448.8749525055064,
+                "latency": {
+                  "ok": {
+                    "p50": 0.001991045000011127,
+                    "p99": 0.00961881800003539
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45944.1425389755,
+                "tx_cpu_seconds_per_ack": 0.0009220489977728284
+              },
+              "batched": {
+                "goodput": 359.3275487144866,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020260930000404187,
+                    "p99": 0.02539301299998442
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41118.20868113523,
+                "tx_cpu_seconds_per_ack": 0.0009627156371730662
+              },
+              "goodput_ratio": 0.800507015837732,
+              "lua_allocation_ratio": 0.8949608461242623,
+              "tx_cpu_ratio": 1.0441046403157168
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 444.47777367928717,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020014550000269082,
+                    "p99": 0.008665903999997226
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45845.89518668466,
+                "tx_cpu_seconds_per_ack": 0.0009356725146198831
+              },
+              "batched": {
+                "goodput": 449.760599172471,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020020130000375502,
+                    "p99": 0.00790992199995344
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 41584.00266785238,
+                "tx_cpu_seconds_per_ack": 0.0009381947532236549
+              },
+              "goodput_ratio": 1.0118854660593122,
+              "lua_allocation_ratio": 0.907038732661281,
+              "tx_cpu_ratio": 1.002695642507781
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 453.8288976105542,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020228170000109458,
+                    "p99": 0.004978599000025952
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46724.277973568285,
+                "tx_cpu_seconds_per_ack": 0.0009559471365638766
+              },
+              "batched": {
+                "goodput": 454.6003504364978,
+                "latency": {
+                  "ok": {
+                    "p50": 0.001991389000011168,
+                    "p99": 0.007792931999972552
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40684.27968337731,
+                "tx_cpu_seconds_per_ack": 0.0009146877748460862
+              },
+              "goodput_ratio": 1.0016998759444482,
+              "lua_allocation_ratio": 0.8707310513474863,
+              "tx_cpu_ratio": 0.956839285207657
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 375.95366333503944,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0020587409999848205,
+                    "p99": 0.016114060999996127
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46262.003723404254,
+                "tx_cpu_seconds_per_ack": 0.000952127659574468
+              },
+              "batched": {
+                "goodput": 467.8430069514097,
+                "latency": {
+                  "ok": {
+                    "p50": 0.001992898000025889,
+                    "p99": 0.005041323000000375
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40783.583333333336,
+                "tx_cpu_seconds_per_ack": 0.0009188034188034187
+              },
+              "goodput_ratio": 1.2444166730581396,
+              "lua_allocation_ratio": 0.8815784023790706,
+              "tx_cpu_ratio": 0.9650002387432555
+            }
+          ],
+          "median_goodput_ratio": 1.0016998759444482,
+          "goodput_ratio_range": [
+            0.7087824421736739,
+            1.2444166730581396
+          ]
+        },
+        {
+          "shape": "unrelated",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 1134.429606312943,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006482269000002816,
+                    "p99": 0.01871693100000016
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45210.39954217292,
+                "tx_cpu_seconds_per_ack": 0.0006779362563831661
+              },
+              "batched": {
+                "goodput": 898.3543593653925,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006672299999991083,
+                    "p99": 0.06513155800001869
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40122.5819435179,
+                "tx_cpu_seconds_per_ack": 0.0006604402935290194
+              },
+              "goodput_ratio": 0.7918996069621028,
+              "lua_allocation_ratio": 0.8874635559478073,
+              "tx_cpu_ratio": 0.9741923186886496
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 1138.1636769325607,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006505719999950088,
+                    "p99": 0.019327325000006113
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45126.886587078654,
+                "tx_cpu_seconds_per_ack": 0.0006724016853932584
+              },
+              "batched": {
+                "goodput": 1150.978210576316,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006462673999976687,
+                    "p99": 0.019712138000045343
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40061.474131944444,
+                "tx_cpu_seconds_per_ack": 0.0006631944444444444
+              },
+              "goodput_ratio": 1.0112589550198012,
+              "lua_allocation_ratio": 0.8877517852830421,
+              "tx_cpu_ratio": 0.9863069335654192
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 1116.9312047326212,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006578634999982569,
+                    "p99": 0.02023979600005532
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45015.85670840787,
+                "tx_cpu_seconds_per_ack": 0.0006744186046511628
+              },
+              "batched": {
+                "goodput": 1104.548415888551,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006516852999993716,
+                    "p99": 0.02306662200004439
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 40534.8582791034,
+                "tx_cpu_seconds_per_ack": 0.0006724511930585684
+              },
+              "goodput_ratio": 0.988913561738089,
+              "lua_allocation_ratio": 0.9004573331053027,
+              "tx_cpu_ratio": 0.9970828035006359
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 1091.4774393231328,
+                "latency": {
+                  "ok": {
+                    "p50": 0.0065345599999773185,
+                    "p99": 0.026264278999974522
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 46008.36603221083,
+                "tx_cpu_seconds_per_ack": 0.0006881405563689604
+              },
+              "batched": {
+                "goodput": 1141.9595668630561,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006474759000013819,
+                    "p99": 0.01859165500002291
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 39936.54882744137,
+                "tx_cpu_seconds_per_ack": 0.0006615330766538327
+              },
+              "goodput_ratio": 1.0462511873550306,
+              "lua_allocation_ratio": 0.8680279755964702,
+              "tx_cpu_ratio": 0.9613342369246122
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 1006.9954648264859,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006678076000014244,
+                    "p99": 0.03236250399999108
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 45009.44662698413,
+                "tx_cpu_seconds_per_ack": 0.0006706349206349207
+              },
+              "batched": {
+                "goodput": 1160.8632365164394,
+                "latency": {
+                  "ok": {
+                    "p50": 0.006470347999993464,
+                    "p99": 0.01688699099997848
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 39948.435111876075,
+                "tx_cpu_seconds_per_ack": 0.0006506024096385542
+              },
+              "goodput_ratio": 1.1527988725514928,
+              "lua_allocation_ratio": 0.887556682110509,
+              "tx_cpu_ratio": 0.9701290368574891
+            }
+          ],
+          "median_goodput_ratio": 1.0112589550198012,
+          "goodput_ratio_range": [
+            0.7918996069621028,
+            1.1527988725514928
+          ]
+        },
+        {
+          "shape": "hot",
+          "pairs": [
+            {
+              "pair": 0,
+              "scalar": {
+                "goodput": 498.5911163618065,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014481099999983371,
+                    "p99": 0.03349726100000794
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 48096.985217738715,
+                "tx_cpu_seconds_per_ack": 0.0009069117059528565
+              },
+              "batched": {
+                "goodput": 508.7538529843063,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013919100000009621,
+                    "p99": 0.042549265999980435
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42698.90383111806,
+                "tx_cpu_seconds_per_ack": 0.0008913213448006254
+              },
+              "goodput_ratio": 1.020382907534849,
+              "lua_allocation_ratio": 0.8877667412586646,
+              "tx_cpu_ratio": 0.9828093947295001
+            },
+            {
+              "pair": 1,
+              "scalar": {
+                "goodput": 491.4704002577796,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014136263000011695,
+                    "p99": 0.041840303000014956
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 48143.29707792208,
+                "tx_cpu_seconds_per_ack": 0.000900974025974026
+              },
+              "batched": {
+                "goodput": 511.2907629272733,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014039651000018694,
+                    "p99": 0.03845518000002812
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42752.486349453975,
+                "tx_cpu_seconds_per_ack": 0.0008853354134165367
+              },
+              "goodput_ratio": 1.0403287006889892,
+              "lua_allocation_ratio": 0.8880257262035287,
+              "tx_cpu_ratio": 0.9826425489452011
+            },
+            {
+              "pair": 2,
+              "scalar": {
+                "goodput": 500.5649254096936,
+                "latency": {
+                  "ok": {
+                    "p50": 0.01406167199996844,
+                    "p99": 0.04339883099999042
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 47883.29641434263,
+                "tx_cpu_seconds_per_ack": 0.0008964143426294821
+              },
+              "batched": {
+                "goodput": 499.56080973753467,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013925605999986601,
+                    "p99": 0.03715106399999968
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 43509.54472843451,
+                "tx_cpu_seconds_per_ack": 0.0008865814696485623
+              },
+              "goodput_ratio": 0.9979940350967716,
+              "lua_allocation_ratio": 0.9086580913715447,
+              "tx_cpu_ratio": 0.9890308839190629
+            },
+            {
+              "pair": 3,
+              "scalar": {
+                "goodput": 522.8238286964697,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014231953000034991,
+                    "p99": 0.0278558410000187
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 49049.6179946626,
+                "tx_cpu_seconds_per_ack": 0.0009340449866565003
+              },
+              "batched": {
+                "goodput": 519.1661936233112,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013934769999991659,
+                    "p99": 0.03311607199998434
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42787.05738332058,
+                "tx_cpu_seconds_per_ack": 0.0008798775822494261
+              },
+              "goodput_ratio": 0.993004077334658,
+              "lua_allocation_ratio": 0.8723219289491002,
+              "tx_cpu_ratio": 0.9420077135674467
+            },
+            {
+              "pair": 4,
+              "scalar": {
+                "goodput": 427.1593476360961,
+                "latency": {
+                  "ok": {
+                    "p50": 0.014818661999981941,
+                    "p99": 0.07221956199998658
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 49653.07390300231,
+                "tx_cpu_seconds_per_ack": 0.0009468822170900692
+              },
+              "batched": {
+                "goodput": 515.8822078925187,
+                "latency": {
+                  "ok": {
+                    "p50": 0.013878959999999552,
+                    "p99": 0.03552978200002599
+                  },
+                  "refused": {
+                    "p50": null,
+                    "p99": null
+                  },
+                  "unknown": {
+                    "p50": null,
+                    "p99": null
+                  }
+                },
+                "lua_bytes_per_ack": 42810.17517401392,
+                "tx_cpu_seconds_per_ack": 0.00088553750966744
+              },
+              "goodput_ratio": 1.2077043631315008,
+              "lua_allocation_ratio": 0.862185798559903,
+              "tx_cpu_ratio": 0.9352140041121989
+            }
+          ],
+          "median_goodput_ratio": 1.020382907534849,
+          "goodput_ratio_range": [
+            0.993004077334658,
+            1.2077043631315008
+          ]
+        }
+      ],
+      "complete": true
+    }
+  ]
+}

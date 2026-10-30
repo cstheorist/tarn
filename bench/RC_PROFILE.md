@@ -236,7 +236,7 @@ passes all 415 existing storage checks on three RF1 shards, native disabled,
 including both engines and lock/yield assertions. These are helper costs
 and storage controls, not transaction throughput, independent-host evidence
 or complete SQL/RF3 fault qualification. The four-mode RF3/fsync end-to-end
-pilot is the next gate; its result is pending. The condition-allocation
+pilot is the next gate. The condition-allocation
 candidate and its negative results remain separate evidence.
 
 The first [guard pilot](https://github.com/cstheorist/tarn/actions/runs/41064465703)
@@ -248,8 +248,34 @@ paired sample: one replica times out in its initial checkpoint and another
 receives a synchronous rollback. The controller stops at its 180-second
 deadline and retains the fixture. The [original logs, copied sources and
 baseline records](rc-evidence/run-41064465703/manifest.json) remain available.
-No candidate result, bootstrap root cause or fix is inferred from this
-failure. Other modes are still pending; no failed pair is replaced.
+No candidate result is inferred for the failed mode; no failed pair is
+replaced. The subsequent WAL investigation and controlled early-policy
+regression are tracked separately in [#209](https://github.com/cstheorist/tarn/issues/209).
+
+All four baselines complete: 132 samples, 372,374 acknowledgements and eight
+refusals reconcile exactly. The other three paired modes complete 180 samples
+(90 warmups and 90 ordinary measurements) and 454,241 acknowledgements,
+with no refusals or unknowns. The [partial paired audit](rc-evidence/run-41064465703/paired-partial-audit.json)
+checks copied sources, configuration, order, counters and every token. It
+remains explicitly incomplete because the native-memtx pair never starts.
+
+| Engine / native | Shape | Median goodput ratio [range] | Median allocation ratio |
+|---|---|---:|---:|
+| memtx / disabled | Uncontended | 0.997 [0.951, 1.011] | 0.874 |
+| memtx / disabled | Unrelated | 1.004 [0.985, 1.020] | 0.878 |
+| memtx / disabled | Hot | 1.011 [1.002, 1.088] | 0.886 |
+| vinyl / disabled | Uncontended | 1.179 [0.702, 1.517] | 0.875 |
+| vinyl / disabled | Unrelated | 1.030 [0.950, 1.137] | 0.876 |
+| vinyl / disabled | Hot | 1.028 [0.952, 1.179] | 0.870 |
+| vinyl / enabled | Uncontended | 1.002 [0.709, 1.244] | 0.895 |
+| vinyl / enabled | Unrelated | 1.011 [0.792, 1.153] | 0.888 |
+| vinyl / enabled | Hot | 1.020 [0.993, 1.208] | 0.888 |
+
+Ratios are batched/scalar; allocation includes diagnostic/background work.
+Allocation falls consistently, but eight of nine goodput ranges cross one.
+The small hot-memtx result and lower allocation do not establish a repeatable
+resource-capacity gain, all-mode benefit or full semantic/fault qualification.
+Production guards remain unchanged and the candidate stays experimental.
 
 ## Retained collector failure
 
