@@ -2340,19 +2340,19 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyBarrierSplitFrontierView | violates PrefixCovered | 197 | 400 | 13 | 00s | 13 |
 | Bug_LazyBarrierTrackOnlyWhenEnabled | violates OwnWritesCovered | 57 | 96 | 7 | 00s | 7 |
 | Bug_LazyBarrierWaitAfterSnapshot | violates OwnWritesCovered | 106 | 185 | 11 | 00s | 11 |
+| Bug_LazyBaselineAboveCounter | violates DrainedConverges | 587 | 1170 | 8 | 01s | 8 |
 | Bug_LazyCapacityAbortLeaks | violates AbortedReleased | 8 | 9 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoByteReserve | violates BytePromisesFit | 7 | 7 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoEntryReserve | violates EntryPromisesFit | 6 | 6 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoSeqReserve | violates SequencePromisesFit | 6 | 6 | 3 | 00s | 3 |
-| Bug_LazyHandoffDropFloors | violates DrainedProjection | 56 | 119 | 7 | 00s | 7 |
-| Bug_LazyHandoffDropLiveVersion | violates LiveVersionSurvives | 9 | 12 | 4 | 00s | 4 |
-| Bug_LazyHandoffDropMarkers | violates DrainedProjection | 18 | 30 | 5 | 00s | 5 |
-| Bug_LazyHandoffNoTargetDrain | violates DrainedProjection | 136 | 365 | 11 | 00s | 11 |
-| Bug_LazyHandoffNoTargetFence | violates DrainedProjection | 136 | 339 | 11 | 00s | 11 |
-| Bug_LazyHandoffNoTargetNote | violates DrainedProjection | 127 | 329 | 11 | 00s | 11 |
-| Bug_LazyHandoffRemovePending | violates SourceObligationsSurvive | 4 | 4 | 2 | 00s | 2 |
-| Bug_LazyHandoffResetCounter | violates CounterContinues | 10 | 13 | 4 | 00s | 4 |
-| Bug_LazyHandoffSourceNoFlush | violates SourceObligationsSurvive | 8 | 10 | 3 | 00s | 3 |
+| Bug_LazyHandoffDropFloors | violates DrainedProjection | 56 | 119 | 7 | 01s | 7 |
+| Bug_LazyHandoffDropMarkers | violates DrainedProjection | 18 | 30 | 5 | 01s | 5 |
+| Bug_LazyHandoffNoTargetDrain | violates DrainedProjection | 136 | 365 | 11 | 01s | 11 |
+| Bug_LazyHandoffNoTargetFence | violates DrainedProjection | 136 | 339 | 11 | 01s | 11 |
+| Bug_LazyHandoffNoTargetNote | violates DrainedProjection | 127 | 329 | 11 | 01s | 11 |
+| Bug_LazyHandoffRemovePending | violates SourceObligationsSurvive | 4 | 4 | 2 | 01s | 2 |
+| Bug_LazyHandoffResetCounter | violates CounterContinues | 10 | 13 | 4 | 01s | 4 |
+| Bug_LazyHandoffSourceNoFlush | violates SourceObligationsSurvive | 8 | 10 | 3 | 01s | 3 |
 | Bug_LazyIndexAckMissingTarget | violates DrainedConverges | 537216 | 5991884 | 21 | 09s | 21 |
 | Bug_LazyIndexCaptureFailOpen | violates DrainedConverges | 171 | 540 | 10 | 00s | 10 |
 | Bug_LazyIndexFloorFromMaxAck | violates DrainedConverges | 775423 | 7956003 | 22 | 12s | 22 |
@@ -2493,9 +2493,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
+| LazyBaseline | no errors | 169572 | 1447512 | 25 | 13s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
-| LazyHandoff | no errors | 156 | 432 | 13 | 00s |  |
-| LazyHandoffLive | no errors | 76 | 196 | 12 | 00s |  |
+| LazyHandoff | no errors | 156 | 432 | 13 | 01s |  |
+| LazyHandoffLive | no errors | 76 | 196 | 12 | 01s |  |
 | LazyIndex | no errors | 475615 | 6599566 | 38 | 09s |  |
 | LazyMeter | no errors | 1918745 | 7064587 | 30 | 20s |  |
 | LazyTargetConfirm | no errors | 19 | 24 | 5 | 00s |  |
