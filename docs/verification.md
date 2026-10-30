@@ -2460,3 +2460,13 @@ case-insensitive and nullable identities, old import tokens, received/sent
 copies, heterogeneous auxiliary IDs, and RF3/fsync leader death/restart on
 MemTX and Vinyl. Resource exhaustion returns a complete fallback or error;
 no prefix of a failed merge is published.
+
+The [retained executable evidence](../tests/evidence/lazy-routing/README.md)
+includes 60 native lifecycle checks, source/target and JOIN restart faults,
+composite RF3/fsync leader recovery, both full 11-case lazy SQL suites
+against MariaDB and the 1,092-case differential pass. The
+[routing cost study](lazy-routing-cost.md) retains five paired RF3/fsync
+comparisons for each uniform/skewed 1/4/16-lane case, all raw samples and
+failed attempts. It reports repeatable gains for the declared fully bound
+skewed workload and separate write-heavy/prefix regressions; it makes no
+universal throughput, independent-host or beyond-RAM claim.

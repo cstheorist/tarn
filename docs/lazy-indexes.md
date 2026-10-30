@@ -57,6 +57,11 @@ incarnations use lazy envelope version 2 and require a version-2 coordinator
 token. Older importers reject the envelope before native schema effects.
 Legacy single-column declarations and version-1 exports remain supported.
 
+The [paired routing cost study](lazy-routing-cost.md) describes the workload,
+resource configuration, accounting and uncertainty for hotspot measurements.
+Adding lanes can also add shipping work and prefix-read fanout; choose the
+routing columns for the queries that actually bind them.
+
 ## Read contract
 
 Only an actual autocommit, nonlocking, single-table SELECT can use the lazy

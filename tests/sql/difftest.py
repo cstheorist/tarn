@@ -1484,11 +1484,15 @@ CASES += [
 
 # Composite routing uses the same SQL identities and typed ordering as the
 # local index. Add it over committed rows so the backfill barrier, rather
-# than an arbitrary sleep, makes the differential reads comparable.
+# than an arbitrary sleep, makes the differential reads comparable. Seed a
+# local CI index to establish its stored weights, then drop that alternative
+# after lazy backfill; adding the first CI weight to populated rows is an
+# independently unsupported ALTER.
 CASES += [
-    ("CREATE TABLE lazy185 (tenant_id INT,id BIGINT UNSIGNED,k VARCHAR(12) COLLATE utf8mb4_general_ci,n BIGINT,PRIMARY KEY(tenant_id,id)) PARTITION BY KEY(tenant_id)", "q"),
+    ("CREATE TABLE lazy185 (tenant_id INT,id BIGINT UNSIGNED,k VARCHAR(12) COLLATE utf8mb4_general_ci,n BIGINT,PRIMARY KEY(tenant_id,id),KEY local_k(k,n)) PARTITION BY KEY(tenant_id)", "q"),
     ("INSERT INTO lazy185 VALUES (1,256,'A',10),(2,2,'a',2),(3,128,'a',10),(4,255,NULL,-1),(5,9007199254740993,'a',9007199254740993)", "dml:lazy185"),
     ("ALTER TABLE lazy185 ADD KEY lk(k,n) COMMENT 'tarn:lazy=2'", "q"),
+    ("ALTER TABLE lazy185 DROP KEY local_k", "q"),
     ("SELECT id,n FROM lazy185 WHERE k='A ' ORDER BY n,id", "q"),
     ("SELECT id,n FROM lazy185 WHERE k='a' ORDER BY n DESC,id DESC LIMIT 2 OFFSET 1", "q"),
     ("SELECT id FROM lazy185 WHERE k='a' AND n=10 ORDER BY id", "q"),

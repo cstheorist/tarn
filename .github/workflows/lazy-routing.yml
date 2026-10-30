@@ -66,7 +66,7 @@ jobs:
           done
       - name: Stop only the owned fixture
         if: always()
-        run: scripts/cluster.sh stop -d /tmp/lazy-routing-cluster
+        run: KEEP=1 scripts/cluster.sh stop -d /tmp/lazy-routing-cluster
       - uses: actions/upload-artifact@v6
         if: always()
         with:
