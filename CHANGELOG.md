@@ -42,6 +42,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The primary contract manifest includes SQL/public-KV/Rust-SDK outcome
   histories with preserved error domains and exact strong/raw visibility.
 
+- Initial timing-policy installation waits for the confirmed shard marker and
+  configured replicas to finish joining, avoiding an early synchronous write
+  that can block a joining replica's first checkpoint. Existing confirmed
+  policies can still load during restart with an unavailable voter (#209).
+
 - Gateway sockets now grow on demand and share a hard physical-connection
   budget with completion capacity. Idle eviction preserves transaction and
   pending-reply owners. Read fanouts have bounded windows and admission;

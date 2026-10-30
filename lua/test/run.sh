@@ -38,6 +38,9 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/member_dependency.sh" "$WORK/member-dependency" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" timeout 120 python3 "$DIR/test/clock_bootstrap.py" "$WORK/clock-bootstrap" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/clock_integration.sh" "$WORK/clock-integration" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

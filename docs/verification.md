@@ -2046,12 +2046,35 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
   Bug_GatewayReserve Bug_GatewayResponseRelease
 ```
 
+### Initial clock bootstrap
+
+`ClockBootstrap` checks the ordering of a new timing-policy write after a
+confirmed shard marker and initial join readiness. Its 23-state finite
+instance permits existing-policy loads and restarts with a missing replica.
+`Bug_ClockBootstrapMarker` violates `PolicyAfterMarker` at depth four;
+`Bug_ClockBootstrapJoin` violates `NoInitialCheckpointBlock` at depth three.
+The model does not prove Tarantool checkpoint/Raft behavior, clock bounds or
+whole-program liveness. The live `lua/test/clock_bootstrap.py` regression
+delays both initial voters, checks policy absence, then completes RF3/fsync
+join, writes memtx and Vinyl tuples once, and checks exact values after a
+leader restart with a temporarily unavailable voter. The original source
+fails the initial policy-absence check; the corrected source passes all five
+controls in Lua-only mode and with a verified native module. Existing
+confirmed-policy reads retain their original admission and durability
+requirements. The [source-bound receipts and original failed attempts](../tests/evidence/clock-bootstrap/manifest.json)
+separate valid component results from local setup errors; complete release
+gates remain pending.
+
+```sh
+tla/check.sh ClockBootstrap Bug_ClockBootstrapMarker Bug_ClockBootstrapJoin
+```
+
 ### Configuration counts
 
-The default list contains 307 unique configurations: 77 positive
-outcomes and 230 expected broken/trade-off outcomes. The 310 generated
+The default list contains 310 unique configurations: 78 positive
+outcomes and 232 expected broken/trade-off outcomes. The 313 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 320 total. Explicit
+placement and query-budget configurations are maintained directly, for 323 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
