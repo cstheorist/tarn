@@ -178,7 +178,6 @@ pub(super) async fn select(
         cx,
         t: &ta.table,
         written: &none,
-        project: None,
         topk: Some(Spec { want, order: &p.order }),
     };
     let scans = read_calls(cluster, &map, mode, &ta.table, path_index(&ta.path), calls, false, keep).await?;
