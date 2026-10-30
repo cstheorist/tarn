@@ -1,0 +1,175 @@
+{
+  "complete": true,
+  "checks": [
+    "clock policy remains absent before initial configured replicas join",
+    "full initial join installs confirmed marker and timing policy",
+    "memtx and Vinyl mutations each acknowledge once after initialization",
+    "existing policy and quorum admission recover without every configured voter present",
+    "rejoined RF3 cluster preserves both exact acknowledged tuples after leader restart"
+  ],
+  "observations": [
+    {
+      "node": 0,
+      "label": "configured voters have not started",
+      "state": {
+        "loaded": false,
+        "quorum": "N / 2 + 1",
+        "policy": false,
+        "marker": false,
+        "ro": false,
+        "wal": "fsync",
+        "running": true,
+        "admitted": false
+      }
+    },
+    {
+      "node": 0,
+      "label": "initial join complete",
+      "state": {
+        "loaded": true,
+        "quorum": "N / 2 + 1",
+        "policy": true,
+        "marker": true,
+        "ro": false,
+        "wal": "fsync",
+        "running": true,
+        "admitted": true
+      }
+    },
+    {
+      "node": 1,
+      "label": "initial join complete",
+      "state": {
+        "loaded": true,
+        "quorum": "N / 2 + 1",
+        "policy": true,
+        "marker": true,
+        "ro": true,
+        "wal": "fsync",
+        "running": true,
+        "admitted": false
+      }
+    },
+    {
+      "node": 2,
+      "label": "initial join complete",
+      "state": {
+        "loaded": true,
+        "quorum": "N / 2 + 1",
+        "policy": true,
+        "marker": true,
+        "ro": true,
+        "wal": "fsync",
+        "running": true,
+        "admitted": false
+      }
+    },
+    {
+      "node": 0,
+      "label": "restart with one configured voter still absent",
+      "state": {
+        "loaded": true,
+        "quorum": "N / 2 + 1",
+        "policy": true,
+        "marker": true,
+        "ro": false,
+        "wal": "fsync",
+        "running": true,
+        "admitted": true
+      }
+    }
+  ],
+  "source_sha256": {
+    "lua/storage.lua": "66a3b891b68fc64a0684f369743316d874597a66d33992c91aa962298020e214",
+    "lua/tarn.lua": "ef1e5de7621b050c83a3d10f30345c1da20fc30dc5607d2fbd71773c6bc97d0a",
+    "lua/tarn_backup.lua": "78cb7093cfbc44817b5ea4adec094dd30f8138ef348fa5e09eadc21ee4621f90",
+    "lua/tarn_clock.lua": "1b6ce9ec30be5e6ce1ee2640eae8738b52953e29be8e2f1a0ec6f8ca416f5fce",
+    "lua/tarn_compat.lua": "489d114da9021dc9d58121fee0f02d43f80348e3fb0a6131a77154011e2cba6f",
+    "lua/tarn_engine.lua": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f",
+    "lua/tarn_fresh.lua": "569925714345485726621011e27703dfb01438069a7cb4a936e330d82c252cca",
+    "lua/tarn_kv.lua": "41c3ceda8051421ba57ddd197c13d3dbccdeb72249e36ee637193ef93c03d0d1",
+    "lua/tarn_lazy.lua": "8332703430b1b6bb9e66217da9bc8ce04fee66c102881c6c6ea092621415a521",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_move.lua": "098e34b7738082b6d013b117ddd15147e2de83148879cbcdf62624e1affa6e58",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd",
+    "lua/test/alter_backfill_restart_test.lua": "efc104802ecd729944951821276ce51cd744f3e549c3adbd7504df59dc32018a",
+    "lua/test/alter_backfill_test.lua": "2bcd6aeffe8a093812d2cf064470c3e6661f61c093e5b093e1783e914784802d",
+    "lua/test/alter_rename_restart_test.lua": "d4e2086de2a0cd3e186197e0d4ac5b484125bea71784deab2bc33527d7cfe2fc",
+    "lua/test/alter_upgrade_test.lua": "0ed1435eabb0686e74d2b1c4c117a5b1133095f394a57dea5dd1d09e4bd1ed0e",
+    "lua/test/bounded_move_test.lua": "41cbd50ed4931b6f81ee0d2606e0be1fafc70c225edf241fa9840630eb40acad",
+    "lua/test/bucket_test.lua": "59cf30f41058c3457ce7c3e8893ae95cffbe66305d4c74efca075c452dad3a59",
+    "lua/test/clock_completion_test.lua": "59ec44b613222fbf6c1c5853c4f415f389b65b3239086cdb70360b459fd87b49",
+    "lua/test/clock_guard_test.lua": "5c84d99d58c82f78c21137bd034e90108ac255b936c8e11865a2e1b72187c1a2",
+    "lua/test/clock_initialization_test.lua": "7028a4e9b9bd089c5b90bc1e147c3721ec7a99164fc0e4894ba8d8316b5a681f",
+    "lua/test/clock_integration_node.lua": "2c5b1a7d941c7f52d4773b6f4443f7e05a9e8fa8f3e447b7d35a932d29799880",
+    "lua/test/clock_integration_test.lua": "b436e6c44fb20acf48d3bf1c83f5d6ac277dcf926f0899829ab1d6743437b27f",
+    "lua/test/clock_protocol_test.lua": "642addefab36424a14c85e7a2da80f7b25724da36851df6cc1ee874e08220cd8",
+    "lua/test/compat_test.lua": "224735fff372e0417f4f07d726b450a4fae01ab4cf11ca17b674b3bf3586398d",
+    "lua/test/engine_alias_test.lua": "11ec42f368dbaff2af0eb45bbea546cce0a853fbeff5da70acc4c1589bb82eb4",
+    "lua/test/engine_cut_test.lua": "fa25b865ccdbcfa6cd1fd8afeab0995ffbca33cc00d646ebe02dee0f7d6eda0b",
+    "lua/test/engine_read_error_test.lua": "fdf5c0714d2c88765a31ec434b27f40fb164212d8b3818b3e5187e6b1a936f80",
+    "lua/test/engine_replication_diagnostics_test.lua": "694d225c78ed3bbe7dfa4f58063ac104113f628c2d81e33aa8a5ce144b11c450",
+    "lua/test/engine_replication_test.lua": "bc0acab3192a1c7927ba3d3b7c1444a7cf7d0a0a8ffdebd86a4166a9082e0cdd",
+    "lua/test/engine_restart_test.lua": "ac8e85c7749d098b11a0b8641aa64b3c16e70db4d4c2542c7b7c5a7ec175397f",
+    "lua/test/engine_terminal_test.lua": "40d3659e3968d92be5c3db0e5bc26cd3d70b17ba5d1f8d77a05572b761ce5134",
+    "lua/test/engine_test.lua": "23dccec69c936787711b8caaaed3990b5d5dfe5af57d7f6a60df8f7860150b52",
+    "lua/test/join_test.lua": "80cfe20a0fd8d07687091645e3ad592849e9a406581619ffe23c1940ba32cc56",
+    "lua/test/kv_api_test.lua": "017ca0e339d8546ed11f8dd857b6927cd934eb4e57d2af9a1eab473eb88ec942",
+    "lua/test/lazy_apply_confirm_test.lua": "2e5d17ee4a4ae7f8476569a11d4e3d553a84af655c965ce3659e88a9746e79b4",
+    "lua/test/lazy_baseline_test.lua": "9d1dc8b3aedde1fec9698790bdd1e8dd2441091d82e9eddd245816d2d38e13b4",
+    "lua/test/lazy_bucket_count_test.lua": "027aeee09893e44658487962a4d65451be8ff5ea3a64623dbe7f6130a416ffc8",
+    "lua/test/lazy_clear_restart_test.lua": "3b6f00e726b5b68f49139916e38f9b45e2c06ce5199b44e1db3738308a50ccad",
+    "lua/test/lazy_codec_test.lua": "a59263c47dc9c39fbbec0304a3c7dfa912e06398529a055b160fe43c914ad353",
+    "lua/test/lazy_concurrency_test.lua": "f087c0426f90dbf47a19073c8a5e10f1b104172aa39a83f726c6738ed97ad34f",
+    "lua/test/lazy_create_restart_test.lua": "b52170b2854598350044a5736eb99328bf6db3a61fa868a7b699b0edbc217cef",
+    "lua/test/lazy_join_restart_test.lua": "3e3a8e6d59a6d9babfd459ecbe2e38424fb74a96155685d70ccfe4134b11a73b",
+    "lua/test/lazy_lifecycle_test.lua": "ee75f1f38ca931bbe724f2e6cfa74e44df709c1bbd862c0fa53a7abcf7d0b830",
+    "lua/test/lazy_metadata_mvcc_test.lua": "f1a09344f866726646bd76ea08157e41a6469dd06082e58014b71119d0e02808",
+    "lua/test/lazy_meter_test.lua": "cc8a3e94a22260ffc845d83109db1539ca3c1562cc4d18023e9dc078ea054652",
+    "lua/test/lazy_native_commit_test.lua": "d471ae361b159ec0268d387873c928c05e6606ee6a66c3eb661933685327124e",
+    "lua/test/lazy_plain_binding_test.lua": "644ac6cd206840173abe8cd52499323048e28fa4faf464738265c7e906b8bf72",
+    "lua/test/lazy_readiness_control.lua": "ee469c8fecd9a95e09d8b8d0bb0c2fa30629f99a6a4e46e8a46c04b42a7fbcda",
+    "lua/test/lazy_registry_test.lua": "d097384fbd3c3f04d90f1c21edb449d9ba3a8cc14b93b486c19fbfa5cd9003a6",
+    "lua/test/lazy_replication_test.lua": "86d1b9425abc80331dc46c268d76c8fdb876de0329356cfff15e6c160a636444",
+    "lua/test/lazy_restart_test.lua": "e465dde3bcf72831456ea0249c5f12f0b08109cbf699913dee8325ee78e3261f",
+    "lua/test/lazy_shipper_test.lua": "a991338e25e8ba332e8596a608a8d5bcffecba024a3fdfedbbb3dd18851fc4ab",
+    "lua/test/lazy_slice_test.lua": "b640a725343c87ddf03bb8ba396c79f2f861eb634a8cf4bfb5134c1a0dfe8622",
+    "lua/test/lazy_target_confirm_test.lua": "9ab9bfdfbb41c65cd1ba0068f046d4fd3c4cda273973eaee600c928953c9bdab",
+    "lua/test/lazy_topology_test.lua": "18ee6162796fd86f72c48810850f5775da06b4a3c0ff0c80ff1d88a10eff6d93",
+    "lua/test/member_dependency_test.lua": "ea670f4a60eca39fb684fb05cde6d53768a00a303dbbd5c02df26b614992063d",
+    "lua/test/member_test.lua": "7144b9beadc1871364aa57cd1ac3ada5858dff73dd41a1e2784fd48e31f25e93",
+    "lua/test/membership_freshness_test.lua": "32b8b3b2f959266c97111965d2605b94f9a71a8e8e7dee9def35ed0e443167f5",
+    "lua/test/native_freshness_control.lua": "8d455b2b2b2e2d4e2ca55f46479f01a21c7612867b49a839b8d9e31d96d757d0",
+    "lua/test/native_freshness_test.lua": "acd626c807cb00fb537922bb439f610ee109b8496594388957ad68bb9d36deb2",
+    "lua/test/native_key_batch_test.lua": "b79fc5049879eceed1402f8ab65255a8a8830c4f0d174eb79000679216cc2841",
+    "lua/test/native_lua_guard_test.lua": "9ba0bdedf9eb7170a7e8ffa320f98505a1e413b9168a65b62a4c97a01037a29a",
+    "lua/test/native_test.lua": "b9171d0d481d7c8fa07f509e2fb6956095fec7f62453f185743e03cc7a169445",
+    "lua/test/prepare_confirm_test.lua": "0ecb5d76d1ebca2a54cb6dc4fb2e00c585102a2efbb32fdd5c4b35844f37cf50",
+    "lua/test/pushdown_test.lua": "53c82f527caa622b45f8ed2642286620b911bd52ed10b5759ecd4098a09b92df",
+    "lua/test/read_freshness_test.lua": "f450fc0e8dd646305bd40539c72ee4e0769f0c3769f194afb0f0004dd9243634",
+    "lua/test/rebalance_test.lua": "6ec996918659745f93c4f8d063fb1bbc1ea1ac7303f9fb9932b1a23503327489",
+    "lua/test/recovery_faults_test.lua": "73f9fe223ceb05042385e8eee57d7a466468c748dc6526ca064c9202add71d41",
+    "lua/test/storage_test.lua": "d384cc5f11a7265d9a9f7b8c869cbfe3767709c43a3296d4ab6027813e03ed92",
+    "lua/test/vinyl_admission_test.lua": "7218f0e9523287067bfd2db950c765ce0c38636df513f6be44097379531636c8",
+    "tests/backup_rpc.lua": "9157f0a314887d0b7bed1b8b9367696814414ac1430753ca52055207743ba459",
+    "lua/test/clock_bootstrap.py": "fa0c7c0635c9e8467baead5af39d81c45b07b8b574f6231e170e444d508996d6"
+  },
+  "tarantool": "Tarantool 3.9.0-0-g8b9a0f59a9",
+  "native": "0",
+  "native_expected": false,
+  "native_sha256": null,
+  "boundary": "Owned same-host RF3/fsync ordering and restart controls; not a general Raft/checkpoint proof.",
+  "native_runtime": false,
+  "readback": [
+    [
+      1,
+      7,
+      1
+    ],
+    [
+      1,
+      7,
+      1
+    ]
+  ]
+}

@@ -1,0 +1,10 @@
+PASS clock policy remains absent before initial configured replicas join
+PASS full initial join installs confirmed marker and timing policy
+PASS memtx and Vinyl mutations each acknowledge once after initialization
+PASS existing policy and quorum admission recover without every configured voter present
+PASS rejoined RF3 cluster preserves both exact acknowledged tuples after leader restart
+PASS clock policy remains absent before initial configured replicas join
+PASS full initial join installs confirmed marker and timing policy
+PASS memtx and Vinyl mutations each acknowledge once after initialization
+PASS existing policy and quorum admission recover without every configured voter present
+PASS rejoined RF3 cluster preserves both exact acknowledged tuples after leader restart

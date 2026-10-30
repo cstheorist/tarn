@@ -10,6 +10,8 @@ from kvfaults import FaultTest
 class WarmRouteRead(unittest.TestCase):
     def setUp(self):
         self.test = FaultTest.__new__(FaultTest)
+        self.test.identities = [{"id": 1}]
+        self.test.group_nodes = Mock(return_value=[{"endpoint": "a"}])
         self.test.sql = Mock()
         self.test.record = Mock()
         self.connection = Mock(server_status=0)
@@ -43,6 +45,8 @@ class WarmRouteRead(unittest.TestCase):
     def test_other_errors_are_not_retried(self):
         for code, message in [(2013, "Lost connection during query"),
                               (2003, "Can't connect to MySQL server"),
+                              (2003, "shard 2 has no reachable leader (a is read-only)"),
+                              (2003, "shard 1 has no reachable leader (other is read-only)"),
                               (1213, "transaction outcome unknown"),
                               (1205, "clock safety unavailable")]:
             with self.subTest(code=code, message=message):

@@ -164,6 +164,19 @@ jobs:
           ci/annotate.sh decision bash tests/decision.sh
           TARN_NATIVE=0 ci/annotate.sh decision-lua bash tests/decision.sh
           ENGINE=vinyl ci/annotate.sh decision-vinyl bash tests/decision.sh
+      - name: Bounded RF3 movement and durable recovery
+        run: |
+          export TARN_BIN="$PWD/target/release/tarn-server" TARN_SOURCE_REVISION="$GITHUB_SHA"
+          for mode in native lua; do
+            export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"
+            [ "$mode" != lua ] || export TARN_NATIVE=0
+            for engine in memtx vinyl mixed; do
+              python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$engine" --engine "$engine" --mib 1 --traffic
+            done
+            for fault in source receiver coordinator disk reply lazy; do
+              python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$fault" --engine mixed --mib 1 --fault "$fault" --traffic
+            done
+          done
       - name: Start a 2-shard cluster (two SQL servers)
         run: TARN_TEST_HOOKS=1 TARN_CHECK_LOCKS=1 scripts/cluster.sh start -n 2 -r 1 -p 4000 -s 2
       - name: SQL differential tests against MariaDB 10.11
@@ -323,6 +336,17 @@ jobs:
             /tmp/tarn-cluster-backup-*/restore/*.json
           if-no-files-found: ignore
           retention-days: 30
+      - name: Retain bounded movement evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bounded-movement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-bounded-*/result.json
+            /tmp/tarn-bounded-*/cluster.json
+            /tmp/tarn-bounded-*/*.log
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Cluster logs
         if: failure()
         run: |
@@ -387,7 +411,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Reject changed upgrade build receipts
         run: python3 tests/test_upgrade_build_receipt.py
-      - name: Upgrade, mixed components, refusal and rollback
+      - name: Reject unsafe upgrade witness replay
+        run: python3 tests/test_upgrade_prepare.py
+      - name: Maintenance migration, component admission and downgrade refusal
         run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
       - name: Retain upgrade evidence
         if: always()

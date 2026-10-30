@@ -246,16 +246,20 @@ class FaultTest(Test):
         # caches a no-leader refusal for 100 ms, so a fresh leader witness
         # does not guarantee that the gateway has discarded that refusal.
         assert c.get_autocommit() and not c.server_status & 1
+        readonly_routes = {
+            f"shard {self.identities[0]['id']} has no reachable leader ({node['endpoint']} is read-only)"
+            for node in self.group_nodes(0)
+        }
         for attempt in range(8):
             try:
                 return self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
             except pymysql.OperationalError as error:
                 code, message = error.args[:2]
                 retryable = (code == 1213 and "shard leader changed" in message
-                             or code == 2003 and message.startswith("shard ")
-                             and " has no reachable leader (" in message)
+                             or code == 2003 and message in readonly_routes)
                 if not retryable or attempt == 7:
                     raise
+                assert c.get_autocommit() and not c.server_status & 1
                 self.record("known_ro_read_retry", attempt=attempt + 1, error=list(error.args),
                             scope="independent autocommit read before BEGIN; no mutation replay")
                 time.sleep(.05)

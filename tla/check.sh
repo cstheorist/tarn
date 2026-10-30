@@ -5,7 +5,7 @@
 # docs/verification.md. Arguments override the list of configurations.
 set -u
 cd "$(dirname "$0")"
-DEFAULT="GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned Bug_GatewayReserve Bug_GatewayResponseRelease Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
+DEFAULT="ClockBootstrap Bug_ClockBootstrapMarker Bug_ClockBootstrapJoin GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned Bug_GatewayReserve Bug_GatewayResponseRelease Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
 Bug_LocalReadsIgnoreWLocks Bug_ROValidateNoWLockCheck Bug_ROValidateNoReadCheck Bug_ValidateLostStream
 Bug_GCIgnoresDecision Bug_GCNoExpiry Bug_FenceAfterExpiry
 Tradeoff_DirectReadAtomic Tradeoff_AckOnPrepare_DirectRYW
@@ -93,8 +93,12 @@ Bug_ClusterBackupRestart Bug_ClusterBackupPartialRestore Bug_ClusterBackupMetada
 DEFAULT="$DEFAULT PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture Bug_PlainLazyPending
 Bug_PlainLazyFirstWriteOnly Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale"
 DEFAULT="$DEFAULT EngineBuildReentry Bug_EngineBuildReusePage Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix"
+DEFAULT="$DEFAULT BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta Bug_BoundedMovePublish
+Bug_BoundedMoveVisibility Bug_BoundedMoveReclaim Bug_BoundedMoveBatch Bug_BoundedMoveLatePage Bug_BoundedMoveSnapshot"
+
 DEFAULT="$DEFAULT LazyRouting Bug_LazyRoutingCapability Bug_LazyRoutingRewrite Bug_LazyRoutingMissingOwner
 Bug_LazyRoutingLexical Bug_LazyRoutingEarlyLimit Bug_LazyRoutingEpoch"
+
 DEFAULT="$DEFAULT ExternalStrongKV Bug_KVOwnerFence Bug_KVIncarnation Bug_KVSchemaAsOwner
 Bug_KVClippedComplete Bug_KVMissingClaim Bug_KVFalseAtomic"
 CONFIGS=${*:-$DEFAULT}

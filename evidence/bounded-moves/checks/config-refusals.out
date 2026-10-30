@@ -1,0 +1,4 @@
+PASS invalid movement configuration refused: text
+PASS invalid movement configuration refused: negative
+PASS invalid movement configuration refused: slots
+PASS invalid movement configuration refused: aggregate

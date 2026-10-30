@@ -2046,12 +2046,45 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
   Bug_GatewayReserve Bug_GatewayResponseRelease
 ```
 
+### Bounded bucket movement
+
+`BoundedMove.tla` separates physical copy/reclaim/install from serving
+ownership. Its three-key, one-row-batch instance permits concurrent pending
+writes, dirty-hint overflow/loss, a restart, disk refusal, cancellation and
+snapshots retained across publication. The positive configuration explores
+6,230 distinct states to depth 28. Eight controls expose their intended
+failures: omitted drain or lost deltas violate `AcknowledgedEffects`; early
+publication violates `CompletePublication`; exposed install/reclaim chunks
+or a stale partial snapshot violate `NoPartialReads`; oversized work violates
+`BoundedWork`; and a late page after cancel violates `CancelledResources`.
+
+`TarnCommit.tla` retains its predicate, prepared-transaction and RC lock
+interleavings through the new reclaim/install phases. The affected positive
+runs completed `Move_Scan` (1,746,444 states), `Move_RC` (1,531,251),
+`Move_ScanFailover` (1,012,888), `Join_Scan` (83,949), `Join_ScanFailover`
+(58,935), `Join3_Scan` (3,881,646) and `Join3_ScanPrepare` (2,150,603).
+The existing omitted-drain, omitted-hold and stale-serving controls still
+violate `StrictSerializable`. These focused runs do not certify all other
+registry configurations; CI runs the default registry separately.
+
+The models do not prove Tarantool, filesystem durability, actual byte/RSS
+accounting, format migration, or unbounded liveness. Live disk/memory/fault
+measurements and the maintenance migration drill supply separate evidence;
+see [the movement contract](bounded-moves.md). Shared executable Verus
+bodies are unchanged (140 verified, zero errors).
+
+```sh
+tla/check.sh BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta \
+  Bug_BoundedMovePublish Bug_BoundedMoveVisibility Bug_BoundedMoveReclaim \
+  Bug_BoundedMoveBatch Bug_BoundedMoveLatePage Bug_BoundedMoveSnapshot
+```
+
 ### Configuration counts
 
-The default list contains 307 unique configurations: 77 positive
-outcomes and 230 expected broken/trade-off outcomes. The 310 generated
+The default list contains 319 unique configurations: 79 positive
+outcomes and 240 expected broken/trade-off outcomes. The 322 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 320 total. Explicit
+placement and query-budget configurations are maintained directly, for 332 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2579,7 +2612,7 @@ MemTX and Vinyl. Resource exhaustion returns a complete fallback or error;
 no prefix of a failed merge is published.
 
 The [retained executable evidence](../tests/evidence/lazy-routing/README.md)
-includes 60 Lua lifecycle checks, source/target and JOIN restart faults,
+includes 60 native lifecycle checks, source/target and JOIN restart faults,
 composite RF3/fsync leader recovery, both full 11-case lazy SQL suites
 against MariaDB and the 1,092-case differential pass. The
 [routing cost study](lazy-routing-cost.md) retains five paired RF3/fsync
@@ -2587,6 +2620,7 @@ comparisons for each uniform/skewed 1/4/16-lane case, all raw samples and
 failed attempts. It reports repeatable gains for the declared fully bound
 skewed workload and separate write-heavy/prefix regressions; it makes no
 universal throughput, independent-host or beyond-RAM claim.
+
 ## Mutation acknowledgement outcomes (issue #183)
 
 [The outcome contract](outcomes.md) adds complete procedure-envelope checks

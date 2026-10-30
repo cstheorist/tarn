@@ -1571,15 +1571,18 @@ impl Cluster {
     /// Reload the catalog after a statement met a newer table definition
     /// (1412); concurrent callers share one reload.
     pub async fn refresh_catalog(&self) -> SqlResult<()> {
-        self.reload_catalog().await
-    }
-
-    pub async fn reload_catalog(&self) -> SqlResult<()> {
         let seen = self.reloads.load(Ordering::Acquire);
         let _g = self.reload_mu.lock().await;
         if self.reloads.load(Ordering::Acquire) != seen {
             return Ok(());
         }
+        self.reload_catalog_inner().await
+    }
+
+    /// Read a catalog after this call began. DDL publication and catch-up
+    /// fences cannot reuse an overlapping read that captured an older schema.
+    pub async fn reload_catalog(&self) -> SqlResult<()> {
+        let _g = self.reload_mu.lock().await;
         self.reload_catalog_inner().await
     }
 
@@ -2336,7 +2339,7 @@ impl Cluster {
             // all yet. No shard joins while the job is in progress.)
             self.load_members().await?;
             if job.kind == JobKind::Move {
-                return self.finish_move(&job).await;
+                return self.with_job_alive(&job.owner, self.finish_move(&job)).await;
             }
             if job.kind == JobKind::Members {
                 return self.finish_members(&job).await;
@@ -2751,12 +2754,20 @@ pub(crate) mod wire_test {
     }
 }
 #[cfg(test)]
+#[path = "../../tarn-iproto/tests/common/mod.rs"]
+mod test_support;
+
+#[cfg(test)]
 #[path = "cluster_fallback_tests.rs"]
 mod fallback_tests;
 
 #[cfg(test)]
 #[path = "cluster_topology_tests.rs"]
 mod topology_tests;
+
+#[cfg(test)]
+#[path = "cluster_catalog_tests.rs"]
+mod catalog_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2876,7 +2887,7 @@ mod tests {
                 .arr(8)
                 .str("ok")
                 .uint(1)
-                .uint(1)
+                .uint(2)
                 .uint(1)
                 .str("3.9.0")
                 .uint(14)
