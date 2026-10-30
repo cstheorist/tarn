@@ -9,9 +9,11 @@
 pub mod admin;
 pub mod alter;
 pub mod buckets;
+pub mod budget;
 pub mod catalog;
 pub mod cluster;
 pub mod collation;
+pub mod compat;
 pub mod members;
 #[rustfmt::skip]
 mod collation_data;

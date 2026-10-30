@@ -5,6 +5,10 @@ prototype: read [Security](#security) and the limitations in the
 [design document](design.md#6-limitations) before exposing it to anything
 that matters.
 
+[Rolling upgrades](upgrades.md) defines the supported predecessor, component
+matrix, connection admission, health gates and rollback boundary. Storage
+runtime admission currently requires Tarantool 3.9.0.
+
 ## Topology
 
 ```mermaid
@@ -623,6 +627,21 @@ participant has prepared (one round trip instead of two) and applies it in
 the background. SQL readers still see strict serializability (they wait on
 the transaction's locks); direct key/value readers may briefly not see a
 just-acknowledged commit. The model checker covers both modes.
+
+### SQL resource limits
+
+The gateway's `resources` configuration bounds query materialization,
+transaction buffers, shared concurrent allocations and execution work.
+Defaults and tuning are documented in [SQL resource limits](resources.md).
+An admitted SQL statement that exceeds a limit returns **1041/HY000** with
+`Tarn resource limit:` in its message. This ends an explicit transaction;
+retry with a smaller operation or a suitable configured budget.
+
+`SHOW STATUS` exposes current/peak bytes and work, active query ownership,
+refusals, storage read deadlines and bounded top-K scans. Charges follow
+pending reads and slow-client results until their owners release them.
+These are logical accounting counters; use process/container metrics to
+measure actual resident memory.
 
 ## Online engine changes
 
@@ -1247,7 +1266,7 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 | 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |
-| 1041 | HY000 | lazy-index encoded outbox or PREPARE capacity exhausted, or exact sequence space exhausted | restore delivery or capacity before retrying; draining does not clear sequence exhaustion |
+| 1041 | HY000 | SQL resource envelope, lazy-index outbox/PREPARE capacity, or sequence space exhausted | a `Tarn resource limit:` error rolls back the explicit transaction; reduce the operation or tune its budget. For outbox errors, restore delivery/capacity; draining does not clear sequence exhaustion |
 | 1264 | 22003 | value out of range for the column | |
 | 1235 | 42000 | not supported | |
 | 1105 | HY000 | under `tarn_tree_checks = 'ERROR'`: a declared [table tree](sql-compatibility.md#table-trees) does not line up (otherwise a warning) | fix the keys or `PARTITION BY KEY` |

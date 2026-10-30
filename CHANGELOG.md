@@ -103,6 +103,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Define a tested rolling-upgrade/rollback pair with protocol/format
+  admission on every new gateway storage connection, explicit native
+  fallback diagnostics, and RF3/fsync mixed-version regressions for memtx
+  and vinyl. See [rolling upgrades](docs/upgrades.md).
+- Bounded SQL execution ([#134](https://github.com/cstheorist/tarn/issues/134)):
+  configurable query, transaction and gateway allocation/work envelopes refuse
+  oversized operations with 1041/HY000 before commit. Eligible unindexed
+  `ORDER BY ... LIMIT` scans retain bounded top-K candidates. Pending reads,
+  results awaiting socket delivery, prepared state and transaction buffers
+  retain their charges until released. See [resource limits](docs/resources.md)
+  for defaults, cleanup, supported shapes and proof boundaries.
 - Optional bounded cardinality hints and conservative two-table inner-join
   reordering ([#136](https://github.com/cstheorist/tarn/issues/136)).
   `ANALYZE TABLE` now collects gateway-local integer-prefix statistics,

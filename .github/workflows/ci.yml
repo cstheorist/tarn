@@ -161,6 +161,8 @@ jobs:
         run: ci/annotate.sh txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
       - name: READ COMMITTED tests
         run: ci/annotate.sh rctest python3 tests/sql/rctest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
+      - name: Query resource bounds and overload
+        run: TARN_RESOURCE_REF=127.0.0.1:3407 ci/annotate.sh resources tests/resources.sh
       - name: Schema changes and dumps
         run: ci/annotate.sh ddltest python3 tests/sql/ddltest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --kv 127.0.0.1:3311,127.0.0.1:3321 --seconds 20
       - name: Lazy-index semantics and own-commit recovery
@@ -294,6 +296,53 @@ jobs:
             /tmp/tarn-lua-test.*/native-freshness-*/s*.pid
             /tmp/tarn-lua-test.*/native-freshness-*/s*.log
             /tmp/tarn-lua-test.*/native-freshness-*/s*/status-events.jsonl
+
+  upgrade:
+    name: Rolling upgrade (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [memtx, vinyl]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Python packages
+        run: pip install PyMySQL
+      - name: Restore Tarantool
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install Tarantool
+        run: |
+          ci/install-tarantool.sh "$TARANTOOL_VERSION" "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+      - name: Reject changed upgrade build receipts
+        run: python3 tests/test_upgrade_build_receipt.py
+      - name: Upgrade, mixed components, refusal and rollback
+        run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
+      - name: Retain upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rolling-upgrade-${{ matrix.engine }}
+          path: |
+            /tmp/tarn-upgrade-build.*/old-build.log
+            /tmp/tarn-upgrade-build.*/new-build.log
+            /tmp/tarn-upgrade-build.*/artifacts/
+            /tmp/tarn-upgrade-build.*/old-native/
+            /tmp/tarn-upgrade-build.*/new-native/
+            /tmp/tarn-upgrade-build.*/results/
+          retention-days: 30
 
   tla:
     if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
