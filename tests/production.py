@@ -8,6 +8,7 @@ physical placement evidence. Every subprocess, config, and result is retained.
 
 import argparse
 import json
+import importlib.metadata
 import os
 from pathlib import Path
 import secrets
@@ -218,7 +219,7 @@ class Fixture:
         self.result["versions"]["tarantool"] = (
             run(["tarantool", "-v"]).stdout.decode().splitlines()[0]
         )
-        self.result["versions"]["pymysql"] = getattr(pymysql, "__version__", "unknown")
+        self.result["versions"]["pymysql"] = importlib.metadata.version("PyMySQL")
         self.result["source_files"] = {
             str(p.relative_to(ROOT)): __import__("hashlib")
             .sha256(p.read_bytes())
@@ -264,6 +265,7 @@ class Fixture:
             user="test",
             password=self.password if password is None else password,
             ssl=self.context(ca) if tls else None,
+            ssl_disabled=not tls,
             connect_timeout=3,
             read_timeout=8,
             write_timeout=8,
@@ -460,7 +462,37 @@ class Fixture:
             "SSLRequest and ClientHello coalesced in one TCP write preserve TLS bytes and authenticate"
         )
 
+    def plaintext_handshake(self):
+        # A raw control is independent of driver defaults or opportunistic TLS.
+        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as raw:
+
+            def exact(n):
+                out = bytearray()
+                while len(out) < n:
+                    chunk = raw.recv(n - len(out))
+                    assert chunk
+                    out.extend(chunk)
+                return bytes(out)
+
+            header = exact(4)
+            exact(int.from_bytes(header[:3], "little"))
+            caps = 1 | (1 << 9) | (1 << 15) | (1 << 19)
+            body = (
+                struct.pack("<IIB23s", caps, 16 * 1024**2, 45, b"\0" * 23)
+                + b"test\0\x14"
+                + b"x" * 20
+                + b"mysql_native_password\0"
+            )
+            raw.sendall(len(body).to_bytes(3, "little") + b"\1" + body)
+            header = exact(4)
+            error = exact(int.from_bytes(header[:3], "little"))
+            assert (
+                error[0] == 0xFF and int.from_bytes(error[1:3], "little") == 3159
+            ), error
+        self.record("raw plaintext MySQL handshake refused before password validation")
+
     def security(self):
+        self.plaintext_handshake()
         self.coalesced_ssl_request()
         self.reject("plaintext SQL refused", lambda: self.sql(tls=False))
         self.reject(
@@ -730,6 +762,11 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
             )
         cli = shutil.which("mariadb") or shutil.which("mysql")
         if cli:
+            version_text = run([cli, "--version"]).stdout.decode().strip()
+            mariadb = "mariadb" in version_text.lower()
+            verify_option = (
+                "ssl-verify-server-cert" if mariadb else "ssl-mode=VERIFY_IDENTITY"
+            )
             # Secret stays in a private option file, never argv/environment.
             opts = self.work / "driver.cnf"
             private(
@@ -740,7 +777,9 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
                 + str(self.port)
                 + "\nssl-ca="
                 + str(self.cert / "ca.pem")
-                + "\nssl-verify-server-cert\n",
+                + "\n"
+                + verify_option
+                + "\n",
             )
             out = run(
                 [cli, "--defaults-extra-file=" + str(opts), "-N", "-e", "SELECT 6*7"]
@@ -748,14 +787,18 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
             assert out.strip() == b"42", out
             matrix.append(
                 dict(
-                    driver="MariaDB CLI/libmariadb",
-                    version=run([cli, "--version"]).stdout.decode().strip(),
+                    driver=(
+                        "MariaDB CLI/libmariadb"
+                        if mariadb
+                        else "MySQL CLI/libmysqlclient"
+                    ),
+                    version=version_text,
                     status="passed",
                     operations="verified TLS, auth, query",
                 )
             )
         elif self.args.require_drivers:
-            raise AssertionError("MariaDB CLI required")
+            raise AssertionError("MariaDB or MySQL CLI required")
         self.result["drivers"] = matrix
         self.record("client driver matrix", matrix)
 
@@ -1105,6 +1148,7 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
                 user="test",
                 password=self.password,
                 ssl=self.context() if tls else None,
+                ssl_disabled=not tls,
                 autocommit=True,
                 connect_timeout=3,
                 read_timeout=10,
@@ -1115,6 +1159,9 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
             for encrypted in ([False, True] if rep % 2 == 0 else [True, False]):
                 with connect(encrypted) as c:
                     with c.cursor() as q:
+                        q.execute("SHOW STATUS LIKE 'Ssl_version'")
+                        protocol = q.fetchone()[1]
+                        assert bool(protocol) == encrypted, (encrypted, protocol)
                         for _ in range(10):
                             q.execute("SELECT 1")
                             q.fetchall()
@@ -1129,6 +1176,7 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
                                 repetition=rep,
                                 query="point read",
                                 mysql_tls=encrypted,
+                                mysql_protocol=protocol,
                                 storage_mtls=True,
                                 wal="fsync",
                                 rf=3,

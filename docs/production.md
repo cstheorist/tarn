@@ -173,7 +173,7 @@ lost mutation reply with exact single-application readback.
 runs the real deployment and retains source hashes/configurations/results.
 The required matrix covers PyMySQL (verified TLS/auth/DDL/transactions),
 MySQL Connector/Python (verified TLS/native-auth switch/binary prepares), and
-MariaDB CLI/libmariadb (CA/name verification/auth/query). Use CA and identity
+MariaDB or MySQL CLI (CA/name verification/auth/query). Use CA and identity
 verification in each client; enabling encryption alone does not authenticate
 the server. Other drivers need their own compatibility/verification run.
 
