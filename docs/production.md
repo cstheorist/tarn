@@ -54,8 +54,11 @@ The separate `tarn_repl` account has only session/usage and the replication
 role. Production removes inherited/public, guest and legacy `tarn` grants.
 Existing unexpected function definitions cause refusal, not a permissive
 fallback. Internal net.box clients request no schema-view privileges. Development
-rolling upgrades retain the predecessor EVAL role probe for mixed storage;
-production disables that fallback, and the switch cannot be set in JSON.
+connections retain the predecessor EVAL role probe only after compatibility
+admission; production disables that fallback, and the switch cannot be set in
+JSON. Persisted format 2 requires the drained maintenance procedure in
+[upgrades](upgrades.md); this profile does not authorize mixed-format rolling
+upgrades or downgrades.
 
 ## Provision and start
 
@@ -118,7 +121,13 @@ production disables that fallback, and the switch cannot be set in JSON.
    Firewall the storage TLS ports to authorized peers/gateways; expose only the
    SQL TLS listener to applications. Run health checks under the service UID
    at deployment and periodically. A nonzero exit is actionable; retain the
-   reason rather than changing the profile to pass it.
+   reason rather than changing the profile to pass it. Health checks validate
+   protocol, persisted format, shard/runtime/native layout and transaction-age
+   compatibility on every replica as well as identity, durability and clock
+   readiness. A read-only follower may report native attachment pending until
+   promotion; that exception does not admit it to routed work. Movement
+   capability discovery uses the same verified TLS routes and explicit service
+   procedure permissions.
 
 ## Resource and clock checks
 
