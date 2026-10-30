@@ -14,6 +14,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   service/replication roles, resource/clock deployment checks, certificate
   rotation and driver/failure tests ([#139](https://github.com/cstheorist/tarn/issues/139)).
   See [the deployment procedure and proof boundaries](docs/production.md).
+- Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
+  schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
+  and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
+  old catalog decoding and provide inspection/migration and pinned-reference
+  mutation/refusal controls. Declaration provenance does not certify old data.
 
 - A quiescent whole-cluster backup/restore workflow with durable replica fences,
   complete membership/routing and transaction/DDL/lazy drain checks, source-bound

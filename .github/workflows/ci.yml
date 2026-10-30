@@ -60,6 +60,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
+      mysql:
+        image: mysql:8.4.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3408:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=30
       # Reference server for the SQL differential tests.
       mariadb:
         image: mariadb:10.11
@@ -101,6 +111,15 @@ jobs:
           key: tarantool-${{ env.TARANTOOL_VERSION }}-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
       - name: Create the MariaDB test user
         run: mysql -h 127.0.0.1 -P 3407 -u root -e "CREATE USER 'sb'@'%' IDENTIFIED BY ''; GRANT ALL ON *.* TO 'sb'@'%';"
+      - name: Create the pinned MySQL integrity reference user
+        run: |
+          python3 - <<'PY'
+          import pymysql
+          with pymysql.connect(host='127.0.0.1',port=3408,user='root',password='',autocommit=True) as c:
+              with c.cursor() as q:
+                  q.execute("CREATE USER 'sb'@'%' IDENTIFIED BY ''")
+                  q.execute("GRANT ALL ON *.* TO 'sb'@'%'")
+          PY
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --release --workspace --all-targets
@@ -158,6 +177,11 @@ jobs:
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
+      - name: Integrity declarations and supported SQL mutations
+        run: |
+          mkdir -p integrity-evidence
+          ci/annotate.sh integrity-mysql python3 tests/sql/integritytest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 --reference mysql --kv 127.0.0.1:3311,127.0.0.1:3321 --output integrity-evidence/native-mysql.json
+          ci/annotate.sh integrity-mariadb python3 tests/sql/integritytest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 --reference mariadb --output integrity-evidence/native-mariadb.json
       - name: Query plans and bounded routing diagnostics
         run: ci/annotate.sh explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
       - name: Bounded statistics and inner-join reordering
@@ -190,6 +214,7 @@ jobs:
           # move reads from disk, a runner moves too few buckets to tell)
           ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh integrity-vinyl python3 tests/sql/integritytest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 --reference mysql --kv 127.0.0.1:3311,127.0.0.1:3321 --output integrity-evidence/vinyl-mysql.json
           ci/annotate.sh vinyl-explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
           ci/annotate.sh vinyl-statisticstest python3 tests/sql/statisticstest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
           ci/annotate.sh vinyl-txntest python3 tests/sql/txntest.py --tarn 127.0.0.1:4000 --kv 127.0.0.1:3311,127.0.0.1:3321 --bank-seconds 15
@@ -239,6 +264,13 @@ jobs:
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+      - name: Retain integrity outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: integrity-evidence
+          retention-days: 30
       - name: Retain Vinyl pressure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

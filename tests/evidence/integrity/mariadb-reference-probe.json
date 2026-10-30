@@ -1,0 +1,146 @@
+[
+  {
+    "id": "create_fk",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_fk_cascade",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_fk_restrict",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_fk_null",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_inline_reference",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_partition_fk",
+    "expected": 1506,
+    "actual": {
+      "error": 1506,
+      "state": "HY000"
+    }
+  },
+  {
+    "id": "create_check",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_column_check",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_check_not_enforced",
+    "expected": 1064,
+    "actual": {
+      "error": 1064,
+      "state": "42000"
+    }
+  },
+  {
+    "id": "create_enum",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "create_set",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "alter_fk",
+    "expected": 0,
+    "actual": {
+      "ok": 2
+    }
+  },
+  {
+    "id": "alter_check",
+    "expected": 0,
+    "actual": {
+      "ok": 2
+    }
+  },
+  {
+    "id": "alter_check_enforced",
+    "expected": 1064,
+    "actual": {
+      "error": 1064,
+      "state": "42000"
+    }
+  },
+  {
+    "id": "alter_check_not_enforced",
+    "expected": 1064,
+    "actual": {
+      "error": 1064,
+      "state": "42000"
+    }
+  },
+  {
+    "id": "alter_enum",
+    "expected": 0,
+    "actual": {
+      "ok": 2
+    }
+  },
+  {
+    "id": "alter_set",
+    "expected": 0,
+    "actual": {
+      "ok": 2
+    }
+  },
+  {
+    "id": "alter_inline_check",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  },
+  {
+    "id": "alter_combined",
+    "expected": 0,
+    "actual": {
+      "ok": 2
+    }
+  },
+  {
+    "id": "alter_combined_type",
+    "expected": 0,
+    "actual": {
+      "ok": 0
+    }
+  }
+]
