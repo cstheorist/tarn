@@ -63,12 +63,25 @@ elseif action == 'lazy_pending' then
     assert(#old==1 and depth(1)==1)
     ev(1,"local keys,old=...;box.space._tarn_meta:replace{'test.backup.lazy',{keys=keys,old=old}};return true",{keys,old})
 elseif action == 'lazy_drain' then
-    local saved=ev(1,"return box.space._tarn_meta:get{'test.backup.lazy'}[2]")
-    ok(call(1,'tarn_lazy_control','resume')); await(function() return depth(1)==0 end)
-    ok(call(1,'tarn_autocommit',{{'replace',sid,{1,saved.keys[2],1}}},{fence={sid,0},wb={1}}))
-    await(function() return depth(1)==0 end)
-    ok(call(2,'tarn_lazy_gc',gen,2,{2}))
-    assert(ev(2,'local g=...;return box.space._tarn_lazy_floor:get{g,2,1}.seq',{gen})>=2)
+    local result={status='ok',attempts={}}
+    local good,err=pcall(function()
+        local saved=ev(1,"return box.space._tarn_meta:get{'test.backup.lazy'}[2]")
+        ok(call(1,'tarn_lazy_control','resume')); await(function() return depth(1)==0 end)
+        result.replace=fixture_retry.call('tarn_autocommit',function()
+            return call(1,'tarn_autocommit',{{'replace',sid,{1,saved.keys[2],1}}},{fence={sid,0},wb={1}})
+        end,result.attempts,fiber.clock,fiber.sleep)
+        if result.replace.status~='ok' then result.status='failed'; result.failure=result.replace; return end
+        await(function() return depth(1)==0 end)
+        result.gc=fixture_retry.call('tarn_lazy_gc',function()
+            return call(2,'tarn_lazy_gc',gen,2,{2})
+        end,result.attempts,fiber.clock,fiber.sleep)
+        if result.gc.status~='ok' then result.status='failed'; result.failure=result.gc; return end
+        result.floor=ev(2,'local g=...;return box.space._tarn_lazy_floor:get{g,2,1}.seq',{gen})
+        assert(result.floor>=2)
+    end)
+    if not good then result.status='failed'; result.failure={kind='stage_error',error=fixture_retry.describe_error(err)} end
+    for _, connection in ipairs(c) do connection:close() end
+    return result
 elseif action == 'move_begin' then
     local r=ok(call(1,'tarn_bucket_send_begin',1,2,'backup-move',5))
     ev(1,'__backup_move_generation=...;return true',{r[2]})

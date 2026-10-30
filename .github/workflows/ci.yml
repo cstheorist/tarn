@@ -160,6 +160,7 @@ jobs:
       - name: Cluster-consistent backup and isolated restore
         run: |
           python3 tests/test_cluster_backup.py
+          tarantool tests/cluster_backup_retry_test.lua
           for engine in memtx vinyl; do
             for mode in native lua; do
               native="$PWD/target/release/libtarn_storage.so"
