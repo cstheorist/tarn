@@ -1,5 +1,11 @@
 # Benchmarks
 
+The [scheduled-arrival load generator](LOAD_GENERATOR.md) supplies bounded
+offered-load scheduling and exact per-key/ledger audits for new SQL studies.
+Independent physical-host validation is tracked separately in
+[#211](https://github.com/cstheorist/tarn/issues/211). Its local functional
+controls do not replace or qualify the historical measurements below.
+
 The separate [bounded native batch experiment](NATIVE_BATCH.md) measures
 one opt-in read kernel on an Apple M4 Max / Docker ARM64 host. Its matched
 Lua/native data, SQL regressions and raw evidence are independent of the
