@@ -4331,6 +4331,7 @@ mod tests {
             params: &[],
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
+            statistics: None,
         };
         let Stmt::CreateTable { mut def, .. } = planner::plan("CREATE TABLE t(id INT PRIMARY KEY)", &ctx).unwrap()
         else {
