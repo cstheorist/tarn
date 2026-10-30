@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# (as in ci.yml: every commit pushed to main runs to completion)
 concurrency:
-  group: outcomes-${{ github.ref }}
-  cancel-in-progress: true
+  group: outcomes-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 jobs:
   outcomes:
     runs-on: ubuntu-24.04
