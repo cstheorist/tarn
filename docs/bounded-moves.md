@@ -1,7 +1,7 @@
 # Bounded bucket movement
 
-Implementation contract for issue #176 (work in progress; acceptance evidence
-must be added before this document describes a supported release).
+Implementation contract for issue #176. The [acceptance report](../evidence/bounded-moves/README.md)
+records fixed-budget measurements, fault results, migration checks and proof boundaries.
 
 The receiver stages rows in a synchronous Vinyl space. Small per-move metadata
 holds its identity, phase, counters and last accepted page/cursor. Copy, delta,
@@ -132,6 +132,15 @@ executed-but-lost page reply use the actual SQL coordinator. A failed run writes
 its error and source/build/configuration hashes; it does not become a pass because
 a later attempt succeeds. This same-host fixture is not an independent-host
 failure-domain or production capacity benchmark.
+
+With `--traffic`, SERIALIZABLE and READ COMMITTED writers maintain separate
+transactional ledgers and counters on the moving bucket. Attempt identifiers
+are never replayed after uncertainty. Final reconciliation requires every
+acknowledged effect, excludes confirmed aborts, bounds other effects by the
+recorded unknown outcomes, and checks progress after movement. The fault matrix
+runs this workload with native dispatch and Lua for memtx, Vinyl and mixed
+tables, and with source/receiver/coordinator loss, lost page replies, disk
+refusal and unavailable lazy targets.
 
 Example fixed-pool cohorts (run in new directories, with the same binaries,
 configuration and repetition count):

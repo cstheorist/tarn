@@ -214,5 +214,51 @@
     "passed": true,
     "engine": "vinyl",
     "error": null
+  },
+  {
+    "directory": "tarn176-final-traffic-source",
+    "passed": false,
+    "settings": {
+      "work": "/tmp/tarn176-final-traffic-source",
+      "engine": "mixed",
+      "mib": 1,
+      "moves": 1,
+      "fault": "source",
+      "traffic": true
+    },
+    "source_revision": "95005ff",
+    "elapsed_seconds": null,
+    "errors": [
+      "Traceback (most recent call last):\n  File \"/work/tests/bounded_moves.py\", line 278, in main\n    wait(lambda: all(len(r['acked'])>=2 for r in load))\n  File \"/work/tests/bounded_moves.py\", line 139, in wait\n    raise AssertionError('readiness timeout: '+str(last))\nAssertionError: readiness timeout: False\n"
+    ]
+  },
+  {
+    "directory": "tarn176-final-traffic-source-v2",
+    "passed": true,
+    "settings": {
+      "work": "/tmp/tarn176-final-traffic-source-v2",
+      "engine": "mixed",
+      "mib": 1,
+      "moves": 1,
+      "fault": "source",
+      "traffic": true
+    },
+    "source_revision": "95005ff-plus-ledger-admission",
+    "elapsed_seconds": 5.38643829402281,
+    "errors": []
+  },
+  {
+    "directory": "tarn176-restore-memtx-native",
+    "passed": false,
+    "settings": {
+      "work": "/tmp/tarn176-restore-memtx-native",
+      "engine": "memtx",
+      "rows": 256,
+      "output": "/tmp/tarn176-restore-memtx-native.json"
+    },
+    "source_revision": "4f7e27da426934c2c8f2f647c305786fe2f389fc",
+    "errors": [
+      "cluster is not drained: n3: _tarn_recv is not empty"
+    ]
   }
 ]
