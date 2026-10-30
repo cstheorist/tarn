@@ -1,0 +1,124 @@
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore
+PASS two RF3/fsync shards loaded through Tarn mutation procedures
+PASS published membership version is present and ready on both shards
+PASS configured native dispatch or explicit Lua-only path exercised
+PASS unreplicated persistent local space refuses capture
+PASS missing registered replica refused
+PASS real prepared/staging distributed transaction refuses capture
+PASS same distributed decision applied and drained before cut
+PASS unfinished DDL job refuses capture
+PASS paused real lazy delivery refuses capture without discarding obligations
+PASS lazy delivery drained with persistent versions, frontiers and GC floors
+PASS real sending/receiving bucket move refuses capture
+PASS completed move drains logical Vinyl staging without waiting for compaction
+PASS completed move preserves exact rows and lazy metadata under the new owner
+PASS all replicas durably fenced and exact coherent cut audited
+PASS pre-fence uncommitted mutation is aborted rather than omitted as committed data
+PASS interrupted capture has no restorable cluster manifest
+PASS storage and raw persistent mutations refused under the fence
+PASS native dispatch and Lua handback cannot bypass the cluster fence
+PASS crashed fenced leader restarts without writable application initialization
+PASS killed copy controller leaves incomplete files and durable source fences
+PASS complete cluster manifest binds all physical replicas to the same cut
+PASS explicit source release and restart restore service after the frozen cut
+PASS killed restore controller leaves whole-cluster and per-node startup fences
+PASS corrupted physical copy cannot produce a verified cluster restore
+PASS physical restore stays quarantined until whole-cluster validation
+PASS quarantined startup has no replication, writable service or application initialization
+PASS every user row, schema and persisted protocol space matches the cut
+PASS interrupted activation refuses startup when a child marker is already removed
+PASS post-cut source acknowledgement is outside the documented RPO
+PASS isolated restored RF3 cluster serves exact acknowledged data and new writes
+PASS late retained lazy frame cannot resurrect membership after GC, move and restore

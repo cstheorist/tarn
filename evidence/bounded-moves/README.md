@@ -78,7 +78,7 @@ exercise those changes; the earlier scale timings are not relabeled as new runs.
 | Format-1 to format-2 maintenance migration | [memtx and Vinyl matrices passed](checks/format-migration.out), including both mixed-component admission directions, interrupted/prepared refusal, old-binary downgrade refusal and reopen; full artifacts in development archive |
 | Cluster backup and isolated restore | Four RF3/fsync combinations passed on `cd1ad67`: memtx/Vinyl × native/Lua; exact rows, schemas and protocol spaces, interrupted capture/restore, quarantine and late lazy-frame checks |
 | Broad failover workload | Two 60-second RF3/fsync runs passed on `cd1ad67`; 39 memtx and 42 Vinyl moves under transfers, increments, predicate audits and RC locks; handoff plus both shard-leader crashes; every acknowledged commit retained, no duplicate increments or unfinished move |
-| Complete native storage suite | Passed; [combined native/Lua output](checks/storage-matrix-before-clock-readiness.out.gz) also retains the subsequent Lua-only setup refusal described below |
+| Complete storage suites | Native passed in the [combined initial output](checks/storage-matrix-before-clock-readiness.out.gz); the [complete Lua rerun on `474aaae`](checks/storage-lua-final.out.gz) passed after the fixture readiness correction below |
 
 The [restore/failover index](restore-and-failover-index.json),
 [complete result/config/process-log archive](restore-and-failover-runs.tar.gz)
@@ -88,7 +88,7 @@ passing means exact effect reconciliation and resumed progress, not zero errors
 or uninterrupted service. Backup captures a frozen cut: later source writes are
 outside its documented recovery point.
 
-Two final fixture corrections preserve the format and clock guards. The topology
+Final fixture corrections preserve the format and clock guards. The topology
 CI originally tried its frozen format-1 gateway against format-2 storage and was
 correctly refused ([original job output](checks/topology-first-ci-failure.out.gz)).
 It now records that refusal explicitly and runs the candidate's full topology
@@ -106,6 +106,16 @@ fixture's ownership wrapper; those startup logs are retained too. The
 [control index](final-fixture-controls-index.json) and [hashed archive](final-fixture-controls.tar.gz)
 retain successful runs and the original diagnostics. Full CI remains the check
 of the integrated final revision.
+
+Hosted CI then observed a confirmed `conflict`/`1213` abort during the backup
+fixture's lazy-drain transaction ([job output](checks/restore-ci-confirmed-conflict.out.gz),
+[original artifact](checks/restore-ci-confirmed-conflict.zip)). That fixture now
+retries only this explicit confirmed-abort response, for at most five seconds;
+transport exceptions and unknown outcomes still propagate without retry.
+All four RF3 restore combinations passed again ([index](restore-confirmed-conflict-index.json),
+[hashed archive](restore-confirmed-conflict-runs.tar.gz),
+[output](checks/restore-confirmed-conflict.out)). This changes fixture setup,
+not production mutation retry behavior.
 
 The migration predecessor is exactly `8b12c4525bd677499a91b973afbc86cbcbb0cafd`.
 Migration run source `265ed5e` and its separately built binaries are recorded in
