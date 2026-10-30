@@ -47,7 +47,9 @@ shard *i* listens on port `3300 + 10·i + j`, so the shards are on 3311 and
 
 ## Run SQL
 
-Without `--user` options, `tarn-server` accepts any user name and password:
+These are development defaults. Use the [production profile](production.md)
+for required TLS/authentication and deployment validation. Without `--user`
+options, the development server accepts any user name and password:
 
 ```sh
 mysql -h 127.0.0.1 -P 4000 -u root

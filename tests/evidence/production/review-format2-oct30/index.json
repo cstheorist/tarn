@@ -1,0 +1,19 @@
+{
+  "runtime": "a8e750c7178dd2bd2060ecf489a2b92781ce7982",
+  "compiled_rust_revision": "f942c0b9a50e6f7f2568930602ab243bc865f978",
+  "qualification": "Both 32-control native and Lua cohorts pass with exact source input hashes; no replay, TLS/fencing/quorum/budgets unchanged. Includes actual RF3 TLS capability and cancel before publication, not a cross-shard production move capacity result.",
+  "negative": "The integrated old statvfs prototype refuses movement capabilities with an exact FFI pointer type mismatch. First integrated workspace unit run also exposed the old format-1 mock; both original failures retained.",
+  "limitations": "Linux ARM64 opt0/debug0; local PyMySQL driver; skip-cost; standard release, current driver matrix and matched overhead remain hosted gates. Seven pre-existing ARM c_char cast warnings exclude tarn-storage from the local lint command only; full x86 workspace lint remains required.",
+  "files": {
+    "before.json": "f5a182d4fbe179dcfefcf8e62b2973091317976b542fc6022140fabe0294dedb",
+    "after-native.out": "2ee39f9a74d8fc52b2cd1f0420c274de04a7fa368efaa21fbf85bf8024098944",
+    "workspace-after.out": "7ab139a49df9cc8764202d11eeaa7c6c2b6b9270f7bbcaacd20e5d84017628d9",
+    "before.out": "c99e7236adf967939ef9c7d23590ed974de75cca7fa2984e4c0096eeba47a396",
+    "workspace-before.out": "81d31a8ec56309728ff83ff4e4b09287e28bae4bedbda870abb972ad76debf1b",
+    "after-lua.out": "2ee39f9a74d8fc52b2cd1f0420c274de04a7fa368efaa21fbf85bf8024098944",
+    "build.out": "c2d57a6a51c17c611ffe5a0879f8224da34f8527fb10b5c6303132cbb93eeed9",
+    "clippy-after.out": "beba1e9cde51bbd8bad5e15a03e018f8721d59826b5344bc17efea5e4881bff1",
+    "after-lua.json": "f155984e1060b3102b490d1669a4b5362aeecb30f5da61de1fe2e3e65c0d438a",
+    "after-native.json": "df3f2bd51b6b975d2c8332560791de8ae9c419252393cd66d79dd494b3a671ef"
+  }
+}

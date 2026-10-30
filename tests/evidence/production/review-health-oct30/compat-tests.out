@@ -1,0 +1,13 @@
+   Compiling tarn-sql v0.1.0 (/tmp/production-health-canonical/crates/tarn-sql)
+    Finished `test` profile [unoptimized] target(s) in 9.28s
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_sql-36220271608fa9da)
+
+running 5 tests
+test compat::tests::admits_supported_protocol_and_explicit_lua_fallbacks ... ok
+test compat::tests::deployment_pending_is_only_for_read_only_replicas_with_the_same_contract ... ok
+test compat::tests::refuses_other_native_layout_contracts ... ok
+test compat::tests::refuses_wrong_protocol_format_identity_runtime_or_expiry_contract ... ok
+test compat::tests::refuses_truncated_extended_and_coerced_reports ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 223 filtered out; finished in 0.00s
+

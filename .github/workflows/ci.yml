@@ -131,6 +131,24 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Production ACL migration and negative controls
+        run: tarantool lua/test/production_acl_test.lua /tmp/tarn-production-acl
+      - name: Production profile, TLS drivers, recovery and matched security costs
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          python3 tests/production.py --bin target/release --native target/release/libtarn_storage.so --work /tmp/tarn-production-native --require-drivers
+          python3 tests/production.py --bin target/release --work /tmp/tarn-production-lua --require-drivers --skip-cost
+      - name: Retain production security evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: production-security
+          path: |
+            /tmp/tarn-production-*/result.json
+            /tmp/tarn-production-*/*.log
+            /tmp/tarn-production-*/config/*.json
+          if-no-files-found: warn
       - name: Strong KV example and benchmark codec tests
         run: |
           cargo test --release -p tarn-sql --example strong_kv

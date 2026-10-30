@@ -597,3 +597,30 @@ async fn shared_scopes_cover_multiple_connections_and_reserved_calls() {
 async fn peer_reply(peer: &mut DuplexStream, id: u64) {
     peer.write_all(&response(iproto::OK, id, &[0x80])).await.unwrap();
 }
+
+#[tokio::test]
+async fn cancelled_tls_handshake_keeps_its_physical_socket_charge_until_drop() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let budget = crate::ConnectionBudget::new(2, 1).unwrap();
+    let mut opts = Opts::new(format!("tls://{}", listener.local_addr().unwrap()));
+    opts.connections = Some(budget.clone());
+    opts.tls = Some(Arc::new(
+        tarn_transport::rustls::ClientConfig::builder_with_provider(Arc::new(
+            tarn_transport::rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(tarn_transport::rustls::RootCertStore::empty())
+        .with_no_client_auth(),
+    ));
+    let connecting = tokio::spawn(async move { Client::connect(&opts).await });
+    let (mut peer, _) = bounded(listener.accept()).await.unwrap();
+    assert_eq!(bounded(peer.read_u8()).await.unwrap(), 0x16); // TLS ClientHello, no IPROTO/application request.
+    assert_eq!(budget.stats().open, 1);
+    assert!(budget.acquire(false).is_err(), "handshake donated its socket slot");
+    connecting.abort();
+    assert!(connecting.await.unwrap_err().is_cancelled());
+    assert_eq!(budget.stats().open, 0);
+    let mut remaining = Vec::new();
+    let _ = bounded(peer.read_to_end(&mut remaining)).await;
+}

@@ -15,7 +15,8 @@
 //! COM_FIELD_LIST, COM_STATISTICS, COM_STMT_PREPARE / EXECUTE /
 //! SEND_LONG_DATA / CLOSE / RESET, COM_SET_OPTION, COM_RESET_CONNECTION,
 //! multi-statements (CLIENT_MULTI_STATEMENTS or COM_SET_OPTION).
-//! Not supported: SSL, compression, cursors (a cursor request is answered
+//! Supports MySQL SSLRequest negotiation when TLS is configured.
+//! Not supported: compression, cursors (a cursor request is answered
 //! with an ordinary result set), COM_CHANGE_USER.
 
 pub mod codec;
@@ -28,7 +29,9 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 use tarn_common::{Column, SqlError, SqlResult, Value};
+use tarn_transport::{rustls, BoxIo, PrefixedIo, TlsAcceptor};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -51,6 +54,9 @@ pub struct ServerOpts {
     /// Version string in the handshake, e.g. "8.0.40-tarn".
     pub server_version: String,
     pub auth: AuthConfig,
+    pub tls: Option<Arc<rustls::ServerConfig>>,
+    pub require_tls: bool,
+    pub handshake_timeout: Duration,
 }
 
 impl Default for ServerOpts {
@@ -59,16 +65,28 @@ impl Default for ServerOpts {
             memory: None,
             server_version: "8.0.40-tarn".to_string(),
             auth: AuthConfig::AllowAll,
+            tls: None,
+            require_tls: false,
+            handshake_timeout: Duration::from_secs(5),
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum AuthConfig {
     /// Accept any user and password.
     AllowAll,
     /// user -> plaintext password (verified with mysql_native_password).
     Users(HashMap<String, String>),
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllowAll => f.write_str("AllowAll"),
+            Self::Users(users) => f.debug_struct("Users").field("accounts", &users.len()).finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +113,8 @@ pub struct PrepareInfo {
 
 /// SQL engine behind one client connection.
 pub trait Backend: Send {
+    /// Physical transport metadata; never a substitute for account auth.
+    fn on_tls(&mut self, _protocol: &str, _cipher: &str) {}
     /// `found_rows`: the client set CLIENT_FOUND_ROWS (UPDATE reports the
     /// rows it matched, not those it changed). `collation`: the character
     /// set and collation id the client asked for in its handshake response.
@@ -129,7 +149,8 @@ struct Stmt {
 }
 
 struct Conn<B> {
-    stream: TcpStream,
+    stream: Option<BoxIo>,
+    peer: String,
     rbuf: BytesMut,
     wbuf: Vec<u8>,
     result_guards: Vec<tarn_common::ResourceGuard>,
@@ -365,12 +386,19 @@ impl<B: Backend> Conn<B> {
 
     async fn flush(&mut self) -> io::Result<()> {
         if !self.wbuf.is_empty() {
-            self.stream.write_all(&self.wbuf).await?;
+            self.stream
+                .as_mut()
+                .expect("connected stream")
+                .write_all(&self.wbuf)
+                .await?;
             self.wbuf.clear();
             if self.wbuf.capacity() > 64 << 10 {
                 self.wbuf = Vec::with_capacity(16 << 10);
             }
         }
+        // Rustls may have accepted plaintext into its record buffer; drain
+        // encrypted bytes before waiting for a request/reply.
+        self.stream.as_mut().expect("connected stream").flush().await?;
         if self.scratch.capacity() > 64 << 10 {
             self.scratch = Vec::with_capacity(1024);
         }
@@ -399,7 +427,14 @@ impl<B: Backend> Conn<B> {
                 self.buffer_charge = need;
             }
             self.rbuf.reserve(16 << 10);
-            if self.stream.read_buf(&mut self.rbuf).await? == 0 {
+            if self
+                .stream
+                .as_mut()
+                .expect("connected stream")
+                .read_buf(&mut self.rbuf)
+                .await?
+                == 0
+            {
                 return Ok(None);
             }
         }
@@ -416,17 +451,70 @@ impl<B: Backend> Conn<B> {
         self.seq = 0;
         let ver = self.opts.server_version.clone();
         let id = self.id;
-        self.send(|p| packets::handshake_v10(p, &ver, id, &scramble, SERVER_STATUS_AUTOCOMMIT));
-        let Some((payload, seq)) = self.read_packet().await? else {
+        let server_caps = packets::SERVER_CAPS | if self.opts.tls.is_some() { cap::SSL } else { 0 };
+        self.send(|p| packets::handshake_v10_caps(p, &ver, id, &scramble, SERVER_STATUS_AUTOCOMMIT, server_caps));
+        let Some((mut payload, mut seq)) = self.read_packet().await? else {
             return Ok(false);
         };
         self.seq = seq.wrapping_add(1);
+        let requests_tls = payload
+            .get(..4)
+            .is_some_and(|b| u32::from_le_bytes(b.try_into().unwrap()) & cap::SSL != 0);
+        let mut encrypted = false;
+        if requests_tls && payload.len() == 32 {
+            let Some(config) = self.opts.tls.clone() else {
+                self.send_err(&SqlError::new(1043, "08S01", "TLS is not configured"));
+                self.flush().await?;
+                return Ok(false);
+            };
+            let transport = PrefixedIo {
+                prefix: self.rbuf.split().freeze(),
+                io: self.stream.take().expect("connected stream"),
+            };
+            let tls = TlsAcceptor::from(config).accept(transport).await?;
+            let connection = tls.get_ref().1;
+            let protocol = match connection.protocol_version() {
+                Some(rustls::ProtocolVersion::TLSv1_3) => "TLSv1.3",
+                Some(rustls::ProtocolVersion::TLSv1_2) => "TLSv1.2",
+                _ => "unknown",
+            };
+            let cipher = connection
+                .negotiated_cipher_suite()
+                .map(|c| format!("{:?}", c.suite()))
+                .unwrap_or_default();
+            self.backend.on_tls(protocol, &cipher);
+            self.stream = Some(Box::new(tls));
+            encrypted = true;
+            let Some(next) = self.read_packet().await? else {
+                return Ok(false);
+            };
+            (payload, seq) = next;
+            self.seq = seq.wrapping_add(1);
+        }
+        if !encrypted && self.opts.require_tls {
+            self.send_err(&SqlError::new(
+                3159,
+                "HY000",
+                "Connections using insecure transport are prohibited",
+            ));
+            self.flush().await?;
+            return Ok(false);
+        }
+        if requests_tls && !encrypted {
+            self.send_err(&SqlError::new(
+                1043,
+                "08S01",
+                "Expected an SSLRequest before TLS authentication",
+            ));
+            self.flush().await?;
+            return Ok(false);
+        }
         let Some(hs) = packets::parse_handshake_response(&payload) else {
             self.send_err(&SqlError::new(1043, "08S01", "Bad handshake"));
             self.flush().await?;
             return Ok(false);
         };
-        self.caps = hs.caps & packets::SERVER_CAPS;
+        self.caps = hs.caps & server_caps;
         let user = text(hs.user).into_owned();
         let db = hs.database.filter(|d| !d.is_empty()).map(|d| text(d).into_owned());
         let mut response = hs.auth.to_vec();
@@ -434,9 +522,10 @@ impl<B: Backend> Conn<B> {
             .plugin
             .map(|p| text(p).into_owned())
             .unwrap_or_else(|| packets::NATIVE_PASSWORD.into());
-        let users = match &self.opts.auth {
+        let opts = self.opts.clone();
+        let users = match &opts.auth {
             AuthConfig::AllowAll => None,
-            AuthConfig::Users(u) => Some(u.clone()),
+            AuthConfig::Users(u) => Some(u),
         };
         if let Some(users) = users {
             if plugin != packets::NATIVE_PASSWORD {
@@ -451,7 +540,7 @@ impl<B: Backend> Conn<B> {
                 .get(&user)
                 .is_some_and(|pw| packets::native_password_ok(pw, &scramble, &response));
             if !ok {
-                let host = self.stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+                let host = self.peer.clone();
                 let using = if response.is_empty() { "NO" } else { "YES" };
                 self.send_err(&SqlError::new(
                     1045,
@@ -781,7 +870,10 @@ impl<B: Backend> Conn<B> {
     }
 
     async fn run(&mut self) -> io::Result<()> {
-        if !self.handshake().await? {
+        let handshake = tokio::time::timeout(self.opts.handshake_timeout, self.handshake())
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "MySQL handshake timed out"))??;
+        if !handshake {
             return Ok(());
         }
         loop {
@@ -805,7 +897,15 @@ pub async fn serve_connection<B: Backend>(
     mut backend: B,
 ) -> io::Result<()> {
     let _ = stream.set_nodelay(true);
-    let initial_charge = (256 + 4 * 16) << 10;
+    if opts.require_tls && opts.tls.is_none() {
+        backend.on_disconnect().await;
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "required MySQL TLS has no server configuration",
+        ));
+    }
+    let peer = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+    let initial_charge = ((256 + 4 * 16) << 10) + if opts.tls.is_some() { 128 << 10 } else { 0 };
     let buffer_guard = match opts
         .memory
         .as_ref()
@@ -820,7 +920,8 @@ pub async fn serve_connection<B: Backend>(
         }
     };
     let mut c = Conn {
-        stream,
+        stream: Some(Box::new(stream)),
+        peer,
         rbuf: BytesMut::with_capacity(16 << 10),
         wbuf: Vec::with_capacity(16 << 10),
         result_guards: Vec::new(),

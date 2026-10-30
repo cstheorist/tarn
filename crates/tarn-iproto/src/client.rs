@@ -84,6 +84,42 @@ struct Waiter {
 
 // The socket halves drop before their guards. Retiring requests keep their
 // shared scope charges until BOTH actual I/O owners have been dropped.
+// Keep the connection charge inside the TLS stream during handshake and
+// through both split owners. Fields drop in order: socket before its permit.
+struct SocketLease<T> {
+    io: T,
+    _connection: Option<crate::connections::ConnectionPermit>,
+}
+impl<T: AsyncRead + Unpin> AsyncRead for SocketLease<T> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_read(cx, buf)
+    }
+}
+impl<T: AsyncWrite + Unpin> AsyncWrite for SocketLease<T> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.io).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_shutdown(cx)
+    }
+}
 struct IoOwner<T> {
     io: T,
     _guard: IoGuard,
@@ -755,6 +791,10 @@ async fn writer_task<W: AsyncWrite + Unpin>(shared: Arc<Shared>, mut wr: IoOwner
             shared.close(&e);
             break;
         }
+        if let Err(e) = wr.io.flush().await {
+            shared.close(&e);
+            break;
+        }
         shared.counters.write_batches.fetch_add(1, Ordering::Relaxed);
         if let Some(traffic) = &shared.traffic {
             traffic.written(buf.len());
@@ -897,6 +937,22 @@ impl Client {
             .as_ref()
             .map(|b| b.acquire(opts.completion_connection))
             .transpose()?;
+        if opts.addr.starts_with("tls://") {
+            let tls = opts
+                .tls
+                .clone()
+                .ok_or_else(|| Error::Protocol("TLS endpoint requires a trusted CA configuration".into()))?;
+            let (addr, name) = tarn_transport::tls_endpoint(&opts.addr)?;
+            let tcp = TcpStream::connect(addr).await?;
+            tcp.set_nodelay(true)?;
+            let socket = SocketLease {
+                io: tcp,
+                _connection: connection,
+            };
+            let stream = tarn_transport::TlsConnector::from(tls).connect(name, socket).await?;
+            let (rd, wr) = tokio::io::split(stream);
+            return Self::start_charged(opts, rd, wr, None).await;
+        }
         // "unix/:/path" (Tarantool's notation) or a bare absolute path
         // selects a Unix domain socket; anything else is host:port.
         let unix_path = opts
@@ -906,6 +962,11 @@ impl Client {
         if let Some(path) = unix_path {
             let (rd, wr) = UnixStream::connect(path).await?.into_split();
             return Self::start_charged(opts, rd, wr, connection).await;
+        }
+        if opts.tls.is_some() {
+            return Err(Error::Protocol(
+                "TLS configuration cannot be used with a plaintext TCP endpoint".into(),
+            ));
         }
         let stream = TcpStream::connect(opts.addr.as_str()).await?;
         stream.set_nodelay(true)?;
@@ -977,6 +1038,7 @@ impl Client {
             });
         }
         wr.io.write_all(&out).await?;
+        wr.io.flush().await?;
 
         let mut buf = BytesMut::with_capacity(READ_CHUNK);
         let mut id_reply: Option<Frame> = None;

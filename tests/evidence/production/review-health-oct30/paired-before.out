@@ -1,0 +1,31 @@
+PASS RF3 fsync identity, majority quorum, strict fencing, clock readiness and resource preflight
+PASS raw plaintext MySQL handshake refused before password validation
+PASS SSLRequest and ClientHello coalesced in one TCP write preserve TLS bytes and authenticate
+PASS plaintext SQL refused
+PASS wrong SQL password refused over TLS
+PASS untrusted SQL CA refused
+PASS PyMySQL verified TLS query and native-password authentication
+PASS authenticated TLS DDL, native data reads and transactions on memtx and vinyl
+PASS typed reductions execute through the service ACL on memtx and vinyl
+PASS composite lazy DDL, fully bound and ordered prefix reads over TLS on both engines
+PASS service denies EVAL, arbitrary CALL, test hooks, system reads and raw writes; guest denied; replication account cannot execute SQL RPCs
+PASS storage mTLS refuses a client without identity before IPROTO greeting
+PASS storage verified mTLS delivers IPROTO greeting
+PASS storage plaintext/downgrade refused
+PASS RF1 configuration rejected
+PASS plaintext storage configuration rejected
+PASS inline storage secret rejected
+PASS startup incompatible transaction age rejected
+Traceback (most recent call last):
+  File "/tmp/production-routing-review/tests/production.py", line 1411, in <module>
+    main()
+  File "/tmp/production-routing-review/tests/production.py", line 1394, in main
+    f.security()
+  File "/tmp/production-routing-review/tests/production.py", line 623, in security
+    self.config_controls()
+  File "/tmp/production-routing-review/tests/production.py", line 687, in config_controls
+    bad(
+  File "/tmp/production-routing-review/tests/production.py", line 642, in bad
+    assert p.returncode != 0, name
+           ^^^^^^^^^^^^^^^^^
+AssertionError: incompatible transaction age rejected

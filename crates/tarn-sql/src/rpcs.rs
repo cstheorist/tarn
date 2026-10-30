@@ -35,7 +35,8 @@ impl Default for RpcConfig {
 }
 
 impl RpcConfig {
-    pub(crate) fn validate(&self) -> SqlResult<()> {
+    /// Validate RPC admission and timeout policy before opening a listener.
+    pub fn validate(&self) -> SqlResult<()> {
         if !self.timeout_secs.is_finite() || !(0.001..=86400.0).contains(&self.timeout_secs) {
             return Err(SqlError::internal(
                 "rpc.timeout_secs must be finite and in [0.001,86400]",

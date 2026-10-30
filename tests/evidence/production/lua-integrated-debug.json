@@ -1,0 +1,507 @@
+{
+  "checks": [
+    {
+      "name": "RF3 fsync identity, majority quorum, strict fencing, clock readiness and resource preflight",
+      "result": true
+    },
+    {
+      "name": "SSLRequest and ClientHello coalesced in one TCP write preserve TLS bytes and authenticate",
+      "result": true
+    },
+    {
+      "name": "plaintext SQL refused",
+      "result": "OperationalError"
+    },
+    {
+      "name": "wrong SQL password refused over TLS",
+      "result": "OperationalError"
+    },
+    {
+      "name": "untrusted SQL CA refused",
+      "result": "OperationalError"
+    },
+    {
+      "name": "PyMySQL verified TLS query and native-password authentication",
+      "result": [
+        [
+          "Ssl_version",
+          "TLSv1.3"
+        ],
+        [
+          "Ssl_cipher",
+          "TLS13_AES_256_GCM_SHA384"
+        ]
+      ]
+    },
+    {
+      "name": "authenticated TLS DDL, native data reads and transactions on memtx and vinyl",
+      "result": true
+    },
+    {
+      "name": "service denies EVAL, arbitrary CALL, test hooks, system reads and raw writes; guest denied; replication account cannot execute SQL RPCs",
+      "result": true
+    },
+    {
+      "name": "storage mTLS refuses a client without identity before IPROTO greeting",
+      "result": "SSLError"
+    },
+    {
+      "name": "storage verified mTLS delivers IPROTO greeting",
+      "result": true
+    },
+    {
+      "name": "storage plaintext/downgrade refused",
+      "result": true
+    },
+    {
+      "name": "RF1 configuration rejected",
+      "result": true
+    },
+    {
+      "name": "plaintext storage configuration rejected",
+      "result": true
+    },
+    {
+      "name": "inline storage secret rejected",
+      "result": true
+    },
+    {
+      "name": "duplicate failure domains rejected",
+      "result": true
+    },
+    {
+      "name": "unachievable CPU requirement rejected",
+      "result": true
+    },
+    {
+      "name": "unachievable memory requirement rejected",
+      "result": true
+    },
+    {
+      "name": "unachievable disk requirement rejected",
+      "result": true
+    },
+    {
+      "name": "public secret permissions rejected",
+      "result": true
+    },
+    {
+      "name": "wrong storage server identity rejected",
+      "result": "SSLCertVerificationError"
+    },
+    {
+      "name": "expired storage server identity rejected",
+      "result": "SSLCertVerificationError"
+    },
+    {
+      "name": "client driver matrix",
+      "result": [
+        {
+          "driver": "PyMySQL",
+          "status": "passed",
+          "operations": "TLS verify identity, auth, DDL, transactions, memtx/vinyl"
+        },
+        {
+          "driver": "mysql-connector-python",
+          "version": "26.10.0",
+          "status": "passed",
+          "operations": "verified TLS, native auth switch, binary prepared statement"
+        },
+        {
+          "driver": "MariaDB CLI/libmariadb",
+          "version": "/usr/bin/mariadb  Ver 15.1 Distrib 10.11.19-MariaDB, for debian-linux-gnu (aarch64) using  EditLine wrapper",
+          "status": "passed",
+          "operations": "verified TLS, auth, query"
+        }
+      ]
+    },
+    {
+      "name": "confirmed commit survives RF3 leader SIGKILL with TLS routing",
+      "result": true
+    },
+    {
+      "name": "killed replica recovers WAL, rejoins encrypted replication and passes deployment checks",
+      "result": true
+    },
+    {
+      "name": "rolling CA overlap, leaf renewal, and old-root retirement on MySQL and storage TLS",
+      "result": true
+    },
+    {
+      "name": "TLS lost mutation reply reports 1180/40003; successful storage reply witnessed; exact single increment, no replay",
+      "result": true
+    }
+  ],
+  "cost": [],
+  "source": "37e3494d48b99c10a7965b709053f942e0d302ed",
+  "placement": "single-host logical RF3 fixture; no physical failure-domain claim",
+  "gateway_build": "/linux-target/debug",
+  "commands": [
+    {
+      "name": "bridge-n0",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n0.tls.json"
+      ]
+    },
+    {
+      "name": "bridge-n1",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n1.tls.json"
+      ]
+    },
+    {
+      "name": "bridge-n2",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n2.tls.json"
+      ]
+    },
+    {
+      "name": "storage-n0",
+      "argv": [
+        "/usr/bin/python3",
+        "/work/scripts/production.py",
+        "storage",
+        "/tmp/production139-source-bound-lua/config/n0.storage.json"
+      ]
+    },
+    {
+      "name": "storage-n1",
+      "argv": [
+        "/usr/bin/python3",
+        "/work/scripts/production.py",
+        "storage",
+        "/tmp/production139-source-bound-lua/config/n1.storage.json"
+      ]
+    },
+    {
+      "name": "storage-n2",
+      "argv": [
+        "/usr/bin/python3",
+        "/work/scripts/production.py",
+        "storage",
+        "/tmp/production139-source-bound-lua/config/n2.storage.json"
+      ]
+    },
+    {
+      "name": "gateway",
+      "argv": [
+        "/linux-target/debug/tarn-server",
+        "--config",
+        "/tmp/production139-source-bound-lua/config/cluster.json",
+        "--production",
+        "/tmp/production139-source-bound-lua/config/gateway.production.json",
+        "--listen",
+        "0.0.0.0:43439",
+        "--threads",
+        "2"
+      ]
+    },
+    {
+      "name": "wrong-bridge",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/wrong.bridge.json"
+      ]
+    },
+    {
+      "name": "expired-bridge",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/expired.bridge.json"
+      ]
+    },
+    {
+      "name": "storage-n0-restart",
+      "argv": [
+        "/usr/bin/python3",
+        "/work/scripts/production.py",
+        "storage",
+        "/tmp/production139-source-bound-lua/config/n0.storage.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n0",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n0.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n1",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n1.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n2",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n2.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-gateway",
+      "argv": [
+        "/linux-target/debug/tarn-server",
+        "--config",
+        "/tmp/production139-source-bound-lua/config/cluster.json",
+        "--production",
+        "/tmp/production139-source-bound-lua/config/gateway.production.json",
+        "--listen",
+        "0.0.0.0:43439",
+        "--threads",
+        "2"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n0",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n0.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n1",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n1.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n2",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n2.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-gateway",
+      "argv": [
+        "/linux-target/debug/tarn-server",
+        "--config",
+        "/tmp/production139-source-bound-lua/config/cluster.json",
+        "--production",
+        "/tmp/production139-source-bound-lua/config/gateway.production.json",
+        "--listen",
+        "0.0.0.0:43439",
+        "--threads",
+        "2"
+      ]
+    },
+    {
+      "name": "rotated-gateway",
+      "argv": [
+        "/linux-target/debug/tarn-server",
+        "--config",
+        "/tmp/production139-source-bound-lua/config/cluster.json",
+        "--production",
+        "/tmp/production139-source-bound-lua/config/gateway.production.json",
+        "--listen",
+        "0.0.0.0:43439",
+        "--threads",
+        "2"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n0",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n0.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n1",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n1.tls.json"
+      ]
+    },
+    {
+      "name": "rotated-bridge-n2",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/config/n2.tls.json"
+      ]
+    },
+    {
+      "name": "tls-fault-proxy",
+      "argv": [
+        "/usr/bin/python3",
+        "/work/tests/proxy.py",
+        "unix/:/tmp/production139-source-bound-lua/fault/proxy.sock",
+        "unix/:/tmp/production139-source-bound-lua/fault/upstream.sock",
+        "tarn_autocommit",
+        "update"
+      ]
+    },
+    {
+      "name": "tls-fault-bridge",
+      "argv": [
+        "/linux-target/debug/tarn-tls",
+        "/tmp/production139-source-bound-lua/fault/bridge.json"
+      ]
+    },
+    {
+      "name": "tls-fault-gateway",
+      "argv": [
+        "/linux-target/debug/tarn-server",
+        "--config",
+        "/tmp/production139-source-bound-lua/fault/cluster.json",
+        "--listen",
+        "127.0.0.1:43441",
+        "--users-file",
+        "/tmp/production139-source-bound-lua/users.json",
+        "--mysql-tls",
+        "/tmp/production139-source-bound-lua/fault/mysql.json",
+        "--threads",
+        "2"
+      ]
+    }
+  ],
+  "versions": {
+    "openssl": "OpenSSL 3.0.20 7 Apr 2026 (Library: OpenSSL 3.0.20 7 Apr 2026)",
+    "tarantool": "Tarantool 3.9.0-0-g8b9a0f59a9",
+    "pymysql": "1.0.2"
+  },
+  "binaries": {
+    "/linux-target/debug/tarn-server": "7aeba59620a0c318199b31d9946cc946df8922b571f1344f34b42230083f41f5",
+    "/linux-target/debug/tarn-tls": "a10bb114300e8369fb876dc1c5158cc222ffae9c7bf5b6513a1ed91cc0a6f510",
+    "/linux-target/debug/examples/security-cost": "938688af585bdf55deda7b37647abb61907f8023406bdd30b7c68a1e59b87cd9",
+    "/linux-target/debug/examples/unsafe-plaintext-bridge": "24f251a4a47f2624eee635e283151f696f484bb703a532551fa7515729516aee"
+  },
+  "source_files": {
+    "crates/tarn-common/src/lib.rs": "74ce8f2de6cbff6bff1259366d32c115a68e9c2951348904d7c553507918109b",
+    "crates/tarn-iproto/examples/bench.rs": "62f164a659442a95fb6084d20d36a3f00b138ea577fe7354301d7e52d6e4b2ca",
+    "crates/tarn-iproto/examples/decode_bench.rs": "b0181e7746fa6a3ae64ca222ecbb67f445e2ba331f22b73b333c0acc6dfb260c",
+    "crates/tarn-iproto/examples/native_batch.rs": "781b445238150b73461e9aafbeb75cfd72164a0bd7716453ab1148cdc4a336d2",
+    "crates/tarn-iproto/examples/security-cost.rs": "83d1d38ac202fe6f8278d61a6013794b0849e04e754b91e664bef76b4101851e",
+    "crates/tarn-iproto/src/admission.rs": "907336147cea861d33e3cc5c51051eb3b0c7b0e7713f63d5f268218ca96f1741",
+    "crates/tarn-iproto/src/client/tests.rs": "48b4a2aac9f52c2611f2daee1fd98b34c3f0451a4282be0957aa682bd5fa320a",
+    "crates/tarn-iproto/src/client.rs": "2812e15e061698fd28bc2e26df5192afd3bc263ceeb8ec738ce1e185bf761094",
+    "crates/tarn-iproto/src/iproto.rs": "fa7b87b77b666324c2fe366be61fc87b1dc2e94f6f36082d03233f4befea3293",
+    "crates/tarn-iproto/src/lib.rs": "12253be81c4a8b1f25795a37144421593800250193caa9555a19185cc50746b9",
+    "crates/tarn-iproto/src/mp.rs": "47c17739891bd4bcd22c7c2cd8f9de9ed22cb71b9bf0277d6667c507144eb985",
+    "crates/tarn-iproto/tests/common/mod.rs": "a25da3ab29068711138a5d4cd79fd084c83cdfd3f3415793a9a6c052ca687e54",
+    "crates/tarn-iproto/tests/integration.rs": "6c8252b232370c49dbb92540c54c981a29199d602a41918c12441ef0b5c4a9aa",
+    "crates/tarn-mysql/src/codec.rs": "8eed9978014e14141aefba3a9d8496aab397e196129a3670e1bd902f4d150665",
+    "crates/tarn-mysql/src/lib.rs": "59d6300a4e2733139fc11b16209a2aab1fd612540cc8dc172484c71f0a17eaac",
+    "crates/tarn-mysql/src/packets.rs": "4e75c9f2c63148bc395293b065bbff2e4141806d4aa8b7fa90a6529377db78dd",
+    "crates/tarn-server/src/main.rs": "5d524dc14509941ad094968bc65e703f21ba1f8a5c170892e28b5520763cee5a",
+    "crates/tarn-server/src/production.rs": "7408dd8236c66a1f8e148aabc179fdecf99c26c3d9d850c6e0630c06ec3e052a",
+    "crates/tarn-sql/examples/kvbench.rs": "8007de1814d906c06c341400c2a831f950edb3c1a7e3fc74fb9306005cd6ae60",
+    "crates/tarn-sql/examples/rpc_reserve.rs": "a33c3ca8a124fc21c3f236b0599bb772ecc570489c7077a0067f853b2e7ceb62",
+    "crates/tarn-sql/src/admin.rs": "69ed002a9bc0a2fff9a815fd6d6335eb388090cd88b7fe7a9d4fc22c64a426af",
+    "crates/tarn-sql/src/alter.rs": "476006bbca32ddd3702e420304ce4b010a91051b3bd5ecf8693df19cb1e03d5e",
+    "crates/tarn-sql/src/buckets.rs": "fb145be59f5387ad9d3107ada80161afb10166ad4da7484913f9493d7fcb7ba1",
+    "crates/tarn-sql/src/budget.rs": "8cbf0540ec965503c2054f35c4d1128b3b7e75b3b8d38e2c936c412653694d80",
+    "crates/tarn-sql/src/catalog.rs": "c835e5e8c6cdbefc865eb27c82612d4f0a8111019db9025eb0b535ca8126f329",
+    "crates/tarn-sql/src/cluster.rs": "b1ef42d7302be6b3eff0aecdb22717979604b64df12bacfa3c7355981fe89350",
+    "crates/tarn-sql/src/cluster_fallback_tests.rs": "eb4727c797a07a66f9b8ffbbdd0f1ca3688a3b99cd4122e2f7154dbb43aea376",
+    "crates/tarn-sql/src/collation.rs": "0f2e1f8c474ba6bc315f8b11f485b388e2c2c70a60a06c467dcc09e397e341c8",
+    "crates/tarn-sql/src/collation_data.rs": "f4b65e6e8051ad3e93d238109d004d83bbf645627980ea4f7ecb5085103385b1",
+    "crates/tarn-sql/src/compat.rs": "2eb47602ff21061923c699f5bd865aec7ef8d39e2fe14fd08547f0767f4abed4",
+    "crates/tarn-sql/src/complex.rs": "6b403ab8603480df35f547b94953e3a881379d3f0a261cdd945f10cc8d563653",
+    "crates/tarn-sql/src/exec/colocated.rs": "b4dc51004e69da2b1807303c8b213ff54dd9f3df3890147da2fe83c3e224cccc",
+    "crates/tarn-sql/src/exec/diagnostics.rs": "4822232a3929ee70d17cd7f5cdcb15e694717e29eee14842c0bf30bc91feea24",
+    "crates/tarn-sql/src/exec/topk.rs": "05f6ae7765088622cd47e3ff09346df26a01fc02f0e9cfb12e21ed55ad607d73",
+    "crates/tarn-sql/src/exec.rs": "6d0bb7e901eb5024a7ce8b7c3f80780d1b96c25239c69b8ea0f3377ad39f6249",
+    "crates/tarn-sql/src/expr.rs": "2cb819920cd02bae8e3d121364e18791554c80b3ba8da306b91ac409f5783cfd",
+    "crates/tarn-sql/src/lazy.rs": "e2640aa42e3c3ae228db96380090323a9327e610d41daefaac85dda37a8045f3",
+    "crates/tarn-sql/src/lib.rs": "48dac6f8991ecbe5006cb638c1da17152e70b508968e9ac2de04740b09bd4dc5",
+    "crates/tarn-sql/src/lint.rs": "9aab2035a475cc953b005cd6677d84686e6f026197fa4e96b52afad44164e569",
+    "crates/tarn-sql/src/members.rs": "d78eceba4c01dd217d0a652e393b6e3273a54aff12528593148e5a67eaf3d316",
+    "crates/tarn-sql/src/mpw.rs": "c0f19ea9c28c9834ed1bcf6c786d87a61ff90279e41f8e29eeb0027f3cb4de0e",
+    "crates/tarn-sql/src/normalize.rs": "051fd437a20b7ae3d3d2c3c9e355fe98c21490abc514684a8bc07e785a098744",
+    "crates/tarn-sql/src/observe.rs": "7263c3754f12a596c603a404a9a67efe427619bdcce90b3ceb35611ad1154b11",
+    "crates/tarn-sql/src/placement.rs": "f662f245d420a3cf244780492f108ee9da5c21b98f36f6b2cb7c177f12c91c5d",
+    "crates/tarn-sql/src/plan.rs": "c5599423730cbbffcc7c07ad16752c8a870731899e2fc7d289f25ce6dd90ac22",
+    "crates/tarn-sql/src/planner.rs": "6f8c251acd718e77e500bd0e4125fa10184350cd257939e909ac8aed09d926ae",
+    "crates/tarn-sql/src/prep.rs": "76372c05ab2fae86ff9dc9de70443473ab64edf0b6c2e5d0c5d8b5c755753d70",
+    "crates/tarn-sql/src/rebalance.rs": "9385abb4427ff5bb7fea521d287e2047cb3d955c3ed700612d9a05af97573500",
+    "crates/tarn-sql/src/route.rs": "a2b3068ed416646a9f709db11aed8da39adf8453ee7473fb27e06ff32de1ddd5",
+    "crates/tarn-sql/src/rpcs.rs": "bf574bb4fc99040b660e9d6cfbee9f56da263f37fe89bbee71506461f2064085",
+    "crates/tarn-sql/src/session.rs": "8f0c4562adf0fac3ecf9fcecf9054fa86cedd8f5840568e1539cd3401defcae4",
+    "crates/tarn-sql/src/statistics.rs": "7e7f790aee96bb6bd2d1f30e02a622e8cc5c12dac2fec73524390f13ecfa64e1",
+    "crates/tarn-sql/src/txn.rs": "57841627dace34e7c0a17c5254ddb5a92a4aa4b23e67b05ccd34f18d10208492",
+    "crates/tarn-sql/src/types.rs": "bece40f900e504a3c694977ac78dd480dafd514517523ffde7956cc92529e347",
+    "crates/tarn-sql/src/vinyl.rs": "4408b46b4a04987fdb3fc9e35c9ad3e3d8322e132e649b1805b1dd3ca49ff38f",
+    "crates/tarn-storage/build.rs": "f10e49b712588b68495bebdb3807aa7dd1fa77d1396113b1a3ea7fb39eaf45f5",
+    "crates/tarn-storage/src/alloc_metrics.rs": "f7478ac65e0d04e3ad4e128014920cd672bebc1eee7552163d8479b63611c9dc",
+    "crates/tarn-storage/src/batch.rs": "cdf75e70713a99af63d12bf2efe19cea0b763242e04e3662d985d44824205f66",
+    "crates/tarn-storage/src/fallback.rs": "76ed33716e5ffe1db722c48d4f241808541d69d051ee3896fedc17d90c9113af",
+    "crates/tarn-storage/src/freshness.rs": "c7a9fe54962ee4c3612e96fbd762a5a2a3e3f488eadcf27f18b3484bc72b1fe0",
+    "crates/tarn-storage/src/lib.rs": "019717e58a83e9209bbc6a2367b59d3607335b3d6a7d29a8171a6107ebc87ca9",
+    "crates/tarn-storage/src/locks.rs": "7907f38e6520c1b97ef06dc4c19efeafa4fac42009f9eecd01281f395f4d94af",
+    "crates/tarn-storage/src/mp.rs": "1414d56a03ec94449260e856b66aae73bc23127b13535ef39577f3a8e6911c92",
+    "crates/tarn-storage/src/procs.rs": "75bca16f4f1be0e6b294edeecb8ed1ea4e8ce1e4e999b42277dd35fbf0e38aa2",
+    "crates/tarn-storage/src/select.rs": "e96afb757ba890fec12f9011c9bfc92e98b586497d38c00ae71e2dee59ff656b",
+    "crates/tarn-storage/src/state.rs": "e722baeb154c820200c6b590797f2a604e4cb21f936a6b684ee9af80a4f88162",
+    "crates/tarn-storage/src/write.rs": "3fa1f484332f7bb2ce8078a3b64044986fb0a8efaaac3d22ecb8c6c0de4dff7a",
+    "crates/tarn-transport/examples/unsafe-plaintext-bridge.rs": "060fd0b3b88378b7848b5d5ac38a078e8fa4f08e3aba5685dbc3fd9f8eb17dc9",
+    "crates/tarn-transport/src/bin/tarn-tls.rs": "8da80e5d830a61bb8621579204baf438780f4c5a209cce2970e22bb8abce72a8",
+    "crates/tarn-transport/src/host.rs": "75387a5629a643a29529ac45d851b68b18a1e7e47e38fbb7c95cc4201a8a189f",
+    "crates/tarn-transport/src/lib.rs": "5672668eb0e9dc4c516b558de54119c31c41345721f52552af2480d33ef1293b",
+    "crates/tarn-verified/src/batch.rs": "d53de09cf83bc68f4176fe2eed6df2aced506c4c52f141982810ce561ad61e4d",
+    "crates/tarn-verified/src/clock.rs": "bbab97b171b6f996039ee2fbf9f1074922347cc514de311b37323a1e7a0c43c8",
+    "crates/tarn-verified/src/coord.rs": "f479cef4353ee2efe2ac2b35c601b967b7dc163f0078157ff1f494d590505d9b",
+    "crates/tarn-verified/src/lib.rs": "e78055cda731636f164d2446d926cd73fc3e35ed270e015661fb182ade035fde",
+    "crates/tarn-verified/src/locks.rs": "e135d8bee7c841aa9623e05db8c63f12de725a88eb36e50f1eef4c87e7292b3e",
+    "crates/tarn-verified/src/mp.rs": "cea193b02c5caa20e3e2e16dc090dbc4d290d7454f5cbaa5e408e85fb86d4eb1",
+    "crates/tarn-verified/src/route.rs": "c5cae4d333567a1fe8f98e494d5d239c21a7134768b9aeb9d8f0acae7b84f440",
+    "crates/tarn-verified/src/uix.rs": "1e8d3b627518342338ea3579c82c1e9302d150a5c98e8e3e221db544463abb8f",
+    "crates/tarn-verified/src/wire.rs": "fc18cfaac40f08953d163e59d510932074efdc9d7567c3ca8dd4770f1ff71c8b",
+    "crates/tarn-verified/tests/erased.rs": "a65a0ee276b2eacc8f774c32bd9f7a86fbe4cd31b641c662d7a35f13f6fcd75b",
+    "crates/tarn-common/Cargo.toml": "ff1ae2ab27dec1a2a13a3c21453bc11a4e662796bea357335e035fd386b53409",
+    "crates/tarn-iproto/Cargo.toml": "8fc2b06132b69927d78234f6ac141ac3409549c230cc6a79f0c63395c6f18876",
+    "crates/tarn-mysql/Cargo.toml": "d2de17b8c98c138ac05c022ed1a8ef3f857240943de245e1491fda4cb040e341",
+    "crates/tarn-server/Cargo.toml": "34d405c45109cfd7968c61ec94a637b98cc4fcb36381a55bd4b945b35dc0cb7f",
+    "crates/tarn-sql/Cargo.toml": "95674101afb9c44a5c6a192995876649ac72892f0334260cd50c314262516270",
+    "crates/tarn-storage/Cargo.toml": "9e39e6c97386ec320173bd661f5addebe9979c834e3bdc958a18817bd08d7381",
+    "crates/tarn-transport/Cargo.toml": "2007987d15c5b81f1e437ff9b9d19c3b5cc684d06aab39110733013e163fe1ba",
+    "crates/tarn-verified/Cargo.toml": "f61d5135b164b2211a24721a42020ee9f7da8e8ca8a78c0014fa13e3ad583dbb",
+    "lua/storage.lua": "eed4c04374c7da6b06c216e756c3545320ba9dcd71ae7fc7cd64d8771896be93",
+    "lua/tarn.lua": "01b36f889350687f4462298e07f8fe16484ac7ae738eef5a6846ad630509ff99",
+    "lua/tarn_backup.lua": "6553ee7d54755680a79247929f12b21cfc81a55b6972f85b435c68437d9f20f3",
+    "lua/tarn_clock.lua": "b66b8868102f8bfddea4cd23ef6b33bf9fb4f4612dd128ab84ae30b3263ee743",
+    "lua/tarn_compat.lua": "c77c0765d173251c4459fcbb4ea6d9d95f97f33c057d0bb2b8b08643ad4b2005",
+    "lua/tarn_engine.lua": "00cf337079d3f77da8bafb5896aad64fc32d22c06aff8a438304b5f60937479e",
+    "lua/tarn_fresh.lua": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2",
+    "lua/tarn_lazy.lua": "a8bb2326ef4319b7179fa4f6b1f58215c7622dc2e7e7fab685b33597675fd63b",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_production.lua": "ae3eca1a883b31d03e9625fa74d5012930a02e0bcc6b7f70849803d3abe17b54",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd",
+    "scripts/production.py": "3d8df95c9c16a0649f567f67a308f18153e69bc97a13bc770819c65ce5e16e15",
+    "tests/production.py": "b163573f4a84927c71b58f28ea95d9db6f4ffd6bdc3c6141fc5ae0058219c7a6",
+    "Cargo.toml": "2460fd280d1ef446dbe08c47e23323ac21ce2763b994288bedd67305616cf5af",
+    "Cargo.lock": "3d8479906b1d04149c3cea29f6391a115a92976235cc3358b400fa29d5cadb12"
+  },
+  "native_state": false,
+  "drivers": [
+    {
+      "driver": "PyMySQL",
+      "status": "passed",
+      "operations": "TLS verify identity, auth, DDL, transactions, memtx/vinyl"
+    },
+    {
+      "driver": "mysql-connector-python",
+      "version": "26.10.0",
+      "status": "passed",
+      "operations": "verified TLS, native auth switch, binary prepared statement"
+    },
+    {
+      "driver": "MariaDB CLI/libmariadb",
+      "version": "/usr/bin/mariadb  Ver 15.1 Distrib 10.11.19-MariaDB, for debian-linux-gnu (aarch64) using  EditLine wrapper",
+      "status": "passed",
+      "operations": "verified TLS, auth, query"
+    }
+  ],
+  "lost_reply_error": {
+    "message": "(1180, 'Lost connection to shard 1 during commit (tarantool connection closed); the statement may or may not have been applied')",
+    "sqlstate": "40003"
+  },
+  "status": "passed"
+}

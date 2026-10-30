@@ -99,6 +99,23 @@ local function default_read_threads()
     return math.max(1, math.min(8, per))
 end
 
+local profile = env('TARN_PROFILE', 'development')
+assert(profile == 'development' or profile == 'production', 'TARN_PROFILE must be development or production')
+local production
+if profile == 'production' then
+    assert(env('TARN_WAL_MODE', 'fsync') == 'fsync', 'production requires fsync WAL')
+    assert(env('TARN_LISTEN', '') == '' and env('TARN_LISTEN_UNIX', '') == '', 'production listen comes only from its manifest')
+    assert(env('TARN_TEST_HOOKS', '') == '' and env('TARN_DUMP_EVERY', '') == '', 'production refuses test hooks')
+    for _, name in ipairs({'TARN_MEMORY_MB','TARN_VINYL_MEMORY_MB','TARN_VINYL_CACHE_MB'}) do
+        assert(env(name, '') == '', 'production memory budget comes only from its manifest')
+    end
+    production = require('tarn_production').load(assert(os.getenv('TARN_PRODUCTION_CONFIG')), workdir, replicas, peers, shard_id)
+    listen = 'unix/:' .. production.listen_unix
+    local ffi = require('ffi'); pcall(ffi.cdef, 'unsigned int umask(unsigned int);'); ffi.C.umask(63)
+else
+    assert(env('TARN_PRODUCTION_CONFIG', '') == '', 'production config requires TARN_PROFILE=production')
+    log.warn('DEVELOPMENT profile: WAL, credentials, TLS and host placement are not production-validated')
+end
 local replicated = #replicas > 1
 local election_mode = env('TARN_ELECTION_MODE', replicated and 'candidate' or 'off')
 assert(election_mode == 'candidate' or election_mode == 'voter' or election_mode == 'off',
@@ -135,10 +152,10 @@ end
 box.cfg{
     listen = listen_cfg,
     work_dir = workdir,
-    memtx_memory = tonumber(env('TARN_MEMORY_MB', '1024')) * 1024 * 1024,
+    memtx_memory = (production and production.memtx_mb or tonumber(env('TARN_MEMORY_MB', '1024'))) * 1024 * 1024,
     memtx_use_mvcc_engine = true,
-    vinyl_memory = tonumber(env('TARN_VINYL_MEMORY_MB', '128')) * 1024 * 1024,
-    vinyl_cache = tonumber(env('TARN_VINYL_CACHE_MB', '128')) * 1024 * 1024,
+    vinyl_memory = (production and production.vinyl_memory_mb or tonumber(env('TARN_VINYL_MEMORY_MB', '128'))) * 1024 * 1024,
+    vinyl_cache = (production and production.vinyl_cache_mb or tonumber(env('TARN_VINYL_CACHE_MB', '128'))) * 1024 * 1024,
     vinyl_timeout = vinyl_timeout,
     vinyl_read_threads = tonumber(env('TARN_VINYL_READ_THREADS', '')) or default_read_threads(),
     vinyl_write_threads = tonumber(env('TARN_VINYL_WRITE_THREADS', '')),
@@ -148,16 +165,19 @@ box.cfg{
     -- Plain (direct) reads must never observe data that a failover could
     -- still roll back.
     txn_isolation = 'read-confirmed',
-    wal_mode = env('TARN_WAL_MODE', 'write'),
+    wal_mode = production and 'fsync' or env('TARN_WAL_MODE', 'write'),
     iproto_threads = tonumber(env('TARN_IPROTO_THREADS', '1')),
     net_msg_max = 8192,
     readahead = 1024 * 1024,
     log_level = tonumber(env('TARN_LOG_LEVEL', '5')),
     checkpoint_interval = 3600,
     feedback_enabled = false,
-    -- Restores are inspected in quarantine with no replication or elections.
-    -- A source fence survives restart while retaining catch-up connectivity.
-    replication = maintenance and maintenance.kind == 'restore' and {} or (replicated and replicas or nil),
+    -- Quarantined restores never connect to source replicas.
+    replication = maintenance and maintenance.kind == 'restore' and {} or (replicated and (production and (function()
+        local r = {}; for _, uri in ipairs(replicas) do
+            r[#r+1] = 'tarn_repl:' .. production.replication_password .. '@' .. production.resolve(uri)
+        end; return r
+    end)() or replicas) or nil),
     read_only = maintenance ~= nil,
     replication_synchro_quorum = replicated and 'N / 2 + 1' or nil,
     replication_synchro_timeout = 5,
@@ -165,7 +185,7 @@ box.cfg{
     election_fencing_mode = replicated and 'strict' or nil,
     replication_timeout = 0.5,
     bootstrap_strategy = replicated and 'config' or 'auto',
-    bootstrap_leader = replicated and replicas[1] or nil,
+    bootstrap_leader = replicated and (production and production.resolve(replicas[1]) or replicas[1]) or nil,
     instance_name = env('TARN_INSTANCE_NAME', 'shard' .. shard_id .. '_' .. (listen:gsub('[^%w]', '_'))),
     instance_uuid = instance_uuid ~= '' and instance_uuid or nil,
     replicaset_name = 'shard' .. shard_id,
@@ -178,7 +198,7 @@ if maintenance then
 end
 
 -- The first instance bootstraps users; replicas receive them via replication.
-if not replicated then
+if not replicated and not production then
     box.schema.user.grant('guest', 'super', nil, nil, {if_not_exists = true})
 end
 
@@ -227,6 +247,10 @@ end
 require('tarn').init{
     shard_id = shard_id,
     peers = peers,
+    production = production,
+    resolve_uri = production and production.resolve or nil,
+    user = production and production.service_user or 'tarn',
+    password = production and production.password or 'tarn',
     sync = replicated,
     max_txn_age = max_age,
     clock_skew = skew,

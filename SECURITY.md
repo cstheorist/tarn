@@ -2,9 +2,13 @@
 
 ## Status
 
-Tarn is a research prototype. It has **no TLS**, takes MySQL passwords on
-the command line, and its storage nodes use a single privileged user. Run it
-only on trusted networks; see [docs/operations.md](docs/operations.md#security).
+Tarn is a research prototype. Its development defaults permit plaintext,
+optional SQL authentication, argv credentials and a privileged storage user;
+keep those defaults on trusted development networks. The explicit
+[production profile](docs/production.md) requires verified SQL/storage TLS,
+private-file credentials, restricted storage accounts and deployment checks.
+Its physical placement, clock and capacity assumptions still require operator
+validation; the profile is not a general production-readiness certification.
 
 ## Supported versions
 

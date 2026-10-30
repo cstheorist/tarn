@@ -15,6 +15,9 @@ name = "tarn-server"
 path = "src/main.rs"
 
 [dependencies]
+tarn-transport.workspace = true
+tarn-iproto.workspace = true
+serde = { version = "1", features = ["derive"] }
 tarn-common.workspace = true
 tarn-mysql.workspace = true
 tarn-sql.workspace = true

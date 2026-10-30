@@ -32,6 +32,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restores remain unavailable; source release requires explicit process restart.
   See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
 
+- An explicit Linux production profile with fsync/RF/quorum and declared
+  failure-domain validation, private-file credentials, required MySQL TLS,
+  mutual TLS bridges for Community Edition storage/replication, restricted
+  service/replication roles, resource/clock deployment checks, certificate
+  rotation and driver/failure tests ([#139](https://github.com/cstheorist/tarn/issues/139)).
+  See [the deployment procedure and proof boundaries](docs/production.md).
+
 ### Fixed
 
 - Preserve 1180/40003 for native commit uncertainty, missing write DATA and
