@@ -115,7 +115,71 @@ states are retained; failed samples are never restarted. Timing disables
 the condition wrapper and additional lock/yield debug checks in both lanes.
 This pilot cannot qualify a production change without the separate
 concurrent/differential and fault gates, and it does not alter production
-code or enable an optimization. Its results remain pending.
+code or enable an optimization.
+
+[Run 41052637120](https://github.com/cstheorist/tarn/actions/runs/41052637120)
+completed all four modes at compiled merge source
+`fbff68976e97cc149db87088c648c0fbe1743b4a` (PR head `099ce1a`). Independent
+audits reconcile all 528,527 paired-pilot attempts as acknowledged exactly
+once, with no refusals or unknown outcomes. The 240 samples comprise 120
+warmups and 120 ordinary measurements. The same run's separate baseline
+contains 132 samples, 381,799 acknowledgements and four explicit refusals;
+all ledger/per-key effects and bounded profiler histograms pass.
+
+The table gives deferred/eager goodput ratios as median [minimum, maximum]
+of five alternating pairs. Above one favors deferred allocation. Every
+observed range crosses one; no consistent end-to-end improvement is
+established. The native memtx and Lua Vinyl lanes are especially close to
+parity. Keep production allocation unchanged.
+
+| Engine / native mode | Uncontended | Eight unrelated keys | Eight clients / hot key |
+|---|---:|---:|---:|
+| memtx / disabled | 0.757 [0.484, 1.065] | 0.695 [0.499, 1.429] | 0.810 [0.695, 1.681] |
+| memtx / enabled | 0.996 [0.981, 1.018] | 0.995 [0.973, 1.001] | 0.994 [0.991, 1.003] |
+| vinyl / disabled | 1.000 [0.991, 1.029] | 0.991 [0.979, 1.018] | 1.014 [0.951, 1.020] |
+| vinyl / enabled | 1.046 [0.855, 1.478] | 1.046 [0.843, 1.116] | 0.981 [0.779, 1.546] |
+
+The [independent audit](rc-evidence/run-41052637120/paired-audit.json) retains
+every pair's latency, TX CPU, Lua allocation and goodput, including all
+regressions. Median TX CPU ratios range from 0.991 to 1.090 and median
+Lua-allocation ratios from 0.990 to 1.015 across the twelve groups.
+Measurements include diagnostic/background work and clock-tick quantization;
+these short, closed-loop, fresh-process samples do not establish a fixed-p99
+capacity gain or an independent-storage-host result.
+
+[Archives and the source-bound manifest](rc-evidence/run-41052637120/manifest.json)
+retain all attempts, metrics, exact readback, copied sources, logs and
+configuration. The original workflow artifacts also contain the exact
+Tarantool executable and complete paired fixture storage state; their hashes
+and sizes remain in the manifest. The initial collector wrote each final
+session's samples before flipping its `complete` flag. The enclosing final
+receipt has the flag set. Both original files remain unchanged, and the
+independent audit checks all samples plus their equivalence. The collector
+now persists the flag in both files for future runs.
+
+```sh
+python3 bench/rc_profile_audit.py bench/rc-evidence/run-41052637120/manifest.json
+python3 bench/rc_compare_audit.py bench/rc-evidence/run-41052637120/manifest.json
+```
+
+Ordinary CI `41052637085` separately passes format/clippy, TLA+, Verus and
+memtx rolling upgrade, but Vinyl rolling upgrade fails while seeding a
+prepared transaction with an explicit 1205 admission refusal. The profile
+does not override this failure, certify the full release, or qualify a
+production optimization.
+
+## Further allocation census
+
+`rc_guard_probe.lua` measures unchanged public freshness helpers on one
+RF3/fsync shard in the owned ARM64 fixture. Five rotated 1,000-call samples
+yield every 100 calls. Median Lua bytes/call are 0.832 for an empty control,
+2,664.832 for `box.info.replication`, 3,032.832 for `fresh.mode`, 3,232.832 for
+`fresh.controls` and 3,328.856 for `fresh.native_controls`. These are helper
+invocations with diagnostic/background overhead, not exact fractions of
+transaction allocation or CPU. The [raw census and receipt](rc-evidence/guard-20261030/manifest.json)
+identify a narrower investigation target. They justify neither caching
+membership/space guards nor eliding any request-specific quorum barrier.
+The owned fixture is stopped and production guards remain unchanged.
 
 ## Retained collector failure
 
@@ -136,6 +200,18 @@ diagnostic stderr. Guest-stack profiling replaces the unbounded host trace;
 it is a narrower measurement with explicit memory/time bounds. Neither this
 change nor a subsequent successful profile would explain #160's unrelated
 historical native GC crash.
+
+The pinned Tarantool constructor allocates Lua userdata, initializes the
+wait-list and attaches its metatable; the inspected constructor and
+`fiber_cond_create` contain no fiber-yield call ([Lua binding](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/lua/fiber_cond.c),
+[core initialization](https://github.com/tarantool/tarantool/blob/8b9a0f59a9/src/lib/core/fiber_cond.c)).
+Treating creation through queue publication as non-yielding remains an
+implementation premise of the local model, including LuaJIT allocation/GC
+behavior. The isolated candidate also passes 415 existing storage protocol
+checks on three RF1 shards with native disabled, including both engines,
+waits, upgrades, NOWAIT/SKIP LOCKED, deadlocks, timeouts and memory pressure.
+The [source-bound receipt](rc-evidence/direct-20261030/summary.json) records
+this control; it does not replace the required SQL/RF3 fault qualification.
 
 The focused `WaiterAllocation` model precedes implementation. Eager and
 deferred allocation both preserve a ready condition before a request is

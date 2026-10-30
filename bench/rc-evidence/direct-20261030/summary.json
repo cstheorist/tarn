@@ -38,5 +38,14 @@
     "Lua counters exclude some C allocations; timings include checks and cooperative yields",
     "elapsed_seconds_instrumented is the legacy field name; instrumented=false disables the condition wrapper",
     "the original no-yield 100000-call probe exceeded the fiber slice; its failed attempt is retained, not included as a valid pair"
-  ]
+  ],
+  "storage_control": {
+    "source_head": "099ce1ae4dbc53bfaa586e8bb72f1df75f0ac41d",
+    "scope": "isolated two-line candidate over current main; three RF1 shards; native disabled; existing storage_test.lua includes memtx/vinyl and lock/yield assertions",
+    "passed": 415,
+    "failed": 0,
+    "log": "storage-test.log",
+    "sha256": "53acc2e532967cdc9d48ee2cb392184b1c2fc15aa10e2433c752b23ab40c6dd6",
+    "limitation": "not the pinned SQL differential or RF3 live-fault qualification"
+  }
 }

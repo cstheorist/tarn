@@ -64,6 +64,10 @@ jobs:
       - run: pip install PyMySQL==1.1.2
       - run: python3 bench/rc_profile_test.py
       - run: python3 bench/rc_profile_audit.py bench/rc-evidence/run-40972150228/manifest.json
+      - name: Audit retained paired evidence and exact baseline effects
+        run: |
+          python3 bench/rc_profile_audit.py bench/rc-evidence/run-41052637120/manifest.json
+          python3 bench/rc_compare_audit.py bench/rc-evidence/run-41052637120/manifest.json > /tmp/retained-rc-paired-audit.json
       - uses: actions/cache/restore@v6
         id: tarantool-cache
         with:

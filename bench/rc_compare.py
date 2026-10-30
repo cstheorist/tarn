@@ -159,6 +159,7 @@ def main():
                 for shape in SHAPES if pair % 2 == 0 else reversed(SHAPES):
                     sample(job, len(session['samples']) + 1, shape, False, endpoints, session_output, session)
                 session['complete'] = True
+                session_output.write_text(json.dumps(session, indent=2) + '\n')
                 output.write_text(json.dumps(receipt, indent=2) + '\n')
                 stop(script, cluster, env)
                 active = None
