@@ -244,6 +244,7 @@ function M.new(c)
                 engine = s.engine or 'memtx', is_sync = c.cfg.sync, format = fmt})
             c.hook('lazy_target_space')
         end
+        require('tarn_production').readable(sp)
         -- Native schema creation is not one transaction. A retry repairs
         -- every index after a crash at any point before descriptor install.
         sp:create_index('primary', {parts = {{field = 1, type = 'varbinary'}}, if_not_exists = true})

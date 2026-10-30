@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    {"name":"s1a","shard_id":1,"uri":"tls://s1a.example.net:3301","failure_domain":"zone-a","socket_dir":"/run/tarn","workdir":"/var/lib/tarn","cert_file":"/etc/tarn/s1a.pem","key_file":"/etc/tarn/s1a.key"},
+    {"name":"s1b","shard_id":1,"uri":"tls://s1b.example.net:3301","failure_domain":"zone-b","socket_dir":"/run/tarn","workdir":"/var/lib/tarn","cert_file":"/etc/tarn/s1b.pem","key_file":"/etc/tarn/s1b.key"},
+    {"name":"s1c","shard_id":1,"uri":"tls://s1c.example.net:3301","failure_domain":"zone-c","socket_dir":"/run/tarn","workdir":"/var/lib/tarn","cert_file":"/etc/tarn/s1c.pem","key_file":"/etc/tarn/s1c.key"}
+  ],
+  "tls":{"ca_file":"/etc/tarn/storage-ca.pem","cert_file":"/etc/tarn/gateway-client.pem","key_file":"/etc/tarn/gateway-client.key"},
+  "mysql_tls":{"cert_file":"/etc/tarn/mysql.pem","key_file":"/etc/tarn/mysql.key"},
+  "users_file":"/etc/tarn/mysql-users.json",
+  "service_password_file":"/etc/tarn/service.secret",
+  "replication_password_file":"/etc/tarn/replication.secret",
+  "memtx_mb":1024,"vinyl_memory_mb":128,"vinyl_cache_mb":128,
+  "storage_host":{"min_cpus":4,"min_memory_bytes":4294967296,"min_free_disk_bytes":34359738368,"data_path":"/var/lib/tarn"},
+  "gateway_host":{"min_cpus":4,"min_memory_bytes":4294967296,"min_free_disk_bytes":1073741824,"data_path":"/var/lib/tarn-gateway"},
+  "bridge_max_connections":512,"gateway_max_connections":64,"gateway_node_id":1,"pool_size":4
+}

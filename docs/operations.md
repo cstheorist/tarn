@@ -1192,12 +1192,15 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 
 ## Security
 
-* There is **no TLS** on either the MySQL or the storage connections.
-  Run Tarn only on trusted networks.
-* MySQL accounts come from the command line (`--user NAME:PASSWORD`, visible
-  in the process list); without any, every login is accepted.
-* The storage user `tarn`/`tarn` has full privileges on the storage nodes.
-* See [SECURITY.md](../SECURITY.md) to report a vulnerability.
+Use the explicit [production profile](production.md) for fsync/RF validation,
+private credentials, verified MySQL TLS, storage/replication mutual TLS,
+restricted service/replication accounts and deployment health checks.
+
+The ordinary development defaults remain unsafe: no required TLS or MySQL
+authentication, argv credentials when `--user` is used, WAL mode `write`, and
+a fully privileged `tarn`/`tarn` storage account. They emit a development
+warning and must not be exposed as a production deployment. See
+[SECURITY.md](../SECURITY.md) to report a vulnerability.
 
 ## Physical shard backups and backup-seeded replicas
 

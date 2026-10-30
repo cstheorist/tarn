@@ -679,6 +679,10 @@ async fn writer_task<W: AsyncWrite + Unpin>(shared: Arc<Shared>, mut wr: IoOwner
             shared.close(&e);
             break;
         }
+        if let Err(e) = wr.io.flush().await {
+            shared.close(&e);
+            break;
+        }
         shared.counters.write_batches.fetch_add(1, Ordering::Relaxed);
         shared
             .counters
@@ -812,6 +816,15 @@ impl Client {
     }
 
     async fn connect_inner(opts: &Opts) -> Result<Client, Error> {
+        if opts.addr.starts_with("tls://") {
+            let tls = opts
+                .tls
+                .clone()
+                .ok_or_else(|| Error::Protocol("TLS endpoint requires a trusted CA configuration".into()))?;
+            let stream = tarn_transport::connect(&opts.addr, tls).await?;
+            let (rd, wr) = tokio::io::split(stream);
+            return Self::start(opts, rd, wr).await;
+        }
         // "unix/:/path" (Tarantool's notation) or a bare absolute path
         // selects a Unix domain socket; anything else is host:port.
         let unix_path = opts
@@ -821,6 +834,11 @@ impl Client {
         if let Some(path) = unix_path {
             let (rd, wr) = UnixStream::connect(path).await?.into_split();
             return Self::start(opts, rd, wr).await;
+        }
+        if opts.tls.is_some() {
+            return Err(Error::Protocol(
+                "TLS configuration cannot be used with a plaintext TCP endpoint".into(),
+            ));
         }
         let stream = TcpStream::connect(opts.addr.as_str()).await?;
         stream.set_nodelay(true)?;
@@ -861,6 +879,7 @@ impl Client {
             });
         }
         wr.write_all(&out).await?;
+        wr.flush().await?;
 
         let mut buf = BytesMut::with_capacity(READ_CHUNK);
         let mut id_reply: Option<Frame> = None;

@@ -261,6 +261,7 @@ function M.new(c)
             sp = box.schema.space.create(r.shadow_name, {id = r.new_id, engine = r.engine,
                 is_sync = c.cfg.sync, format = r.schema.format})
         end
+        require('tarn_production').readable(sp)
         schema_index(sp, r.schema.indexes[1])
         return sp
     end

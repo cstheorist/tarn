@@ -9,6 +9,8 @@
 //! `--shard` (repeatable, comma-separated replicas, leader found
 //! automatically) is shorthand for a config with default settings.
 
+mod production;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -42,6 +44,9 @@ fn convert(o: Output, warnings: u16) -> QueryResult {
 }
 
 impl Backend for Conn {
+    fn on_tls(&mut self, protocol: &str, cipher: &str) {
+        self.s.tls = Some((protocol.into(), cipher.into()));
+    }
     async fn on_connect(
         &mut self,
         user: &str,
@@ -96,6 +101,10 @@ impl Backend for Conn {
 }
 
 struct Args {
+    production: Option<String>,
+    check_deployment: bool,
+    users_file: Option<String>,
+    mysql_tls: Option<String>,
     config: Option<String>,
     shards: Vec<String>,
     listen: String,
@@ -121,7 +130,7 @@ fn usage() -> ! {
         "usage: tarn-server (--config FILE | --shard ADDR[,ADDR..] ...) [--listen HOST:PORT] \
          [--threads N] [--user NAME:PASSWORD]... [--allow-all] [--ack-on-prepare] [--pool N] [--node-id N] \
          [--isolation READ-COMMITTED|REPEATABLE-READ|SERIALIZABLE] [--lock-wait-timeout SECONDS] \
-         [--default-engine memtx|vinyl] [--default-collation NAME]\n       \
+         [--default-engine memtx|vinyl] [--default-collation NAME] [--users-file FILE] [--mysql-tls FILE] [--production FILE] [--check-deployment]\n       \
          tarn-server --check-schema FILE [--database DB] [--default-collation NAME]"
     );
     std::process::exit(2)
@@ -129,6 +138,10 @@ fn usage() -> ! {
 
 fn parse_args() -> Args {
     let mut a = Args {
+        production: None,
+        check_deployment: false,
+        users_file: None,
+        mysql_tls: None,
         config: None,
         shards: Vec::new(),
         listen: "127.0.0.1:3306".into(),
@@ -149,6 +162,10 @@ fn parse_args() -> Args {
     while let Some(arg) = it.next() {
         let mut val = || it.next().unwrap_or_else(|| usage());
         match arg.as_str() {
+            "--production" => a.production = Some(val()),
+            "--check-deployment" => a.check_deployment = true,
+            "--users-file" => a.users_file = Some(val()),
+            "--mysql-tls" => a.mysql_tls = Some(val()),
             "--config" => a.config = Some(val()),
             "--shard" => a.shards.push(val()),
             "--listen" => a.listen = val(),
@@ -212,10 +229,17 @@ fn check_schema(path: &str, db: Option<&str>, collation: &str) -> i32 {
 fn load_config(a: &Args) -> ClusterConfig {
     let mut cfg: ClusterConfig = match &a.config {
         Some(path) => {
-            let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
-                eprintln!("cannot read {path}: {e}");
-                std::process::exit(1)
-            });
+            let source = if a.production.is_some() {
+                tarn_transport::read_config(std::path::Path::new(path), 1_048_576)
+            } else {
+                std::fs::read(path)
+            };
+            let text = source
+                .and_then(|b| String::from_utf8(b).map_err(std::io::Error::other))
+                .unwrap_or_else(|e| {
+                    eprintln!("cannot read {path}: {e}");
+                    std::process::exit(1)
+                });
             serde_json::from_str(&text).unwrap_or_else(|e| {
                 eprintln!("bad config {path}: {e}");
                 std::process::exit(1)
@@ -296,7 +320,79 @@ fn main() {
     rt.block_on(run(args, cfg));
 }
 
-async fn run(args: Args, cfg: ClusterConfig) {
+async fn run(args: Args, mut cfg: ClusterConfig) {
+    let profile = args.production.as_ref().map(|p| {
+        production::Production::load(p).unwrap_or_else(|e| {
+            eprintln!("production profile: {e}");
+            std::process::exit(2)
+        })
+    });
+    if profile.is_some()
+        && (args.allow_all
+            || !args.users.is_empty()
+            || args.users_file.is_some()
+            || args.mysql_tls.is_some()
+            || args.config.is_none()
+            || args.ack_on_prepare)
+    {
+        eprintln!("production rejects development overrides; use only --config, --production, --listen, --threads, --node-id, --check-deployment");
+        std::process::exit(2);
+    }
+    let (auth, tls) = if let Some(p) = &profile {
+        let users = p.validate(&cfg).unwrap_or_else(|e| {
+            eprintln!("production validation: {e}");
+            std::process::exit(2)
+        });
+        let tls = p.mysql_tls.load().unwrap_or_else(|e| {
+            eprintln!("MySQL TLS: {e}");
+            std::process::exit(2)
+        });
+        cfg.load_credentials().unwrap_or_else(|e| {
+            eprintln!("storage credentials: {e}");
+            std::process::exit(2)
+        });
+        if cfg.password.len() < 32 || cfg.password == "tarn" {
+            eprintln!("production storage secret too short");
+            std::process::exit(2);
+        }
+        if let Err(e) = p.health(&cfg).await {
+            eprintln!("production health: {e}");
+            std::process::exit(1);
+        }
+        (AuthConfig::Users(users), Some(tls))
+    } else {
+        tracing::warn!(
+            "DEVELOPMENT profile: durability, credentials, transport and host placement are not production-validated"
+        );
+        let users = match &args.users_file {
+            Some(path) => serde_json::from_slice(
+                &tarn_transport::read_private(std::path::Path::new(path), 1_048_576).expect("private users file"),
+            )
+            .expect("JSON account map"),
+            None => args.users.clone(),
+        };
+        let auth = if args.allow_all || users.is_empty() {
+            AuthConfig::AllowAll
+        } else {
+            AuthConfig::Users(users)
+        };
+        let tls = args.mysql_tls.as_ref().map(|p| {
+            let c: tarn_transport::ServerTls =
+                serde_json::from_slice(&std::fs::read(p).expect("TLS configuration")).expect("TLS configuration JSON");
+            c.load().expect("TLS identity")
+        });
+        (auth, tls)
+    };
+    if args.check_deployment {
+        if profile.is_none() {
+            eprintln!("--check-deployment requires --production");
+            std::process::exit(2);
+        }
+        println!("production deployment checks passed; physical placement and common-mode clock accuracy require operator attestation");
+        return;
+    }
+    let max_connections = profile.as_ref().map(|p| p.max_connections).unwrap_or(100_000);
+    let slots = Arc::new(tokio::sync::Semaphore::new(max_connections));
     let nshards = cfg.shards.len();
     let cluster = match Cluster::connect(cfg).await {
         Ok(c) => c,
@@ -305,14 +401,12 @@ async fn run(args: Args, cfg: ClusterConfig) {
             std::process::exit(1)
         }
     };
-    let auth = if args.allow_all || args.users.is_empty() {
-        AuthConfig::AllowAll
-    } else {
-        AuthConfig::Users(args.users.clone())
-    };
     let opts = Arc::new(ServerOpts {
         server_version: tarn_sql::SERVER_VERSION.to_string(),
         auth,
+        tls,
+        require_tls: profile.is_some(),
+        ..ServerOpts::default()
     });
     let listener = match tokio::net::TcpListener::bind(&args.listen).await {
         Ok(l) => l,
@@ -337,6 +431,10 @@ async fn run(args: Args, cfg: ClusterConfig) {
                 continue;
             }
         };
+        let Ok(permit) = slots.clone().try_acquire_owned() else {
+            drop(stream);
+            continue;
+        };
         let _ = stream.set_nodelay(true);
         let id = next_id.fetch_add(1, Ordering::Relaxed);
         let backend = Conn {
@@ -344,6 +442,7 @@ async fn run(args: Args, cfg: ClusterConfig) {
         };
         let opts = opts.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = tarn_mysql::serve_connection(stream, id, opts, backend).await {
                 tracing::debug!("connection {id} from {peer}: {e}");
             }

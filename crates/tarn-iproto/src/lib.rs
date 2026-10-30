@@ -34,6 +34,8 @@ pub struct Opts {
     pub user: Option<String>,
     /// Password for `user`; `None` is the empty password.
     pub password: Option<String>,
+    /// Verified TLS for tls:// endpoints. There is no plaintext fallback.
+    pub tls: Option<std::sync::Arc<tarn_transport::rustls::ClientConfig>>,
     /// Bound on TCP connect + greeting + `IPROTO_ID` + `IPROTO_AUTH`.
     /// `Duration::ZERO` means no limit.
     pub connect_timeout: Duration,
@@ -55,6 +57,7 @@ impl Opts {
             addr: addr.into(),
             user: None,
             password: None,
+            tls: None,
             connect_timeout: Duration::from_secs(5),
             request_limits: Limits::default(),
             request_timeout: Duration::from_secs(120),
@@ -70,6 +73,7 @@ impl std::fmt::Debug for Opts {
             .field("addr", &self.addr)
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("tls", &self.tls.is_some())
             .field("connect_timeout", &self.connect_timeout)
             .field("request_limits", &self.request_limits)
             .field("request_timeout", &self.request_timeout)

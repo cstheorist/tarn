@@ -40,7 +40,7 @@ pub struct ShardConfig {
     pub replicas: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ClusterConfig {
     pub shards: Vec<ShardConfig>,
     /// The number of buckets of a new cluster (default
@@ -53,6 +53,12 @@ pub struct ClusterConfig {
     pub user: String,
     #[serde(default = "default_user")]
     pub password: String,
+    #[serde(default)]
+    pub password_file: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub storage_tls: Option<tarn_transport::ClientTls>,
+    #[serde(skip)]
+    pub tls_config: Option<Arc<tarn_transport::rustls::ClientConfig>>,
     /// Connections per shard leader (streams are multiplexed on them).
     #[serde(default = "default_pool")]
     pub pool_size: usize,
@@ -106,6 +112,28 @@ pub struct ClusterConfig {
     /// Bounded IPROTO admission and physical connection lifetimes.
     #[serde(default)]
     pub rpc: crate::RpcConfig,
+}
+
+impl std::fmt::Debug for ClusterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterConfig")
+            .field("shards", &self.shards)
+            .field("user", &self.user)
+            .field("password", &"<redacted>")
+            .field("storage_tls", &self.storage_tls)
+            .finish_non_exhaustive()
+    }
+}
+impl ClusterConfig {
+    pub fn load_credentials(&mut self) -> std::io::Result<()> {
+        if let Some(path) = &self.password_file {
+            self.password = tarn_transport::read_secret(path)?;
+        }
+        if let Some(tls) = &self.storage_tls {
+            self.tls_config = Some(tls.load()?);
+        }
+        Ok(())
+    }
 }
 
 fn default_move_timeout() -> f64 {
@@ -487,9 +515,9 @@ impl Shard {
             // Routing a completion must not first spend ordinary capacity
             // on its leader probe, or normal overload could strand it.
             let probe = if completion {
-                c.eval_control(0, "return box.info.ro", &[0x90]).await
+                c.call_control(0, "tarn_role", &[0x90]).await
             } else {
-                c.eval(0, "return box.info.ro", &[0x90]).await
+                c.call(0, "tarn_role", &[0x90]).await
             };
             let ro = match probe {
                 // DATA = [ro]; Tarantool may use any array header width.
@@ -920,7 +948,9 @@ pub async fn detect_deadlocks(c: &Arc<Cluster>) {
 }
 
 impl Cluster {
-    pub async fn connect(cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+    pub async fn connect(mut cfg: ClusterConfig) -> SqlResult<Arc<Cluster>> {
+        cfg.load_credentials()
+            .map_err(|e| SqlError::internal(format!("storage credentials/TLS: {e}")))?;
         cfg.rpc.validate()?;
         let rpc_global =
             tarn_iproto::Budget::new("global", cfg.rpc.global).map_err(|e| SqlError::internal(e.to_string()))?;
@@ -1072,6 +1102,7 @@ impl Cluster {
         admission.push(self.rpc_global.clone());
         Opts {
             addr: addr.to_string(),
+            tls: self.cfg.tls_config.clone(),
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
