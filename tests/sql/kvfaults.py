@@ -36,16 +36,29 @@ def known_ro_serialization(error):
                        "(Can't modify data on a read-only instance)")
 
 
-def quorum_sql_outcome(error):
+def quorum_sql_outcome(error, expected_shard):
     if not isinstance(error, pymysql.MySQLError) or len(error.args) < 2:
         return None
     state = getattr(error, "sqlstate", None)
     if (isinstance(error, pymysql.OperationalError) and error.args[0] == 2013 and state is None
             and error.args[1] == "Lost connection to MySQL server during query (timed out)"):
         return "client_read_timeout"
+    if (isinstance(error, pymysql.OperationalError) and error.args[0] == 2003 and state == "HY000"
+            and type(expected_shard) is int and expected_shard > 0 and isinstance(error.args[1], str)):
+        prefix = f"shard {expected_shard} has no reachable leader ("
+        message = error.args[1]
+        if message.startswith(prefix) and message.endswith(")") and message[len(prefix):-1].strip():
+            return "leader_discovery_unavailable"
     if error.args[0] in (7, 97, 1180, 1205, 1213) and state not in ("40003", b"40003"):
         return "server_refusal"
     return None
+
+
+def scan_reached(state):
+    result = state.get("reached_result")
+    return (state.get("observer_done") is True and not state.get("observer_error")
+            and isinstance(result, list) and len(result) == 2 and result[0] == "ok"
+            and type(result[1]) is int and result[1] > 0 and state.get("reached") == result[1])
 
 
 STATE = """
@@ -108,24 +121,36 @@ INSTALL_SCAN = """
 local owner=...; assert(tarn.cfg.test_hooks,'test_hooks required')
 assert(rawget(_G,'__tarn_kv_scan_hook')==nil,'another owned scan hook exists')
 local fiber,clock=require('fiber'),require('clock')
-local s={owner=owner,original=yield_point,control=tarn_test_hook,entered=false,resumed=false,
+local s={owner=owner,control=tarn_test_hook,observer_done=false,observer_error=false,
+ observer_cancel_expected=false,observer_cancelled=false,observer_joined=false,
  released=false,expired=false,restore_error=false,expires=clock.monotonic()+10}
-s.wrapped=function(name,...)
- local first=name=='scan' and not s.entered
- if first then s.entered=true; s.entered_at=clock.monotonic() end
- local ok,result=pcall(s.original,name,...)
- if first then s.resumed=true; s.resumed_at=clock.monotonic() end
- if not ok then error(result,0) end
- return result
-end
-rawset(_G,'__tarn_kv_scan_hook',s); yield_point=s.wrapped
+rawset(_G,'__tarn_kv_scan_hook',s)
 assert(s.control('scan','hold')[1]=='ok')
+s.observer=fiber.new(function()
+ -- The production yield_point is lexical, not a global function. Observe
+ -- the real public counter asynchronously: reached may itself wait5s,
+ -- while the Python controller retains its independent4s await deadline.
+ local ok,result=pcall(s.control,'scan','reached')
+ s.observer_done=true
+ if rawget(_G,'__tarn_kv_scan_hook')~=s then return end
+ if not ok then
+  if s.observer_cancel_expected then s.observer_cancelled=true
+  else s.observer_error=tostring(result) end
+  return
+ end
+ s.reached_result=result
+ s.observed_at=clock.monotonic()
+ if type(result)=='table' and result[1]=='ok' and type(result[2])=='number' then
+  s.reached=result[2]
+ else s.observer_error='invalid public reached result' end
+end)
+s.observer:set_joinable(true)
 fiber.create(function()
  fiber.sleep(10)
  if rawget(_G,'__tarn_kv_scan_hook')==s and not s.released then
   s.expired=true
-  if yield_point~=s.wrapped or tarn_test_hook~=s.control then s.restore_error='scan hook identity changed'; return end
-  s.control('scan','release'); s.released=true; yield_point=s.original
+  if tarn_test_hook~=s.control then s.restore_error='scan control identity changed'; return end
+  s.control('scan','release'); s.released=true
  end
 end)
 return {owner=owner,expires=s.expires}
@@ -133,16 +158,46 @@ return {owner=owner,expires=s.expires}
 
 SCAN_CONTROL = """
 local owner,action=...; local s=assert(rawget(_G,'__tarn_kv_scan_hook')); assert(s.owner==owner,'scan owner changed')
+local clock=require('clock')
 assert(not s.restore_error,s.restore_error)
 assert(tarn_test_hook==s.control,'scan control function changed')
-assert(yield_point==s.wrapped or s.released and yield_point==s.original,'scan yield function changed')
 if action=='release' or action=='close' then
- if action=='release' then assert(s.entered and not s.resumed and not s.expired,'scan no longer held') end
- if not s.released then s.released_at=require('clock').monotonic(); s.control('scan','release'); s.released=true end
- if yield_point==s.wrapped then yield_point=s.original end
+ if action=='release' then
+  assert(not s.observer_error and s.reached and s.reached>0 and not s.expired
+   and not s.released and clock.monotonic()<s.expires,'scan lease not held')
+  local reached=s.control('scan','reached')
+  assert(type(reached)=='table' and reached[1]=='ok' and reached[2]>0,'public scan counter not reached')
+  s.release_reached_result=reached
+ end
+ if not s.released then
+  s.control('scan','release'); s.released=true
+  s.released_at=clock.monotonic()
+  s.released_mono_ns=tostring(clock.monotonic64()):gsub('U?LL$','')
+ end
+ if action=='close' then
+  -- An unreached public counter can keep waiting until its own5s bound
+  -- even after release. Cancel only the exact owned observer fiber.
+  if not s.observer_done and s.observer:status()~='dead' then
+   s.observer_cancel_expected=true; s.observer:cancel()
+  end
+  if not s.observer_joined then
+   -- A completed joinable fiber may still report suspended until joined.
+   -- A timed-out join returns false but leaves the fiber live: it must not
+   -- qualify as drained merely because cancellation was expected.
+   local called,joined,why=pcall(s.observer.join,s.observer,.25)
+   assert(called,tostring(joined))
+   assert(s.observer:status()=='dead','owned scan observer did not join within cleanup bound')
+   s.observer_joined=true
+   assert(joined or s.observer_cancel_expected,tostring(why))
+  end
+ end
 end
-local result={owner=s.owner,entered=s.entered,resumed=s.resumed,released=s.released,expired=s.expired,
- entered_at=s.entered_at or box.NULL,resumed_at=s.resumed_at or box.NULL,released_at=s.released_at or box.NULL}
+local result={owner=s.owner,reached=s.reached or box.NULL,reached_result=s.reached_result or box.NULL,
+ observed_at=s.observed_at or box.NULL,observer_done=s.observer_done,observer_error=s.observer_error,
+ observer_cancel_expected=s.observer_cancel_expected,observer_cancelled=s.observer_cancelled,
+ observer_joined=s.observer_joined,
+ released=s.released,expired=s.expired,release_reached_result=s.release_reached_result or box.NULL,
+ released_at=s.released_at or box.NULL,released_mono_ns=s.released_mono_ns or box.NULL}
 if action=='close' then rawset(_G,'__tarn_kv_scan_hook',nil) end
 return result
 """
@@ -335,20 +390,33 @@ class FaultTest(Test):
         deadline, last = time.monotonic() + 4, None
         while time.monotonic() < deadline:
             last = ev(endpoint, SCAN_CONTROL, [owner, "snapshot"])
-            assert not last["expired"] and not last["resumed"], last
-            if last["entered"]:
-                self.record("sdk_second_group_scan_held", endpoint=endpoint, state=last)
+            assert not last["expired"] and not last["released"] and not last["observer_error"], last
+            if scan_reached(last):
+                assert worker.is_alive(), "SDK finished before the actual reached counter was observed"
+                self.record("sdk_second_group_scan_held", endpoint=endpoint, state=last,
+                            scope="actual public reached counter; observed_at is an observation, not exact scan entry")
                 return last
             assert worker.is_alive(), "SDK finished before the selected scan was held"
             time.sleep(.01)
         raise AssertionError("SDK second group did not reach the real scan hook", last)
+
+    def release_scan(self, endpoint, owner, worker):
+        assert worker.is_alive(), "SDK finished before public scan release"
+        self.record("scan_release_dispatch", endpoint=endpoint, owner=owner, sdk_worker_alive=True)
+        result = ev(endpoint, SCAN_CONTROL, [owner, "release"])
+        reached = result.get("release_reached_result")
+        assert (result["released"] and not result["expired"] and scan_reached(result)
+                and isinstance(reached, list) and len(reached) == 2 and reached[0] == "ok"
+                and type(reached[1]) is int and reached[1] > 0), result
+        return result
 
     def close_scan(self, endpoint, owner, worker):
         active_error = sys.exc_info()[0] is not None
         try:
             result = ev(endpoint, SCAN_CONTROL, [owner, "close"])
             self.record("scan_hook_restore", endpoint=endpoint, result=result)
-            assert result["released"] and not result["expired"], result
+            assert (result["released"] and not result["expired"] and result["observer_joined"]
+                    and not result["observer_error"]), result
         except Exception:
             self.record("scan_hook_cleanup_error", traceback=traceback.format_exc())
             if not active_error:
@@ -622,13 +690,14 @@ class FaultTest(Test):
                     sql_result = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
                     result_returned = True
             except pymysql.MySQLError as caught:
-                sql_kind = quorum_sql_outcome(caught)
+                sql_kind = quorum_sql_outcome(caught, self.identities[0]["id"])
                 sql_error = {"type": type(caught).__name__, "args": list(caught.args),
                              "errno": caught.args[0] if caught.args and isinstance(caught.args[0], int) else None,
                              "sqlstate": getattr(caught, "sqlstate", None)}
             finally:
                 query_finished = time.monotonic_ns()
             outcome = {"kind": sql_kind, "error": sql_error, "row_result_returned": result_returned,
+                       "expected_shard_id": self.identities[0]["id"],
                        "configured_client_read_timeout_seconds": 15,
                        "elapsed_ns": query_finished - query_started if query_started is not None else None,
                        "guard_coverage": False}
@@ -681,7 +750,7 @@ class FaultTest(Test):
                     except Exception:
                         self.record("uncertain_move_inspection_error", traceback=traceback.format_exc())
                     raise
-            release = ev(source["endpoint"], SCAN_CONTROL, [owner, "release"])
+            release = self.release_scan(source["endpoint"], owner, worker)
             self.record("scan_release_after_move_ack", result=release, value_ack_sequence=value_ack,
                         move_ack_sequence=self.ack, bucket=bucket)
             worker.join(13)
@@ -746,7 +815,7 @@ class FaultTest(Test):
                     except Exception:
                         self.record("uncertain_ddl_inspection_error", traceback=traceback.format_exc())
                     raise
-            release = ev(source["endpoint"], SCAN_CONTROL, [owner, "release"])
+            release = self.release_scan(source["endpoint"], owner, worker)
             self.record("scan_release_after_ddl_ack", result=release, ddl_ack_sequence=self.ack)
             worker.join(13)
             self.check("held SDK worker completes after the real DDL", not worker.is_alive())
