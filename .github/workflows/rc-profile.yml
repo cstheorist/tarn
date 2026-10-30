@@ -68,6 +68,8 @@ jobs:
         run: |
           python3 bench/rc_profile_audit.py bench/rc-evidence/run-41052637120/manifest.json
           python3 bench/rc_compare_audit.py bench/rc-evidence/run-41052637120/manifest.json > /tmp/retained-rc-paired-audit.json
+          python3 bench/rc_profile_audit.py bench/rc-evidence/run-41060171963/manifest.json
+          python3 bench/rc_compare_audit.py bench/rc-evidence/run-41060171963/manifest.json > /tmp/repeated-rc-paired-audit.json
       - uses: actions/cache/restore@v6
         id: tarantool-cache
         with:

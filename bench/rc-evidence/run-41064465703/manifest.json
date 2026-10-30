@@ -1,0 +1,1299 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/41064465703",
+  "source": "9c38f9b69e13aeb18152d5205974bb158db84483",
+  "head": "9c38f9b69e13aeb18152d5205974bb158db84483",
+  "hypothesis": "plan-guards",
+  "legacy_session_flag": false,
+  "archives": [
+    {
+      "path": "rc-memtx-enabled-41064465703.tar.gz",
+      "bytes": 2252738,
+      "sha256": "d5731210aa362891a13e3fc182922afe0bad29ef8988011c1467edac1348f867",
+      "excluded": [
+        {
+          "path": "rc-results/failed-cluster.tar.gz",
+          "bytes": 10803448,
+          "sha256": "7634cab1f8effcfe9e5054b8d07c3555a0e9acd845d7c8c552e0703e9b0dfc52"
+        },
+        {
+          "path": "rc-results/paired/fixtures.tar.gz",
+          "bytes": 760506,
+          "sha256": "3789325e0db70f950a37da2aaad7c3504c893d723d048e042f0b15d3ccb2f203"
+        },
+        {
+          "path": "rc-results/tarantool",
+          "bytes": 41741792,
+          "sha256": "bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f"
+        }
+      ],
+      "members": [
+        {
+          "path": "paired-fixture/batched/lua/storage.lua",
+          "bytes": 11682,
+          "sha256": "2ba5ce15c67b5a6470fab46a946e0516bf127c0ee7ae57c743a5cccb8b570b2c"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn.lua",
+          "bytes": 336307,
+          "sha256": "a1db1a2b0fdf555f83342f63e7df511ab47868d4160d17e53f8b59a2b5157433"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_backup.lua",
+          "bytes": 9148,
+          "sha256": "6553ee7d54755680a79247929f12b21cfc81a55b6972f85b435c68437d9f20f3"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_clock.lua",
+          "bytes": 35619,
+          "sha256": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_compat.lua",
+          "bytes": 933,
+          "sha256": "c77c0765d173251c4459fcbb4ea6d9d95f97f33c057d0bb2b8b08643ad4b2005"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_engine.lua",
+          "bytes": 32320,
+          "sha256": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_fresh.lua",
+          "bytes": 12217,
+          "sha256": "a23e916e667c209a7302bcf9ac790068767a4a061b9bd1168f6697f3a7beb806"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_lazy.lua",
+          "bytes": 62695,
+          "sha256": "ff90c7c126b4e6626457d08fed147a4a66192ac3906bd8c1e3bd3c85ecb16615"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_lazy_meter.lua",
+          "bytes": 8120,
+          "sha256": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab"
+        },
+        {
+          "path": "paired-fixture/batched/lua/tarn_vinyl.lua",
+          "bytes": 10086,
+          "sha256": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/alter_backfill_faults.sh",
+          "bytes": 1075,
+          "sha256": "3b26982c793b396933cc9c9a2c0df5514b2c6582bd855231688c2a96079326ff"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/alter_backfill_restart_test.lua",
+          "bytes": 5069,
+          "sha256": "efc104802ecd729944951821276ce51cd744f3e549c3adbd7504df59dc32018a"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/alter_backfill_test.lua",
+          "bytes": 16938,
+          "sha256": "2bcd6aeffe8a093812d2cf064470c3e6661f61c093e5b093e1783e914784802d"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/alter_rename_restart_test.lua",
+          "bytes": 3823,
+          "sha256": "d4e2086de2a0cd3e186197e0d4ac5b484125bea71784deab2bc33527d7cfe2fc"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/alter_upgrade_test.lua",
+          "bytes": 4075,
+          "sha256": "0ed1435eabb0686e74d2b1c4c117a5b1133095f394a57dea5dd1d09e4bd1ed0e"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/bucket_test.lua",
+          "bytes": 30906,
+          "sha256": "b6ff6765a89192ccbca65e3821936c60f5d0cc72a9e5596f94616f28e4f66f15"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_completion.sh",
+          "bytes": 395,
+          "sha256": "3ae684fc4ec17a7546490975162dfcfe22a4ba3da6a087035764ccea958c7502"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_completion_test.lua",
+          "bytes": 7463,
+          "sha256": "59ec44b613222fbf6c1c5853c4f415f389b65b3239086cdb70360b459fd87b49"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_guard_test.lua",
+          "bytes": 29524,
+          "sha256": "5c84d99d58c82f78c21137bd034e90108ac255b936c8e11865a2e1b72187c1a2"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_initialization_test.lua",
+          "bytes": 1878,
+          "sha256": "7028a4e9b9bd089c5b90bc1e147c3721ec7a99164fc0e4894ba8d8316b5a681f"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_integration.sh",
+          "bytes": 648,
+          "sha256": "aba8841a1b849ac38c2dbfe53d903057de73c59d9649ae50eefce01409cba487"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_integration_node.lua",
+          "bytes": 790,
+          "sha256": "2c5b1a7d941c7f52d4773b6f4443f7e05a9e8fa8f3e447b7d35a932d29799880"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_integration_test.lua",
+          "bytes": 8565,
+          "sha256": "b436e6c44fb20acf48d3bf1c83f5d6ac277dcf926f0899829ab1d6743437b27f"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_protocol.sh",
+          "bytes": 2559,
+          "sha256": "feda2e9067f7ffa021ad7c8bc6a45d404b01a0d94f216cb5c5ad121dbd87aad3"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/clock_protocol_test.lua",
+          "bytes": 13372,
+          "sha256": "53131d22f79bebc424dc20dab4206d463d0d7a3add92aca272d8b0dc47900ad3"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/compat_test.lua",
+          "bytes": 1189,
+          "sha256": "148e8ddbeaf45b69da0f9cc11d91e5ac1a51160e4e12787e33b4c2987fb6e351"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_alias_test.lua",
+          "bytes": 8638,
+          "sha256": "11ec42f368dbaff2af0eb45bbea546cce0a853fbeff5da70acc4c1589bb82eb4"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_cut_test.lua",
+          "bytes": 22032,
+          "sha256": "fa25b865ccdbcfa6cd1fd8afeab0995ffbca33cc00d646ebe02dee0f7d6eda0b"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_faults.sh",
+          "bytes": 759,
+          "sha256": "3f6154141f9cdabecd0379410cb0fc1d19dfc3beb65cf0b536f925b0f1012f93"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_read_error_test.lua",
+          "bytes": 5420,
+          "sha256": "fdf5c0714d2c88765a31ec434b27f40fb164212d8b3818b3e5187e6b1a936f80"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_replication.sh",
+          "bytes": 5567,
+          "sha256": "19c1ebe28f8375954fedb7069dfbef5ed897fac662d4ab8256d424f49167951c"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_replication_diagnostics_test.lua",
+          "bytes": 594,
+          "sha256": "694d225c78ed3bbe7dfa4f58063ac104113f628c2d81e33aa8a5ce144b11c450"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_replication_test.lua",
+          "bytes": 18914,
+          "sha256": "bc0acab3192a1c7927ba3d3b7c1444a7cf7d0a0a8ffdebd86a4166a9082e0cdd"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_restart_test.lua",
+          "bytes": 11707,
+          "sha256": "ac8e85c7749d098b11a0b8641aa64b3c16e70db4d4c2542c7b7c5a7ec175397f"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_terminal_test.lua",
+          "bytes": 8687,
+          "sha256": "40d3659e3968d92be5c3db0e5bc26cd3d70b17ba5d1f8d77a05572b761ce5134"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/engine_test.lua",
+          "bytes": 30107,
+          "sha256": "23dccec69c936787711b8caaaed3990b5d5dfe5af57d7f6a60df8f7860150b52"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/join_test.lua",
+          "bytes": 14947,
+          "sha256": "80cfe20a0fd8d07687091645e3ad592849e9a406581619ffe23c1940ba32cc56"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_apply_confirm_test.lua",
+          "bytes": 8252,
+          "sha256": "2e5d17ee4a4ae7f8476569a11d4e3d553a84af655c965ce3659e88a9746e79b4"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_bucket_count_test.lua",
+          "bytes": 2893,
+          "sha256": "027aeee09893e44658487962a4d65451be8ff5ea3a64623dbe7f6130a416ffc8"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_clear_restart_test.lua",
+          "bytes": 5488,
+          "sha256": "3cb0c2e2d660652147cbe25e641ca18583a00cb33a458f86b8ad7ff9afc3e4e7"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_codec_test.lua",
+          "bytes": 2039,
+          "sha256": "a59263c47dc9c39fbbec0304a3c7dfa912e06398529a055b160fe43c914ad353"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_concurrency_test.lua",
+          "bytes": 5603,
+          "sha256": "f087c0426f90dbf47a19073c8a5e10f1b104172aa39a83f726c6738ed97ad34f"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_create_restart_test.lua",
+          "bytes": 2918,
+          "sha256": "b52170b2854598350044a5736eb99328bf6db3a61fa868a7b699b0edbc217cef"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_faults.sh",
+          "bytes": 3019,
+          "sha256": "568fc9b0a12be888d578adeaea49736df8de079543f8c644b455d0438692ee5a"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_join_restart_test.lua",
+          "bytes": 1881,
+          "sha256": "3e3a8e6d59a6d9babfd459ecbe2e38424fb74a96155685d70ccfe4134b11a73b"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_lifecycle_test.lua",
+          "bytes": 9060,
+          "sha256": "4b53d2982da4544b1a34a1f8078c371706586caa3d20799cace02f0ee3f62659"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_metadata_mvcc_test.lua",
+          "bytes": 12021,
+          "sha256": "f1a09344f866726646bd76ea08157e41a6469dd06082e58014b71119d0e02808"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_meter_test.lua",
+          "bytes": 9258,
+          "sha256": "cc8a3e94a22260ffc845d83109db1539ca3c1562cc4d18023e9dc078ea054652"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_native_commit_test.lua",
+          "bytes": 7839,
+          "sha256": "d471ae361b159ec0268d387873c928c05e6606ee6a66c3eb661933685327124e"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_plain_binding_test.lua",
+          "bytes": 18723,
+          "sha256": "644ac6cd206840173abe8cd52499323048e28fa4faf464738265c7e906b8bf72"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_readiness_control.lua",
+          "bytes": 4144,
+          "sha256": "ee469c8fecd9a95e09d8b8d0bb0c2fa30629f99a6a4e46e8a46c04b42a7fbcda"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_readiness_control.sh",
+          "bytes": 1459,
+          "sha256": "bfae77d27dfe045b0f70fbdaa46d873907a24fc6cd69b8c409ec99a6a446fe13"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_registry_test.lua",
+          "bytes": 11397,
+          "sha256": "d097384fbd3c3f04d90f1c21edb449d9ba3a8cc14b93b486c19fbfa5cd9003a6"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_replication.sh",
+          "bytes": 4547,
+          "sha256": "9232b81b2179de387ae08d1056ffba0abe4f0a58cf50e27c319a7716fdc48b67"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_replication_test.lua",
+          "bytes": 17755,
+          "sha256": "f3211a8dae37d6a10f4bc25eb58e1b69500720045caff73c1246ef94d55d9285"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_restart_test.lua",
+          "bytes": 4925,
+          "sha256": "e465dde3bcf72831456ea0249c5f12f0b08109cbf699913dee8325ee78e3261f"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_shipper_test.lua",
+          "bytes": 3541,
+          "sha256": "a991338e25e8ba332e8596a608a8d5bcffecba024a3fdfedbbb3dd18851fc4ab"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_slice_test.lua",
+          "bytes": 15269,
+          "sha256": "b640a725343c87ddf03bb8ba396c79f2f861eb634a8cf4bfb5134c1a0dfe8622"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_target_confirm_test.lua",
+          "bytes": 6143,
+          "sha256": "9ab9bfdfbb41c65cd1ba0068f046d4fd3c4cda273973eaee600c928953c9bdab"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/lazy_topology_test.lua",
+          "bytes": 13283,
+          "sha256": "47b129cc6e78154b8cf909603fbad0f13ced9a6e7696461a2e67be7a5c540b88"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/member_dependency.sh",
+          "bytes": 2804,
+          "sha256": "250d05c48ab4daae5a1516664ba23335e72e3c0aadaed89b5f92e56142a5627b"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/member_dependency_test.lua",
+          "bytes": 20759,
+          "sha256": "ea670f4a60eca39fb684fb05cde6d53768a00a303dbbd5c02df26b614992063d"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/member_test.lua",
+          "bytes": 11781,
+          "sha256": "7144b9beadc1871364aa57cd1ac3ada5858dff73dd41a1e2784fd48e31f25e93"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/membership_freshness_test.lua",
+          "bytes": 5105,
+          "sha256": "32b8b3b2f959266c97111965d2605b94f9a71a8e8e7dee9def35ed0e443167f5"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/native_freshness.sh",
+          "bytes": 4134,
+          "sha256": "14a9467d99b7a92a634a7fff0f669d4aefa4eb20ce6a9fa17752329a49891c0d"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/native_freshness_control.lua",
+          "bytes": 3144,
+          "sha256": "8d455b2b2b2e2d4e2ca55f46479f01a21c7612867b49a839b8d9e31d96d757d0"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/native_freshness_test.lua",
+          "bytes": 19900,
+          "sha256": "acd626c807cb00fb537922bb439f610ee109b8496594388957ad68bb9d36deb2"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/native_key_batch_test.lua",
+          "bytes": 15444,
+          "sha256": "b79fc5049879eceed1402f8ab65255a8a8830c4f0d174eb79000679216cc2841"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/native_lua_guard_test.lua",
+          "bytes": 10802,
+          "sha256": "9e757c89b417fcb181a80b8559388908f0aa8dab5ec0a1797b83dfe99b49f643"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/native_test.lua",
+          "bytes": 71702,
+          "sha256": "b9171d0d481d7c8fa07f509e2fb6956095fec7f62453f185743e03cc7a169445"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/prepare_confirm_test.lua",
+          "bytes": 11269,
+          "sha256": "0ecb5d76d1ebca2a54cb6dc4fb2e00c585102a2efbb32fdd5c4b35844f37cf50"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/read_freshness_test.lua",
+          "bytes": 11395,
+          "sha256": "f450fc0e8dd646305bd40539c72ee4e0769f0c3769f194afb0f0004dd9243634"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/rebalance_test.lua",
+          "bytes": 9180,
+          "sha256": "6ec996918659745f93c4f8d063fb1bbc1ea1ac7303f9fb9932b1a23503327489"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/recovery_faults.sh",
+          "bytes": 2269,
+          "sha256": "c3cc78526c20d495070c8305794a812cb63a5a907d130ed3bfd600b9c84a4927"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/recovery_faults_test.lua",
+          "bytes": 13746,
+          "sha256": "73f9fe223ceb05042385e8eee57d7a466468c748dc6526ca064c9202add71d41"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/run.sh",
+          "bytes": 7634,
+          "sha256": "387d61b9ef4065461a914704f94b3cb3e517454e0c7aa0f22c6117acfeeed5cf"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/storage_test.lua",
+          "bytes": 109000,
+          "sha256": "41b878833a25c6e8a809972fcee59497dc1a60f6bbca41ce52967fb0ae087d97"
+        },
+        {
+          "path": "paired-fixture/batched/lua/test/vinyl_admission_test.lua",
+          "bytes": 8273,
+          "sha256": "7218f0e9523287067bfd2db950c765ce0c38636df513f6be44097379531636c8"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/backup.py",
+          "bytes": 12605,
+          "sha256": "30735453ade038e53e6a18b23867519d37cb07368ecd152d18a14b3d2f197435"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/backup_rpc.lua",
+          "bytes": 2309,
+          "sha256": "87aba68182c2595bd6d2a2ab45bf6e6a424f3e130f7fe4497b80560b2ed0aced"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/ci_strong_read_cost.py",
+          "bytes": 23985,
+          "sha256": "20b0ec6a0c91c76e49774fffc9595d2b3e3d6b33ddf15f9e188b349de0d3139b"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/cluster.sh",
+          "bytes": 9588,
+          "sha256": "fb41f8ba19f45e9edd9e14ee1614ffed15edd3b8a1e806ed86da2d3696799063"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/cluster_backup.py",
+          "bytes": 21009,
+          "sha256": "efcd5d924307df19156dba78f18d18b2ffd2f6ed8560e19946fe33bc7c833b2c"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/gc_failover_review.py",
+          "bytes": 10089,
+          "sha256": "f1f31e3e1998a3a10bad61f5a06d7d2ec2c29db260130dfa1ed75b218611da13"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/gen_collations.py",
+          "bytes": 5107,
+          "sha256": "f54a68b064aaf481dadb2463a026967b3637156927028d80a3d8bb151be66cf5"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/joined.lua",
+          "bytes": 697,
+          "sha256": "83f1369c12733c9490e5543c4a3730691e9e8d0f30f9f29510f0e09de3d1c475"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/probe.lua",
+          "bytes": 685,
+          "sha256": "57f65ca4fb1ab713bcb373b602dbea635bdbe596d01064fc80300e0ff379bc22"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/promote.lua",
+          "bytes": 529,
+          "sha256": "3934645307967e7a05a55774466cf391f9f69b113e2044776ab54f34364db6a9"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/render_docs.py",
+          "bytes": 1979,
+          "sha256": "fa700c89016575af5ec93bad09e627ac5ca49f024060cf97af1b4e83969aff76"
+        },
+        {
+          "path": "paired-fixture/batched/scripts/upgrade_build_receipt.py",
+          "bytes": 1712,
+          "sha256": "381e8bd58417aaa15426190e25a069deb3ff6950cb7921fd3f0728a0e66118f5"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/cluster.json",
+          "bytes": 159,
+          "sha256": "0546cf113d9f214410d9e4d49cf2107241867c8ddcced3fb3710dddce7fca0ad"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/params",
+          "bytes": 75,
+          "sha256": "989d9978fdef53e9a14c7d5884ea7b3bfa332a02e20e9fecfe18c6a8e0be36f7"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s1.1.log",
+          "bytes": 18210,
+          "sha256": "1a17df40ef3c853fc0a7b1e4a036f60d674e9e00aee95bc64665255259450783"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s1.1.sh",
+          "bytes": 1013,
+          "sha256": "1100f5559d89c2a3603cfd229dc5b504bdd463296c705225f7f2a7cd7928b8ba"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s1.2.log",
+          "bytes": 4797,
+          "sha256": "0b02535459eef44c03eff8c54128890c84261ddd8276aa0def04c278dcfa15dc"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s1.2.sh",
+          "bytes": 1013,
+          "sha256": "52352c10b49c594e1300c27b13c84e7b2ab81a20b2ca8eb4f1d532dba173fa29"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s1.3.log",
+          "bytes": 7017,
+          "sha256": "174dadfef3b67d1404c7d4622bfd8cfacf2f9ac93133762bb92d3a41d2453ed7"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s1.3.sh",
+          "bytes": 1013,
+          "sha256": "6519e92fbf4ee0e559d94290f1094f60e764f14060a2aa8f18bee9a1fcf8cc51"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s2.1.log",
+          "bytes": 16278,
+          "sha256": "0b14395c697c9fbfc526a94b45fe6f36736fa66fe64f01e06bf9fcf895b1dcdc"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s2.1.sh",
+          "bytes": 1013,
+          "sha256": "e6acf908b18b59c1ef314740c32290794bc7aaba0fc8fbdf93698e516c32ae2a"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s2.2.log",
+          "bytes": 13205,
+          "sha256": "8112032ecaba8038223d4d0932fe8f7705e5327740ee8ed1dbe57e26b0aa74c8"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s2.2.sh",
+          "bytes": 1013,
+          "sha256": "a00aeb1cf2826ed6ee3295b6eeebbad7954105e43aaabd714fdc21d2d33b5002"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s2.3.log",
+          "bytes": 13018,
+          "sha256": "d2b90e73f499e825c1006021fab39f03d858e28fd50860c5338b9f988d7ad0d4"
+        },
+        {
+          "path": "paired-fixture/cluster-0-scalar/s2.3.sh",
+          "bytes": 1013,
+          "sha256": "a90a73629accf59ee43397f5a598d589ce94de0265d6da91f1071e1fd2df2afe"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/storage.lua",
+          "bytes": 11682,
+          "sha256": "2ba5ce15c67b5a6470fab46a946e0516bf127c0ee7ae57c743a5cccb8b570b2c"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn.lua",
+          "bytes": 336380,
+          "sha256": "3301c192767645bb83ca87ce6edac22a4ccc228d382e624d9963465fbe80f289"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_backup.lua",
+          "bytes": 9148,
+          "sha256": "6553ee7d54755680a79247929f12b21cfc81a55b6972f85b435c68437d9f20f3"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_clock.lua",
+          "bytes": 35619,
+          "sha256": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_compat.lua",
+          "bytes": 933,
+          "sha256": "c77c0765d173251c4459fcbb4ea6d9d95f97f33c057d0bb2b8b08643ad4b2005"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_engine.lua",
+          "bytes": 32320,
+          "sha256": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_fresh.lua",
+          "bytes": 11863,
+          "sha256": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_lazy.lua",
+          "bytes": 62695,
+          "sha256": "ff90c7c126b4e6626457d08fed147a4a66192ac3906bd8c1e3bd3c85ecb16615"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_lazy_meter.lua",
+          "bytes": 8120,
+          "sha256": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/tarn_vinyl.lua",
+          "bytes": 10086,
+          "sha256": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/alter_backfill_faults.sh",
+          "bytes": 1075,
+          "sha256": "3b26982c793b396933cc9c9a2c0df5514b2c6582bd855231688c2a96079326ff"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/alter_backfill_restart_test.lua",
+          "bytes": 5069,
+          "sha256": "efc104802ecd729944951821276ce51cd744f3e549c3adbd7504df59dc32018a"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/alter_backfill_test.lua",
+          "bytes": 16938,
+          "sha256": "2bcd6aeffe8a093812d2cf064470c3e6661f61c093e5b093e1783e914784802d"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/alter_rename_restart_test.lua",
+          "bytes": 3823,
+          "sha256": "d4e2086de2a0cd3e186197e0d4ac5b484125bea71784deab2bc33527d7cfe2fc"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/alter_upgrade_test.lua",
+          "bytes": 4075,
+          "sha256": "0ed1435eabb0686e74d2b1c4c117a5b1133095f394a57dea5dd1d09e4bd1ed0e"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/bucket_test.lua",
+          "bytes": 30906,
+          "sha256": "b6ff6765a89192ccbca65e3821936c60f5d0cc72a9e5596f94616f28e4f66f15"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_completion.sh",
+          "bytes": 395,
+          "sha256": "3ae684fc4ec17a7546490975162dfcfe22a4ba3da6a087035764ccea958c7502"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_completion_test.lua",
+          "bytes": 7463,
+          "sha256": "59ec44b613222fbf6c1c5853c4f415f389b65b3239086cdb70360b459fd87b49"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_guard_test.lua",
+          "bytes": 29524,
+          "sha256": "5c84d99d58c82f78c21137bd034e90108ac255b936c8e11865a2e1b72187c1a2"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_initialization_test.lua",
+          "bytes": 1878,
+          "sha256": "7028a4e9b9bd089c5b90bc1e147c3721ec7a99164fc0e4894ba8d8316b5a681f"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_integration.sh",
+          "bytes": 648,
+          "sha256": "aba8841a1b849ac38c2dbfe53d903057de73c59d9649ae50eefce01409cba487"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_integration_node.lua",
+          "bytes": 790,
+          "sha256": "2c5b1a7d941c7f52d4773b6f4443f7e05a9e8fa8f3e447b7d35a932d29799880"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_integration_test.lua",
+          "bytes": 8565,
+          "sha256": "b436e6c44fb20acf48d3bf1c83f5d6ac277dcf926f0899829ab1d6743437b27f"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_protocol.sh",
+          "bytes": 2559,
+          "sha256": "feda2e9067f7ffa021ad7c8bc6a45d404b01a0d94f216cb5c5ad121dbd87aad3"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/clock_protocol_test.lua",
+          "bytes": 13372,
+          "sha256": "53131d22f79bebc424dc20dab4206d463d0d7a3add92aca272d8b0dc47900ad3"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/compat_test.lua",
+          "bytes": 1189,
+          "sha256": "148e8ddbeaf45b69da0f9cc11d91e5ac1a51160e4e12787e33b4c2987fb6e351"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_alias_test.lua",
+          "bytes": 8638,
+          "sha256": "11ec42f368dbaff2af0eb45bbea546cce0a853fbeff5da70acc4c1589bb82eb4"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_cut_test.lua",
+          "bytes": 22032,
+          "sha256": "fa25b865ccdbcfa6cd1fd8afeab0995ffbca33cc00d646ebe02dee0f7d6eda0b"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_faults.sh",
+          "bytes": 759,
+          "sha256": "3f6154141f9cdabecd0379410cb0fc1d19dfc3beb65cf0b536f925b0f1012f93"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_read_error_test.lua",
+          "bytes": 5420,
+          "sha256": "fdf5c0714d2c88765a31ec434b27f40fb164212d8b3818b3e5187e6b1a936f80"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_replication.sh",
+          "bytes": 5567,
+          "sha256": "19c1ebe28f8375954fedb7069dfbef5ed897fac662d4ab8256d424f49167951c"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_replication_diagnostics_test.lua",
+          "bytes": 594,
+          "sha256": "694d225c78ed3bbe7dfa4f58063ac104113f628c2d81e33aa8a5ce144b11c450"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_replication_test.lua",
+          "bytes": 18914,
+          "sha256": "bc0acab3192a1c7927ba3d3b7c1444a7cf7d0a0a8ffdebd86a4166a9082e0cdd"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_restart_test.lua",
+          "bytes": 11707,
+          "sha256": "ac8e85c7749d098b11a0b8641aa64b3c16e70db4d4c2542c7b7c5a7ec175397f"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_terminal_test.lua",
+          "bytes": 8687,
+          "sha256": "40d3659e3968d92be5c3db0e5bc26cd3d70b17ba5d1f8d77a05572b761ce5134"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/engine_test.lua",
+          "bytes": 30107,
+          "sha256": "23dccec69c936787711b8caaaed3990b5d5dfe5af57d7f6a60df8f7860150b52"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/join_test.lua",
+          "bytes": 14947,
+          "sha256": "80cfe20a0fd8d07687091645e3ad592849e9a406581619ffe23c1940ba32cc56"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_apply_confirm_test.lua",
+          "bytes": 8252,
+          "sha256": "2e5d17ee4a4ae7f8476569a11d4e3d553a84af655c965ce3659e88a9746e79b4"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_bucket_count_test.lua",
+          "bytes": 2893,
+          "sha256": "027aeee09893e44658487962a4d65451be8ff5ea3a64623dbe7f6130a416ffc8"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_clear_restart_test.lua",
+          "bytes": 5488,
+          "sha256": "3cb0c2e2d660652147cbe25e641ca18583a00cb33a458f86b8ad7ff9afc3e4e7"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_codec_test.lua",
+          "bytes": 2039,
+          "sha256": "a59263c47dc9c39fbbec0304a3c7dfa912e06398529a055b160fe43c914ad353"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_concurrency_test.lua",
+          "bytes": 5603,
+          "sha256": "f087c0426f90dbf47a19073c8a5e10f1b104172aa39a83f726c6738ed97ad34f"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_create_restart_test.lua",
+          "bytes": 2918,
+          "sha256": "b52170b2854598350044a5736eb99328bf6db3a61fa868a7b699b0edbc217cef"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_faults.sh",
+          "bytes": 3019,
+          "sha256": "568fc9b0a12be888d578adeaea49736df8de079543f8c644b455d0438692ee5a"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_join_restart_test.lua",
+          "bytes": 1881,
+          "sha256": "3e3a8e6d59a6d9babfd459ecbe2e38424fb74a96155685d70ccfe4134b11a73b"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_lifecycle_test.lua",
+          "bytes": 9060,
+          "sha256": "4b53d2982da4544b1a34a1f8078c371706586caa3d20799cace02f0ee3f62659"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_metadata_mvcc_test.lua",
+          "bytes": 12021,
+          "sha256": "f1a09344f866726646bd76ea08157e41a6469dd06082e58014b71119d0e02808"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_meter_test.lua",
+          "bytes": 9258,
+          "sha256": "cc8a3e94a22260ffc845d83109db1539ca3c1562cc4d18023e9dc078ea054652"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_native_commit_test.lua",
+          "bytes": 7839,
+          "sha256": "d471ae361b159ec0268d387873c928c05e6606ee6a66c3eb661933685327124e"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_plain_binding_test.lua",
+          "bytes": 18723,
+          "sha256": "644ac6cd206840173abe8cd52499323048e28fa4faf464738265c7e906b8bf72"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_readiness_control.lua",
+          "bytes": 4144,
+          "sha256": "ee469c8fecd9a95e09d8b8d0bb0c2fa30629f99a6a4e46e8a46c04b42a7fbcda"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_readiness_control.sh",
+          "bytes": 1459,
+          "sha256": "bfae77d27dfe045b0f70fbdaa46d873907a24fc6cd69b8c409ec99a6a446fe13"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_registry_test.lua",
+          "bytes": 11397,
+          "sha256": "d097384fbd3c3f04d90f1c21edb449d9ba3a8cc14b93b486c19fbfa5cd9003a6"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_replication.sh",
+          "bytes": 4547,
+          "sha256": "9232b81b2179de387ae08d1056ffba0abe4f0a58cf50e27c319a7716fdc48b67"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_replication_test.lua",
+          "bytes": 17755,
+          "sha256": "f3211a8dae37d6a10f4bc25eb58e1b69500720045caff73c1246ef94d55d9285"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_restart_test.lua",
+          "bytes": 4925,
+          "sha256": "e465dde3bcf72831456ea0249c5f12f0b08109cbf699913dee8325ee78e3261f"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_shipper_test.lua",
+          "bytes": 3541,
+          "sha256": "a991338e25e8ba332e8596a608a8d5bcffecba024a3fdfedbbb3dd18851fc4ab"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_slice_test.lua",
+          "bytes": 15269,
+          "sha256": "b640a725343c87ddf03bb8ba396c79f2f861eb634a8cf4bfb5134c1a0dfe8622"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_target_confirm_test.lua",
+          "bytes": 6143,
+          "sha256": "9ab9bfdfbb41c65cd1ba0068f046d4fd3c4cda273973eaee600c928953c9bdab"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/lazy_topology_test.lua",
+          "bytes": 13283,
+          "sha256": "47b129cc6e78154b8cf909603fbad0f13ced9a6e7696461a2e67be7a5c540b88"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/member_dependency.sh",
+          "bytes": 2804,
+          "sha256": "250d05c48ab4daae5a1516664ba23335e72e3c0aadaed89b5f92e56142a5627b"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/member_dependency_test.lua",
+          "bytes": 20759,
+          "sha256": "ea670f4a60eca39fb684fb05cde6d53768a00a303dbbd5c02df26b614992063d"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/member_test.lua",
+          "bytes": 11781,
+          "sha256": "7144b9beadc1871364aa57cd1ac3ada5858dff73dd41a1e2784fd48e31f25e93"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/membership_freshness_test.lua",
+          "bytes": 5105,
+          "sha256": "32b8b3b2f959266c97111965d2605b94f9a71a8e8e7dee9def35ed0e443167f5"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/native_freshness.sh",
+          "bytes": 4134,
+          "sha256": "14a9467d99b7a92a634a7fff0f669d4aefa4eb20ce6a9fa17752329a49891c0d"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/native_freshness_control.lua",
+          "bytes": 3144,
+          "sha256": "8d455b2b2b2e2d4e2ca55f46479f01a21c7612867b49a839b8d9e31d96d757d0"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/native_freshness_test.lua",
+          "bytes": 19900,
+          "sha256": "acd626c807cb00fb537922bb439f610ee109b8496594388957ad68bb9d36deb2"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/native_key_batch_test.lua",
+          "bytes": 15444,
+          "sha256": "b79fc5049879eceed1402f8ab65255a8a8830c4f0d174eb79000679216cc2841"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/native_lua_guard_test.lua",
+          "bytes": 10802,
+          "sha256": "9e757c89b417fcb181a80b8559388908f0aa8dab5ec0a1797b83dfe99b49f643"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/native_test.lua",
+          "bytes": 71702,
+          "sha256": "b9171d0d481d7c8fa07f509e2fb6956095fec7f62453f185743e03cc7a169445"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/prepare_confirm_test.lua",
+          "bytes": 11269,
+          "sha256": "0ecb5d76d1ebca2a54cb6dc4fb2e00c585102a2efbb32fdd5c4b35844f37cf50"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/read_freshness_test.lua",
+          "bytes": 11395,
+          "sha256": "f450fc0e8dd646305bd40539c72ee4e0769f0c3769f194afb0f0004dd9243634"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/rebalance_test.lua",
+          "bytes": 9180,
+          "sha256": "6ec996918659745f93c4f8d063fb1bbc1ea1ac7303f9fb9932b1a23503327489"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/recovery_faults.sh",
+          "bytes": 2269,
+          "sha256": "c3cc78526c20d495070c8305794a812cb63a5a907d130ed3bfd600b9c84a4927"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/recovery_faults_test.lua",
+          "bytes": 13746,
+          "sha256": "73f9fe223ceb05042385e8eee57d7a466468c748dc6526ca064c9202add71d41"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/run.sh",
+          "bytes": 7634,
+          "sha256": "387d61b9ef4065461a914704f94b3cb3e517454e0c7aa0f22c6117acfeeed5cf"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/storage_test.lua",
+          "bytes": 109000,
+          "sha256": "41b878833a25c6e8a809972fcee59497dc1a60f6bbca41ce52967fb0ae087d97"
+        },
+        {
+          "path": "paired-fixture/scalar/lua/test/vinyl_admission_test.lua",
+          "bytes": 8273,
+          "sha256": "7218f0e9523287067bfd2db950c765ce0c38636df513f6be44097379531636c8"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/backup.py",
+          "bytes": 12605,
+          "sha256": "30735453ade038e53e6a18b23867519d37cb07368ecd152d18a14b3d2f197435"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/backup_rpc.lua",
+          "bytes": 2309,
+          "sha256": "87aba68182c2595bd6d2a2ab45bf6e6a424f3e130f7fe4497b80560b2ed0aced"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/ci_strong_read_cost.py",
+          "bytes": 23985,
+          "sha256": "20b0ec6a0c91c76e49774fffc9595d2b3e3d6b33ddf15f9e188b349de0d3139b"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/cluster.sh",
+          "bytes": 9588,
+          "sha256": "fb41f8ba19f45e9edd9e14ee1614ffed15edd3b8a1e806ed86da2d3696799063"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/cluster_backup.py",
+          "bytes": 21009,
+          "sha256": "efcd5d924307df19156dba78f18d18b2ffd2f6ed8560e19946fe33bc7c833b2c"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/gc_failover_review.py",
+          "bytes": 10089,
+          "sha256": "f1f31e3e1998a3a10bad61f5a06d7d2ec2c29db260130dfa1ed75b218611da13"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/gen_collations.py",
+          "bytes": 5107,
+          "sha256": "f54a68b064aaf481dadb2463a026967b3637156927028d80a3d8bb151be66cf5"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/joined.lua",
+          "bytes": 697,
+          "sha256": "83f1369c12733c9490e5543c4a3730691e9e8d0f30f9f29510f0e09de3d1c475"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/probe.lua",
+          "bytes": 685,
+          "sha256": "57f65ca4fb1ab713bcb373b602dbea635bdbe596d01064fc80300e0ff379bc22"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/promote.lua",
+          "bytes": 529,
+          "sha256": "3934645307967e7a05a55774466cf391f9f69b113e2044776ab54f34364db6a9"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/render_docs.py",
+          "bytes": 1979,
+          "sha256": "fa700c89016575af5ec93bad09e627ac5ca49f024060cf97af1b4e83969aff76"
+        },
+        {
+          "path": "paired-fixture/scalar/scripts/upgrade_build_receipt.py",
+          "bytes": 1712,
+          "sha256": "381e8bd58417aaa15426190e25a069deb3ff6950cb7921fd3f0728a0e66118f5"
+        },
+        {
+          "path": "rc-build/binaries.sha256",
+          "bytes": 193,
+          "sha256": "ff7822d46d749a35b84d965cb4f4642a73c327358c0adb3b3273eb1f02d9ae8d"
+        },
+        {
+          "path": "rc-build/rustc.txt",
+          "bytes": 196,
+          "sha256": "778fbc643a806f0dd123c056e66201d7e8a56a61928ec0a33171be8d6c2d5a37"
+        },
+        {
+          "path": "rc-build/source.txt",
+          "bytes": 41,
+          "sha256": "75c308de5d3c815cfb29d9b5c15831fd8ba80628fa6c906ddcee299d2f843da1"
+        },
+        {
+          "path": "rc-cluster/cluster.json",
+          "bytes": 159,
+          "sha256": "0546cf113d9f214410d9e4d49cf2107241867c8ddcced3fb3710dddce7fca0ad"
+        },
+        {
+          "path": "rc-cluster/params",
+          "bytes": 75,
+          "sha256": "989d9978fdef53e9a14c7d5884ea7b3bfa332a02e20e9fecfe18c6a8e0be36f7"
+        },
+        {
+          "path": "rc-cluster/s1.1.log",
+          "bytes": 15645,
+          "sha256": "7d3cafa96973ffe3a1d2f4263aef5a6a85c69b36eff41f9a7ccaca439d403083"
+        },
+        {
+          "path": "rc-cluster/s1.1.sh",
+          "bytes": 921,
+          "sha256": "c284341a106b73d57de7be91b34ab9d4c6ffa26613c943fa2342c854cfadb91d"
+        },
+        {
+          "path": "rc-cluster/s1.2.log",
+          "bytes": 16452,
+          "sha256": "433f76f388b0bedef92a15249353f0519232e2eab91b255544b946da77507d62"
+        },
+        {
+          "path": "rc-cluster/s1.2.sh",
+          "bytes": 921,
+          "sha256": "f76e2eadff46d253e6baf35ac355129673fd5cc4d12bcd921a689747f3735863"
+        },
+        {
+          "path": "rc-cluster/s1.3.log",
+          "bytes": 14998,
+          "sha256": "794e02e20c9a12a3474f0b3d1bf7ac890ca008ad5d375092853b286ef2802cd9"
+        },
+        {
+          "path": "rc-cluster/s1.3.sh",
+          "bytes": 921,
+          "sha256": "f7bd9151ea5124a984be515946f10af31b0874a14bc45a533040a53bf7382a15"
+        },
+        {
+          "path": "rc-cluster/s2.1.log",
+          "bytes": 15084,
+          "sha256": "bc23e5081a94d1ff32a09ec686fdb2a54c8d6cf4a2ff338fa2557719b29a4515"
+        },
+        {
+          "path": "rc-cluster/s2.1.sh",
+          "bytes": 921,
+          "sha256": "f19bbdaf52c0af413b05b2ffb69747d369098a6cacdfe8bba6c55775219fce24"
+        },
+        {
+          "path": "rc-cluster/s2.2.log",
+          "bytes": 13891,
+          "sha256": "abe9251a14618e9b4d2080b87e617f58bd5cec5cfd6c5ff7fe41d8cbd06960b3"
+        },
+        {
+          "path": "rc-cluster/s2.2.sh",
+          "bytes": 921,
+          "sha256": "2e881f019b3c99ff04260c70ae19db6c45685258663d9f321db0b400bc0354b9"
+        },
+        {
+          "path": "rc-cluster/s2.3.log",
+          "bytes": 13533,
+          "sha256": "cebc476ac5a0420013096d741d154c8d99a0884328047e35d64b99cb607570a6"
+        },
+        {
+          "path": "rc-cluster/s2.3.sh",
+          "bytes": 921,
+          "sha256": "55d08d19d996e24f7df2fa87117f1088740b609f8eb1b579751aeec3951164b8"
+        },
+        {
+          "path": "rc-cluster/tarn1.log",
+          "bytes": 822,
+          "sha256": "3d733acaf27262551dcaa0bd0da5516b02619eb044655ddd70ce443d543b5c76"
+        },
+        {
+          "path": "rc-cluster/tarn1.sh",
+          "bytes": 192,
+          "sha256": "913a8c632f11c908ff9f361b263ef3ebcf81e7aa30e772c09a68041265317d20"
+        },
+        {
+          "path": "rc-results/baseline-sample-1.jsonl",
+          "bytes": 107636,
+          "sha256": "d9bc53619412bbe9a8e2e6c02619cb5a4e72e6162f32eb26469fbad02987e8ab"
+        },
+        {
+          "path": "rc-results/baseline-sample-10.jsonl",
+          "bytes": 191775,
+          "sha256": "9c346429afe3ff1abba4996627d28e8101ad26a8124b65f3dab67633ad9c6f02"
+        },
+        {
+          "path": "rc-results/baseline-sample-11.jsonl",
+          "bytes": 465066,
+          "sha256": "7de99ae0550de3ca69e0015fd588e2d243746c75302b7138b41a4fb31939bcd4"
+        },
+        {
+          "path": "rc-results/baseline-sample-12.jsonl",
+          "bytes": 226687,
+          "sha256": "0652efa2cc8ef525eaac8bba7f218b75517e5c3be24077c09c3faae3444ab787"
+        },
+        {
+          "path": "rc-results/baseline-sample-13.jsonl",
+          "bytes": 224883,
+          "sha256": "2b5f883bf1878790c183fbfcc45e9979b1d679af7c14f9c4e196b83fd320f671"
+        },
+        {
+          "path": "rc-results/baseline-sample-14.jsonl",
+          "bytes": 460712,
+          "sha256": "c994d4d00e318166283a2f46aa1179132ae21e5915f94e5773c8d1c7e0d0de40"
+        },
+        {
+          "path": "rc-results/baseline-sample-15.jsonl",
+          "bytes": 193717,
+          "sha256": "b70bb5884b8ef67b9dc758f3caa96d596aa4e2a8075fdbc7c25c99eae9d79449"
+        },
+        {
+          "path": "rc-results/baseline-sample-16.jsonl",
+          "bytes": 194243,
+          "sha256": "73c3e21b9fb39aaa3bdb21294691027de239c850e7c89f903c49c5e750d309c6"
+        },
+        {
+          "path": "rc-results/baseline-sample-17.jsonl",
+          "bytes": 464967,
+          "sha256": "3ceddd157e0ee973fa1d296a164cd37bd891b4417671d4f4fce18cd58193a530"
+        },
+        {
+          "path": "rc-results/baseline-sample-18.jsonl",
+          "bytes": 224180,
+          "sha256": "731cf3c610bf3697b7256f88f0222db708d7627af605a9bb8dc81ca934728e06"
+        },
+        {
+          "path": "rc-results/baseline-sample-19.jsonl",
+          "bytes": 188696,
+          "sha256": "88ef71339c0256ccc5b9f3e4c7905bb8ef47eab77bc0127211795b79344adced"
+        },
+        {
+          "path": "rc-results/baseline-sample-2.jsonl",
+          "bytes": 272884,
+          "sha256": "3abef1bb3c9147e6b17adeedbab51ba45c0b1677ca0e97ce223af3418159520f"
+        },
+        {
+          "path": "rc-results/baseline-sample-20.jsonl",
+          "bytes": 459004,
+          "sha256": "1f9d2694d3ee42b52a2b9ea229d0acdad9107da02a5fe802a5212e1e29282c34"
+        },
+        {
+          "path": "rc-results/baseline-sample-21.jsonl",
+          "bytes": 225178,
+          "sha256": "c1cc8f7161a69aabc8c47f02a3e0d92341b3c854af16b824b7dd88d5f85bd076"
+        },
+        {
+          "path": "rc-results/baseline-sample-22.jsonl",
+          "bytes": 225793,
+          "sha256": "e0afd7d93b5eeaad691f65e2d35edc3e55ce3ee28c90bcf7df484792d820f7bf"
+        },
+        {
+          "path": "rc-results/baseline-sample-23.jsonl",
+          "bytes": 463248,
+          "sha256": "f546f1848033c4cccd08f3fe94a4f348f5962d29e59801561beacfc4fe8d5240"
+        },
+        {
+          "path": "rc-results/baseline-sample-24.jsonl",
+          "bytes": 192754,
+          "sha256": "88c0975fecd6d5b63a2fb880387e1be39a34c9917fec649a3bc7f039497b7626"
+        },
+        {
+          "path": "rc-results/baseline-sample-25.jsonl",
+          "bytes": 193383,
+          "sha256": "b67376b466227eba92c2c0f8065514bf5ff0615ae5fc64ce38deb02a92f60142"
+        },
+        {
+          "path": "rc-results/baseline-sample-26.jsonl",
+          "bytes": 456117,
+          "sha256": "4045553b7961ed6f877e27ef96877e035a85d4d0ae2a446cefb57af2ca538d57"
+        },
+        {
+          "path": "rc-results/baseline-sample-27.jsonl",
+          "bytes": 220326,
+          "sha256": "334c12ace0019a16faf747de8ead816a5607745355106fee0b4a3b01d21c47ac"
+        },
+        {
+          "path": "rc-results/baseline-sample-28.jsonl",
+          "bytes": 218848,
+          "sha256": "d74742a96dfd08e138b4aa3bdbef9b06534e1e9aceb602baf36fe63209c87c92"
+        },
+        {
+          "path": "rc-results/baseline-sample-29.jsonl",
+          "bytes": 451761,
+          "sha256": "d0f882d70c25e62ba740b13a0305580b667990525701a8a0a1f6364d33263507"
+        },
+        {
+          "path": "rc-results/baseline-sample-3.jsonl",
+          "bytes": 130079,
+          "sha256": "a4c7a097efbcb4e924df21fba65fa48ebde4301b4de5c62db4c410805be11460"
+        },
+        {
+          "path": "rc-results/baseline-sample-30.jsonl",
+          "bytes": 190837,
+          "sha256": "69535dd3d4bad824c768ae1cca3a07de7e886793426519a0399414254af0af27"
+        },
+        {
+          "path": "rc-results/baseline-sample-31.jsonl",
+          "bytes": 190915,
+          "sha256": "d3bf35680bf9b3cbed3d850ddeddc9378bc4259b255eb08d6c38db956dc6c6af"
+        },
+        {
+          "path": "rc-results/baseline-sample-32.jsonl",
+          "bytes": 451917,
+          "sha256": "f2ae637b1017e019951c5c6367844e7d18fd5b1568eb038008e2d69eb3aba981"
+        },
+        {
+          "path": "rc-results/baseline-sample-33.jsonl",
+          "bytes": 220634,
+          "sha256": "e44daffb9e6e84e56a93592bf7ec97d7a0203ca43e1d8d08f7dcdf9a980560b7"
+        },
+        {
+          "path": "rc-results/baseline-sample-4.jsonl",
+          "bytes": 191466,
+          "sha256": "432e1bf187d840e2def7740d5ad8e2cdb72d65c73716f8922cfdb57c6169195d"
+        },
+        {
+          "path": "rc-results/baseline-sample-5.jsonl",
+          "bytes": 458956,
+          "sha256": "ebbf6cf3811b8ca19b7f15e2a5d1eb55626c64aebf8dcf78bc5f4ef25a67dc96"
+        },
+        {
+          "path": "rc-results/baseline-sample-6.jsonl",
+          "bytes": 222606,
+          "sha256": "e66013b3431b264448eceb092ad386db055c94a623210376376741b78053faca"
+        },
+        {
+          "path": "rc-results/baseline-sample-7.jsonl",
+          "bytes": 215575,
+          "sha256": "6b76f303d7dfd0433e7482ea8bfa4ff700f49e7f07df80a987bf689ffdc3b437"
+        },
+        {
+          "path": "rc-results/baseline-sample-8.jsonl",
+          "bytes": 455384,
+          "sha256": "1e7b49d2e27ead5d7feccfe37eb5096e9ad375b94263d601d7ccd29a56713c28"
+        },
+        {
+          "path": "rc-results/baseline-sample-9.jsonl",
+          "bytes": 188492,
+          "sha256": "3cfe41626dcc27b841c243de9867d4ebf0ff9777bb314e18cc7942f3a7902caf"
+        },
+        {
+          "path": "rc-results/baseline.json",
+          "bytes": 8357384,
+          "sha256": "9f6f69c5c425c6dcf21d244d0fe3dcafe0512303773ec9f35774dca6f1202cf0"
+        },
+        {
+          "path": "rc-results/cpu.txt",
+          "bytes": 3189,
+          "sha256": "d893a2e1fe38c883e9c6304826742490a3e71cb4324cac80c4809870147219b4"
+        },
+        {
+          "path": "rc-results/paired/comparison.json",
+          "bytes": 15716,
+          "sha256": "0fb268c0d5d463ff2b2e09672348dd1ac37288fac5d267573ddd24c67e6eb217"
+        },
+        {
+          "path": "rc-results/paired/pair-0-scalar.startup.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "rc-results/tarantool.sha256",
+          "bytes": 110,
+          "sha256": "69a35bd51bcbe2d19c0702c2ee0df2d52f0a817a4cb2c752f763793692d2480c"
+        },
+        {
+          "path": "rc-results/tarantool.txt",
+          "bytes": 851,
+          "sha256": "d4ed4b8d774bdded20a560d9b6f47ef8a0d38907e3e87db59d572c82a21a31aa"
+        }
+      ],
+      "artifact": {
+        "id": 12983727432,
+        "zip_bytes": 30828007,
+        "zip_sha256": "373b3b6f8d92d29631335ac9c5400424d80fc5f9348a829de83c78fd1ad25f4e"
+      }
+    }
+  ],
+  "scope": "Partial guard pilot: completed native-memtx baseline; first scalar pair failed during fresh RF3 bootstrap before a paired sample. Other modes are pending, not represented here."
+}

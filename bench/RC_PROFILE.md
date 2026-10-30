@@ -182,6 +182,9 @@ The [complete archives and audit](rc-evidence/run-41060171963/manifest.json)
 preserve these regressions. This reinforces the decision to keep the
 condition-allocation candidate experimental. It contains no plan-guard
 batching measurements.
+The corresponding ordinary CI `41060172073` passes Tests, both rolling
+upgrade lanes, TLA+, Verus and lint for that source. This does not qualify
+the later gateway integration or guard candidate.
 
 ## Further allocation census
 
@@ -235,6 +238,18 @@ and storage controls, not transaction throughput, independent-host evidence
 or complete SQL/RF3 fault qualification. The four-mode RF3/fsync end-to-end
 pilot is the next gate; its result is pending. The condition-allocation
 candidate and its negative results remain separate evidence.
+
+The first [guard pilot](https://github.com/cstheorist/tarn/actions/runs/41064465703)
+uses experimental source `9c38f9b69e13aeb18152d5205974bb158db84483`.
+Its native-memtx baseline completes 33 samples and independently reconciles
+91,743 acknowledgements with no refusals or unknowns. The first unchanged
+scalar fixture then fails during fresh RF3 bootstrap, before setup or any
+paired sample: one replica times out in its initial checkpoint and another
+receives a synchronous rollback. The controller stops at its 180-second
+deadline and retains the fixture. The [original logs, copied sources and
+baseline records](rc-evidence/run-41064465703/manifest.json) remain available.
+No candidate result, bootstrap root cause or fix is inferred from this
+failure. Other modes are still pending; no failed pair is replaced.
 
 ## Retained collector failure
 
