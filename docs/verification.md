@@ -1944,6 +1944,45 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
   Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix
 ```
 
+### External strong KV read envelopes (issue #181)
+
+`ExternalStrongKV.tla` checks the supported read-only API's composition
+with existing strong point reads. A request has three positions `<<a,b,a>>`,
+including an initial miss and a duplicate. Owner changes can restart a
+whole vector under the same frozen table handle, with a finite shared work
+budget. Definition/incarnation changes are terminal and discard the whole
+result. Each returned point observes its existing strong-read primitive;
+different positions may observe different committed revisions.
+
+The ownership control returns an actual false absence at a departed owner.
+The incarnation control decodes a new table's values under an old handle.
+Misclassifying a schema change as an ownership refresh returns a complete
+vector with mixed column definitions. The capacity control marks a clipped
+prefix complete. Omitting the prepared-claim check returns a currently
+missing row after an acknowledged insert. The atomicity control advertises
+a snapshot for an actual completed `<<1,2,2>>` vector even though the only
+committed images were `<<1,0,1>>` and `<<2,2,2>>`. That vector is legal under
+`independent_points`; the false guarantee is what the control detects.
+
+| Configuration | Distinct states | Depth | Expected result |
+|---|---:|---:|---|
+| `ExternalStrongKV` | 103 | 11 | passes |
+| `Bug_KVOwnerFence` | 17 | 7 | violates `PointMeaning` |
+| `Bug_KVIncarnation` | 20 | 7 | violates `FrozenObjectData` |
+| `Bug_KVSchemaAsOwner` | 12 | 9 | violates `FrozenColumns` |
+| `Bug_KVClippedComplete` | 5 | 5 | violates `FullVector` |
+| `Bug_KVMissingClaim` | 33 | 9 | violates `PointMeaning` |
+| `Bug_KVFalseAtomic` | 20 | 7 | violates `AdvertisedSnapshot` |
+
+These are the registered two-worker results. A negative run stops at its
+first violation, so its explored state count is not a full graph size.
+Profiles bound the faults separately and retain the actual completed-data
+witnesses. The model does not duplicate the quorum algorithm: native
+freshness, confirmed MVCC, ACLs, no-ambient-transaction entry, codecs,
+role/clock checks and DDL/movement implementations remain compositional
+or runtime premises. [The public API contract](strong-kv.md) and paired
+runtime histories define those separate obligations. No Verus body changes.
+
 ### Gateway resource ownership
 
 `GatewayResources.tla` models connecting, pooled and retiring sockets,
@@ -1971,10 +2010,10 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
 
 ### Configuration counts
 
-The default list contains 290 unique configurations: 74 positive
-outcomes and 216 expected broken/trade-off outcomes. The 293 generated
+The default list contains 299 unique configurations: 75 positive
+outcomes and 224 expected broken/trade-off outcomes. The 302 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 303 total. Explicit
+placement and query-budget configurations are maintained directly, for 312 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2008,14 +2047,21 @@ then completed all 259 cases with 68 positive and 191 expected control
 outcomes; all four jobs passed, including 140 Verus bodies with zero errors.
 The four BUILD re-entry cases subsequently completed separately, preserving
 the original 259-case prefix, model/config bytes and module dispatch. This
-formed the 263-case union. The five file-backup cases then completed
-separately with one positive and four expected violations; the combined
-registry contained all 268 inputs. Four query-budget configurations add one
-positive and three expected ownership/decision violations, yielding 272. This is an input union, not a claim that
-a previous CI run executed changed models. The generator reproduces
-without changes. The current proof inventory is 359 files: 343 TLA+
-model/config files, 11 verified-crate source/test/manifest files and five
-formal runner/inspection scripts. Verus bodies are unchanged.
+formed a 263-case union. The full list subsequently passed in
+[CI 40910653977](https://github.com/cstheorist/tarn/actions/runs/40910653977),
+alongside all four required jobs on the exact #191 source tree. File-backup
+and cluster-backup registrations add twelve configurations, and seven
+external-KV checks passed separately through the registered checker.
+Integration preserves both groups, their model/config bytes and dispatch.
+This is an input union; prior CI runs did not execute the integrated list.
+The current proof inventory is 365 files: 349 TLA+ model/config files,
+11 verified-crate source/test/manifest files and five formal runner/inspection
+scripts. The complete 293-case CI run remains a separate validation gate.
+Four query-budget configurations add one positive and three expected
+violations. Verus bodies are unchanged.
+The two malformed-handback controls and five gateway-resource configurations complete this union. The prior 277-case
+list passed in [CI 40945628982](https://github.com/cstheorist/tarn/actions/runs/40945628982);
+that result does not certify the added KV model or this combined source.
 
 ## Verus proofs
 
@@ -2475,3 +2521,18 @@ online-backup guarantee, arbitrary-time PITR, whole-code refinement or automatic
 liveness/restart bound follows. The [operations contract](cluster-backup.md)
 and [live evidence index](../tests/evidence/cluster-backup/index.json) retain
 these boundaries and all source-bound outcomes.
+
+## Mutation acknowledgement outcomes (issue #183)
+
+[The outcome contract](outcomes.md) adds complete procedure-envelope checks
+for autocommit, single-shard and READ COMMITTED mutations. This refines the
+gateway's interpretation of a result, without changing `TarnCommit` durable
+transitions, votes, locks, acknowledgement timing or recovery.
+
+`NativeHandback` now permits a matched reply to have a malformed success,
+rollback or handback prefix. Positive stream/autocommit configurations retain
+`AtMostOnce` and `ReplyHolds`; `Bug_HandbackMalformedReply` and its autocommit
+variant trust that prefix and violate `ReplyHolds`. A valid complete but
+dishonest storage reply is outside the model. Exact MessagePack parsing,
+numeric codes/SQLSTATE and two MySQL drivers are executable test obligations,
+not newly verified Rust bodies. The 140 shared Verus functions are unchanged.

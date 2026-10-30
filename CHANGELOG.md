@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A versioned, read-only strong Key/Value API for full-primary-key points
+  and bounded independent-point batches, with dedicated-reader grants,
+  ownership/schema handles and a generic Rust client. Complete responses
+  preserve input positions, duplicates and misses; unsupported snapshot,
+  transaction and mutation requests fail explicitly. See the
+  [contract and raw-native visibility boundaries](docs/strong-kv.md).
+
 - Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
   schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
   and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
@@ -22,6 +29,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
 
 ### Fixed
+
+- Preserve 1180/40003 for native commit uncertainty, missing write DATA and
+  malformed mutation replies. Require complete error and handback envelopes
+  before retry/fallback so a plausible prefix cannot replay an increment.
+  Register the cross-client outcome contract and RF3/fsync fault histories,
+  including statement/transaction rollback, pending APPLY and operation IDs.
+  The primary contract manifest includes SQL/public-KV/Rust-SDK outcome
+  histories with preserved error domains and exact strong/raw visibility.
 
 - Gateway sockets now grow on demand and share a hard physical-connection
   budget with completion capacity. Idle eviction preserves transaction and
@@ -127,14 +142,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   default `false` retains ordinary execution because narrow-row cases can
   regress. New status counters
   expose reduction RPCs and projected scan attempts.
-- Add a pinned MySQL 8.4 executable compatibility manifest and RF3 native/Lua,
-  memtx/vinyl release controls for text/binary protocols. Expose effective,
-  active and pending isolation, refuse an exact MySQL-isolation mode, and
-  report gateway-global isolation/lock timeout independently of session values.
-  Duplicate rows skipped by `INSERT IGNORE` now report 1062 warnings; retain
-  at most 64 messages while preserving the total count, without accumulating
-  diagnostics from aborted autocommit attempts.
-
 - Define a tested rolling-upgrade/rollback pair with protocol/format
   admission on every new gateway storage connection, explicit native
   fallback diagnostics, and RF3/fsync mixed-version regressions for memtx
@@ -152,6 +159,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   invalidates plans by generation and reports MariaDB analyze status.
   `SHOW TARN STATISTICS`/EXPLAIN expose uncertainty, and query diagnostics
   count actual decoded storage tuples separately from RPCs.
+- Add a pinned MySQL 8.4 executable compatibility manifest and RF3 native/Lua,
+  memtx/vinyl release controls for text/binary protocols. Expose effective,
+  active and pending isolation, refuse an exact MySQL-isolation mode, and
+  report gateway-global isolation/lock timeout independently of session values.
+  Duplicate rows skipped by `INSERT IGNORE` now report 1062 warnings; retain
+  at most 64 messages while preserving the total count, without accumulating
+  diagnostics from aborted autocommit attempts.
+
 - Physical per-shard file backups and verified restores with bounded copy
   rates, owned expiring GC leases and incomplete-directory refusal
   ([#56](https://github.com/cstheorist/tarn/issues/56)). Backups can seed a

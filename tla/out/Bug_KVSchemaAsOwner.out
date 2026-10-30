@@ -1,0 +1,333 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 0 and seed -1241527497006132880 with 2 workers on 16 cores with 736MB heap and 64MB offheap memory [pid: 46769] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue181-kv-registration-q57pifbz/registered-checker/tla/ExternalStrongKV.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9276384640272500403/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module ExternalStrongKV
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module ExternalStrongKV
+Starting... (2026-10-29 13:54:12)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 13:54:12.
+Error: Invariant FrozenColumns is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = FALSE
+/\ writer = "idle"
+/\ c = [ phase |-> "idle",
+  pos |-> 1,
+  buffer |-> <<>>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 0, instance |-> 0],
+  work |-> 0,
+  retries |-> 0,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 0, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 2: <Start line 69, col 5 to line 72, col 22 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = FALSE
+/\ writer = "idle"
+/\ c = [ phase |-> "reading",
+  pos |-> 1,
+  buffer |-> <<>>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 0, instance |-> 0],
+  work |-> 0,
+  retries |-> 0,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 0, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 3: <ReadPoint line 75, col 5 to line 95, col 22 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = FALSE
+/\ writer = "idle"
+/\ c = [ phase |-> "reading",
+  pos |-> 2,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ] >>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 0, instance |-> 0],
+  work |-> 1,
+  retries |-> 0,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 0, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 4: <Alter line 133, col 5 to line 136, col 83 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = TRUE
+/\ writer = "idle"
+/\ c = [ phase |-> "reading",
+  pos |-> 2,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ] >>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 0, instance |-> 0],
+  work |-> 1,
+  retries |-> 0,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 1, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 5: <ReadPoint line 75, col 5 to line 95, col 22 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = TRUE
+/\ writer = "idle"
+/\ c = [ phase |-> "schema_error",
+  pos |-> 2,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ] >>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 0, instance |-> 0],
+  work |-> 2,
+  retries |-> 0,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "SchemaChanged" ]
+/\ metadata = [schema |-> 1, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 6: <SchemaFailure line 105, col 5 to line 112, col 22 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = TRUE
+/\ writer = "idle"
+/\ c = [ phase |-> "reading",
+  pos |-> 2,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ] >>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 1, instance |-> 0],
+  work |-> 2,
+  retries |-> 1,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 1, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 7: <ReadPoint line 75, col 5 to line 95, col 22 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = TRUE
+/\ writer = "idle"
+/\ c = [ phase |-> "reading",
+  pos |-> 3,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 0,
+           key |-> "b",
+           found |-> FALSE,
+           column |-> "w",
+           expected |-> 0 ] >>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 1, instance |-> 0],
+  work |-> 3,
+  retries |-> 1,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 1, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 8: <ReadPoint line 75, col 5 to line 95, col 22 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = TRUE
+/\ writer = "idle"
+/\ c = [ phase |-> "reading",
+  pos |-> 4,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 0,
+           key |-> "b",
+           found |-> FALSE,
+           column |-> "w",
+           expected |-> 0 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "w",
+           expected |-> 1 ] >>,
+  out |-> <<>>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 1, instance |-> 0],
+  work |-> 4,
+  retries |-> 1,
+  requested |-> "independent_points",
+  advertised |-> "none",
+  error |-> "none" ]
+/\ metadata = [schema |-> 1, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+State 9: <Finish line 115, col 5 to line 116, col 41 of module ExternalStrongKV>
+/\ owners = [a |-> 0, b |-> 1]
+/\ eventDone = TRUE
+/\ writer = "idle"
+/\ c = [ phase |-> "done",
+  pos |-> 4,
+  buffer |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 0,
+           key |-> "b",
+           found |-> FALSE,
+           column |-> "w",
+           expected |-> 0 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "w",
+           expected |-> 1 ] >>,
+  out |->
+      << [ schema |-> 0,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "v",
+           expected |-> 1 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 0,
+           key |-> "b",
+           found |-> FALSE,
+           column |-> "w",
+           expected |-> 0 ],
+         [ schema |-> 1,
+           instance |-> 0,
+           value |-> 1,
+           key |-> "a",
+           found |-> TRUE,
+           column |-> "w",
+           expected |-> 1 ] >>,
+  route |-> [a |-> 0, b |-> 1],
+  handle |-> [schema |-> 1, instance |-> 0],
+  work |-> 4,
+  retries |-> 1,
+  requested |-> "independent_points",
+  advertised |-> "independent_points",
+  error |-> "none" ]
+/\ metadata = [schema |-> 1, instance |-> 0]
+/\ claims = {}
+/\ history = {[a |-> 1, b |-> 0]}
+/\ physical = (0 :> [a |-> 1, b |-> 0] @@ 1 :> [a |-> 0, b |-> 0])
+/\ logical = [a |-> 1, b |-> 0]
+/\ profile = "schema"
+
+12 states generated, 12 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-29 13:54:12)
+Trace exploration spec path: ./ExternalStrongKV_TTrace_1793296452.tla

@@ -1384,12 +1384,15 @@ impl Cluster {
         if !c.marked(mark) {
             match c.call(0, func, args).await {
                 Ok(r) => {
-                    let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
-                    if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
+                    let d = r
+                        .data()
+                        .ok_or_else(|| crate::mpw::ambiguous(s.id, &"CALL reply without data"))?;
+                    let handback = crate::mpw::native_write_handback(&d);
+                    if handback == Some(true) {
                         tracing::debug!(shard = s.id, "{} hands back every call", func);
                         c.mark(mark);
                     }
-                    if !crate::mpw::status_is(&d, "lua") {
+                    if handback.is_none() {
                         return Ok(d);
                     }
                 }
@@ -1455,7 +1458,15 @@ impl Cluster {
                 c.call(0, func, args).await
             };
             match reply {
-                Ok(r) => return r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data")),
+                Ok(r) => {
+                    return r.data().ok_or_else(|| {
+                        if idempotent {
+                            crate::mpw::proto("CALL reply without data")
+                        } else {
+                            crate::mpw::ambiguous(s.id, &"CALL reply without data")
+                        }
+                    });
+                }
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
                     tracing::warn!(shard = s.id, "leader changed: {}", message);
                     s.invalidate();

@@ -515,7 +515,7 @@ SPECIFICATION Spec
 CONSTANTS
   InStream = $stream
 EOF
-    for flag in BugKeepWritesOnHandback BugHandbackAfterCommitBegan BugResendAfterLoss; do
+    for flag in BugKeepWritesOnHandback BugHandbackAfterCommitBegan BugResendAfterLoss BugTrustMalformedReply; do
         value=FALSE
         if [ "$flag" = "$bug" ]; then value=TRUE; fi
         echo "  $flag = $value" >> "$name.cfg"
@@ -532,6 +532,8 @@ mk_handback Bug_HandbackAfterCommitBegan TRUE BugHandbackAfterCommitBegan
 mk_handback Bug_HandbackAfterCommitBegan_Autocommit FALSE BugHandbackAfterCommitBegan
 mk_handback Bug_HandbackResendAfterLoss TRUE BugResendAfterLoss
 mk_handback Bug_HandbackResendAfterLoss_Autocommit FALSE BugResendAfterLoss
+mk_handback Bug_HandbackMalformedReply TRUE BugTrustMalformedReply
+mk_handback Bug_HandbackMalformedReply_Autocommit FALSE BugTrustMalformedReply
 # Online engine migration: local copy certificates and later publication.
 engine_flags () {
     case "$1" in
@@ -856,6 +858,29 @@ mk_engine_build EngineBuildReentry all ''
 mk_engine_build Bug_EngineBuildReusePage capture ReusePage
 mk_engine_build Bug_EngineBuildCallerOnlyCut capture CallerOnlyCut
 mk_engine_build Bug_EngineBuildKeepPrefix capture KeepPrefix
+
+# Frozen-handle independent points: errors never certify a partial vector.
+mk_external_kv () {
+    local name=$1 profile=$2 bug=$3 flag value
+    {
+        echo 'SPECIFICATION Spec'
+        echo 'CONSTANTS'
+        echo "  Profile = \"$profile\""
+        for flag in IgnoreOwner IgnoreBinding SchemaAsOwner ClipComplete IgnoreClaim AdvertiseAtomic; do
+            value=FALSE; [ "$flag" = "$bug" ] && value=TRUE
+            echo "  Bug$flag = $value"
+        done
+        echo 'INVARIANTS TypeOK FullVector NoPartialError PointMeaning FrozenColumns FrozenObjectData AdvertisedSnapshot'
+        echo 'CHECK_DEADLOCK FALSE'
+    } > "$name.cfg"
+}
+mk_external_kv ExternalStrongKV all ''
+mk_external_kv Bug_KVOwnerFence owner IgnoreOwner
+mk_external_kv Bug_KVIncarnation incarnation IgnoreBinding
+mk_external_kv Bug_KVSchemaAsOwner schema SchemaAsOwner
+mk_external_kv Bug_KVClippedComplete cap ClipComplete
+mk_external_kv Bug_KVMissingClaim pending IgnoreClaim
+mk_external_kv Bug_KVFalseAtomic atomic AdvertiseAtomic
 
 # File-copy publication/restore and registered seed identity (issue #56).
 mk_file_backup () {

@@ -2312,16 +2312,24 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
 | Bug_GroupedTablesNoWLockCheck | violates StrictSerializable | 1194 | 5093 | 13 | 00s | 13 |
-| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 34 | 56 | 8 | 00s | 8 |
-| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 23 | 42 | 7 | 00s | 7 |
-| Bug_HandbackKeepsWrites | violates AtMostOnce | 32 | 52 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss | violates ReplyHolds | 35 | 66 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 29 | 55 | 7 | 00s | 7 |
+| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 57 | 107 | 8 | 00s | 8 |
+| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 34 | 69 | 7 | 00s | 7 |
+| Bug_HandbackKeepsWrites | violates AtMostOnce | 51 | 85 | 7 | 00s | 7 |
+| Bug_HandbackMalformedReply | violates ReplyHolds | 26 | 40 | 5 | 00s | 5 |
+| Bug_HandbackMalformedReply_Autocommit | violates ReplyHolds | 21 | 36 | 5 | 00s | 5 |
+| Bug_HandbackResendAfterLoss | violates ReplyHolds | 51 | 96 | 7 | 00s | 7 |
+| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 38 | 79 | 7 | 00s | 7 |
 | Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
 | Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
 | Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
 | Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_KVClippedComplete | violates FullVector | 5 | 5 | 5 | 00s | 5 |
+| Bug_KVFalseAtomic | violates AdvertisedSnapshot | 20 | 20 | 7 | 00s | 7 |
+| Bug_KVIncarnation | violates FrozenObjectData | 20 | 21 | 7 | 00s | 7 |
+| Bug_KVMissingClaim | violates PointMeaning | 33 | 43 | 9 | 00s | 8 |
+| Bug_KVOwnerFence | violates PointMeaning | 17 | 19 | 7 | 00s | 7 |
+| Bug_KVSchemaAsOwner | violates FrozenColumns | 12 | 12 | 9 | 00s | 9 |
 | Bug_KeyBatchMissingClaim | violates NoMissingClaim | 101 | 110 | 7 | 00s | 7 |
 | Bug_KeyBatchMixedSnapshots | violates OneSnapshot | 174 | 298 | 9 | 00s | 9 |
 | Bug_KeyBatchTruncatedComplete | violates FullBatch | 46 | 53 | 4 | 00s | 4 |
@@ -2465,6 +2473,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
+| ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
 | FileBackup | no errors | 356 | 983 | 15 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
@@ -2476,8 +2485,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
-| Handback | no errors | 28 | 48 | 7 | 00s |  |
-| Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
+| Handback | no errors | 46 | 96 | 7 | 00s |  |
+| Handback_Autocommit | no errors | 33 | 78 | 7 | 00s |  |
 | Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
