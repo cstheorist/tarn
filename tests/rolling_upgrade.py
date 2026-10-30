@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Owned, isolated RF3/fsync rolling-upgrade regression; see docs/upgrades.md.
+"""Owned, isolated RF3/fsync maintenance format migration regression; see docs/upgrades.md.
 
 The old source/artifacts must be the baseline prepared by rolling_upgrade.sh.
 All processes, data, logs, source/binary identities and events stay under a
@@ -23,7 +23,7 @@ import pymysql  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from upgrade_build_receipt import verify as verify_build  # noqa: E402
 
-BASELINE = "2e8aaeb772542968e503212a143b2e6f8d27b8ab"
+BASELINE = "8b12c4525bd677499a91b973afbc86cbcbb0cafd"
 ROOT = Path(__file__).resolve().parents[1]
 TARANTOOL = os.environ.get("TARANTOOL", "tarantool")
 
@@ -267,45 +267,6 @@ return box.space._tarn_part:get{txid}.state
             assert ev(node, "return box.space['upgrade.prepared']:get{tarn.cfg.shard_id}.v") == 1
         self.event("prepared_applied_once_after_restart", txid=txid)
 
-    def roll(self, version):
-        for shard in range(1, self.shards + 1):
-            leader = self.leader(shard)
-            followers = [k for k in self.nodes if k.startswith(f"{shard}.") and k != leader]
-            for key in followers:
-                txid = f"upgrade-{version}-{key}"
-                self.prepare(txid)
-                self.stop("s" + key)
-                self.storage(key, version)
-                self.ready(key)
-                self.joined(shard)
-                assert ev(self.nodes[key], "return box.space._tarn_part:get{...}.state", [txid]) == "prepared"
-                self.finish(txid)
-                self.canary()
-            # A transaction opened on the old leader must not validate its
-            # stale stream after a real handoff, even though that socket lives.
-            with self.sql(0, "upgrade") as c:
-                key = next(i for i in self.expected
-                           if ev(self.nodes[leader], "return box.space['upgrade.t']:get{...} ~= nil", [i]))
-                q(c, "BEGIN")
-                q(c, "SELECT v FROM t WHERE id=%s", (key,))
-                target = followers[0]
-                ev(self.nodes[target], "box.ctl.promote(); return true")
-                assert wait("handoff", lambda: self.leader(shard) == target)
-                self.ready(target)
-                try:
-                    q(c, "COMMIT")
-                except pymysql.MySQLError as error:
-                    assert error.args[0] in (1213, 1180), error
-                    self.event("old_stream_refused_after_handoff", code=error.args[0])
-                else:
-                    raise AssertionError("old leader validated a stream after handoff")
-            self.stop("s" + leader)
-            self.storage(leader, version)
-            self.ready(leader)
-            self.joined(shard)
-            self.canary()
-        self.event("storage_roll_complete", source=version)
-
 
 def fresh_cluster(args):
     c = Cluster(args, "fresh-compatible")
@@ -324,43 +285,91 @@ def fresh_cluster(args):
         c.close()
 
 
-def rolling(args):
-    c = Cluster(args, "rolling")
+def storage_refused(c, key, message):
+    proc = c.processes['s' + key]
+    assert proc.wait(timeout=45) != 0
+    assert message in c.logs['s' + key].read_text(), c.logs['s' + key]
+    c.stop('s' + key)
+    c.event('storage_admission_refused', node=key, reason=message)
+
+
+def maintenance(args):
+    c = Cluster(args, 'maintenance')
     try:
         for key in c.nodes:
-            c.storage(key, "old")
+            c.storage(key, 'old')
         for key in c.nodes:
             c.ready(key)
         for shard in range(1, c.shards + 1):
             c.joined(shard)
-        c.gateway("old")
+        c.gateway('old')
         c.setup()
-        c.gateway("new", slot=1, refuse=True)
-        c.roll("new")
-        c.gateway("new", slot=1)
-        c.canary((0, 1))
-        for shard in range(1, c.shards + 1):
-            old = c.leader(shard)
-            target = next(k for k in c.nodes if k.startswith(f"{shard}.") and k != old)
-            ev(c.nodes[target], "box.ctl.promote(); return true")
-            assert wait("new gateway handoff", lambda: c.leader(shard) == target)
-            c.ready(target)
-            c.check_rows((0, 1))
-        c.event("both_gateways_follow_upgraded_leaders")
-        # Swap gateway versions independently, leaving durable prepared state.
-        c.prepare("upgrade-gateway-restart")
-        c.stop("g0")
-        c.gateway("new", slot=0)
-        c.finish("upgrade-gateway-restart")
-        c.canary((0, 1))
-        c.stop("g0")
-        c.gateway("old", slot=0)
-        c.stop("g1")
-        # Format 1 adds only an ignored meta key: the tested baseline can
-        # be restored after all new gateways stop, with DDL/moves drained.
-        c.roll("old")
         c.canary()
-        c.event("baseline_rollback_passed")
+        c.gateway('new', slot=1, refuse=True)
+        c.stop('g0')
+        wait_empty(c.leaders())
+        for node in c.leaders():
+            assert ev(node, "return box.space._tarn_meta:get{'storage_format'}.value") == 1
+        # No old storage process or gateway remains when format 2 is written.
+        for key in c.nodes:
+            c.stop('s' + key)
+        for key in c.nodes:
+            c.storage(key, 'new')
+        for key in c.nodes:
+            c.ready(key)
+            assert ev(c.nodes[key], "return box.space._tarn_meta:get{'storage_format'}.value") == 2
+            assert ev(c.nodes[key], "return box.space._tarn_recv.engine") == 'vinyl'
+        for shard in range(1, c.shards + 1):
+            c.joined(shard)
+        c.gateway('old', slot=1, refuse=True)
+        c.gateway('new')
+        c.canary()
+        c.gateway('new', slot=1)
+        for shard in range(1, c.shards + 1):
+            leader = c.leader(shard)
+            target = next(k for k in c.nodes if k.startswith(f'{shard}.') and k != leader)
+            ev(c.nodes[target], 'box.ctl.promote(); return true')
+            assert wait('format-2 handoff', lambda: c.leader(shard) == target)
+            c.ready(target)
+        c.canary((0, 1))
+        c.stop('g0'); c.stop('g1')
+        wait_empty(c.leaders())
+        for node in c.leaders():
+            ev(node, 'box.snapshot(); return true')
+        for key in c.nodes:
+            c.stop('s' + key)
+        for key in c.nodes:
+            c.storage(key, 'old')
+        for key in c.nodes:
+            storage_refused(c, key, 'unsupported persisted storage_format')
+        # Reopen the same snapshot/WAL with format-2 software after refusal.
+        for key in c.nodes:
+            c.storage(key, 'new')
+        for key in c.nodes:
+            c.ready(key)
+        c.gateway('new')
+        c.check_rows()
+        c.canary()
+        c.event('format_migration_snapshot_reopen_and_downgrade_refusal_passed')
+    finally:
+        c.close()
+
+
+def pending_migration(args):
+    c = Cluster(args, 'pending-migration', shards=1, replicas=1)
+    try:
+        c.storage('1.1', 'old'); c.ready('1.1')
+        c.gateway('old'); c.setup()
+        c.prepare('migration-prepared')
+        c.stop('g0'); c.stop('s1.1')
+        c.storage('1.1', 'new')
+        storage_refused(c, '1.1', 'drain legacy')
+        c.storage('1.1', 'old'); c.ready('1.1')
+        assert ev(c.nodes['1.1'], "return box.space._tarn_meta:get{'storage_format'}.value") == 1
+        c.finish('migration-prepared')
+        c.stop('s1.1'); c.storage('1.1', 'new'); c.ready('1.1')
+        c.gateway('new'); c.check_rows()
+        c.event('unfinished_work_refused_before_marker_then_drained_migration_passed')
     finally:
         c.close()
 
@@ -389,24 +398,13 @@ def native_modes(args):
             c.canary()
             c.event("native_contract_passed", report=report, module_sha256=None if native == "0" else sha(native))
             if label == "ready":
-                # Replace a warm backend with actual legacy code. Discovery
-                # must refuse it before forwarding a non-idempotent UPDATE.
                 c.stop("s1.1")
                 c.storage("1.1", "old")
-                c.ready("1.1")
-                with c.sql(0, "upgrade") as sql:
-                    try:
-                        q(sql, "UPDATE t SET v=v+1 WHERE id=1")
-                    except pymysql.MySQLError as error:
-                        assert error.args[0] == 1235, error
-                    else:
-                        raise AssertionError("new gateway used downgraded storage")
-                assert ev(c.nodes["1.1"], "return box.space['upgrade.t']:get{1}.v") == c.expected[1]
-                c.stop("s1.1")
+                storage_refused(c, '1.1', 'unsupported persisted storage_format')
                 c.storage("1.1", "new")
                 c.ready("1.1")
                 c.check_rows()
-                c.event("warm_gateway_reconnect_refused_legacy_without_effect")
+                c.event("format_2_refused_by_old_binary_without_data_effect")
         finally:
             c.close()
 
@@ -440,7 +438,8 @@ def main():
     (args.evidence / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     try:
         fresh_cluster(args)
-        rolling(args)
+        maintenance(args)
+        pending_migration(args)
         native_modes(args)
         assert source(ROOT) == manifest["new_source"], "source changed during validation"
         assert source(args.old_root) == manifest["old_source"], "baseline source changed during validation"
@@ -450,7 +449,7 @@ def main():
         raise
     finally:
         (args.evidence / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    print("ROLLING UPGRADE TESTS PASSED", flush=True)
+    print("FORMAT MIGRATION TESTS PASSED", flush=True)
 
 
 if __name__ == "__main__":

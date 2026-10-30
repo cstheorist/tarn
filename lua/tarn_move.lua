@@ -63,6 +63,7 @@ function M.new(c)
     end
     function B.schema()
         B.limits()
+        assert(require('tarn_compat').current() == 2, 'format marker must precede movement schema')
         local recv = box.space._tarn_recv
         local id = recv and recv.id
         if recv and recv.engine ~= 'vinyl' then
@@ -92,6 +93,7 @@ function M.new(c)
     end
     function B.totals()
         local n, bytes = 0, 0
+        if not box.space._tarn_move then return n, bytes end
         for _, r in box.space._tarn_move:pairs() do
             n, bytes = n + 1, bytes + r.bytes
             if n > 64 then bad(1041, 'Durable movement inventory exceeds the supported maximum') end

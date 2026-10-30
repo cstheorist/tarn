@@ -77,7 +77,7 @@ def main():
     result = dict(format='tarn-bounded-movement-v1', settings=dict(vars(a)), checks=checks, errors=errors,
         source_revision=os.getenv('TARN_SOURCE_REVISION', 'uncommitted'),
         source_sha256={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
-            [ROOT/'tests/bounded_moves.py', ROOT/'tests/bounded_move_rpc.lua', ROOT/'crates/tarn-sql/src/buckets.rs',
+            [ROOT/'tests/bounded_moves.py', ROOT/'tests/bounded_move_rpc.lua', ROOT/'crates/tarn-sql/src/buckets.rs', ROOT/'crates/tarn-sql/src/cluster.rs', ROOT/'crates/tarn-sql/src/compat.rs',
              *sorted((ROOT/'lua').glob('*.lua'))]},
         limits=dict(vinyl_memory=16*1024*1024, vinyl_cache=0, batch_rows=64, batch_bytes=256*1024,
                     delta_keys=64, delta_bytes=64*1024, total_delta_bytes=128*1024,

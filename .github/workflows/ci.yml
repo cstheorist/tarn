@@ -328,7 +328,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Reject changed upgrade build receipts
         run: python3 tests/test_upgrade_build_receipt.py
-      - name: Upgrade, mixed components, refusal and rollback
+      - name: Maintenance migration, component admission and downgrade refusal
         run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
       - name: Retain upgrade evidence
         if: always()

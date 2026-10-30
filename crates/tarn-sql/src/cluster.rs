@@ -2674,7 +2674,7 @@ mod tests {
                 .arr(8)
                 .str("ok")
                 .uint(1)
-                .uint(1)
+                .uint(2)
                 .uint(1)
                 .str("3.9.0")
                 .uint(14)

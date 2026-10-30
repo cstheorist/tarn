@@ -115,6 +115,19 @@ local BK = {nl = {}, state = {}, peer = {}, move = {}, held = 0, partial = 0, ph
 -- Schema
 -------------------------------------------------------------------------------
 
+-- Every replica configured for this shard has joined and follows this node.
+local function replicas_follow()
+    local cfg = box.cfg.replication
+    local want = type(cfg) == 'table' and #cfg - 1 or 0   -- the list names this node too
+    local n = 0
+    for id, r in pairs(box.info.replication) do
+        if id ~= box.info.id and r.downstream ~= nil and r.downstream.status == 'follow' then
+            n = n + 1
+        end
+    end
+    return n >= want
+end
+
 local function ensure_schema()
     local sync = M.cfg.sync
     local function space(name, format)
@@ -123,6 +136,23 @@ local function ensure_schema()
     end
     local meta = space('_tarn_meta', {{'key', 'string'}, {'value', 'any', is_nullable = true}})
     meta:create_index('pk', {parts = {'key'}, if_not_exists = true})
+
+    if box.space._tarn_meta:get{'shard_id'} == nil then
+        -- The new shard's first synchronous write. Made while the replicas
+        -- are still joining, it cannot reach its quorum (they cannot
+        -- acknowledge it yet): it times out after replication_synchro_timeout,
+        -- and so does the first checkpoint of a joining replica that
+        -- received it, which waits for its confirmation and stops the
+        -- replica when it fails (Tarantool 3.9). So first let the replicas
+        -- join (for up to a minute).
+        local deadline = clock.monotonic() + 60
+        while M.cfg.sync and not replicas_follow() and clock.monotonic() < deadline do
+            fiber.sleep(0.1)
+        end
+        box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
+    end
+    -- The synchronous format marker must precede any format-2 DDL/data.
+    M.compatibility.persist()
 
     local cat = space('_tarn_catalog', {{'name', 'string'}, {'def', 'map'}})
     cat:create_index('pk', {parts = {'name'}, if_not_exists = true})
@@ -7179,6 +7209,10 @@ function tarn_bucket_recv_abort(b, move, once)
 end
 
 function tarn_move_capabilities()
+    if M.compatibility.current() ~= 2 or not box.space._tarn_move or
+       not box.space._tarn_recv or box.space._tarn_recv.engine ~= 'vinyl' then
+        return {'error', 1412, 'Bounded movement storage migration incomplete'}
+    end
     local ok, err = pcall(M.move.headroom, 0)
     if not ok then return failure(err) end
     return {OK, 2}
@@ -7484,19 +7518,6 @@ end
 
 -------------------------------------------------------------------------------
 
--- Every replica configured for this shard has joined and follows this node.
-local function replicas_follow()
-    local cfg = box.cfg.replication
-    local want = type(cfg) == 'table' and #cfg - 1 or 0   -- the list names this node too
-    local n = 0
-    for id, r in pairs(box.info.replication) do
-        if id ~= box.info.id and r.downstream ~= nil and r.downstream.status == 'follow' then
-            n = n + 1
-        end
-    end
-    return n >= want
-end
-
 -- Users and spaces, created by the writable node; replicas get them by
 -- replication. Every step is idempotent and writes nothing when its object
 -- exists.
@@ -7510,25 +7531,6 @@ local function setup_schema()
                             'tarn_storage.ts_commit_local', 'tarn_storage.ts_validate'}) do
             box.schema.func.create(f, {language = 'C', if_not_exists = true})
         end
-    end
-    if box.space._tarn_meta:get{'shard_id'} == nil then
-        -- The new shard's first synchronous write. Made while the replicas
-        -- are still joining, it cannot reach its quorum (they cannot
-        -- acknowledge it yet): it times out after replication_synchro_timeout,
-        -- and so does the first checkpoint of a joining replica that
-        -- received it, which waits for its confirmation and stops the
-        -- replica when it fails (Tarantool 3.9). So first let the replicas
-        -- join (for up to a minute).
-        local deadline = clock.monotonic() + 60
-        while M.cfg.sync and not replicas_follow() and clock.monotonic() < deadline do
-            fiber.sleep(0.1)
-        end
-        box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
-    end
-    -- Keep shard_id as the first synchronous metadata write: the joining
-    -- replicas must be able to acknowledge it before any marker is added.
-    if box.space._tarn_meta:get{'storage_format'} == nil then
-        box.space._tarn_meta:replace{'storage_format', M.compatibility.format}
     end
     migrate_legacy_job()
     M.engine.fresh()

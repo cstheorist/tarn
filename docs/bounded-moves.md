@@ -37,9 +37,9 @@ Bloom filters, native user indexes, replication queues, WAL, allocator overhead
 and the user's memtx data are separate; there is no whole-process RSS bound.
 
 New movements require the bounded-movement capability on both replica sets.
-Upgrade every replica and gateway before enabling them; drain legacy movements
-before migrating an old memtx staging space. In-progress new states must not be
-opened by older software. Cluster backup refuses unfinished movement; complete
+Follow the drained maintenance sequence in [upgrades](upgrades.md). Format 2
+is persisted before migrating old memtx staging or creating movement progress.
+Older guarded software refuses the upgraded files; in-place downgrade is unsupported. Cluster backup refuses unfinished movement; complete
 backups preserve the new internal space definitions and progress metadata.
 
 The abstract contract is `BoundedMove.tla`. Its bounded dirty tracker, frozen
