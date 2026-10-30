@@ -59,6 +59,7 @@ jobs:
           pip freeze > key-evidence/python.txt
       - name: Start RF3 fsync cluster
         env:
+          TARN_QUERY_PUSHDOWN: "true"
           TARN_VINYL_MEMORY_MB: "64"
           TARN_VINYL_CACHE_MB: "0"
           TARN_BUCKET_COUNT: "256"

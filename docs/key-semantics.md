@@ -114,8 +114,8 @@ equivalent DATETIME spellings and uniqueness without claiming the temporal
 type is admitted by MYSQL mode. Existing MariaDB differential tests,
 native/Lua storage suites, global uniqueness and movement/restart faults,
 the TLA+ registry and shared Verus checks remain required release gates.
-The `Exact key contracts` workflow runs both clients in all four
-memtx/vinyl × native/Lua configurations, then kills an owned RF3 leader
+The `Exact key contracts` workflow runs both clients with typed query pushdown
+enabled in all four memtx/vinyl × native/Lua configurations, then kills an owned RF3 leader
 during writes, observes promotion, restores the killed clock peer, reconciles
 every acknowledged/refused/uncertain attempt and moves a populated bucket. It compares the
 final SQL values with native decoded tuples. Mutations are never retried.
