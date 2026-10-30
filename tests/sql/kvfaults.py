@@ -21,6 +21,16 @@ from movetest import bucket_of
 
 IMPLEMENTED = {"leader", "quorum", "stall", "move", "ddl", "partition"}
 
+
+def known_ro_serialization(error):
+    state = getattr(error, "sqlstate", None)
+    return (isinstance(error, pymysql.MySQLError) and len(error.args) >= 2
+            and error.args[0] == 1213 and state in (None, "40001", b"40001")
+            and isinstance(error.args[1], str)
+            and error.args[1].startswith("shard leader changed, retry the transaction (")
+            and "read-only instance" in error.args[1] and error.args[1].endswith(")"))
+
+
 STATE = """
 assert(rawget(_G,'tarn')); local name=...; local s=assert(box.space[name])
 return {shard_id=tarn.cfg.shard_id,uuid=tostring(box.info.uuid),ro=box.info.ro,
@@ -351,6 +361,33 @@ class FaultTest(Test):
                 self.check("exact SQL ACK-dependent value", rows == (() if value is None else ((value,),)),
                            key=[tenant, key], expected=value, rows=rows)
 
+    def warm_readonly_route(self, connection, table, tenant, expected, label):
+        # Independent autocommit reads only, before either caller's BEGIN.
+        # The known RO serialization refusal invalidates the gateway pool;
+        # the next SELECT may discover the replacement. Never replay SQL
+        # transaction history, a mutation, or an uncertain transport result.
+        deadline = time.monotonic() + 10
+        statement = f"SELECT v FROM {table} WHERE tenant=%s AND id=1"
+        for attempt in range(1, 5):
+            try:
+                rows = self.sql(connection, statement, (tenant,))
+            except pymysql.MySQLError as error:
+                retry = known_ro_serialization(error)
+                self.record("known_ro_readonly_warmup_refusal", attempt=attempt, table=table,
+                            error={"type": type(error).__name__, "args": list(error.args),
+                                   "sqlstate": getattr(error, "sqlstate", None)},
+                            retry_eligible=retry, guard_coverage=False,
+                            scope="independent read-only route warm-up; no mutation or transaction replay")
+                if not retry or attempt == 4 or time.monotonic() >= deadline:
+                    raise
+                time.sleep(.05)
+                if time.monotonic() >= deadline:
+                    raise
+            else:
+                self.check(label, rows == ((expected,),), rows=rows, attempt=attempt,
+                           scope="exact positive SELECT required before the subsequent once-only mutation")
+                return rows
+
     def caught_up(self, table, tenant, expected, seconds=20):
         deadline, last = time.monotonic() + seconds, None
         while time.monotonic() < deadline:
@@ -449,9 +486,8 @@ class FaultTest(Test):
             self.record("known_ro_route_warmup", former=former, replacement=state,
                         scope="known-RO witness; no old-writable-role or A-B-A promotion claim")
             with self.connect() as c:
-                rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
-                self.check("SQL read warms the replacement route without a mutation",
-                           rows == ((self.values[engine][1],),), rows=rows)
+                self.warm_readonly_route(c, table, tenant, self.values[engine][1],
+                                         "SQL read warms the replacement route without a mutation")
                 self.signal(old["node_id"], "STOP")
                 current, _ = self.leader(0, table, exclude=(old["node_id"],))
                 self.check("replacement remains current while the former leader is paused",
@@ -765,8 +801,7 @@ end; return out
                 raise AssertionError("cut former leader did not supply a real RO route fence", former)
             self.frozen_ingress(old["node_id"], paused)
             with self.connect() as c:
-                rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
-                self.check("partition SQL route warms through real RO fencing", rows == ((10,),), rows=rows)
+                self.warm_readonly_route(c, table, tenant, 10, "partition SQL route warms through real RO fencing")
                 self.sql(c, "BEGIN")
                 self.sql(c, f"UPDATE {table} SET v=11 WHERE tenant=%s AND id=1", (tenant,))
                 self.sql(c, f"INSERT INTO {table} VALUES (%s,2,12)", (tenant,))
