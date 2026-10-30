@@ -39,21 +39,21 @@ def stat(c, name):
     return int(values[name])
 
 
-def _native(node, mode, text, args):
+def _native(node, mode, text, args, timeout=12):
     script = pathlib.Path(__file__).with_name("lazyrpc.lua")
     r = subprocess.run([TARANTOOL, str(script), node, mode, text, json.dumps(args)],
-                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=12)
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
     if r.returncode:
         raise RuntimeError(f"storage {mode} on {node}: {r.stderr[-2000:]}")
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-def rpc(node, proc, args):
-    return _native(node, "call", proc, args)
+def rpc(node, proc, args, timeout=12):
+    return _native(node, "call", proc, args, timeout)
 
 
-def ev(node, script, args=None):
-    return _native(node, "eval", script, [] if args is None else args)
+def ev(node, script, args=None, timeout=12):
+    return _native(node, "eval", script, [] if args is None else args, timeout)
 
 
 def wait_empty(nodes, timeout=10):

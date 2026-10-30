@@ -157,6 +157,21 @@ witnesses), and all process logs. A failed run records the exception and
 cleans up its processes. CI runs both engines and uploads results even on
 failure. Preserve the complete directory when reporting a result.
 
+Preparing the restart witness may receive a confirmed Vinyl admission NO.
+Setup records each vote and admits a fresh transaction identity only after
+the prior decision and every participant are durably aborted, all fixture
+values remain zero, and row/range locks are absent. It permits at most 32
+attempts within 45 seconds; each PREPARE/cleanup RPC is bounded by the remaining deadline
+and its normal timeout. A lost reply, unknown/expired vote, unrelated error,
+or failed cleanup stops the fixture without replay. Every successful
+witness still requires durable YES across restart and exact once-only APPLY.
+The Vinyl lane forces first- and second-participant refusals under a leased
+test pressure hook, then verifies the admitted identity across follower
+restarts. Ordinary rolling stages use genuine admission settings and pressure.
+Run `python3 tests/test_upgrade_prepare.py` for the uncertainty, cleanup,
+deadline and attempt-limit negative controls. The original failed CI run and
+focused control receipts remain in `tests/evidence/upgrade-admission/`.
+
 Native controls use an absent module, an actual loader failure, and a
 loadable C fixture whose state header declares ABI 10 and whose data
 procedures refuse execution. Each must use Lua with exact SQL effects.
