@@ -9,9 +9,10 @@ on:
 permissions:
   contents: read
 
+# (as in ci.yml: every commit pushed to main runs to completion)
 concurrency:
-  group: mysql-contracts-${{ github.ref }}
-  cancel-in-progress: true
+  group: mysql-contracts-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 defaults:
   run:
