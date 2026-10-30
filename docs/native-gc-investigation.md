@@ -100,3 +100,47 @@ in the run artifacts. Ordinary format/clippy, Tests, TLA+ and Verus jobs
 [passed separately](https://github.com/cstheorist/tarn/actions/runs/40873456428).
 These bounded negative results do not explain the original crash or establish
 its recovered effects; #160 remains open.
+
+## Second retained observation and ordinary CI capture
+
+[Run 41070288089, job 124112263428](https://github.com/cstheorist/tarn/actions/runs/41070288089/job/124112263428)
+failed during native-enabled RF3 Vinyl failover on merge source
+`a1eb5dd890e8ac363c097ed60852e639ef330366`. Replica `s2.1` (PID 41966)
+stopped without an intentional kill marker. The log reports `SEGV_MAPERR`
+at `0x401c64cc`, in `gc_traverse_trace.part.0+199`, followed by
+`propagatemark`, `lj_gc_step`, `gc_step_jit_cp`, `lj_vm_cpcall`, and
+`lj_gc_step_jit`. The fixture subsequently killed `s2.2`, a different
+replica. Its failed workload finalizations do not establish exact recovered
+effects or data loss.
+
+[The retained package](../tests/evidence/native-gc-crash/run-41070288089/)
+contains the selected crash excerpt, same-job binary hash receipts with
+runner paths removed, and disassembly. The full decoded CI log and original
+native-freshness artifact are retained locally, excluded from the published
+package; their original hashes and artifact identity remain recorded.
+The same job recorded native SHA-256
+`1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae`
+and Tarantool SHA-256
+`bb5e7c24d89e9b6ab86a03e78d001afc2d9c19ac163d9867791e392c35d17d6f`.
+Both match actual binaries retained from benchmark run `41070288021`.
+These are pre-crash hash receipts, not crash-time mapping evidence; this
+CI run again uploaded no core or failed storage/WAL archive. They are not
+the missing binaries from the original `40753059987` crash.
+
+In that matching Tarantool ELF, offset 199 is address `0x27e407`, instruction
+`movl (%rdx,%rax,4), %eax`. The logged registers yield
+`0x401af4b0 + 4 * 0x5c07 = 0x401c64cc`, the reported fault address.
+This identifies a trace-table lookup as the fault site; it does not establish
+why the trace reference or table was invalid. The two collector crashes
+have different offsets and call paths. A shared cause remains unproven.
+
+Ordinary CI now snapshots the actual gateway, native and Tarantool binaries,
+source identities and runtime/compiler versions immediately before its two
+failover stages. Those stages enable core dumps on their isolated runner.
+An always-run collector stops only their owned fixtures, retains remaining
+logs/storage/WAL and core files, and checks the binaries against the initial
+snapshot. An empty core inventory is explicit. A changed binary or incomplete
+collection fails the collector while preserving available evidence. Its
+`complete` flag describes artifact collection only; `job_status` independently
+retains the test result. Original failover assertions and mutation behavior
+remain unchanged. Artifacts still expire after 30 days.

@@ -252,17 +252,53 @@ jobs:
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
+      - name: Bind failover inputs and enable cores on this isolated runner
+        id: failover-evidence
+        run: |
+          python3 tests/test_retain_failover.py
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/failover-cores/core.%e.%p.%t"
+          python3 ci/retain_failover.py begin --output "$RUNNER_TEMP/failover-evidence" \
+            --cores "$RUNNER_TEMP/failover-cores"
+          tarantool --version > "$RUNNER_TEMP/failover-evidence/tarantool-version.txt"
+          rustc -Vv > "$RUNNER_TEMP/failover-evidence/rustc.txt"
       - name: Failover (2 shards x 3 replicas)
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
-        run: SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
+        run: |
+          ulimit -c unlimited
+          SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
+          ulimit -c unlimited
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+      - name: Preserve failover state and crash cores
+        if: always() && steps.failover-evidence.outcome == 'success'
+        env:
+          CAPTURE_JOB_STATUS: ${{ job.status }}
+        run: |
+          # Only these two fixtures belong to the failover steps above.
+          # A startup failure can leave replicas alive; stop before archiving.
+          for fixture in /tmp/tarn-failover /tmp/tarn-failover-vinyl; do
+            if [ -d "$fixture" ]; then
+              KEEP=1 scripts/cluster.sh stop -d "$fixture"
+            fi
+          done
+          python3 ci/retain_failover.py finish --output "$RUNNER_TEMP/failover-evidence" \
+            --cores "$RUNNER_TEMP/failover-cores" --job-status "$CAPTURE_JOB_STATUS" \
+            --fixture /tmp/tarn-failover --fixture /tmp/tarn-failover-vinyl
+      - name: Retain failover inputs and crash evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: failover-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/failover-evidence
+          retention-days: 30
+          compression-level: 1
+          if-no-files-found: ignore
       - name: Retain integrity outcomes
         if: always()
         uses: actions/upload-artifact@v4
