@@ -18,6 +18,9 @@ and recheck current base rows, but may miss recent matches. Explicit
 transactions keep the strong path. [Lazy secondary indexes](lazy-indexes.md)
 specifies capture, delivery, session catch-up, bootstrap and topology rules.
 
+Gateway resource lifetimes and scaling bounds are documented in
+[Gateway resource limits](gateway-resources.md).
+
 ## 1. Architecture
 
 ```
@@ -2267,6 +2270,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_FileBackupPartial | violates PublishedComplete | 12 | 13 | 3 | 00s | 3 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
+| Bug_GatewayEarlyRelease | violates SocketCharged | 8 | 11 | 3 | 00s | 3 |
+| Bug_GatewayEvictPinned | violates EvictionSafe | 73 | 146 | 5 | 00s | 5 |
+| Bug_GatewayReserve | violates CompletionReserve | 9 | 12 | 3 | 00s | 3 |
+| Bug_GatewayResponseRelease | violates ResponseOwned | 69 | 132 | 4 | 00s | 4 |
 | Bug_GroupedDDLIgnoreGeneration | violates NoHeldSnapshot | 36 | 46 | 5 | 00s | 5 |
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
@@ -2335,9 +2342,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LockReplyRelabelGeneration | violates ReturnedRowsLocked | 187 | 436 | 12 | 00s | 11 |
 | Bug_LogicalClockFloorAdvance | violates NoFalseNO | 134 | 194 | 4 | 00s | 4 |
 | Bug_LogicalClockRawBound | violates NoFalseNO | 4028 | 12533 | 7 | 00s | 7 |
-| Bug_MoveNoDrain | violates StrictSerializable | 12646 | 41165 | 11 | 01s | 11 |
-| Bug_MoveNoHold | violates StrictSerializable | 3216 | 8519 | 9 | 01s | 9 |
-| Bug_MoveServeStale | violates StrictSerializable | 12352 | 37701 | 11 | 01s | 11 |
+| Bug_MoveNoDrain | violates StrictSerializable | 16448 | 57619 | 12 | 01s | 11 |
+| Bug_MoveNoHold | violates StrictSerializable | 4424 | 12727 | 10 | 00s | 10 |
+| Bug_MoveServeStale | violates StrictSerializable | 15863 | 52067 | 13 | 01s | 11 |
 | Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
 | Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
@@ -2426,15 +2433,16 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
 | Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 17s |  |
+| GatewayResources | no errors | 24388 | 130038 | 24 | 00s |  |
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
 | Handback | no errors | 28 | 48 | 7 | 00s |  |
 | Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
-| Join3_Scan | no errors | 3881646 | 27339272 | 32 | 24min 53s |  |
-| Join3_ScanPrepare | no errors | 2150603 | 17707410 | 35 | 05min 52s |  |
-| Join_Scan | no errors | 83949 | 431879 | 26 | 10s |  |
-| Join_ScanFailover | no errors | 58935 | 241904 | 26 | 07s |  |
+| Join3_Scan | no errors | 3881646 | 27339272 | 32 | 07min 19s |  |
+| Join3_ScanPrepare | no errors | 2150603 | 17707410 | 35 | 02min 24s |  |
+| Join_Scan | no errors | 83949 | 431879 | 26 | 05s |  |
+| Join_ScanFailover | no errors | 58935 | 241904 | 26 | 03s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
@@ -2451,9 +2459,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
 | LogicalClockExpiry | no errors | 85476 | 387918 | 19 | 01s |  |
-| Move_RC | stopped at the time limit, no violation so far | 75299 | 305289 | ≥14 | - |  |
+| Move_RC | no errors | 1531251 | 11100418 | 31 | 01min 41s |  |
 | Move_Scan | no errors | 1746444 | 10990896 | 27 | 01min 36s |  |
-| Move_ScanFailover | no errors | 1012888 | 5683034 | 27 | 15min 56s |  |
+| Move_ScanFailover | no errors | 1012888 | 5683034 | 27 | 58s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
 | PipelineAdmission | no errors | 730752 | 2650849 | 26 | 21s |  |

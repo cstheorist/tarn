@@ -1,0 +1,86 @@
+name: Gateway topology bounds
+on:
+  pull_request:
+    paths:
+      - 'crates/tarn-iproto/**'
+      - 'crates/tarn-sql/**'
+      - 'tests/topology.sh'
+      - 'tests/sql/topologytest.py'
+      - '.github/workflows/topology.yml'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: topology-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  scale:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {groups: 8, replicas: 1, pool: 4, gateways: 2}
+          - {groups: 32, replicas: 1, pool: 4, gateways: 2}
+          - {groups: 128, replicas: 1, pool: 4, gateways: 2}
+          - {groups: 8, replicas: 3, pool: 4, gateways: 2}
+          - {groups: 8, replicas: 1, pool: 1, gateways: 2}
+          - {groups: 8, replicas: 1, pool: 4, gateways: 1}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL
+      - uses: actions/cache@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - run: cargo build --release --locked -p tarn-server -p tarn-storage
+      - name: Retain release binaries and source identity
+        run: |
+          mkdir -p /tmp/topology-evidence
+          git rev-parse HEAD > /tmp/topology-evidence/source.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/topology-evidence/binaries.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: topology-release-${{ matrix.groups }}-${{ matrix.replicas }}-${{ matrix.pool }}-${{ matrix.gateways }}
+          path: |
+            target/release/tarn-server
+            target/release/libtarn_storage.so
+            /tmp/topology-evidence/source.txt
+            /tmp/topology-evidence/binaries.txt
+      - name: Build the frozen comparison gateway with the same release profile
+        run: |
+          git worktree add --detach /tmp/topology-baseline 8b12c4525bd677499a91b973afbc86cbcbb0cafd
+          cd /tmp/topology-baseline
+          cargo build --release --locked -p tarn-server
+          git rev-parse HEAD > /tmp/topology-evidence/baseline-source.txt
+          sha256sum target/release/tarn-server > /tmp/topology-evidence/baseline-binary.txt
+      - name: Real shards, two gateways, bounded point and scatter reads
+        env:
+          GROUPS_COUNT: ${{ matrix.groups }}
+          REPLICAS: ${{ matrix.replicas }}
+          POOL_SIZE: ${{ matrix.pool }}
+          GATEWAYS: ${{ matrix.gateways }}
+          BASELINE_BIN: /tmp/topology-baseline/target/release/tarn-server
+          TOPOLOGY_WORK: /tmp/topology-work
+          TOPOLOGY_OUT: /tmp/topology-evidence
+        run: bash tests/topology.sh
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: topology-results-${{ matrix.groups }}-${{ matrix.replicas }}-${{ matrix.pool }}-${{ matrix.gateways }}
+          path: |
+            /tmp/topology-evidence
+            /tmp/topology-work/storage/*.log
+            /tmp/topology-work/storage/cluster.json
