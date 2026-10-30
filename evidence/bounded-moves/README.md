@@ -148,3 +148,13 @@ OOM interruption, an invocation with missing required test arguments, and a
 Vinyl index-build setup refused by admission at the movement study's smaller
 16 MiB setting. Standard SQL validation uses the documented 128 MiB Vinyl
 setting; the fixed-memory movement cohorts retain their original 16 MiB limit.
+
+The updated gateway's [build receipt](catalog-build-receipt.json) binds source
+`8c47d63` to the final local binaries. Both engines pass all 1,083 differential
+cases and 21 concurrent DDL tests; Vinyl also passes ten lazy semantics and
+four lazy recovery cases. Four further RF3/fsync mixed-engine movement cases
+(source/coordinator crash × native/Lua) pass with exact effect reconciliation
+and no replay of unknown outcomes. The [result index](catalog-integration-index.json)
+and [hashed process/config/output archive](catalog-integration-runs.tar.gz)
+retain those checks and the initial fixed-build clock-drift refusal separately.
+No timing from these correctness runs replaces the fixed-memory study.
