@@ -8,6 +8,7 @@ for cfg in "$@"; do
   # Focused grouped-read and backfill modules check local refinement
   # premises; other configurations use the commit-protocol MC module.
   case "$cfg" in
+    ClockBootstrap|Bug_ClockBootstrap*) module=ClockBootstrap.tla ;;
     GatewayResources|Bug_Gateway*) module=GatewayResources.tla ;;
     QueryBudget|Bug_Query*) module=QueryBudget.tla ;;
     ClusterBackup|Bug_ClusterBackup*) module=ClusterBackup.tla ;;
