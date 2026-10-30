@@ -402,7 +402,40 @@ def case_bounded_warnings(s):
     assert cleared==[], cleared
     rows=s.sql(c,"SELECT id,v FROM t ORDER BY id")
     assert rows==[[1,10],[2,20]], rows
-    return [affected,total,len(messages),cleared,rows]
+    # Diagnostic words inside ordinary SQL data/comments do not make the
+    # statement a diagnostic reader. Check both protocol data paths.
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    assert len(q(c,"SHOW WARNINGS"))==1
+    assert s.sql(c,"SELECT 'warning_count'")==[["warning_count"]]
+    literal_cleared=q(c,"SHOW WARNINGS")
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    assert s.sql(c,"SELECT 1 /* error_count */")==[[1]]
+    comment_cleared=q(c,"SHOW WARNINGS")
+    assert literal_cleared==[] and comment_cleared==[], (literal_cleared,comment_cleared)
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    q(c,"SET @saved_warning_count=@@warning_count")
+    set_cleared=q(c,"SHOW WARNINGS")
+    set_count=q(c,"SELECT @@warning_count")
+    saved=q(c,"SELECT @saved_warning_count")
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    expression=q(c,"SELECT @@warning_count+0")
+    expression_cleared=q(c,"SHOW WARNINGS")
+    expression_count=q(c,"SELECT @@warning_count")
+    assert saved==[[1]] and expression==[[1]], (saved,expression)
+    assert set_cleared==[] and set_count==[[0]], (set_cleared,set_count)
+    assert expression_cleared==[] and expression_count==[[0]], (expression_cleared,expression_count)
+    # A new DML statement captures the prior count but publishes only its
+    # own diagnostics. Variable-bearing administration is text in both modes.
+    s.sql(c,"INSERT IGNORE INTO t VALUES "+",".join("(1,99,99)" for _ in range(70)))
+    inserted=q(c,"INSERT IGNORE INTO t VALUES (3,@@warning_count,33),(1,99,99)")
+    dml_messages=q(c,"SHOW WARNINGS")
+    dml_count=q(c,"SELECT @@warning_count")
+    captured=q(c,"SELECT v FROM t WHERE id=3")
+    assert inserted==1 and captured==[[70]] and dml_count==[[1]], (inserted,captured,dml_count)
+    assert len(dml_messages)==1 and dml_messages[0][:2]==["Warning",1062], dml_messages
+    return [affected,total,len(messages),cleared,rows,literal_cleared,comment_cleared,saved,expression,
+            set_cleared,set_count,expression_cleared,expression_count,inserted,captured,dml_count,
+            [row[:2] for row in dml_messages]]
 
 
 def case_rc_paged_snapshot(s):
@@ -416,10 +449,11 @@ def case_rc_paged_snapshot(s):
     for x in (a,b):
         q(x,"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
     q(a,"BEGIN")
-    start,stop=threading.Event(),threading.Event()
+    start,stop,ready=threading.Event(),threading.Event(),threading.Event()
     writes,errors=[],[]
     def writer():
         try:
+            ready.set()
             assert start.wait(10)
             for i in range(30):
                 if stop.is_set(): break
@@ -431,11 +465,13 @@ def case_rc_paged_snapshot(s):
             errors.append(repr(e))
     thread=threading.Thread(target=writer,daemon=True)
     thread.start()
+    assert ready.wait(10), "writer did not reach the start barrier"
     reads=[]
-    start.set()
     try:
-        for _ in range(6):
+        deadline=time.monotonic()+20
+        for _ in range(64):
             began=time.monotonic()
+            start.set()
             try:
                 rows=s.sql(a,"SELECT id FROM t WHERE v>=0 ORDER BY v")
                 ended=time.monotonic()
@@ -446,12 +482,15 @@ def case_rc_paged_snapshot(s):
                 ended=time.monotonic()
                 assert s.kind=="tarn" and [e.errno,e.sqlstate]==[1213,"40001"], repr(e)
                 reads.append({"begin":began,"end":ended,"rows":None,"error":[e.errno,e.sqlstate]})
-            # Bound the burst independently of reader speed: a fast oracle
-            # must not stop the writer before the required 30 updates.
-            if len(reads)==1:
-                thread.join(15)
-                assert not thread.is_alive() and not errors, errors
+            # Keep scanning while the bounded writer is active. Joining it
+            # after the first read serializes the remaining history when
+            # that read finishes before the first UPDATE acknowledgement.
+            assert not errors, errors
             if sum(r["error"] is None for r in reads)>=3 and not thread.is_alive(): break
+            if time.monotonic()>=deadline: break
+            time.sleep(.001)
+        thread.join(15)
+        assert not thread.is_alive() and not errors, errors
         q(a,"COMMIT")
     finally:
         stop.set()
@@ -459,8 +498,11 @@ def case_rc_paged_snapshot(s):
     assert not thread.is_alive() and not errors and len(writes)==30, (errors,len(writes))
     assert sum(r["error"] is None for r in reads)>=3, reads
     overlap=sum(any(r["begin"]<=w<=r["end"] for w in writes) for r in reads)
-    assert overlap>0, "no observed write completion during a scan"
-    return {"rows":n,"writes":len(writes),"overlapping_reads":overlap,"reads":reads}
+    assert overlap>0, ("no observed write completion during a scan", reads, writes)
+    changed={1+(i*997)%n for i in range(30)}
+    final=s.sql(a,"SELECT id,v FROM t ORDER BY id")
+    assert final==[[i,i+20000 if i in changed else i] for i in range(1,n+1)], "writer effects differ"
+    return {"rows":n,"writes":len(writes),"overlapping_reads":overlap,"reads":reads,"exact_final_values":True}
 
 
 def case_warning_limit_refusal(s):

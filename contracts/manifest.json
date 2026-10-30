@@ -156,7 +156,7 @@
     {
       "id": "bounded_warnings",
       "classification": "equivalent",
-      "description": "Seventy ignored duplicate rows leave data unchanged and report a total warning_count of 70, while SHOW WARNINGS retains 64 messages (max_error_count explicitly set to 64 on both servers). Read messages before SELECT @@warning_count: SELECT returns the prior total and clears the list.",
+      "description": "Seventy ignored duplicates leave data unchanged, report warning_count 70 and retain 64 messages (max_error_count=64). SHOW WARNINGS preserves diagnostics. SELECT count, expression SELECT and SET capture prior counts then clear messages/counts; a DML count reference captures the prior count while publishing only its own warnings. Literal/comment diagnostic words do not preserve old warnings.",
       "test": "tests/sql/contracts.py::case_bounded_warnings"
     },
     {
