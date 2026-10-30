@@ -1,0 +1,11 @@
+{
+  "bytes": 1605,
+  "complete": true,
+  "error": null,
+  "lines": 5,
+  "max_bytes": 134217728,
+  "max_line": 4096,
+  "schema": 1,
+  "scope": "Bounded log capture only; not transport or SQL completion.",
+  "sha256": "ebe89052aa13aca7f591bba2ccbd7ee3f5ce28cf4280056c244cdadd3e5b5232"
+}

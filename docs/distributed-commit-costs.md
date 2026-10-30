@@ -27,7 +27,11 @@ write; numeric, NULL and other values must retain their exact final values.
 A full-row mutation, missing base, unsupported layout or unproven condition
 keeps the full replacement. This is a hypothesis to model and measure, not
 an implemented or qualified policy. A compact intent that older readers
-could misinterpret is not an acceptable shortcut under current format 1.
+could misinterpret is not an acceptable shortcut under baseline format 1.
+The study branch now includes reviewed main `1b3a11f`, whose format 2 adds
+bounded movement. That migration does not establish compatibility for a
+different canonical lock intent. Rebind all measured candidate/control
+inputs to the actual integrated source before drawing a comparison.
 
 Before a candidate changes storage actions, a local refinement must establish
 the same final tuple under the existing durable-lock, atomicity and replay
@@ -75,10 +79,28 @@ admission, deadline and response-ownership tests remain required.
 
 ## Required evidence before qualification
 
-Implement a bounded collector/auditor before retaining performance evidence:
-cap raw bytes and line sizes, preserve hashes and failed/incomplete traces,
-reconcile request/frame/terminal identities and compare aggregate socket
-counters. Add transaction phase/participant timelines and storage observations
+`bench/commit_cost.py capture --output NEW_DIRECTORY` reads diagnostic logs
+from stdin with a 128 MiB raw limit and 4 KiB line limit. It retains the exact
+bounded prefix, SHA-256 and explicit incomplete status on overflow/truncation;
+directory reuse is refused. `audit --input DIRECTORY --counters COUNTERS.json
+--output RESULT.json` uses disk-backed joins with a 128 MiB SQLite limit and
+2 MiB page cache. At most 4096 connection/phase-owner summary entries are
+accepted. It rejects malformed events, duplicate identities, absent/misowned
+responses, invalid terminal types/times, CHUNKs after a final frame and
+counter disagreement. Exit 2 and `qualified=false` preserve an incomplete
+or failed audit. Qualification describes transport observations only.
+
+Counters are a bounded JSON array of `{process, connection, bytes_written,
+bytes_read}` from independent peer measurements or the actual `Client::stats`
+at a quiescent end, covering every traced connection from its creation.
+Handshake bytes are excluded. A partial trace, in-flight snapshot or counters
+summed from the trace cannot establish reconciliation. Missing counters
+remain explicitly unqualified. Receiver cancellation is retained as such;
+terminal delivery never becomes an SQL acknowledgement. A real TCP peer
+control exercises the actual colored default formatter and independently
+checks complete request and fragmented CHUNK/final response lengths.
+
+Add transaction phase/participant timelines and storage observations
 for logical WAL/replication bytes, kernel disk-write bytes where available,
 lock duration, CPU, capture and cleanup. Report unavailable measurements
 explicitly. No trace-only result establishes complete byte amplification.

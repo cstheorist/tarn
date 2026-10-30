@@ -1,0 +1,33 @@
+{
+  "capture_sha256": "ebe89052aa13aca7f591bba2ccbd7ee3f5ce28cf4280056c244cdadd3e5b5232",
+  "errors": [],
+  "event_counts": {
+    "frame": 2,
+    "request": 1,
+    "retired": 1,
+    "terminal": 1
+  },
+  "phases": [
+    {
+      "encoded_bytes": 53,
+      "enqueue_to_terminal_max_ns": 273250,
+      "enqueue_to_terminal_sum_ns": 273250,
+      "owner": 7,
+      "phase": "prepare",
+      "requests": 1
+    }
+  ],
+  "prepare_owner_distribution": [
+    {
+      "correlations": 1,
+      "owners": 1
+    }
+  ],
+  "prepare_requests_without_owner_or_correlation": 0,
+  "qualified": true,
+  "receiver_cancelled": 0,
+  "schema": 1,
+  "scope": "Complete encoded transport observations only. Receiver delivery is not SQL ACK; no WAL/disk/CPU or performance claim.",
+  "socket_reconciled": true,
+  "unattributed_requests": 0
+}
