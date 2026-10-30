@@ -785,6 +785,10 @@ impl StrongKvClient {
             .connect_timeout
             .min(deadline.saturating_duration_since(Instant::now()));
         options.request_timeout = self.options.read_timeout;
+        // Refuse an oversized advertised frame before reserving its body.
+        // The V1 envelope is bounded to 1 MiB; allow 4 KiB for the IPROTO
+        // header/body wrapper and authentication/capability replies.
+        options.max_response_bytes = MAX_WIRE_RESPONSE_BYTES;
         options.request_limits = self.options.request_limits;
         options.admission = vec![self.budget.clone()];
         let client = timeout_at(deadline, Client::connect(&options))
@@ -1159,6 +1163,7 @@ pub struct KvPoint {
 }
 
 const MAX_SCHEMA_BYTES: usize = 1 << 20;
+const MAX_WIRE_RESPONSE_BYTES: usize = MAX_SCHEMA_BYTES + 4096;
 const MAX_COLUMNS: usize = 1024;
 const MAX_FIELDS: usize = 8192;
 
@@ -1699,6 +1704,58 @@ mod tests {
             seen
         });
         (endpoint, actor)
+    }
+
+    #[tokio::test]
+    async fn public_discovery_retires_an_oversized_advertised_frame_without_waiting_for_the_body() {
+        use crate::cluster::wire_test::{accept, reply};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        let actor = tokio::spawn(async move {
+            let mut sock = accept(&listener).await;
+            let (kind, sync, stream, _) = mock_request(&mut sock).await;
+            assert_eq!((kind, stream), (7, 0));
+            reply(&mut sock, sync, 0, &[0x80]).await;
+            let (kind, _, stream, _) = mock_request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let mut prefix = vec![0xce];
+            prefix.extend_from_slice(&((MAX_WIRE_RESPONSE_BYTES + 1) as u32).to_be_bytes());
+            sock.write_all(&prefix).await.unwrap();
+            // No advertised payload is sent. The client must close from
+            // this prefix rather than wait for its request deadline.
+            let mut byte = [0];
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(2), sock.read(&mut byte))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                0
+            );
+        });
+        let mut options = KvOptions::new(
+            vec![ShardConfig {
+                id: 1,
+                replicas: vec![endpoint],
+            }],
+            Credentials {
+                user: "reader".into(),
+                password: "p".into(),
+            },
+        );
+        // Isolate one physical retirement from permitted read-only
+        // rediscovery. The transport reports retired waiters as Closed.
+        options.max_read_attempts = 1;
+        let client = StrongKvClient::connect(options).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), client.table("d", "t"))
+            .await
+            .unwrap();
+        assert!(
+            matches!(&result, Err(KvError::Transport(tarn_iproto::Error::Closed))),
+            "{result:?}"
+        );
+        actor.await.unwrap();
+        assert!(client.connection_stats().is_empty());
     }
 
     #[tokio::test]

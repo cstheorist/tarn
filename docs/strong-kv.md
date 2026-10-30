@@ -131,6 +131,9 @@ size is checked before encoding it into a reply; the final tuple and full
 reply are checked too. The SDK applies the data-reply bound across all
 shard replies in one attempt, with metadata counted separately. An
 oversized result fails; no clipped prefix is acknowledged as a batch.
+The Rust SDK also caps advertised IPROTO response frames at 1 MiB plus
+4 KiB of protocol overhead, before reserving their bodies. The envelope
+and aggregate data limits above still apply.
 Storage's own allocation/tuple limits remain separate. Deadline checkpoints
 do not establish a universal engine, network or quorum latency bound.
 
