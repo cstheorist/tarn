@@ -35,6 +35,8 @@ pub mod rebalance;
 pub mod route;
 mod rpcs;
 pub use rpcs::RpcConfig;
+mod topology;
+pub use topology::TopologyConfig;
 pub mod session;
 pub mod statistics;
 pub mod txn;

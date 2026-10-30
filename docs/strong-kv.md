@@ -134,6 +134,8 @@ oversized result fails; no clipped prefix is acknowledged as a batch.
 The Rust SDK also caps advertised IPROTO response frames at 1 MiB plus
 4 KiB of protocol overhead, before reserving their bodies. The envelope
 and aggregate data limits above still apply.
+The SDK's request and per-response limits are independent of SQL gateway
+connection and response-memory budgets.
 Storage's own allocation/tuple limits remain separate. Deadline checkpoints
 do not establish a universal engine, network or quorum latency bound.
 
