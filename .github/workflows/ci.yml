@@ -228,6 +228,7 @@ jobs:
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
       - name: Strong KV paired SQL histories and RF3 faults
         run: |
+          python3 tests/test_kv_control.py
           ci/annotate.sh strong-kv tests/kv.sh
           TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
       - name: Retain strong KV histories and fixture evidence

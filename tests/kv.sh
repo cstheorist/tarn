@@ -44,9 +44,10 @@ owned() {
     [ "$2" = "$$" ] && [ "${20}" = "${BIRTHS[$pid]:-missing}" ] || return 1
     [ "$(readlink "/proc/$pid/cwd")" = "${WORKDIRS[$pid]:-missing}" ] || return 1
     [ "$(readlink "/proc/$pid/exe")" = "${EXES[$pid]:-missing}" ] || return 1
-    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fx "TARN_KV_OWNER_NONCE=$NONCE" >/dev/null || return 1
-    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fx "TARN_KV_NODE_ID=${IDS[$pid]:-missing}" >/dev/null || return 1
-    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fx "TARN_KV_WORKDIR=${WORKDIRS[$pid]:-missing}" >/dev/null
+    # Tarantool rewrites its process title and relocates the environment.
+    # An inherited read-only descriptor keeps the private owner receipt
+    # bound to the original child independently of argv/environ storage.
+    [ "/proc/$pid/fd/9" -ef "$WORK/owner.json" ]
 }
 cleanup() {
     local status=$? pid round live=0 failure=0
@@ -81,7 +82,7 @@ q=p/'lifecycle.json';q.write_text(json.dumps(v,indent=2)+'\n');q.chmod(0o600)
 PY
     echo "Strong KV exit $status; logs, identities, WAL and evidence retained at $WORK"
     if [ "$status" != 0 ]; then
-        for name in preflight.stderr functional.log faults.log; do
+        for name in preflight.stderr preflight.json functional.log faults.log; do
             if [ -f "$WORK/$name" ]; then echo "Retained $name (last 100 lines):"; tail -100 "$WORK/$name"; fi
         done
     fi
@@ -130,7 +131,7 @@ PY
 start() {
     local name=$1 port=$2 dir=$3 expected_exe=$4; shift 4
     mkdir -m 700 "$dir"
-    (cd "$dir"; exec env TARN_KV_OWNER_NONCE="$NONCE" TARN_KV_NODE_ID="$name" TARN_KV_WORKDIR="$dir" "$@") > "$WORK/$name.log" 2>&1 &
+    (cd "$dir"; exec 9<"$WORK/owner.json"; exec env TARN_KV_OWNER_NONCE="$NONCE" TARN_KV_NODE_ID="$name" TARN_KV_WORKDIR="$dir" "$@") > "$WORK/$name.log" 2>&1 &
     local pid=$! line rest birth count
     PIDS+=("$pid");NAMES+=("$name");WORKDIRS[$pid]=$dir;EXES[$pid]=$expected_exe;IDS[$pid]=$name
     line=$(cat "/proc/$pid/stat");rest=${line##*) };set -- $rest;birth=${20};BIRTHS[$pid]=$birth
@@ -141,7 +142,8 @@ start() {
 import json,os,pathlib,sys
 root=pathlib.Path(sys.argv[1]);name=sys.argv[2];pid=int(sys.argv[4])
 n={'node_id':name,'endpoint':'127.0.0.1:'+sys.argv[3],'pid':pid,'ppid':int(sys.argv[5]),
- 'starttime':int(sys.argv[6]),'workdir':sys.argv[7],'ownerNonce':sys.argv[8],'exe':os.readlink(f'/proc/{pid}/exe')}
+ 'starttime':int(sys.argv[6]),'workdir':sys.argv[7],'ownerNonce':sys.argv[8],
+ 'owner_fd':9,'exe':os.readlink(f'/proc/{pid}/exe')}
 if name.startswith('s'):n.update(shard_id=int(name[1]),replica=int(name[3]))
 fd=os.open(str(root/'processes.jsonl'),os.O_WRONLY|os.O_APPEND|os.O_CREAT,0o600)
 try:os.write(fd,(json.dumps(n)+'\n').encode())

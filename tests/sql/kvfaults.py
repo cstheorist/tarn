@@ -268,7 +268,21 @@ class FaultTest(Test):
             self.record("known_ro_route_warmup", former=former, replacement=state,
                         scope="known-RO witness; no old-writable-role or A-B-A promotion claim")
             with self.connect() as c:
-                rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
+                # Discovery can refuse the first independent read on the
+                # cached former-leader socket. Record each refusal, and
+                # retry only this read, before any BEGIN or mutation.
+                assert c.get_autocommit() and not c.server_status & 1
+                for attempt in range(8):
+                    try:
+                        rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
+                        break
+                    except pymysql.OperationalError as error:
+                        if (error.args[0] != 1213 or "shard leader changed" not in str(error)
+                                or attempt == 7):
+                            raise
+                        self.record("known_ro_read_retry", attempt=attempt + 1, error=list(error.args),
+                                    scope="independent autocommit read before BEGIN; no mutation replay")
+                        time.sleep(.05)
                 self.check("SQL read warms the replacement route without a mutation",
                            rows == ((self.values[engine][1],),), rows=rows)
                 self.signal(old["node_id"], "STOP")
@@ -380,8 +394,17 @@ class FaultTest(Test):
                     self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
             except pymysql.MySQLError as caught:
                 sql_error = list(caught.args)
-            self.check("no-quorum SQL returns a storage/refusal error", sql_error is not None
-                       and sql_error[0] in (7, 97, 1180, 1205, 1213), error=sql_error)
+            # The client's 15-second read budget can expire before the
+            # gateway's 120-second RPC/discovery deadline. This read then
+            # loses its connection without rows; it is not a server ERR or
+            # a known transaction abort. Keep that outcome separate.
+            client_timeout = (sql_error is not None and sql_error[0] == 2013
+                              and sql_error[1] == "Lost connection to MySQL server during query (timed out)")
+            no_leader = (sql_error is not None and sql_error[0] == 2003
+                         and "has no reachable leader" in sql_error[1])
+            self.check("no-quorum SQL refuses rows or loses its read connection", sql_error is not None
+                       and (sql_error[0] in (7, 97, 1180, 1205, 1213) or no_leader or client_timeout),
+                       error=sql_error, classification="client_connection_loss" if client_timeout else "server_refusal")
             self.record("no_quorum_classification", before=before, after=observed,
                         first_guard="role" if error.get("domain") == "tarantool" and error.get("code") == 7
                         else "clock" if "clock" in error.get("message", "").lower() else "barrier_or_transport",

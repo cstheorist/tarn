@@ -57,7 +57,7 @@ def read_manifest(path, platform=None):
                 "invalid process identity")
         require(n["pid"] > 1 and n["ppid"] == m["launcher_pid"] and n["pid"] != n["ppid"],
                 "node is not an original launcher child")
-        require(n.get("ownerNonce") == m["ownerNonce"]
+        require(n.get("owner_fd") == 9 and n.get("ownerNonce") == m["ownerNonce"]
                 and n.get("workdir") == str(parent / n["node_id"]), "node owner/workdir mismatch")
         require(n.get("shard_id") == int(n["node_id"][1])
                 and n.get("replica") == int(n["node_id"][3]), "invalid logical node identity")
@@ -79,8 +79,13 @@ def parse_stat(raw):
 def proc_snapshot(pid):
     p = Path("/proc") / str(pid)
     info = parse_stat((p / "stat").read_text())
+    try:
+        owner = (p / 'fd/9').stat()
+        owner_file = (owner.st_dev, owner.st_ino)
+    except FileNotFoundError:
+        owner_file = None
     info.update(uid=p.stat().st_uid, cwd=os.readlink(p / "cwd"), exe=os.readlink(p / "exe"),
-                environ=(p / "environ").read_bytes().split(b"\0"))
+                owner_file=owner_file)
     return info
 
 
@@ -92,9 +97,8 @@ def verify_process(m, n, snapshot=proc_snapshot):
     require(p["pid"] == n["pid"] and p["ppid"] == n["ppid"] and p["starttime"] == n["starttime"]
             and p["uid"] == os.getuid() and p["state"] != "Z", "node process identity changed")
     require(p["cwd"] == n["workdir"] and p["exe"] == n["exe"], "node executable/workdir changed")
-    for key, value in (("TARN_KV_OWNER_NONCE", m["ownerNonce"]), ("TARN_KV_NODE_ID", n["node_id"]),
-                       ("TARN_KV_WORKDIR", n["workdir"])):
-        require((key + "=" + value).encode() in p["environ"], "node environment owner changed")
+    owner = (Path(m['workdir']) / 'owner.json').stat()
+    require(p['owner_file'] == (owner.st_dev, owner.st_ino), 'node owner descriptor changed')
     return {**n, "state": p["state"], "identity_verified": True}
 
 
