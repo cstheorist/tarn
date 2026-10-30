@@ -265,7 +265,7 @@ return n >= ...
     def prepare(self, txid):
         for shard, node in enumerate(self.leaders(), 1):
             result = ev(node, """
-local txid, shard, engine = ...
+local txid, shard, engine, parts = ...
 local sid=99001
 -- A fixture space outside the SQL catalog: incomplete native definitions
 -- must never be inserted into the gateway's catalog as if they were SQL.
@@ -277,11 +277,11 @@ local bucket
 for _,b in box.space._tarn_buckets:pairs() do if b.state=='active' then bucket=b.bucket;break end end
 assert(bucket)
 box.space[sid]:replace{shard,0,bucket}
-local r=tarn_prepare(txid,1,{1,2},{{'replace',sid,{shard,1,bucket}}},{},{},require('fiber').time(),
+local r=tarn_prepare(txid,1,parts,{{'replace',sid,{shard,1,bucket}}},{},{},require('fiber').time(),
                      nil,{sid,0},{bucket})
 assert(r[1]=='yes',require('json').encode(r))
 return box.space._tarn_part:get{txid}.state
-""", [txid, shard, self.args.engine])
+""", [txid, shard, self.args.engine, list(range(1, self.shards+1))])
             assert result == "prepared"
         self.event("durable_YES_before_restart", txid=txid)
 
