@@ -13,10 +13,13 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def audit_mode(data, source, legacy_session_flag=False):
+def audit_mode(data, source, legacy_session_flag=False, measured_seconds=5):
     receipt = json.loads(data['rc-results/paired/comparison.json'])
     baseline = json.loads(data['rc-results/baseline.json'])
     assert receipt['complete'] and receipt['source'] == source == baseline['source']
+    assert measured_seconds in (5, 15)
+    assert receipt.get('measured_seconds', 5) == measured_seconds
+    assert receipt.get('warmup_seconds', 3) == 3
     assert receipt['binary_sha256'] == baseline['binary_sha256']
     assert receipt['native_sha256'] == baseline['native_sha256']
     assert (receipt['engine'], receipt['native']) == (baseline['engine'], baseline['native'])
@@ -93,7 +96,7 @@ end'''
         for sample in session['samples']:
             assert sample['complete'] and not sample['profiled']
             assert not sample['errors'] and not sample['workers_live'] and not sample.get('diagnostic_errors')
-            assert sample['scheduled_seconds'] == (3 if sample['warmup'] else 5)
+            assert sample['scheduled_seconds'] == (3 if sample['warmup'] else measured_seconds)
             raw = data['rc-results/paired/' + sample['attempts_file']]
             assert sha(raw) == sample['attempts_sha256']
             attempts = [json.loads(line) for line in raw.splitlines()]
@@ -161,7 +164,8 @@ def audit(manifest_path):
                 assert len(raw) == member['bytes'] and sha(raw) == member['sha256']
                 assert member['path'] not in data
                 data[member['path']] = raw
-        results.append(audit_mode(data, manifest['source'], manifest.get('legacy_session_flag', False)))
+        results.append(audit_mode(data, manifest['source'], manifest.get('legacy_session_flag', False),
+                                  manifest.get('measured_seconds', 5)))
     assert {(r['engine'], r['native']) for r in results} == {
         (e, n) for e in ('memtx', 'vinyl') for n in ('enabled', 'disabled')}
     assert len(results) == 4

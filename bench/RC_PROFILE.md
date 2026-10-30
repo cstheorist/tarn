@@ -309,6 +309,26 @@ has no completed pair. These five-second windows do not establish a repeatable
 capacity gain. A predeclared longer-window study is needed to resolve the
 small CPU/goodput effect before any production proposal.
 
+### Predeclared longer-window experiment
+
+The isolated `codex/rc-plan-guard-long` experiment uses 15-second ordinary
+windows, three-second warmups, five alternating scalar/batched pairs and
+the same three shapes in all four engine/native modes. Baseline profiling
+retains its five-second windows and remains separate from paired timing.
+Every mode, failed startup, refusal, regression and incomplete sample will
+be retained. Longer windows are intended to resolve the small CPU/goodput
+effect; they do not turn the existing allocation reduction into a capacity
+claim. No replacement run is substituted for a failed lane.
+
+Both lanes include current main through MySQL contracts (#194) and the
+initial clock-policy ordering correction (#210). The candidate still changes
+only the two copied plan-guard functions, and the exact-copy audit remains
+in force. Receipts declare measured and warmup durations; the independent
+audit binds each sample to the manifest's declared duration. Older evidence
+continues to require five-second measurements. Outcome reconciliation,
+runtime checks and single-attempt mutation rules are unchanged. Production
+Lua does not enable batched plan guards.
+
 ## Retained collector failure
 
 [The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)

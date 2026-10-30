@@ -152,6 +152,7 @@ def main():
                TARN_VINYL_CACHE_MB='0', TARN_CHECK_LOCKS='0', TARN_CHECK_YIELDS='0')
     receipt = dict(schema=1, complete=False, sessions=[], scope='isolated RF3/fsync allocation pilot',
                    hypothesis=args.hypothesis, variants=variants,
+                   measured_seconds=args.seconds, warmup_seconds=3,
                    source=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                    binary_sha256=sha(args.bin), native_sha256=sha(native), harness_sha256=sha(__file__),
                    worker_sha256=sha(ROOT / 'bench/rc_profile.py'), work_directory=str(work),
@@ -161,7 +162,7 @@ def main():
                    lua_sha256={variant: sha(path/'lua/tarn.lua') for variant, path in paths.items()},
                    lua_file_sha256={variant: {str(p.relative_to(path)): sha(p) for p in sorted((path/'lua').rglob('*.lua'))}
                                     for variant, path in paths.items()},
-                   limitations='Single host, closed-loop, five-second samples. Fresh fixture/process/JIT per lane. '
+                   limitations=f'Single host, closed-loop, {args.seconds:g}-second samples. Fresh fixture/process/JIT per lane. '
                    'No engine/WAL CPU attribution or full concurrent/fault qualification. No production default change.')
     output = args.out / 'comparison.json'
     active = None
