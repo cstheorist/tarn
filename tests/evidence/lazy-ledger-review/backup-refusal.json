@@ -1,0 +1,28 @@
+{
+  "pr": 206,
+  "reviewed_feature_head": "319a8947bd425f36d6d4552fd500618ed1432fda",
+  "failed_run": "https://github.com/cstheorist/tarn/actions/runs/41061241133/job/124081230044",
+  "failure": {
+    "stage": "cluster_backup.py -> lazy_drain",
+    "reply": [
+      "conflict",
+      1213,
+      "Transaction has been aborted by conflict"
+    ],
+    "preceding_passes": [
+      "native and Lua storage protocol suites",
+      "earlier complete cluster backup history",
+      "paused delivery retains obligations"
+    ]
+  },
+  "correction": {
+    "source_commit": "bb0131c",
+    "scope": "Apply bounded known-abort handling to individual atomic calls in lazy_drain, never replay the stage. Exceptions, 1180/unknown and malformed envelopes stop. Preserve each observation and source hash in the fixture evidence.",
+    "production_code_changed": false
+  },
+  "review_checks": {
+    "registry": "298 total configurations reproduce byte-for-byte; 285 defaults (74 positive, 211 expected controls)",
+    "models": "LazyBaseline/negative plus ten LazyHandoff outcomes all match expectations",
+    "local_control_boundary": "Known-abort/no-replay control runs on Tarantool; absolute-path baseline test covers both engines. Local direct relative-path invocation failed module resolution after box.cfg changed cwd; the harness uses absolute paths."
+  }
+}
