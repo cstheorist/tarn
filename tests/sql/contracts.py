@@ -402,7 +402,17 @@ def case_bounded_warnings(s):
     assert cleared==[], cleared
     rows=s.sql(c,"SELECT id,v FROM t ORDER BY id")
     assert rows==[[1,10],[2,20]], rows
-    return [affected,total,len(messages),cleared,rows]
+    # Diagnostic words inside ordinary SQL data/comments do not make the
+    # statement a diagnostic reader. Check both protocol data paths.
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    assert len(q(c,"SHOW WARNINGS"))==1
+    assert s.sql(c,"SELECT 'warning_count'")==[["warning_count"]]
+    literal_cleared=q(c,"SHOW WARNINGS")
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    assert s.sql(c,"SELECT 1 /* error_count */")==[[1]]
+    comment_cleared=q(c,"SHOW WARNINGS")
+    assert literal_cleared==[] and comment_cleared==[], (literal_cleared,comment_cleared)
+    return [affected,total,len(messages),cleared,rows,literal_cleared,comment_cleared]
 
 
 def case_rc_paged_snapshot(s):
