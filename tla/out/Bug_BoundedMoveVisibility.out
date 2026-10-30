@@ -1,0 +1,277 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 1 and seed -6282521405830493389 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 90120] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:15:49)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 20:15:49.
+Error: Invariant NoPartialReads is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 0
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, -1, -1>>
+/\ diskOK = TRUE
+
+State 2: <Copy(1) line 37, col 5 to line 41, col 83 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, -1, -1>>
+/\ diskOK = TRUE
+
+State 3: <Copy(2) line 37, col 5 to line 41, col 83 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, -1>>
+/\ diskOK = TRUE
+
+State 4: <Copy(3) line 37, col 5 to line 41, col 83 of module BoundedMove>
+/\ phase = "copy"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 5: <Fence line 42, col 10 to line 45, col 108 of module BoundedMove>
+/\ phase = "fenced"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 6: <Drain line 46, col 10 to line 50, col 108 of module BoundedMove>
+/\ phase = "delta"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 7: <Send line 57, col 9 to line 60, col 107 of module BoundedMove>
+/\ phase = "reclaim"
+/\ src = <<0, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 8: <Reclaim({1}) line 62, col 5 to line 67, col 92 of module BoundedMove>
+/\ phase = "reclaim"
+/\ src = <<-1, 0, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 9: <Reclaim({2}) line 62, col 5 to line 67, col 92 of module BoundedMove>
+/\ phase = "reclaim"
+/\ src = <<-1, -1, 0>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 10: <Reclaim({3}) line 62, col 5 to line 67, col 92 of module BoundedMove>
+/\ phase = "reclaim"
+/\ src = <<-1, -1, -1>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 11: <BeginInstall line 69, col 5 to line 72, col 103 of module BoundedMove>
+/\ phase = "install"
+/\ src = <<-1, -1, -1>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<-1, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<0, 0, 0>>
+/\ diskOK = TRUE
+
+State 12: <Install(1) line 74, col 5 to line 78, col 83 of module BoundedMove>
+/\ phase = "install"
+/\ src = <<-1, -1, -1>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = FALSE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<0, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, 0, 0>>
+/\ diskOK = TRUE
+
+State 13: <ReadPartial line 85, col 5 to line 91, col 90 of module BoundedMove>
+/\ phase = "install"
+/\ src = <<-1, -1, -1>>
+/\ dirty = {}
+/\ truth = <<0, 0, 0>>
+/\ lastBatch = 1
+/\ partialRead = TRUE
+/\ written = {}
+/\ partialSnapshot = FALSE
+/\ restarted = FALSE
+/\ copied = {1, 2, 3}
+/\ pending = {}
+/\ dst = <<0, -1, -1>>
+/\ lost = FALSE
+/\ todo = {}
+/\ live = TRUE
+/\ staged = <<-1, 0, 0>>
+/\ diskOK = TRUE
+
+12585 states generated, 4786 distinct states found, 412 states left on queue.
+The depth of the complete state graph search is 13.
+Finished in 01s at (2026-10-29 20:15:50)
+Trace exploration spec path: ./BoundedMove_TTrace_1793319348.tla

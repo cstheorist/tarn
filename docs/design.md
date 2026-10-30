@@ -2195,6 +2195,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Backfill | no errors | 3757 | 7686 | 21 | 00s |  |
 | BackfillDDL | no errors | 33 | 42 | 11 | 00s |  |
 | BootstrapCount | no errors | 2160 | 2592 | 4 | 00s |  |
+| BoundedMove | no errors | 6230 | 17145 | 28 | 02s |  |
 | Bug_BackfillAbortAfterApply | violates PublishedIndexCorrect | 1249 | 2126 | 11 | 00s | 11 |
 | Bug_BackfillDDLNoFinisherSerialization | violates PublishedIndexMatches | 65 | 90 | 9 | 00s | 9 |
 | Bug_BackfillDDLNoQuiescence | violates NoLateAbortedIndex | 33 | 42 | 6 | 00s | 6 |
@@ -2207,6 +2208,14 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
+| Bug_BoundedMoveBatch | violates BoundedWork | 1646 | 3436 | 8 | 01s | 8 |
+| Bug_BoundedMoveDelta | violates AcknowledgedEffects | 6863 | 17929 | 19 | 02s | 19 |
+| Bug_BoundedMoveDrain | violates AcknowledgedEffects | 7899 | 21506 | 17 | 02s | 17 |
+| Bug_BoundedMoveLatePage | violates CancelledResources | 46 | 64 | 4 | 01s | 4 |
+| Bug_BoundedMovePublish | violates CompletePublication | 4372 | 11121 | 12 | 01s | 12 |
+| Bug_BoundedMoveReclaim | violates NoPartialReads | 2385 | 5293 | 9 | 01s | 9 |
+| Bug_BoundedMoveSnapshot | violates NoPartialReads | 5542 | 15227 | 17 | 01s | 17 |
+| Bug_BoundedMoveVisibility | violates NoPartialReads | 4786 | 12585 | 13 | 01s | 13 |
 | Bug_ClusterBackupDrain | violates NoLostAcknowledgement | 40367 | 182089 | 12 | 00s | 12 |
 | Bug_ClusterBackupEarlyCopy | violates CoherentData | 43988 | 157326 | 9 | 00s | 9 |
 | Bug_ClusterBackupMetadata | violates MetadataRetained | 31165 | 142161 | 11 | 00s | 11 |
@@ -2326,9 +2335,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LockReplyRelabelGeneration | violates ReturnedRowsLocked | 187 | 436 | 12 | 00s | 11 |
 | Bug_LogicalClockFloorAdvance | violates NoFalseNO | 134 | 194 | 4 | 00s | 4 |
 | Bug_LogicalClockRawBound | violates NoFalseNO | 4028 | 12533 | 7 | 00s | 7 |
-| Bug_MoveNoDrain | violates StrictSerializable | 4650 | 13078 | 10 | 03s | 9 |
-| Bug_MoveNoHold | violates StrictSerializable | 4619 | 12922 | 10 | 02s | 9 |
-| Bug_MoveServeStale | violates StrictSerializable | 5787 | 15518 | 11 | 03s | 9 |
+| Bug_MoveNoDrain | violates StrictSerializable | 12646 | 41165 | 11 | 01s | 11 |
+| Bug_MoveNoHold | violates StrictSerializable | 3216 | 8519 | 9 | 01s | 9 |
+| Bug_MoveServeStale | violates StrictSerializable | 12352 | 37701 | 11 | 01s | 11 |
 | Bug_NoReadLocks | violates StrictSerializable | 1893 | 6394 | 9 | 02s | 9 |
 | Bug_NoTombstone | violates AppliedOnlyIfCommitted | 6397 | 17927 | 9 | 03s | 9 |
 | Bug_NoWLockCheckOnRead | violates StrictSerializable | 12006 | 44352 | 11 | 04s | 11 |
@@ -2419,10 +2428,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
 | Handback | no errors | 28 | 48 | 7 | 00s |  |
 | Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
-| Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
-| Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
-| Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
-| Join_ScanFailover | no errors | 56937 | 238702 | 24 | 09s |  |
+| Join3_Scan | no errors | 3881646 | 27339272 | 32 | 24min 53s |  |
+| Join3_ScanPrepare | no errors | 2150603 | 17707410 | 35 | 05min 52s |  |
+| Join_Scan | no errors | 83949 | 431879 | 26 | 10s |  |
+| Join_ScanFailover | no errors | 58935 | 241904 | 26 | 07s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
@@ -2439,9 +2448,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
 | LogicalClockExpiry | no errors | 85476 | 387918 | 19 | 01s |  |
-| Move_RC | no errors | 1450427 | 10618984 | 29 | 03min 17s |  |
-| Move_Scan | no errors | 1471152 | 9238538 | 25 | 03min 36s |  |
-| Move_ScanFailover | no errors | 853724 | 4772626 | 25 | 01min 59s |  |
+| Move_RC | no errors | 1531251 | 11100418 | 31 | 09min 46s |  |
+| Move_Scan | no errors | 1746444 | 10990896 | 27 | 12min 58s |  |
+| Move_ScanFailover | no errors | 1012888 | 5683034 | 27 | 15min 56s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
 | PipelineAdmission | no errors | 730752 | 2650849 | 26 | 21s |  |

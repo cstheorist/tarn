@@ -1923,10 +1923,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 275 unique configurations: 71 positive
-outcomes and 204 expected broken/trade-off outcomes. The 282 generated
+The default list contains 284 unique configurations: 72 positive
+outcomes and 212 expected broken/trade-off outcomes. The 291 generated
 configurations reproduce from `gen_cfgs.sh`; six grouped-read and decision-
-placement configurations are maintained directly, for 288 total. Explicit
+placement configurations are maintained directly, for 297 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57

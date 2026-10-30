@@ -2141,7 +2141,7 @@ impl Cluster {
             // all yet. No shard joins while the job is in progress.)
             self.load_members().await?;
             if job.kind == JobKind::Move {
-                return self.finish_move(&job).await;
+                return self.with_job_alive(&job.owner, self.finish_move(&job)).await;
             }
             if job.kind == JobKind::Members {
                 return self.finish_members(&job).await;

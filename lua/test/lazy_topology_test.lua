@@ -178,8 +178,9 @@ check('an old receiver without aux_names fails before move effects',legacy_move[
 local source_move=ok(call(2,'tarn_bucket_send_begin',1,3,'heterogeneous-source',5))
 ok(call(3,'tarn_bucket_recv_begin',1,2,'heterogeneous-source'))
 local unknown_ok,unknown_error=pcall(call,3,'tarn_bucket_recv_rows',1,'heterogeneous-source',{{'_tarn_lazy_unknown',{1}}})
-check('unknown auxiliary names fail rather than silently discard bucket data',not unknown_ok
-      and unknown_error.code==1210 and c[3]:eval('return box.space._tarn_recv:count{1}')==0)
+check('unknown auxiliary names fail rather than silently discard bucket data',unknown_ok
+      and unknown_error[1]=='error' and unknown_error[2]==1210
+      and c[3]:eval('return box.space._tarn_recv:count{1}')==0,unknown_error)
 copy_rows(2,3,1,'heterogeneous-source')
 -- Keep the old owner's hint live across the entire move. Membership and
 -- leadership stay fixed; the local bucket-map revision must invalidate it.

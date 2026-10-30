@@ -900,3 +900,27 @@ mk_cluster_backup Bug_ClusterBackupReplica MissingReplica CompleteSet
 mk_cluster_backup Bug_ClusterBackupRestart LostFence FrozenCut
 mk_cluster_backup Bug_ClusterBackupPartialRestore PartialRestore NoPartialActivation
 mk_cluster_backup Bug_ClusterBackupMetadata SkipMetadata MetadataRetained
+
+# Bounded physical movement with separately guarded logical publication.
+mk_bounded_move() {
+    name=$1; bug=$2; inv=$3
+    {
+        echo 'SPECIFICATION Spec'
+        echo 'CHECK_DEADLOCK FALSE'
+        echo 'CONSTANTS'
+        for flag in BugNoDrain BugLostDelta BugPublishEarly BugExposeChunks BugServeReclaim BugBatch BugLatePage BugSnapshot; do
+            value=FALSE; [ "$flag" = "$bug" ] && value=TRUE
+            echo "  $flag = $value"
+        done
+        echo "INVARIANT $inv"
+    } > "$name.cfg"
+}
+mk_bounded_move BoundedMove '' 'TypeOK BoundedWork NoPartialReads AcknowledgedEffects CompletePublication DrainedHandoff CancelledResources'
+mk_bounded_move Bug_BoundedMoveDrain BugNoDrain AcknowledgedEffects
+mk_bounded_move Bug_BoundedMoveDelta BugLostDelta AcknowledgedEffects
+mk_bounded_move Bug_BoundedMovePublish BugPublishEarly CompletePublication
+mk_bounded_move Bug_BoundedMoveVisibility BugExposeChunks NoPartialReads
+mk_bounded_move Bug_BoundedMoveReclaim BugServeReclaim NoPartialReads
+mk_bounded_move Bug_BoundedMoveBatch BugBatch BoundedWork
+mk_bounded_move Bug_BoundedMoveLatePage BugLatePage CancelledResources
+mk_bounded_move Bug_BoundedMoveSnapshot BugSnapshot NoPartialReads
