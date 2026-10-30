@@ -1946,10 +1946,10 @@ tla/check.sh EngineBuildReentry Bug_EngineBuildReusePage \
 
 ### Configuration counts
 
-The default list contains 282 unique configurations: 74 positive
-outcomes and 208 expected broken/trade-off outcomes. The 285 generated
+The default list contains 286 unique configurations: 76 positive
+outcomes and 210 expected broken/trade-off outcomes. The 289 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 295 total. Explicit
+placement and query-budget configurations are maintained directly, for 299 total. Explicit
 check arguments override the default list.
 
 The three waiter-allocation configurations precede the #186 optimization.
@@ -1960,6 +1960,16 @@ release/reset callback before the published waiter's condition exists.
 These local allocation checks preserve the owner-protocol abstraction;
 they do not extend the proof to FIFO, shared upgrades, deadlocks, storage
 freshness, durable commit or liveness. See [the profiling scope](../bench/RC_PROFILE.md).
+
+The four `PlanGuardBatch` configurations precede the separate experimental
+final-plan guard batching candidate. Scalar and batched decisions agree in
+48 distinct states each. Retaining a mode through a yield and omitting a
+planned space check violate `NoUnsafeAcceptance` at depths four and two.
+Configuration/space properties can change at every yield boundary; the
+equivalence depends on the existing final check being nonyielding and
+examining every planned space. Clock/prefix proofs, schema/lock fences and
+commit behavior are unchanged premises. This bounded local model makes no
+whole-code, durability, freshness or performance claim.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
 positive, 162 controls). A separate frozen merged 238-case run completed

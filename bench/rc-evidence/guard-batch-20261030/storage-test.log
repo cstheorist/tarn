@@ -1,0 +1,448 @@
+storage test storage_test.lua
+autocommit writes
+  ok   insert on shard 1
+  ok   insert on shard 2
+  ok   duplicate PK reported as 1062
+  ok   update ops applied
+  ok   no-op update counts 0 changed rows
+  ok   no-op update counts 1 found row
+  ok   update of a missing row counts 0 found rows
+single-shard commit (TarnCommit!CommitLocal)
+  ok   commit_local ok
+  ok   stale read -> conflict 1213
+cross-shard commit (Prepare/ApplyAt)
+  ok   both participants vote yes
+  ok   decision record is staging on D
+  ok   intents invisible to direct reads
+  ok   commit_local blocked by prepared W lock
+  ok   autocommit waits then conflicts on W lock
+  ok   apply shard 1
+  ok   apply shard 2
+  ok   balances moved atomically
+  ok   locks released
+  ok   apply is idempotent
+prepare conflicts
+  ok   X2 prepared on shard 1
+  ok   W-W conflict votes no (X3)
+  ok   NO leaves a tombstone
+  ok   re-delivered PREPARE after tombstone votes no
+  ok   read of W-locked key votes no
+  ok   reader X5 prepared
+  ok   writer blocked by R lock
+  ok   writer proceeds after R lock released
+  ok   abort restores nothing (intents dropped)
+range locks and unique keys
+  ok   range reader prepared
+  ok   insert into locked range refused
+  ok   insert outside range proceeds
+  ok   X7 claims unique email u@x
+  ok   second claimant of u@x refused
+  ok   prepare of existing unique value votes 1062
+lock-aware reads (strict serializability fix)
+  ok   W1 prepared
+  ok   tarn_read blocks on W lock
+  ok   tarn_read returns the applied value
+  ok   range tarn_read blocks on W lock inside range
+  ok   range tarn_read sees the applied row
+  ok   commit_local with W-locked read key -> conflict
+  ok   read-only validate with W-locked read key -> conflict
+  ok   read-only validate passes once unlocked
+  ok   read of old unique key waits/conflicts while locked
+  ok   read of new unique key after apply
+multi-key reads (issue #10)
+  ok   unique keys: one row per existing key, in key order
+  ok   non-unique keys: every row of each key
+  ok   ... at most limit rows per key
+  ok   autocommit multi-key read waits for a W-locked key
+  ok   ... and returns the applied row
+  ok   a stream request begins the transaction
+counts in storage (issue #52)
+  ok   an equality prefix is counted by the index
+  ok   a whole index
+  ok   a bounded range
+  ok   residual comparisons
+  ok   NULL and NOT NULL
+  ok   a comparison with a NULL field never holds
+  ok   IN lists
+  ok   a field past the end of the tuple takes its fill value
+  ok   excluded rows are left out where the scan covers them
+  ok   an autocommit count waits for a W lock in its range
+  ok   ... and then counts
+  ok   a stream count begins the transaction
+  ok   ... and counts in its snapshot
+row counts for the access path (issue #81)
+bounded optimizer samples (issue #136)
+  ok   ANALYZE returns bounded integer projections and a size hint
+  ok   ANALYZE refuses a mismatched definition
+  ok   ANALYZE refuses excessive samples/noninteger fields
+  ok   ANALYZE refuses excessive samples/noninteger fields
+  ok   memtx counts both prefixes in its indexes
+  ok   an empty prefix counts 0
+recovery (coordinator crashed)
+  ok   R2 prepared on shard 2 only
+  ok   R3 prepared on D only
+  ok   R1 committed by recovery
+  ok   R1 decision recorded
+  ok   R2 fenced at D and aborted
+  ok   R3 participant fenced, txn aborted
+  ok   no aborted intents leaked
+  ok   all locks released
+  ok   late PREPARE after fence votes no
+APPLY outcomes
+  ok   APPLY on the decision shard marked X1 committed
+  ok   APPLY without a participant record reports none
+  ok   APPLY of an aborted participant is an error
+expiry and failed PREPAREs
+  ok   PREPARE of an expired transaction is refused as expired (neither yes nor no)
+  ok   ... without a tombstone
+  ok   PREPARE failing after taking its locks votes no
+  ok   ... and leaves no lock in the index
+  ok   ... so its row stays writable
+stale leaders
+  ok   validate on a demoted node raises READONLY
+  ok   autocommit on a demoted node raises READONLY
+  ok   PREPARE on a demoted node raises READONLY
+  ok   lock-checked read on a demoted node raises READONLY
+  ok   validate of a stream begun in an earlier term -> conflict
+  ok   validate of a stream begun in the current term passes
+  ok   a new election term
+  ok   local commit of a stream begun in an earlier term -> conflict
+  ok   a new election term
+  ok   PREPARE of a stream begun in an earlier term -> no
+  ok   ... nothing written
+  ok   local commit of reads whose stream transaction is gone -> conflict
+  ok   PREPARE of reads whose stream transaction is gone -> no
+  ok   ... with its authoritative NO tombstone
+  ok   local commit of a stream begun in the current term commits
+lock index rebuild with a PREPARE waiting for quorum
+  ok   PREPARE reached the synchronous queue
+  ok   rebuilt index keeps the lock of a PREPARE waiting for quorum
+  ok   the waiting PREPARE returns no vote after its clock epoch changed
+  ok   ... without manufacturing a NO tombstone
+  ok   ... and its lock is gone
+  ok   ... so the row is writable again
+garbage collection
+  ok   a fully aged receipt is collected
+  ok   the same GC pass retains a legacy receipt for the second skew margin
+  ok   the legacy receipt is collected once the full retention passes
+  ok   applied participant record kept while the decision record is STAGING
+  ok   decision record COMMITTED once D applied
+  ok   then every G1 record is collected
+  ok   decision record kept while a participant is prepared
+  ok   collected once nobody is prepared, tombstone too
+  ok   resolve of a vanished transaction writes nothing
+arithmetic updates keep MySQL integer semantics (issue #11)
+  ok   signed BIGINT may go negative
+  ok   ... down to the minimum
+  ok   BIGINT overflow is 1690
+  ok   an unsigned column cannot go below zero: 1690
+  ok   TINYINT range is 1264
+  ok   ... and its maximum fits
+  ok   int_lt compares signed and unsigned exactly
+row locks (READ COMMITTED, #17)
+  ok   X lock granted with the latest row
+  ok   a conflicting X request times out with 1205
+  ok   NOWAIT fails at once with 3572
+  ok   SKIP LOCKED skips the held row and takes the free one
+  ok   S locks are shared
+  ok   S -> X upgrade waits for the other S holder
+  ok   ... and is granted once it is the only holder
+  ok   a waiter queues behind the holder
+  ok   RC commit applies the write and releases the lock
+  ok   the request that closes a cycle fails with 1213 at once
+  ok   ... and the other transaction proceeds
+  ok   tarn_lock_waits reports the wait-for edge
+  ok   ... and the other shards where the waiter holds row locks
+  ok   tarn_lock_victim fails a pending wait with 1213
+  ok   ... seen by the waiter
+  ok   a request that times out after taking locks reports their generation
+  ok   ... and keeps them
+  ok   a request that took no lock reports no generation
+  ok   an autocommit write waits for a row lock, then fails with 1205
+  ok   ... it keeps waiting while the lock is held
+  ok   ... and writes once it is released
+  ok   a serializable commit over a row lock conflicts
+  ok   RC commit with a stale lock generation is refused
+  ok   ... and releases the transaction's locks
+  ok   a closed connection releases its locks
+  ok   ... and its transaction can no longer commit
+  ok   ... nor take new locks
+  ok   ... even once that is forgotten: the generation names the closed session
+  ok   PREPARE without row locks is unaffected
+  ok   PREPARE of an RC transaction whose locks were lost votes NO
+  ok   ... and its ABORT releases the row locks
+  ok   a lock request waits while a prepared transaction W-locks the row
+  ok   ... and reads the applied value
+  ok   a unique-key value lock reads the row holding that value
+  ok   every row lock is released
+locking reads of a primary-key range in one call (issue #49)
+  ok   the first n rows of the range, locked and read
+  ok   SKIP LOCKED: another transaction gets the next free rows; a second range does not skip its locks
+  ok   ... its own locks are not skipped
+  ok   ... the keys it is told to leave out are left out
+  ok   NOWAIT on a held row: 3572, with no lock taken
+  ok   a waiting request times out with 1205
+  ok   a range shorter than n ends with what it has (all free rows, across pages)
+  ok   ... and stays in its prefix
+  ok   a request queues behind the holder of the first row
+  ok   ... and, once the holder deleted the rows it waited for, takes the next one
+  ok   ... having released the lock of the deleted row
+  ok   SKIP LOCKED skips a row a prepared transaction W-locks
+  ok   a waiting request waits for the prepared transaction
+  ok   ... and reads the applied value
+  ok   an unknown space is 1146
+  ok   every row lock is released
+schema changes (ALTER TABLE)
+  ok   PREPARE refuses rows that do not fit the new type (1265)
+  ok   ... and lifts its fence again
+  ok   PREPARE builds a new index under a temporary name
+  ok   a write made with the replaced definition is refused (1412)
+  ok   ... one made with the new definition is not
+  ok   CommitLocal refuses it too
+  ok   ... and PREPARE votes NO
+  ok   ABORT drops the temporary index and lifts the fence
+  ok   PREPARE waits for prepared transactions writing the table, up to its timeout (1205)
+  ok   ... it waits
+  ok   ... until the transaction is applied
+  ok   APPLY changes the format and stores definition version 6
+  ok   ... a repeated APPLY does nothing
+  ok   the fence outlives the ALTER (stored with the definition)
+  ok   an update of a row older than an added field starts from its fill value
+  ok   a unique index the rows violate: 1062, and no index is left
+  ok   a NOT NULL check counts a short row by its fill value (NULL here)
+  ok   ... and a range check by its fill value (0 here)
+  ok   one schema change of a table at a time (job record)
+  ok   ... the pending job can be read back
+  ok   ... taken over by another server
+  ok   ... and ended by its owner
+  ok   two schema changes beginning at once: one runs, the other is told busy
+index builds ahead of the fence (BUILD, vinyl tables)
+  ok   BUILD leaves a memtx table to PREPARE (MVCC aborts a build that writes overtake)
+  ok   BUILD makes the new index under a temporary name
+  ok   ... without fencing writes made with the current definition
+  ok   ... and keeps the index current
+  ok   a write the new unique index refuses fails with 1062, naming the index as it will be named
+  ok   ABORT drops what BUILD made
+  ok   a transaction prepared before BUILD, writing a value the new index will refuse
+  ok   ... BUILD does not see that value yet
+  ok   ... its APPLY lands, dropping the index under construction
+  ok   ... and PREPARE, building it again behind the fence, fails the schema change (1062)
+  ok   checks of more existing rows than tarn.cfg.alter_check_rows are refused (1846)
+  ok   ... before anything is fenced
+  ok   BUILD, PREPARE and APPLY: the index under its own name
+indexes over instant-ADD fields (issue #70)
+  ok   memtx: BUILD defers every index when any field needs a presence check
+  ok   memtx: short non-NULL fill fails PREPARE with 1846, repeatably
+  ok   memtx: short non-NULL fill fails PREPARE with 1846, repeatably
+  ok   memtx: failed check releases the fence
+  ok   memtx: presence checks retain the row-scan bound
+  ok   memtx: bounded refusal does not leave a fence
+  ok   memtx: old-layout writer can prepare before the DDL fence
+  ok   memtx: PREPARE drains writers before checking short tuples
+  ok   memtx: presence check waits for the prepared writer
+  ok   memtx: materialized value and explicit NULL both pass after drain
+  ok   memtx: successful PREPARE is repeatable
+  ok   memtx: ABORT removes both temporary indexes
+  ok   memtx: APPLY without its fence rechecks and fails closed
+  ok   memtx: failed APPLY releases the reconstructed fence
+  ok   memtx: fully present fields can be indexed and published
+  ok   memtx: published APPLY remains idempotent
+  ok   memtx: BUILD accepts explicit MessagePack NULL checks
+  ok   vinyl: BUILD defers every index when any field needs a presence check
+  ok   vinyl: short non-NULL fill fails PREPARE with 1846, repeatably
+  ok   vinyl: short non-NULL fill fails PREPARE with 1846, repeatably
+  ok   vinyl: failed check releases the fence
+  ok   vinyl: presence checks retain the row-scan bound
+  ok   vinyl: bounded refusal does not leave a fence
+  ok   vinyl: old-layout writer can prepare before the DDL fence
+  ok   vinyl: PREPARE drains writers before checking short tuples
+  ok   vinyl: presence check waits for the prepared writer
+  ok   vinyl: materialized value and explicit NULL both pass after drain
+  ok   vinyl: successful PREPARE is repeatable
+  ok   vinyl: ABORT removes both temporary indexes
+  ok   vinyl: APPLY without its fence rechecks and fails closed
+  ok   vinyl: failed APPLY releases the reconstructed fence
+  ok   vinyl: fully present fields can be indexed and published
+  ok   vinyl: published APPLY remains idempotent
+  ok   vinyl: BUILD accepts explicit MessagePack NULL checks
+DROP TABLE under a prepared transaction
+  ok   a transaction prepared with writes to two tables
+  ok   one of them dropped
+  ok   ... APPLY lands the write to the other one
+  ok   ... and releases the locks
+vinyl reader threads
+  ok   TARN_VINYL_READ_THREADS sets vinyl_read_threads
+  ok   by default, the CPUs divided among the instances
+vinyl tables: commit steps that yield
+  ok   a vinyl space
+  ok   autocommit into a vinyl table
+  ok   two PREPAREs of one vinyl row: the second votes yes ...
+  ok   ... and the first, held after its read, votes no
+  ok   ... and the row holds the second one
+  ok   a local commit that meets a W lock taken while it read fails
+  ok   ... and the prepared write is applied
+  ok   a row lock waits for an autocommit write in flight
+  ok   ... then reads the row as it was
+  ok   ... while the write waits for the row lock
+  ok   ... and is applied once it is released
+  ok   a row lock on another row does not wait for a commit in flight
+  ok   ... but one on its row, its old or its new unique value does
+  ok   ... then read the row as it was
+  ok   ... and the write is applied once they are released
+  ok   PREPARE of a schema change waits for a commit in flight
+  ok   ... which fails its fence check (1412)
+  ok   ... and the change is prepared
+  ok   ... and the row is unchanged
+  ok   a read whose row was written by a cross-shard commit while it ran reads again
+  ok   ... and one that meets a W lock taken meanwhile waits for it
+  ok   ... then reads the applied row
+  ok   a vinyl count whose range a cross-shard commit wrote while it ran counts again
+  ok   a vinyl count with a residual
+  ok   vinyl counts a prefix up to where paging the other is sure to read fewer rows
+  ok   ... and not past one page: the plan stays
+  ok   vinyl: budget rows of A in the first page cost that page; A is counted one past it
+  ok   ... read backwards for a backwards page
+  ok   ... fewer rows of A extrapolate from their share of the page
+  ok   ... a B shorter than the page costs its rows
+  ok   ... and with no row of A in the page, falls back to the index size
+  ok   ... as it does without a sample
+  ok   a vinyl count in a stream leaves out the rows the caller wrote
+  ok   no atomic section yielded on vinyl
+jobs: one record per table name
+  ok   jobs on two tables run at once
+  ok   a job on a table that another holds is told busy
+  ok   ... and holds none of its names
+  ok   ... unless it is the same job (a repeated call)
+  ok   with a wait, it waits
+  ok   ... and begins once the other ends
+  ok   a job records its phase
+  ok   an abandoned job is taken over by one server
+  ok   ... a repeated takeover succeeds
+  ok   ... and the old owner cannot change it any more
+  ok   jobs end
+CREATE TABLE, DROP TABLE and TRUNCATE in steps (issue #30)
+  ok   CREATE PREPARE makes the space
+  ok   ... which no catalog names yet
+  ok   ... a repeated PREPARE does nothing
+  ok   CREATE ABORT drops it
+  ok   CREATE APPLY names it in the catalog
+  ok   ... after which ABORT leaves it
+  ok   a CREATE of a name another table has: 1050
+  ok   a transaction prepared with a write to the table
+  ok   TRUNCATE PREPARE waits for it
+  ok   ... meanwhile autocommit reads of the table wait, then fail (1213)
+  ok   ... those of other tables do not
+  ok   ... and writes made with the current definition get 1412
+  ok   ... and a row lock with a read waits
+  ok   ... until the transaction is applied: then it prepares
+  ok   an autocommit count of the held table waits (no row lock left), then fails
+  ok   a transaction that read the held table fails validation
+  ok   the fence and the hold outlive a rebuild from storage (a restart, a new leader)
+  ok   TRUNCATE APPLY empties the table, the applied transaction's row too
+  ok   ... the waiting row lock reads the empty table
+  ok   ... the definition is stored under the new version
+  ok   ... writes encoded before it stay refused (1412)
+  ok   ... those encoded after it are not
+  ok   ... and a repeated APPLY does nothing
+  ok   ... and nothing is held any more
+  ok   TRUNCATE ABORT after PREPARE
+  ok   (a node that knows of no hold reads the table)
+  ok   ... once it is to read the holds again, an autocommit read reads them, then waits (1213)
+  ok   ... releases the table and lowers the fence
+  ok   DROP PREPARE and APPLY drop the space and its catalog entry
+  ok   ... a repeated APPLY does nothing
+  ok   ... and nothing is held
+  ok   a stream reads a vinyl table
+  ok   the table is truncated
+  ok   ... and the stream that read it before fails validation
+  ok   ... one that began after it does not
+global indexes of unique keys without the shard key (issue #14)
+  ok   CREATE makes the global index space on every shard
+  ok   ... with no catalog entry of its own
+  ok   a row and its entry commit together
+  ok   ... the other shard has no entry
+  ok   an entry whose key is taken: 1062, named by the unique key
+  ok   ... also when PREPARE finds it
+  ok   a transaction prepared with an entry
+  ok   DROP PREPARE waits for the table's prepared entries
+  ok   ... until they are applied
+  ok   TRUNCATE empties the global index too
+  ok   an entry written with the definition from before TRUNCATE gets 1412 (fenced by its table)
+  ok   a local commit moves a value from a later row to an earlier one
+  ok   ... and two rows swap their values
+  ok   PREPARE of a transaction that moves a value back: yes
+  ok   ... and APPLY lands both rows
+  ok   PREPARE of a REPLACE that deletes the value's holder: no 1062
+  ok   DROP drops the global index space
+ALTER TABLE adds a global index to a table with rows (issue #88)
+  ok   a fill before PREPARE is refused (1412)
+  ok   PREPARE creates the empty global index space
+  ok   a fill of the run the job was taken from (generation 2 prepared since) is refused
+  ok   ... and so is a late PREPARE of that run
+  ok   the SQL server fills it; entries written again (another fill) count once
+  ok   ... a value another row holds: duplicate
+  ok   the fence outlives a rebuild from storage (a restart, a new leader): 1412
+  ok   APPLY keeps the filled entries
+  ok   ... and clears the stored fence
+  ok   a fill after APPLY (a server that lost the job) is refused
+  ok   ABORT drops the new space
+  ok   ... and the table takes writes again, also after a rebuild from storage
+  ok   a late PREPARE after ABORT is refused and fences nothing
+  ok   a late PREPARE of a change older than one begun since is refused
+  ok   a failed PREPARE of the same run lifts the fence
+  ok   a late PREPARE's undo leaves the fence of the run that took the job over
+  ok   ABORT waits for an outstanding ALTER PREPARE before removing its native candidates
+  ok   ABORT removes all candidates after the earlier PREPARE quiesces
+pages
+  ok   memtx: an unbounded autocommit read returns one page and where to go on
+  ok   memtx: its pages hold every row once, in order
+  ok   memtx: a range with a limit and an end key, in pages
+  ok   memtx: a secondary-index prefix
+  ok   memtx: pages end at scan_page_bytes too
+  ok   memtx: and in a stream
+  ok   memtx: multi-key reads in pages, each key's limit kept
+  ok   memtx: unique keys in one page
+  ok   memtx: LE on index 0 in pages, as one read
+  ok   memtx: LT on index 0 in pages, as one read
+  ok   memtx: GT on index 0 in pages, as one read
+  ok   memtx: LE on index 0 in pages, as one read
+  ok   memtx: EQ on index 1 in pages, as one read
+  ok   memtx: REQ on index 1 in pages, as one read
+  ok   memtx: GE on index 1 in pages, as one read
+  ok   memtx: LT on index 1 in pages, as one read
+  ok   memtx: a W lock past the page does not hold it up
+  ok   ... the page that reaches it does
+  ok   memtx: a tuple as the position
+  ok   vinyl: an unbounded autocommit read returns one page and where to go on
+  ok   vinyl: its pages hold every row once, in order
+  ok   vinyl: a range with a limit and an end key, in pages
+  ok   vinyl: a secondary-index prefix
+  ok   vinyl: pages end at scan_page_bytes too
+  ok   vinyl: and in a stream
+  ok   vinyl: multi-key reads in pages, each key's limit kept
+  ok   vinyl: unique keys in one page
+  ok   vinyl: LE on index 0 in pages, as one read
+  ok   vinyl: LT on index 0 in pages, as one read
+  ok   vinyl: GT on index 0 in pages, as one read
+  ok   vinyl: LE on index 0 in pages, as one read
+  ok   vinyl: EQ on index 1 in pages, as one read
+  ok   vinyl: REQ on index 1 in pages, as one read
+  ok   vinyl: GE on index 1 in pages, as one read
+  ok   vinyl: LT on index 1 in pages, as one read
+  ok   vinyl: a W lock past the page does not hold it up
+  ok   ... the page that reaches it does
+  ok   vinyl: a tuple as the position
+  ok   tarn_lock_range goes on after a page cut by its bytes
+  ok   four unbounded reads of 200,000 rows each under a 40 MiB heap margin all complete
+  ok   a read short of Lua memory fails with 1041
+  ok   ... in a scan with an end key too
+  ok   ... and the node stays up
+  ok   memtx: a scan with an end key fails with 1041 when the heap runs short as it scans
+  ok   vinyl: an autocommit read fails with 1041 when the heap runs short as it scans
+  ok   a read in a stream fails with 1041 when the heap runs short as it scans
+  ok   ... the scans stopped where they ran short (3 more 1041s), and the node stays up
+  ok   garbage pressure reaches the heap reserve while preserving native-core headroom
+  ok   a heap of garbage at the limit is collected without a manual collect, and calls succeed
+  ok   the lazy delivery worker survives recovered Lua heap pressure
+
+415 passed, 0 failed

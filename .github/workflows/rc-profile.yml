@@ -104,10 +104,10 @@ jobs:
       - name: Stop the owned fixture and retain its state
         if: always()
         run: KEEP=1 scripts/cluster.sh stop -d /tmp/rc-cluster
-      - name: Isolated five-pair RF3 condition-allocation pilot
+      - name: Isolated five-pair RF3 plan-guard allocation pilot
         run: |
           python3 bench/rc_compare.py --bin /tmp/rc-build/tarn-server --out /tmp/rc-results/paired \
-            --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' --seconds 5
+            --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' --seconds 5 --hypothesis plan-guards
       - name: Preserve failed-run storage state
         if: failure()
         run: tar -czf /tmp/rc-results/failed-cluster.tar.gz -C /tmp rc-cluster

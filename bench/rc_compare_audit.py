@@ -23,21 +23,55 @@ def audit_mode(data, source, legacy_session_flag=False):
     assert receipt['environment']['TARN_CHECK_LOCKS'] == '0'
     assert receipt['environment']['TARN_CHECK_YIELDS'] == '0'
     assert receipt['environment']['TARN_VINYL_CACHE_MB'] == '0'
-    eager = data['paired-fixture/eager/lua/tarn.lua']
-    deferred = data['paired-fixture/deferred/lua/tarn.lua']
-    assert sha(eager) == receipt['lua_sha256']['eager']
-    assert sha(deferred) == receipt['lua_sha256']['deferred']
-    constructor = b'local req = {txid = txid, mode = mode, entry = e, cond = fiber.cond(), held = held}'
-    publish = b'    if cur ~= nil then table.insert(e.queue, 1, req) else e.queue[#e.queue + 1] = req end'
-    assert eager.count(constructor) == eager.count(publish) == 1
-    assert deferred == eager.replace(constructor, constructor.replace(b'cond = fiber.cond(), ', b'')).replace(
-        publish, b'    req.cond = fiber.cond()\n' + publish)
-    for path, raw in data.items():
-        if path.startswith('paired-fixture/eager/') and path != 'paired-fixture/eager/lua/tarn.lua':
-            assert raw == data[path.replace('/eager/', '/deferred/', 1)], path
+    hypothesis = receipt.get('hypothesis', 'condition')
+    variants = {'condition': ('eager', 'deferred'), 'plan-guards': ('scalar', 'batched')}[hypothesis]
+    assert tuple(receipt.get('variants', variants)) == variants
+    copies = []
+    for variant in variants:
+        prefix = f'paired-fixture/{variant}/'
+        files = {p[len(prefix):]: raw for p, raw in data.items() if p.startswith(prefix)}
+        assert sha(files['lua/tarn.lua']) == receipt['lua_sha256'][variant]
+        if 'lua_file_sha256' in receipt:
+            assert {p: sha(raw) for p, raw in files.items() if p.startswith('lua/') and p.endswith('.lua')} == receipt['lua_file_sha256'][variant]
+        copies.append(files)
+    control, candidate = copies
+    assert control.keys() == candidate.keys()
+    eager, deferred = control['lua/tarn.lua'], candidate['lua/tarn.lua']
+    if hypothesis == 'condition':
+        constructor = b'local req = {txid = txid, mode = mode, entry = e, cond = fiber.cond(), held = held}'
+        publish = b'    if cur ~= nil then table.insert(e.queue, 1, req) else e.queue[#e.queue + 1] = req end'
+        assert eager.count(constructor) == eager.count(publish) == 1
+        assert deferred == eager.replace(constructor, constructor.replace(b'cond = fiber.cond(), ', b'')).replace(
+            publish, b'    req.cond = fiber.cond()\n' + publish)
+        changed = {'lua/tarn.lua'}
+    else:
+        before = b'''function BK.fresh_plans(plans)
+    M.fresh.clock_check(); M.fresh.controls(); writable()
+    for _, p in ipairs(plans) do M.fresh.space(p[P_SPACE]) end
+end'''
+        after = b'''function BK.fresh_plans(plans)
+    M.fresh.clock_check(); M.fresh.plans(plans)
+end'''
+        assert eager.count(before) == 1 and deferred == eager.replace(before, after)
+        original = control['lua/tarn_fresh.lua']
+        space = b'    function F.space(sp)\n        local mode = F.mode()\n'
+        anchor = b'    -- These ordinary Lua guards run through the public Lua C API before\n'
+        methods = b'''    function F.space(sp) return space_mode(sp, F.mode()) end
+    -- Only used inside the existing nonyielding final plan check. This
+    -- mode is local to one invocation and cannot survive a yield/barrier.
+    function F.plans(plans)
+        local mode = F.controls()
+        c.writable()
+        for _, plan in ipairs(plans) do space_mode(plan[1], mode) end
+    end
+'''
+        assert original.count(space) == original.count(anchor) == 1
+        assert candidate['lua/tarn_fresh.lua'] == original.replace(space, b'    local function space_mode(sp, mode)\n').replace(anchor, methods + anchor)
+        changed = {'lua/tarn.lua', 'lua/tarn_fresh.lua'}
+    assert {p for p in control if control[p] != candidate[p]} == changed
     sessions = receipt['sessions']
     expected_order = [(pair, variant) for pair in range(5)
-                      for variant in (('eager', 'deferred') if pair % 2 == 0 else ('deferred', 'eager'))]
+                      for variant in (variants if pair % 2 == 0 else tuple(reversed(variants)))]
     assert [(s['pair'], s['variant']) for s in sessions] == expected_order
     totals = collections.Counter()
     measured = {}
@@ -99,8 +133,8 @@ def audit_mode(data, source, legacy_session_flag=False):
     for shape in ('uncontended', 'unrelated', 'hot'):
         pairs = []
         for pair in range(5):
-            e, d = (measured[pair, variant, shape] for variant in ('eager', 'deferred'))
-            pairs.append(dict(pair=pair, eager=e, deferred=d, goodput_ratio=d['goodput']/e['goodput'],
+            e, d = (measured[pair, variant, shape] for variant in variants)
+            pairs.append(dict(pair=pair, **{variants[0]: e, variants[1]: d}, goodput_ratio=d['goodput']/e['goodput'],
                               lua_allocation_ratio=d['lua_bytes_per_ack']/e['lua_bytes_per_ack'],
                               tx_cpu_ratio=d['tx_cpu_seconds_per_ack']/e['tx_cpu_seconds_per_ack']))
         original = next(s for s in receipt['summary'] if s['shape'] == shape)

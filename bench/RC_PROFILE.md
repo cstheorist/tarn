@@ -181,6 +181,46 @@ identify a narrower investigation target. They justify neither caching
 membership/space guards nor eliding any request-specific quorum barrier.
 The owned fixture is stopped and production guards remain unchanged.
 
+### Final plan-guard hypothesis
+
+`BK.fresh_plans` runs inside the existing nonyielding final commit check.
+It checks control spaces, then rebuilds the same replication-mode metadata
+for every planned row. An isolated candidate keeps one mode value local to
+that invocation while still checking every planned user space. It preserves
+clock/prefix barriers, all control-space checks and the writable check;
+it never carries a mode through a yield or into another invocation. No
+production source is changed. `rc_compare.py --hypothesis plan-guards`
+reproduces the two copied-source edits with scalar/batched lanes.
+
+The model precedes this candidate. `PlanGuardScalar` and `PlanGuardBatch`
+make identical decisions in 48 distinct states each. Broken controls that
+reuse mode through a yield or omit a planned space violate
+`NoUnsafeAcceptance` at depths four and two. This proves only a finite local
+guard equivalence under the nonyielding premise, not whole-code refinement,
+freshness, locking, durability or liveness. Those contracts remain unchanged
+and require their existing gates before any production proposal.
+
+Five alternating helper-only pairs on RF3/fsync give the following median
+batched/scalar ratios. Each sample contains 1,000 calls; both paths use the
+same process, data, pre-timing GC and cooperative yield every ten calls.
+All individual pairs remain in [the raw receipt](rc-evidence/guard-batch-20261030/summary.json).
+
+| Planned rows | Elapsed ratio | Lua allocation ratio |
+|---:|---:|---:|
+| 1 | 0.712 | 0.516 |
+| 2 | 0.525 | 0.348 |
+| 8 | 0.196 | 0.118 |
+| 32 | 0.057 | 0.032 |
+
+Both paths refuse a changed unsupported mode between invocations and an
+asynchronous space at the first or last position. The isolated candidate
+passes all 415 existing storage checks on three RF1 shards, native disabled,
+including both engines and lock/yield assertions. These are helper costs
+and storage controls, not transaction throughput, independent-host evidence
+or complete SQL/RF3 fault qualification. The four-mode RF3/fsync end-to-end
+pilot is the next gate; its result is pending. The condition-allocation
+candidate and its negative results remain separate evidence.
+
 ## Retained collector failure
 
 [The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)
