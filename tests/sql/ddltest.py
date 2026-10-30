@@ -1279,16 +1279,24 @@ return true""")
             a1 = time.time()
             assert not ddl.is_alive() and not ddl_errors, ddl_errors
         finally:
+            cleanup_errors = []
             for node in installed:
-                ev(node, "local h=__index_build_review; if h then h.release=true; tarn_alter_build=h.old end; return true")
+                try:
+                    ev(node, "local h=__index_build_review; if h then h.release=true; tarn_alter_build=h.old end; return true")
+                except Exception as error:
+                    cleanup_errors.append((node, repr(error)))
             if ddl.ident is not None:
                 ddl.join(30)
             done.set()
             if t.ident is not None:
                 t.join(30)
             for node in installed:
-                state = ev(node, "local h=__index_build_review; __index_build_review=nil; return {timed_out=h and h.timed_out or false}")
-                self.check(not state['timed_out'], "build witness released before its safety deadline")
+                try:
+                    state = ev(node, "local h=__index_build_review; __index_build_review=nil; return {timed_out=h and h.timed_out or false}")
+                    self.check(not state['timed_out'], "build witness released before its safety deadline")
+                except Exception as error:
+                    cleanup_errors.append((node, repr(error)))
+            self.check(not cleanup_errors, f"every build witness restored: {cleanup_errors}")
         within = sum(1 for (s0, s1) in lat if a0 <= s0 and s1 <= a1)
         worst = max((s1 - s0 for (s0, s1) in lat if s0 <= a1 and s1 >= a0), default=0.0)
         print(f"    ADD INDEX on {rows} {'vinyl' if vinyl else 'memtx'} rows: {a1 - a0:.2f} s; "
