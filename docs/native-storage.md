@@ -100,6 +100,17 @@ uses `luaT_state()` as an entry stack, restores its stack top and returns
 unavailable on a missing helper, invalid result or protected error. Exact
 transaction IDs enter Lua as uint64 values.
 
+A ready bucket cache before the barrier is not a promise that the native
+path will serve after it. The actual `box.status` callback conservatively
+invalidates that cache even for a notification with unchanged role/term.
+Native entries must recheck it and can hand back without reading data.
+The RF3 fixture separates a controlled native-path input/stream witness
+from delivery of that real callback during the pending stream barrier;
+the latter requires the stale-bucket handback and exact owned-transaction
+cleanup. Neither refreshes caches while the native call is pending or
+weakens a production guard. [Verification](verification.md#strong-read-freshness-stream-provenance-and-locking-replies-issue-130)
+documents the original failure, diagnostic limits and exported evidence.
+
 These guards do not yield, publish/access native State or perform I/O.
 Their heap eligibility predicate observes free space without requesting a
 collection. The State stores no LuaJIT FFI callback addresses: ABI 13's
