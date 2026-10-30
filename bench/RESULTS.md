@@ -6,6 +6,10 @@ Independent physical-host validation is tracked separately in
 [#211](https://github.com/cstheorist/tarn/issues/211). Its local functional
 controls do not replace or qualify the historical measurements below.
 
+The separate [typed range-read study](PUSHDOWN.md) records matched
+projection/partial-aggregate response bytes, RPCs, process CPU and timing,
+with complete repeated evidence and explicit shared-host/RF1 limits.
+
 The separate [bounded native batch experiment](NATIVE_BATCH.md) measures
 one opt-in read kernel on an Apple M4 Max / Docker ARM64 host. Its matched
 Lua/native data, SQL regressions and raw evidence are independent of the
