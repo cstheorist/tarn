@@ -1,0 +1,354 @@
+{
+  "schema": 1,
+  "run": 41108078099,
+  "head": "8c33a9e844c148cdf39e92ed22865a6fa66763d2",
+  "compiled_merge_source": "6a6c59e98d3da86ac51020f273a884ebc0fabdde",
+  "binaries": {
+    "tarn-server": "7e059afd8dcfba7c5c09b6c4ce2d3f1b0f2f13a0cd3d03ce1f2cf42f8923fac2",
+    "libtarn_storage.so": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae"
+  },
+  "manifest_sha256": "6a8d4389156a098b0ac1f0735b9358a6b547a53601d1d8afa4d6cce7ab30907d",
+  "lanes": [
+    {
+      "artifact": "contracts-memtx-disabled-41108078099",
+      "engine": "memtx",
+      "native": false,
+      "records": 60,
+      "failures": 0,
+      "result_sha256": "9380f45f010b9afff7e677a3c3da473fd75f34f2b78ade43b84338698e025cd9",
+      "storage_sha256": "f1913981368a1b364ee6cc4c77e99cdd695d46cbb1c98965bd32c85bc77a73fa",
+      "diagnostic_assignment": {
+        "id": "diagnostic_assignment_protocol",
+        "prepared": true,
+        "classification": "difference",
+        "results": [
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  1
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  70
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            }
+          ]
+        ],
+        "passed": true
+      }
+    },
+    {
+      "artifact": "contracts-memtx-enabled-41108078099",
+      "engine": "memtx",
+      "native": true,
+      "records": 60,
+      "failures": 0,
+      "result_sha256": "177bd99cec59aaa2563da98bba35bb12580242272aa39dd741c99181c70221e3",
+      "storage_sha256": "5a39f9f8af7480ae0c511e2c3b4d2042bd57a9d344dee6f1e2846f1fcdcd1977",
+      "diagnostic_assignment": {
+        "id": "diagnostic_assignment_protocol",
+        "prepared": true,
+        "classification": "difference",
+        "results": [
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  1
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  70
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            }
+          ]
+        ],
+        "passed": true
+      }
+    },
+    {
+      "artifact": "contracts-vinyl-disabled-41108078099",
+      "engine": "vinyl",
+      "native": false,
+      "records": 60,
+      "failures": 0,
+      "result_sha256": "ce9537e3b7eff1472f29cf6e1df163d9f7aa0d45ca306ac4a914fce4051f81b8",
+      "storage_sha256": "388aa5cc8222fcefa69e04ba54606eeef6b1cb6d1a3d935cd3ce9e8162d43076",
+      "diagnostic_assignment": {
+        "id": "diagnostic_assignment_protocol",
+        "prepared": true,
+        "classification": "difference",
+        "results": [
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  1
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  70
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            }
+          ]
+        ],
+        "passed": true
+      }
+    },
+    {
+      "artifact": "contracts-vinyl-enabled-41108078099",
+      "engine": "vinyl",
+      "native": true,
+      "records": 60,
+      "failures": 0,
+      "result_sha256": "dc704f7bb78340b4a80610d12494d2ee274c75a17d4d789b6bdd7dcfa5bbf103",
+      "storage_sha256": "a715f13618bd09d8dd815df16bb3d8b0a338baf088c6f4518090da830c9d1396",
+      "diagnostic_assignment": {
+        "id": "diagnostic_assignment_protocol",
+        "prepared": true,
+        "classification": "difference",
+        "results": [
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  1
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "value": 0
+              },
+              "messages": [],
+              "saved": [
+                [
+                  70
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "prior_count": 1,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            },
+            {
+              "prior_count": 70,
+              "result": {
+                "error": [
+                  1295,
+                  "HY000"
+                ]
+              },
+              "messages": [
+                [
+                  "Error",
+                  1295
+                ]
+              ],
+              "saved": [
+                [
+                  7
+                ]
+              ]
+            }
+          ]
+        ],
+        "passed": true
+      }
+    }
+  ],
+  "scope": "Original release contract component evidence only; full CI for this source failed separately. Current-head CI remains required. This workflow used WAL write, not fsync. Source provenance is the recorded workflow merge identity, not an all-source build-input hash receipt."
+}
