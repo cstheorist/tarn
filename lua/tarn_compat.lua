@@ -65,7 +65,8 @@ end
 function M.report(cfg, layout, native, ready)
     M.check()
     local format = M.current()
-    assert(ready and format == M.format and box.space._tarn_move and
+    assert(ready and format == M.format and box.space._tarn_meta:get{'shard_id'} and
+           box.space._tarn_move and
            box.space._tarn_recv and box.space._tarn_recv.engine == 'vinyl',
            'tarn: storage format migration/initialization incomplete')
     return {'ok', M.protocol, format, cfg.shard_id, box.info.version, layout, native, cfg.max_txn_age}

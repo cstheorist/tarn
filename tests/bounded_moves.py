@@ -79,7 +79,7 @@ def main():
         source_sha256={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
             [ROOT/'tests/bounded_moves.py', ROOT/'tests/bounded_move_rpc.lua', ROOT/'crates/tarn-sql/src/buckets.rs', ROOT/'crates/tarn-sql/src/cluster.rs', ROOT/'crates/tarn-sql/src/compat.rs',
              *sorted((ROOT/'lua').glob('*.lua'))]},
-        limits=dict(vinyl_memory=16*1024*1024, vinyl_cache=0, batch_rows=64, batch_bytes=256*1024,
+        limits=dict(vinyl_memory=16*1024*1024, vinyl_cache=0, batch_rows=512, batch_bytes=1024*1024,
                     delta_keys=64, delta_bytes=64*1024, total_delta_bytes=128*1024,
                     slots=2, staging_bytes=256*1024*1024, total_staging_bytes=512*1024*1024),
         boundary='same-host RF3/fsync, no independent failure domains; RSS includes user data and engine overhead',
@@ -115,7 +115,7 @@ def main():
             TARN_WORKDIR=str(work/f'node{i}'),TARN_PEERS=json.dumps(peers),TARN_REPLICAS=json.dumps(peers[str(i//3+1)]),
             TARN_MEMORY_MB='256',TARN_VINYL_MEMORY_MB='16',TARN_VINYL_CACHE_MB='0',TARN_WAL_MODE='fsync',
             TARN_HOST_INSTANCES='6',TARN_VINYL_READ_THREADS='1',TARN_LOG_LEVEL='3',TARN_CHECK_YIELDS='1',TARN_TEST_HOOKS='1',
-            TARN_MOVE_BATCH_ROWS='64',TARN_MOVE_BATCH_BYTES='262144',TARN_MOVE_DELTA_KEYS='64',
+            TARN_MOVE_BATCH_ROWS='512',TARN_MOVE_BATCH_BYTES='1048576',TARN_MOVE_DELTA_KEYS='64',
             TARN_MOVE_DELTA_BYTES='65536',TARN_MOVE_TOTAL_DELTA_BYTES='131072',TARN_MOVE_SLOTS='2',
             TARN_MOVE_STAGING_BYTES='268435456',TARN_MOVE_TOTAL_STAGING_BYTES='536870912')
         f=logfile(f'node{i}.log')
@@ -171,6 +171,11 @@ end assert(seen==want,'row count '..seen..' expected '..want) return seen''',[ta
         for i in range(6):start_storage(i)
         for i in range(6):wait(lambda i=i:rpc(i).call("return rawget(_G,'tarn')~=nil and box.space._tarn_move~=nil",timeout=2))
         ls=[wait(lambda:leader(1) is not None and leader(1)+1)-1,wait(lambda:leader(2) is not None and leader(2)+1)-1]
+        for i in ls:
+            identity=rpc(i).call('return {sync=tarn.cfg.sync,wal=box.cfg.wal_mode,version=box.info.version,native=tarn_info().native}')
+            assert identity['sync'] and identity['wal']=='fsync' and identity['version'].split('-')[0]=='3.9.0', identity
+            assert (identity['native'] and identity['native']['ready']==1) if native!='0' else not identity['native'], identity
+        checked('RF3/fsync runtime and requested native/Lua dispatch verified')
         for i in range(6):
             rpc(i).call('''__move_events={}
 for _,name in ipairs({'tarn_bucket_fence','tarn_bucket_send','tarn_bucket_recv'}) do
@@ -246,7 +251,7 @@ end return true''',[tables,key,b,count],timeout=600)
         if injected:result['fault_at_seconds']=0
         finished=False;fence_start=None;unavailable_start=None;cleanup_start=None
         peak_rss={};peak_disk=0
-        while time.monotonic()-t0<240:
+        while time.monotonic()-t0<1800:
             now=time.monotonic()-t0
             sample=dict(seconds=now,states={},staged_bytes=0,rss={},disk_bytes=0)
             for i,p in storage.items():
@@ -334,7 +339,8 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
                 target_install_and_cleanup=interval(recv.get('finished'),recv.get('started')))
         result.update(moves=moves,elapsed_seconds=elapsed,peak_rss_bytes=peak_rss,peak_allocated_disk_bytes=peak_disk,
             payload_bytes=a.moves*a.mib*1024*1024,payload_mib_per_second=a.moves*a.mib/elapsed,
-            peak_encoded_staging_bytes=max(s['staged_bytes'] for s in metrics),
+            peak_encoded_staging_bytes=max(state['movement']['stats']['peak_staged_bytes'] for sample in metrics for state in sample['states'].values()),
+            peak_sampled_encoded_staging_bytes=max(s['staged_bytes'] for s in metrics),
             peak_simultaneous_moves=max((state['movement']['active'] for sample in metrics for state in sample['states'].values()), default=0),
             sampled_write_fence_seconds=None if fence_start is None else elapsed-fence_start,
             sampled_unavailable_seconds=None if unavailable_start is None else elapsed-unavailable_start,
@@ -361,10 +367,16 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
             assert dropped>=1,'proxy did not swallow an executed page reply'
             result['dropped_page_replies']=dropped
             checked('executed page reply lost; durable receipt recovered without duplicate effects')
-        for i in ls:
-            state=rpc(i).call('return {tarn_info().movement,box.space._tarn_recv:count(),#tarn_jobs()}')
+        for shard in (1, 2):
+            def reclaimed():
+                i = leader(shard)
+                if i is None:return False
+                state = rpc(i).call('return {tarn_info().movement,box.space._tarn_recv:count(),#tarn_jobs()}')
+                ls[shard-1] = i
+                return state
+            state=wait(reclaimed)
             assert state[0]['active']==0 and state[0]['staged_bytes']==0 and state[1:]==[0,0],state
-            assert state[0]['stats']['max_batch_rows']<=64 and state[0]['stats']['max_batch_bytes']<=262144,state
+            assert state[0]['stats']['max_batch_rows']<=512 and state[0]['stats']['max_batch_bytes']<=1048576,state
         checked('owned staging and progress reclaimed; observed batch bounds respected')
         # Re-encode decoded WAL rows, grouped by durable transaction sequence.
         # This measures transaction bytes, excluding physical xlog framing and

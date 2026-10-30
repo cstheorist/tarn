@@ -137,19 +137,13 @@ local function ensure_schema()
     local meta = space('_tarn_meta', {{'key', 'string'}, {'value', 'any', is_nullable = true}})
     meta:create_index('pk', {parts = {'key'}, if_not_exists = true})
 
-    if box.space._tarn_meta:get{'shard_id'} == nil then
-        -- The new shard's first synchronous write. Made while the replicas
-        -- are still joining, it cannot reach its quorum (they cannot
-        -- acknowledge it yet): it times out after replication_synchro_timeout,
-        -- and so does the first checkpoint of a joining replica that
-        -- received it, which waits for its confirmation and stops the
-        -- replica when it fails (Tarantool 3.9). So first let the replicas
-        -- join (for up to a minute).
+    if meta:get{'shard_id'} == nil then
+        -- The first synchronous write must wait until joining replicas can
+        -- acknowledge it. Keep shard_id as the completed-schema signal below.
         local deadline = clock.monotonic() + 60
         while M.cfg.sync and not replicas_follow() and clock.monotonic() < deadline do
             fiber.sleep(0.1)
         end
-        box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
     end
     -- The synchronous format marker must precede any format-2 DDL/data.
     M.compatibility.persist()
@@ -7531,6 +7525,9 @@ local function setup_schema()
                             'tarn_storage.ts_commit_local', 'tarn_storage.ts_validate'}) do
             box.schema.func.create(f, {language = 'C', if_not_exists = true})
         end
+    end
+    if box.space._tarn_meta:get{'shard_id'} == nil then
+        box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
     end
     migrate_legacy_job()
     M.engine.fresh()

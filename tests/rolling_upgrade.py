@@ -358,6 +358,24 @@ def maintenance(args):
             ev(c.nodes[target], 'box.ctl.promote(); return true')
             assert wait('format-2 handoff', lambda: c.leader(shard) == target)
             c.ready(target)
+        # A warm pool can still name the demoted leader. Exercise and retire
+        # that pool with a read/lock/rollback probe before canary mutations.
+        # Only the confirmed 40001 refusal is retried; no user write is sent.
+        for slot in (0, 1):
+            def ready_pool():
+                with c.sql(slot, 'upgrade') as sql:
+                    try:
+                        q(sql, 'BEGIN')
+                        q(sql, 'SELECT id FROM t WHERE id=1 FOR UPDATE')
+                        q(sql, 'ROLLBACK')
+                        return True
+                    except pymysql.MySQLError as error:
+                        q(sql, 'ROLLBACK')
+                        if error.args[0] != 1213:
+                            raise
+                        c.event('warm_pool_refused_demoted_leader', code=error.args[0], slot=slot)
+                        return False
+            wait('gateway leader rediscovery', ready_pool)
         c.canary((0, 1))
         c.stop('g0'); c.stop('g1')
         wait_empty(c.leaders())

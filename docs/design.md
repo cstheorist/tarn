@@ -2195,7 +2195,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Backfill | no errors | 3757 | 7686 | 21 | 00s |  |
 | BackfillDDL | no errors | 33 | 42 | 11 | 00s |  |
 | BootstrapCount | no errors | 2160 | 2592 | 4 | 00s |  |
-| BoundedMove | no errors | 6230 | 17145 | 28 | 02s |  |
+| BoundedMove | no errors | 6230 | 17145 | 28 | 00s |  |
 | Bug_BackfillAbortAfterApply | violates PublishedIndexCorrect | 1249 | 2126 | 11 | 00s | 11 |
 | Bug_BackfillDDLNoFinisherSerialization | violates PublishedIndexMatches | 65 | 90 | 9 | 00s | 9 |
 | Bug_BackfillDDLNoQuiescence | violates NoLateAbortedIndex | 33 | 42 | 6 | 00s | 6 |
@@ -2208,14 +2208,14 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_BackfillSkipDrain | violates OldProjectionPreserved | 631 | 1054 | 8 | 00s | 8 |
 | Bug_BackfillStaleBatch | violates AbortedUndoClean | 86 | 105 | 6 | 00s | 6 |
 | Bug_BackfillWrongOldPad | violates OldProjectionPreserved | 11 | 11 | 4 | 00s | 4 |
-| Bug_BoundedMoveBatch | violates BoundedWork | 1646 | 3436 | 8 | 01s | 8 |
-| Bug_BoundedMoveDelta | violates AcknowledgedEffects | 6863 | 17929 | 19 | 02s | 19 |
-| Bug_BoundedMoveDrain | violates AcknowledgedEffects | 7899 | 21506 | 17 | 02s | 17 |
-| Bug_BoundedMoveLatePage | violates CancelledResources | 46 | 64 | 4 | 01s | 4 |
-| Bug_BoundedMovePublish | violates CompletePublication | 4372 | 11121 | 12 | 01s | 12 |
-| Bug_BoundedMoveReclaim | violates NoPartialReads | 2385 | 5293 | 9 | 01s | 9 |
-| Bug_BoundedMoveSnapshot | violates NoPartialReads | 5542 | 15227 | 17 | 01s | 17 |
-| Bug_BoundedMoveVisibility | violates NoPartialReads | 4786 | 12585 | 13 | 01s | 13 |
+| Bug_BoundedMoveBatch | violates BoundedWork | 1867 | 4007 | 9 | 00s | 8 |
+| Bug_BoundedMoveDelta | violates AcknowledgedEffects | 6893 | 17991 | 19 | 00s | 19 |
+| Bug_BoundedMoveDrain | violates AcknowledgedEffects | 7914 | 21551 | 17 | 00s | 17 |
+| Bug_BoundedMoveLatePage | violates CancelledResources | 89 | 129 | 4 | 00s | 4 |
+| Bug_BoundedMovePublish | violates CompletePublication | 4748 | 12437 | 13 | 00s | 12 |
+| Bug_BoundedMoveReclaim | violates NoPartialReads | 2396 | 5335 | 9 | 00s | 9 |
+| Bug_BoundedMoveSnapshot | violates NoPartialReads | 5673 | 15579 | 18 | 00s | 17 |
+| Bug_BoundedMoveVisibility | violates NoPartialReads | 4773 | 12545 | 13 | 00s | 13 |
 | Bug_ClusterBackupDrain | violates NoLostAcknowledgement | 40367 | 182089 | 12 | 00s | 12 |
 | Bug_ClusterBackupEarlyCopy | violates CoherentData | 43988 | 157326 | 9 | 00s | 9 |
 | Bug_ClusterBackupMetadata | violates MetadataRetained | 31165 | 142161 | 11 | 00s | 11 |
@@ -2451,8 +2451,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | LockCopy | no errors | 290 | 1127 | 6 | 00s |  |
 | LockReplyOwnership | no errors | 184 | 437 | 12 | 00s |  |
 | LogicalClockExpiry | no errors | 85476 | 387918 | 19 | 01s |  |
-| Move_RC | no errors | 1531251 | 11100418 | 31 | 09min 46s |  |
-| Move_Scan | no errors | 1746444 | 10990896 | 27 | 12min 58s |  |
+| Move_RC | stopped at the time limit, no violation so far | 75299 | 305289 | ≥14 | - |  |
+| Move_Scan | no errors | 1746444 | 10990896 | 27 | 01min 36s |  |
 | Move_ScanFailover | no errors | 1012888 | 5683034 | 27 | 15min 56s |  |
 | Move_ScanPrepare | no errors | 20568816 | 174490000 | 29 | 48min 06s |  |
 | NativeKeyBatch | no errors | 105 | 117 | 9 | 00s |  |
