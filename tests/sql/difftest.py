@@ -653,9 +653,8 @@ CASES = [
     ("ALTER TABLE al ENGINE = InnoDB, ALGORITHM = INPLACE, LOCK = NONE", "ddl:al"),
     ("ALTER TABLE al DISABLE KEYS", "q"),
     ("ALTER TABLE al ENABLE KEYS", "q"),
-    ("ALTER TABLE fkc ADD CONSTRAINT fk1 FOREIGN KEY (p) REFERENCES t1 (id)", "ddl:fkc"),
-    ("ALTER TABLE fkc DROP COLUMN p", "err"),
-    ("ALTER TABLE fkc DROP FOREIGN KEY fk1", "ddl:fkc"),
+    # New unenforced declarations are refused (intentional MySQL divergence).
+    # Their exact errors/atomicity and legacy migration are in integritytest.py.
     ("ALTER TABLE fkc DROP FOREIGN KEY fk1", "err"),
     ("RENAME TABLE fkc TO fkc2", "q"),
     ("SELECT * FROM fkc", "err"),

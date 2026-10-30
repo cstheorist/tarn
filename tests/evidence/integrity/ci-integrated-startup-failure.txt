@@ -1,0 +1,36 @@
+https://github.com/cstheorist/tarn/actions/runs/40927561808/job/123637711708
+2026-10-29T18:32:39.2034553Z 4. a new cluster with bucket_count = 4096
+2026-10-29T18:32:39.2034808Z Traceback (most recent call last):
+2026-10-29T18:32:39.2042834Z   File "/home/runner/work/tarn/tarn/tests/sql/bucketcount.py", line 209, in <module>
+2026-10-29T18:32:39.2052764Z     main()
+2026-10-29T18:32:39.2053280Z   File "/home/runner/work/tarn/tarn/tests/sql/bucketcount.py", line 203, in main
+2026-10-29T18:32:39.2053731Z     failures = Test(args).run()
+2026-10-29T18:32:39.2053965Z                ^^^^^^^^^^^^^^^^
+2026-10-29T18:32:39.2054321Z   File "/home/runner/work/tarn/tarn/tests/sql/bucketcount.py", line 188, in run
+2026-10-29T18:32:39.2054670Z     self.forget_map(4096)
+2026-10-29T18:32:39.2055024Z   File "/home/runner/work/tarn/tarn/tests/sql/bucketcount.py", line 129, in forget_map
+2026-10-29T18:32:39.2055381Z     self.start_server()
+2026-10-29T18:32:39.2055732Z   File "/home/runner/work/tarn/tarn/tests/sql/bucketcount.py", line 97, in start_server
+2026-10-29T18:32:39.2056238Z     raise RuntimeError(f"the SQL server stopped (exit code {p.returncode}); see tarn1.log")
+2026-10-29T18:32:39.2056661Z RuntimeError: the SQL server stopped (exit code 1); see tarn1.log
+2026-10-29T18:32:39.7246276Z BUCKET COUNT TEST FAILED; logs kept in /tmp/tarn-bucketcount
+2026-10-29T18:32:39.7307296Z ##[error]--- tarn-server
+2026-10-29T18:32:39.021684Z ERROR tarn_server: cannot connect to the cluster: shard 2 has no reachable leader (127.0.0.1:4321 is read-only)
+2026-10-29T18:32:39.7327235Z ##[error]Traceback (most recent call last):
+2026-10-29T18:32:39.7345657Z ##[error]    raise RuntimeError(f"the SQL server stopped (exit code {p.returncode}); see tarn1.log")
+2026-10-29T18:32:39.7364004Z ##[error]RuntimeError: the SQL server stopped (exit code 1); see tarn1.log
+2026-10-29T18:32:39.7382433Z ##[error]BUCKET COUNT TEST FAILED; logs kept in /tmp/tarn-bucketcount
+2026-10-29T18:32:39.7402334Z ##[error]Process completed with exit code 1.
+2026-10-29T18:32:39.7480009Z ##[group]Run actions/upload-artifact@v4
+2026-10-29T18:32:39.7480379Z with:
+2026-10-29T18:32:39.7480639Z   name: integrity-40927561808-1
+2026-10-29T18:32:39.7481006Z   path: integrity-evidence
+2026-10-29T18:32:39.7481310Z   retention-days: 30
+2026-10-29T18:32:39.7481593Z   if-no-files-found: warn
+2026-10-29T18:32:39.7481880Z   compression-level: 6
+2026-10-29T18:32:39.7482174Z   overwrite: false
+2026-10-29T18:32:39.7482453Z   include-hidden-files: false
+2026-10-29T18:32:39.7482764Z env:
+2026-10-29T18:32:39.7483017Z   CARGO_TERM_COLOR: always
+2026-10-29T18:32:39.7483317Z   RUST_TOOLCHAIN: 1.98.1
+2026-10-29T18:32:39.7483625Z   TARANTOOL_VERSION: 3.9.0
