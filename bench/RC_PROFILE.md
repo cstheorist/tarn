@@ -329,6 +329,53 @@ continues to require five-second measurements. Outcome reconciliation,
 runtime checks and single-attempt mutation rules are unchanged. Production
 Lua does not enable batched plan guards.
 
+## Completed longer-window control
+
+[Run 41077906757](https://github.com/cstheorist/tarn/actions/runs/41077906757)
+uses source `7082bb18613e7180e868bb92ff8a5c8aefe676be` with predeclared
+15-second measured windows, three-second warmups and five alternating pairs.
+Both lanes include the clock-bootstrap fix in #210 and the release contracts
+in #194. Only the two copied final-guard functions differ. No production
+guard is changed by this experiment.
+
+All four modes complete. The 132 baseline samples reconcile 310,960
+acknowledgements and five refusals; the 240 paired samples reconcile
+1,082,777 acknowledgements and ten refusals, with no unknown outcomes.
+[Raw archives and independent audits](rc-evidence/run-41077906757/) preserve
+all outcomes. The additional source/statistics audit checks 92 control files
+per mode against the exact Git tree, collector/worker identities, actual
+release ELF hashes, every latency quantile and allocation/counter delta,
+and stable process identities.
+
+| Engine / native | Shape | Median goodput ratio [range] | Median allocation ratio | Median transaction-thread CPU/ack ratio |
+|---|---|---:|---:|---:|
+| memtx / disabled | Uncontended | 1.3102 [1.0703, 1.4314] | 0.8706 | 0.9457 |
+| memtx / disabled | Unrelated | 1.0691 [0.9936, 1.5162] | 0.8729 | 0.9561 |
+| memtx / disabled | Hot | 0.8604 [0.5724, 1.4571] | 0.8991 | 1.0027 |
+| memtx / enabled | Uncontended | 1.0042 [0.9961, 1.0116] | 0.8828 | 0.9885 |
+| memtx / enabled | Unrelated | 1.0070 [0.9985, 1.0243] | 0.8814 | 0.9821 |
+| memtx / enabled | Hot | 0.9994 [0.9782, 1.0038] | 0.8883 | 0.9899 |
+| vinyl / disabled | Uncontended | 1.0056 [1.0001, 1.0128] | 0.8794 | 0.9860 |
+| vinyl / disabled | Unrelated | 1.0183 [1.0085, 1.0218] | 0.8803 | 0.9683 |
+| vinyl / disabled | Hot | 1.0093 [1.0032, 1.0155] | 0.8874 | 0.9755 |
+| vinyl / enabled | Uncontended | 0.9948 [0.9923, 1.0057] | 0.8888 | 0.9920 |
+| vinyl / enabled | Unrelated | 1.0122 [1.0039, 1.0207] | 0.8797 | 0.9782 |
+| vinyl / enabled | Hot | 1.0077 [1.0030, 1.0132] | 0.8903 | 0.9885 |
+
+Allocation falls about 10–13%, and transaction-thread CPU per acknowledgement
+usually falls modestly. Six of twelve goodput ranges cross one. Vinyl/Lua
+has positive ranges in this run, while memtx/Lua has a large uncontended
+increase and a hot-key median regression with a wide range; both are kept.
+These are five paired ranges, not confidence intervals or independent-host
+scaling results. Together with the earlier studies, they support a bounded
+allocation benefit but do not establish an all-workload capacity win or
+complete semantic/fault qualification of a production candidate.
+
+Physical-host measurements are tracked separately in #211. Positive scoped
+microbenchmarks can support an otherwise validated implementation; physical
+validation is not a blanket prerequisite. Correctness, fault behavior and
+honest reporting of the observed regressions remain requirements.
+
 ## Retained collector failure
 
 [The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)

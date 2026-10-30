@@ -1,0 +1,45 @@
+{
+  "source": "7082bb18613e7180e868bb92ff8a5c8aefe676be",
+  "modes": [
+    {
+      "engine": "memtx",
+      "native": "disabled",
+      "control_source_files": 92,
+      "paired_samples": 60,
+      "checks": "Exact Git control sources; actual release ELF hashes; latency quantiles, allocation/counter deltas and stable process identities recomputed"
+    },
+    {
+      "engine": "memtx",
+      "native": "enabled",
+      "control_source_files": 92,
+      "paired_samples": 60,
+      "checks": "Exact Git control sources; actual release ELF hashes; latency quantiles, allocation/counter deltas and stable process identities recomputed"
+    },
+    {
+      "engine": "vinyl",
+      "native": "disabled",
+      "control_source_files": 92,
+      "paired_samples": 60,
+      "checks": "Exact Git control sources; actual release ELF hashes; latency quantiles, allocation/counter deltas and stable process identities recomputed"
+    },
+    {
+      "engine": "vinyl",
+      "native": "enabled",
+      "control_source_files": 92,
+      "paired_samples": 60,
+      "checks": "Exact Git control sources; actual release ELF hashes; latency quantiles, allocation/counter deltas and stable process identities recomputed"
+    }
+  ],
+  "actual_binaries": {
+    "tarn-server": "f98320be2c62b0dc0be58f7b5b744c4073a10b89ddfee8ff383b781da101a403",
+    "libtarn_storage.so": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae"
+  },
+  "build_artifact": {
+    "id": 12990137290,
+    "sha256": "199ad2b1eab8d6d10df92b435f188b70b04036924eba24aa121cc9dabe2e8b79"
+  },
+  "harness_sha256": {
+    "rc_compare.py": "7b57f5db3cf3eba24539fb1eb4087a04d9a90e80222cc5ea363afb0fa7c30ec9",
+    "rc_profile.py": "6b8e33cde5bd65a4ee27762f03f36248ea7b6305767656534ff2f0c59b61515a"
+  }
+}
