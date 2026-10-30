@@ -18,6 +18,9 @@ and recheck current base rows, but may miss recent matches. Explicit
 transactions keep the strong path. [Lazy secondary indexes](lazy-indexes.md)
 specifies capture, delivery, session catch-up, bootstrap and topology rules.
 
+Gateway resource lifetimes and scaling bounds are documented in
+[Gateway resource limits](gateway-resources.md).
+
 ## 1. Architecture
 
 ```
@@ -2258,6 +2261,10 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_FileBackupPartial | violates PublishedComplete | 12 | 13 | 3 | 00s | 3 |
 | Bug_GCIgnoresDecision | violates NoAbortAfterCommit | 24653 | 94588 | 12 | 05s | 11 |
 | Bug_GCNoExpiry | violates NoAbortAfterCommit | 2594 | 7212 | 9 | 02s | 9 |
+| Bug_GatewayEarlyRelease | violates SocketCharged | 8 | 11 | 3 | 00s | 3 |
+| Bug_GatewayEvictPinned | violates EvictionSafe | 73 | 146 | 5 | 00s | 5 |
+| Bug_GatewayReserve | violates CompletionReserve | 9 | 12 | 3 | 00s | 3 |
+| Bug_GatewayResponseRelease | violates ResponseOwned | 69 | 132 | 4 | 00s | 4 |
 | Bug_GroupedDDLIgnoreGeneration | violates NoHeldSnapshot | 36 | 46 | 5 | 00s | 5 |
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
@@ -2417,6 +2424,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | FracFailover_ROValidate | no errors | 518625 | 2830211 | 21 | 01min 12s |  |
 | Frac_GC_ROValidate | no errors | 1846859 | 13211705 | 25 | 04min 10s |  |
 | Frac_ROValidate | no errors | 95786 | 555473 | 19 | 17s |  |
+| GatewayResources | no errors | 24388 | 130038 | 24 | 00s |  |
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
