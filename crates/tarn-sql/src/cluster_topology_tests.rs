@@ -5,10 +5,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap().to_string();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // One fake server, distinct loopback destinations: the accepted socket's
+    // local address supplies the physical shard identity for the production
+    // compatibility handshake. No handshake guard is bypassed in the test.
+    let address = |id: usize| format!("127.1.{}.{}:{port}", id / 256, id % 256);
     let shards: Vec<_> = (1..=MAX_SHARDS)
-        .map(|id| serde_json::json!({"id":id, "replicas":[addr]}))
+        .map(|id| serde_json::json!({"id":id, "replicas":[address(id)]}))
         .collect();
     let cfg: ClusterConfig = serde_json::from_value(serde_json::json!({
         "shards":shards, "pool_size":4,
@@ -23,7 +27,7 @@ async fn simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps
             .uint(id as u64)
             .str("replicas")
             .arr(1)
-            .str(&addr)
+            .str(&address(id))
             .str("state")
             .str("active");
     }
@@ -36,6 +40,12 @@ async fn simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps
         loop {
             let mut sock = wire_test::accept(&listener).await;
             sock.set_nodelay(true).unwrap();
+            let std::net::IpAddr::V4(ip) = sock.local_addr().unwrap().ip() else {
+                panic!("IPv4 peer")
+            };
+            let octets = ip.octets();
+            assert_eq!(&octets[..2], &[127, 1], "only simulated loopback groups may connect");
+            let id = usize::from(octets[2]) * 256 + usize::from(octets[3]);
             let payload = payload.clone();
             let counted = counted.clone();
             connections.spawn(async move {
@@ -75,6 +85,20 @@ async fn simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps
                                 }
                             }
                             match proc.as_str() {
+                                "tarn_compatibility" => {
+                                    body.map(1)
+                                        .uint(0x30)
+                                        .arr(1)
+                                        .arr(8)
+                                        .str("ok")
+                                        .uint(1)
+                                        .uint(1)
+                                        .uint(id as u64)
+                                        .str("3.9.0")
+                                        .uint(14)
+                                        .str("ready")
+                                        .f64(120.0);
+                                }
                                 "tarn_read_contract" => {
                                     body.map(1).uint(0x30).arr(1).arr(2).str("strong_reads").uint(1);
                                 }

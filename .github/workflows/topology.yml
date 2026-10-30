@@ -61,7 +61,7 @@ jobs:
             /tmp/topology-evidence/binaries.txt
       - name: Build the frozen comparison gateway with the same release profile
         run: |
-          git worktree add --detach /tmp/topology-baseline a885dc403c06df57a88496d28f147d6c4fb556c0
+          git worktree add --detach /tmp/topology-baseline 8b12c4525bd677499a91b973afbc86cbcbb0cafd
           cd /tmp/topology-baseline
           cargo build --release --locked -p tarn-server
           git rev-parse HEAD > /tmp/topology-evidence/baseline-source.txt
