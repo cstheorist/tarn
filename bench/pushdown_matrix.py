@@ -129,6 +129,10 @@ def main():
             lanes = {}
             for enabled in (False, True):
                 cfg = dict(config, query_pushdown=enabled, node_id=1350 + int(enabled), pool_size=4)
+                # Matched study policy admits the complete 64 KiB x 1024-row
+                # ordinary control; neither path may silently clip or skip it.
+                cfg['resources'] = dict(query_bytes=512 << 20, server_bytes=2 << 30,
+                                        query_work=1_000_000_000, server_work=4_000_000_000)
                 proxies = []
                 if phase == 'instrumented':
                     shards = []

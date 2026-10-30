@@ -244,3 +244,11 @@ receiving/decoding rows. No saturation, throughput-capacity, disk-bound or
 multi-host advantage is established. The later default-off change alters
 rollout policy; these measurements remain evidence for the explicit off/on
 paths at the recorded source, with new-head validation kept separate.
+
+The resource-integrated release study uses the same explicit 512 MiB query,
+2 GiB gateway, 1 billion query-work and 4 billion gateway-work policy on both
+paths. The complete 64 KiB × 1024-row ordinary control exceeds the default
+64 MiB logical envelope; this isolated study does not raise production defaults
+or omit/refuse that control. Each retained configuration records these limits.
+Earlier samples keep their original source and policy; do not combine them
+with this integration as a single before/after measurement.

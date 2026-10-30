@@ -210,7 +210,9 @@ fn decode_projected(d: &Bytes, t: &TableDef, project: &Projection) -> SqlResult<
     // Sparse projected rows still allocate the full logical width. Include
     // the scan boundary row and charge before any row vector is allocated.
     crate::budget::decoded(d.len(), n.saturating_add(1), t.columns.len())?;
-    if n > rd.buf.len() { return Err(crate::mpw::proto("truncated projected rows")); }
+    if n > rd.buf.len() {
+        return Err(crate::mpw::proto("truncated projected rows"));
+    }
     let rows = (0..n)
         .map(|_| projected(&mut rd, t, &project.cols))
         .collect::<SqlResult<Vec<_>>>()?;
