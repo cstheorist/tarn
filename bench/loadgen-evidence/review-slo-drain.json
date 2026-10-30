@@ -1,0 +1,11 @@
+{
+  "base_revision": "e6f972c42515ce7fdd1d88dceb03c0e477e5a150",
+  "before_source_sha256": "9cafd06462c4d5a048694b2b21ecd98cd752057502886d711d90f1579388874a",
+  "after_source_sha256": "321cbd6d1fe4c18536917f750f6736d1fe89d7ba8d37d069a832b1be08956be9",
+  "checks": 20,
+  "boundary": "Synthetic accounting regression: one SLO-qualified acknowledgement drains to one measured second. Both useful goodput metrics must report 1/s; this is not a target performance measurement.",
+  "files": {
+    "review-slo-drain-before.out": "2195a0226fe89e1da9b0e94e333415acb4ba5609f6743da06a3d60608f818918",
+    "review-slo-drain-after.out": "351932703faeb7483ca50ef822554d4e2d5f4236a1fada3e7e31199b1734dc28"
+  }
+}
