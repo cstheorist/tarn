@@ -137,6 +137,8 @@ jobs:
           cargo test --release -p tarn-sql --example strong_kv_bench
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
+      - name: Bounded commit-cost observation controls
+        run: python3 bench/test_commit_cost.py
       - name: Storage protocol tests
         run: TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh storage lua/test/run.sh
       - name: Storage protocol tests without the native procedures
