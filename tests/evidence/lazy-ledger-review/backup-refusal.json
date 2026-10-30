@@ -24,5 +24,6 @@
     "registry": "298 total configurations reproduce byte-for-byte; 285 defaults (74 positive, 211 expected controls)",
     "models": "LazyBaseline/negative plus ten LazyHandoff outcomes all match expectations",
     "local_control_boundary": "Known-abort/no-replay control runs on Tarantool; absolute-path baseline test covers both engines. Local direct relative-path invocation failed module resolution after box.cfg changed cwd; the harness uses absolute paths."
-  }
+  },
+  "measurement_boundary": "The historical footprint file has one observation per version/engine/size and no immutable source/build receipts. Its numeric differences are unqualified development evidence. Do not use them for repeatable RSS/capacity claims or close the broader #177 measurement acceptance."
 }

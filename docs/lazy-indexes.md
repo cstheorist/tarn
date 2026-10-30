@@ -254,8 +254,10 @@ serializable query snapshot.
 
 ## Memory and disk
 
-The source keeps no per-row state: a bucket counter per source bucket, the
-pending outbox, and the reservations of prepared transactions. Before issue
+New captured writes keep no per-row version state: the source keeps a bucket
+counter per source bucket, the pending outbox, and prepared reservations.
+Legacy version entries remain until bounded background cleanup removes them.
+Before issue
 [#177](https://github.com/cstheorist/tarn/issues/177) it also kept a
 per-row version ledger, `_tarn_lazy_version`, in memtx: an entry for every
 live row written since the table's first lazy index, also for vinyl
@@ -269,7 +271,14 @@ commits 100 cross-shard transactions. `python3 bench/lazy_footprint.py run
 `python3 bench/lazy_footprint.py table` prints these tables from
 `bench/results_lazy_footprint.json`.
 
-Per-row version ledger (`_tarn_lazy_version`, memtx), after loading the rows:
+The archived measurements below contain one observation per version, engine
+and row count. They lack immutable source/build receipts and repeated matched
+pairs. Their before/after differences are unqualified development evidence,
+and do not establish capacity, repeatable RSS savings or completion of #177's
+measurement criteria. The original reported values are retained here; a
+source-bound repeated study remains required.
+
+Archived per-row version ledger (`_tarn_lazy_version`, memtx), after loading:
 
 | Rows | Table | Entries before | Ledger bytes before | Bytes per row | Entries after | memtx data + index, before → after | Process RSS, before → after |
 |---:|---|---:|---:|---:|---:|---|---|
