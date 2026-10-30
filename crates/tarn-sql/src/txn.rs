@@ -308,7 +308,32 @@ pub enum Locked {
     Skipped,
 }
 
+struct CancelCleanup {
+    streams: Vec<(Client, u64)>,
+    locks: Vec<Client>,
+    active: bool,
+}
+
+impl Drop for CancelCleanup {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        // A cancelled acquisition/read may execute after its caller drops.
+        // Retire the physical session so neither a late grant nor a late
+        // BEGIN can outlive cleanup. Other sent mutations remain unknown.
+        for (client, _) in &self.streams {
+            client.close();
+        }
+        for client in &self.locks {
+            client.close();
+        }
+    }
+}
+
 pub struct Txn {
+    resources: Option<crate::budget::Account>,
+    cleanup: Option<CancelCleanup>,
     pub id: String,
     pub ts: f64,
     pub explicit: bool,
@@ -377,8 +402,15 @@ impl Txn {
     }
 
     pub fn with_mode(cluster: &Cluster, explicit: bool, mode: Mode, lock_timeout: f64) -> Txn {
+        let id = cluster.new_txid();
         Txn {
-            id: cluster.new_txid(),
+            resources: Some(cluster.resources.account(cluster.cfg.resources.transaction_bytes)),
+            cleanup: Some(CancelCleanup {
+                streams: Vec::new(),
+                locks: Vec::new(),
+                active: true,
+            }),
+            id,
             ts: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -448,10 +480,15 @@ impl Txn {
         self.encode_lock_opts(&mut m, cluster, o, &held);
         // NOWAIT and SKIP LOCKED requests never queue.
         let _waiting = (!o.nowait && !o.skip).then(|| cluster.lock_request(&self.id, shard, held));
+        self.charge(4096 + keys.iter().map(|k| crate::budget::row_bytes(&k.key) * 8).sum::<u64>())?;
+        if let Some(cleanup) = &mut self.cleanup {
+            cleanup.locks.push(client.clone());
+        }
         self.lock_shards.insert(shard);
         // Lock requests change nothing that a resend could duplicate: a lost
         // reply just fails the statement (the locks are released with the
         // transaction).
+        let _wire = crate::budget::retain(crate::budget::WIRE_BYTES)?;
         let r = client.call(0, "tarn_lock", &m.0).await.map_err(from_iproto_read)?;
         let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
         let rd = self.lock_status(shard, &client, &d)?;
@@ -459,6 +496,11 @@ impl Txn {
         let gen = rd.string()?;
         self.note_locks(shard, client, gen)?;
         let n = rd.array()?;
+        crate::budget::decoded(
+            d.len(),
+            n,
+            keys.iter().map(|k| k.table.columns.len()).max().unwrap_or(0),
+        )?;
         let mut out = Vec::with_capacity(n);
         for k in keys.iter().take(n) {
             out.push(match rd.buf.first() {
@@ -566,7 +608,18 @@ impl Txn {
             for req in reqs {
                 let client = self.conn(cluster, req.0).await?;
                 let (m, held) = encode(self, req);
+                self.charge(
+                    4096 + req
+                        .2
+                        .iter()
+                        .map(|r| crate::budget::row_bytes(&r.prefix) * 8)
+                        .sum::<u64>(),
+                )?;
+                if let Some(cleanup) = &mut self.cleanup {
+                    cleanup.locks.push(client.clone());
+                }
                 self.lock_shards.insert(req.0);
+                let _wire = crate::budget::retain(crate::budget::WIRE_BYTES)?;
                 let r = {
                     let _waiting = cluster.lock_request(&self.id, req.0, held);
                     client.call(0, "tarn_lock_range", &m.0).await
@@ -588,14 +641,31 @@ impl Txn {
                     c
                 }
             };
+            self.charge(
+                4096 + req
+                    .2
+                    .iter()
+                    .map(|r| crate::budget::row_bytes(&r.prefix) * 8)
+                    .sum::<u64>(),
+            )?;
+            if let Some(cleanup) = &mut self.cleanup {
+                cleanup.locks.push(client.clone());
+            }
             calls.push((client, encode(self, req).0));
         }
         self.lock_shards.extend(reqs.iter().map(|r| r.0));
-        let replies =
-            futures::future::join_all(calls.iter().map(|(client, m)| client.call(0, "tarn_lock_range", &m.0))).await;
+        let replies = futures::future::join_all(calls.iter().map(|(client, m)| async move {
+            let guard = crate::budget::retain(crate::budget::WIRE_BYTES)?;
+            Ok((client.call(0, "tarn_lock_range", &m.0).await, guard))
+        }))
+        .await;
         let mut first_err = None;
         for ((req, (client, _)), r) in reqs.iter().zip(&calls).zip(replies) {
-            match self.decode_ranges(req.0, client, r, &req.2) {
+            let decoded = match r {
+                Ok((reply, _wire)) => self.decode_ranges(req.0, client, reply, &req.2),
+                Err(error) => Err(error),
+            };
+            match decoded {
                 Ok(v) => out.push(v),
                 Err(e) => {
                     out.push(Vec::new());
@@ -630,9 +700,14 @@ impl Txn {
         let gen = rd.string()?;
         self.note_locks(shard, client.clone(), gen)?;
         let n = rd.array()?;
+        if n != ranges.len() {
+            return Err(crate::mpw::proto("lock range count changed"));
+        }
+        crate::budget::decoded(d.len(), n, 0)?;
         let mut out = Vec::with_capacity(n);
         for rg in ranges.iter().take(n) {
             let nrows = rd.array()?;
+            crate::budget::decoded(0, nrows, rg.table.columns.len())?;
             let mut rows = Vec::with_capacity(nrows);
             for _ in 0..nrows {
                 rows.push(rd.row_of(&rg.table)?);
@@ -737,6 +812,10 @@ impl Txn {
         }
         let client = self.conn(cluster, shard).await?;
         let id = client.next_stream_id();
+        self.charge(4096)?;
+        if let Some(cleanup) = &mut self.cleanup {
+            cleanup.streams.push((client.clone(), id));
+        }
         self.streams.insert(
             shard,
             Stream {
@@ -759,16 +838,58 @@ impl Txn {
         }
     }
 
-    pub fn note_point(&mut self, shard: usize, space: u32, index: u32, key: Vec<Value>, bucket: Option<u32>) {
+    pub fn note_point(
+        &mut self,
+        shard: usize,
+        space: u32,
+        index: u32,
+        key: Vec<Value>,
+        bucket: Option<u32>,
+    ) -> SqlResult<()> {
+        self.charge(crate::budget::row_bytes(&key).saturating_mul(8))?;
+        let key = crate::budget::own_row(key);
         self.rpoints.entry(shard).or_default().push((space, index, key, bucket));
+        Ok(())
     }
 
-    pub fn note_range(&mut self, shard: usize, r: RangeRead) {
+    pub fn note_range(&mut self, shard: usize, mut r: RangeRead) -> SqlResult<()> {
+        self.charge(
+            (256 + crate::budget::row_bytes(r.lo.as_deref().unwrap_or(&[]))
+                + crate::budget::row_bytes(r.hi.as_deref().unwrap_or(&[])))
+            .saturating_mul(8),
+        )?;
+        r.lo = r.lo.map(crate::budget::own_row);
+        r.hi = r.hi.map(crate::budget::own_row);
         self.rranges.entry(shard).or_default().push(r);
+        Ok(())
     }
 
-    pub fn buffer(&mut self, w: BufWrite) -> SqlResult<()> {
+    fn charge(&mut self, bytes: u64) -> SqlResult<()> {
+        self.resources.as_mut().map_or(Ok(()), |account| account.charge(bytes))
+    }
+
+    pub fn snapshot_charge(&mut self) -> SqlResult<()> {
+        let cost = self.writes.values().fold(128u64, |n, write| {
+            n.saturating_add(
+                crate::budget::row_bytes(&write.pk) + write.row.as_ref().map_or(0, |r| crate::budget::row_bytes(r)),
+            )
+        });
+        self.charge(cost.saturating_mul(8))?;
+        crate::budget::charge(cost.saturating_mul(2))
+    }
+
+    pub fn savepoint_name_charge(&mut self, bytes: usize) -> SqlResult<()> {
+        self.charge((bytes as u64).saturating_mul(4))
+    }
+
+    pub fn buffer(&mut self, mut w: BufWrite) -> SqlResult<()> {
+        self.charge(
+            (256 + crate::budget::row_bytes(&w.pk) + w.row.as_ref().map_or(0, |r| crate::budget::row_bytes(r)))
+                .saturating_mul(8),
+        )?;
         self.check_def(&w.table)?;
+        w.pk = crate::budget::own_row(w.pk);
+        w.row = w.row.map(crate::budget::own_row);
         crate::observe::shard(w.shard);
         crate::observe::bucket(None);
         self.defs.insert(w.table.space_id, w.table.ver);
@@ -940,6 +1061,9 @@ impl Txn {
     /// Roll back every open stream and release the row locks (best effort,
     /// nothing to wait for).
     pub fn rollback(mut self, cluster: &Arc<Cluster>) {
+        if let Some(cleanup) = &mut self.cleanup {
+            cleanup.active = false;
+        }
         for (_, s) in std::mem::take(&mut self.streams) {
             tokio::spawn(async move {
                 let _ = s.client.rollback(s.id).await;
@@ -965,10 +1089,29 @@ impl Txn {
         });
     }
 
-    pub async fn commit(mut self, cluster: &Arc<Cluster>) -> SqlResult<CommitOutcome> {
+    pub async fn commit(self, cluster: &Arc<Cluster>) -> SqlResult<CommitOutcome> {
+        // Completion owns the transaction and query reservations even if the
+        // SQL caller disconnects. No new execution budget is acquired here.
+        let guard = crate::budget::current().map(|q| q.guard());
+        let cluster = cluster.clone();
+        tokio::spawn(crate::observe::inherit(async move {
+            let result = self.commit_inner(&cluster).await;
+            drop(guard);
+            result
+        }))
+        .await
+        .map_err(|_| SqlError::new(1180, "40003", "Commit worker stopped; outcome may be unknown"))?
+    }
+
+    async fn commit_inner(mut self, cluster: &Arc<Cluster>) -> SqlResult<CommitOutcome> {
         if let Some(e) = self.doomed.take() {
             self.rollback(cluster);
             return Err(e);
+        }
+        // Resource checks end before an irrevocable decision. Cancellation
+        // during commit is owned by the existing durable recovery protocol.
+        if let Some(cleanup) = &mut self.cleanup {
+            cleanup.active = false;
         }
         let parts = self.participants();
         crate::observe::commit(parts.len());
@@ -1613,7 +1756,8 @@ pub async fn select_join(
     }
     m.bool(lock_check).bool(begin);
     route.encode(&mut m);
-    let r = match client.call(stream, "tarn_select_join", &m.0).await {
+    let (reply, _wire) = crate::budget::call_read(client, stream, "tarn_select_join", &m.0).await?;
+    let r = match reply {
         Ok(r) => r,
         Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::errcode::ER_NO_SUCH_PROC => {
             return Ok(JoinedRead::Unavailable);
@@ -1638,12 +1782,14 @@ fn join_rows_of(d: &Bytes, reads: &[JoinRead<'_>]) -> SqlResult<JoinedRead> {
     if n != 0 && n != reads.len() {
         return Err(crate::mpw::proto("co-located read slot count changed"));
     }
+    crate::budget::decoded(d.len(), n, 0)?;
     let mut out = Vec::with_capacity(n);
     for r in reads.iter().take(n) {
         if rd.array()? != 2 {
             return Err(crate::mpw::proto("invalid co-located read slot"));
         }
         let nkeys = rd.array()?;
+        crate::budget::decoded(0, nkeys, r.parts.len())?;
         let mut keys = Vec::with_capacity(nkeys);
         for _ in 0..nkeys {
             // Read-set keys outlive these result rows. Copy their strings
@@ -1660,6 +1806,7 @@ fn join_rows_of(d: &Bytes, reads: &[JoinRead<'_>]) -> SqlResult<JoinedRead> {
             keys.push(key);
         }
         let nrows = rd.array()?;
+        crate::budget::decoded(0, nrows, r.table.columns.len())?;
         let mut rows = Vec::with_capacity(nrows);
         for _ in 0..nrows {
             rows.push(rd.row_of(r.table)?);
@@ -1675,6 +1822,9 @@ fn join_rows_of(d: &Bytes, reads: &[JoinRead<'_>]) -> SqlResult<JoinedRead> {
     if !rd.buf.is_empty() || (complete && n != reads.len()) || (!complete && n != 0) {
         return Err(crate::mpw::proto("partial or malformed co-located read reply"));
     }
+    if complete {
+        crate::observe::storage_rows(out.iter().map(|s| s.rows.len()).sum());
+    }
     Ok(if complete {
         JoinedRead::Complete(out)
     } else {
@@ -1687,6 +1837,7 @@ fn page_of(d: &Bytes, t: &TableDef) -> SqlResult<Page> {
     let (_, rd) = lua_status(d)?;
     let mut rd = Rd::shared_at(d, rd);
     let n = rd.array()?;
+    crate::budget::decoded(d.len(), n, t.columns.len())?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(rd.row_of(t)?);
@@ -1696,6 +1847,7 @@ fn page_of(d: &Bytes, t: &TableDef) -> SqlResult<Page> {
     } else {
         Some(rd.raw_value()?.to_vec())
     };
+    crate::observe::storage_rows(out.len());
     Ok((out, next))
 }
 
@@ -1749,10 +1901,12 @@ pub async fn select_keys(
         && full_primary
         && native_batch_available(client).await?
     {
-        match client.call(0, "tarn_storage.ts_select", &m.0).await {
+        let (reply, _wire) = crate::budget::call_read(client, 0, "tarn_storage.ts_select", &m.0).await?;
+        match reply {
             Ok(r) => {
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no native batch data"))?;
                 if let Some(page) = native_batch_reply(&d, t, keys.len())? {
+                    crate::observe::storage_rows(page.0.len());
                     return Ok(page);
                 }
             }
@@ -1764,10 +1918,8 @@ pub async fn select_keys(
             Err(e) => return Err(from_iproto_read(e)),
         }
     }
-    let r = client
-        .call(stream, "tarn_select_keys", &m.0)
-        .await
-        .map_err(from_iproto_read)?;
+    let (result, _wire) = crate::budget::call_read(client, stream, "tarn_select_keys", &m.0).await?;
+    let r = result.map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     page_of(&d, t)
 }
@@ -1792,7 +1944,8 @@ async fn native_batch_available(client: &Client) -> SqlResult<bool> {
     if client.marked(MARK_NATIVE_BATCH) {
         return Ok(true);
     }
-    let reply = match client.call(0, "tarn_storage.ts_select", &[0x90]).await {
+    let (result, _wire) = crate::budget::call_read(client, 0, "tarn_storage.ts_select", &[0x90]).await?;
+    let reply = match result {
         Ok(reply) => reply,
         Err(tarn_iproto::Error::Server { code, .. }) if missing_native_read(code) => {
             client.mark(MARK_NO_NATIVE_SELECT);
@@ -1838,7 +1991,7 @@ fn native_batch_capability(data: &[u8]) -> SqlResult<bool> {
 /// Unlike Lua's general pager, a served batch must be complete in one reply.
 /// Only an exact handback permits calling Lua; malformed replies are errors.
 fn native_batch_reply(data: &Bytes, t: &TableDef, requested: usize) -> SqlResult<Option<Page>> {
-    let mut rd = Rd::shared_at(data, Rd::new(data));
+    let mut rd = Rd::shared(data);
     if rd.array()? != 1 {
         return Err(crate::mpw::proto("invalid native batch envelope"));
     }
@@ -1851,6 +2004,7 @@ fn native_batch_reply(data: &Bytes, t: &TableDef, requested: usize) -> SqlResult
             if n > requested {
                 return Err(crate::mpw::proto("oversized native key batch"));
             }
+            crate::budget::decoded(data.len(), n, t.columns.len())?;
             let mut rows = Vec::with_capacity(n);
             for _ in 0..n {
                 rows.push(rd.row_of(t)?);
@@ -1929,10 +2083,8 @@ pub async fn count_rows(
     }
     m.bool(lock_check).bool(begin);
     route.encode(&mut m);
-    let r = client
-        .call(stream, "tarn_count", &m.0)
-        .await
-        .map_err(from_iproto_read)?;
+    let (result, _wire) = crate::budget::call_read(client, stream, "tarn_count", &m.0).await?;
+    let r = result.map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     let (_, mut rd) = lua_status(&d)?;
     match rd.value()? {
@@ -1970,17 +2122,26 @@ pub async fn select_rows(
         let mut k = Mp::new();
         k.vals(key);
         let n = limit.unwrap_or(u32::MAX).min(PAGE_ROWS);
-        match client.select(stream, t.space_id, index, iter, 0, n, &k.0).await {
+        let (reply, _wire) = crate::budget::select_read(client, stream, t.space_id, index, iter, 0, n, &k.0).await?;
+        match reply {
             Ok(r) => {
-                let tuples = r.tuples().map_err(crate::mpw::proto)?;
-                let mut out = Vec::with_capacity(tuples.len());
-                for tup in &tuples {
-                    out.push(Rd::shared(tup).row_of(t)?);
+                let data = r.data().ok_or_else(|| crate::mpw::proto("no SELECT data"))?;
+                let mut rd = Rd::new(&data);
+                let count = rd.array()?;
+                crate::budget::decoded(data.len(), count, t.columns.len())?;
+                let mut out = Vec::with_capacity(count);
+                let mut last = None;
+                for _ in 0..count {
+                    let tuple = rd.raw_value()?;
+                    out.push(Rd::shared_at(&data, Rd::new(tuple)).row_of(t)?);
+                    last = Some(tuple);
                 }
-                let next = match tuples.last() {
-                    Some(last) if tuples.len() == n as usize && Some(n) != limit => Some(last.to_vec()),
-                    _ => None,
+                let next = if count == n as usize && Some(n) != limit {
+                    last.map(|r| r.to_vec())
+                } else {
+                    None
                 };
+                crate::observe::storage_rows(out.len());
                 return Ok((out, next));
             }
             Err(tarn_iproto::Error::Server {
@@ -2044,7 +2205,8 @@ pub async fn select_rows(
         use tarn_iproto::errcode::{
             ER_ACCESS_DENIED, ER_LOAD_FUNCTION, ER_LOAD_MODULE, ER_NO_SUCH_FUNCTION, ER_NO_SUCH_PROC,
         };
-        match client.call(stream, "tarn_storage.ts_select", &m.0).await {
+        let (reply, _wire) = crate::budget::call_read(client, stream, "tarn_storage.ts_select", &m.0).await?;
+        match reply {
             Ok(r) => {
                 let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
                 if !crate::mpw::status_is(&d, "lua") {
@@ -2061,10 +2223,8 @@ pub async fn select_rows(
             Err(e) => return Err(from_iproto_read(e)),
         }
     }
-    let r = client
-        .call(stream, "tarn_select", &m.0)
-        .await
-        .map_err(from_iproto_read)?;
+    let (result, _wire) = crate::budget::call_read(client, stream, "tarn_select", &m.0).await?;
+    let r = result.map_err(from_iproto_read)?;
     let d = r.data().ok_or_else(|| crate::mpw::proto("no data"))?;
     page_of(&d, t)
 }
@@ -2315,6 +2475,12 @@ mod tests {
                 let (status, version) = status.unwrap();
                 packet.map(1).uint(0x30).arr(1);
                 match (status, version) {
+                    ("rows", _) => {
+                        packet.arr(2).str("ok").arr(2);
+                        for _ in 0..2 {
+                            packet.vals(&[Value::str("tenant"), Value::Int(7), Value::str("label"), Value::UInt(1)]);
+                        }
+                    }
                     ("bad-page", _) => {
                         packet.arr(4).str("ok").arr(0).nil().bool(false);
                     }
@@ -2461,7 +2627,7 @@ mod tests {
                             names.push("lua");
                             reply(&mut sock, sync, 0, Some(("ok", None))).await;
                         } else {
-                            reply(&mut sock, sync, 0, Some(("ok", None))).await;
+                            reply(&mut sock, sync, 0, Some(("rows", None))).await;
                         }
                     }
                 }
@@ -2482,22 +2648,27 @@ mod tests {
                     }
                 })
                 .collect();
+            let metrics = crate::observe::Metrics::default();
             for _ in 0..2 {
                 let result = timeout(
                     Duration::from_secs(3),
-                    select_keys(
-                        &client,
-                        if case == 6 { 73 } else { 0 },
-                        &table,
-                        0,
-                        &keys,
-                        None,
-                        case != 6,
-                        false,
-                        None,
-                        &Route::Buckets(vec![1, 1, 1]),
-                        case != 4,
-                    ),
+                    crate::observe::track(&metrics, async {
+                        crate::observe::describe(crate::observe::Descriptor::new(None, "SELECT native_batch"));
+                        select_keys(
+                            &client,
+                            if case == 6 { 73 } else { 0 },
+                            &table,
+                            0,
+                            &keys,
+                            None,
+                            case != 6,
+                            false,
+                            None,
+                            &Route::Buckets(vec![1, 1, 1]),
+                            case != 4,
+                        )
+                        .await
+                    }),
                 )
                 .await
                 .unwrap();
@@ -2505,9 +2676,14 @@ mod tests {
                     assert!(result.is_err());
                 } else {
                     let page = result.unwrap();
-                    assert!(page.0.is_empty() && page.1.is_none());
+                    assert_eq!(page.0.len(), if case == 0 { 2 } else { 0 });
+                    assert!(page.1.is_none());
                 }
             }
+            assert_eq!(
+                metrics.rows()[0].last(),
+                Some(&Value::UInt(if case == 0 { 4 } else { 0 }))
+            );
             if case == 1 {
                 assert!(!client.marked(MARK_NO_NATIVE_SELECT));
             }
@@ -2680,6 +2856,8 @@ mod tests {
 
     fn empty_txn() -> Txn {
         Txn {
+            resources: None,
+            cleanup: None,
             id: "test/1".into(),
             ts: 0.0,
             explicit: true,
@@ -2809,6 +2987,7 @@ mod tests {
 
         let catalog = Catalog::default();
         let cx = PlanCtx {
+            statistics: None,
             catalog: &catalog,
             db: Some("d"),
             params: &[],

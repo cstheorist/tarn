@@ -22,6 +22,7 @@ use tarn_common::{Column, ColumnType, SqlError, SqlResult, Value};
 const AGG_BASE: usize = 1 << 24;
 
 pub struct PlanCtx<'a> {
+    pub statistics: Option<&'a crate::statistics::Snapshot>,
     pub catalog: &'a Catalog,
     pub db: Option<&'a str>,
     /// Parameter values when known (text queries), for metadata inference.
@@ -182,6 +183,32 @@ pub fn parse_one(sql: &str) -> SqlResult<A::Statement> {
 }
 
 /// Plan a (normalized) statement.
+pub(crate) fn analyze_target(sql: &str, ctx: &PlanCtx) -> SqlResult<Arc<TableDef>> {
+    let A::Statement::Analyze(a) = parse_one(sql)? else {
+        return Err(SqlError::unsupported("use ANALYZE TABLE one_table without options"));
+    };
+    if !a.has_table_keyword
+        || a.for_columns
+        || !a.columns.is_empty()
+        || a.partitions.is_some()
+        || a.cache_metadata
+        || a.noscan
+        || a.compute_statistics
+    {
+        return Err(SqlError::unsupported("use ANALYZE TABLE one_table without options"));
+    }
+    let t = lookup_table(
+        a.table_name
+            .as_ref()
+            .ok_or_else(|| SqlError::parse("ANALYZE TABLE needs a table"))?,
+        ctx,
+    )?;
+    if t.is_virtual() {
+        return Err(SqlError::unsupported("ANALYZE of virtual metadata"));
+    }
+    Ok(t)
+}
+
 pub fn plan(sql: &str, ctx: &PlanCtx) -> SqlResult<Stmt> {
     if let Some(a) = crate::admin::recognize(sql)? {
         return Ok(Stmt::Admin(a));
@@ -2080,7 +2107,8 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
         return Err(SqlError::unsupported("locking reads that join information_schema"));
     }
     let lockable = virtuals == 0;
-    Ok(SelectPlan {
+    let p = SelectPlan {
+        join_estimate: None,
         source,
         filter,
         agg: agg_plan,
@@ -2101,7 +2129,153 @@ pub fn plan_query(q: &A::Query, ctx: &PlanCtx) -> SqlResult<SelectPlan> {
             nowait: matches!(l.nonblock, Some(A::NonBlock::Nowait)),
             skip: matches!(l.nonblock, Some(A::NonBlock::SkipLocked)),
         }),
-    })
+    };
+    Ok(optimize_inner_join(p, &scope, &joins, &on_exprs, &conj, ctx))
+}
+
+/// The result metadata and every expression stay in the original logical
+/// column order. Only the physical row layout/access paths are permuted.
+/// Any estimate can be wrong without changing which rows qualify. Keep
+/// outer joins, volatile/error-sensitive expressions and order-sensitive
+/// aggregate/limit shapes on their existing paths.
+fn optimize_inner_join(
+    mut p: SelectPlan,
+    scope: &Scope,
+    joins: &[(JoinKind, Option<A::Expr>)],
+    on: &[Option<Expr>],
+    conj: &[Expr],
+    ctx: &PlanCtx,
+) -> SelectPlan {
+    let Some(stats) = ctx.statistics else { return p };
+    if scope.tables.len() != 2
+        || joins.len() != 1
+        || joins[0].0 != JoinKind::Inner
+        || p.agg.is_some()
+        || p.having.is_some()
+        || p.distinct
+        || p.lock.is_some()
+        || p.limit.is_some()
+        || p.offset.is_some()
+        || scope.tables.iter().any(|t| t.table.is_virtual())
+    {
+        return p;
+    }
+    let integer_col = |c: usize| col_source(scope, c).is_some_and(|(t, c)| t.columns[c].ty().is_integer());
+    let atom = |e: &Expr| match e {
+        Expr::Col(c) => integer_col(*c),
+        Expr::Lit(Value::Int(_) | Value::UInt(_) | Value::Null) => true,
+        Expr::Param(i) => matches!(ctx.params.get(*i), Some(Value::Int(_) | Value::UInt(_) | Value::Null)),
+        _ => false,
+    };
+    fn equalities(e: &Expr, atom: &dyn Fn(&Expr) -> bool) -> bool {
+        match e {
+            Expr::Cmp(a, CmpOp::Eq, b, _) => atom(a) && atom(b),
+            Expr::And(a, b) => equalities(a, atom) && equalities(b, atom),
+            _ => false,
+        }
+    }
+    if !p.project.iter().all(|e| matches!(e, Expr::Col(_) | Expr::Lit(_)))
+        || !p.order.iter().all(|(e, _)| {
+            matches!(e, Expr::Col(_)) || matches!(e, Expr::Key(v, _) if matches!(v.as_ref(), Expr::Col(_)))
+        })
+        || !conj.iter().all(|e| equalities(e, &atom))
+        || !on.iter().all(|e| e.as_ref().is_some_and(|e| equalities(e, &atom)))
+    {
+        return p;
+    }
+    let Some((old_cost, old_rows, old_rpcs)) = join_cost(&p.source, stats) else {
+        return p;
+    };
+    // The existing grouped-read path may make a fixed root prefix much
+    // cheaper than nested-loop estimates suggest. Conservatively retain
+    // that order, even when grouping later declines for another reason.
+    if let Source::Join { left, .. } = &p.source {
+        if let Source::Table(root) = left.as_ref() {
+            if path_fixes_shard_key(root) {
+                return p;
+            }
+        }
+    }
+    let na = scope.tables[0].table.columns.len();
+    let nb = scope.tables[1].table.columns.len();
+    let map = |c| Expr::Col(if c < na { c + nb } else { c - na });
+    let mut swapped = scope.clone();
+    swapped.tables.swap(0, 1);
+    swapped.tables[0].offset = 0;
+    swapped.tables[1].offset = nb;
+    let new_on: Vec<_> = on.iter().map(|e| e.as_ref().map(|e| e.remap(&map))).collect();
+    let new_conj: Vec<_> = conj.iter().map(|e| e.remap(&map)).collect();
+    let Ok((candidate, _)) = build_source(&swapped, joins, &new_on, &new_conj, &[]) else {
+        return p;
+    };
+    let Some((cost, rows, rpcs)) = join_cost(&candidate, stats) else {
+        return p;
+    };
+    let chosen = cost < old_cost * 0.8;
+    p.join_estimate = Some(serde_json::json!({"statistics_generation":stats.generation,
+        "reordered":chosen,"written_order_cost":old_cost,"alternative_cost":cost,
+        "written_order_tuple_work":old_rows,"alternative_tuple_work":rows,
+        "written_order_read_rpcs":old_rpcs,"alternative_read_rpcs":rpcs,
+        "cost_note":"heuristic nested-loop tuple work + 256 per read RPC; average prefix selectivity, no parameter-value dependence; excludes validation/retries/grouped reads and batch-key deduplication"}));
+    if chosen {
+        p.source = candidate;
+        p.filter = p.filter.map(|e| e.remap(&map));
+        p.project = p.project.iter().map(|e| e.remap(&map)).collect();
+        p.order = p.order.iter().map(|(e, d)| (e.remap(&map), *d)).collect();
+    }
+    p
+}
+
+fn path_prefix(a: &TableAccess) -> Option<(u32, usize)> {
+    match &a.path {
+        AccessPath::Point { index, keys } | AccessPath::Prefixes { index, keys } => Some((*index, keys.first()?.len())),
+        AccessPath::Range { index, eq, .. } => Some((*index, eq.len())),
+        AccessPath::Full => Some((0, 0)),
+        _ => None,
+    }
+}
+
+fn path_fixes_shard_key(a: &TableAccess) -> bool {
+    let Some((i, n)) = path_prefix(a) else { return false };
+    let Some(index) = a.table.indexes.iter().find(|v| v.id == i) else {
+        return false;
+    };
+    a.table
+        .shard_key
+        .iter()
+        .all(|c| index.cols[..n.min(index.cols.len())].contains(c))
+}
+
+fn join_cost(source: &Source, stats: &crate::statistics::Snapshot) -> Option<(f64, f64, f64)> {
+    let Source::Join { left, right, .. } = source else {
+        return None;
+    };
+    let Source::Table(root) = left.as_ref() else {
+        return None;
+    };
+    let a = stats.tables.get(&root.table.space_id)?;
+    let b = stats.tables.get(&right.table.space_id)?;
+    let outer = a.estimate(&root.table, &root.path)?;
+    let inner = b.estimate(&right.table, &right.path)?;
+    let fanout = |t: &TableAccess, s: &crate::statistics::TableStats| {
+        if path_fixes_shard_key(t) {
+            1.0
+        } else {
+            s.shards as f64
+        }
+    };
+    let batched = matches!(right.path, AccessPath::Point { .. } | AccessPath::Prefixes { .. })
+        || matches!(&right.path, AccessPath::Range { eq, .. } if !eq.is_empty());
+    let probes = if batched {
+        (outer / crate::exec::JOIN_BATCH as f64).ceil()
+    } else {
+        outer
+    };
+    let rows = outer + outer * inner;
+    let rpcs = (outer / 4096.0).ceil().max(1.0) * fanout(root, a)
+        + probes * fanout(right, b)
+        + (outer * inner / 4096.0).floor();
+    Some((rows + 256.0 * rpcs, rows, rpcs))
 }
 
 fn col_source(scope: &Scope, c: usize) -> Option<(Arc<TableDef>, usize)> {
@@ -3116,6 +3290,7 @@ mod tests {
                   c CHAR(120) DEFAULT '' NOT NULL, pad CHAR(60) DEFAULT '' NOT NULL, PRIMARY KEY (id), KEY k_1 (k))";
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("sbtest"),
             params: &[],
@@ -3159,6 +3334,7 @@ mod tests {
         use crate::catalog::Engine;
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3191,6 +3367,7 @@ mod tests {
         let cat = catalog();
         let n = normalize(sql, Mode::Literals).unwrap();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("sbtest"),
             params: &n.params,
@@ -3204,6 +3381,116 @@ mod tests {
     }
 
     #[test]
+    fn statistics_reorder_only_safe_joins_and_preserve_logical_columns() {
+        use crate::statistics::{Snapshot, TableStats};
+        let cat = catalog();
+        let a = cat.get("sbtest", "sbtest1").unwrap();
+        let mut b = (*a).clone();
+        b.name = "t2".into();
+        b.space_id = 513;
+        let cat = Catalog::new(1, vec!["sbtest".into()], vec![(*a).clone(), b]);
+        let mut stats = Snapshot::default();
+        for (space, rows) in [(512, 10000.0), (513, 20.0)] {
+            stats.tables.insert(
+                space,
+                Arc::new(TableStats {
+                    space,
+                    version: 0,
+                    rows,
+                    sampled: 20,
+                    shards: 2,
+                    prefixes: vec![],
+                    collected: std::time::Instant::now(),
+                }),
+            );
+        }
+        let make = |sql: &str, stats: Option<&Snapshot>| {
+            let n = normalize(sql, Mode::Literals).unwrap();
+            let ctx = PlanCtx {
+                statistics: stats,
+                catalog: &cat,
+                db: Some("sbtest"),
+                params: &n.params,
+                conn_coll: "utf8mb4_bin",
+                default_coll: "utf8mb4_bin",
+            };
+            let Stmt::Select(p) = plan(&n.template, &ctx).unwrap() else {
+                panic!()
+            };
+            p
+        };
+        let sql = "SELECT a.*, b.* FROM sbtest1 a JOIN t2 b ON a.id=b.k WHERE b.id=7 ORDER BY a.id";
+        let original = make(sql, None);
+        let p = make(sql, Some(&stats));
+        assert_eq!(p.source.tables()[0].alias, "b");
+        assert_eq!(p.join_estimate.as_ref().unwrap()["reordered"], true);
+        assert_eq!(
+            p.columns
+                .iter()
+                .map(|c| (&c.name, &c.table, &c.schema, c.ty, c.charset))
+                .collect::<Vec<_>>(),
+            original
+                .columns
+                .iter()
+                .map(|c| (&c.name, &c.table, &c.schema, c.ty, c.charset))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            p.project
+                .iter()
+                .map(|e| match e {
+                    Expr::Col(c) => *c,
+                    _ => panic!(),
+                })
+                .collect::<Vec<_>>(),
+            vec![4, 5, 6, 7, 0, 1, 2, 3]
+        );
+        let star = make(&sql.replace("a.*, b.*", "*"), Some(&stats));
+        assert_eq!(format!("{:?}", star.project), format!("{:?}", p.project));
+        let mut columns = vec![];
+        p.filter.as_ref().unwrap().columns(&mut columns);
+        assert_eq!(columns, vec![0]);
+        for sql in [
+            sql.replace(" JOIN ", " LEFT JOIN "),
+            sql.replace("a.*, b.*", "RAND()"),
+            sql.replace("a.*, b.*", "SUM(a.k)"),
+            sql.replace("a.*, b.*", "DISTINCT a.id"),
+            format!("{sql} LIMIT 1"),
+            format!("{sql} FOR UPDATE"),
+            sql.replace("b.id=7", "b.c='x'"),
+            sql.replace("b.id=7", "b.id>7"),
+        ] {
+            assert!(make(&sql, Some(&stats)).join_estimate.is_none(), "{sql}");
+        }
+        // A schema-mismatched/missing hint cannot select an alternative.
+        stats.tables.remove(&512);
+        assert!(make(sql, Some(&stats)).join_estimate.is_none());
+    }
+
+    #[test]
+    fn analyze_rejects_options_and_unknown_or_virtual_tables() {
+        let cat = catalog();
+        let ctx = PlanCtx {
+            statistics: None,
+            catalog: &cat,
+            db: Some("sbtest"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        assert!(analyze_target("ANALYZE TABLE sbtest1", &ctx).is_ok());
+        for sql in [
+            "ANALYZE",
+            "ANALYZE sbtest1",
+            "ANALYZE TABLE sbtest1 NOSCAN",
+            "ANALYZE TABLE sbtest1 FOR COLUMNS k",
+        ] {
+            assert!(analyze_target(sql, &ctx).is_err(), "{sql}");
+        }
+        assert_eq!(analyze_target("ANALYZE TABLE missing", &ctx).unwrap_err().code, 1146);
+    }
+
+    #[test]
     fn hexadecimal_literals_and_introducers_are_binary_strings() {
         // a prepared statement keeps its literals (#122): the planner reads them
         let cat = catalog();
@@ -3213,6 +3500,7 @@ mod tests {
         )
         .unwrap();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
@@ -3253,6 +3541,7 @@ mod tests {
     fn upsert_row_alias() {
         let cat = catalog();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
@@ -3368,6 +3657,7 @@ mod tests {
         // prefix are the ORDER BY wins over the primary-key prefix
         let c0 = Catalog::default();
         let ctx0 = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3388,6 +3678,7 @@ mod tests {
         let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
         let path = |sql: &str| {
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &[],
@@ -3490,6 +3781,7 @@ mod tests {
         );
         // aggregates read every row anyway
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -3513,6 +3805,7 @@ mod tests {
         // page instead when row counts favour it
         let c0 = Catalog::default();
         let ctx0 = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3535,6 +3828,7 @@ mod tests {
         let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
         let paths = |sql: &str| {
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &[],
@@ -3582,6 +3876,7 @@ mod tests {
         );
         // a point lookup is never traded for a page
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -3605,6 +3900,7 @@ mod tests {
         // the shard key (a range on one shard wins then)
         let c0 = Catalog::default();
         let ctx0 = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3624,6 +3920,7 @@ mod tests {
         let cat = Catalog::new(1, vec!["d".into()], vec![*def]);
         let path = |sql: &str| {
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &[],
@@ -3667,6 +3964,7 @@ mod tests {
         // issue #32: InnoDB's clustered index without a PRIMARY KEY
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3712,6 +4010,7 @@ mod tests {
         log.space_id = 600;
         let cat = Catalog::new(1, vec!["d".into()], vec![log]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("d"),
             params: &[],
@@ -3741,6 +4040,7 @@ mod tests {
         // issue #33: read from the catalog, never written
         let cat = catalog();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
@@ -3824,6 +4124,7 @@ mod tests {
         ));
         let cat = catalog();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("sbtest"),
             params: &[],
@@ -3854,6 +4155,7 @@ mod tests {
         // NULLs (issue #51); on a NOT NULL one it is the same as `=`
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3869,6 +4171,7 @@ mod tests {
         let path = |sql: &str| {
             let n = normalize(sql, Mode::Literals).unwrap();
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &n.params,
@@ -3905,6 +4208,7 @@ mod tests {
         ));
         let dml = |sql: &str| {
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &[],
@@ -3933,6 +4237,7 @@ mod tests {
         // indexed and hashed by weight strings
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -3958,6 +4263,7 @@ mod tests {
         let path = |sql: &str| {
             let n = normalize(sql, Mode::Literals).unwrap();
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &n.params,
@@ -4022,6 +4328,7 @@ mod tests {
         assert!(!sql.to_uppercase().contains("PARTITION"));
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
@@ -4051,6 +4358,7 @@ mod global_index_tests {
     fn entries_of_a_global_index() {
         let c0 = Catalog::default();
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &c0,
             db: Some("d"),
             params: &[],
