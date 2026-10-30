@@ -1,0 +1,66 @@
+{
+  "failure_run": 41101768716,
+  "failure_job": 124220089816,
+  "failure_source": "9950f4fc2502e0355c0be4aac5dd5d5b654bebdb",
+  "reviewed_PR": 213,
+  "fix_parent": "f4a0a8f341c9c851f3001d964c08de70cc5ba388",
+  "sql_error": {
+    "args": [
+      2003,
+      "shard 1 has no reachable leader (127.0.0.1:57089 is read-only)"
+    ],
+    "errno": 2003,
+    "sqlstate": null,
+    "type": "OperationalError"
+  },
+  "history_sequence": 334,
+  "boundary": "Only a bounded independent autocommit SELECT before any BEGIN/mutation can repeat. Accept exact read-only discovery messages naming the known RF3 inventory, plus the existing known leader-change refusal. Unknowns, other 2003 errors and the eighth refusal stop. No production mutation or query retry changed.",
+  "files": {
+    "after-lua.out": "e86cba0bffd35e874237879605852c6c0aa5fef5584ea06eba52da09d0d72883",
+    "after-lua.tar.gz": "4ccbbe26b49de0cdd79c0f0b64423c95a3885f14d572add08847f621f3b7b543",
+    "after-native.out": "fcf6e2a4ee9837f0d4cfe62aec889f2970b6d5ddbc3fcb23e4b1cdca6e71552a",
+    "after-native.tar.gz": "57e1350666af348157164cb007b3171efebb947883534a2025e5e7234b67fd46",
+    "build-inputs.json": "43fcac85f214ae3855cda1841411badbffdf529b0afb811d25ec415e983d618b",
+    "original-41101768716.tar.gz": "58ebd0b9e0f6ceec1ba031de00c3c7356ab6974640050179299801b32a8a697b",
+    "original-job.out.gz": "40daa9c3e8a11a1c8cb97c2ad0fa70e49ab08961d4f6e25c80a79186be12865f"
+  },
+  "after": [
+    {
+      "mode": "native",
+      "runtime_source": "098c84de414a761f2e709d4dcafd690af858260b",
+      "functional_checks": 68,
+      "leader_fault_checks": 38,
+      "engines": [
+        "memtx",
+        "vinyl"
+      ],
+      "observed_retry_codes": [],
+      "cleanup": {
+        "exit_code": 0,
+        "owned_processes_reaped": true,
+        "finished_unix_ns": 1793385796315593087,
+        "scope": "owned PID/PPID/birth/cwd/nonce cleanup; no other services touched"
+      }
+    },
+    {
+      "mode": "lua",
+      "runtime_source": "098c84de414a761f2e709d4dcafd690af858260b",
+      "functional_checks": 68,
+      "leader_fault_checks": 38,
+      "engines": [
+        "memtx",
+        "vinyl"
+      ],
+      "observed_retry_codes": [
+        1213
+      ],
+      "cleanup": {
+        "exit_code": 0,
+        "owned_processes_reaped": true,
+        "finished_unix_ns": 1793385869485493385,
+        "scope": "owned PID/PPID/birth/cwd/nonce cleanup; no other services touched"
+      }
+    }
+  ],
+  "qualification_boundary": "Fresh focused native/Lua RF3/fsync leader histories pass; they did not reproduce the new 2003 branch. The original current-source CI incident remains its failure evidence, and the exact allowlist/static read-only scope is reviewed separately. This does not claim no-quorum/stall completion, an old-writable-role/A-B-A witness, performance, or a successful final release cohort."
+}

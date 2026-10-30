@@ -1,0 +1,658 @@
+{
+  "target_source": "326dfb92cb91844ec0ffcdb48af4ac0d7d50b5b6",
+  "generator_inputs": {
+    "bench/loadgen_test.py": "6fdcec4e67719368d155a70eb3bc1250dd718be721aa38d622f08695f0633197",
+    "bench/loadgen_smoke.sh": "cf0a03a55958724babbc2aaaf345becf984ffe992a53c9851422305e824e1bff",
+    "bench/loadgen_runtime.lua": "ab870bd3ad3398ccecaaef70cb09d48b9925f43187571d3f971605f4cb323685",
+    "bench/loadgen.py": "9cafd06462c4d5a048694b2b21ecd98cd752057502886d711d90f1579388874a"
+  },
+  "build": "cargo build --locked --offline -p tarn-server -p tarn-storage; CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false",
+  "scope": "ARM64 Linux in shared Docker VM, two shards x RF3/fsync. Debug target validates functionality only; no performance qualification.",
+  "prior_build_failures": [
+    "cargo initially absent from login-shell PATH",
+    "normal release two-job build killed under VM memory pressure",
+    "normal release one-job build also killed; failed logs retained"
+  ],
+  "controls": 19,
+  "modes": [
+    {
+      "mode": "memtx-native",
+      "phases": {
+        "point": {
+          "acknowledged": 24
+        },
+        "transaction": {
+          "acknowledged": 24
+        },
+        "hot": {
+          "acknowledged": 24
+        },
+        "overload": {
+          "acknowledged": 268,
+          "queue_full": 5732
+        }
+      }
+    },
+    {
+      "mode": "vinyl-lua",
+      "phases": {
+        "point": {
+          "acknowledged": 24
+        },
+        "transaction": {
+          "acknowledged": 24
+        },
+        "hot": {
+          "acknowledged": 24
+        },
+        "overload": {
+          "acknowledged": 291,
+          "queue_full": 5709
+        }
+      }
+    }
+  ],
+  "archive": {
+    "path": "local-functional-20261030.tar.gz",
+    "bytes": 226615,
+    "sha256": "1ac62a76725e9fa72dc146f781a005267d6d88a4c7d5dc0ed3fdafeb4a20c73b"
+  },
+  "members": [
+    {
+      "path": "local-container-controls.log",
+      "bytes": 331,
+      "sha256": "32e058ab80193e4dbc34d2bc1aa7f3836ea99680e663bb836b1bf2ee77f14e38"
+    },
+    {
+      "path": "local-target-build-corrected.log",
+      "bytes": 6169,
+      "sha256": "d6a85cff285b8fad2edfd0b54ee2f5585d729af05760c80a60e5eba46891ff77"
+    },
+    {
+      "path": "local-target-build-debug.log",
+      "bytes": 3733,
+      "sha256": "ec602580f40ffacbaaeb8f4879c1dbead435344657826fd488211d0acb4cef04"
+    },
+    {
+      "path": "local-target-build-single-job.log",
+      "bytes": 1911,
+      "sha256": "3083f268a8d24239b406ad76ea3afb614cc65c95af4e939e0138f28c73f978e6"
+    },
+    {
+      "path": "local-target-build.log",
+      "bytes": 39,
+      "sha256": "e977a1713ace7b115cb28b5fb2eb4e5a74d624e400b2b8838fc1bfaf2fbb0c90"
+    },
+    {
+      "path": "memtx-native/cleanup.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "memtx-native/cluster/cluster.json",
+      "bytes": 165,
+      "sha256": "583c65f5a38b60ed033ddf1ec0ebbd6dd1c9256d6b20444047e982affe1e5860"
+    },
+    {
+      "path": "memtx-native/cluster/params",
+      "bytes": 75,
+      "sha256": "76e8130b875262f801a1e38976ebba7c1209f5045783fe363fa782742f83ea09"
+    },
+    {
+      "path": "memtx-native/cluster/s1.1.log",
+      "bytes": 15982,
+      "sha256": "1f9361df06456d89e437f02323563c98b4ccd31026b402795459b938537dbbae"
+    },
+    {
+      "path": "memtx-native/cluster/s1.1.sh",
+      "bytes": 1014,
+      "sha256": "1c525b8b90bb0a22a5659cc4a92bf9960cfddc48f3273724a0330f4aea20d008"
+    },
+    {
+      "path": "memtx-native/cluster/s1.2.log",
+      "bytes": 14915,
+      "sha256": "5dd81cb8a79363ca640acfa4b4309bd69793dd10d5663543c220a284fa77fb65"
+    },
+    {
+      "path": "memtx-native/cluster/s1.2.sh",
+      "bytes": 1014,
+      "sha256": "7f64150779b33b448cbbd53e7834dc13b77f5a852f2f4e92e66d0cad827ef3fe"
+    },
+    {
+      "path": "memtx-native/cluster/s1.3.log",
+      "bytes": 14365,
+      "sha256": "5c0e2ca50dece645f4cfa6035b717b43f2fdb53036c638ae79bbe119e31f58f3"
+    },
+    {
+      "path": "memtx-native/cluster/s1.3.sh",
+      "bytes": 1014,
+      "sha256": "6543631bb6e0c7d4fdd17247cd51a4c9c95dc0b81638f87c56af89d534f2b239"
+    },
+    {
+      "path": "memtx-native/cluster/s2.1.log",
+      "bytes": 15285,
+      "sha256": "ba78bcee4332cd99d12934d370d900d1182992765117cc465e3359fe82f434d1"
+    },
+    {
+      "path": "memtx-native/cluster/s2.1.sh",
+      "bytes": 1014,
+      "sha256": "03a2b05eef6f9336673f1fe2cf042bd79cd384b609d4da0ffc64ed6662685a6e"
+    },
+    {
+      "path": "memtx-native/cluster/s2.2.log",
+      "bytes": 14730,
+      "sha256": "3505bf593bdc3fef0edd0ee411a015e904bba0157b07784522d1f28560f269a4"
+    },
+    {
+      "path": "memtx-native/cluster/s2.2.sh",
+      "bytes": 1014,
+      "sha256": "e8858c91f0f42ea3f723c90ab6665d0f4a56895c73f49168084663afd58c96be"
+    },
+    {
+      "path": "memtx-native/cluster/s2.3.log",
+      "bytes": 14632,
+      "sha256": "4260251a01a68a328c70a5254d589e6dfb8430eb0c51b278f419c11e784522f2"
+    },
+    {
+      "path": "memtx-native/cluster/s2.3.sh",
+      "bytes": 1014,
+      "sha256": "f93020ab6104ee2f036e1b1aad842ee67cf79cde8fdc3c74fcc45524b3a2a297"
+    },
+    {
+      "path": "memtx-native/cluster/tarn1.log",
+      "bytes": 825,
+      "sha256": "c48342637e9f8acb26bad96ab9b7d66f99516e64deccfcdf11fd73bdf7c98933"
+    },
+    {
+      "path": "memtx-native/cluster/tarn1.sh",
+      "bytes": 251,
+      "sha256": "fe32e646d805656f392888dbe046158cbdb7e5ad6f4051e33d4dea9a76330480"
+    },
+    {
+      "path": "memtx-native/hot-audit.json",
+      "bytes": 576,
+      "sha256": "ca9cba0ab53352ff2a7e2cc0fedad334e363070b212a490791c9ea355e17d582"
+    },
+    {
+      "path": "memtx-native/hot/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "memtx-native/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "memtx-native/hot/readback.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "memtx-native/hot/receipt.json",
+      "bytes": 2666,
+      "sha256": "e3b3ca3a58f0a0caf08ba81941c34a258b6cf07629da2f1b9116dcb7d3b82f03"
+    },
+    {
+      "path": "memtx-native/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "memtx-native/hot/worker-0.jsonl",
+      "bytes": 686,
+      "sha256": "0e0794a47c02a97045409dd6206c123e294c948cda2a264fb023d7e2e72177f2"
+    },
+    {
+      "path": "memtx-native/hot/worker-1.jsonl",
+      "bytes": 685,
+      "sha256": "090e9574bd7a552a8b62e5e2fab26a40fa87888b92ff6484b8e9ca049424e235"
+    },
+    {
+      "path": "memtx-native/hot/worker-2.jsonl",
+      "bytes": 678,
+      "sha256": "45a6da2588418364fe177e72d0f5a263952e305a94dd6aa6f5e6dca105bfedbc"
+    },
+    {
+      "path": "memtx-native/hot/worker-3.jsonl",
+      "bytes": 680,
+      "sha256": "2d9a6b1920d022e942c4584dcc68019e4daf5d5293602b9ae5a1735dbf74a8f4"
+    },
+    {
+      "path": "memtx-native/inputs.sha256",
+      "bytes": 323,
+      "sha256": "5f1c0526b99dabec34d7389c9f5aabd31325c301bec57372fe2cffb69d605945"
+    },
+    {
+      "path": "memtx-native/overload-audit.json",
+      "bytes": 646,
+      "sha256": "58f420ade15be1d3cf03cbd09af7215c9c231519eae857385c15f8387d1f9826"
+    },
+    {
+      "path": "memtx-native/overload/baseline.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "memtx-native/overload/ledger.jsonl",
+      "bytes": 12598,
+      "sha256": "96a18f492997bbce741e3a6d343cc1c4e1f6b7f2c51f1851930d0afb27871950"
+    },
+    {
+      "path": "memtx-native/overload/readback.jsonl",
+      "bytes": 4022,
+      "sha256": "4f16c3b146825839eebcacb9a0f5e90366d1f0a97eaa122eab2bb9149b0a5326"
+    },
+    {
+      "path": "memtx-native/overload/receipt.json",
+      "bytes": 2425,
+      "sha256": "9606db723a04ee6714ed85d976a528bed0fd7861df43970b3f85c2d636648e57"
+    },
+    {
+      "path": "memtx-native/overload/scheduler.jsonl",
+      "bytes": 583327,
+      "sha256": "8de7fba17e013c29935fe967a6077881a00e8918373ca8e0d43db46584179328"
+    },
+    {
+      "path": "memtx-native/overload/worker-0.jsonl",
+      "bytes": 31645,
+      "sha256": "ac31c37d29adcfb15b44add8850a66649fb0abb1f2b90535d2503815a94f0025"
+    },
+    {
+      "path": "memtx-native/point-audit.json",
+      "bytes": 577,
+      "sha256": "0de28a2101e554458dc5eb7e145579f71e825a52e420f3867167d9a3ec9506f4"
+    },
+    {
+      "path": "memtx-native/point/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "memtx-native/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "memtx-native/point/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "memtx-native/point/receipt.json",
+      "bytes": 2459,
+      "sha256": "60e4b81c49100eb14da8148abd374c36f9dc0151ca9b6f8f2d79b1b7d2772285"
+    },
+    {
+      "path": "memtx-native/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "memtx-native/point/worker-0.jsonl",
+      "bytes": 1364,
+      "sha256": "4d7d7bce6c39d1383d05341936d5c8495d8468c2891046b9eb5e9fd51185f473"
+    },
+    {
+      "path": "memtx-native/point/worker-1.jsonl",
+      "bytes": 1361,
+      "sha256": "9f4957adc203f956e6038778124db8db6e2184da3d15af2066d192625659ec39"
+    },
+    {
+      "path": "memtx-native/prepare/receipt.json",
+      "bytes": 1302,
+      "sha256": "6df99f2eb2dacd919a43fb587b00d80e8036c79a75af03cfc0bc023956c3e92e"
+    },
+    {
+      "path": "memtx-native/runtime-after.json",
+      "bytes": 12082,
+      "sha256": "b99d3a1f5526fba9df1915cfe8c1b8c26ecf3b31c4523a8377f65610aa0345ad"
+    },
+    {
+      "path": "memtx-native/runtime-before.json",
+      "bytes": 11936,
+      "sha256": "1434d067c2fdb2e77f803d4dca143781057b9ca3dcfb18f032f0f10aa80f9168"
+    },
+    {
+      "path": "memtx-native/startup.log",
+      "bytes": 112,
+      "sha256": "fbbb1414b2f0d9551b9875762ae6575c3de3450b116be3901ee50ec0a2447dcb"
+    },
+    {
+      "path": "memtx-native/transaction-audit.json",
+      "bytes": 576,
+      "sha256": "5ce54e452b7857bc40aed009de28668574d20816df83236a9bd0ba822709fa1c"
+    },
+    {
+      "path": "memtx-native/transaction/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "memtx-native/transaction/ledger.jsonl",
+      "bytes": 1023,
+      "sha256": "4d98527fff8c4ed38e1aa21c01ad06985edf4a8aecd835bbf933de2f90797329"
+    },
+    {
+      "path": "memtx-native/transaction/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "memtx-native/transaction/receipt.json",
+      "bytes": 2685,
+      "sha256": "5f50c4f98688650e6bd51d2d23069094e669f16fb8a0f092f79ab05c03ff7f77"
+    },
+    {
+      "path": "memtx-native/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "memtx-native/transaction/worker-0.jsonl",
+      "bytes": 676,
+      "sha256": "55cd97f44122f81c7a6a042d0df04f1300e4a3b4e55d0e292ff2395e1c0a4591"
+    },
+    {
+      "path": "memtx-native/transaction/worker-1.jsonl",
+      "bytes": 684,
+      "sha256": "219ddb1306318a5abd827d79838fdd2630c619a5dd1404bced92063ed8c9021b"
+    },
+    {
+      "path": "memtx-native/transaction/worker-2.jsonl",
+      "bytes": 679,
+      "sha256": "d93e9e14e23d36c5d70636a4c8395e476cc54ffac9a5f7f54040bd35fbac62b7"
+    },
+    {
+      "path": "memtx-native/transaction/worker-3.jsonl",
+      "bytes": 683,
+      "sha256": "8c02b0085d38e9d09f2eb321a35a5a8794ed7a187afb922d36600eea85c0faf5"
+    },
+    {
+      "path": "vinyl-lua/cleanup.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vinyl-lua/cluster/cluster.json",
+      "bytes": 165,
+      "sha256": "583c65f5a38b60ed033ddf1ec0ebbd6dd1c9256d6b20444047e982affe1e5860"
+    },
+    {
+      "path": "vinyl-lua/cluster/params",
+      "bytes": 75,
+      "sha256": "76e8130b875262f801a1e38976ebba7c1209f5045783fe363fa782742f83ea09"
+    },
+    {
+      "path": "vinyl-lua/cluster/s1.1.log",
+      "bytes": 15179,
+      "sha256": "33a606cee9aed142a90fb041d2cf6a69f3dc9e282112bca01c991f2c0aea91d1"
+    },
+    {
+      "path": "vinyl-lua/cluster/s1.1.sh",
+      "bytes": 963,
+      "sha256": "d23f96bc6aa54d7685f08845998ba5c2cd8d6841d37096920135a78d932fcfdb"
+    },
+    {
+      "path": "vinyl-lua/cluster/s1.2.log",
+      "bytes": 14525,
+      "sha256": "e5b556d9351019240d2e5ca90a2ed0fe529e2966276780b9ed3c733755d3a053"
+    },
+    {
+      "path": "vinyl-lua/cluster/s1.2.sh",
+      "bytes": 963,
+      "sha256": "4d7988df6d444c36ace26592c4e4c9d226548c600f75997ec700ce06f91a5d09"
+    },
+    {
+      "path": "vinyl-lua/cluster/s1.3.log",
+      "bytes": 14632,
+      "sha256": "d344e82dd418d50235df02d52d1beb69b1fb06ee80247af8029804a7559fba3c"
+    },
+    {
+      "path": "vinyl-lua/cluster/s1.3.sh",
+      "bytes": 963,
+      "sha256": "effb8a3cc191844dd745759a93aa94b5bfa31708a520fa8a8265b055c3842963"
+    },
+    {
+      "path": "vinyl-lua/cluster/s2.1.log",
+      "bytes": 14484,
+      "sha256": "87f63ad57473b62e5fbf0c51a575b10960fddb2ea81a44f162e96b681a7e3828"
+    },
+    {
+      "path": "vinyl-lua/cluster/s2.1.sh",
+      "bytes": 963,
+      "sha256": "1693dc9e5f53e3ddf9c6e40e76da4a2285bee84d46335c4d059c495ede5da9ac"
+    },
+    {
+      "path": "vinyl-lua/cluster/s2.2.log",
+      "bytes": 14141,
+      "sha256": "357dd429ae9daa642ce814470314e5c1d765e34770a8e8d23dd338bdccceddc6"
+    },
+    {
+      "path": "vinyl-lua/cluster/s2.2.sh",
+      "bytes": 963,
+      "sha256": "dac5528cd96d2eda5693423c4d04e0ae4b819c55d68bf6ac33eff53fcf6f6485"
+    },
+    {
+      "path": "vinyl-lua/cluster/s2.3.log",
+      "bytes": 13894,
+      "sha256": "8e402b1125216230f8f6650b336bb39bf8f088ac47680912640823956efcdc6f"
+    },
+    {
+      "path": "vinyl-lua/cluster/s2.3.sh",
+      "bytes": 963,
+      "sha256": "d176b708398048d5bcbbfe4601c4d0c8dbb2dcb3505d0ab4502be18cad17324b"
+    },
+    {
+      "path": "vinyl-lua/cluster/tarn1.log",
+      "bytes": 825,
+      "sha256": "aa02d445ec1f2cbe0e18ee998b7a07d2488279ecab2d5de6aae84a2fb69145d5"
+    },
+    {
+      "path": "vinyl-lua/cluster/tarn1.sh",
+      "bytes": 245,
+      "sha256": "f6cd1dd9794036c06baf9f87fa18db2ab5fd10dbf462ebee354052c9e43feec0"
+    },
+    {
+      "path": "vinyl-lua/hot-audit.json",
+      "bytes": 577,
+      "sha256": "8b43587bcfebc27565c6463b06274bb7ded44897e746f55effbd662c6c40ad83"
+    },
+    {
+      "path": "vinyl-lua/hot/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "vinyl-lua/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "vinyl-lua/hot/readback.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "vinyl-lua/hot/receipt.json",
+      "bytes": 2673,
+      "sha256": "66676c84f367e7356c79b3655c74e3ce6d13d3e59b35caa909bfae3eed5e5c80"
+    },
+    {
+      "path": "vinyl-lua/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vinyl-lua/hot/worker-0.jsonl",
+      "bytes": 681,
+      "sha256": "cb45c998fd1aefb0d4dd912a3e581866bb3761f11f9a03a3c21256115c40a4b8"
+    },
+    {
+      "path": "vinyl-lua/hot/worker-1.jsonl",
+      "bytes": 787,
+      "sha256": "b9f591bb955283dd4c2437c5ba9b8a72770b90f3d89dc2aa10c8d241abd21689"
+    },
+    {
+      "path": "vinyl-lua/hot/worker-2.jsonl",
+      "bytes": 569,
+      "sha256": "8fd90ab3bf266bb403453052f4c27c2206b0c981f64cfa397c8f97f8e6dcab85"
+    },
+    {
+      "path": "vinyl-lua/hot/worker-3.jsonl",
+      "bytes": 680,
+      "sha256": "0e6023608e7666c9b9cbdf05c2c9fe3ce05f10438a970a518c3bc361beec2790"
+    },
+    {
+      "path": "vinyl-lua/inputs.sha256",
+      "bytes": 213,
+      "sha256": "1fe4ae858b48c6355a820329a3f62969e06495d889f34f48fa4f210d3fa61de0"
+    },
+    {
+      "path": "vinyl-lua/overload-audit.json",
+      "bytes": 644,
+      "sha256": "aa3689846ac30063c8dff98b9ee45262a56d02d938fb10eecfee9c4968ecc835"
+    },
+    {
+      "path": "vinyl-lua/overload/baseline.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "vinyl-lua/overload/ledger.jsonl",
+      "bytes": 13670,
+      "sha256": "480fbbea48567702c3b3796f97ebc087b70f6fa0bd46541c9186fd5b9042c970"
+    },
+    {
+      "path": "vinyl-lua/overload/readback.jsonl",
+      "bytes": 4022,
+      "sha256": "56a601b6a6dc909b37c00c39df01240500802b3ded370945376fc8d7a90214bb"
+    },
+    {
+      "path": "vinyl-lua/overload/receipt.json",
+      "bytes": 2420,
+      "sha256": "4d3703114baa9aab2d665c8fab552fca9120def26940df8e1ff65db50c25dc89"
+    },
+    {
+      "path": "vinyl-lua/overload/scheduler.jsonl",
+      "bytes": 580904,
+      "sha256": "2f58be9d4a9d2906ca73a739f625281f09ae199189e72b29fe5949aa1c310a97"
+    },
+    {
+      "path": "vinyl-lua/overload/worker-0.jsonl",
+      "bytes": 34400,
+      "sha256": "eaefb298ce9b2c4fc5dbddc9c3fe483898dc3eeeddb46930c1826113146a7b2f"
+    },
+    {
+      "path": "vinyl-lua/point-audit.json",
+      "bytes": 571,
+      "sha256": "afee6e59656962e0dcf9bc3a05d99dd38889ca80c5828caa543a8f39f5798500"
+    },
+    {
+      "path": "vinyl-lua/point/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "vinyl-lua/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vinyl-lua/point/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "vinyl-lua/point/receipt.json",
+      "bytes": 2450,
+      "sha256": "2c2136e1705b91720fe18bfd7d6c64c357efff5e0c6d9061a8341811a6b92d5f"
+    },
+    {
+      "path": "vinyl-lua/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vinyl-lua/point/worker-0.jsonl",
+      "bytes": 1259,
+      "sha256": "cb81ebcf6f9d4cec9cab282c3ee0500a37333ecddf127434f5695ea66115e0d2"
+    },
+    {
+      "path": "vinyl-lua/point/worker-1.jsonl",
+      "bytes": 1473,
+      "sha256": "eebc85bb8bcbe2fc8eb5f9d8a2efdffead17ae26d753c1331f7b5543d5f51c57"
+    },
+    {
+      "path": "vinyl-lua/prepare/receipt.json",
+      "bytes": 1299,
+      "sha256": "3163a26e8787bfb447fb134707bae454f862d86cbb6b644b274a7df94818acb4"
+    },
+    {
+      "path": "vinyl-lua/runtime-after.json",
+      "bytes": 11723,
+      "sha256": "2b5a13a9ba3f896ec9191a783341d1f4a6bf2029ce4a8a9d709f88884b5bdee5"
+    },
+    {
+      "path": "vinyl-lua/runtime-before.json",
+      "bytes": 11649,
+      "sha256": "0868fa8cb6ee0c18e984f7f8a365e329a74669e2b6171e232709e13daa51db88"
+    },
+    {
+      "path": "vinyl-lua/startup.log",
+      "bytes": 109,
+      "sha256": "2cc7897bdb74880df8dbfdfb6177fbe5461ebe1445928422b49e71ea88ddb13d"
+    },
+    {
+      "path": "vinyl-lua/transaction-audit.json",
+      "bytes": 576,
+      "sha256": "6b5f22e3c63a5e73eb1438a041cd1b59cd5f6255a2d75f11909a02a983795e03"
+    },
+    {
+      "path": "vinyl-lua/transaction/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "vinyl-lua/transaction/ledger.jsonl",
+      "bytes": 1023,
+      "sha256": "4d98527fff8c4ed38e1aa21c01ad06985edf4a8aecd835bbf933de2f90797329"
+    },
+    {
+      "path": "vinyl-lua/transaction/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "vinyl-lua/transaction/receipt.json",
+      "bytes": 2682,
+      "sha256": "afc83f0314badc16c288d03982808bbbaf422ef6d34180450380ea103d67774c"
+    },
+    {
+      "path": "vinyl-lua/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vinyl-lua/transaction/worker-0.jsonl",
+      "bytes": 682,
+      "sha256": "1ef1ca4a24749805cda55f1eee21409b3218fb9c4e6c6dc47e06bafe046bd92f"
+    },
+    {
+      "path": "vinyl-lua/transaction/worker-1.jsonl",
+      "bytes": 684,
+      "sha256": "1c781e41181ca5e25b23677b1fc09d2d82928b98255bc6ba915bf9bf678e88c7"
+    },
+    {
+      "path": "vinyl-lua/transaction/worker-2.jsonl",
+      "bytes": 674,
+      "sha256": "c25bff89b8fba6305e30584c48cd9b917f7a5db8340096f288e5ad091701f6ce"
+    },
+    {
+      "path": "vinyl-lua/transaction/worker-3.jsonl",
+      "bytes": 680,
+      "sha256": "94613905a35cc25076262d304bff272933eadab6af10732612c8006c814f4db4"
+    }
+  ],
+  "pending": "Normal release four-mode CI and pinned MySQL functional checks. Physical-host acceptance is separate issue #211."
+}

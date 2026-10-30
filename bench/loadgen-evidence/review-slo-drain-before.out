@@ -1,0 +1,13 @@
+..........F.........
+======================================================================
+FAIL: test_slo_goodput_counts_drain_even_when_latency_objective_allows_it (__main__.Accounting)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "bench/loadgen_test.py", line 123, in test_slo_goodput_counts_drain_even_when_latency_objective_allows_it
+    self.assertAlmostEqual(result['goodput_within_slo_per_second'],1)
+AssertionError: 3.3333333333333335 != 1 within 7 places (2.3333333333333335 difference)
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.271s
+
+FAILED (failures=1)

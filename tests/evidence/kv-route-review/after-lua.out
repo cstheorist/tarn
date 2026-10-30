@@ -1,0 +1,110 @@
+Strong KV evidence: /tmp/tarn-kv181-RZbiQ9Lg
+  ok  points_memtx SDK rows equal SQL
+  ok  points_memtx schema accompanies rows
+  ok  memtx registered metadata
+  ok  memtx RPC duplicate/miss positions
+  ok  memtx prefix
+  ok  memtx wrong_type
+  ok  memtx nested
+  ok  memtx count_cap
+  ok  memtx bytes_cap
+  ok  memtx stale owner explicit
+  ok  memtx old frozen token terminal
+  ok  changed_memtx SDK rows equal SQL
+  ok  changed_memtx schema accompanies rows
+  ok  memtx table READ grant required
+  ok  edges_memtx SDK rows equal SQL
+  ok  edges_memtx schema accompanies rows
+  ok  unsigned_memtx SDK rows equal SQL
+  ok  unsigned_memtx schema accompanies rows
+  ok  collated_memtx SDK rows equal SQL
+  ok  collated_memtx schema accompanies rows
+  ok  binary_memtx SDK rows equal SQL
+  ok  binary_memtx schema accompanies rows
+  ok  memtx final tuple crosses whole batch cap
+  ok  memtx SQL ACK has pending physical APPLY
+  ok  memtx ACK decision and participant witnesses
+  ok  memtx raw absence is retained separately
+  ok  memtx held reads finish within their bounded refusal budgets
+  ok  memtx physical APPLY remains held during refusals
+  ok  memtx sql refuses captured W claim after ACK
+  ok  memtx sdk refuses captured W claim after ACK
+  ok  memtx rpc refuses captured W claim after ACK
+  ok  pending_memtx SDK rows equal SQL
+  ok  pending_memtx schema accompanies rows
+  ok  memtx registered point after physical APPLY
+  ok  points_vinyl SDK rows equal SQL
+  ok  points_vinyl schema accompanies rows
+  ok  vinyl registered metadata
+  ok  vinyl RPC duplicate/miss positions
+  ok  vinyl prefix
+  ok  vinyl wrong_type
+  ok  vinyl nested
+  ok  vinyl count_cap
+  ok  vinyl bytes_cap
+  ok  vinyl stale owner explicit
+  ok  vinyl old frozen token terminal
+  ok  changed_vinyl SDK rows equal SQL
+  ok  changed_vinyl schema accompanies rows
+  ok  vinyl table READ grant required
+  ok  edges_vinyl SDK rows equal SQL
+  ok  edges_vinyl schema accompanies rows
+  ok  unsigned_vinyl SDK rows equal SQL
+  ok  unsigned_vinyl schema accompanies rows
+  ok  collated_vinyl SDK rows equal SQL
+  ok  collated_vinyl schema accompanies rows
+  ok  binary_vinyl SDK rows equal SQL
+  ok  binary_vinyl schema accompanies rows
+  ok  vinyl final tuple crosses whole batch cap
+  ok  vinyl SQL ACK has pending physical APPLY
+  ok  vinyl ACK decision and participant witnesses
+  ok  vinyl raw absence is retained separately
+  ok  vinyl held reads finish within their bounded refusal budgets
+  ok  vinyl physical APPLY remains held during refusals
+  ok  vinyl sql refuses captured W claim after ACK
+  ok  vinyl sdk refuses captured W claim after ACK
+  ok  vinyl rpc refuses captured W claim after ACK
+  ok  pending_vinyl SDK rows equal SQL
+  ok  pending_vinyl schema accompanies rows
+  ok  vinyl registered point after physical APPLY
+68 checks, PASS
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  fault_memtx SDK rows equal SQL
+  ok  fault_memtx schema accompanies rows
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  replacement has a newer actual term
+  ok  SQL read warms the replacement route without a mutation
+  ok  replacement remains current while the former leader is paused
+  ok  resumed former leader returns a typed refusal without a missing prefix
+  ok  fault_memtx SDK rows equal SQL
+  ok  fault_memtx schema accompanies rows
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  fault_vinyl SDK rows equal SQL
+  ok  fault_vinyl schema accompanies rows
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  RF3 durability/configuration remains unchanged
+  ok  RF3 durability/configuration remains unchanged
+  ok  replacement has a newer actual term
+  ok  SQL read warms the replacement route without a mutation
+  ok  replacement remains current while the former leader is paused
+  ok  resumed former leader returns a typed refusal without a missing prefix
+  ok  fault_vinyl SDK rows equal SQL
+  ok  fault_vinyl schema accompanies rows
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+  ok  exact SQL ACK-dependent value
+38 checks, PASS
+Strong KV exit 0; logs, identities, WAL and evidence retained at /tmp/tarn-kv181-RZbiQ9Lg
