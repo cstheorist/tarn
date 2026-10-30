@@ -20,7 +20,7 @@
 //! original physical identity, while the cluster allocates an owned shadow
 //! and fresh auxiliary generations (`EngineCopy` and `EngineCutover`).
 
-use crate::catalog::{self, Catalog, ColumnDef, Fill, ForeignKeyDef, IndexDef, TableDef};
+use crate::catalog::{self, Catalog, ColumnDef, Fill, IndexDef, TableDef};
 use crate::mpw::Mp;
 use crate::planner::{self, PlanCtx};
 use crate::types::{int_range, BaseType, SqlType};
@@ -92,10 +92,6 @@ pub enum AlterOp {
     IndexVisibility {
         name: String,
         invisible: bool,
-    },
-    AddForeignKey {
-        name: Option<String>,
-        fk: ForeignKeyDef,
     },
     DropForeignKey {
         name: String,
@@ -466,7 +462,7 @@ fn tokens_text(sql: &str, t: &[Tok]) -> String {
 }
 
 /// ADD <constraint or index definition> through the CREATE TABLE parser.
-fn table_element(sql: &str, spec: &[Tok], ctx: &PlanCtx) -> SqlResult<AlterOp> {
+fn table_element(sql: &str, spec: &[Tok], _ctx: &PlanCtx) -> SqlResult<AlterOp> {
     let (spec, invisible) = strip_visibility(spec);
     let text = tokens_text(sql, &spec);
     let ct = parse_create_table_body(&format!("_tarn_x INT, {}", text))?;
@@ -492,11 +488,8 @@ fn table_element(sql: &str, spec: &[Tok], ctx: &PlanCtx) -> SqlResult<AlterOp> {
             comment: planner::index_comment(&ix.index_options),
             if_not_exists: false,
         },
-        A::TableConstraint::ForeignKey(fk) => {
-            let (name, fk) = planner::foreign_key_spec(fk, ctx)?;
-            AlterOp::AddForeignKey { name, fk }
-        }
-        A::TableConstraint::Check(_) => AlterOp::Ignored,
+        A::TableConstraint::ForeignKey(_) => return Err(crate::integrity::reject("FOREIGN KEY")),
+        A::TableConstraint::Check(_) => return Err(crate::integrity::reject("CHECK")),
         other => return Err(SqlError::unsupported(format!("ALTER TABLE ADD {}", other))),
     })
 }
@@ -666,7 +659,7 @@ fn alteration(sql: &str, spec: &[Tok], ctx: &PlanCtx, out: &mut Vec<AlterOp>) ->
                 };
                 out.push(AlterOp::IndexVisibility { name, invisible });
             } else if c.eat("CHECK") || c.eat("CONSTRAINT") {
-                out.push(AlterOp::Ignored); // [NOT] ENFORCED: CHECKs are not enforced
+                return Err(crate::integrity::reject("CHECK"));
             } else {
                 let _ = c.eat("COLUMN");
                 let col = c.ident()?;
@@ -1687,17 +1680,6 @@ pub fn apply(def: &TableDef, plan: &AlterPlan, cat: &Catalog, now: &str) -> SqlR
                 nd.indexes[k].invisible = *invisible;
                 changed = true;
             }
-            AlterOp::AddForeignKey { name, fk } => {
-                let before: Vec<u32> = nd.indexes.iter().map(|i| i.id).collect();
-                planner::add_foreign_key(&mut nd, name.clone(), fk.clone())?;
-                // an implicit index takes this statement's next id
-                for ix in nd.indexes.iter_mut() {
-                    if !before.contains(&ix.id) {
-                        ix.id = alloc_id(&mut next_id);
-                    }
-                }
-                changed = true;
-            }
             AlterOp::DropForeignKey { name, if_exists } => {
                 match nd.foreign_keys.iter().position(|f| f.name.eq_ignore_ascii_case(name)) {
                     Some(k) => {
@@ -2317,7 +2299,17 @@ mod tests {
     }
 
     fn alter(def: &TableDef, cat: &Catalog, sql: &str) -> SqlResult<Change> {
-        apply(def, &plan1(sql, cat), cat, "2026-10-25 12:00:00")
+        let ctx = PlanCtx {
+            statistics: None,
+            catalog: cat,
+            db: Some("db"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let mut plans = plan(sql, &ctx)?.expect("a schema change");
+        assert_eq!(plans.len(), 1);
+        apply(def, &plans.remove(0), cat, "2026-10-25 12:00:00")
     }
 
     const T: &str = "CREATE TABLE t (id INT PRIMARY KEY, a INT, s VARCHAR(10), d DECIMAL(6,2), KEY ka (a))";
@@ -2897,17 +2889,15 @@ mod tests {
             alter(&def, &cat, "ALTER TABLE t DROP INDEX PRIMARY").unwrap_err().code,
             1235
         );
-        let ch = alter(
-            &def,
-            &cat,
-            "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (s) REFERENCES other.p (x)",
-        )
-        .unwrap();
-        assert_eq!(ch.def.foreign_keys[0].name, "fk");
         assert_eq!(
-            (ch.builds[0].name.as_str(), ch.builds[0].id),
-            ("fk", 3),
-            "implicit index for the foreign key"
+            alter(
+                &def,
+                &cat,
+                "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (s) REFERENCES other.p (x)"
+            )
+            .unwrap_err()
+            .code,
+            1235
         );
         let ch = alter(&def, &cat, "ALTER TABLE t RENAME TO other.t9").unwrap();
         assert_eq!(ch.rename.as_deref(), Some("other.t9"));

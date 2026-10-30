@@ -6,8 +6,19 @@ persisted clock/retention, capture binding and engine-cut contracts). This relea
 admission and a format marker. Oversized work may be refused with 1041/HY000
 before commit under the configured resource policy; tune and validate that
 policy before replacing gateways. The upgrade does not change stored user tuples, transaction records, lock semantics,
-DDL/move/lazy metadata, or the native state layout. Other historical
+move/lazy metadata, or the native state layout. Catalog definitions add
+`integrity_policy` declaration provenance; older gateways ignore it. Other historical
 versions require a separate compatibility test before deployment.
+
+The new gateway also rejects writes to predecessor-created tables by default:
+old catalogs lack declaration provenance, including discarded CHECK/ENUM/SET
+history. Inspect `SHOW TARN INTEGRITY` and follow [the migration contract](integrity.md)
+before replacing gateways. A deliberate session-only `tarn_legacy_integrity='ALLOW'`
+acknowledges the old unenforced behavior; it is never enabled automatically.
+Mixed older gateways continue their old policy, and rollback restores that policy.
+The upgrade matrix checks default refusal without an effect before explicitly
+acknowledging only its owned, known-schema legacy canary sessions. This is a
+SQL admission change, not a data-validation certificate or format conversion.
 
 ## Compatibility matrix
 
@@ -18,10 +29,10 @@ vinyl user spaces retain synchronous memtx protocol metadata under RF3.
 | Gateway | Lua/storage | Native module | Admission and behavior |
 |---|---|---|---|
 | Predecessor | Predecessor | Its ABI 14 module or disabled | Existing behavior; no compatibility handshake |
-| Predecessor | This version | This version's ABI 14 module | Supported transition; existing RPC and metadata contracts remain unchanged |
+| Predecessor | This version | This version's ABI 14 module | Supported transition; existing RPCs; older gateway does not enforce new integrity admission |
 | This version | This version | Matching ABI 14 module | Protocol 1 / format 1 handshake before use |
 | This version | This version | Predecessor's ABI 14 module | Same state and RPC contract; tested explicitly |
-| This version | This version | Disabled, load failure, or incompatible ABI | Explicit Lua fallback, with the reason in the compatibility report; all SQL semantics retained |
+| This version | This version | Disabled, load failure, or incompatible ABI | Explicit Lua fallback, with the reason in the compatibility report; the same SQL admission and fallback contracts apply |
 | This version | Predecessor or missing compatibility RPC | Any | Refused before forwarding user RPCs; upgrade storage first |
 | This version | Unknown protocol, disk format, runtime, shard identity, or expiry contract | Any | Refused; no unsafe compatibility override |
 
