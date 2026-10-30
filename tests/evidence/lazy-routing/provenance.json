@@ -41,5 +41,36 @@
       "uniform_write_heavy": "unqualified: eight of ten p99 ceilings exceeded, no workload errors"
     },
     "scope": "User explicitly requested #185 isolated; PR213 replaces PR208, whose externally combined branch remains intact."
+  },
+  "reviewed_main_merge": {
+    "source": "b107cbb",
+    "base": "b3317b344d7f636f59f77031ae298cc1cfc708e1",
+    "scope": "Only reviewed main merged into the isolated #185 branch; no caf39e6 integration.",
+    "validation": {
+      "workspace_tests": 334,
+      "workspace_clippy": "pass",
+      "format": "pass",
+      "lazy_sql_each_engine": {
+        "tests": 11,
+        "failures": 0,
+        "skips": 0
+      },
+      "differential_each_engine": {
+        "cases": 1122,
+        "failures": 0,
+        "warnings": 0
+      },
+      "composite_rf3": "MemTX and Vinyl fsync: durable YES/APPLY, two leader deaths, restart and catch-up pass"
+    },
+    "setup_failure": "Initial SQL attempt reached the old r3 fixture because cleanup used DIR instead of -d; new gateway refused clock-unsafe discovery. Retained as setup failure, not validation. Corrected explicit-directory cleanup and fresh fixture verified all process identities and rebuilt gateway executable before all passing tests.",
+    "performance": "All measurements remain bound to their recorded revisions; no b107cbb performance claim."
+  },
+  "complete_standard_release_cost": {
+    "run": 41092212161,
+    "source": "3f6bd0365e50ebf344c3d6b3d896c250667111ca",
+    "tree": "730fe03fc4e251eb112596b8169b002438e2f82c",
+    "qualified_arms": 180,
+    "summary": "summary-ci-41092212161.json",
+    "cluster_logs_retained": true
   }
 }

@@ -191,3 +191,28 @@ Uniform read-heavy was 0.963 (0.875–1.060); skewed write-heavy was 1.015
 (0.990–1.040), and skewed read-heavy was 0.962 (0.911–1.016). Scheduled
 low-load ratios stayed near one. These results and the cancellation record
 remain separate from the local fully bound comparisons.
+
+The isolated PR's complete standard-release workflow
+[`41092212161`](https://github.com/cstheorist/tarn/actions/runs/41092212161)
+then completed all six cases, with five pairs for each of three workloads:
+180 arms, all error-free and below the p99 ceiling. Its merge candidate
+`3f6bd03` has the same tree as `841aee2`. The earlier unqualified case remains
+retained; a later passing run does not erase its latency failure.
+
+| Shape | Lanes | Write-heavy paired ratio (95% interval) | Read-heavy paired ratio (95% interval) |
+|---|---:|---:|---:|
+| uniform | 1 | 1.000 (0.978–1.022) | 0.987 (0.974–1.001) |
+| uniform | 4 | 0.992 (0.967–1.018) | 0.955 (0.906–1.007) |
+| uniform | 16 | 0.977 (0.955–1.001) | 0.966 (0.931–1.002) |
+| skewed | 1 | 0.984 (0.942–1.028) | 0.986 (0.971–1.000) |
+| skewed | 4 | 0.869 (0.815–0.926) | 0.937 (0.907–0.969) |
+| skewed | 16 | 0.858 (0.836–0.879) | 0.925 (0.911–0.938) |
+
+Every scheduled low-load ratio remained near one. The skewed single-lane
+read-heavy upper bound is 1.0001 before rounding. This complete matrix
+repeats the saturated prefix/write-heavy cost at four and sixteen lanes.
+The [full summary](../tests/evidence/lazy-routing/summary-ci-41092212161.json)
+retains per-arm CPU, RPCs, bytes, lag, catch-up, latency extrema and offered
+load; each archive now also contains all cluster node logs. These
+measurements describe their recorded source revisions, not later main
+integrations or a universal performance guarantee.

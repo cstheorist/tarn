@@ -53,6 +53,20 @@ attempts. No failed or incomplete attempt is counted as qualification.
 * `ci-41077514469-{uniform,skewed}-1.tar.gz` and corresponding summaries:
   completed cases from the cancelled predecessor workflow on source
   `841aee2`, including the unqualified uniform write-heavy latency result.
+* `ci-41092212161-{uniform,skewed}-{1,4,16}.tar.gz` and
+  `summary-ci-41092212161.json`: the complete standard-release CI matrix,
+  180 qualifying arms across write-heavy, read-heavy and low-load work.
+  All archives include the node logs. Source `3f6bd03` has the same tree as
+  `841aee2`; the retained results include 13–14% write-heavy and 6–8%
+  read-heavy regressions in the skewed four- and sixteen-lane fixtures.
+* `validation-b107cbb.tar.gz`: after merging reviewed main `b3317b3`, all
+  334 workspace tests, workspace clippy, both 11-test lazy SQL suites,
+  1,122 differential cases on each engine, and composite RF3/fsync leader
+  failures/recovery pass. Commands and full fixture logs are retained.
+  `validation-b107cbb-setup-refusal.tar.gz` preserves the initial invalid
+  fixture attempt: incorrect cleanup left the previous cluster listening.
+  The successful rerun used explicit-directory cleanup and verified every
+  process identity and the rebuilt gateway executable before testing.
 
 The new `LazyRouting` model and six expected-failure outputs are retained
 under `tla/`. They cover a finite frozen generation, not unbounded SQL,
