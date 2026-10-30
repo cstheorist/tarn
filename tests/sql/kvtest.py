@@ -7,6 +7,7 @@ EVAL is confined to fixture setup/inspection; reader calls use kvrpc.lua.
 """
 import argparse
 import copy
+import decimal
 import hashlib
 import json
 import os
@@ -67,6 +68,8 @@ def ev(node, script, args=None, *, stage="administrative_eval", sensitive=()):
 
 
 def typed(value):
+    if isinstance(value, decimal.Decimal):
+        return {"decimal": str(value)}
     if isinstance(value, bytes):
         return {"binary_hex": value.hex()}
     if isinstance(value, (list, tuple)):
@@ -334,6 +337,27 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
         binary_keys = [[b"\x00\xff"], [b"missing"]]
         self.paired(c, binary, binary_keys, "id,v", "id=X%s",
                     sql_keys=[[key[0].hex()] for key in binary_keys])
+        # Use a separate session so the checked profile does not change the
+        # legacy/refusal controls that follow. The SDK shares SQL key coercion
+        # and row decoding, including native decimal values above 2^53.
+        exact_table = "exact_keys_" + engine
+        with self.connect() as exact:
+            self.sql(exact, "SET NAMES utf8mb4 COLLATE utf8mb4_0900_bin")
+            self.sql(exact, "SET tarn_key_contract='MYSQL'")
+            self.sql(exact, f"CREATE TABLE {exact_table} (tenant BIGINT UNSIGNED,id VARCHAR(32) COLLATE utf8mb4_0900_bin,"
+                     "d DECIMAL(38,2),b VARBINARY(8),PRIMARY KEY(tenant,id)) "
+                     f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)
+            vectors = [(2**64 - 1, "a", "9007199254740992.01"),
+                       (2**64 - 1, "a ", "9007199254740992.02"),
+                       (2**53 + 1, "\u00e9", "18446744073709551615.00"),
+                       (2**53 + 1, "e\u0301", "-9223372036854775808.00")]
+            for tenant, key, value in vectors:
+                self.sql(exact, f"INSERT INTO {exact_table} VALUES (%s,%s,%s,X'00ff')",
+                         (tenant, key, decimal.Decimal(value)), mutation=True)
+            self.grant(exact_table)
+            exact_keys = [[tenant, key] for tenant, key, _ in vectors]
+            exact_keys += [exact_keys[0], [2**64 - 1, "missing"]]
+            self.paired(exact, exact_table, exact_keys, "tenant,id,d,b", "tenant=%s AND id=%s")
         cap = "reply_cap_" + engine
         self.sql(c, f"CREATE TABLE {cap} (tenant INT,id INT,v LONGBLOB,PRIMARY KEY(tenant,id)) "
                  f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)

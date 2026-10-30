@@ -97,7 +97,11 @@ claim that unsettled lazy SELECTs match MySQL. Ordinary strong paths retain
 their existing read validation. Raw clients must use physical field/index
 metadata, existing ownership/freshness rules and native type decoding;
 privileged writes bypassing SQL remain outside this profile. The supported
-KV API work is tracked separately in #181.
+[strong KV API](strong-kv.md) is read-only and accepts complete primary keys
+within its own type limits. Its Rust client reuses SQL key coercion and row
+decoding; paired SQL/SDK controls cover exact large integers and decimal row
+values, NO PAD strings and binary bytes. It does not admit DECIMAL primary
+keys or turn independent point reads into a transactional snapshot.
 
 Every gateway used by a client must implement this profile. Older gateways
 may accept unknown SET variables inertly: SET/readback alone is insufficient
