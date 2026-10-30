@@ -265,7 +265,7 @@ end return true''',[tables,key,b,count],timeout=600)
                         except pymysql.MySQLError as error:
                             code=error.args[0];record['codes'][str(code)]=record['codes'].get(str(code),0)+1
                             if stage=='commit':record['aborted' if code==1213 else 'unknown'].add(seq)
-                            if code not in (1213,1180,1205,1041,2003,2006,2013):raise
+                            if code not in (1213,1180,1205,1041,1412,2003,2006,2013):raise
                             # Each attempt has a fresh identity. Even an uncertain
                             # COMMIT is never replayed; reconciliation uses its ledger.
                             if conn is not None:conn.close();conn=None
@@ -275,7 +275,10 @@ end return true''',[tables,key,b,count],timeout=600)
                     if conn is not None:conn.close()
             for worker in range(2):
                 th=threading.Thread(target=traffic,args=(worker,),daemon=True);load_threads.append(th);th.start()
-            wait(lambda: all(len(r['acked'])>=2 for r in load))
+            def load_progress(counts):
+                assert not any(r['errors'] for r in load), [r['errors'] for r in load]
+                return all(len(r['acked'])>=n for r,n in zip(load,counts))
+            wait(lambda: load_progress([2,2]))
             checked('SER and RC ledger writers active on the moving bucket')
         # Hold at a real phase boundary when injecting a failure, so small
         # datasets cannot accidentally skip the intended fault.
@@ -366,7 +369,7 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
         for th in threads:th.join(5)
         if a.traffic:
             before=[len(r['acked']) for r in load]
-            wait(lambda: all(len(r['acked'])>n for r,n in zip(load,before)), seconds=180)
+            wait(lambda: load_progress([n+1 for n in before]), seconds=180)
             load_stop.set()
             for th in load_threads:th.join(15);assert not th.is_alive()
             for worker, record in enumerate(load):
@@ -435,7 +438,12 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
             state=wait(reclaimed)
             assert state[0]['active']==0 and state[0]['staged_bytes']==0 and state[1:]==[0,0],state
             assert state[0]['stats']['max_batch_rows']<=512 and state[0]['stats']['max_batch_bytes']<=1048576,state
-        checked('owned staging and progress reclaimed; observed batch bounds respected')
+            assert state[0]['stats']['peak_delta_bytes']<=result['limits']['total_delta_bytes'],state
+            assert state[0]['stats']['peak_staged_bytes']<=result['limits']['total_staging_bytes'],state
+            assert state[0]['copy_buffers']<=result['limits']['slots'],state
+        assert result['peak_simultaneous_moves']<=result['limits']['slots']
+        if a.moves==2:assert result['peak_simultaneous_moves']==2, 'concurrent fixture did not overlap moves'
+        checked('owned staging and progress reclaimed; observed batch and aggregate bounds respected')
         # Re-encode decoded WAL rows, grouped by durable transaction sequence.
         # This measures transaction bytes, excluding physical xlog framing and
         # compression; it is not the WAL writer's combined syscall buffer size.
