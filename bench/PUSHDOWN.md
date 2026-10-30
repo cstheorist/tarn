@@ -202,6 +202,20 @@ transaction limits, wire bounds, and admission-refusal behavior are unchanged.
 These elevated matched caps are a benchmark condition, not evidence that
 the full-projection control fits the default production budget.
 
+[Run 41052066119](https://github.com/cstheorist/tarn/actions/runs/41052066119)
+then completes all four correctness modes and all 960 paired samples
+(9,600 queries) with these identical caps, at compiled merge source
+`7a7a106f3dc7967d71a53eea07bd864ca1156cb8` (head `162a2bb`). Independent
+checks confirm every expected pair/phase, exact result digest and path
+counter. The [retained archive and receipt](pushdown-validation/run-41052066119.json)
+keep every configuration, comparison, regression and source/binary hash.
+Direct 64 KiB narrow-projection median elapsed ratios are 0.128 on memtx
+and 0.336 on Vinyl; 256 B high-selectivity reductions regress to 2.511
+and 1.899, respectively. Pushdown stays default-off. The associated
+ordinary CI was superseded by subsequent integrity/warning review commits;
+this successful source-bound study does not qualify those later commits
+or establish a complete release pass.
+
 [Run 40935962215](https://github.com/cstheorist/tarn/actions/runs/40935962215)
 passes all four RF3/fsync correctness configurations: 47 exact MySQL
 comparisons plus overlay, missing/malformed-procedure and OCC controls
@@ -258,9 +272,10 @@ multi-host advantage is established. The later default-off change alters
 rollout policy; these measurements remain evidence for the explicit off/on
 paths at the recorded source, with new-head validation kept separate.
 
-The resource-integrated release study uses the same explicit 512 MiB query,
-2 GiB gateway, 1 billion query-work and 4 billion gateway-work policy on both
-paths. The complete 64 KiB × 1024-row ordinary control exceeds the default
+The resource-integrated release study uses the same explicit 2 GiB query
+and 4 GiB gateway memory policy on both paths. Other resource settings are
+inherited unchanged from the fixture configuration; the study does not add
+query-work or gateway-work overrides. The complete 64 KiB × 1024-row ordinary control exceeds the default
 64 MiB logical envelope; this isolated study does not raise production defaults
 or omit/refuse that control. Each retained configuration records these limits.
 Earlier samples keep their original source and policy; do not combine them
