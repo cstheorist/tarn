@@ -212,9 +212,11 @@ local function main()
         -- The decision shard creates STAGING atomically with its YES. A
         -- pre-existing decision record correctly fences a fresh PREPARE.
         -- Empty/local entry readiness does not establish the distributed
-        -- clock-peer certificate. Wait for that before the one-shot PREPARE.
-        await('prepared transaction clock peer ready', function()
-            return ev(l, 'return tarn.clock.check({1}) == nil')
+        -- clock-peer certificate, and the admission meter can still be
+        -- rebuilding its confirmed cut (PREPARE then votes NO, 1213). Wait
+        -- for both before the one-shot PREPARE.
+        await('prepared transaction clock peer and admission meter ready', function()
+            return ev(l, 'return tarn.clock.check({1}) == nil and tarn.lazy.quota.ready()')
         end)
         local r=call(l,'tarn_prepare',txid,1,{1},{{'insert',sid,{ids[2],'prepared',bucket}}},{},{},require('clock').realtime(),box.NULL,{sid,0},{bucket})
         assert(r[1]=='yes',json.encode(r))
