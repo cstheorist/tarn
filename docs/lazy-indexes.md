@@ -172,6 +172,15 @@ live entries must not discard them merely because their versions are below
 an imported floor. Collection is disabled until bootstrap is fully
 acknowledged and the incarnation is ready.
 
+A retired incarnation's frames are acknowledged from its retirement,
+which is durable and never undone, without reading its floors. Once its
+target is dropped, a background pass deletes those floors: at most 128 in
+a transaction, in buckets the node may write, noted for a move like any
+write. A floor that a move brings back from a node that kept it goes the
+same way. Deleting the floors of a ready incarnation instead would let a
+late duplicate of a frame whose tombstone was collected bring a stale
+membership back (`tla/LazyBaseline.tla`, `Bug_LazyBaselineClearLiveFloors`).
+
 A permanent old delivery hole can hold back this global source prefix
 while later changes at other destinations are acknowledged. Their
 tombstones remain until the hole is resolved. Source outbox limits alone
@@ -394,11 +403,12 @@ Per shard replica, then:
   completed prefix passes it and a floor collects it. A permanent delivery
   hole keeps them (see "Frontiers and tombstone collection").
 - **Floors:** one per incarnation, target bucket and source bucket that has
-  collected a tombstone, about 91 bytes each, in memtx. None is deleted,
-  even after its incarnation is retired; only a bucket leaving the shard
+  collected a tombstone, about 91 bytes each, in memtx, until the
+  incarnation is retired and its target dropped; a bucket leaving the shard
   takes its floors along. With deletes spread over every bucket they
-  approach incarnations × target buckets × source buckets. That is bounded
-  by the bucket count, not by the rows, but large at high bucket counts.
+  approach live incarnations × target buckets × source buckets. That is
+  bounded by the bucket count, not by the rows, but large at high bucket
+  counts.
 - **Protocol records:** about 73 bytes per cross-shard transaction, until
   they expire and garbage collection removes them.
 - **The process:** RSS also holds Lua, network buffers and allocator

@@ -2351,7 +2351,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_LazyBarrierSplitFrontierView | violates PrefixCovered | 197 | 400 | 13 | 00s | 13 |
 | Bug_LazyBarrierTrackOnlyWhenEnabled | violates OwnWritesCovered | 57 | 96 | 7 | 00s | 7 |
 | Bug_LazyBarrierWaitAfterSnapshot | violates OwnWritesCovered | 106 | 185 | 11 | 00s | 11 |
-| Bug_LazyBaselineAboveCounter | violates DrainedConverges | 587 | 1170 | 8 | 01s | 8 |
+| Bug_LazyBaselineAboveCounter | violates DrainedConverges | 762 | 1427 | 8 | 00s | 8 |
+| Bug_LazyBaselineClearLiveFloors | violates DrainedConverges | 87841 | 455369 | 14 | 04s | 14 |
 | Bug_LazyCapacityAbortLeaks | violates AbortedReleased | 8 | 9 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoByteReserve | violates BytePromisesFit | 7 | 7 | 3 | 00s | 3 |
 | Bug_LazyCapacityNoEntryReserve | violates EntryPromisesFit | 6 | 6 | 3 | 00s | 3 |
@@ -2511,7 +2512,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Join_ScanFailover | no errors | 58935 | 241904 | 26 | 03s |  |
 | LazyApplyConfirm | no errors | 14 | 20 | 7 | 00s |  |
 | LazyBarrier | no errors | 80 | 171 | 13 | 00s |  |
-| LazyBaseline | no errors | 169572 | 1447512 | 25 | 13s |  |
+| LazyBaseline | no errors | 323760 | 2914848 | 25 | 16s |  |
 | LazyCapacity | no errors | 71 | 147 | 9 | 00s |  |
 | LazyHandoff | no errors | 156 | 432 | 13 | 01s |  |
 | LazyHandoffLive | no errors | 76 | 196 | 12 | 01s |  |

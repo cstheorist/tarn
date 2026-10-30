@@ -20,10 +20,16 @@
 (* however frames were reordered or duplicated, also after collection.     *)
 (* BugBaselineAboveCounter gives the baseline the counter plus one: a      *)
 (* later write's old-key delete then no longer supersedes it.              *)
+(*                                                                         *)
+(* Retirement (DROP or a rotation) is permanent: the target is dropped and *)
+(* every later frame is acknowledged without reading a floor, so the       *)
+(* floors go too (L.clear_retired).  BugClearLiveFloors also clears them   *)
+(* while the incarnation is ready: a duplicate of a frame whose tombstone  *)
+(* was collected then brings a stale membership back.                      *)
 (***************************************************************************)
 EXTENDS Naturals, Integers, FiniteSets
 
-CONSTANTS BugBaselineAboveCounter
+CONSTANTS BugBaselineAboveCounter, BugClearLiveFloors
 
 Keys == {"A", "B"}
 Values == Keys \cup {"none"}
@@ -43,7 +49,7 @@ NoMarker == [seq |-> -1, present |-> FALSE]
 
 TypeOK ==
     /\ base \in Values /\ counter \in 0..MaxSeq
-    /\ phase \in {"before", "building", "ready"}
+    /\ phase \in {"before", "building", "ready", "retired"}
     /\ before \in 0..MaxBefore /\ after \in 0..MaxAfter
     /\ outbox \subseteq Frames /\ sent \subseteq Frames /\ wire \subseteq Frames
     /\ markers \in [Keys -> [seq : -1..MaxSeq, present : BOOLEAN]]
@@ -115,10 +121,11 @@ Lose(f) ==
 
 \* L.apply: a frame above the floor and the marker is applied; a baseline
 \* the target would apply once the incarnation is ready is refused; any other
-\* frame is acknowledged as obsolete.
+\* frame is acknowledged as obsolete.  Once the incarnation is retired,
+\* every frame is acknowledged, from the retirement alone.
 Deliver(f) ==
     /\ f \in wire
-    /\ LET accept == f.seq > floors[f.key] /\ f.seq > markers[f.key].seq
+    /\ LET accept == phase # "retired" /\ f.seq > floors[f.key] /\ f.seq > markers[f.key].seq
            refused == accept /\ f.boot /\ phase = "ready"
        IN /\ markers' = IF accept /\ ~refused
                          THEN [markers EXCEPT ![f.key] = [seq |-> f.seq, present |-> f.put]]
@@ -139,10 +146,26 @@ GC(k) ==
     /\ markers' = [markers EXCEPT ![k] = NoMarker]
     /\ UNCHANGED <<base, counter, phase, before, after, outbox, sent, wire, floors>>
 
+\* DROP or a rotation retires the incarnation for good, and its target is
+\* dropped (L.retire, L.collect_once).
+Retire ==
+    /\ phase = "ready"
+    /\ phase' = "retired"
+    /\ markers' = [k \in Keys |-> NoMarker]
+    /\ UNCHANGED <<base, counter, before, after, outbox, sent, wire, floors>>
+
+\* L.clear_retired: a retired incarnation's floors are deleted.
+ClearFloors(k) ==
+    /\ \/ phase = "retired"
+       \/ BugClearLiveFloors /\ phase = "ready"
+    /\ floors[k] >= 0
+    /\ floors' = [floors EXCEPT ![k] = -1]
+    /\ UNCHANGED <<base, counter, phase, before, after, outbox, sent, wire, markers>>
+
 Next ==
-    \/ WriteBefore \/ Bootstrap \/ Ready \/ WriteAfter
+    \/ WriteBefore \/ Bootstrap \/ Ready \/ WriteAfter \/ Retire
     \/ \E f \in Frames : Ship(f) \/ Duplicate(f) \/ Lose(f) \/ Deliver(f)
-    \/ \E k \in Keys : InstallFloor(k) \/ GC(k)
+    \/ \E k \in Keys : InstallFloor(k) \/ GC(k) \/ ClearFloors(k)
 
 Spec == Init /\ [][Next]_vars
 
