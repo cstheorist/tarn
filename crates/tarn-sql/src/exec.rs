@@ -128,11 +128,11 @@ async fn scan_pages(
     let mut left = c.limit;
     let mut top = keep.topk.map(topk::TopK::new).transpose()?;
     loop {
-        let frame = top.as_ref().map(|_| crate::budget::Frame::new());
-        let page = async {
-            reads.fetch_add(1, AtomicOrdering::Relaxed);
+        // Projection and top-K have disjoint eligibility. Keep the ordinary
+        // top-K page lifetime if a future caller supplies both options.
+        if top.is_none() {
             if let Some(project) = keep.project {
-                debug_assert!(top.is_none());
+                reads.fetch_add(1, AtomicOrdering::Relaxed);
                 if let Some(page) = crate::txn::project_rows(
                     client,
                     stream,
@@ -151,13 +151,24 @@ async fn scan_pages(
                 {
                     begin = false;
                     out.read += page.read;
-                    if let Some(row) = page.last {
-                        out.last = Some(row);
+                    if let Some(r) = page.last {
+                        out.last = Some(r);
                     }
                     keep.extend(&mut out.rows, page.rows)?;
-                    return Ok::<_, SqlError>(page.next);
+                    match (page.next, pages) {
+                        (None, _) => return Ok(out),
+                        (Some(_), Pages::One(e)) => return Err(e()),
+                        (Some(n), Pages::All) => {
+                            after = Some(n);
+                            continue;
+                        }
+                    }
                 }
             }
+        }
+        let frame = top.as_ref().map(|_| crate::budget::Frame::new());
+        let page = async {
+            reads.fetch_add(1, AtomicOrdering::Relaxed);
             let (rows, next) = select_rows(
                 client,
                 stream,

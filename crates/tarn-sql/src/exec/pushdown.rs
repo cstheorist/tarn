@@ -113,7 +113,7 @@ pub(super) async fn reduce(
             .range((t.space_id, Bytes::new())..)
             .take_while(|((s, _), _)| *s == t.space_id)
         {
-            crate::budget::charge(64)?;
+            crate::budget::charge(crate::budget::row_bytes(&w.pk).saturating_mul(2))?;
             written.push((w.shard, w.pk.clone()));
             if let Some(r) = &w.row {
                 if match &p.filter {

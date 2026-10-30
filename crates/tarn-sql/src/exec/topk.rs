@@ -173,6 +173,7 @@ pub(super) async fn select(
     let calls = range_calls_in(&map, &shards, &ta.table, &ta.path, &[], cx, None, None)?;
     let none = BTreeSet::new();
     let keep = Keep {
+        project: None,
         filter: p.filter.as_ref(),
         cx,
         t: &ta.table,
