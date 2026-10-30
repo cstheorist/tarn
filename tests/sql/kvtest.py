@@ -116,6 +116,7 @@ class Test:
         self.identities = []
         self.users = []
         self.user_attempts = []
+        self.user_created_origins = set()
         self.workers = []
         self.pending_completed = []
         self.evidence = Path(args.evidence)
@@ -244,6 +245,7 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
 """, [self.user, self.password], stage="create_reader", sensitive=(self.password,))
             assert isinstance(result, dict) and isinstance(result.get("uid"), int), result
             self.users.append((node, result["uid"]))  # Cleanup only a definite creation ACK.
+            self.user_created_origins.add(node)  # Creation origin is stable across leader retargeting.
             self.record("admin_reader_create", node=node, result=result)
 
     def paired(self, c, table, keys, columns, where):
@@ -348,6 +350,9 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
         self.check(engine + " final tuple crosses whole batch cap", oversized.get("status") == "error"
                    and oversized["error"]["kind"] == "limit_exceeded" and "rows" not in oversized, reply=oversized)
 
+    def uncertain_reader_attempts(self):
+        return [node for node in self.user_attempts if node not in self.user_created_origins]
+
     def cleanup(self, success):
         errors = []
         live = [t.name for t in self.workers if t.is_alive()]
@@ -376,7 +381,7 @@ return {absent=box.space._user.index.name:get{name}==nil,uid=uid}
             self.private.cleanup()
         except Exception as error:
             errors.append("private credential cleanup: " + str(error))
-        uncertain_users = [node for node in self.user_attempts if node not in {n for n, _ in self.users}]
+        uncertain_users = self.uncertain_reader_attempts()
         self.record("cleanup", database_preserved=self.created,
                     database_possibly_preserved=self.created or self.database_attempted and not self.database_ack,
                     uncertain_reader_attempts_preserved=uncertain_users, success=not errors, errors=errors)
@@ -539,7 +544,7 @@ def main():
         summary = {"completed_checks": test.completed, "success": success and not cleanup,
                    "primary_error": failure, "cleanup_errors": cleanup, "database_preserved": test.created,
                    "database_possibly_preserved": test.created or test.database_attempted and not test.database_ack,
-                   "uncertain_reader_attempts_preserved": [n for n in test.user_attempts if n not in {x for x, _ in test.users}],
+                   "uncertain_reader_attempts_preserved": test.uncertain_reader_attempts(),
                    "pending_apply_completed_engines": test.pending_completed,
                    "live_read_workers": [t.name for t in test.workers if t.is_alive()]}
         (test.evidence / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

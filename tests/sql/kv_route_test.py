@@ -278,6 +278,48 @@ class ReadonlyRouteControls(unittest.TestCase):
         self.assertEqual(test.completed, 0)
 
 
+class ReaderCleanupControls(unittest.TestCase):
+    def fixture(self):
+        test = driver()
+        test.initial_endpoints = ["s1old", "s2old"]
+        test.args.replica_groups = [["s1old", "s1new", "s1other"], ["s2old", "s2new", "s2other"]]
+        test.leader = Mock(side_effect=[({"endpoint": "s1new"}, {}), ({"endpoint": "s2new"}, {})])
+        test.user_attempts = ["s1old", "s2old"]
+        test.user_created_origins = {"s1old"}
+        test.users = [("s1old", 33)]
+        test.workers, test.created, test.database_attempted, test.database_ack = [], False, False, False
+        test.user, test.private = "owned_reader", Mock()
+        return test
+
+    def test_retarget_preserves_definite_create_and_unknown_create_origins(self):
+        test = self.fixture()
+        test.retarget("owned_memtx")
+        self.assertEqual(test.users, [("s1new", 33)])
+        self.assertEqual(test.user_created_origins, {"s1old"})
+        with patch.object(kvtest, "ev", return_value={"absent": True, "uid": 33}) as cleanup:
+            self.assertEqual(kvtest.Test.cleanup(test, True), [])
+        self.assertEqual(cleanup.call_args.args[0], "s1new")
+        self.assertEqual(cleanup.call_args.args[2], ["owned_reader", 33])
+        self.assertEqual(test.uncertain_reader_attempts(), ["s2old"])
+        event = next(e for e in test.events if e["event"] == "cleanup")
+        self.assertEqual(event["uncertain_reader_attempts_preserved"], ["s2old"])
+
+    def test_definite_creation_does_not_hide_wrong_uid_or_drop_transport_failure(self):
+        for outcome in ({"absent": True, "uid": 34}, OSError("drop transport outcome unknown")):
+            with self.subTest(outcome=repr(outcome)):
+                test = self.fixture()
+                test.retarget("owned_memtx")
+                arguments = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
+                with patch.object(kvtest, "ev", **arguments) as cleanup:
+                    errors = kvtest.Test.cleanup(test, True)
+                self.assertEqual(cleanup.call_count, 1)
+                self.assertEqual(len(errors), 1)
+                self.assertFalse(any(e["event"] == "admin_reader_drop" for e in test.events))
+                event = next(e for e in test.events if e["event"] == "cleanup")
+                self.assertFalse(event["success"])
+                self.assertEqual(event["uncertain_reader_attempts_preserved"], ["s2old"])
+
+
 class PublicScanControls(unittest.TestCase):
     """Exercise actual driver methods; these mocks do not qualify Lua fibers."""
 
