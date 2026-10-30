@@ -193,6 +193,7 @@ covers and how to run it.
 | [Getting started](docs/getting-started.md) | build, run a cluster, SQL and key/value access, failover |
 | [SQL compatibility](docs/sql-compatibility.md) | supported statements, types, functions, and differences from MySQL |
 | [Operations](docs/operations.md) | configuration, deployment, monitoring, error codes, security |
+| [Production profile](docs/production.md) | required TLS/authentication, fsync/RF checks, private secrets, restricted storage roles, deployment health |
 | [Design](docs/design.md) | architecture, the commit protocol, and the correctness argument |
 | [Verification](docs/verification.md) | the TLA+ model, the Verus proofs, the test suites, CI |
 | [Benchmarks](bench/RESULTS.md) | setup, full results, analysis |

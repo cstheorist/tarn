@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An explicit Linux production profile with fsync/RF/quorum and declared
+  failure-domain validation, private-file credentials, required MySQL TLS,
+  mutual TLS bridges for Community Edition storage/replication, restricted
+  service/replication roles, resource/clock deployment checks, certificate
+  rotation and driver/failure tests ([#139](https://github.com/cstheorist/tarn/issues/139)).
+  See [the deployment procedure and proof boundaries](docs/production.md).
+
 - A quiescent whole-cluster backup/restore workflow with durable replica fences,
   complete membership/routing and transaction/DDL/lazy drain checks, source-bound
   physical manifests, exact isolated restore audits and guarded activation
