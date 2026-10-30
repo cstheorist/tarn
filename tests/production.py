@@ -560,8 +560,8 @@ local c=net.connect(arg[1],{fetch_schema=false,user='tarn_service',password=pass
 assert(c:is_connected()); assert(type(c:call('tarn_role'))=='boolean')
 local info=c:call('tarn_info'); if not info.ro then
  local map=c:call('tarn_buckets'); local bucket=assert(map[4][1][1]); local move='production-capability-control'
- assert(c:call('tarn_move_capabilities')[2]==2)
- assert(c:call('tarn_bucket_send_begin',{bucket,1,move,5})[1]=='ok')
+ local capability=c:call('tarn_move_capabilities'); assert(capability[2]==2,json.encode(capability))
+ local begun=c:call('tarn_bucket_send_begin',{bucket,1,move,5}); assert(begun[1]=='ok',json.encode(begun))
  assert(c:call('tarn_bucket_progress',{bucket,move})[1]=='ok')
  assert(c:call('tarn_bucket_send_abort',{bucket,move})[1]=='ok')
  local after=c:call('tarn_buckets'); assert(#after[5]==0 and after[4][1][1]==bucket)

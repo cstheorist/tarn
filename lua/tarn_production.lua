@@ -39,7 +39,7 @@ function P.resources(c, workdir)
     -- structure is private to this module to avoid an FFI type collision.
     pcall(ffi.cdef, [[struct tarn_statvfs { unsigned long bsize, frsize, blocks, bfree, bavail,
         files, ffree, favail, fsid, flag, namemax; int spare[6]; };
-        int statvfs(const char *, struct tarn_statvfs *);]])
+        int statvfs(const char *, void *);]])
     assert(ffi.sizeof('long') == 8, 'production requires 64-bit Linux')
     local st = ffi.new('struct tarn_statvfs[1]')
     assert(ffi.C.statvfs(workdir, st) == 0, 'cannot measure storage filesystem')
