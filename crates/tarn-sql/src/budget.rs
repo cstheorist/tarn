@@ -245,6 +245,14 @@ impl Account {
         self.bytes = next;
         Ok(())
     }
+    /// Transfer already admitted ownership without a second reservation.
+    /// The child limit must have excluded the parent's existing bytes.
+    pub fn absorb(&mut self, mut child: Account) {
+        assert!(Arc::ptr_eq(&self.pool, &child.pool));
+        assert!(child.bytes <= self.limit.saturating_sub(self.bytes));
+        self.bytes += child.bytes;
+        child.bytes = 0;
+    }
     pub fn used(&self) -> u64 {
         self.bytes
     }

@@ -1,0 +1,169 @@
+{
+  "schema": 1,
+  "oracle": {
+    "image": "mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7",
+    "version": "8.4.13",
+    "amd64_manifest": "sha256:5cf1e1293ea42e077e6a22114e6773b9aae3bb8f9933a2acd5a9721518ff8f5b",
+    "arm64_manifest": "sha256:8ab2115abe8ca3d2745962f4e75f2f86fb8182ae19908773cd4cce811f3c106e",
+    "source": "https://github.com/docker-library/mysql/tree/c92fbc392511086e6c1500f28a21421413f0bb51/8.4"
+  },
+  "scope": "Only the registered histories/shapes are classified. Existing MariaDB differential, transaction, storage and fault suites remain separate release requirements; this manifest is not a blanket MySQL equivalence claim.",
+  "contracts": [
+    {
+      "id": "session_scope",
+      "classification": "equivalent",
+      "description": "Session and gateway-global isolation/lock timeout are distinct; new connections inherit globals.",
+      "test": "tests/sql/contracts.py::case_session_scope"
+    },
+    {
+      "id": "rc_visibility",
+      "classification": "equivalent",
+      "description": "READ COMMITTED sees committed changes and its own writes; rollback removes own changes.",
+      "test": "tests/sql/contracts.py::case_rc_visibility"
+    },
+    {
+      "id": "savepoint_statement_rollback",
+      "classification": "equivalent",
+      "description": "Duplicate multi-row INSERT rolls back that statement; savepoint rollback preserves earlier writes.",
+      "test": "tests/sql/contracts.py::case_savepoint_statement_rollback"
+    },
+    {
+      "id": "lock_timeout",
+      "classification": "equivalent",
+      "description": "1205/HY000 rolls back the waiting statement; preceding transaction writes can commit.",
+      "test": "tests/sql/contracts.py::case_lock_timeout"
+    },
+    {
+      "id": "lock_wait",
+      "classification": "equivalent",
+      "description": "A conflicting READ COMMITTED update waits, then updates the newly committed value.",
+      "test": "tests/sql/contracts.py::case_lock_wait"
+    },
+    {
+      "id": "nowait_skip_locked",
+      "classification": "equivalent",
+      "description": "NOWAIT returns 3572/HY000; SKIP LOCKED returns the unlocked row. MariaDB supplemental control uses 1205/HY000.",
+      "test": "tests/sql/contracts.py::case_nowait_skip_locked"
+    },
+    {
+      "id": "ddl_implicit_commit",
+      "classification": "equivalent",
+      "description": "Successful CREATE TABLE commits preceding writes; later ROLLBACK does not undo them.",
+      "test": "tests/sql/contracts.py::case_ddl_implicit_commit"
+    },
+    {
+      "id": "autocommit_scope",
+      "classification": "equivalent",
+      "description": "Enabling autocommit commits the pending transaction.",
+      "test": "tests/sql/contracts.py::case_autocommit_scope"
+    },
+    {
+      "id": "affected_rows",
+      "classification": "equivalent",
+      "description": "Unchanged UPDATE reports zero or one with CLIENT_FOUND_ROWS; changed UPDATE reports one.",
+      "test": "tests/sql/contracts.py::case_affected_rows"
+    },
+    {
+      "id": "binary_parameters",
+      "classification": "equivalent",
+      "description": "Text and COM_STMT parameter binding preserve exact point-read and UPDATE results.",
+      "test": "tests/sql/contracts.py::case_binary_parameters"
+    },
+    {
+      "id": "rr_validation_difference",
+      "classification": "difference",
+      "description": "REPEATABLE READ uses strict serializability: stale read validation aborts COMMIT with 1213/40001.",
+      "test": "tests/sql/contracts.py::case_rr_validation_difference"
+    },
+    {
+      "id": "write_skew_difference",
+      "classification": "difference",
+      "description": "REPEATABLE READ rejects write skew under Tarn strict serializability; InnoDB snapshot isolation permits this history.",
+      "test": "tests/sql/contracts.py::case_write_skew_difference"
+    },
+    {
+      "id": "isolation_reporting",
+      "classification": "difference",
+      "description": "Tarn exposes requested session isolation, effective default, pending one-shot setting and active effective isolation.",
+      "test": "tests/sql/contracts.py::case_isolation_reporting"
+    },
+    {
+      "id": "exact_mysql_refusal",
+      "classification": "rejected",
+      "description": "SET tarn_isolation_contract=MYSQL is refused with 1235/42000; no exact InnoDB isolation mode is advertised.",
+      "test": "tests/sql/contracts.py::case_exact_mysql_refusal"
+    },
+    {
+      "id": "rc_phantom_current_read",
+      "classification": "equivalent",
+      "description": "READ COMMITTED ordinary and current reads see intervening committed inserts/updates.",
+      "test": "tests/sql/contracts.py::case_rc_phantom_current_read"
+    },
+    {
+      "id": "rr_phantom_difference",
+      "classification": "difference",
+      "description": "A REPEATABLE READ predicate invalidated by an insert fails Tarn commit validation; MySQL can commit its snapshot.",
+      "test": "tests/sql/contracts.py::case_rr_phantom_difference"
+    },
+    {
+      "id": "noop_serializable_difference",
+      "classification": "difference",
+      "description": "An unchanged serializable UPDATE holds no Tarn write lock; InnoDB still locks the matched row.",
+      "test": "tests/sql/contracts.py::case_noop_serializable_difference"
+    },
+    {
+      "id": "deadlock_rollback",
+      "classification": "equivalent",
+      "description": "A two-row deadlock aborts one entire transaction with 1213/40001; the survivor commits exactly one increment per key.",
+      "test": "tests/sql/contracts.py::case_deadlock_rollback"
+    },
+    {
+      "id": "global_unsupported_refusal",
+      "classification": "rejected",
+      "description": "Unsupported GLOBAL autocommit/sql_mode assignments fail with 1235/42000 before changing session behavior or committing buffered writes. Only isolation and lock-timeout have mutable gateway defaults.",
+      "test": "tests/sql/contracts.py::case_global_unsupported_refusal"
+    },
+    {
+      "id": "warnings_errors",
+      "classification": "equivalent",
+      "description": "INSERT IGNORE preserves accepted rows and reports warning level/code 1062; unknown columns report 1054/42S22. Error message wording is outside this entry.",
+      "test": "tests/sql/contracts.py::case_warnings_errors"
+    },
+    {
+      "id": "rc_paged_snapshot",
+      "classification": "difference",
+      "description": "A 10,000-row indexed READ COMMITTED scan overlapping bounded key movement must return every key once. Tarn may explicitly refuse a read with 1213/40001; InnoDB reads its statement snapshot. At least three complete scans and observed overlap are required.",
+      "test": "tests/sql/contracts.py::case_rc_paged_snapshot"
+    },
+    {
+      "id": "lock_upgrade",
+      "classification": "equivalent",
+      "description": "Two READ COMMITTED shared-lock upgrades choose one 1213/40001 victim; only the survivor increment commits.",
+      "test": "tests/sql/contracts.py::case_lock_upgrade"
+    },
+    {
+      "id": "local_commit",
+      "classification": "equivalent",
+      "description": "Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values; Tarn runtime counters prove the local path.",
+      "test": "tests/sql/contracts.py::case_local_commit"
+    },
+    {
+      "id": "distributed_commit",
+      "classification": "equivalent",
+      "description": "Two-row READ COMMITTED and SERIALIZABLE commits preserve exact values across shards; Tarn runtime counters prove two-phase commit.",
+      "test": "tests/sql/contracts.py::case_distributed_commit"
+    },
+    {
+      "id": "bounded_warnings",
+      "classification": "equivalent",
+      "description": "Seventy ignored duplicates leave data unchanged, report warning_count 70 and retain 64 messages (max_error_count=64). SHOW WARNINGS preserves diagnostics. SELECT count, expression SELECT and SET capture prior counts then clear messages/counts; a DML count reference captures the prior count while publishing only its own warnings. Literal/comment diagnostic words do not preserve old warnings.",
+      "test": "tests/sql/contracts.py::case_bounded_warnings"
+    },
+    {
+      "id": "warning_limit_refusal",
+      "classification": "rejected",
+      "description": "Tarn supports max_error_count=64/DEFAULT and refuses other limits with 1235/42000 without changing the limit; MySQL supports a configurable limit.",
+      "test": "tests/sql/contracts.py::case_warning_limit_refusal"
+    }
+  ]
+}
