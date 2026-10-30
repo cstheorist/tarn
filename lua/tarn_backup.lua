@@ -74,7 +74,9 @@ local function readiness()
     end
     local function empty(name)
         local s = box.space[name]
-        if s and s:len() ~= 0 then errors[#errors + 1] = name .. ' is not empty' end
+        -- Vinyl len() is an estimate and can retain deleted staging rows until
+        -- compaction. Probe the logical primary index without counting a bucket.
+        if s and s.index[0]:min() ~= nil then errors[#errors + 1] = name .. ' is not empty' end
     end
     for _, name in ipairs({'_tarn_locks', '_tarn_rlocks', '_tarn_recv', '_tarn_move', '_tarn_alter_undo',
                            '_tarn_lazy_reservation', '_tarn_lazy_outbox'}) do empty(name) end
