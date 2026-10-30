@@ -77,7 +77,7 @@ DEFAULT="$DEFAULT LockReplyOwnership Bug_LockReplyRelabelGeneration Bug_LockRepl
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
 DEFAULT="$DEFAULT QueryBudget Bug_QueryEarlyWireRelease Bug_QueryEarlyResultRelease Bug_QueryPostDecisionRefusal"
 DEFAULT="$DEFAULT Fairness Bug_FairnessPrefix"
-DEFAULT="$DEFAULT LazyBaseline Bug_LazyBaselineAboveCounter"
+DEFAULT="$DEFAULT LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors"
 DEFAULT="$DEFAULT DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect
 Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry"
 DEFAULT="$DEFAULT PipelineAdmission Bug_PipelineFreeOnCancel Bug_PipelineEarlyRetireRelease

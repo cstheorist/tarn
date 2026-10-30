@@ -45,6 +45,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Storage nodes delete the tombstone floors of retired lazy incarnations
+  once the target is dropped ([#177](https://github.com/cstheorist/tarn/issues/177)).
+  They used to keep them forever, one per target and source bucket, for
+  every index a DROP or a rotation retired. The deletion runs in the
+  background, at most 128 in a transaction, only in buckets the node may
+  write. Late frames for a retired incarnation are still acknowledged from
+  its retirement (`tla/LazyBaseline.tla`, `Bug_LazyBaselineClearLiveFloors`).
+
 - Preserve 1180/40003 for native commit uncertainty, missing write DATA and
   malformed mutation replies. Require complete error and handback envelopes
   before retry/fallback so a plausible prefix cannot replay an increment.

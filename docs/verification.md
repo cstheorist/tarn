@@ -582,14 +582,22 @@ collection. `BugBaselineAboveCounter` gives the baseline the counter plus
 one: the delete of a later write at that sequence no longer supersedes it,
 and the deleted row stays in the index.
 
+The incarnation can also be retired (DROP or a rotation): its target is
+dropped, every later frame is acknowledged from the retirement alone, and
+its floors are deleted (`L.clear_retired`). `BugClearLiveFloors` deletes
+the floors of a ready incarnation too: a duplicate of a frame whose
+tombstone was collected under a floor is applied again, and the row's old
+key comes back.
+
 ```sh
-tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter
+tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `LazyBaseline` | 169,572 | 25 | passes |
-| `Bug_LazyBaselineAboveCounter` | 587 | 8 | violates `DrainedConverges` |
+| `LazyBaseline` | 323,760 | 25 | passes |
+| `Bug_LazyBaselineAboveCounter` | 762 | 8 | violates `DrainedConverges` |
+| `Bug_LazyBaselineClearLiveFloors` | 87,841 | 14 | violates `DrainedConverges` |
 
 ### Conservative capacity meter
 
@@ -2081,10 +2089,10 @@ tla/check.sh BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta \
 
 ### Configuration counts
 
-The default list contains 319 unique configurations: 79 positive
-outcomes and 240 expected broken/trade-off outcomes. The 322 generated
+The default list contains 320 unique configurations: 79 positive
+outcomes and 241 expected broken/trade-off outcomes. The 323 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 332 total. Explicit
+placement and query-budget configurations are maintained directly, for 333 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
