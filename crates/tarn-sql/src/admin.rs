@@ -65,6 +65,8 @@ pub enum Admin {
     ShowTarnQueries,
     /// SHOW TARN PLAN FOR a named SQL PREPARE or binary statement ID.
     ShowTarnPlan(String),
+    Analyze(String),
+    ShowTarnStatistics,
     ShowTarnRpcs,
     /// SHOW TARN BUCKETS: which shard owns which buckets, and the moves in
     /// progress.
@@ -678,7 +680,8 @@ pub fn recognize(sql: &str) -> SqlResult<Option<Admin>> {
             }
             Admin::RemoveShard { id }
         }
-        "LOCK" | "UNLOCK" | "FLUSH" | "ANALYZE" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
+        "ANALYZE" => Admin::Analyze(sql.to_string()),
+        "LOCK" | "UNLOCK" | "FLUSH" | "OPTIMIZE" | "CHECKSUM" | "DO" => Admin::Noop,
         _ => return Ok(None),
     };
     Ok(Some(r))
@@ -1117,6 +1120,12 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
                 return Err(SqlError::parse("SHOW TARN INTEGRITY [FROM database]"));
             }
             Admin::ShowTarnIntegrity { db }
+        }
+        "TARN" if t.is("STATISTICS") => {
+            if !t.done() {
+                return Err(SqlError::parse("unexpected text after SHOW TARN STATISTICS"));
+            }
+            Admin::ShowTarnStatistics
         }
         "TARN" if t.is("QUERIES") => {
             if !t.done() {

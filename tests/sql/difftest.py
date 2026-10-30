@@ -184,6 +184,13 @@ def seed():
 
 # (sql, kind): 'q', 'rows', 'plan' (engine-specific JSON), 'dml' (table dumps), or 'err'.
 CASES = [
+    # Explicit optional optimizer statistics and reordered integer joins;
+    # status rows and logical SELECT * column order match MariaDB.
+    ("ANALYZE TABLE t1", "rows"),
+    ("ANALYZE TABLE t2", "rows"),
+    ("SELECT * FROM t1 a JOIN t2 b ON a.id=b.t1_id WHERE b.id=1 ORDER BY a.id,b.id", "q"),
+    ("SELECT b.*,a.* FROM t1 a JOIN t2 b ON a.id=b.t1_id WHERE b.id=2 ORDER BY a.id,b.id", "q"),
+    ("SELECT a.id,b.name FROM t1 a LEFT JOIN t2 b ON a.id=b.t1_id WHERE a.id=1 ORDER BY b.id", "q"),
     # Engine plans differ; compare the JSON result envelope and subsequent
     # exact data/transaction behavior, never cost or plan field equality.
     ("EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE id=1", "plan"),
@@ -1232,6 +1239,13 @@ CASES = [
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa, id LIMIT 8", "q"),
     ("SELECT id, pa FROM ord WHERE tenant = 1 AND del = 0 ORDER BY pa DESC, id DESC LIMIT 8", "q"),
     ("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", "q"),
+    # Bounded unindexed ORDER/LIMIT (#134): NULLs, collation keys and
+    # offsets; computed and floating-point sort keys retain the normal path.
+    ("SELECT id,b FROM t1 ORDER BY b DESC,id LIMIT 3 OFFSET 1", "q"),
+    ("SELECT id,a FROM t1 ORDER BY a DESC,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,d FROM t1 ORDER BY d DESC,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,a FROM t1 ORDER BY a+1,id LIMIT 4 OFFSET 1", "q"),
+    ("SELECT id,name FROM ci ORDER BY name COLLATE utf8mb4_bin DESC,id LIMIT 3 OFFSET 1", "q"),
     # joins whose inner lookups are read in batches (issue #84): 600 outer
     # rows, keys repeated, NULL or without rows
     ("SELECT jo.id, jc.n, jc.v FROM jo JOIN jc ON jc.r = jo.r ORDER BY jo.id, jc.n", "q"),
