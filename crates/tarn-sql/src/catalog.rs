@@ -352,6 +352,11 @@ pub struct TableDef {
     pub collation: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign_keys: Vec<ForeignKeyDef>,
+    /// Declaration-admission provenance, not a data-validation certificate.
+    /// Old CHECKs and ENUM/SET lists were discarded, so missing provenance
+    /// must stay unknown even after an otherwise successful ALTER.
+    #[serde(default)]
+    pub integrity_policy: u8,
     /// Tarantool id of the bucket_id index (from the shard at load).
     #[serde(skip)]
     pub bucket_index: Option<u32>,
@@ -367,6 +372,10 @@ pub struct TableDef {
 }
 
 impl TableDef {
+    pub fn current_integrity_policy(&self) -> bool {
+        self.integrity_policy == crate::integrity::DECLARATION_POLICY && self.foreign_keys.is_empty()
+    }
+
     pub fn counter_space_id(&self) -> u32 {
         self.counter_id.unwrap_or(self.space_id)
     }
@@ -551,6 +560,7 @@ impl TableDef {
             dropped: Vec::new(),
             collation: None,
             foreign_keys: Vec::new(),
+            integrity_policy: crate::integrity::DECLARATION_POLICY,
             bucket_index: Some(1),
             layout: Default::default(),
             globals: Vec::new(),
@@ -1116,6 +1126,7 @@ pub fn information_schema_table(name: &str) -> SqlResult<TableDef> {
         bucket: None,
         dropped: Vec::new(),
         foreign_keys: Vec::new(),
+        integrity_policy: crate::integrity::DECLARATION_POLICY,
         bucket_index: None,
         collation: None,
         layout: Default::default(),
