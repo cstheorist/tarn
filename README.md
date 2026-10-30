@@ -68,7 +68,7 @@ read them as **key/value**.
 
 ## Quick start
 
-You need Rust (via [rustup](https://rustup.rs)), Tarantool 3.x on your
+You need Rust (via [rustup](https://rustup.rs)), Tarantool 3.9.0 on your
 `PATH`, and a MySQL client.
 
 ```sh

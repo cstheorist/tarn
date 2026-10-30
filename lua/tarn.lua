@@ -45,6 +45,7 @@ local decimal = require('decimal')
 local uuid = require('uuid')
 
 local M = {
+    compatibility = require('tarn_compat'),
     cfg = {
         shard_id = 0,
         peers = {},              -- shard_id -> {uri, uri, ...} (all replicas)
@@ -1457,12 +1458,14 @@ function BK.ns_init()
     if f == nil then return end
     local ok, addr = pcall(f.call, f, {BK.NS_LAYOUT})
     if not ok then
+        BK.ns_status = 'load_failed'
         log.warn('tarn: native procedures not loaded (%s): the Lua ones serve every request', tostring(addr))
         M.cfg.native = false
         return
     end
     local ns = ffi.cast('struct tarn_ns *', addr)
     if ns.layout ~= BK.NS_LAYOUT then
+        BK.ns_status = 'abi_mismatch'
         log.warn('tarn: native procedures of state layout %d, %d expected: not used', ns.layout, BK.NS_LAYOUT)
         M.cfg.native = false
         return
@@ -1488,6 +1491,7 @@ function BK.ns_init()
     BK.ns_window()
     BK.ns_hooks()
     ns.ready = 1
+    BK.ns_status = 'ready'
     log.info('tarn: native procedures loaded')
 end
 
@@ -7433,6 +7437,7 @@ function tarn_info()
         if st == 'active' or st == 'sending' or st == 'fenced' then nb = nb + 1 end
     end
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats, buckets = nb, bucket_epoch = BK.epoch,
+            compatibility = tarn_compatibility(),
             locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, plock_txns = ptx,
             ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
@@ -7467,6 +7472,7 @@ end
 -- replication. Every step is idempotent and writes nothing when its object
 -- exists.
 local function setup_schema()
+    M.compatibility.check()
     box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
     box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
     ensure_schema()
@@ -7489,6 +7495,11 @@ local function setup_schema()
             fiber.sleep(0.1)
         end
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
+    end
+    -- Keep shard_id as the first synchronous metadata write: the joining
+    -- replicas must be able to acknowledge it before any marker is added.
+    if box.space._tarn_meta:get{'storage_format'} == nil then
+        box.space._tarn_meta:replace{'storage_format', M.compatibility.format}
     end
     migrate_legacy_job()
     M.engine.fresh()
@@ -7516,6 +7527,8 @@ local function setup_when_writable()
 end
 
 function M.init(cfg)
+    M.compatibility.check()
+    M.compat_ready = false
     M.clock.stop()
     M.clock_sampler_close()
     M.clock.invalidate('configuration reload')
@@ -7523,6 +7536,7 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')
     pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
     if not M.cfg.sync and not box.info.ro then
         setup_schema()          -- a single instance: before it serves requests
@@ -7568,7 +7582,12 @@ function M.init(cfg)
     M.lazy.start()
     PG.watch_heap()
     rawset(_G, 'tarn', M)
+    M.compat_ready = true
     return M
+end
+
+function tarn_compatibility()
+    return M.compatibility.report(M.cfg, BK.NS_LAYOUT, BK.ns_status, M.compat_ready)
 end
 
 -- Clock samples cover configured logical shards, current joined shards and
