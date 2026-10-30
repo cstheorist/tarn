@@ -123,6 +123,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add a pinned MySQL 8.4 executable compatibility manifest and RF3 native/Lua,
+  memtx/vinyl release controls for text/binary protocols. Expose effective,
+  active and pending isolation, refuse an exact MySQL-isolation mode, and
+  report gateway-global isolation/lock timeout independently of session values.
+  Duplicate rows skipped by `INSERT IGNORE` now report 1062 warnings; retain
+  at most 64 messages while preserving the total count, without accumulating
+  diagnostics from aborted autocommit attempts.
+
 - Define a tested rolling-upgrade/rollback pair with protocol/format
   admission on every new gateway storage connection, explicit native
   fallback diagnostics, and RF3/fsync mixed-version regressions for memtx
