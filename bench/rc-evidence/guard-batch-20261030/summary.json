@@ -1,0 +1,157 @@
+{
+  "base_head": "88ac1249b079f8f394e3f66b150e185fe550398a",
+  "production_changed": false,
+  "scope": "same-process RF3 helper calls, five alternating pairs, 1000 calls per sample, yield every 10 calls, forced GC outside timing; shared ARM64 Docker",
+  "storage_control": {
+    "passed": 415,
+    "failed": 0,
+    "scope": "existing storage suite on isolated copied candidate; three RF1 shards, native disabled, both engines and lock/yield checks; not SQL/RF3 fault qualification"
+  },
+  "model_control": {
+    "positive_states": 48,
+    "yield_control": "NoUnsafeAcceptance violated at depth 4",
+    "omitted_space_control": "NoUnsafeAcceptance violated at depth 2",
+    "premises": "unchanged clock/prefix proofs and nonyielding final check; no cached mode across invocations or yields"
+  },
+  "groups": [
+    {
+      "planned_rows": 1,
+      "pairs": [
+        {
+          "pair": 0,
+          "elapsed_ratio": 0.7796600451481316,
+          "allocation_ratio": 0.5604096606837261
+        },
+        {
+          "pair": 1,
+          "elapsed_ratio": 0.7124927063643574,
+          "allocation_ratio": 0.5162200100615142
+        },
+        {
+          "pair": 2,
+          "elapsed_ratio": 0.71248509033774,
+          "allocation_ratio": 0.516483995440135
+        },
+        {
+          "pair": 3,
+          "elapsed_ratio": 0.6819300192523019,
+          "allocation_ratio": 0.5162200100615142
+        },
+        {
+          "pair": 4,
+          "elapsed_ratio": 0.7015019075223669,
+          "allocation_ratio": 0.5162258625658761
+        }
+      ],
+      "median_elapsed_ratio": 0.71248509033774,
+      "median_allocation_ratio": 0.5162258625658761
+    },
+    {
+      "planned_rows": 2,
+      "pairs": [
+        {
+          "pair": 0,
+          "elapsed_ratio": 0.5141927129319603,
+          "allocation_ratio": 0.34708482433856896
+        },
+        {
+          "pair": 1,
+          "elapsed_ratio": 0.5248987665447111,
+          "allocation_ratio": 0.3479105388756313
+        },
+        {
+          "pair": 2,
+          "elapsed_ratio": 0.5469986146851117,
+          "allocation_ratio": 0.3479096338163003
+        },
+        {
+          "pair": 3,
+          "elapsed_ratio": 0.5256896449424244,
+          "allocation_ratio": 0.34806008225670926
+        },
+        {
+          "pair": 4,
+          "elapsed_ratio": 0.5253356133177604,
+          "allocation_ratio": 0.34791314029635384
+        }
+      ],
+      "median_elapsed_ratio": 0.5253356133177604,
+      "median_allocation_ratio": 0.3479105388756313
+    },
+    {
+      "planned_rows": 8,
+      "pairs": [
+        {
+          "pair": 0,
+          "elapsed_ratio": 0.19155501787205925,
+          "allocation_ratio": 0.11808939394594922
+        },
+        {
+          "pair": 1,
+          "elapsed_ratio": 0.19797079236657678,
+          "allocation_ratio": 0.11768533729825979
+        },
+        {
+          "pair": 2,
+          "elapsed_ratio": 0.21546706274593974,
+          "allocation_ratio": 0.11763728830182378
+        },
+        {
+          "pair": 3,
+          "elapsed_ratio": 0.1912077852747312,
+          "allocation_ratio": 0.11768611370354257
+        },
+        {
+          "pair": 4,
+          "elapsed_ratio": 0.19573287983951884,
+          "allocation_ratio": 0.11768547106208185
+        }
+      ],
+      "median_elapsed_ratio": 0.19573287983951884,
+      "median_allocation_ratio": 0.11768547106208185
+    },
+    {
+      "planned_rows": 32,
+      "pairs": [
+        {
+          "pair": 0,
+          "elapsed_ratio": 0.06751139541010567,
+          "allocation_ratio": 0.03860907536153612
+        },
+        {
+          "pair": 1,
+          "elapsed_ratio": 0.05265167252913512,
+          "allocation_ratio": 0.03226585418788361
+        },
+        {
+          "pair": 2,
+          "elapsed_ratio": 0.057437211950651976,
+          "allocation_ratio": 0.03227082745954747
+        },
+        {
+          "pair": 3,
+          "elapsed_ratio": 0.05701621828367137,
+          "allocation_ratio": 0.032162094661266113
+        },
+        {
+          "pair": 4,
+          "elapsed_ratio": 0.05813360801719659,
+          "allocation_ratio": 0.03226926680204553
+        }
+      ],
+      "median_elapsed_ratio": 0.057437211950651976,
+      "median_allocation_ratio": 0.03226926680204553
+    }
+  ],
+  "conclusion": "Lower helper allocation and time justify an end-to-end paired experiment; no transaction performance or safety rollout claim.",
+  "files": {
+    "prototype.diff": "3ace52ddcb244f08106925b2399b8bed1cade95d39e5de091a1ddcad5547b508",
+    "probe.lua": "9cd547146bdbe3404a5ca134ac09db5cc5e9c274eccfde14ab45316a87576d7d",
+    "storage-test.log": "53acc2e532967cdc9d48ee2cb392184b1c2fc15aa10e2433c752b23ab40c6dd6",
+    "helper-census.json": "f38534ee949f1c3eaecd0772f12df8c0d265c6e0f7fa2ee4e2ff4cbb2b2135dd"
+  },
+  "prototype_sources": {
+    "lua/tarn.lua": "a1db1a2b0fdf555f83342f63e7df511ab47868d4160d17e53f8b59a2b5157433",
+    "lua/tarn_fresh.lua": "a23e916e667c209a7302bcf9ac790068767a4a061b9bd1168f6697f3a7beb806"
+  }
+}

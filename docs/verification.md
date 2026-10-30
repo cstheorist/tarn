@@ -1971,11 +1971,30 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
 
 ### Configuration counts
 
-The default list contains 284 unique configurations: 73 positive
-outcomes and 211 expected broken/trade-off outcomes. The 287 generated
+The default list contains 291 unique configurations: 77 positive
+outcomes and 214 expected broken/trade-off outcomes. The 294 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 297 total. Explicit
+placement and query-budget configurations are maintained directly, for 304 total. Explicit
 check arguments override the default list.
+
+The three waiter-allocation configurations precede the #186 optimization.
+`WaiterAllocation` and its eager control each explore 35 distinct states
+without violating condition-publication and notification invariants.
+`Bug_WaiterLateAllocation` exposes `NoMissedSignal` at depth 3 by allowing a
+release/reset callback before the published waiter's condition exists.
+These local allocation checks preserve the owner-protocol abstraction;
+they do not extend the proof to FIFO, shared upgrades, deadlocks, storage
+freshness, durable commit or liveness. See [the profiling scope](../bench/RC_PROFILE.md).
+
+The four `PlanGuardBatch` configurations precede the separate experimental
+final-plan guard batching candidate. Scalar and batched decisions agree in
+48 distinct states each. Retaining a mode through a yield and omitting a
+planned space check violate `NoUnsafeAcceptance` at depths four and two.
+Configuration/space properties can change at every yield boundary; the
+equivalence depends on the existing final check being nonyielding and
+examining every planned space. Clock/prefix proofs, schema/lock fences and
+commit behavior are unchanged premises. This bounded local model makes no
+whole-code, durability, freshness or performance claim.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
 positive, 162 controls). A separate frozen merged 238-case run completed

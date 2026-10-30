@@ -2354,6 +2354,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_PlainLazyGlobalStale | violates UnrelatedOneCommit | 15 | 22 | 7 | 00s | 7 |
 | Bug_PlainLazyPending | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
 | Bug_PlainLazyReplaceReadset | violates NoStaleReadCommit | 9 | 12 | 6 | 00s | 6 |
+| Bug_PlanGuardSkipSpace | violates NoUnsafeAcceptance | 39 | 399 | 2 | 00s | 2 |
+| Bug_PlanGuardYield | violates NoUnsafeAcceptance | 197 | 1349 | 4 | 00s | 4 |
 | Bug_QueryEarlyResultRelease | violates Ownership | 24 | 30 | 5 | 00s | 5 |
 | Bug_QueryEarlyWireRelease | violates Ownership | 5 | 5 | 3 | 00s | 3 |
 | Bug_QueryPostDecisionRefusal | violates NoPartialBudgetDML | 39 | 58 | 6 | 00s | 6 |
@@ -2407,6 +2409,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_VinylAdmissionResetFullBurst | violates SharedBudget | 15 | 15 | 3 | 00s | 3 |
 | Bug_VinylAdmissionThrottleDecidedApply | violates DecidedApplyNotThrottled | 593 | 1078 | 6 | 00s | 6 |
 | Bug_VinylAdmissionThrottleExistingYes | violates ExistingYesStable | 54 | 70 | 4 | 00s | 4 |
+| Bug_WaiterLateAllocation | violates NoMissedSignal | 6 | 7 | 3 | 00s | 3 |
 | ClusterBackup | no errors | 52164 | 255561 | 30 | 00s |  |
 | CompletionRetention | no errors | 672 | 720 | 25 | 00s |  |
 | DecisionPlacement | no errors | 1970 | 3722 | 5 | 00s |  |
@@ -2460,6 +2463,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Placement_RC | no errors | 1153174 | 8224685 | 26 | 03min 23s |  |
 | Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
 | PlainLazyBinding | no errors | 115 | 137 | 7 | 00s |  |
+| PlanGuardBatch | no errors | 48 | 624 | 2 | 00s |  |
+| PlanGuardScalar | no errors | 48 | 624 | 2 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
 | QueryBudget | no errors | 142 | 249 | 13 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
@@ -2492,6 +2497,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
 | Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |
 | VinylAdmission | no errors | 67072 | 224657 | 20 | 01s |  |
+| WaiterAllocation | no errors | 35 | 91 | 6 | 00s |  |
+| WaiterAllocationEager | no errors | 35 | 91 | 6 | 00s |  |
 
 ### 5.2 Benchmarks
 

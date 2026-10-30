@@ -1,0 +1,12 @@
+{
+  "head": "099ce1ae4dbc53bfaa586e8bb72f1df75f0ac41d",
+  "source_files": {
+    "lua/tarn_fresh.lua": "0adfcb894eace1fb9e69db9baa718dd9b321ab487a957457dd74f6f697b370f2",
+    "lua/tarn.lua": "3301c192767645bb83ca87ce6edac22a4ccc228d382e624d9963465fbe80f289",
+    "bench/rc_guard_probe.lua": "4097ae37d4ccb0ca62a13855e18636bf995cfc80b3a250c2772ba194d839d972"
+  },
+  "fixture": "one RF3 shard; fsync; memtx controls; native disabled; no gateway/user workload; owned ARM64 Linux Docker",
+  "conclusion": "Freshness control helpers allocate about 3.2 KB per invocation. This isolates a possible investigation target, not its fraction of transaction CPU or an optimization. Every guard and barrier remains unchanged.",
+  "cleanup": "Owned storage fixture stopped with KEEP=1; no mutation history replayed.",
+  "census_sha256": "10f431b93377ff62bf87f154f7f257b9ecf80d181039f13ff75648d6a35e7c2f"
+}

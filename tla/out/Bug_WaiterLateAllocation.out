@@ -1,0 +1,62 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Warning: Please run the Java VM, which executes TLC with a throughput optimized garbage collector, by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 67 and seed -6975474673382467765 with 1 worker on 16 cores with 256MB heap and 64MB offheap memory [pid: 5179] (Linux 6.10.14-linuxkit aarch64, Debian 17.0.21 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/tarn186-tla/WaiterAllocation.tla
+Parsing file /tmp/tlc-5848743071692324493/Naturals.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5848743071692324493/Sequences.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5848743071692324493/FiniteSets.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5848743071692324493/_TLCTrace.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5848743071692324493/TLC.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5848743071692324493/TLCExt.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-5848743071692324493/Integers.tla (jar:file:/tmp/tarn186-tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module WaiterAllocation
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module WaiterAllocation
+Starting... (2026-10-29 22:11:50)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-29 22:11:50.
+Error: Invariant NoMissedSignal is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ holder = "initial"
+/\ missed = {}
+/\ queued = {}
+/\ phase = [a |-> "new", b |-> "new"]
+/\ fast = {}
+/\ notified = {}
+/\ conditions = {}
+/\ queue = <<>>
+
+State 2: <Request("a") line 30, col 5 to line 42, col 37 of module WaiterAllocation>
+/\ holder = "initial"
+/\ missed = {}
+/\ queued = {"a"}
+/\ phase = [a |-> "queued", b |-> "new"]
+/\ fast = {}
+/\ notified = {}
+/\ conditions = {}
+/\ queue = <<"a">>
+
+State 3: <Cancel("a") line 64, col 5 to line 69, col 53 of module WaiterAllocation>
+/\ holder = "initial"
+/\ missed = {"a"}
+/\ queued = {"a"}
+/\ phase = [a |-> "done", b |-> "new"]
+/\ fast = {}
+/\ notified = {}
+/\ conditions = {}
+/\ queue = <<>>
+
+7 states generated, 6 distinct states found, 3 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-10-29 22:11:50)
+Trace exploration spec path: ./WaiterAllocation_TTrace_1793311910.tla

@@ -1,0 +1,51 @@
+{
+  "scope": "RF1 memtx Lua-only direct lock/unlock; same process settings; fresh process per sample; five alternating pairs; 100000 calls with a cooperative yield every 1000",
+  "base_head": "7b1117c5b9b95c1bc77ed121246d1ee4ba55246b",
+  "production_changed": false,
+  "conclusion": "No repeatable improvement beyond uncertainty established; do not enable a production optimization from these measurements.",
+  "ratios": [
+    {
+      "repeat": 0,
+      "time": 0.9369958410181225,
+      "lua_allocation": 0.9517388757651698
+    },
+    {
+      "repeat": 1,
+      "time": 1.0091213812842101,
+      "lua_allocation": 0.9923467193710367
+    },
+    {
+      "repeat": 2,
+      "time": 0.9419038822792558,
+      "lua_allocation": 0.9668906665430484
+    },
+    {
+      "repeat": 3,
+      "time": 1.0137390373590696,
+      "lua_allocation": 1.0047756993898798
+    },
+    {
+      "repeat": 4,
+      "time": 0.9687734013471584,
+      "lua_allocation": 0.9684377647341693
+    }
+  ],
+  "median_time": 0.9687734013471584,
+  "median_lua_allocation": 0.9684377647341693,
+  "limitations": [
+    "single ARM64 Docker host; RF1; no SQL/commit/WAL workload",
+    "same data and checks, distinct fresh process/JIT history per sample",
+    "Lua counters exclude some C allocations; timings include checks and cooperative yields",
+    "elapsed_seconds_instrumented is the legacy field name; instrumented=false disables the condition wrapper",
+    "the original no-yield 100000-call probe exceeded the fiber slice; its failed attempt is retained, not included as a valid pair"
+  ],
+  "storage_control": {
+    "source_head": "099ce1ae4dbc53bfaa586e8bb72f1df75f0ac41d",
+    "scope": "isolated two-line candidate over current main; three RF1 shards; native disabled; existing storage_test.lua includes memtx/vinyl and lock/yield assertions",
+    "passed": 415,
+    "failed": 0,
+    "log": "storage-test.log",
+    "sha256": "53acc2e532967cdc9d48ee2cb392184b1c2fc15aa10e2433c752b23ab40c6dd6",
+    "limitation": "not the pinned SQL differential or RF3 live-fault qualification"
+  }
+}

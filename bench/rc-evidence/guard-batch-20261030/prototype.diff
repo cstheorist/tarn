@@ -1,0 +1,36 @@
+--- lua/tarn_fresh.lua
++++ lua/tarn_fresh.lua
+@@ -87,12 +87,19 @@
+         end
+         return mode
+     end
+-    function F.space(sp)
+-        local mode = F.mode()
++    local function space_mode(sp, mode)
+         if mode == 3 then unavailable('unsupported replicated configuration') end
+         if mode == 2 and (not sp.is_sync or not sp.state.is_sync) then
+             unavailable('space ' .. sp.name .. ' is not synchronous')
+         end
++    end
++    function F.space(sp) return space_mode(sp, F.mode()) end
++    -- Only used inside the existing nonyielding final plan check. This
++    -- mode is local to one invocation and cannot survive a yield/barrier.
++    function F.plans(plans)
++        local mode = F.controls()
++        c.writable()
++        for _, plan in ipairs(plans) do space_mode(plan[1], mode) end
+     end
+     -- These ordinary Lua guards run through the public Lua C API before
+     -- borrowing native State and after a quorum wait. Read current public
+--- lua/tarn.lua
++++ lua/tarn.lua
+@@ -2848,8 +2848,7 @@
+     end
+ end
+ function BK.fresh_plans(plans)
+-    M.fresh.clock_check(); M.fresh.controls(); writable()
+-    for _, p in ipairs(plans) do M.fresh.space(p[P_SPACE]) end
++    M.fresh.clock_check(); M.fresh.plans(plans)
+ end
+ function BK.clock_ids(parts, dshard)
+     if type(parts) ~= 'table' then return nil end -- legacy unknown scope: conservative full coverage

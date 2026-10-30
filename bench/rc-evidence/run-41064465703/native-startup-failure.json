@@ -1,0 +1,22 @@
+{
+  "run": "https://github.com/cstheorist/tarn/actions/runs/41064465703",
+  "source": "9c38f9b69e13aeb18152d5205974bb158db84483",
+  "engine": "memtx",
+  "native": "enabled",
+  "paired_complete": false,
+  "paired_sessions": 0,
+  "baseline": {
+    "samples": 33,
+    "attempts": 91743,
+    "acknowledged": 91743,
+    "refused": 0
+  },
+  "failure": "First unchanged scalar fixture timed out after 180 seconds during RF3 bootstrap, before setup or paired samples.",
+  "observations": [
+    "s1.2.log: checkpoint.c:134 timed out and fatal cannot initialize storage at 14:05:12 UTC.",
+    "s1.3.log: checkpoint.c:144 synchronous rollback during bootstrap.",
+    "s1.1.log: creating the schema reports synchronous rollback while retrying."
+  ],
+  "boundary": "No candidate timing, effect or performance result for this mode. Root cause and a bootstrap correction are not established; no sample or transaction was replayed.",
+  "retention": "Archive contains exact baseline attempts/readback/runtime/source receipts and paired copied source/configuration/logs. Original artifact additionally retains Tarantool and complete fixture storage files; their hashes and sizes remain in manifest excluded entries."
+}

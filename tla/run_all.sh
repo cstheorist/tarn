@@ -42,6 +42,8 @@ for cfg in "$@"; do
     StrongStreamCertificate|Bug_StrongStream*) module=StrongStreamCertificate.tla ;;
     StrongStreamCompletion|Bug_StreamCompletion*) module=StrongStreamCompletion.tla ;;
     LockReplyOwnership|Bug_LockReply*) module=LockReplyOwnership.tla ;;
+    WaiterAllocation*|Bug_WaiterLateAllocation) module=WaiterAllocation.tla ;;
+    PlanGuard*|Bug_PlanGuard*) module=PlanGuardBatch.tla ;;
     NativeKeyBatch|Bug_KeyBatch*) module=NativeKeyBatch.tla ;;
     LockCopy|Bug_Lock*) module=NativeLockCopy.tla ;;
     Fairness*|Bug_Fairness*) module=RecoveryFairness.tla ;;

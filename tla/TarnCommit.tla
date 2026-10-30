@@ -762,6 +762,8 @@ Confirmed(k) == IF InFlight(k) THEN (CHOOSE i \in infl : i.k = k).prev ELSE data
 \* the write is computed from the value of an earlier plain read; the lock
 \* reads k while a local commit to it is in flight, i.e. the value before.)
 \* (On the shard where k is; a move's fence refuses it.)
+\* WaiterAllocation separately checks the condition-publication premise of
+\* the local wait implementation. It adds no action to this owner protocol.
 RCLock(t, k) ==
     LET s == place[k] IN
     /\ t \in RC /\ coord[t] = "exec" /\ local[t] = "none"
