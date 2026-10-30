@@ -60,7 +60,9 @@ study; fault-case throughput is not presented as a performance comparison.
 ## Validation and source boundaries
 
 The [build receipt](build-receipt.json) binds the scale/fault binaries to all Rust
-inputs and verifies that those inputs still match the final implementation.
+inputs and verifies them through `cd1ad67`. A later catalog freshness correction
+changes the gateway; it does not change the movement protocol or native module.
+The original timings remain bound to their original binary, not the later build.
 Later Lua changes protect native guard error state, reject invalid limits before
 initialization, and replace the backup drain check's estimated Vinyl length with
 a bounded logical-index probe. Their focused checks and the final restore drills
@@ -122,3 +124,27 @@ Migration run source `265ed5e` and its separately built binaries are recorded in
 the archived manifests. Format 2 requires drained maintenance, not a rolling
 upgrade or an in-place downgrade. Raw native reads still expose local physical
 state and do not establish routed ownership or a distributed snapshot.
+
+## Catalog freshness regression found during final integration
+
+The first full SQL differential run observed a stale `SELECT *` column list
+after an acknowledged `ALTER TABLE ... DROP COLUMN`. An isolated 50-sequence
+repeat did not reproduce it; a second full differential run passed on both
+engines. These passes do not erase the first failure. Code inspection identified
+a catalog-reload coalescing path also present unchanged on main `dacd3cb`.
+
+A deterministic real-Tarantool regression holds an old catalog read across
+publication and queues both an ordinary refresh and a mandatory DDL reload.
+The unchanged implementation returns the old catalog ([negative control](checks/catalog-refresh-before-fix.out)).
+The fix keeps ordinary refreshes coalesced and serializes mandatory reloads
+while requiring their own read. The regression then passes, as do all 201 SQL
+unit tests (including the 1,024-group simulation) and SQL all-target clippy
+([output](checks/catalog-refresh-after-fix.out)). It adds no mutation retry.
+
+Additional local SQL diagnostics are retained in
+[the pre-fix output archive](checks/sql-before-catalog-fix.out.gz): the original
+differential mismatch, passing memtx suites, the MySQL reference container's
+OOM interruption, an invocation with missing required test arguments, and a
+Vinyl index-build setup refused by admission at the movement study's smaller
+16 MiB setting. Standard SQL validation uses the documented 128 MiB Vinyl
+setting; the fixed-memory movement cohorts retain their original 16 MiB limit.

@@ -2,8 +2,7 @@
 use super::*;
 use crate::{Output, Session};
 
-#[path = "../../tarn-iproto/tests/common/mod.rs"]
-mod common;
+use super::test_support as common;
 
 const MARK: u32 = 1; // Session's autocommit native-unavailable mark.
 
