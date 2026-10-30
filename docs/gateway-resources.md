@@ -131,3 +131,87 @@ response and fanout limits intact. Its printed payload/traffic/peak counts
 are control-plane simulation evidence, not 1,024 real storage groups or
 data-plane throughput. Configurations above the 1,024-position limit fail
 before opening I/O.
+
+## Measured envelope and retained evidence
+
+The primary integrated study is [run 40972749238](https://github.com/cstheorist/tarn/actions/runs/40972749238):
+implementation `3537a7e` against frozen main `a885dc4`. Both gateways use the
+normal release profile, Tarantool 3.9.0, the same native storage module,
+`fsync`, and identical tables/configuration. Empty Vinyl and lazy-index
+tables keep both diagnostic workers active. Eight already-connected clients
+schedule 200 point reads/second in two-second windows. Five alternating
+AB/BA pairs per configuration each admitted all 400 scheduled reads in
+both modes, with zero errors or missed slots. A second automatic PR cohort
+also completed all six configurations and every scheduled read.
+
+The table reports medians across the five runs; RSS is a per-gateway
+observation after load, not peak process memory. Socket brackets show the
+observed range. Latencies are each run's p99 over 400 reads, then the median
+of those five p99s. Startup is elapsed time until all configured gateways
+accept SQL, including initial membership and bucket loading. The last column
+is per-gateway idle traffic with active pollers, measured over two seconds;
+bytes exclude handshakes and use the lifetime counters described above.
+
+| Groups / RF / pool / gateways | Sockets, baseline → candidate | RSS MiB, baseline → candidate | Point p99 ms, baseline → candidate | Candidate startup ms | Candidate idle RPC/s / read B/s / written B/s |
+| --- | --- | --- | --- | --- | --- |
+| 8 / 1 / 1 / 2 | 8 → 8 | 31.94 → 34.50 | 0.636 → 0.648 | 46.8 | 11.0 / 1692 / 349 |
+| 8 / 1 / 4 / 1 | 32 → 8–9 | 40.39 → 34.76 | 0.554 → 0.589 | 24.9 | 11.0 / 1694 / 351 |
+| 8 / 1 / 4 / 2 | 32 → 8–9 | 40.10 → 34.68 | 0.627 → 0.701 | 32.0 | 11.0 / 1694 / 349 |
+| 8 / 3 / 4 / 2 | 32 → 8–9 | 39.85 → 34.72 | 2.309 → 3.053 | 64.3 | 11.2 / 1702 / 358 |
+| 32 / 1 / 4 / 2 | 128 → 16 | 65.05 → 44.90 | 3.292 → 3.253 | 238.5 | 18.5 / 2035 / 599 |
+| 128 / 1 / 4 / 2 | 512 → 16 | 169.08 → 50.49 | 7.446 → 1.520 | 294.5 | 18.9 / 2048 / 612 |
+
+These short, single-host runs establish a resource envelope, not a general
+throughput improvement. Small-topology p99 sometimes regressed, and the
+pool-one case used more RSS. With more groups than the ordinary socket
+budget, diagnostic polling also incurs discovery work; it remains bounded
+by the fixed polling budget. The baseline has no lifetime traffic counters,
+so its idle bytes are not inferred from the candidate. Deadlock polling is
+disabled here; its full-graph cost remains proportional to topology size.
+The measured real-storage envelope is 128 RF1 groups or eight RF3 groups,
+not 1,024 real groups or an independent-host availability claim.
+
+The 1,024-group fake-wire simulation coalesces eight concurrent refresh
+callers into one successful membership round per gateway. Each of its two
+gateways opens 1,024 connections over the round, peaks at 16 physical
+sockets, sends 3,072 requests, reads 47,907,840 encoded bytes and writes
+95,232 bytes. Its response high-water mark is 47,864,832 bytes and returns
+to zero. The integrated macOS debug run took 31.13 seconds; this is control
+metadata/capacity evidence, not a production refresh latency claim.
+
+[The evidence index](../tests/evidence/gateway-topology/index.json) retains
+source and binary identities, every paired sample, configuration, raw logs,
+summary ranges, both integrated cohorts, earlier cohorts and CI failures.
+The earlier plain-memtx/cold-client study has missed scheduled slots and is
+not used in the table. Its RF3 startup failure, the original insufficient
+join-fixture capacity, and the old compaction-witness failure remain recorded.
+The successful [complete integrated CI run](https://github.com/cstheorist/tarn/actions/runs/40972723729)
+passed native and Lua storage, SQL differentials, query budgets, RPC
+saturation, oversized post-mutation frames, movement/join/departure,
+recovery and RF3 failover on memtx and Vinyl. All 284 formal configurations
+produced their expected outcomes; Verus verified 140 bodies with zero
+errors. An additional manual CI run hit a matched 1213 in the existing
+backup fixture's direct Lua `lazy_drain`; the complete PR run passed that
+same fixture unchanged. It is recorded, not counted as another full pass.
+
+The separately retained integrated RF3 Docker test disconnects the former
+leader's replication network while keeping SQL reachable. The majority
+acknowledges one increment submitted exactly once. The isolated raw tuple
+remains old, SQL refuses the read, and after healing both restarted gateways
+read the increment exactly. Socket peaks stay within eight, and the fixture
+removes all four owned containers. Reproduce with compatible normal Linux
+release binaries inside the checkout and an image containing Tarantool 3.9:
+
+```sh
+python3 tests/sql/topology_partition.py --image YOUR_TARANTOOL_IMAGE \
+  --gateway target/release/tarn-server --native target/release/libtarn_storage.so \
+  --out /absolute/path/inside/checkout/target/partition-evidence
+```
+
+For the matched real-group fixture, `GATEWAYS=1` or `2`, `POOL_SIZE=1` or `4`,
+`REPLICAS=1` or `3`, `GROUPS_COUNT=8`, `32` or `128`, and `BASELINE_BIN` select
+the published configurations. It preserves failed attempts as well as
+successful samples. The response-copy cost, periodic discovery churn,
+uncounted allocation classes, and explicit serializable pinned-set refusal
+remain part of the supported contract; no routing hierarchy is justified by
+these measurements.
