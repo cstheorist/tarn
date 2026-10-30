@@ -75,6 +75,7 @@ async fn main() -> io::Result<()> {
         tasks.spawn(async move {
             loop {
                 let (tcp, _) = listener.accept().await?;
+                tcp.set_nodelay(true)?;
                 let Ok(permit) = slots.clone().try_acquire_owned() else {
                     drop(tcp);
                     continue;

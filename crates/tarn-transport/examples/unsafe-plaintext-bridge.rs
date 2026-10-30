@@ -45,6 +45,7 @@ async fn main() -> io::Result<()> {
         tasks.spawn(async move {
             loop {
                 let (mut remote, _) = l.accept().await?;
+                remote.set_nodelay(true)?;
                 let Ok(permit) = slots.clone().try_acquire_owned() else {
                     continue;
                 };
@@ -76,6 +77,7 @@ async fn main() -> io::Result<()> {
                     if let Ok(Ok(mut remote)) =
                         tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(addr)).await
                     {
+                        let _ = remote.set_nodelay(true);
                         let _ = copy_bidirectional(&mut local, &mut remote).await;
                     }
                 });
