@@ -328,13 +328,21 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
         self.sql(c, f"INSERT INTO {binary} VALUES (X'00ff','bytes')", mutation=True)
         self.grant(binary)
         self.paired(c, binary, [[b"\x00\xff"], [b"missing"]], "id,v", "id=%s")
+        self.reply_cap_fixture(c, engine)
+
+    def reply_cap_fixture(self, c, engine):
         cap = "reply_cap_" + engine
         self.sql(c, f"CREATE TABLE {cap} (tenant INT,id INT,v LONGBLOB,PRIMARY KEY(tenant,id)) "
                  f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)
         # Each stored row fits the engine's default 1 MiB tuple limit.
         # The shared tenant routes both keys to one server-side batch.
-        self.sql(c, f"INSERT INTO {cap} VALUES (1,1,%s),(1,2,%s)",
-                 (b"x" * (600 * 1024), b"y" * (600 * 1024)), mutation=True)
+        # Generate the same payloads inside SQL: quoting 1.2 MiB of client
+        # bytes needlessly exceeds the default query-text memory budget.
+        size = 600 * 1024
+        self.sql(c, f"INSERT INTO {cap} VALUES (1,1,REPEAT('x',{size})),"
+                 f"(1,2,REPEAT('y',{size}))", mutation=True)
+        lengths = self.sql(c, f"SELECT id,LENGTH(v) FROM {cap} WHERE tenant=1 ORDER BY id")
+        self.check(engine + " reply cap fixture exact lengths", lengths == ((1, size), (2, size)), rows=lengths)
         self.grant(cap)
         oversized = self.sdk(cap, [[1, 1], [1, 2]])
         self.check(engine + " final tuple crosses whole batch cap", oversized.get("status") == "error"

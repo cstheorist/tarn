@@ -10,6 +10,11 @@ on:
         description: Run strong KV RF3 histories and matched SQL/KV/raw measurements only
         type: boolean
         default: false
+      strong_kv_scope:
+        description: Qualification cohorts to run
+        type: choice
+        options: [all, histories]
+        default: all
       file_backup_scale:
         description: Include the file-backup scale study
         type: boolean
@@ -404,7 +409,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        cohort: [native-history, lua-history, native-clock, lua-clock, memtx, vinyl]
+        cohort: ${{ fromJSON(inputs.strong_kv_scope == 'histories' && '["native-history","lua-history"]' || '["native-history","lua-history","native-clock","lua-clock","memtx","vinyl"]') }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust

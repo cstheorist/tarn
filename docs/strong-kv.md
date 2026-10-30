@@ -206,6 +206,8 @@ histories, native and Lua terminal clock faults, and the two measurement
 engines on six separate runners, with at most three running concurrently.
 A failed cohort remains failed while the other isolated cohorts finish and
 retain their evidence.
+The optional `strong_kv_scope: histories` selects just the two fault-history
+cohorts when investigating a history-fixture change.
 
 Each engine uses two RF3 shards, quorum two, synchronous spaces and fsync,
 with test hooks disabled. The workload reads an unchanged 10,000-row,
