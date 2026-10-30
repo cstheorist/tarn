@@ -179,3 +179,16 @@ is used only for this functional witness; no timing or capacity claim is
 made. Existing `tests/jointest.sh` and `tests/growshrink.sh` exercise this
 join-then-move path in full release CI. The integrated current-source
 release/model/format-migration gates remain required before merge.
+
+
+The combined format-2/KV storage unit exposed a fixture dependency: the
+intentional oversized reply-cap row exceeded the normal movement-row
+budget, and the local roundtrip named a fictional second shard. The
+fixture now retires that payload only after both public API limit guards
+pass and uses its real local capability endpoint for both roundtrip
+sides. It remains explicitly a local protocol test, with real RF3
+join/movement checked separately. Production limits and guards are
+unchanged. The [original failure](checks/kv-integration-before.out) and
+[complete corrected 210-check run](checks/kv-integration-after.out) are
+retained. All 27 lazy baseline checks and 66 bounded movement checks
+also pass on the combined storage source.
