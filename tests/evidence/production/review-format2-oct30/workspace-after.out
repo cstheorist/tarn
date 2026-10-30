@@ -1,0 +1,471 @@
+   Compiling tarn-server v0.1.0 (/tmp/production-format2-canonical/crates/tarn-server)
+   Compiling tarn-storage v0.1.0 (/tmp/production-format2-canonical/crates/tarn-storage)
+   Compiling tarn-mysql v0.1.0 (/tmp/production-format2-canonical/crates/tarn-mysql)
+   Compiling tarn-sql v0.1.0 (/tmp/production-format2-canonical/crates/tarn-sql)
+   Compiling tarn-verified v0.1.0 (/tmp/production-format2-canonical/crates/tarn-verified)
+   Compiling tarn-iproto v0.1.0 (/tmp/production-format2-canonical/crates/tarn-iproto)
+   Compiling tarn-transport v0.1.0 (/tmp/production-format2-canonical/crates/tarn-transport)
+   Compiling tarn-common v0.1.0 (/tmp/production-format2-canonical/crates/tarn-common)
+    Finished `test` profile [unoptimized] target(s) in 20.00s
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_common-2b4a7f20fc21bd55)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_iproto-c69d0ae15de3943b)
+
+running 36 tests
+test admission::tests::invalid_limits_and_oversized_requests_never_charge ... ok
+test admission::tests::ordinary_admission_preserves_both_completion_reserves ... ok
+test admission::tests::parent_refusal_refunds_each_earlier_scope ... ok
+test client::tests::cancelled_tls_handshake_keeps_its_physical_socket_charge_until_drop ... ok
+test client::tests::cancelled_requests_keep_both_limits_and_completion_reserve ... ok
+test client::tests::duplicate_final_or_push_after_final_retires_other_requests ... ok
+test client::tests::every_length_encoding_and_fragmented_prefix ... ok
+test client::tests::fragmented_coalesced_and_reordered_terminal_replies ... ok
+test client::tests::handshake_requires_unique_owned_terminal_replies ... ok
+test client::tests::invalid_types_and_unowned_fencing_errors_retire_pending_requests ... ok
+test client::tests::matched_terminal_database_error_keeps_connection_usable ... ok
+test client::tests::missing_duplicate_mistyped_headers_and_malformed_bodies_are_fatal ... ok
+test client::tests::chunks_and_cancelled_callers_retain_exact_response_ownership ... ok
+test client::tests::oversized_headers_refuse_before_reserving_payload_memory ... ok
+test client::tests::response_budget_survives_response_slices_and_refuses_before_large_reserve ... ok
+test client::tests::retirement_does_not_refund_until_both_physical_owners_drop ... ok
+test client::tests::shared_scopes_cover_multiple_connections_and_reserved_calls ... ok
+test client::tests::old_cancelled_head_expires_despite_other_replies_and_compacts_order ... ok
+test client::tests::socket_budget_covers_handshake_cancellation_and_pinned_handles ... ok
+test client::tests::sql_frame_limit_composes_with_aggregate_response_ownership ... ok
+test connections::tests::connecting_sockets_and_completion_reserve_share_one_cap ... ok
+test connections::tests::eviction_waits_for_physical_retirement_without_reserving_or_disabling_limits ... ok
+test mp::tests::bad_decimals_fall_back_to_string ... ok
+test mp::tests::civil_dates ... ok
+test mp::tests::datetimes_written_by_tarantool ... ok
+test mp::tests::decimal_decoding_matches_tarantool ... ok
+test mp::tests::decimal_encoding_matches_tarantool ... ok
+test mp::tests::decimal_text_forms ... ok
+test mp::tests::decode_special_types ... ok
+test mp::tests::headers_and_readers ... ok
+test mp::tests::huge_scales_render_scientific ... ok
+test mp::tests::integer_encodings_are_minimal ... ok
+test mp::tests::scalars_round_trip ... ok
+test mp::tests::skip_and_raw ... ok
+test responses::tests::slices_keep_the_entire_frame_charge ... ok
+test client::tests::slow_peer_bounds_encoded_bytes_and_retires_a_blocked_writer ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/integration.rs (/tmp/tarn-oct30-debug-control/debug/deps/integration-35af900db0242243)
+
+running 18 tests
+test bad_password_and_unknown_user ... ok
+test call_and_eval ... ok
+test decimals_and_datetimes_written_by_tarantool ... ok
+test dropping_the_client_rolls_back_its_streams ... ok
+test connect_failures ... ok
+test every_value_variant_round_trips_through_tarantool ... ok
+test greeting_id_auth_and_ping ... ok
+test guest_session_without_user ... ok
+test explicit_close_fails_pending_requests ... ok
+test insert_replace_update_delete ... ok
+test pipelining_20k_concurrent_requests ... ok
+test read_write_conflict_aborts_stream_transaction ... ok
+test readonly_reply_marks_connection_stale ... ok
+test select_every_iterator_with_limit_and_offset ... ok
+test server_death_fails_pending_and_new_requests ... ok
+test large_requests_and_responses ... ok
+test stream_writes_are_invisible_until_commit ... ok
+test transaction_errors_isolation_and_timeout ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_mysql-035b68a2297a3f4c)
+
+running 12 tests
+test codec::tests::lenenc_boundaries ... ok
+test packets::tests::binary_rows ... ok
+test packets::tests::datetime_parsing ... ok
+test packets::tests::handshake_response_parsing ... ok
+test packets::tests::native_password_round_trip ... ok
+test packets::tests::ok_info_is_length_encoded ... ok
+test packets::tests::params_all_types ... ok
+test packets::tests::text_rows ... ok
+test tests::connection_admission_refusal_still_disconnects_the_backend ... ok
+test tests::packet_size_limits ... ok
+test tests::splits_statements ... ok
+test codec::tests::framing_boundaries ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running unittests src/main.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_server-599fec9a80466925)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_sql-34ee6598b99ce062)
+
+running 233 tests
+test admin::tests::admin_dash_comments_require_mysql_whitespace_or_control ... ok
+test admin::tests::bucket_statements ... ok
+test admin::tests::interleaved_comments_keep_original_set_rhs_offsets ... ok
+test admin::tests::diagnostic_lifetime_uses_statement_kind_not_substring ... ok
+test admin::tests::isolation_contract_preserves_scope_and_reports_active_mode ... ok
+test admin::tests::prepared_normalization_distinguishes_markers_from_comment_and_literal_text ... ok
+test admin::tests::leading_comments_preserve_set_expressions ... ok
+test admin::tests::rebalance_statements ... ok
+test admin::tests::quoted_admin_tokens_preserve_utf8_and_escapes ... ok
+test admin::tests::shard_statements ... ok
+test admin::tests::sql_prepared_statements ... ok
+test admin::tests::recognizes ... ok
+test alter::tests::added_columns_live_after_bucket_id ... ok
+test alter::tests::collations_and_weight_fields ... ok
+test alter::tests::create_index_comment_decodes_mysql_string_escapes ... ok
+test alter::tests::dropped_columns_keep_their_field ... ok
+test alter::tests::floats_stored_as_integers_read_as_doubles ... ok
+test alter::tests::index_comments_are_kept ... ok
+test alter::tests::indexes_and_names ... ok
+test alter::tests::indexes_require_stored_non_null_fills ... ok
+test alter::tests::lazy_incarnation_survives_metadata_changes_and_is_retired_on_drop ... ok
+test alter::tests::lua_args_encode ... ok
+test alter::tests::materialization_wire_keeps_old_storage_presence_checks ... ok
+test alter::tests::materialization_pad_preserves_old_dropped_values_and_weights ... ok
+test alter::tests::quoted_lexer_keeps_backtick_escapes_and_utf8 ... ok
+test alter::tests::parses_mysql_alterations ... ok
+test buckets::tests::a_bucket_in_flight_goes_where_it_is_received ... ok
+test buckets::tests::a_shard_the_map_does_not_have_is_refused ... ok
+test alter::tests::type_changes_are_checked_or_refused ... ok
+test buckets::tests::bad_maps_are_refused ... ok
+test buckets::tests::initial_layout_is_contiguous_and_covers_every_bucket ... ok
+test buckets::tests::map_from_reports ... ok
+test buckets::tests::the_bucket_count_of_a_new_map ... ok
+test buckets::tests::report_parsing ... ok
+test budget::tests::concurrent_accounts_cannot_over_admit_or_leak_failed_charges ... ok
+test budget::tests::frames_refund_only_their_memory_and_results_keep_ownership ... ok
+test cluster::catalog_tests::ddl_reload_observes_publication_after_an_inflight_refresh ... ok
+test budget::tests::cancelled_read_keeps_its_reservation_until_socket_retirement ... ok
+test cluster::fallback_tests::native_conflict_and_lost_reply_never_fall_back ... ok
+test cluster::fallback_tests::matched_handback_keeps_its_physical_client ... ok
+test cluster::fallback_tests::readonly_refusals_discover_a_new_client_before_lua ... ok
+test cluster::fallback_tests::uncertain_native_reply_never_replays_a_committed_increment ... ok
+test cluster::tests::completion_discovery_negotiates_capability_through_reserved_admission ... ok
+test cluster::tests::finds_cycles_through_shards ... ok
+test cluster::tests::parses_lock_waits ... ok
+test cluster::fallback_tests::warmed_unavailable_autocommit_uses_every_connection ... ok
+test cluster::tests::second_collection_needs_the_same_edges ... ok
+test cluster::tests::space_allocations_never_wrap_or_reuse_an_incarnation ... ok
+test cluster::tests::strong_read_capability_requires_supported_complete_contract ... ok
+test cluster::tests::role_probe_never_uses_eval_in_production_and_checks_legacy_compatibility ... ok
+test cluster::tests::walk_follows_queued_requests ... ok
+test cluster::tests::walk_follows_waits_backwards ... ok
+test cluster::tests::walk_without_waiters ... ok
+test cluster::tests::strong_read_contract_is_negotiated_over_tcp_and_retires_rejected_sockets ... ok
+test collation::tests::ascii_general_weights_are_upper_case ... ok
+test collation::tests::equality_and_padding ... ok
+test collation::tests::like_by_weights ... ok
+test collation::tests::locate_like_mariadb ... ok
+test collation::tests::names_and_aggregation ... ok
+test collation::tests::ordering_follows_keys ... ok
+test collation::tests::weight_strings_match_mariadb ... ok
+test compat::tests::admits_supported_protocol_and_explicit_lua_fallbacks ... ok
+test compat::tests::deployment_pending_is_only_for_read_only_replicas_with_the_same_contract ... ok
+test compat::tests::refuses_other_native_layout_contracts ... ok
+test compat::tests::refuses_truncated_extended_and_coerced_reports ... ok
+test compat::tests::refuses_wrong_protocol_format_identity_runtime_or_expiry_contract ... ok
+test complex::tests::explain_never_materializes_subqueries ... ok
+test complex::tests::union_all_parts_lists_each_select_in_order ... ok
+test complex::tests::union_all_parts_refuses_union_distinct ... ok
+test exec::colocated::tests::alternative_paths_bounds_limits_and_virtual_tables_fall_back ... ok
+test exec::colocated::tests::collation_keys_use_physical_fields_once ... ok
+test exec::colocated::tests::composite_shard_positions_must_be_equated_in_hash_order ... ok
+test exec::colocated::tests::dependent_prefix_has_one_earlier_primary_parent ... ok
+test exec::colocated::tests::dependent_primary_prefixes_and_constants ... ok
+test exec::colocated::tests::planner_primary_point_and_dependent_prefix_chain ... ok
+test exec::colocated::tests::proof_requires_ordinary_conjunctive_equalities ... ok
+test exec::colocated::tests::slot_limit_falls_back_without_changing_sql_support ... ok
+test exec::colocated::tests::types_collations_and_inexact_numeric_parts_fall_back ... ok
+test exec::tests::batched_join_can_leave_a_decimal_suffix_unprobed ... ok
+test exec::tests::batched_join_decimal_pk_guard_applies_only_to_global_lookups ... ok
+test exec::tests::batched_join_decimal_probes_keep_the_native_lookup ... ok
+test exec::tests::batched_join_lookups ... ok
+test exec::tests::batched_lookup_rows_go_to_their_outer_rows ... ok
+test exec::tests::columns_of_literals_are_named_as_mariadb_names_them ... ok
+test exec::tests::count_pushdown ... ok
+test exec::tests::merging_the_pages_of_several_shards ... ok
+test exec::tests::numeric_storage_atoms_ignore_the_connection_collation ... ok
+test exec::tests::only_prefix_accepts_equalities_of_the_prefix_columns ... ok
+test exec::tests::only_prefix_refuses_anything_else ... ok
+test exec::tests::paging_keeps_a_routed_lane_after_ownership_refresh ... ok
+test exec::tests::paging_keeps_scatter_epochs_and_membership ... ok
+test exec::tests::paging_the_ordered_index_or_reading_the_prefix ... ok
+test exec::topk::tests::heap_matches_stable_sort_with_nulls_ties_and_mixed_directions ... ok
+test expr::tests::datetime_format ... ok
+test expr::tests::functions ... ok
+test expr::tests::like ... ok
+test expr::tests::three_valued_logic ... ok
+test integrity::tests::declarations_are_rejected_before_a_plan_can_publish ... ok
+test integrity::tests::old_catalogs_remain_unknown_after_metadata_removal_and_alter ... ok
+test kv::tests::aggregate_reply_cap_discards_successful_first_shard ... ok
+test kv::tests::credentials_are_explicit_and_debug_redacted ... ok
+test kv::tests::descriptor_bounds_precede_sql_layout_resolution ... ok
+test kv::tests::errors_are_typed_and_do_not_certify_partial_rows ... ok
+test kv::tests::invalid_complete_keys_do_not_turn_into_fresh_misses ... ok
+test kv::tests::key_and_row_codecs_handle_weights_and_instant_physical_layout ... ok
+test kv::tests::later_shard_schema_change_discards_earlier_successful_group ... ok
+test kv::tests::metadata_binds_layout_names_native_pk_and_outer_version ... ok
+test kv::tests::owner_refresh_restarts_vector_with_identical_frozen_table_and_keys ... ok
+test kv::tests::public_batch_accepts_exact_key_byte_limit_and_rejects_one_over_before_wire ... ok
+test kv::tests::public_client_never_retries_schema_changed_or_returns_a_prefix ... ok
+test kv::tests::server_errors_retain_namespaces_and_schema_owner_causes ... ok
+test kv::tests::slots_preserve_duplicates_and_misses_without_equal_value_promise ... ok
+test lazy::tests::candidate_page_rejects_wrong_generation_width_and_trailing_data ... ok
+test lazy::tests::canonical_integer_keys_ignore_value_enum_representation ... ok
+test lazy::tests::capability_requires_explicit_matching_protocol_and_bounds ... ok
+test lazy::tests::ci_raw_pk_and_canonical_fields_are_distinct ... ok
+test lazy::tests::composite_routing_is_explicit_persistent_and_immutable_for_existing_indexes ... ok
+test lazy::tests::cumulative_history_is_bounded_and_never_last_commit_only ... ok
+test lazy::tests::explicit_metadata_not_legacy_comment_activates_lazy ... ok
+test lazy::tests::frontier_requires_exact_hole_free_bucket_set_and_integer_bounds ... ok
+test lazy::tests::merge_orders_typed_keys_then_primary_keys_in_both_directions ... ok
+test lazy::tests::reject_unique_and_noncanonical_lazy_identity_only ... ok
+test lazy::tests::select_eligibility_and_direction_are_conservative ... ok
+test lazy::tests::session_variable_boundaries ... ok
+test lint::tests::a_root_sharded_by_part_of_its_key ... ok
+test lint::tests::a_tree_that_lines_up ... ok
+test lint::tests::annotations_in_comments ... ok
+test lint::tests::children_and_replaced_tables ... ok
+test lint::tests::key_types_that_hash_alike ... ok
+test lint::tests::keys_that_do_not_line_up ... ok
+test lint::tests::missing_parents_cycles_and_annotations ... ok
+test lint::tests::schema_files ... ok
+test lint::tests::unique_keys_outside_the_shard_key ... ok
+test members::tests::composite_schema_import_requires_a_version_two_coordinator ... ok
+test members::tests::members_round_trip ... ok
+test members::tests::ordinary_schema_import_keeps_one_argument_compatibility ... ok
+test members::tests::schema_import_uses_authoritative_active_or_retired_tag ... ok
+test members::tests::unsupported_or_malformed_lazy_join_tag_fails_before_import ... ok
+test mpw::tests::duplicate_message_can_contain_non_utf8_collation_weights ... ok
+test mpw::tests::incomplete_write_replies_cannot_certify_rollback_or_success ... ok
+test mpw::tests::only_complete_native_handbacks_authorize_fallback ... ok
+test mpw::tests::status_and_its_fields ... ok
+test mpw::tests::write_envelopes_validate_wire_types_before_sql_value_coercion ... ok
+test mpw::tests::write_outcomes_keep_codes_and_sqlstates ... ok
+test normalize::tests::comments_and_interval ... ok
+test normalize::tests::hexadecimal_literals_become_binary_params ... ok
+test normalize::tests::identifiers_with_digits_untouched ... ok
+test normalize::tests::introducers_and_national_strings ... ok
+test normalize::tests::literals_become_params ... ok
+test normalize::tests::placeholders_numbered_in_prepare_mode ... ok
+test normalize::tests::positional_order_by_kept ... ok
+test normalize::tests::same_template_for_different_literals ... ok
+test observe::tests::bounds_cardinality_and_sample_bytes ... ok
+test observe::tests::cancellation_and_nested_execution_are_explicit ... ok
+test observe::tests::isolates_concurrent_queries_and_preserves_errors ... ok
+test observe::tests::owned_foreground_workers_keep_fanout_and_commit_attribution ... ok
+test observe::tests::prepared_and_text_literals_share_a_redacted_descriptor ... ok
+test placement::tests::empty_and_single_writer ... ok
+test placement::tests::prefers_active_writers_and_retains_the_inactive_fallback ... ok
+test placement::tests::stable_durable_identity_across_gateway_positions ... ok
+test placement::tests::transaction_identities_spread_a_common_writer_set ... ok
+test planner::global_index_tests::entries_of_a_global_index ... ok
+test planner::tests::analyze_rejects_options_and_unknown_or_virtual_tables ... ok
+test planner::tests::collation_paths ... ok
+test planner::tests::create_table_engine ... ok
+test planner::tests::create_table_layout ... ok
+test planner::tests::hexadecimal_literals_and_introducers_are_binary_strings ... ok
+test planner::tests::index_that_follows_order_by ... ok
+test planner::tests::index_that_follows_order_by_without_the_shard_key ... ok
+test planner::tests::information_schema_tables ... ok
+test planner::tests::legacy_counter_identity_survives_physical_replacements ... ok
+test planner::tests::limit_not_pushed_below_having ... ok
+test planner::tests::longer_prefix_or_the_index_that_follows_order_by ... ok
+test planner::tests::multi_key_paths ... ok
+test planner::tests::null_safe_equality_paths ... ok
+test planner::tests::partition_by_key ... ok
+test planner::tests::point_select_path ... ok
+test planner::tests::range_and_agg ... ok
+test planner::tests::row_value_comparisons ... ok
+test planner::tests::statistics_reorder_only_safe_joins_and_preserve_logical_columns ... ok
+test planner::tests::tables_without_primary_key ... ok
+test planner::tests::upsert_row_alias ... ok
+test prep::tests::executable_comments ... ok
+test prep::tests::select_into_variables ... ok
+test prep::tests::statement_text ... ok
+test prep::tests::variables ... ok
+test rebalance::tests::only_temporary_movement_capacity_is_rescheduled ... ok
+test rebalance::tests::plan_by_load_moves_the_hot_buckets ... ok
+test rebalance::tests::plan_evens_the_buckets_out_too ... ok
+test rebalance::tests::plan_evens_the_shards_out ... ok
+test rebalance::tests::record_round_trip ... ok
+test route::tests::buckets_in_range_and_spread ... ok
+test route::tests::matches_tarantool_digest_crc32 ... ok
+test rpcs::tests::before_enqueue_refusal_is_neither_abort_certification_nor_uncertainty ... ok
+test rpcs::tests::defaults_and_unsafe_configuration_are_explicit ... ok
+test session::tests::autocommit_ack_requires_exact_count_and_terminal_envelope ... ok
+test session::tests::duplicate_diagnostics_admit_before_formatting_and_keep_retained_ownership ... ok
+test session::tests::known_write_failures_preserve_cumulative_lazy_history ... ok
+test session::tests::schema_output_exposes_legacy_integrity_without_certifying_rows ... ok
+test session::tests::show_create_control_strings_round_trip ... ok
+test session::tests::sql_string_format_matches_mariadb_bytes ... ok
+test statistics::tests::bounds_cache_and_invalidates_generations_on_expiry_and_schema ... ok
+test topology::tests::a_read_leaves_ordinary_socket_capacity_and_counts_existing_unique_streams ... ok
+test topology::tests::bounded_waiting_is_fifo_and_cancellation_releases_only_branch_slots ... ok
+test topology::tests::branch_window_preserves_order_completeness_and_error_outcomes ... ok
+test topology::tests::configuration_cannot_disable_bounds_or_consume_every_slot_per_query ... ok
+test txn::pushdown::tests::filtered_scan_coverage_still_consumes_work ... ok
+test txn::pushdown::tests::projected_rows_charge_logical_width_before_decoding ... ok
+test txn::pushdown::tests::reduction_payload_is_charged_and_incomplete_stays_incomplete ... ok
+test txn::tests::apply_acknowledgement_must_certify_physical_completion ... ok
+test txn::tests::batch_capability_is_versioned_and_complete ... ok
+test txn::tests::failed_lock_gen_reads_the_fourth_field ... ok
+test txn::tests::grouped_reply_decodes_physical_rows_and_detaches_read_keys ... ok
+test txn::tests::grouped_reply_rejects_partial_or_wrong_envelopes ... ok
+test txn::tests::native_commit_excludes_lazy_writes_and_lock_requests ... ok
+test txn::tests::native_key_batch_negotiates_once_and_preserves_fallback_calls ... ok
+test txn::tests::native_key_batch_reply_preserves_physical_rows_and_requires_completion ... ok
+test cluster::topology_tests::simulated_1024_group_refresh_coalesces_two_gateways_under_physical_caps ... ok
+test txn::tests::prepare_uncertainty_is_never_a_no_vote ... ok
+test txn::tests::prepare_votes_require_exact_complete_envelopes ... ok
+test txn::tests::raw_missing_space_read_keeps_its_stream_and_only_falls_back_for_error_36 ... ok
+test txn::tests::successful_commit_unlocks_only_extra_lock_requests ... ok
+test types::tests::arithmetic ... ok
+test types::tests::coercion ... ok
+test types::tests::comparisons ... ok
+test types::tests::decimals ... ok
+test types::tests::parse_types ... ok
+test types::tests::temporal_spellings ... ok
+test vinyl::tests::invalid_samples_cannot_appear_current ... ok
+test vinyl::tests::malformed_admission_replies_never_certify_no_effect ... ok
+test vinyl::tests::only_explicit_before_effect_refusals_allow_retry ... ok
+test vinyl::tests::samples_keep_exact_counters_and_unknown_metrics ... ok
+test txn::tests::prepare_only_cleans_owned_stream_after_complete_explicit_no_vote ... ok
+
+test result: ok. 233 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.52s
+
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_storage-1cc332505b5d7e58)
+
+running 38 tests
+test batch::tests::capability_is_only_a_complete_empty_argument_array ... ok
+test batch::tests::accepts_composite_and_exact_work_bound ... ok
+test batch::tests::refuses_unsupported_or_incomplete_shapes ... ok
+test batch::tests::retains_order_duplicates_and_misses_as_requested_keys ... ok
+test fallback::tests::a_map_of_more_than_15_reasons ... ok
+test fallback::tests::counts_the_reason_noted_last ... ok
+test fallback::tests::every_reason_once_in_order ... ok
+test freshness::tests::bounded_raw_correction_uses_the_shared_logical_baseline_check ... ok
+test locks::tests::checks_reads_as_reads_w_locked ... ok
+test locks::tests::counts_ranges_and_row_locks ... ok
+test locks::tests::checks_writes_as_write_conflict ... ok
+test locks::tests::counts_the_holders_of_each_mode ... ok
+test locks::tests::keys_as_the_lua_module_encodes_them ... ok
+test locks::tests::says_what_a_step_meets ... ok
+test mp::tests::a_failed_read_moves_nothing ... ok
+test mp::tests::integers_of_any_sign ... ok
+test mp::tests::reads_what_it_writes ... ok
+test mp::tests::signed_encodings_of_non_negative_integers ... ok
+test mp::tests::integers_out_of_range_are_not_written - should panic ... ok
+test mp::tests::skips_nested_values ... ok
+test select::tests::end_keys ... ok
+test select::tests::leaves_the_others_to_lua ... ok
+test select::tests::pages ... ok
+test select::tests::parses_the_reads_it_serves ... ok
+test select::tests::routes ... ok
+test select::tests::scan_pages ... ok
+test select::tests::which_pages ... ok
+test state::tests::buckets ... ok
+test state::tests::layout_matches_the_lua_declaration ... ok
+test state::tests::lazy_capture_excludes_unknown_sources_and_slot_collisions ... ok
+test write::tests::affected_rows ... ok
+test write::tests::arithmetic ... ok
+test write::tests::parses_a_commit ... ok
+test write::tests::parses_a_validation ... ok
+test write::tests::parses_an_update ... ok
+test write::tests::parses_inserts_and_deletes ... ok
+test write::tests::update_ops_skip_additions_to_null ... ok
+test write::tests::values_as_lua_stores_them ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_transport-e6b0fcf894e203d0)
+
+running 2 tests
+test tests::tls_authorities_cannot_override_identity_verification ... ok
+test tests::secrets_refuse_other_readers_and_symlinks ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/tarn-tls.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_tls-3f6b096fd2b9fc92)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/tarn-oct30-debug-control/debug/deps/tarn_verified-b01136185e3bedbf)
+
+running 3 tests
+test locks::tests::checks ... ok
+test locks::tests::steps ... ok
+test uix::tests::deltas ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/erased.rs (/tmp/tarn-oct30-debug-control/debug/deps/erased-3ee0d223d94d15e5)
+
+running 18 tests
+test batch_budget_checks_large_sizes_without_overflow_or_partial_charge ... ok
+test batch_budget_preserves_misses_and_exact_last_tuple ... ok
+test batch_budget_refuses_each_exhausted_resource_before_a_miss ... ok
+test clock_backward_correction_accounts_for_elapsed_monotonic_time ... ok
+test clock_corrections_cannot_ratchet_the_logical_baseline_backwards ... ok
+test clock_observations_check_both_drift_directions_at_the_boundary ... ok
+test bucket_owners_from_reports ... ok
+test clock_observations_do_not_overflow_at_integer_limits ... ok
+test clock_observations_refuse_pause_steps_and_backwards_monotonic_time ... ok
+test clock_recorded_correction_deltas_use_the_exact_drift_boundary ... ok
+test coordinator_decisions ... ok
+test crc_matches_tarantool ... ok
+test lenenc_boundaries_round_trip ... ok
+test lenenc_strings ... ok
+test msgpack_headers_at_their_boundaries ... ok
+test msgpack_integers_at_their_boundaries ... ok
+test msgpack_values_skipped_however_nested ... ok
+test framing_boundaries ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+
+   Doc-tests tarn_common
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tarn_iproto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tarn_mysql
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tarn_sql
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tarn_transport
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tarn_verified
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

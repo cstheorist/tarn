@@ -1,0 +1,9 @@
+   Compiling tarn-transport v0.1.0 (/tmp/production-format2-canonical/crates/tarn-transport)
+   Compiling tarn-common v0.1.0 (/tmp/production-format2-canonical/crates/tarn-common)
+   Compiling tarn-verified v0.1.0 (/tmp/production-format2-canonical/crates/tarn-verified)
+   Compiling tarn-iproto v0.1.0 (/tmp/production-format2-canonical/crates/tarn-iproto)
+   Compiling tarn-storage v0.1.0 (/tmp/production-format2-canonical/crates/tarn-storage)
+   Compiling tarn-mysql v0.1.0 (/tmp/production-format2-canonical/crates/tarn-mysql)
+   Compiling tarn-sql v0.1.0 (/tmp/production-format2-canonical/crates/tarn-sql)
+   Compiling tarn-server v0.1.0 (/tmp/production-format2-canonical/crates/tarn-server)
+    Finished `dev` profile [unoptimized] target(s) in 10.74s

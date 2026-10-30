@@ -1,0 +1,8 @@
+    Checking tarn-transport v0.1.0 (/tmp/production-format2-canonical/crates/tarn-transport)
+    Checking tarn-common v0.1.0 (/tmp/production-format2-canonical/crates/tarn-common)
+    Checking tarn-iproto v0.1.0 (/tmp/production-format2-canonical/crates/tarn-iproto)
+    Checking tarn-verified v0.1.0 (/tmp/production-format2-canonical/crates/tarn-verified)
+    Checking tarn-sql v0.1.0 (/tmp/production-format2-canonical/crates/tarn-sql)
+    Checking tarn-mysql v0.1.0 (/tmp/production-format2-canonical/crates/tarn-mysql)
+    Checking tarn-server v0.1.0 (/tmp/production-format2-canonical/crates/tarn-server)
+    Finished `dev` profile [unoptimized] target(s) in 8.59s
