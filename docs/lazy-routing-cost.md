@@ -27,10 +27,14 @@ measurement of the standard release profile. CI uses the normal release profile
 and a separate host configuration. Comparisons are within each fixture;
 results from different configurations are never pooled.
 
-## Final runtime: single-row lookups
+## Measured runtime: single-row lookups
 
-The final runtime is `a20867b`, including only reviewed changes already merged
-into main (MySQL contracts, typed reads, outcome handling and the lazy ledger).
+The runtime measured in these final local studies is `a20867b`, including
+reviewed MySQL contracts, typed reads, outcome handling and the lazy ledger.
+Subsequent integration of main `8960b9b` brings in bounded movement, clock
+bootstrap and the release load generator. The routing implementation is
+unchanged, but these measurements do not qualify those newer runtime changes;
+all results remain attached to their recorded source and binary hashes.
 Its sixty successful single-row arms have zero workload errors and satisfy
 the fixed p99 ceiling. No throughput interval excludes one. Earlier gains
 must not be attributed to this final runtime.
@@ -63,7 +67,7 @@ one fails, and persists raw samples in a finally block. Unit controls and a
 live RF3 post-workload timeout injection verify retention and hook restoration.
 The successful fresh sixteen-lane run uses this correction.
 
-## Final runtime: eight-row lookups
+## Measured runtime: eight-row lookups
 
 After the single-row study, a separate two-pair, five-second pilot tested
 `--lookup-batch`: each lookup returns and verifies all eight rows of the

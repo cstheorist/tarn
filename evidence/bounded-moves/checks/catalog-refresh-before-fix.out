@@ -1,0 +1,19 @@
+   Compiling tarn-sql v0.1.0 (/work/crates/tarn-sql)
+    Finished `test` profile [unoptimized] target(s) in 11.25s
+     Running unittests src/lib.rs (/out/target/debug/deps/tarn_sql-fbd160ec2f4cb8b1)
+
+running 1 test
+
+thread 'cluster::catalog_tests::ddl_reload_observes_publication_after_an_inflight_refresh' (49707) panicked at crates/tarn-sql/src/cluster_catalog_tests.rs:72:9:
+DDL acknowledged with the pre-publication catalog
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test cluster::catalog_tests::ddl_reload_observes_publication_after_an_inflight_refresh ... FAILED
+
+failures:
+
+failures:
+    cluster::catalog_tests::ddl_reload_observes_publication_after_an_inflight_refresh
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 200 filtered out; finished in 0.10s
+
+error: test failed, to rerun pass `-p tarn-sql --lib`

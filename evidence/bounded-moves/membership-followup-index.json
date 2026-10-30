@@ -1,0 +1,29 @@
+{
+  "base_revision": "405448019bee22001c52e8081e7ae17d7f109b44",
+  "source_changes": {
+    "lua/tarn.lua": "e195b95ad1f5391e2f532c99f6b4c83d12fdb3ce9150802e37eb7a75df33cbc7",
+    "lua/tarn_move.lua": "8fb91780fffd0205ba36b2d94f4ae8520e8637a6fc6047403016cb62b73ff0e3",
+    "crates/tarn-sql/src/rebalance.rs": "38dcb22d7411295daee9e0f69d85b41bcc3d9c992a613689e3f4201aa9f35adc"
+  },
+  "gateway_sha256": "e91683c148619b4c04d542e31f173c1e1a6596c83a1c2207bb3261322d438cf0",
+  "native_sha256": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf",
+  "archive": {
+    "path": "membership-followup-runs.tar.gz",
+    "sha256": "f8d6eda945aac5ee20a4e03283df6a21d0e4bfc1fbf05f8d234b8cca97d1eb5d",
+    "files": 212
+  },
+  "passed_controls": [
+    "native join faults",
+    "native join under load and old-config restart",
+    "native growth/removal/rate/cancel/coordinator recovery",
+    "Lua join faults",
+    "Lua join under load and old-config restart",
+    "Lua growth/removal/rate/cancel/coordinator recovery",
+    "native RF3/fsync Vinyl join and removal under load"
+  ],
+  "prior_failures": [
+    "v1: dead gateway remained a PID-1-owned zombie and blocked the restart fixture",
+    "v2: five explicit movement-capacity refusals recorded as failed rebalance moves"
+  ],
+  "profile": "dev opt0; source-bound correctness checks, no new performance comparison"
+}

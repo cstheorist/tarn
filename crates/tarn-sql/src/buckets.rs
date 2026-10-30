@@ -225,14 +225,14 @@ impl BucketMap {
         let mut going: BTreeMap<u32, usize> = BTreeMap::new();
         for (i, r) in reports.iter().enumerate() {
             for (b, state, ..) in &r.others {
-                if state == "held" || state == "receiving" {
+                if matches!(state.as_str(), "held" | "receiving" | "installing") {
                     going.insert(*b, i);
                 }
             }
         }
         for r in &reports {
             for (b, state, peer, _) in &r.others {
-                if state == "sent" {
+                if state == "sent" || state == "reclaiming" {
                     if let Some(&p) = peer.and_then(|p| pos.get(&p)) {
                         going.entry(*b).or_insert(p);
                     }
@@ -330,10 +330,6 @@ pub fn ranges_text(r: &[(u32, u32)]) -> String {
 /// run on it: see `Cluster::epoch_of`).
 const SETTLE_WAIT: Duration = Duration::from_secs(2);
 
-/// The most times a move copies a bucket again after its notes of the
-/// writes since the copy were lost (leader changes on the sending shard).
-const MAX_RECOPIES: usize = 3;
-
 /// How long a step of a move is tried again after a leader change or a lost
 /// connection (every step can be repeated).
 const STEP_RETRY: Duration = Duration::from_secs(30);
@@ -342,6 +338,54 @@ const STEP_RETRY: Duration = Duration::from_secs(30);
 /// leader changed, or the connection to it broke.
 fn transient(e: &SqlError) -> bool {
     matches!(e.code, 2003 | 2013) || (e.code == 1213 && !e.moved && e.message.contains("leader"))
+}
+
+/// Last page and its effects share one receiver transaction. A frozen copy
+/// uses the durable move identity as its generation: the source write fence
+/// survives leadership changes, so its cursor remains resumable.
+#[derive(Default)]
+struct MoveProgress {
+    seq: u64,
+    phase: String,
+    generation: String,
+    cursor: Vec<u8>,
+    done: bool,
+    clearing: bool,
+    reset_seq: u64,
+}
+impl MoveProgress {
+    fn read(rd: &mut Rd<'_>) -> SqlResult<Self> {
+        let mut p = Self {
+            cursor: vec![0xc0],
+            ..Self::default()
+        };
+        for _ in 0..rd.map()? {
+            match rd.string()?.as_str() {
+                "seq" => p.seq = rd.value()?.as_i64().unwrap_or(0) as u64,
+                "phase" => p.phase = rd.string()?,
+                "generation" => p.generation = rd.string()?,
+                "cursor" => p.cursor = rd.raw_value()?.to_vec(),
+                "done" => p.done = rd.value()?.as_i64() == Some(1),
+                "clearing" => p.clearing = rd.value()?.as_i64() == Some(1),
+                "reset_seq" => p.reset_seq = rd.value()?.as_i64().unwrap_or(0) as u64,
+                _ => rd.skip()?,
+            }
+        }
+        Ok(p)
+    }
+    fn write(&self, a: &mut Mp) {
+        a.map(5)
+            .str("seq")
+            .uint(self.seq)
+            .str("phase")
+            .str(&self.phase)
+            .str("generation")
+            .str(&self.generation)
+            .str("cursor")
+            .raw(&self.cursor)
+            .str("done")
+            .bool(self.done);
+    }
 }
 
 /// The pieces of a move.
@@ -662,7 +706,8 @@ impl Cluster {
                 Ok(true)
             }
             Err(e) if !flipped => {
-                if let Err(a) = self.abort_move(&mv).await {
+                self.job_phase(&job, "abort").await?;
+                if let Err(a) = self.with_job_alive(&job.owner, self.abort_move(&mv)).await {
                     // The job stays: whoever finishes it gives the move up.
                     tracing::warn!("giving the move of bucket {} up: {}", b, a);
                     return Err(e);
@@ -698,6 +743,7 @@ impl Cluster {
             let r = self.call(shard, proc, args).await;
             let e = match &r {
                 Err(e) => e.clone(),
+                Ok(d) if crate::mpw::status_is(d, "more") => return r,
                 Ok(d) => match lua_status(d) {
                     Err(e) => e,
                     Ok(_) => return r,
@@ -716,40 +762,38 @@ impl Cluster {
         let b = mv.bucket as u64;
         let (s_id, r_id) = (self.shards[mv.from].id as u64, self.shards[mv.to].id as u64);
         let mut a = Mp::new();
-        a.arr(3).uint(b).uint(s_id).str(&mv.id);
+        a.arr(4).uint(b).uint(s_id).str(&mv.id).uint(2);
         self.move_step(mv.to, "tarn_bucket_recv_begin", &a.0).await?;
-        let mut gen = self.send_begin(mv, r_id, timeout).await?;
-        let mut rows = self.copy_bucket(mv).await?;
+        let gen = self.send_begin(mv, r_id, timeout).await?;
+        let mut progress = self.move_progress(mv).await?;
+        if progress.generation.is_empty() {
+            progress.generation = gen;
+        }
+        let mut rows = 0;
+        if !progress.clearing && (progress.phase.is_empty() || progress.phase == "copy") {
+            rows += self.copy_bucket(mv, &mut progress, "copy").await?;
+        }
         let mut a = Mp::new();
         a.arr(2).uint(b).str(&mv.id);
         self.move_step(mv.to, "tarn_bucket_hold", &a.0).await?;
-        let mut recopies = 0;
-        loop {
+        let mut a = Mp::new();
+        a.arr(3).uint(b).str(&mv.id).f64(timeout);
+        self.move_step(mv.from, "tarn_bucket_fence", &a.0).await?;
+        if progress.phase == "frozen" {
+            rows += self.copy_bucket(mv, &mut progress, "frozen").await?;
+        } else if progress.clearing || self.copy_delta(mv, &mut progress).await?.is_none() {
+            // Lost/overflowed dirty hints require a frozen full recopy. Once
+            // selected, the durable fence makes this cut stable across restarts.
+            let seq = if progress.clearing {
+                progress.reset_seq
+            } else {
+                progress.seq + 1
+            };
             let mut a = Mp::new();
-            a.arr(3).uint(b).str(&mv.id).f64(timeout);
-            self.move_step(mv.from, "tarn_bucket_fence", &a.0).await?;
-            match self.copy_delta(mv, &gen).await? {
-                Some(n) => {
-                    rows += n;
-                    break;
-                }
-                None if recopies < MAX_RECOPIES => {
-                    // The sending shard's leader changed: its notes of the
-                    // writes since the copy are gone. Copy it all again.
-                    recopies += 1;
-                    let mut a = Mp::new();
-                    a.arr(2).uint(b).str(&mv.id);
-                    self.move_step(mv.to, "tarn_bucket_recv_clear", &a.0).await?;
-                    gen = self.send_begin(mv, r_id, timeout).await?;
-                    rows = self.copy_bucket(mv).await?;
-                }
-                None => {
-                    return Err(SqlError::conflict(format!(
-                        "bucket {}: the sending shard kept changing leaders",
-                        b
-                    )))
-                }
-            }
+            a.arr(4).uint(b).str(&mv.id).bool(true).uint(seq);
+            lua_status(&self.move_batches(mv.to, "tarn_bucket_recv_clear", &a.0).await?)?;
+            progress = self.move_progress(mv).await?;
+            rows += self.copy_bucket(mv, &mut progress, "frozen").await?;
         }
         // From here on the move only goes forward: a server that takes it
         // over finishes it. When the write of the phase fails it may still
@@ -794,38 +838,57 @@ impl Cluster {
         rd.string()
     }
 
-    /// Copy the rows of the bucket from S to R, a page at a time.
-    async fn copy_bucket(&self, mv: &Move) -> SqlResult<u64> {
-        let mut after: Vec<u8> = vec![0xc0];
-        let mut n = 0u64;
+    async fn move_progress(&self, mv: &Move) -> SqlResult<MoveProgress> {
+        let mut a = Mp::new();
+        a.arr(2).uint(mv.bucket as u64).str(&mv.id);
+        let d = self.move_step(mv.to, "tarn_bucket_progress", &a.0).await?;
+        let (_, mut rd) = lua_status(&d)?;
+        MoveProgress::read(&mut rd)
+    }
+
+    /// Copy from the durable receiver cursor. Memory holds at most one page.
+    async fn copy_bucket(&self, mv: &Move, p: &mut MoveProgress, phase: &str) -> SqlResult<u64> {
+        if p.phase == phase && p.done {
+            return Ok(0);
+        }
+        p.phase = phase.into();
+        let mut n = 0;
         loop {
             let mut a = Mp::new();
-            a.arr(2).uint(mv.bucket as u64).raw(&after);
+            a.arr(2).uint(mv.bucket as u64).raw(&p.cursor);
             let d = self.move_step(mv.from, "tarn_bucket_rows", &a.0).await?;
             let (_, mut rd) = lua_status(&d)?;
             let rows = rd.raw_value()?.to_vec();
             n += Rd::new(&rows).array()? as u64;
-            let next = if rd.buf.is_empty() || rd.is_nil() {
-                None
-            } else {
-                Some(rd.raw_value()?.to_vec())
-            };
-            self.recv_rows(mv, &rows).await?;
-            match next {
-                Some(p) => after = p,
-                None => return Ok(n),
+            p.done = rd.buf.is_empty() || rd.is_nil();
+            p.cursor = if p.done { vec![0xc0] } else { rd.raw_value()?.to_vec() };
+            self.recv_rows(mv, &rows, p).await?;
+            if p.done {
+                return Ok(n);
             }
         }
     }
 
-    /// Copy the rows written since generation `gen`'s notes began; None
-    /// when the notes were lost.
-    async fn copy_delta(&self, mv: &Move, gen: &str) -> SqlResult<Option<u64>> {
-        let mut from = 1u64;
-        let mut n = 0u64;
+    /// None means the optimization was lost: restart as a frozen full copy.
+    async fn copy_delta(&self, mv: &Move, p: &mut MoveProgress) -> SqlResult<Option<u64>> {
+        if p.phase == "delta" && p.done {
+            return Ok(Some(0));
+        }
+        if p.phase != "delta" {
+            p.phase = "delta".into();
+            p.done = false;
+            let mut a = Mp::new();
+            a.uint(1);
+            p.cursor = a.0;
+        }
+        let mut n = 0;
         loop {
             let mut a = Mp::new();
-            a.arr(4).uint(mv.bucket as u64).str(&mv.id).str(gen).uint(from);
+            a.arr(4)
+                .uint(mv.bucket as u64)
+                .str(&mv.id)
+                .str(&p.generation)
+                .raw(&p.cursor);
             let d = self.move_call(mv.from, "tarn_bucket_delta", &a.0).await?;
             if crate::mpw::status_is(&d, "lost") {
                 return Ok(None);
@@ -833,30 +896,42 @@ impl Cluster {
             let (_, mut rd) = lua_status(&d)?;
             let rows = rd.raw_value()?.to_vec();
             n += Rd::new(&rows).array()? as u64;
-            let next = if rd.buf.is_empty() || rd.is_nil() {
-                None
-            } else {
-                rd.value()?.as_i64()
-            };
-            self.recv_rows(mv, &rows).await?;
-            match next {
-                Some(i) => from = i as u64,
-                None => return Ok(Some(n)),
+            p.done = rd.buf.is_empty() || rd.is_nil();
+            p.cursor = if p.done { vec![0xc0] } else { rd.raw_value()?.to_vec() };
+            self.recv_rows(mv, &rows, p).await?;
+            if p.done {
+                return Ok(Some(n));
             }
         }
     }
 
-    async fn recv_rows(&self, mv: &Move, rows: &[u8]) -> SqlResult<()> {
+    async fn recv_rows(&self, mv: &Move, rows: &[u8], p: &mut MoveProgress) -> SqlResult<()> {
+        p.seq += 1;
         let mut a = Mp::new();
-        a.arr(3).uint(mv.bucket as u64).str(&mv.id).raw(rows);
+        a.arr(4).uint(mv.bucket as u64).str(&mv.id).raw(rows);
+        p.write(&mut a);
+        // The exact page and receipt are idempotent together. A lost reply
+        // repeats these bytes, never rereads mutable source rows at this seq.
         self.move_step(mv.to, "tarn_bucket_recv_rows", &a.0).await.map(|_| ())
+    }
+
+    /// A physical step commits one bounded batch. Replies lost between
+    /// batches can safely repeat: the durable remaining rows are the cursor.
+    async fn move_batches(&self, shard: usize, proc: &str, args: &[u8]) -> SqlResult<bytes::Bytes> {
+        loop {
+            let d = self.move_call(shard, proc, args).await?;
+            if !crate::mpw::status_is(&d, "more") {
+                return Ok(d);
+            }
+            tokio::task::yield_now().await;
+        }
     }
 
     /// S sends the bucket, R takes it over (each repeatable).
     async fn flip(&self, mv: &Move) -> SqlResult<()> {
         let mut a = Mp::new();
-        a.arr(2).uint(mv.bucket as u64).str(&mv.id);
-        let d = self.move_call(mv.from, "tarn_bucket_send", &a.0).await?;
+        a.arr(3).uint(mv.bucket as u64).str(&mv.id).bool(true);
+        let d = self.move_batches(mv.from, "tarn_bucket_send", &a.0).await?;
         if crate::mpw::status_is(&d, "not_moving") {
             // S gave the move up although the job says 'flip' (its driver
             // gave it up after its write of the phase seemed lost, see
@@ -867,11 +942,11 @@ impl Cluster {
                 self.shards[mv.from].id,
                 self.shards[mv.to].id
             );
-            self.move_step(mv.to, "tarn_bucket_recv_abort", &a.0).await?;
+            lua_status(&self.move_batches(mv.to, "tarn_bucket_recv_abort", &a.0).await?)?;
             return Ok(());
         }
         lua_status(&d)?;
-        self.move_step(mv.to, "tarn_bucket_recv", &a.0).await?;
+        lua_status(&self.move_batches(mv.to, "tarn_bucket_recv", &a.0).await?)?;
         Ok(())
     }
 
@@ -880,22 +955,22 @@ impl Cluster {
     /// forward instead: R takes it over.
     async fn abort_move(&self, mv: &Move) -> SqlResult<()> {
         let mut a = Mp::new();
-        a.arr(2).uint(mv.bucket as u64).str(&mv.id);
+        a.arr(3).uint(mv.bucket as u64).str(&mv.id).bool(true);
         let d = self.move_call(mv.from, "tarn_bucket_send_abort", &a.0).await?;
         match lua_status(&d) {
             Err(e) if e.message.contains("was sent already") => {
-                self.move_step(mv.to, "tarn_bucket_recv", &a.0).await?;
+                self.flip(mv).await?;
                 return Ok(());
             }
             Err(e) => return Err(e),
             Ok(_) => {}
         }
-        self.move_step(mv.to, "tarn_bucket_recv_abort", &a.0).await?;
+        lua_status(&self.move_batches(mv.to, "tarn_bucket_recv_abort", &a.0).await?)?;
         Ok(())
     }
 
     /// Finish a move whose server stopped (the job is ours now): forward
-    /// from phase 'flip', else back.
+    /// from its durable cursor, or reclaim an explicitly cancelled move.
     pub(crate) async fn finish_move(&self, job: &Job) -> SqlResult<()> {
         // The phase as it is now that the job is ours (its server can no
         // longer change it).
@@ -908,8 +983,11 @@ impl Cluster {
         };
         if job.phase == "flip" {
             self.flip(&mv).await?;
-        } else {
+        } else if job.phase == "abort" {
             self.abort_move(&mv).await?;
+        } else {
+            let mut flipped = false;
+            self.move_steps(&mv, &job, 10.0, &mut flipped).await?;
         }
         self.job_end(&job.owner).await?;
         self.refresh_buckets().await?;
@@ -935,7 +1013,7 @@ impl Cluster {
                         "{} {} {} {}",
                         b,
                         st,
-                        if st == "sent" || st == "sending" || st == "fenced" {
+                        if matches!(st.as_str(), "sent" | "sending" | "fenced" | "reclaiming") {
                             "to"
                         } else {
                             "from"

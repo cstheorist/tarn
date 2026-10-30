@@ -1,47 +1,48 @@
-# Rolling upgrades
+# Storage format upgrades
 
-The supported predecessor is exactly
-`2e8aaeb772542968e503212a143b2e6f8d27b8ab` (the merged statistics/freshness release, including cluster backup and current
-persisted clock/retention, capture binding and engine-cut contracts). This release adds bounded query resource admission, connection compatibility
-admission and a format marker. Oversized work may be refused with 1041/HY000
-before commit under the configured resource policy; tune and validate that
-policy before replacing gateways. The upgrade does not change stored user tuples, transaction records, lock semantics,
-move/lazy metadata, or the native state layout. Catalog definitions add
-`integrity_policy` declaration provenance; older gateways ignore it. Other historical
-versions require a separate compatibility test before deployment.
+This release introduces **storage format 2** for bounded bucket movement:
+synchronous Vinyl staging, durable page receipts and resource reservations,
+and non-serving install/reclaim/cancel states. User tuple layouts and native
+layout **14/392** remain unchanged. This is a **maintenance upgrade**, with
+all gateways and storage processes stopped at the transition. It does not
+preserve the previous release's format-1 rolling upgrade/rollback promise.
+
+The tested predecessor is exactly
+`8b12c4525bd677499a91b973afbc86cbcbb0cafd`, which has the format-1 admission
+guard. Keep Tarantool fixed at **3.9.0**, including a `3.9.0-…` build suffix.
+Other releases and Tarantool upgrades require separate validation. In
+particular, `2e8aaeb` predates the disk-format guard: never start it on a
+format-2 directory, even if it appears to open the files.
 
 The new gateway also rejects writes to predecessor-created tables by default:
 old catalogs lack declaration provenance, including discarded CHECK/ENUM/SET
 history. Inspect `SHOW TARN INTEGRITY` and follow [the migration contract](integrity.md)
 before replacing gateways. A deliberate session-only `tarn_legacy_integrity='ALLOW'`
 acknowledges the old unenforced behavior; it is never enabled automatically.
-Mixed older gateways continue their old policy, and rollback restores that policy.
+This SQL admission boundary is separate from format-2 disk admission; an old
+gateway is refused against the upgraded storage.
 The upgrade matrix checks default refusal without an effect before explicitly
 acknowledging only its owned, known-schema legacy canary sessions. This is a
 SQL admission change, not a data-validation certificate or format conversion.
 
 ## Compatibility matrix
 
-Keep Tarantool fixed at **3.9.0**, including its `3.9.0-…` build suffix.
-Changing Tarantool itself is outside this tested upgrade. Both memtx and
-vinyl user spaces retain synchronous memtx protocol metadata under RF3.
+| Gateway | Storage | Admission |
+|---|---|---|
+| Tested format-1 predecessor | Format 1 | Existing behavior |
+| Tested format-1 predecessor | This release / format 2 | Refused before user RPCs |
+| This release | Format 1 or missing compatibility RPC | Refused before user RPCs |
+| This release | This release / format 2 | Protocol 1, format 2, native layout 14 |
+| This release | This release with predecessor ABI 14 module | Supported by the unchanged native state/RPC layout; tested explicitly |
+| This release | This release with native disabled, missing or incompatible | Explicit Lua fallback; same SQL contract |
+| Any supported gateway | Unknown format, protocol, runtime, shard or expiry contract | Refused; no unsafe override |
 
-| Gateway | Lua/storage | Native module | Admission and behavior |
-|---|---|---|---|
-| Predecessor | Predecessor | Its ABI 14 module or disabled | Existing behavior; no compatibility handshake |
-| Predecessor | This version | This version's ABI 14 module | Supported transition; existing RPCs; older gateway does not enforce new integrity admission |
-| This version | This version | Matching ABI 14 module | Protocol 1 / format 1 handshake before use |
-| This version | This version | Predecessor's ABI 14 module | Same state and RPC contract; tested explicitly |
-| This version | This version | Disabled, load failure, or incompatible ABI | Explicit Lua fallback, with the reason in the compatibility report; the same SQL admission and fallback contracts apply |
-| This version | Predecessor or missing compatibility RPC | Any | Refused before forwarding user RPCs; upgrade storage first |
-| This version | Unknown protocol, disk format, runtime, shard identity, or expiry contract | Any | Refused; no unsafe compatibility override |
-
-Deploy Lua files and their native module as one immutable release directory.
-Restart a process to replace them. Hot-reloading Lua, changing C modules in
-place, and changing the format marker on a running cluster are unsupported:
-physical connections cache admission for their process lifetime. An old
-gateway has no new admission guard; do not point it at an arbitrary future
-storage release.
+Deploy Lua and its native module as an immutable release directory. Restart
+to replace them. Hot reload and changing format markers manually are
+unsupported. Physical pool connections cache compatibility admission for
+their lifetime; every new or replacement connection negotiates before
+carrying user work. Compatibility and role probes use the reserved
+completion lane so overload cannot prevent discovery of decided work.
 
 `tarn_compatibility()` returns the fixed eight-field array:
 
@@ -50,137 +51,103 @@ storage release.
  native_state_layout, native_status, max_txn_age]
 ```
 
-Current values are protocol **1**, format **1**, native layout **14/392**, and
+It reports protocol **1**, persisted format **2**, native layout **14**, and
 the configured transaction age (120 seconds by default). Native status is
-`ready`, `disabled`, `load_failed`, or `abi_mismatch`. A node still starting
-may report `pending`; a new gateway refuses it until initialization ends.
-`tarn_info().compatibility` exposes the same report. A report selects a
-compatible dispatch path; it is not a quorum/freshness barrier, a durability
-receipt, or evidence about any mutation's outcome.
+`ready`, `disabled`, `load_failed`, or `abi_mismatch`; `pending` is refused
+by gateways. Storage refuses the report until the new staging/progress
+spaces exist. The report is neither a quorum/freshness barrier nor a
+mutation receipt. Confirmed conflicts remain **1213/40001**; uncertain
+mutation effects remain **1180/40003** and must never be blindly replayed.
 
-Every newly discovered physical pool connection is checked, before the
-pool is published. That includes extra connections and replacement leaders
-after a socket closes or ER_READONLY invalidates a pool. Failed negotiation
-returns **1235/42000**, before that connection carries user work. Existing
-in-flight writes still follow the established rules: uncertain effects
-remain **1180/40003** and are never replayed; confirmed transaction conflicts
-remain **1213/40001**. The handshake adds no retry or fallback after an
-uncertain native commit.
+## Maintenance sequence
 
-Storage checks the runtime and `_tarn_meta['storage_format']` before schema
-setup or recovery starts, and again before setup on promotion. A missing
-marker means the explicitly supported predecessor's format 1; setup adds
-the numeric marker 1 synchronously. Unknown values, including a string
-`"1"`, are refused without schema migration. This version never raises the
-format and provides no format-conversion operation.
+1. Record release/configuration/native hashes, catalog and bucket map,
+   membership and lazy generations. Retain the old release and a verified
+   format-1 backup. Confirm healthy RF3 quorums and following replicas.
+2. Stop accepting new sessions and drain gateways. Resolve prepared
+   transactions, staging decisions, DDL/topology jobs, bucket moves, lazy
+   builds, reservations and outboxes. Retain decided completion records;
+   they need not be erased. Check clock health and transaction-age settings.
+3. Stop **all gateways and storage processes**. Preserve every replica's
+   identity, work directory, replication configuration and seeded-voter
+   gate. Install the new immutable release on every replica.
+4. Start the new storage processes. Before setup/recovery, format-1
+   admission checks reject unfinished locks, prepared/staging work,
+   movement, DDL/topology metadata and lazy work. A missing marker is
+   treated as format 1; unknown or coerced markers are refused. Correct a
+   refusal by reopening with the old release and draining, only while the
+   marker still says 1. Never force or edit the marker.
+5. The writable leader synchronously persists **format 2 before any new
+   movement representation**, then replaces the empty memtx receiver with
+   Vinyl (preserving its ID) and creates `_tarn_move`. The first metadata
+   write on a fresh shard still waits for joining replicas. An interrupted
+   migration resumes idempotently with the new release. From this marker
+   onward, downgrade is forbidden, including if later DDL was interrupted.
+6. Wait for every replica to follow and report the complete format-2
+   schema. Start new gateways with distinct node IDs. Verify exact SQL and
+   native committed rows, single/distributed writes, rollback, DDL, lazy
+   index results and a bounded move on disposable data. Exercise a leader
+   handoff and check new connection admission. Monitor prepared age,
+   decision cleanup, replication, lazy delivery and clock health.
 
-## Upgrade order and gates
+Movement additionally requires every configured replica of both shards to
+advertise movement protocol 2 and sufficient initial disk headroom. An
+existing durable reservation may resume with a failed voter while quorum
+remains available. A format-2 snapshot preserves Vinyl staging and progress;
+cluster-consistent backup refuses unfinished movement and other outstanding
+work. Restore format-2 files only with this or a separately verified
+compatible release. See [cluster backup](cluster-backup.md) and
+[bounded movement](bounded-moves.md).
 
-1. Record source revisions, Tarantool version, native module hashes, config,
-   and the current catalog, bucket map, membership, and lazy generations.
-   Retain the old release directory and a recoverable backup. Check that
-   every shard has a healthy quorum, replicas follow, no synchronous queue
-   is stuck, prepared transactions resolve, and lazy outboxes drain. Keep
-   the existing clock/retention assumptions and identical `max_txn_age`.
-2. Keep the predecessor gateways serving traffic. In each shard replace
-   **one follower at a time** with the new immutable Lua/native directory,
-   retaining its identity, work directory and replication configuration.
-   Wait for it to follow with its WAL caught up before touching another
-   replica. Never remove a quorum.
-3. Promote an upgraded follower, wait for writable leadership and completed
-   schema/native initialization, then replace the former leader. Wait for
-   every replica to follow. Repeat for each shard. All eligible failover
-   targets must be upgraded before starting new gateways; a missed legacy
-   leader will be refused after failover.
-4. From the predecessor gateway run an exact SQL canary: single-shard and
-   distributed writes with unique keys, read-your-writes and rollback,
-   ALTER on a disposable table, and a controlled move/lazy catch-up where
-   those features are used. Verify full rows and counts, native committed
-   tuples, prepared/decision cleanup and outbox progress. Check logs for
-   native-copy differences, atomic-section yields, and new errors.
-5. Start one new gateway with a distinct node ID. It must negotiate every
-   live shard before binding its MySQL listener. Compare exact canary
-   results through old and new gateways, then replace the remaining
-   gateways one at a time. Drain a gateway's sessions before stopping it;
-   a lost COMMIT reply is still outcome-unknown and needs reconciliation,
-   not blind retry.
-6. Exercise a controlled leader handoff. Confirm that old streams fail
-   validation and fresh connections negotiate the replacement. Monitor
-   SQL error classes, commit/recovery progress, prepared age, replication
-   and lazy delivery before declaring the upgrade complete.
+## Rollback and validation boundary
 
-The automated regression starts a fresh RF3 cluster and verifies schema,
-native initialization and SQL canaries before testing upgrades. It retains durable YES records during
-follower replacement and gateway replacement, then applies twice to check
-idempotence. It also runs DDL, moves and exact lazy-index comparisons in
-mixed storage stages and through both gateway versions. This is bounded
-functional evidence, not an availability or throughput guarantee under
-arbitrary outages. RF1 has no rolling storage availability; stop traffic
-while restarting its only replica.
+Before the format marker advances, the drained predecessor can reopen the
+unchanged files. After it advances, its startup check refuses the directory
+before Tarn schema setup or recovery. Restore the preserved **format-1
+backup into isolated directories** to return to old software, reconciling
+any later acknowledged writes separately. There is no in-place downgrade
+or reverse conversion. Do not use a pre-guard binary to bypass this boundary.
 
-## Rollback and future disk formats
-
-For this exact pair, format stays **1**. Stop/drain all new gateways first,
-wait for distributed transactions, DDL jobs, bucket moves and lazy delivery
-to finish, then reverse the storage process above using the preserved
-predecessor Lua/native directory. The predecessor ignores the added meta
-key and understands all other persisted records. The regression tests this
-rollback with data written by both gateways. Do not downgrade just Lua or
-replace a module in a live process.
-
-A future change to persisted semantics must raise `storage_format` **before
-writing the new representation**, define reader/writer compatibility and
-peer admission, and provide its own migration/restore tests. That is the
-irreversible downgrade boundary: this version refuses such a disk.
-The predecessor predates this protection and cannot refuse a future format;
-operators must never use it past that boundary. No rolling compatibility
-with future protocol/format numbers is implied by this document.
-
-## Reproduce and retain evidence
-
-With the pinned Rust toolchain, Tarantool 3.9.0, a C compiler, Python and
-PyMySQL installed, run on a dedicated Linux test machine:
+Run the pinned-toolchain, Linux/Tarantool/Python/PyMySQL regression:
 
 ```sh
-git fetch origin 2e8aaeb772542968e503212a143b2e6f8d27b8ab
+git fetch origin 8b12c4525bd677499a91b973afbc86cbcbb0cafd
 bash tests/rolling_upgrade.sh
 ENGINE=vinyl bash tests/rolling_upgrade.sh
 ```
 
-The wrapper archives the exact predecessor from Git and builds old and new
-artifacts separately with the same Cargo settings. The Python fixture owns
-all processes and allocates local ports; it never attaches to an existing
-cluster. Each run retains build logs, immutable artifacts and source trees,
-`manifest.json` (per-file source hashes, binary hashes, versions, engine,
-RF3/fsync and build overrides), `events.jsonl` (durable/restart/refusal/data
-witnesses), and all process logs. A failed run records the exception and
-cleans up its processes. CI runs both engines and uploads results even on
-failure. Preserve the complete directory when reporting a result.
+The historical script name is retained. It builds immutable old/new artifacts
+in separate target directories and verifies receipts binding all compiled
+inputs to binary hashes. The RF3/fsync fixture checks fresh bootstrap,
+format-1 canaries, both gateway admission directions, maintenance migration,
+post-migration DDL/moves/lazy results, leader handoff, snapshot/WAL reopening,
+and actual predecessor downgrade refusal. A separate fixture retains
+prepared work, verifies refusal before advancing format, then drains under
+old software and completes migration. Native controls cover both ABI-14
+modules, disabled native, loader failure and incompatible ABI fallback.
+The startup test interrupts schema creation after observing the durable
+format marker and checks successful resume, as well as unknown/coerced
+format and unfinished-job refusal.
 
-Native controls use an absent module, an actual loader failure, and a
-loadable C fixture whose state header declares ABI 10 and whose data
-procedures refuse execution. Each must use Lua with exact SQL effects.
-A warm new gateway is also tested against a backend restarted with actual
-predecessor code: it must refuse an UPDATE without changing its row, then
-recover after the compatible backend returns. The separate startup fixture
-checks refusal of unknown/coerced persisted formats before schema creation.
-The existing handback model and lost-reply fault suites remain the evidence
-for uncertain mutation handling; compatibility negotiation does not extend
-their proof boundary.
+Each run retains source/binary/configuration identities, build logs,
+`manifest.json`, `events.jsonl` and process logs, including failed runs. CI
+runs memtx and vinyl and uploads evidence on failure too. These are bounded,
+same-host functional drills; they do not establish rolling availability,
+independent failure domains or production throughput. The movement and
+commit TLA+ models cover movement visibility and transaction obligations;
+they do not prove filesystem migration or Tarantool's implementation.
 
-The supported predecessor already has ABI 14/392, request-specific first-read
-barriers and final-prefix validation, persisted clock policy/high-water and
-retention semantics, and the current lazy/engine capture binding contracts.
-Those records and guarantees remain unchanged across this exact pair. The
-older ABI-11 prototype is outside this rolling/rollback contract; it cannot
-be inferred safe merely because an old gateway ignores a format marker.
-Seeded voters retain their registered identity and `seed.json` election gate;
-verify WAL follow before promotion through either release.
-
-Every compatibility RPC used to discover an existing completion uses the
-reserved completion lane, as do role and strong-read capability probes. A
-cold pool must not spend ordinary capacity before it can finish decided work.
-The overload unit test holds the entire normal lane while both negotiations
-complete. Build roots have separate target directories regardless of an
-inherited `CARGO_TARGET_DIR`; each build receipt binds compiled source and
-artifact hashes, and the matrix refuses identical old/new gateway binaries.
+Preparing the restart witness may receive a confirmed Vinyl admission NO.
+Setup records each vote and admits a fresh transaction identity only after
+the prior decision and every participant are durably aborted, all fixture
+values remain zero, and row/range locks are absent. It permits at most 32
+attempts within 45 seconds; each PREPARE/cleanup RPC is bounded by the remaining deadline
+and its normal timeout. A lost reply, unknown/expired vote, unrelated error,
+or failed cleanup stops the fixture without replay. Every successful
+witness still requires durable YES across restart and exact once-only APPLY.
+The Vinyl lane forces first- and second-participant refusals under a leased
+test pressure hook, then verifies the admitted identity across follower
+restarts. Ordinary maintenance stages use genuine admission settings and pressure.
+Run `python3 tests/test_upgrade_prepare.py` for the uncertainty, cleanup,
+deadline and attempt-limit negative controls. The original failed CI run and
+focused control receipts remain in `tests/evidence/upgrade-admission/`.

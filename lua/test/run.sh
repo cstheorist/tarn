@@ -13,6 +13,12 @@ if [ -z "${TEST:-}" ]; then
   timeout 60 "$T" "$DIR/test/vinyl_admission_test.lua" "$WORK/vinyl-admission" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/move_config.sh" "$WORK/move-config" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+  TEST="$DIR/test/bounded_move_test.lua" bash "$DIR/test/run.sh" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   for test in compat_test clock_guard_test clock_initialization_test membership_freshness_test read_freshness_test native_lua_guard_test native_key_batch_test kv_api_test engine_test engine_terminal_test engine_read_error_test engine_alias_test lazy_codec_test lazy_slice_test lazy_lifecycle_test lazy_concurrency_test lazy_target_confirm_test lazy_apply_confirm_test prepare_confirm_test lazy_native_commit_test lazy_bucket_count_test lazy_plain_binding_test lazy_baseline_test; do
     echo "storage test $test" | tee -a "$WORK/test.out"
     timeout 60 "$T" "$DIR/test/$test.lua" "$WORK/$test" 2>&1 | tee -a "$WORK/test.out"
@@ -36,6 +42,9 @@ if [ -z "${TEST:-}" ]; then
     done
   done
   TARANTOOL="$T" bash "$DIR/test/member_dependency.sh" "$WORK/member-dependency" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" timeout 120 python3 "$DIR/test/clock_bootstrap.py" "$WORK/clock-bootstrap" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
   TARANTOOL="$T" bash "$DIR/test/clock_integration.sh" "$WORK/clock-integration" 2>&1 | tee -a "$WORK/test.out"

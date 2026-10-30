@@ -31,7 +31,8 @@ all MySQL syntax or coercions are supported.
 **Upgrade all SQL gateways before relying on declaration/write admission.**
 Older gateways do not implement this gate. The storage protocol, native ABI,
 commit, lock and recovery algorithms are unchanged. A rollback to an older
-gateway restores its old unsupported-constraint behavior.
+gateway restores its old unsupported-constraint behavior only with a compatible
+storage format; [format-2 upgrade rules](upgrades.md) prohibit that downgrade.
 
 ```sql
 SHOW TARN INTEGRITY;                  -- current database

@@ -1,0 +1,73 @@
+127.0.0.1:3653: connect, called on fd 12, aka 127.0.0.1:39634: Connection refused
+127.0.0.1:3652: connect, called on fd 11, aka 127.0.0.1:36424: Connection refused
+127.0.0.1:3651: connect, called on fd 10, aka 127.0.0.1:54412: Connection refused
+127.0.0.1:3653: Instance bootstrap hasn't finished yet
+127.0.0.1:3652: Instance bootstrap hasn't finished yet
+  ok   memtx: RF3 fsync Lua capture/quota initialized
+  ok   memtx: confirmed base/outbox and durable YES retain exact quota
+  ok   memtx: PREPARE reserves without sequence allocation
+3 passed, 0 failed (memtx setup)
+  ok   memtx: identity before first leader death
+1 passed, 0 failed (memtx kill-first)
+/work/lua/test/lazy_replication.sh: line 89: 40484 Killed                  TARN_SHARD_ID=1 TARN_LISTEN="127.0.0.1:$port" TARN_WORKDIR="$RUNTIME/s$i" TARN_REPLICAS="$REPLICAS" TARN_PEERS="$PEERS" TARN_WAL_MODE=fsync TARN_MEMORY_MB=96 TARN_VINYL_MEMORY_MB=16 TARN_VINYL_CACHE_MB=0 TARN_VINYL_READ_THREADS=1 TARN_HOST_INSTANCES=3 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 "$T" "$SOURCE/storage.lua" >> "$RUNTIME/s$i.log" 2>&1
+127.0.0.1:3651: connect, called on fd 10, aka 127.0.0.1:54588: Connection refused
+  ok   memtx: first promotion rebuilds capture and exact confirmed quota
+  ok   memtx: promoted leader retains base/outbox/promise/counter
+  ok   memtx: UNKNOWN rejects new source publication without user tuple
+  ok   memtx: known committed APPLY converts durable promise after promotion
+  ok   memtx: APPLY consumes promise once and advances sequence
+  ok   memtx: target floor confirmed before second promotion
+  ok   memtx: delete/ACK/GC leaves floor3 and only prepared membership
+7 passed, 0 failed (memtx after-first)
+127.0.0.1:3651: connect, called on fd 10, aka 127.0.0.1:59178: Connection refused
+  ok   memtx: first killed replica restarts same identity and catches up
+  ok   memtx: three-replica restored cluster ready for second death
+2 passed, 0 failed (memtx caught-up)
+  ok   memtx: identity before second leader death
+1 passed, 0 failed (memtx kill-second)
+/work/lua/test/lazy_replication.sh: line 89: 40486 Killed                  TARN_SHARD_ID=1 TARN_LISTEN="127.0.0.1:$port" TARN_WORKDIR="$RUNTIME/s$i" TARN_REPLICAS="$REPLICAS" TARN_PEERS="$PEERS" TARN_WAL_MODE=fsync TARN_MEMORY_MB=96 TARN_VINYL_MEMORY_MB=16 TARN_VINYL_CACHE_MB=0 TARN_VINYL_READ_THREADS=1 TARN_HOST_INSTANCES=3 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 "$T" "$SOURCE/storage.lua" >> "$RUNTIME/s$i.log" 2>&1
+127.0.0.1:3652: connect, called on fd 11, aka 127.0.0.1:37858: Connection refused
+  ok   memtx: second promotion rebuilds exact empty quota and capture
+  ok   memtx: floor and sequence survive second leader death
+  ok   memtx: delayed old ADD cannot bypass promoted floor
+  ok   memtx: reinsert uses next sequence and durable paused outbox
+  ok   memtx: resumed real shipper drains confirmed source quota
+  ok   memtx: final native memberships and committed tuples match
+6 passed, 0 failed (memtx after-second)
+cleaned all owned memtx processes
+127.0.0.1:3653: connect, called on fd 12, aka 127.0.0.1:41846: Connection refused
+127.0.0.1:3652: connect, called on fd 11, aka 127.0.0.1:35976: Connection refused
+127.0.0.1:3651: connect, called on fd 10, aka 127.0.0.1:53854: Connection refused
+  ok   vinyl: RF3 fsync Lua capture/quota initialized
+  ok   vinyl: confirmed base/outbox and durable YES retain exact quota
+  ok   vinyl: PREPARE reserves without sequence allocation
+3 passed, 0 failed (vinyl setup)
+  ok   vinyl: identity before first leader death
+1 passed, 0 failed (vinyl kill-first)
+/work/lua/test/lazy_replication.sh: line 89: 40632 Killed                  TARN_SHARD_ID=1 TARN_LISTEN="127.0.0.1:$port" TARN_WORKDIR="$RUNTIME/s$i" TARN_REPLICAS="$REPLICAS" TARN_PEERS="$PEERS" TARN_WAL_MODE=fsync TARN_MEMORY_MB=96 TARN_VINYL_MEMORY_MB=16 TARN_VINYL_CACHE_MB=0 TARN_VINYL_READ_THREADS=1 TARN_HOST_INSTANCES=3 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 "$T" "$SOURCE/storage.lua" >> "$RUNTIME/s$i.log" 2>&1
+127.0.0.1:3651: connect, called on fd 10, aka 127.0.0.1:53964: Connection refused
+  ok   vinyl: first promotion rebuilds capture and exact confirmed quota
+  ok   vinyl: promoted leader retains base/outbox/promise/counter
+  ok   vinyl: UNKNOWN rejects new source publication without user tuple
+  ok   vinyl: known committed APPLY converts durable promise after promotion
+  ok   vinyl: APPLY consumes promise once and advances sequence
+  ok   vinyl: target floor confirmed before second promotion
+  ok   vinyl: delete/ACK/GC leaves floor3 and only prepared membership
+7 passed, 0 failed (vinyl after-first)
+127.0.0.1:3651: connect, called on fd 10, aka 127.0.0.1:54376: Connection refused
+  ok   vinyl: first killed replica restarts same identity and catches up
+  ok   vinyl: three-replica restored cluster ready for second death
+2 passed, 0 failed (vinyl caught-up)
+  ok   vinyl: identity before second leader death
+1 passed, 0 failed (vinyl kill-second)
+/work/lua/test/lazy_replication.sh: line 89: 40638 Killed                  TARN_SHARD_ID=1 TARN_LISTEN="127.0.0.1:$port" TARN_WORKDIR="$RUNTIME/s$i" TARN_REPLICAS="$REPLICAS" TARN_PEERS="$PEERS" TARN_WAL_MODE=fsync TARN_MEMORY_MB=96 TARN_VINYL_MEMORY_MB=16 TARN_VINYL_CACHE_MB=0 TARN_VINYL_READ_THREADS=1 TARN_HOST_INSTANCES=3 TARN_LOG_LEVEL=4 TARN_CHECK_YIELDS=1 TARN_TEST_HOOKS=1 "$T" "$SOURCE/storage.lua" >> "$RUNTIME/s$i.log" 2>&1
+127.0.0.1:3653: connect, called on fd 12, aka 127.0.0.1:41994: Connection refused
+  ok   vinyl: second promotion rebuilds exact empty quota and capture
+  ok   vinyl: floor and sequence survive second leader death
+  ok   vinyl: delayed old ADD cannot bypass promoted floor
+  ok   vinyl: reinsert uses next sequence and durable paused outbox
+  ok   vinyl: resumed real shipper drains confirmed source quota
+  ok   vinyl: final native memberships and committed tuples match
+6 passed, 0 failed (vinyl after-second)
+cleaned all owned vinyl processes
+lazy RF3 both engines complete; only owned processes cleaned

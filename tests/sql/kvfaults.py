@@ -241,25 +241,6 @@ class FaultTest(Test):
             self.configuration(node["endpoint"], "fault_memtx")
         self.values = {"memtx": {1: 10, 2: None, 99: None}, "vinyl": {1: 10, 2: None, 99: None}}
 
-    def warm_route_read(self, c, table, tenant):
-        # Only this independent read before BEGIN may be retried. Discovery
-        # caches a no-leader refusal for 100 ms, so a fresh leader witness
-        # does not guarantee that the gateway has discarded that refusal.
-        assert c.get_autocommit() and not c.server_status & 1
-        for attempt in range(8):
-            try:
-                return self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
-            except pymysql.OperationalError as error:
-                code, message = error.args[:2]
-                retryable = (code == 1213 and "shard leader changed" in message
-                             or code == 2003 and message.startswith("shard ")
-                             and " has no reachable leader (" in message)
-                if not retryable or attempt == 7:
-                    raise
-                self.record("known_ro_read_retry", attempt=attempt + 1, error=list(error.args),
-                            scope="independent autocommit read before BEGIN; no mutation replay")
-                time.sleep(.05)
-
     def scenario_leader(self, engine):
         table, tenant = "fault_" + engine, self.tenant
         self.paired_values(table, tenant, self.values[engine])
@@ -287,7 +268,28 @@ class FaultTest(Test):
             self.record("known_ro_route_warmup", former=former, replacement=state,
                         scope="known-RO witness; no old-writable-role or A-B-A promotion claim")
             with self.connect() as c:
-                rows = self.warm_route_read(c, table, tenant)
+                # Discovery can refuse the first independent read on the
+                # cached former-leader socket. Record each refusal, and
+                # retry only this read, before any BEGIN or mutation.
+                assert c.get_autocommit() and not c.server_status & 1
+                readonly_routes = {
+                    f"shard {self.identities[0]['id']} has no reachable leader ({node['endpoint']} is read-only)"
+                    for node in self.group_nodes(0)
+                }
+                for attempt in range(8):
+                    try:
+                        rows = self.sql(c, f"SELECT v FROM {table} WHERE tenant=%s AND id=1", (tenant,))
+                        break
+                    except pymysql.OperationalError as error:
+                        message = error.args[1] if len(error.args) > 1 else ""
+                        changed = error.args[0] == 1213 and "shard leader changed" in message
+                        readonly = error.args[0] == 2003 and message in readonly_routes
+                        if not (changed or readonly) or attempt == 7:
+                            raise
+                        assert c.get_autocommit() and not c.server_status & 1
+                        self.record("known_ro_read_retry", attempt=attempt + 1, error=list(error.args),
+                                    scope="independent autocommit read before BEGIN; no mutation replay")
+                        time.sleep(.05)
                 self.check("SQL read warms the replacement route without a mutation",
                            rows == ((self.values[engine][1],),), rows=rows)
                 self.signal(old["node_id"], "STOP")

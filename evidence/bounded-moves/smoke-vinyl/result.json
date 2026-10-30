@@ -1,0 +1,62 @@
+{
+  "format": "tarn-bounded-movement-v1",
+  "settings": {
+    "work": "/work/evidence/bounded-moves/smoke-vinyl",
+    "engine": "vinyl",
+    "mib": 1,
+    "moves": 1,
+    "fault": "none"
+  },
+  "checks": [],
+  "errors": [
+    "Traceback (most recent call last):\n  File \"/work/tests/bounded_moves.py\", line 165, in main\n    for i in range(6):wait(lambda i=i:rpc(i).call(\"return rawget(_G,'tarn')~=nil and box.space._tarn_move~=nil\",timeout=2))\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/work/tests/bounded_moves.py\", line 129, in wait\n    raise AssertionError('readiness timeout: '+str(last))\nAssertionError: readiness timeout: RuntimeError('connect, called on fd 10, aka 127.0.0.1:52408: Connection refused')\n"
+  ],
+  "source_revision": "2e8aaeb-plus-issue176-uncommitted",
+  "source_sha256": {
+    "tests/bounded_moves.py": "24d3a235ad8d1f2df296545ca9ce58cf5da786b8e4492925d46b3f665d98fff5",
+    "tests/bounded_move_rpc.lua": "dea99019f34847821e6d40174348fb398ffc08700ce460bf298757c173a92834",
+    "crates/tarn-sql/src/buckets.rs": "3be0d314c4b56cf9a8456f84429e3d9bb5617dd38bd76d569ef4ad366022d0dd",
+    "lua/storage.lua": "059d4e93e8ef1c4a0167a3defb954dbd4803ff2e0e86b1d5c02fbc5d29e983dc",
+    "lua/tarn.lua": "ec0974289dbd24b96dd206820d74f7efe0c79422482a069a7aefe6ab60c8f335",
+    "lua/tarn_backup.lua": "d688194fc3896b013836be019b13651a6c71b01fba84a55c90444bdb58710c08",
+    "lua/tarn_clock.lua": "8868417bc1ce33cdaa6a1589e3df9067936b870995e9b239fea589dc737e26e9",
+    "lua/tarn_engine.lua": "23bd5cc896244757760082b49b6d9c26c80a4d60bfbc93abeade8e74097a1f2f",
+    "lua/tarn_fresh.lua": "cfbe78d2d628a033cd1a44be3f20312432918628917286ca8693f92a9296433d",
+    "lua/tarn_lazy.lua": "ff90c7c126b4e6626457d08fed147a4a66192ac3906bd8c1e3bd3c85ecb16615",
+    "lua/tarn_lazy_meter.lua": "163f3b32824051c2035a787e9c7044046f6627aa06f5faeb1d64ec82eb07c6ab",
+    "lua/tarn_move.lua": "96e402cecddc736442f8c928777d904428310527efae8699276cb9ee0e744a58",
+    "lua/tarn_vinyl.lua": "71a928397640a66f55f742b1d75cc6956a4f2db6132750480bc52b49dfe23abd"
+  },
+  "limits": {
+    "vinyl_memory": 16777216,
+    "vinyl_cache": 0,
+    "batch_rows": 64,
+    "batch_bytes": 262144,
+    "delta_keys": 64,
+    "delta_bytes": 65536,
+    "total_delta_bytes": 131072,
+    "slots": 2,
+    "staging_bytes": 268435456,
+    "total_staging_bytes": 536870912
+  },
+  "boundary": "same-host RF3/fsync, no independent failure domains; RSS includes user data and engine overhead",
+  "environment": {
+    "uname": [
+      "Linux",
+      "0eb24357f9a0",
+      "6.10.14-linuxkit",
+      "#1 SMP Thu Mar 20 16:32:56 UTC 2025",
+      "aarch64"
+    ],
+    "python": "3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0]",
+    "cpu.max": "200000 100000\n",
+    "memory.max": "2147483648\n",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+  },
+  "samples": [],
+  "binaries": {
+    "/out/target/debug/tarn-server": "2da5e86f474c16bfdfcddd5550fe76a33f1b3f61895a8f9f332fc9b3df6e509c",
+    "/out/target/debug/libtarn_storage.so": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+  },
+  "passed": false
+}
