@@ -475,7 +475,7 @@ struct Call {
 
 /// Lexicographic order of index keys as the index holds them (as
 /// Tarantool orders them: a case-insensitive part is a binary weight string).
-fn key_cmp(a: &[Value], b: &[Value]) -> std::cmp::Ordering {
+pub(crate) fn key_cmp(a: &[Value], b: &[Value]) -> std::cmp::Ordering {
     for (x, y) in a.iter().zip(b) {
         let o = sort_cmp(x, y);
         if o != std::cmp::Ordering::Equal {

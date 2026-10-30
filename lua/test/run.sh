@@ -79,6 +79,9 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/lazy_replication.sh" "$WORK/lazy-rf3" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  LAZY_ROUTE_PARTS=2 TARANTOOL="$T" bash "$DIR/test/lazy_replication.sh" "$WORK/lazy-composite-rf3" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   LAZY_RF3_STATUS_CONTROL=1 LAZY_RF3_REAL_TARANTOOL="$T" \
     TARANTOOL="$DIR/test/lazy_readiness_control.sh" \
     bash "$DIR/test/lazy_replication.sh" "$WORK/lazy-readiness-rf3" 2>&1 | tee -a "$WORK/test.out"

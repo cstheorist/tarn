@@ -199,6 +199,10 @@ local function main()
             indexes={{name='primary',unique=true,parts={{1,'unsigned'}}},
                      {name='bucket_id',unique=false,parts={{3,'unsigned'}}},
                      {name='v',unique=false,parts={{2,'string'}}}}}
+        if os.getenv('LAZY_ROUTE_PARTS') == '2' then
+            spec.route_parts, spec.key_fields, spec.key_types = 2, {2,1}, {'string','unsigned'}
+            def.indexes[3].parts[2] = {1,'unsigned'}
+        end
         local a={def=def,timeout=5}
         ok(call(l,'tarn_create_prepare',name,a,1))
         for _=1,5 do local r=ok(call(l,'tarn_lazy_bootstrap',name,a,1)); if r[2] then break end end

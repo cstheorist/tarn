@@ -89,6 +89,8 @@ Bug_ClusterBackupRestart Bug_ClusterBackupPartialRestore Bug_ClusterBackupMetada
 DEFAULT="$DEFAULT PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture Bug_PlainLazyPending
 Bug_PlainLazyFirstWriteOnly Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale"
 DEFAULT="$DEFAULT EngineBuildReentry Bug_EngineBuildReusePage Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix"
+DEFAULT="$DEFAULT LazyRouting Bug_LazyRoutingCapability Bug_LazyRoutingRewrite Bug_LazyRoutingMissingOwner
+Bug_LazyRoutingLexical Bug_LazyRoutingEarlyLimit Bug_LazyRoutingEpoch"
 CONFIGS=${*:-$DEFAULT}
 fail=0
 for cfg in $CONFIGS; do

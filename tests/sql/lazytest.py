@@ -99,10 +99,10 @@ class T:
     def c(self, **kw):
         return connect(self.args.tarn, **kw)
 
-    def table(self, name="t", lazy=True):
+    def table(self, name="t", lazy=True, route_parts=1):
         c = self.c()
         q(c, f"DROP TABLE IF EXISTS {name}")
-        tag = " COMMENT 'tarn:lazy'" if lazy else ""
+        tag = (" COMMENT 'tarn:lazy'" if route_parts == 1 else f" COMMENT 'tarn:lazy={route_parts}'") if lazy else ""
         q(c, f"CREATE TABLE {name} (tenant_id INT NOT NULL,id INT NOT NULL,k INT,n INT,v VARCHAR(32),"
              f"PRIMARY KEY(tenant_id,id),KEY lk(k,n,id){tag}) PARTITION BY KEY(tenant_id) "
              f"ENGINE={self.args.engine}")
@@ -130,6 +130,40 @@ class T:
             q(c, "INSERT INTO t_boot VALUES (4,4,7,4,'d')")
             self.caught_up(c)
             assert self.lazy(c, "SELECT id FROM t_boot WHERE k=7 ORDER BY n,id") == ((1,), (2,), (4,))
+
+    def test_composite_routing_merge_rechecks_and_migration(self):
+        with self.table("t_composite", route_parts=2) as c:
+            rows = [(i % 11, i, 7, i // 2, f"v{i}") for i in range(1, 641)]
+            with c.cursor() as cur:
+                cur.executemany("INSERT INTO t_composite VALUES (%s,%s,%s,%s,%s)", rows)
+            self.caught_up(c)
+            sql = "SELECT id,n FROM t_composite WHERE k=7 ORDER BY n,id"
+            expected = tuple((r[1], r[3]) for r in rows)
+            assert self.lazy(c, sql) == expected
+            assert self.lazy(c, sql + " LIMIT 11 OFFSET 257") == expected[257:268]
+            assert self.lazy(c, sql.replace("n,id", "n DESC,id DESC") + " LIMIT 9 OFFSET 258") == expected[::-1][258:267]
+            plan = json.loads(q(c, "EXPLAIN FORMAT=JSON " + sql)[0][0])["plan"]["lazy_index_alternative"]
+            assert plan["routing_parts"] == 2 and plan["routing"]["shard_count"] == len(self.nodes), plan
+            exact = "SELECT id,n FROM t_composite WHERE k=7 AND n=128 ORDER BY id"
+            assert self.lazy(c, exact) == ((256, 128), (257, 128))
+            plan = json.loads(q(c, "EXPLAIN FORMAT=JSON " + exact)[0][0])["plan"]["lazy_index_alternative"]
+            assert plan["routing"]["status"] == "single_destination" and plan["routing"]["shard_count"] == 1, plan
+            q(c, "SET tarn_lazy_read_your_writes=OFF")
+            pause(self.nodes)
+            try:
+                q(c, "UPDATE t_composite SET n=n+1000 WHERE id<=500")
+                q(c, "DELETE FROM t_composite WHERE id=501")
+                assert self.lazy(c, sql + " LIMIT 5 OFFSET 3") == expected[504:509]
+            finally:
+                resume(self.nodes)
+            self.caught_up(c)
+            # A new incarnation backfills current committed rows. The old
+            # generation is retained until the new one is ready.
+            q(c, "ALTER TABLE t_composite ADD KEY replacement(k,n,id) COMMENT 'tarn:lazy=3'")
+            q(c, "ALTER TABLE t_composite DROP KEY lk")
+            actual = self.lazy(c, sql)
+            wanted = sorted(((i, n + (1000 if i <= 500 else 0)) for i, n in expected if i != 501), key=lambda r: (r[1], r[0]))
+            assert actual == tuple(wanted)
 
     def test_lagged_insert_strong_contexts_and_unbound_prefix(self):
         with self.table() as c:
@@ -360,7 +394,7 @@ class T:
             self.skipped += 1
             print("    SKIP: --ref not supplied")
             return
-        with self.table("t_diff") as c, connect(self.args.ref, db=None) as ref:
+        with self.table("t_diff", route_parts=2) as c, connect(self.args.ref, db=None) as ref:
             q(ref, f"CREATE DATABASE IF NOT EXISTS {DB}")
             q(ref, f"USE {DB}")
             q(ref, "DROP TABLE IF EXISTS t_diff")

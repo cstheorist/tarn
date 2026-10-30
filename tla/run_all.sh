@@ -16,6 +16,7 @@ for cfg in "$@"; do
     DepartureDependencies|Bug_Departure*) module=DepartureDependencies.tla ;;
     DecisionPlacement|Bug_Decision*) module=DecisionPlacement.tla ;;
     PipelineAdmission|Bug_Pipeline*) module=PipelineAdmission.tla ;;
+    LazyRouting|Bug_LazyRouting*) module=LazyRouting.tla ;;
     LazyIndex|Bug_LazyIndex*) module=LazyIndex.tla ;;
     LazyCapacity|Bug_LazyCapacity*) module=LazyCapacity.tla ;;
     LazyBarrier|Bug_LazyBarrier*) module=LazyBarrier.tla ;;

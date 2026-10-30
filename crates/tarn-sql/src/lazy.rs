@@ -13,7 +13,7 @@ use crate::mpw::{lua_status, proto, Mp, Rd};
 use crate::plan::{AccessPath, SelectPlan, Source};
 use crate::txn::{apply_pending, key_bytes, CommitOutcome, PendingApply, Route, Row, Txn};
 use bytes::Bytes;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tarn_common::{SqlError, SqlResult, Value};
@@ -26,6 +26,8 @@ const HISTORY_BUCKETS: usize = 4096;
 const HISTORY_PENDING: usize = 128;
 const HISTORY_BYTES: usize = 1_048_576;
 const SCAN_ENTRIES: usize = 65_536;
+pub const MAX_READ_SHARDS: usize = 64;
+const MAX_PAGE_READS: usize = 1024;
 const RESULT_BYTES: usize = 16 * 1_048_576;
 
 pub fn flag(value: Option<&Value>) -> SqlResult<bool> {
@@ -281,6 +283,7 @@ async fn frontiers(cluster: &Cluster, buckets: &BTreeSet<u32>) -> SqlResult<BTre
 struct Candidate {
     key: Vec<Value>,
     raw_pk: Vec<Value>,
+    order: Vec<Value>,
     pkid: Bytes,
     bucket: u32,
 }
@@ -327,7 +330,12 @@ fn decode_page(
             return Err(proto("invalid lazy base identity"));
         }
         unsigned(&mut rd, MAX_SEQ)?; // zero is valid for bootstrap entries
+        let mut order = key.clone();
+        for (&col, v) in t.pk().cols.iter().zip(&raw_pk) {
+            order.push(t.lookup_part(col, v).ok_or_else(|| proto("invalid lazy raw PK"))?);
+        }
         rows.push(Candidate {
+            order,
             key,
             raw_pk,
             pkid,
@@ -338,12 +346,17 @@ fn decode_page(
         rd.skip()?;
         None
     } else {
-        Some(rd.raw_value()?.to_vec())
+        let raw = rd.raw_value()?;
+        if !matches!(raw.first(), Some(0xa0..=0xbf | 0xc4..=0xc6 | 0xd9..=0xdb)) {
+            return Err(proto("invalid lazy cursor type"));
+        }
+        match Rd::new(raw).value()? {
+            Value::Str(s) | Value::Bin(s) if !s.is_empty() => {}
+            _ => return Err(proto("invalid lazy cursor")),
+        }
+        Some(raw.to_vec())
     };
     end(&rd)?;
-    if rows.is_empty() && next.is_some() {
-        return Err(proto("empty nonterminal lazy page"));
-    }
     Ok((rows, next))
 }
 
@@ -385,7 +398,7 @@ pub fn eligible(p: &SelectPlan) -> bool {
     };
     ix.lazy
         .as_ref()
-        .is_some_and(|l| l.ready && l.space_id != 0 && eq.len() >= l.route_parts as usize)
+        .is_some_and(|l| l.ready && l.space_id != 0 && !eq.is_empty())
         && !ix.invisible
         && ta.offset == 0
         && !ta.table.is_virtual()
@@ -430,6 +443,26 @@ fn follows_order(p: &SelectPlan, ix: &IndexDef, t: &TableDef, eq: usize) -> bool
     })
 }
 
+struct Lane {
+    shard: usize,
+    route: Route,
+    after: Option<Vec<u8>>,
+    done: bool,
+    rows: VecDeque<Candidate>,
+    bytes: usize,
+}
+
+fn next_lane(lanes: &[Lane], reverse: bool) -> Option<usize> {
+    (0..lanes.len()).filter(|&n| !lanes[n].rows.is_empty()).reduce(|a, b| {
+        let cmp = exec::key_cmp(&lanes[b].rows[0].order, &lanes[a].rows[0].order);
+        if if reverse { cmp.is_gt() } else { cmp.is_lt() } {
+            b
+        } else {
+            a
+        }
+    })
+}
+
 /// `None` means restart through the ordinary strong executor. The caller
 /// invokes this only after actual Session autocommit/locking checks.
 pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<Vec<Row>>> {
@@ -451,7 +484,7 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
     let ix = t.indexes.iter().find(|i| i.id == *index).unwrap();
     let l = ix.lazy.as_ref().unwrap();
     let mut key = Vec::new();
-    for (n, e) in eq.iter().take(l.route_parts as usize).enumerate() {
+    for (n, e) in eq.iter().enumerate() {
         let raw = e.eval(&[], cx)?;
         if raw.is_null() && !null_eq.get(n).copied().unwrap_or(false) {
             return Ok(Some(Vec::new()));
@@ -462,8 +495,19 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
         key.push(v);
     }
     let map = cluster.bucket_map();
-    let bucket = crate::route::bucket_of(&key, map.count);
-    let shard = map.shard(bucket);
+    let routes = if key.len() >= l.route_parts as usize {
+        let bucket = crate::route::bucket_of(&key[..l.route_parts as usize], map.count);
+        vec![(map.shard(bucket), Route::Buckets(vec![bucket]))]
+    } else {
+        let shards: Vec<_> = cluster.live_shards().take(MAX_READ_SHARDS + 1).collect();
+        if shards.len() > MAX_READ_SHARDS {
+            return Ok(None);
+        }
+        shards
+            .into_iter()
+            .map(|s| Ok((s, Route::Epoch(map.epoch_of(s)?, map.mver))))
+            .collect::<SqlResult<Vec<_>>>()?
+    };
     let ordered = follows_order(p, ix, t, eq.len()) && p.order.iter().all(|(_, d)| d == reverse);
     let offset = exec::eval_limit(&p.offset, cx)?.unwrap_or(0);
     let want = if ordered {
@@ -474,38 +518,73 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
     if want == Some(0) {
         return Ok(Some(Vec::new()));
     }
-    let mut after: Option<Vec<u8>> = None;
+    let mut lanes: Vec<Lane> = routes
+        .into_iter()
+        .map(|(shard, route)| Lane {
+            shard,
+            route,
+            after: None,
+            done: false,
+            rows: VecDeque::new(),
+            bytes: 0,
+        })
+        .collect();
     let mut seen = HashSet::new();
     let mut kept = Vec::new();
-    let (mut scanned, mut bytes) = (0usize, 0usize);
+    let (mut scanned, mut bytes, mut pages) = (0usize, 0usize, 0usize);
     let mut dummy = Txn::new(cluster, false);
     loop {
-        let mut m = Mp::new();
-        m.arr(6)
-            .uint(l.space_id as u64)
-            .vals(&key)
-            .uint(if *reverse { Iter::Req as u64 } else { Iter::Eq as u64 })
-            .uint(PAGE_ENTRIES as u64);
-        match &after {
-            Some(a) => {
-                m.raw(a);
+        let mut candidates = Vec::with_capacity(PAGE_ENTRIES);
+        while candidates.len() < PAGE_ENTRIES {
+            // Every non-exhausted owner must have a head before choosing
+            // the next candidate. A drained page can precede every other
+            // head; refill it before continuing the typed merge.
+            for lane in &mut lanes {
+                while lane.rows.is_empty() && !lane.done {
+                    pages += 1;
+                    if pages > MAX_PAGE_READS {
+                        return Ok(None);
+                    }
+                    let mut m = Mp::new();
+                    m.arr(6)
+                        .uint(l.space_id as u64)
+                        .vals(&key)
+                        .uint(if *reverse { Iter::Req as u64 } else { Iter::Eq as u64 })
+                        .uint(PAGE_ENTRIES as u64);
+                    match &lane.after {
+                        Some(a) => {
+                            m.raw(a);
+                        }
+                        None => {
+                            m.nil();
+                        }
+                    }
+                    crate::observe::shard(lane.shard);
+                    crate::observe::read(&lane.route);
+                    lane.route.encode(&mut m);
+                    let (d, _wire) = crate::budget::cluster_read(cluster, lane.shard, "tarn_lazy_select", &m.0).await?;
+                    let (rows, next) = decode_page(&d, l.space_id, t, ix, map.count)?;
+                    if next.is_some() && next == lane.after {
+                        return Err(proto("lazy cursor did not advance"));
+                    }
+                    scanned += rows.len();
+                    if scanned > SCAN_ENTRIES {
+                        return Ok(None);
+                    }
+                    lane.bytes = d.len();
+                    lane.done = next.is_none();
+                    lane.after = next;
+                    lane.rows = rows.into();
+                }
             }
-            None => {
-                m.nil();
+            if lanes.iter().map(|l| l.bytes).sum::<usize>() > RESULT_BYTES {
+                return Ok(None);
             }
+            let Some(head) = next_lane(&lanes, *reverse) else { break };
+            candidates.push(lanes[head].rows.pop_front().unwrap());
         }
-        let route = Route::Buckets(vec![bucket]);
-        crate::observe::shard(shard);
-        crate::observe::read(&route);
-        route.encode(&mut m);
-        let (d, _wire) = crate::budget::cluster_read(cluster, shard, "tarn_lazy_select", &m.0).await?;
-        let (candidates, next) = decode_page(&d, l.space_id, t, ix, map.count)?;
-        if next.is_some() && next == after {
-            return Err(proto("lazy cursor did not advance"));
-        }
-        scanned += candidates.len();
-        if scanned > SCAN_ENTRIES {
-            return Ok(None);
+        if candidates.is_empty() {
+            break;
         }
         let mut keys = Vec::with_capacity(candidates.len());
         for c in &candidates {
@@ -564,10 +643,17 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
         {
             return Ok(None);
         }
-        if want.is_some_and(|n| kept.len() as u64 >= n) || next.is_none() {
+        if want.is_some_and(|n| kept.len() as u64 >= n) {
             break;
         }
-        after = next;
+    }
+    let current = cluster.bucket_map();
+    if current.count != map.count
+        || current.mver != map.mver
+        || current.epochs != map.epochs
+        || current.moving != map.moving
+    {
+        return Ok(None);
     }
     exec::finish_select(kept, p, cx).map(Some)
 }
@@ -579,7 +665,7 @@ pub struct StatsSample {
     pub values: BTreeMap<String, Value>,
 }
 
-fn capability(d: &[u8]) -> SqlResult<()> {
+fn capability(d: &[u8], route_parts: u32) -> SqlResult<()> {
     let mut rd = ok_table(d, 3)?;
     if unsigned(&mut rd, u32::MAX as u64)? != 1 {
         return Err(proto("unsupported lazy storage version"));
@@ -597,6 +683,7 @@ fn capability(d: &[u8]) -> SqlResult<()> {
         || limits.get("max_bytes").copied().unwrap_or(0) < PAGE_BYTES as u64
         || limits.get("max_seq").copied() != Some(MAX_SEQ)
         || limits.get("aux_names").copied() != Some(1)
+        || limits.get("route_parts").copied().unwrap_or(1) < route_parts as u64
     {
         return Err(proto("incompatible lazy storage limits"));
     }
@@ -604,7 +691,7 @@ fn capability(d: &[u8]) -> SqlResult<()> {
 }
 
 impl Cluster {
-    pub(crate) async fn lazy_capabilities_on(&self, replicas: &[String]) -> SqlResult<()> {
+    pub(crate) async fn lazy_capabilities_on(&self, replicas: &[String], route_parts: u32) -> SqlResult<()> {
         for addr in replicas {
             self.reclaim_connections(false).await;
             let client = tarn_iproto::Client::connect(&self.opts(addr))
@@ -618,14 +705,15 @@ impl Cluster {
             .map_err(|_| SqlError::unsupported("lazy storage capability check timed out"))?
             .map_err(|e| SqlError::unsupported(format!("lazy indexes require storage V1 on every replica ({e})")))?;
             let data = r.data().ok_or_else(|| proto("missing lazy capability"))?;
-            capability(&data)?;
+            capability(&data, route_parts)?;
         }
         Ok(())
     }
 
-    pub(crate) async fn require_lazy_capabilities(&self) -> SqlResult<()> {
+    pub(crate) async fn require_lazy_capabilities(&self, route_parts: u32) -> SqlResult<()> {
         for s in self.live_shards() {
-            self.lazy_capabilities_on(self.shards[s].replicas()).await?;
+            self.lazy_capabilities_on(self.shards[s].replicas(), route_parts)
+                .await?;
         }
         Ok(())
     }
@@ -636,11 +724,11 @@ impl Cluster {
         call: &[u8],
         shards: &[usize],
     ) -> SqlResult<()> {
-        let (active, seconds) = job_lazy(&job.args)?;
+        let (active, seconds, route_parts) = job_lazy(&job.args)?;
         if !active {
             return Ok(());
         }
-        self.require_lazy_capabilities().await?;
+        self.require_lazy_capabilities(route_parts).await?;
         let work = async {
             for &s in shards {
                 loop {
@@ -691,9 +779,9 @@ fn boolean(rd: &mut Rd<'_>) -> SqlResult<bool> {
     Ok(b)
 }
 
-fn job_lazy(args: &[u8]) -> SqlResult<(bool, f64)> {
+fn job_lazy(args: &[u8]) -> SqlResult<(bool, f64, u32)> {
     let mut rd = Rd::new(args);
-    let (mut active, mut timeout) = (false, 50.0f64);
+    let (mut active, mut timeout, mut route_parts) = (false, 50.0f64, 1u32);
     for _ in 0..rd.map()? {
         match rd.string()?.as_str() {
             "lazy_drop" => {
@@ -715,7 +803,19 @@ fn job_lazy(args: &[u8]) -> SqlResult<(bool, f64)> {
                 for _ in 0..rd.map()? {
                     if rd.string()? == "lazy" {
                         let raw = rd.raw_value()?;
-                        active |= Rd::new(raw).array()? > 0;
+                        let mut specs = Rd::new(raw);
+                        let count = specs.array()?;
+                        active |= count > 0;
+                        for _ in 0..count {
+                            for _ in 0..specs.map()? {
+                                if specs.string()? == "route_parts" {
+                                    route_parts = route_parts
+                                        .max(unsigned(&mut specs, crate::catalog::MAX_LAZY_ROUTE_PARTS as u64)? as u32);
+                                } else {
+                                    specs.skip()?;
+                                }
+                            }
+                        }
                     } else {
                         rd.skip()?;
                     }
@@ -725,7 +825,7 @@ fn job_lazy(args: &[u8]) -> SqlResult<(bool, f64)> {
         }
     }
     end(&rd)?;
-    Ok((active, timeout.clamp(1.0, 60.0)))
+    Ok((active, timeout.clamp(1.0, 60.0), route_parts))
 }
 
 fn decode_stats(d: &[u8]) -> SqlResult<StatsSample> {
@@ -888,8 +988,68 @@ mod tests {
         assert_eq!(ld.lazy[0].key_fields, vec![3, 4, 2]);
         assert_eq!(ld.lazy[0].pk_fields, vec![1, 2]);
         let mut invalid: serde_json::Value = serde_json::from_str(&json).unwrap();
-        invalid["indexes"][1]["lazy"]["route_parts"] = 2.into();
+        invalid["indexes"][1]["lazy"]["route_parts"] = 0.into();
         assert!(crate::catalog::parse_def_json(&invalid.to_string()).is_err());
+    }
+
+    #[test]
+    fn composite_routing_is_explicit_persistent_and_immutable_for_existing_indexes() {
+        let t = table("CREATE TABLE t (id INT PRIMARY KEY,k INT,n INT,KEY lk(k,n) COMMENT 'tarn:lazy=2')");
+        assert_eq!(t.indexes[1].lazy.as_ref().unwrap().route_parts, 2);
+        let restored = crate::catalog::parse_def_json(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(restored.lua_def().lazy[0].route_parts, 2);
+        assert!(eligible(&select_plan(
+            t.clone(),
+            "SELECT id FROM t WHERE k=7 ORDER BY n,id LIMIT 2"
+        )));
+        let mut changed = t.clone();
+        changed.indexes[1].comment = "tarn:lazy=1".into();
+        changed.declare_lazy(Some(&t)).unwrap();
+        assert_eq!(changed.indexes[1].lazy, t.indexes[1].lazy);
+        let mut invalid = t;
+        invalid.indexes[1].lazy.as_mut().unwrap().route_parts = 3;
+        assert!(invalid.validate_lazy().is_err());
+    }
+
+    #[test]
+    fn merge_orders_typed_keys_then_primary_keys_in_both_directions() {
+        for reverse in [false, true] {
+            let mut lanes: Vec<Lane> = [vec![(2, 255), (10, 2)], vec![(2, 256), (12, 1)]]
+                .into_iter()
+                .map(|mut keys| {
+                    if reverse {
+                        keys.reverse();
+                    }
+                    Lane {
+                        shard: 0,
+                        route: Route::None,
+                        after: None,
+                        done: true,
+                        bytes: 0,
+                        rows: keys
+                            .into_iter()
+                            .map(|(key, pk)| Candidate {
+                                key: vec![Value::Int(key)],
+                                raw_pk: vec![Value::Int(pk)],
+                                order: vec![Value::Int(key), Value::Int(pk)],
+                                pkid: Bytes::new(),
+                                bucket: 1,
+                            })
+                            .collect(),
+                    }
+                })
+                .collect();
+            let mut out = Vec::new();
+            while let Some(n) = next_lane(&lanes, reverse) {
+                let c = lanes[n].rows.pop_front().unwrap();
+                out.push((c.key[0].as_i64().unwrap(), c.raw_pk[0].as_i64().unwrap()));
+            }
+            let mut expected = vec![(2, 255), (2, 256), (10, 2), (12, 1)];
+            if reverse {
+                expected.reverse();
+            }
+            assert_eq!(out, expected);
+        }
     }
 
     #[test]
@@ -910,6 +1070,8 @@ mod tests {
             "CREATE TABLE t (id INT PRIMARY KEY,k INT,n DECIMAL(20,0),KEY lk(k,n) COMMENT 'tarn:lazy')",
             "CREATE TABLE t (tenant_id INT,id FLOAT,k INT,PRIMARY KEY(tenant_id,id),KEY lk(k) COMMENT 'tarn:lazy') PARTITION BY KEY(tenant_id)",
             "CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(k) COMMENT 'tarn:lazy=2')",
+            "CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(k) COMMENT 'tarn:lazy=0')",
+            "CREATE TABLE t (id INT PRIMARY KEY,k INT,KEY lk(k) COMMENT 'tarn:lazy tarn:lazy=1')",
             "CREATE TABLE t (id INT PRIMARY KEY,k JSON,KEY lk(k) COMMENT 'tarn:lazy')",
         ] { assert_eq!(plan(sql,&cx).unwrap_err().code,1235,"{sql}"); }
         assert!(plan("CREATE TABLE t (id INT PRIMARY KEY,k DOUBLE,KEY lk(k))", &cx).is_ok());
@@ -1067,14 +1229,15 @@ mod tests {
             }
             m.0
         };
-        assert!(capability(&make(1, MAX_SEQ, Some(1))).is_ok());
-        assert!(capability(&make(0, MAX_SEQ, Some(1))).is_err());
-        assert!(capability(&make(1, MAX_SEQ - 1, Some(1))).is_err());
-        assert!(capability(&make(1, MAX_SEQ, None)).is_err());
-        assert!(capability(&make(1, MAX_SEQ, Some(0))).is_err());
+        assert!(capability(&make(1, MAX_SEQ, Some(1)), 1).is_ok());
+        assert!(capability(&make(1, MAX_SEQ, Some(1)), 2).is_err());
+        assert!(capability(&make(0, MAX_SEQ, Some(1)), 1).is_err());
+        assert!(capability(&make(1, MAX_SEQ - 1, Some(1)), 1).is_err());
+        assert!(capability(&make(1, MAX_SEQ, None), 1).is_err());
+        assert!(capability(&make(1, MAX_SEQ, Some(0)), 1).is_err());
         let mut d = make(1, MAX_SEQ, Some(1));
         d.push(0xc0);
-        assert!(capability(&d).is_err());
+        assert!(capability(&d, 1).is_err());
     }
 
     #[test]
@@ -1118,5 +1281,15 @@ mod tests {
         let mut empty = Mp::new();
         empty.arr(1).arr(4).str("ok").uint(10001).arr(0).arr(1).uint(1);
         assert!(decode_page(&empty.0, 10001, &t, ix, 30000).is_err());
+        let mut skipped = Mp::new();
+        skipped
+            .arr(1)
+            .arr(4)
+            .str("ok")
+            .uint(10001)
+            .arr(0)
+            .str("opaque-position");
+        let (rows, next) = decode_page(&skipped.0, 10001, &t, ix, 30000).unwrap();
+        assert!(rows.is_empty() && next.is_some());
     }
 }

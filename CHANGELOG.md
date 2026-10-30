@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Explicit composite lazy-index routing with `COMMENT 'tarn:lazy=N'`,
+  bounded typed merging for partial prefixes, single-destination complete
+  keys, routing diagnostics and guarded incarnation migration (#185).
+
 - Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
   schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
   and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
