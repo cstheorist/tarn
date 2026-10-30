@@ -33,12 +33,19 @@ fn predicates(m: &mut Mp, t: &TableDef, preds: &[StoragePred]) {
     }
 }
 
-async fn optional(client: &Client, stream: u64, name: &str, m: &Mp) -> SqlResult<Option<Bytes>> {
-    match client.call(stream, name, &m.0).await {
-        Ok(r) => r.data().map(Some).ok_or_else(|| crate::mpw::proto("no pushdown data")),
-        Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::errcode::ER_NO_SUCH_PROC => Ok(None),
-        Err(e) => Err(from_iproto_read(e)),
-    }
+async fn optional(
+    client: &Client,
+    stream: u64,
+    name: &'static str,
+    m: &Mp,
+) -> SqlResult<(Option<Bytes>, Option<tarn_common::ResourceGuard>)> {
+    let (reply, wire) = crate::budget::call_read(client, stream, name, &m.0).await?;
+    let data = match reply {
+        Ok(r) => Some(r.data().ok_or_else(|| crate::mpw::proto("no pushdown data"))?),
+        Err(tarn_iproto::Error::Server { code, .. }) if code == tarn_iproto::errcode::ER_NO_SUCH_PROC => None,
+        Err(e) => return Err(from_iproto_read(e)),
+    };
+    Ok((data, wire))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -80,7 +87,8 @@ pub async fn reduce_rows(
         m.arr(3).str(a.op).uint(a.col.map_or(0, |c| t.field_of(c) as u64 + 1));
         m.val(&a.col.map_or(Value::Null, |c| t.layout.fills[c].clone()));
     }
-    let Some(d) = optional(client, stream, "tarn_reduce", &m).await? else {
+    let (data, _wire) = optional(client, stream, "tarn_reduce", &m).await?;
+    let Some(d) = data else {
         return Ok(Reduced::Unavailable);
     };
     let (status, rd) = lua_status(&d)?;
@@ -93,6 +101,7 @@ pub async fn reduce_rows(
     if n != 0 && n != aggs.len() {
         return Err(crate::mpw::proto("partial aggregate width changed"));
     }
+    crate::budget::decoded(d.len(), 1, n)?;
     let values = (0..n).map(|_| rd.value()).collect::<SqlResult<Vec<_>>>()?;
     let complete = match rd.buf.first() {
         Some(0xc3) => true,
@@ -179,7 +188,8 @@ pub(crate) async fn project_rows(
     for &c in &project.boundary {
         m.arr(2).uint(t.field_of(c) as u64 + 1).val(&t.layout.fills[c]);
     }
-    let Some(d) = optional(client, stream, "tarn_select_projected", &m).await? else {
+    let (data, _wire) = optional(client, stream, "tarn_select_projected", &m).await?;
+    let Some(d) = data else {
         return Ok(None);
     };
     let (status, rd) = lua_status(&d)?;
@@ -189,6 +199,10 @@ pub(crate) async fn project_rows(
     }
     let mut rd = Rd::shared_at(&d, rd);
     let n = rd.array()?;
+    if n > rd.buf.len() {
+        return Err(crate::mpw::proto("truncated projected rows"));
+    }
+    crate::budget::decoded(d.len(), n, t.columns.len())?;
     let rows = (0..n)
         .map(|_| projected(&mut rd, t, &project.cols))
         .collect::<SqlResult<Vec<_>>>()?;
@@ -208,6 +222,7 @@ pub(crate) async fn project_rows(
         rd.skip()?;
         None
     } else {
+        crate::budget::decoded(0, 1, t.columns.len())?;
         Some(projected(&mut rd, t, &project.boundary)?)
     };
     if !rd.buf.is_empty() || n > read || (read == 0) != last.is_none() || (read == 0 && next.is_some()) {

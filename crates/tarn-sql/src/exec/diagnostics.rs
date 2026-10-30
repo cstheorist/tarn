@@ -157,6 +157,8 @@ impl Context<'_, '_> {
             "schema_findings":findings.iter().take(32).map(|f| json!({"level":f.level.name(),"message":f.message})).collect::<Vec<_>>(),
             "schema_findings_truncated":findings.len()>32,
             "definition_version":t.ver, "access_path":kind,
+            "cardinality":self.cluster.statistics.snapshot(catalog.version).tables.get(&t.space_id)
+                .filter(|s| s.version == t.ver).map(|s| s.diagnostic(t,&a.path)),
             "index":index.map(|i| index_def(t,i).name.clone()),
             "index_columns":index.map(|i| index_def(t,i).cols.iter().map(|&c| t.columns[c].name.clone()).collect::<Vec<_>>()),
             "shard_key":t.shard_key.iter().map(|&c| &t.columns[c].name).collect::<Vec<_>>(),
@@ -243,6 +245,7 @@ impl Context<'_, '_> {
             }
         };
         json!({"accesses":accesses,"routing":routing,
+            "join_estimate":p.join_estimate,
             "colocation":colocation,
             "runtime_alternative_access":p.ordered.as_ref().and_then(|path| steps.first().map(|(a,_,_)| json!({
                 "routing":self.path(&a.table,path,0),

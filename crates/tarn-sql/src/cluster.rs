@@ -42,6 +42,9 @@ pub struct ShardConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClusterConfig {
+    /// Query/transaction and gateway-wide SQL resource budgets.
+    #[serde(default)]
+    pub resources: crate::budget::Limits,
     pub shards: Vec<ShardConfig>,
     /// The number of buckets of a new cluster (default
     /// `buckets::NEW_CLUSTER_BUCKETS`), fixed when the first SQL server
@@ -467,6 +470,14 @@ impl Shard {
         *self.leader.write() = None;
     }
 
+    pub(crate) fn retire_connections(&self) {
+        if let Some(pool) = self.leader.write().take() {
+            for client in &pool.clients {
+                client.close();
+            }
+        }
+    }
+
     pub fn leader_addr(&self) -> Option<String> {
         self.leader.read().as_ref().map(|p| p.addr.clone())
     }
@@ -517,6 +528,7 @@ impl Shard {
                 last_err = format!("{} is read-only", addr);
                 continue;
             }
+            crate::compat::admit(&c, self.id, cluster.cfg.max_txn_age, completion).await?;
             if let Err(e) = require_strong_reads(&c, completion).await {
                 last_err = format!("{}: {}", addr, e);
                 continue;
@@ -525,6 +537,7 @@ impl Shard {
             for _ in 1..cluster.cfg.pool_size.max(1) {
                 match Client::connect(&opts).await {
                     Ok(x) => {
+                        crate::compat::admit(&x, self.id, cluster.cfg.max_txn_age, completion).await?;
                         if let Err(e) = require_strong_reads(&x, completion).await {
                             tracing::warn!(shard = self.id, "extra storage connection is incompatible: {}", e);
                             break;
@@ -556,6 +569,7 @@ impl Shard {
 
 #[derive(Default)]
 pub struct Stats {
+    pub topk_scans: AtomicU64,
     pub(crate) query_digests: crate::observe::Metrics,
     pub queries: AtomicU64,
     pub commits_local: AtomicU64,
@@ -588,12 +602,16 @@ pub struct Stats {
 }
 
 pub struct CachedPlan {
+    pub resource_guard: tarn_common::ResourceGuard,
+    pub(crate) statistics_generation: Option<u64>,
     pub version: u64,
     pub stmt: crate::plan::Stmt,
     pub(crate) diagnostic: Option<crate::observe::Descriptor>,
 }
 
 pub struct Cluster {
+    pub resources: Arc<crate::budget::Pool>,
+    pub statistics: crate::statistics::Statistics,
     pub(crate) rpc_global: tarn_iproto::Budget,
     pub cfg: ClusterConfig,
     pub shards: ShardList,
@@ -960,6 +978,8 @@ impl Cluster {
             cfg.shards.len(),
         );
         let c = Arc::new(Cluster {
+            resources: crate::budget::Pool::new(cfg.resources.clone())?,
+            statistics: crate::statistics::Statistics::default(),
             rpc_global,
             cfg,
             shards,
@@ -1081,6 +1101,7 @@ impl Cluster {
             user: Some(self.cfg.user.clone()),
             password: Some(self.cfg.password.clone()),
             connect_timeout: Duration::from_secs(3),
+            max_response_bytes: crate::budget::STORAGE_REPLY_BYTES,
             request_limits: self.cfg.rpc.connection,
             request_timeout: Duration::from_secs_f64(self.cfg.rpc.timeout_secs),
             admission,
@@ -1450,7 +1471,10 @@ impl Cluster {
             .read()
             .get(&(db.to_string(), template.to_string()))
             .cloned()?;
-        if p.version == v {
+        if p.version == v
+            && p.statistics_generation
+                .is_none_or(|g| self.statistics.snapshot(v).generation == g)
+        {
             self.stats.plan_cache_hits.fetch_add(1, Ordering::Relaxed);
             Some(p)
         } else {
@@ -2648,6 +2672,26 @@ mod tests {
             let mut rd = Rd::new(&body);
             assert_eq!(rd.map().unwrap(), 2);
             assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+            assert_eq!(rd.string().unwrap(), "tarn_compatibility");
+            let mut body = Mp::new();
+            body.map(1)
+                .uint(0x30)
+                .arr(1)
+                .arr(8)
+                .str("ok")
+                .uint(1)
+                .uint(1)
+                .uint(1)
+                .str("3.9.0")
+                .uint(14)
+                .str("ready")
+                .f64(120.0);
+            reply(&mut sock, sync, 0, &body.0).await;
+            let (kind, sync, stream, body) = request(&mut sock).await;
+            assert_eq!((kind, stream), (10, 0));
+            let mut rd = Rd::new(&body);
+            assert_eq!(rd.map().unwrap(), 2);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
             assert_eq!(rd.string().unwrap(), "tarn_read_contract");
             let mut body = Mp::new();
             body.map(1).uint(0x30).arr(1).arr(2).str("strong_reads").uint(1);
@@ -2681,10 +2725,13 @@ mod tests {
             client.call(0, "ordinary", &[0x90]).await,
             Err(tarn_iproto::Error::Admission { .. })
         ));
-        tokio::time::timeout(Duration::from_secs(2), require_strong_reads(&client, true))
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            crate::compat::admit(&client, 1, 120.0, true).await?;
+            require_strong_reads(&client, true).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
         held.await.unwrap();
         assert_eq!(budget.stats().pending, 0);
         assert!(!client.is_closed());
