@@ -12,7 +12,7 @@ failover. It takes about ten minutes, most of it the first build.
 | [Rust](https://rustup.rs) via rustup | `rust-toolchain.toml` pins 1.98.1; rustup installs it on the first build | building |
 | [Tarantool](https://www.tarantool.io/en/download/) | 3.9.0 | storage nodes; other runtime versions are refused |
 | `mysql` or `mariadb` client | any | talking to Tarn |
-| Python 3 with [PyMySQL](https://pypi.org/project/PyMySQL/) | 3.10+ | the SQL test suites (optional) |
+| Python 3 with [PyMySQL](https://pypi.org/project/PyMySQL/) | 3.10+ | SQL tests; outcome/RPC tests also use MySQL Connector/Python and msgpack (see [contributing](../CONTRIBUTING.md)) |
 
 The scripts look for `tarantool` on your `PATH`; set `TARANTOOL=/path/to/tarantool`
 to use another binary.

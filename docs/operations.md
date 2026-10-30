@@ -557,6 +557,7 @@ options:
   "user": "tarn", "password": "tarn",
   "pool_size": 4,
   "native_batch_reads": false,
+  "query_pushdown": false,
   "node_id": 1,
   "ack_on_prepare": false,
   "max_txn_age": 120,
@@ -575,6 +576,16 @@ primary keys on memtx; unsupported requests use the existing Lua procedure.
 Each connection negotiates support, so older native modules retain their
 ordinary read paths. Turning this option off keeps other native procedures
 enabled. See [the native storage inventory and contract](native-storage.md).
+
+`query_pushdown` (default `false`) opts into exact integer partial aggregates
+and filtered column projections over eligible range scans. The matched
+RF3 study finds consistent gains for its 64 KiB scans and regressions for
+several 256 B/4 KiB shapes. Measure the workload before enabling it, using
+`false` as the ordinary-executor control under the same isolation and
+storage settings. Unsupported shapes and missing optional procedures fall
+back completely; this setting does not change the existing COUNT or ordered
+page paths. See [request paths](design.md#12-request-paths) and
+[the complete results](../bench/PUSHDOWN.md#expanded-release-results).
 
 `default_collation` (`--default-collation`) is the collation of text
 columns in tables that declare none (`@@collation_server`); MySQL's own
@@ -1168,8 +1179,11 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
   retries, plan-cache hits and misses, deadlocks across shards broken by
   this server, storage calls its deadlock detector made
   (`Tarn_deadlock_detector_calls`: none while no lock wait lasts), `COUNT`s
-  the shards computed without returning rows (`Tarn_storage_counts`), rows
-  read from storage (`Tarn_rows_read`), attempted storage reads (`Tarn_storage_reads`,
+  the shards computed without returning rows (`Tarn_storage_counts`),
+  successful reduction RPCs (`Tarn_storage_reductions`,
+  including explicit incomplete folds), completed projected scan attempts
+  (`Tarn_storage_projections`: logical scans, including old-storage fallback),
+  rows read from storage (`Tarn_rows_read`), attempted storage reads (`Tarn_storage_reads`,
   one per index-scan or multi-key page or co-located join request, including
   failed or discarded attempts), row counts taken to choose between
   an ordered page and a longer index prefix (`Tarn_path_estimates`), buckets
@@ -1257,6 +1271,9 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 
 ## Error codes
 
+[Outcomes and retries](outcomes.md) specifies transaction state, complete
+write replies, pending APPLY, client disconnects and operation-ID recovery.
+
 | Code | SQLSTATE | Meaning | Client action |
 |---|---|---|---|
 | 1213 | 40001 | serialization conflict, deadlock, leader change, row locks lost, moved bucket, unavailable clock/stream freshness proof, or connection lost before anything was written | retry the transaction after the cause is resolved; investigate sticky clock/policy faults |
@@ -1267,7 +1284,7 @@ replica. Benchmark cleanup records raw status before stopping owned nodes.
 | 1305 | 42000 | no such savepoint | |
 | 1568 | 25001 | `SET TRANSACTION` inside a transaction | |
 | 1231 / 1232 | 42000 | bad value / type for a system variable | |
-| 1180 | 40003 | connection to a shard lost during a commit: outcome unknown | check whether it was applied |
+| 1180 | 40003 | lost/malformed write acknowledgement or native commit uncertainty: outcome unknown | resolve from durable operation evidence; never blindly replay |
 | 2003 | HY000 | a shard has no reachable leader | retry later |
 | 1062 | 23000 | duplicate key | |
 | 1041 | HY000 | SQL resource envelope, lazy-index outbox/PREPARE capacity, or sequence space exhausted | a `Tarn resource limit:` error rolls back the explicit transaction; reduce the operation or tune its budget. For outbox errors, restore delivery/capacity; draining does not clear sequence exhaustion |

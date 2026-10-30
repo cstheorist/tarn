@@ -68,9 +68,10 @@ identifier.
 
 The source assigns exact, monotonically increasing sequence numbers per
 base bucket. Counters survive deletes, empty buckets, restarts and bucket
-moves. A logical commit writes the base changes, row-version state and all
+moves. A logical commit writes the base changes, the bucket counter and all
 old/new membership assignments to a durable outbox in the same local
-transaction. Initial images are captured before physical rewrite loops;
+transaction. No per-row state is kept on the source (issue
+[#177](https://github.com/cstheorist/tarn/issues/177)): see "Bootstrap". Initial images are captured before physical rewrite loops;
 temporary deletes used for unique-value cycles must not emit independent
 logical changes. Physical backfill and bucket import must not emit changes.
 
@@ -149,7 +150,16 @@ assignments to be durably acknowledged. The existing per-shard ALTER scan
 limit applies; this is not an unbounded online backfill. An instant-added
 column is first materialized using its committed fill/layout rules.
 
-Every baseline row and its version come from one consistent view. The
+Every baseline row and its bucket's counter come from one consistent view,
+and the baseline assignment takes that counter as its sequence. Any value
+up to the counter would do: every later change of the row takes a greater
+sequence and supersedes the baseline at the target, and the new
+incarnation's floors begin only after READY, once every baseline
+assignment is acknowledged (`tla/LazyBaseline.tla`; a baseline above the
+counter fails it). The counter holds the bucket's completed prefix back the
+least while the baseline is pending. Releases before #177 gave each row the
+sequence of its last change from a per-row ledger, `_tarn_lazy_version`, and
+0 to rows without an entry; those values are within the same bound. The
 generation/phase check rejects late bootstrap enqueue after readiness, so a
 baseline assignment cannot appear behind a previously reported frontier.
 All baseline acknowledgements precede READY, catalog publication and
@@ -172,8 +182,8 @@ gateway or an older client.
 DROP durably retires its lazy incarnations before hidden-space cleanup.
 TRUNCATE rotates them to freshly allocated incarnations and publishes the
 empty ready indexes with the cleared base table. It keeps the source
-bucket counters and clears the table's live-row version ledger. It does
-not backfill the rows being truncated. Late assignments for the old
+bucket counters, and clears what older releases left in the table's
+per-row version ledger. It does not backfill the rows being truncated. Late assignments for the old
 incarnations cannot populate the new ones.
 
 ## Bucket moves and shard removal
@@ -185,8 +195,11 @@ writes and immediately before commit. A move must not acknowledge a batch
 that is then stranded on its old owner.
 
 A source bucket is fenced and drained, and every committed assignment is
-durably acknowledged before the source flips ownership. Its counters and
-row-version state are copied even when it has no user rows. Pending
+durably acknowledged before the source flips ownership. Its counters are
+copied even when it has no user rows, and so is what an older release left
+in the per-row version ledger, until the storage node deletes it: a
+background pass deletes those entries, at most 128 in a transaction, in
+buckets the node may write, noted for the move like any write. Pending
 assignments are not migrated in the initial design. Destination outage can
 therefore delay a move. Shard removal must also wait for pending,
 reserved and in-flight lazy obligations before decommissioning a source.
@@ -238,6 +251,72 @@ potentially longer lock wait as a fallback. Queries already using the
 strong path retain their ordinary lock-wait behavior. The barrier
 establishes causal index catch-up before the read, not a globally
 serializable query snapshot.
+
+## Memory and disk
+
+New captured writes keep no per-row version state: the source keeps a bucket
+counter per source bucket, the pending outbox, and prepared reservations.
+Legacy version entries remain until bounded background cleanup removes them.
+Before issue
+[#177](https://github.com/cstheorist/tarn/issues/177) it also kept a
+per-row version ledger, `_tarn_lazy_version`, in memtx: an entry for every
+live row written since the table's first lazy index, also for vinyl
+tables. `bench/lazy_footprint.lua` measures each structure on one storage
+node owning 1,024 buckets, with a table `t(id, k, bucket_id)` and a lazy
+index on `k` (1,000 distinct values). It loads the rows, deletes a tenth of
+them (at most 20,000) and lets garbage collection collect their tombstones,
+holds the assignments of 1,000 key changes in the outbox, and prepares then
+commits 100 cross-shard transactions. `python3 bench/lazy_footprint.py run
+--before OLD/lua` repeats it for an older release's Lua module, and
+`python3 bench/lazy_footprint.py table` prints these tables from
+`bench/results_lazy_footprint.json`.
+
+The archived measurements below contain one observation per version, engine
+and row count. They lack immutable source/build receipts and repeated matched
+pairs. Their before/after differences are unqualified development evidence,
+and do not establish capacity, repeatable RSS savings or completion of #177's
+measurement criteria. The original reported values are retained here; a
+source-bound repeated study remains required.
+
+Archived per-row version ledger (`_tarn_lazy_version`, memtx), after loading:
+
+| Rows | Table | Entries before | Ledger bytes before | Bytes per row | Entries after | memtx data + index, before → after | Process RSS, before → after |
+|---:|---|---:|---:|---:|---:|---|---|
+| 10,000 | memtx | 10,000 | 840,192 | 84 | 0 | 5.6 MiB → 4.8 MiB | 50 MiB → 48 MiB |
+| 10,000 | vinyl | 10,000 | 804,576 | 80 | 0 | 2.9 MiB → 2.1 MiB | 53 MiB → 52 MiB |
+| 100,000 | memtx | 100,000 | 7,529,192 | 75 | 0 | 38.6 MiB → 31.6 MiB | 86 MiB → 78 MiB |
+| 100,000 | vinyl | 100,000 | 7,455,073 | 75 | 0 | 13.2 MiB → 6.3 MiB | 96 MiB → 89 MiB |
+| 1,000,000 | memtx | 1,000,000 | 82,512,752 | 83 | 0 | 346.7 MiB → 272.7 MiB | 410 MiB → 329 MiB |
+| 1,000,000 | vinyl | 1,000,000 | 82,418,317 | 82 | 0 | 87.5 MiB → 13.6 MiB | 324 MiB → 244 MiB |
+
+What stays, per item, 1,000,000 rows (this branch; tuple payload and index, without the allocator's per-tuple overhead):
+
+| Structure | Kept | memtx table | vinyl table |
+|---|---|---:|---:|
+| Target marker | one per live row and lazy index, in the table's engine | 147 B | 216 B on disk |
+| Tombstone | one per removed membership, until its floor collects it | 147 B | on disk |
+| Floor (`_tarn_lazy_floor`) | one per incarnation, target bucket and source bucket that collected a tombstone; never deleted | 91 B (2,560 after 20,000 deletes) | 91 B (2,560 after 20,000 deletes) |
+| Counter (`_tarn_lazy_counter`) | one per source bucket with a captured write | 135 B (1,024) | 135 B (1,024) |
+| Outbox assignment | one per pending membership change, capped by `lazy_outbox_entries` and `lazy_outbox_bytes` | 77 B, 45 B encoded | 77 B, 45 B encoded |
+| Reservation | one per row a prepared transaction writes | 70 B | 70 B |
+| Protocol records (`_tarn_part`, `_tarn_txn`) | per cross-shard transaction, until expiry | 73 B | 73 B |
+| Process RSS after loading |  | 329 MiB | 244 MiB |
+
+Per shard, then:
+- **Source:** about 135 bytes per source bucket for counters; the
+  outbox, which `lazy_outbox_entries` and `lazy_outbox_bytes` cap
+  (65,536 assignments and 64 MiB encoded by default); and the reservations
+  of the transactions prepared on the shard.
+- **Target:** one marker per live row and index, and one tombstone per
+  removed membership until collection, in the base table's engine: memtx
+  holds them in memory, vinyl on disk with only its cache in memory.
+- **Floors:** one per incarnation, target bucket and source bucket that has
+  collected a tombstone, in memtx. None is deleted, even after its
+  incarnation is retired; only a bucket leaving the shard takes its floors
+  along. With deletes spread over every bucket they approach incarnations
+  × target buckets × source buckets: bounded by the bucket count, not by
+  the rows, but large at high bucket counts. Bounding them is the next
+  part of #177.
 
 ## Observability and verification
 

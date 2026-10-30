@@ -489,6 +489,54 @@ function M.new(c)
             c.hook('lazy_clear_versions')
         end
     end
+    -- Entries older releases wrote to the per-row version ledger, which
+    -- nothing reads now: deleted at most BATCH in a transaction, in buckets
+    -- this shard may write, noted for moves and committed as lazy GC is
+    -- (in flight, ownership checked last). Returns true if it deleted some.
+    function L.clear_legacy()
+        local versions = box.space._tarn_lazy_version
+        if versions == nil or versions:len() == 0 then return false end
+        c.writable()
+        c.bk.fresh()
+        local flight
+        local ok, result = pcall(function()
+            flight = c.inflight_begin()
+            box.begin(c.rw)
+            local keys, scanned, last = {}, 0, nil
+            local opts = {iterator = 'GE'}
+            if L.legacy_after ~= nil then opts.after = L.legacy_after end
+            for _, v in versions:pairs({}, opts) do
+                scanned, last = scanned + 1, v
+                if not c.bk.bad(v.bucket_id, true) then keys[#keys + 1] = {v.base_id, v.pk} end
+                if #keys >= BATCH or scanned >= BATCH * 8 then break end
+            end
+            -- (the end of the space: the next pass starts from the first)
+            L.legacy_after = (scanned >= BATCH * 8 or #keys >= BATCH) and last ~= nil
+                             and versions.index.pk:tuple_pos(last) or nil
+            local plans, buckets, seen = {}, {}, {}
+            for _, key in ipairs(keys) do
+                local old = versions:delete(key)
+                if old ~= nil then
+                    c.bk.note(versions, old, nil)
+                    plans[#plans + 1] = {versions, key, old, nil, nil, false}
+                    if not seen[old.bucket_id] then seen[old.bucket_id] = true; buckets[#buckets + 1] = old.bucket_id end
+                end
+            end
+            if #plans == 0 then box.rollback(); return false end
+            c.inflight_writes(flight, plans)
+            local refused = c.atomic('LazyClearLegacy', L.final_check, buckets, plans)
+            if refused then box.rollback(); return false end
+            box.commit()
+            return true
+        end)
+        if box.is_in_txn() then box.rollback() end
+        if flight ~= nil then c.inflight_end(flight) end
+        if not ok then
+            L.legacy_after = nil
+            error(result)
+        end
+        return result
+    end
     function L.activate(def)
         -- Caller publishes the catalog in THIS transaction.
         L.invalidate()
@@ -523,7 +571,7 @@ function M.new(c)
         local sp = box.space[a.def.id]
         if sp == nil then return {'error', 1412, 'Lazy source disappeared'} end
         local ok, result = pcall(function()
-            -- Confirmed row/version view and durable cursor advance share
+            -- Confirmed row/counter view and durable cursor advance share
             -- one transaction; the DDL fence prevents new source writes.
             box.begin{txn_isolation = 'read-confirmed'}
             for _, spec in ipairs(a.def.lazy or {}) do
@@ -537,11 +585,24 @@ function M.new(c)
                     else
                         local opts, n, bytes, cursor, complete = {iterator = 'ALL'}, 0, 0, d.cursor, true
                         if not isnull(cursor) then opts.after = cursor end
+                        -- A baseline assignment's sequence is its bucket's
+                        -- counter in this view (issue #177): every later
+                        -- change of the row takes a greater one, and this
+                        -- incarnation's floors begin after READY. Any value
+                        -- up to the counter would do (tla/LazyBaseline.tla);
+                        -- the counter holds the bucket's completed prefix back
+                        -- the least while the baseline is pending.
+                        local counters = {}
                         for _, row in sp.index[0]:pairs({}, opts) do
                             local pk, raw = values(row, spec.pk_native_fields), values(row, spec.pk_fields)
-                            local version = box.space._tarn_lazy_version:get{sp.id, bin(pk)}
-                            local seq = version and sequence(version.seq) or 0
                             local key, bucket = values(row, spec.key_fields), row[spec.bucket_field]
+                            local seq = counters[bucket]
+                            if seq == nil then
+                                local t = box.space._tarn_lazy_counter:get{bucket}
+                                seq = t and sequence(t.seq) or 0
+                                if seq == nil then bad(1041, 'Lazy sequence capacity exhausted') end
+                                counters[bucket] = seq
+                            end
                             local event = {bin({0, spec.gen, key, pk}), spec.gen, bucket, seq,
                                            L.bucket(spec, key), key, pk, raw, true, true}
                             local size = #mp.encode(event)
@@ -686,17 +747,14 @@ function M.new(c)
     local function assignment(row, m, seq, ordinal)
         return {bin({1, row[2], seq, ordinal}), m[1], row[2], seq, m[2], m[3], m[4], m[5], m[6], false}
     end
+    -- (no per-row version is kept: a bootstrap takes the bucket counter,
+    -- see L.bootstrap; _tarn_lazy_version only holds what older releases
+    -- wrote, which L.clear_legacy deletes)
     local function publish(row, promised)
         local n = capacity(row)
-        local seq, counters, versions = n + 1, box.space._tarn_lazy_counter, box.space._tarn_lazy_version
+        local seq, counters = n + 1, box.space._tarn_lazy_counter
         local old = counters:get{row[2]}
         c.bk.note(counters, old, counters:replace{row[2], seq})
-        local pk = bin(row[3])
-        old = versions:get{row[1], pk}
-        local new
-        if row[4] then new = versions:replace{row[1], pk, row[2], seq}
-        else versions:delete{row[1], pk} end
-        c.bk.note(versions, old, new)
         for i, m in ipairs(row[5]) do enqueue(assignment(row, m, seq, i), promised) end
     end
     function L.capture(plans)
@@ -957,6 +1015,10 @@ function M.new(c)
     local function worker_tick()
         if not L.quota_marked then c.quota_mark(); L.quota_marked = true end
         if box.space._tarn_lazy_outbox ~= nil and box.space._tarn_lazy_reservation ~= nil then q.rebuild() end
+        if not L.paused and not box.info.ro and (L.next_legacy or 0) <= clock.monotonic() then
+            L.next_legacy = clock.monotonic() + .1
+            pcall(L.clear_legacy)
+        end
         if not L.paused and not box.info.ro and box.space._tarn_lazy_defs ~= nil
            and box.space._tarn_lazy_defs:len() > 0 then
             local ok, progress = pcall(L.ship_once) -- exact entries survive every failure

@@ -159,3 +159,8 @@ strictly increasing cursors and a final short/empty page, keeps unknown and
 in-flight effects unsettled, and records partial progress if a later page
 fails. This preserves exact acknowledgement/refusal accounting under the
 default 64 MiB query cap without increasing it or replaying a mutation.
+
+INSERT IGNORE diagnostic messages are admitted before formatting and commit.
+Their byte ownership transfers to the session without a second, postcommit
+admission; diagnostic clearing or disconnect releases it. Omitted messages
+retain only their count. The 64-message cap is separate from these byte limits.

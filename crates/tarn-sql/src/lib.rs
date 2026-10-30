@@ -21,6 +21,7 @@ pub mod complex;
 pub mod exec;
 pub mod expr;
 mod integrity;
+pub mod kv;
 pub mod lazy;
 pub mod lint;
 pub mod mpw;

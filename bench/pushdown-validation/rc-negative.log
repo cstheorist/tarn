@@ -1,0 +1,2 @@
+{"sql": "SELECT SUM(n),MIN(n),MAX(n),COUNT(n) FROM neg135.p", "before": {"Tarn_storage_reductions": 0, "Tarn_commits_read_only": 0}, "after": {"Tarn_storage_reductions": 2, "Tarn_commits_read_only": 1}, "rows": [["10", 1, 4, 4]]}
+prior gateway exhibits new validation on a small RC read; final public regression must reject this
