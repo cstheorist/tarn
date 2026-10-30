@@ -911,9 +911,17 @@ impl Session {
 
     async fn query_budgeted(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
-        if !admin::reads_diagnostics(sql) {
+        let sql = crate::prep::expand_comments(sql);
+        let captured;
+        let sql = if admin::reads_diagnostics(&sql) {
+            sql.as_ref()
+        } else {
+            // Release old message ownership before this statement can admit
+            // new diagnostics. The captured scalars survive stale-plan retries.
+            captured = admin::capture_diagnostics(&sql, self.warnings.len() + self.omitted_warnings);
             self.clear_warnings();
-        }
+            captured.as_deref().unwrap_or(&sql)
+        };
         // A statement outside any transaction that met a table definition an
         // ALTER TABLE replaced (1412) took no effect: re-plan and run it
         // again with the new catalog.

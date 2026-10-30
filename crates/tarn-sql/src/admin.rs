@@ -881,21 +881,29 @@ impl TreeChecks {
     }
 }
 
-/// Statements that read the last statement's diagnostics, which they must
-/// not clear: SHOW WARNINGS / ERRORS / COUNT(*) ..., @@warning_count.
+/// Administrative readers consume the prior diagnostics themselves:
+/// SHOW preserves them, while SelectVars captures its values then clears.
 pub fn reads_diagnostics(sql: &str) -> bool {
     let expanded = crate::prep::expand_comments(sql);
-    if matches!(recognize(&expanded), Ok(Some(Admin::ShowWarnings { .. }))) {
-        return true;
-    }
-    let mut diagnostic = false;
-    crate::prep::substitute_vars(&expanded, false, &mut |reference| {
+    matches!(
+        recognize(&expanded),
+        Ok(Some(Admin::ShowWarnings { .. } | Admin::SelectVars(_)))
+    )
+}
+
+/// Capture only prior diagnostic counts before clearing the old messages.
+/// Other variables keep their normal evaluation order, including SET targets.
+pub fn capture_diagnostics(sql: &str, warning_count: usize) -> Option<String> {
+    crate::prep::substitute_vars(sql, true, &mut |reference| {
         if let crate::prep::VarRef::System(name) = reference {
-            diagnostic |= matches!(sysvar_name(name).as_str(), "warning_count" | "error_count");
+            return match sysvar_name(name).as_str() {
+                "warning_count" => Some(warning_count.to_string()),
+                "error_count" => Some("0".into()),
+                _ => None,
+            };
         }
         None
-    });
-    diagnostic
+    })
 }
 
 pub(crate) fn bad_value(var: &str, v: &str) -> SqlError {
@@ -1260,8 +1268,6 @@ mod tests {
             "SHOW ERRORS",
             "SELECT @@warning_count",
             "SELECT @@autocommit,@@warning_count",
-            "SET @wc=@@warning_count",
-            "SELECT @@warning_count+0",
             "/*!80000 SELECT @@warning_count */",
         ] {
             assert!(reads_diagnostics(sql), "{sql}");
@@ -1270,9 +1276,28 @@ mod tests {
             "SELECT 'warning_count'",
             "INSERT INTO warning_count VALUES(1)",
             "SELECT 1 /* error_count */",
+            "SET @wc=@@warning_count",
+            "SELECT @@warning_count+0",
         ] {
             assert!(!reads_diagnostics(sql), "{sql}");
         }
+        assert_eq!(
+            capture_diagnostics("SET @wc=@@warning_count, @x=@@error_count", 70).as_deref(),
+            Some("SET @wc=70, @x=0")
+        );
+        assert_eq!(
+            capture_diagnostics("SELECT @@warning_count+0", 70).as_deref(),
+            Some("SELECT 70+0")
+        );
+        assert_eq!(
+            capture_diagnostics("INSERT IGNORE INTO t VALUES(1,@@warning_count)", 70).as_deref(),
+            Some("INSERT IGNORE INTO t VALUES(1,70)")
+        );
+        assert_eq!(capture_diagnostics("SET @@warning_count=7", 70), None);
+        assert_eq!(
+            capture_diagnostics("SELECT '@@warning_count' /* @@error_count */", 70),
+            None
+        );
     }
 
     #[test]
