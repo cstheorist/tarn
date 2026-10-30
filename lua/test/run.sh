@@ -85,6 +85,11 @@ if [ -z "${TEST:-}" ]; then
   TARANTOOL="$T" bash "$DIR/test/lazy_faults.sh" "$WORK/lazy-faults" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  for engine in memtx vinyl; do
+    ENGINE=$engine TARANTOOL="$T" bash "$DIR/test/lazy_soak.sh" "$WORK/lazy-soak-$engine" 2>&1 | tee -a "$WORK/test.out"
+    r=${PIPESTATUS[0]}
+    [ "$r" -ne 0 ] && rc=$r
+  done
   TARANTOOL="$T" bash "$DIR/test/lazy_replication.sh" "$WORK/lazy-rf3" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
