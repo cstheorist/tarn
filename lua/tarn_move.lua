@@ -118,7 +118,9 @@ function M.new(c)
         end
     end
     function B.capable(peer)
-        local uris = cfg.peers[peer] or cfg.peers[tostring(peer)]
+        -- Existing nodes learn joined shards through persisted membership;
+        -- their startup peer inventory remains unchanged.
+        local uris = c.shard_uris(peer)
         if type(uris) ~= 'table' or #uris == 0 or #uris > 64 then
             bad(1412, 'Bounded movement requires a complete supported replica inventory')
         end

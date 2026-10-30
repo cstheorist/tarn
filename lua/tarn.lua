@@ -7710,7 +7710,7 @@ M.lazy = require('tarn_lazy').new{
         return mark == nil or BK.ns == nil or BK.ns.oldest_inflight > mark
     end,
 }
-M.move = require('tarn_move').new{cfg = M.cfg, bk = BK}
+M.move = require('tarn_move').new{cfg = M.cfg, bk = BK, shard_uris = shard_uris}
 M.engine = require('tarn_engine').new{
     cfg = M.cfg, bk = BK, writable = writable, failure = failure, atomic = atomic,
     key_def = index_key_def, serial = UIX.serial_sid, drain = drain, wait_commits = wait_commits,

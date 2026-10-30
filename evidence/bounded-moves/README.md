@@ -158,3 +158,24 @@ and no replay of unknown outcomes. The [result index](catalog-integration-index.
 and [hashed process/config/output archive](catalog-integration-runs.tar.gz)
 retain those checks and the initial fixed-build clock-drift refusal separately.
 No timing from these correctness runs replaces the fixed-memory study.
+
+
+## Independent review: joined-shard capability lookup
+
+Review of `4054480` reproduced a movement refusal after a successful real
+RF3/fsync `TARN ADD SHARD 3`. The original nodes still had startup peers 1/2,
+while confirmed membership named all three replicas of shard 3. The new
+movement capability lookup consulted only startup peers and refused the
+move with storage 1412 / SQL 1105. The exact value stayed unchanged.
+
+The correction reuses the existing `shard_uris` membership-aware resolver;
+it still checks every replica in that authoritative inventory. A fresh
+three-shard native-enabled RF3/fsync run acknowledged the same move,
+returned the exact value through SQL, and independently found the tuple
+only on the new physical owner. The retained [before](checks/joined-move-review-before.out)
+and [after](checks/joined-move-review-after.out) logs preserve the actual
+startup inventory, committed membership and effects. The Rust dev build
+is used only for this functional witness; no timing or capacity claim is
+made. Existing `tests/jointest.sh` and `tests/growshrink.sh` exercise this
+join-then-move path in full release CI. The integrated current-source
+release/model/format-migration gates remain required before merge.
