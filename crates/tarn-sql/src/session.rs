@@ -734,7 +734,7 @@ impl Session {
                 if policy == "MYSQL" {
                     crate::key_contract::collation(&self.collation_connection)?;
                 }
-                self.sys_vars.insert(name.into(), Value::str(&policy));
+                self.set_system_value(name.to_string(), Value::str(&policy))?;
                 return Ok(());
             }
             "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
