@@ -7798,6 +7798,8 @@ BK.production_functions = {
         'tarn_bucket_fence',
         'tarn_bucket_hold',
         'tarn_bucket_init',
+        'tarn_move_capabilities',
+        'tarn_bucket_progress',
         'tarn_bucket_recv',
         'tarn_bucket_recv_abort',
         'tarn_bucket_recv_begin',

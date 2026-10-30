@@ -534,10 +534,23 @@ class Fixture:
                     f"SELECT COUNT(*),SUM(n),MIN(n),MAX(n) FROM {engine}_t WHERE id>=0 AND n>=0", c
                 ) == ((1, 11, 11, 11),)
                 assert int(self.query("SHOW GLOBAL STATUS LIKE 'Tarn_storage_reductions'", c)[0][1]) > before
+                self.query("SET SESSION tarn_lazy_read_your_writes=ON", c)
+                self.query(
+                    f"CREATE TABLE {engine}_l (id INT PRIMARY KEY,n INT,lane INT,"
+                    f"KEY spread(n,lane,id) COMMENT 'tarn:lazy=2') ENGINE={engine}", c
+                )
+                self.query(f"INSERT INTO {engine}_l VALUES (1,7,1),(2,7,2)", c)
+                assert self.query(
+                    f"SELECT id,lane FROM {engine}_l FORCE INDEX(spread) WHERE n=7 AND lane=1", c
+                ) == ((1, 1),)
+                assert self.query(
+                    f"SELECT id,lane FROM {engine}_l FORCE INDEX(spread) WHERE n=7 ORDER BY lane,id", c
+                ) == ((1, 1), (2, 2))
             self.record(
                 "authenticated TLS DDL, native data reads and transactions on memtx and vinyl"
             )
             self.record("typed reductions execute through the service ACL on memtx and vinyl")
+            self.record("composite lazy DDL, fully bound and ordered prefix reads over TLS on both engines")
         # Drive storage directly through net.box over private sockets for
         # exact authorization checks; the mTLS network test follows below.
         probe = self.work / "acl.lua"
@@ -545,7 +558,14 @@ class Fixture:
 local f=assert(io.open(arg[2])); local password=f:read('*l'); f:close()
 local c=net.connect(arg[1],{fetch_schema=false,user='tarn_service',password=password,wait_connected=5})
 assert(c:is_connected()); assert(type(c:call('tarn_role'))=='boolean')
-local info=c:call('tarn_info'); if not info.ro then print(json.encode(info.native)) end
+local info=c:call('tarn_info'); if not info.ro then
+ local map=c:call('tarn_buckets'); local bucket=assert(map[4][1][1]); local move='production-capability-control'
+ assert(c:call('tarn_move_capabilities')[2]==2)
+ assert(c:call('tarn_bucket_send_begin',{bucket,1,move,5})[1]=='ok')
+ assert(c:call('tarn_bucket_progress',{bucket,move})[1]=='ok')
+ assert(c:call('tarn_bucket_send_abort',{bucket,move})[1]=='ok')
+ local after=c:call('tarn_buckets'); assert(#after[5]==0 and after[4][1][1]==bucket)
+ print(json.encode(info.native)) end
 for _, fn in ipairs({function() c:eval('return 1') end,
  function() c:call('box.schema.user.create',{'intruder'}) end,
  function() c:call('tarn_clock_test_time',{0,0}) end,
@@ -584,6 +604,8 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
         self.record(
             "service denies EVAL, arbitrary CALL, test hooks, system reads and raw writes; guest denied; replication account cannot execute SQL RPCs"
         )
+
+        self.record("bounded movement capability validates every RF3 TLS route and service ACL; pre-publication self move cancels without ownership change")
 
         def no_client_identity():
             with socket.create_connection(("127.0.0.1", self.base), timeout=3) as raw:

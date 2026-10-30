@@ -157,15 +157,15 @@ mod tests {
 
     #[test]
     fn deployment_pending_is_only_for_read_only_replicas_with_the_same_contract() {
-        let pending = report(1, 1, 2, "3.9.0", "pending", 120.0);
+        let pending = report(1, 2, 2, "3.9.0", "pending", 120.0);
         assert!(validate(&pending, 2, 120.0).is_err());
         assert!(validate_report(&pending, 2, 120.0, true).is_ok());
         for data in [
-            report(2, 1, 2, "3.9.0", "pending", 120.0),
-            report(1, 2, 2, "3.9.0", "pending", 120.0),
-            report(1, 1, 1, "3.9.0", "pending", 120.0),
-            report(1, 1, 2, "3.9.0", "pending", 121.0),
-            report(1, 1, 2, "3.9.0", "unknown", 120.0),
+            report(2, 2, 2, "3.9.0", "pending", 120.0),
+            report(1, 1, 2, "3.9.0", "pending", 120.0),
+            report(1, 2, 1, "3.9.0", "pending", 120.0),
+            report(1, 2, 2, "3.9.0", "pending", 121.0),
+            report(1, 2, 2, "3.9.0", "unknown", 120.0),
         ] {
             assert!(validate_report(&data, 2, 120.0, true).is_err());
         }
