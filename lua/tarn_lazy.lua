@@ -265,12 +265,13 @@ function M.new(c)
     local function valid_spec(s)
         if type(s) ~= 'table' or sequence(s.gen) == nil or s.gen < 10000
            or sequence(s.base_space_id) == nil or s.base_space_id < 10000
-           or s.gen == s.base_space_id or s.route_parts ~= 1
+           or s.gen == s.base_space_id or sequence(s.route_parts) == nil or s.route_parts < 1 or s.route_parts > 16
            or sequence(s.local_index_id) == nil or sequence(s.bucket_field) == nil or s.bucket_field < 1 then return false end
         for _, fields in ipairs({s.key_fields, s.pk_fields, s.pk_native_fields}) do
             if type(fields) ~= 'table' or #fields == 0 then return false end
             for _, f in ipairs(fields) do if sequence(f) == nil or f < 1 then return false end end
         end
+        if s.route_parts > #s.key_fields then return false end
         if type(s.key_types) ~= 'table' or type(s.pk_types) ~= 'table' or #s.key_fields ~= #s.key_types
            or #s.pk_fields ~= #s.pk_native_fields or #s.pk_fields ~= #s.pk_types then return false end
         for _, types in ipairs({s.key_types, s.pk_types}) do
@@ -299,15 +300,18 @@ function M.new(c)
             if d.phase == 'retired' then retired[#retired + 1] = d:totable() end
         end
         if #active == 0 and #retired == 0 then return nil end
-        return {lazy_v1 = {version = 1, active = active, retired = retired}, schema_version = schema_version}
+        local version = 1
+        for _, s in ipairs(active) do if s.route_parts > 1 then version = 2 end end
+        for _, d in ipairs(retired) do if d[6].route_parts > 1 then version = 2 end end
+        return {lazy_v1 = {version = version, active = active, retired = retired}, schema_version = schema_version}
     end
     function L.import_envelope(export, token)
         if type(export) ~= 'table' then bad(1210, 'Malformed schema import envelope') end
         local tagged = type(export[1]) == 'table' and export[1].lazy_v1 ~= nil
         local meta, tables, expected, seen, active = tagged and export[1].lazy_v1 or nil, {}, {}, {}, {}
-        if tagged and (token ~= 1 or type(meta) ~= 'table' or meta.version ~= 1
+        if tagged and (type(meta) ~= 'table' or (meta.version ~= 1 and meta.version ~= 2) or token ~= meta.version
            or type(meta.active) ~= 'table' or type(meta.retired) ~= 'table'
-           or sequence(export[1].schema_version) == nil) then bad(1412, 'Lazy schema import requires V1 coordinator capability') end
+           or sequence(export[1].schema_version) == nil) then bad(1412, 'Lazy schema import requires matching coordinator capability') end
         -- Validate the entire envelope before creating any native space.
         for i, t in ipairs(export) do
             if not (tagged and i == 1) then
@@ -322,7 +326,7 @@ function M.new(c)
                        or type(u.format) ~= 'table' or type(u.indexes) ~= 'table' then bad(1210, 'Malformed imported global index') end
                 end
                 for _, spec in ipairs(t.def.lazy or {}) do
-                    if not tagged or not valid_spec(spec) or spec.base_space_id ~= t.def.id or expected[spec.gen] then
+                    if not tagged or not valid_spec(spec) or (spec.route_parts > 1 and meta.version ~= 2) or spec.base_space_id ~= t.def.id or expected[spec.gen] then
                         bad(1412, 'Unbound lazy schema generation')
                     end
                     expected[spec.gen] = spec_identity(spec)
@@ -332,7 +336,7 @@ function M.new(c)
         end
         if tagged then
             for _, spec in ipairs(meta.active) do
-                if not valid_spec(spec) or expected[spec.gen] ~= spec_identity(spec) or active[spec.gen] then
+                if not valid_spec(spec) or (spec.route_parts > 1 and meta.version ~= 2) or expected[spec.gen] ~= spec_identity(spec) or active[spec.gen] then
                     bad(1210, 'Malformed active lazy import descriptor')
                 end
                 local old = box.space._tarn_lazy_defs:get{spec.gen}
@@ -347,7 +351,7 @@ function M.new(c)
             local retired = {}
             for _, d in ipairs(meta.retired) do
                 if type(d) ~= 'table' or #d ~= 8 or d[4] ~= 'retired' or not valid_spec(d[6])
-                   or d[1] ~= d[6].gen or d[2] ~= d[6].base_space_id or active[d[1]] or retired[d[1]]
+                   or (d[6].route_parts > 1 and meta.version ~= 2) or d[1] ~= d[6].gen or d[2] ~= d[6].base_space_id or active[d[1]] or retired[d[1]]
                    or sequence(d[3]) == nil or sequence(d[5]) == nil or type(d[8]) ~= 'boolean' then
                     bad(1210, 'Malformed retired lazy import descriptor')
                 end
@@ -1055,24 +1059,33 @@ function M.new(c)
             return confirmed(function()
                 local d = box.space._tarn_lazy_defs:get{gen}
                 if d == nil or d.phase ~= 'ready' then bad(1412, 'Lazy index is not ready') end
-                if #key < d.spec.route_parts or #key > #d.spec.key_fields then bad(1210, 'Invalid lazy prefix') end
-                local bucket = L.bucket(d.spec, key)
-                if c.bk.bad(bucket, false) then return c.bk.moved(bucket) end
+                if #key < 1 or #key > #d.spec.key_fields then bad(1210, 'Invalid lazy prefix') end
+                if #key >= d.spec.route_parts then
+                    local bucket = L.bucket(d.spec, key)
+                    if c.bk.bad(bucket, false) then return c.bk.moved(bucket) end
+                elseif type(route) ~= 'table' or type(route.e) ~= 'number' or type(route.m) ~= 'number' then
+                    bad(1210, 'Composite lazy prefix requires an epoch and membership fence')
+                end
                 local sp, prefix, rows, bytes = box.space[gen], {true}, {}, 0
                 for _, x in ipairs(key) do prefix[#prefix + 1] = x end
                 local opts = {iterator = iterator}
                 if not isnull(after) then opts.after = after end
-                local next, cut = box.NULL, false
+                local next, cut, visited = box.NULL, false, 0
                 for _, t in sp.index.ordered:pairs(prefix, opts) do
-                    local k = {}
-                    for i = 1, #d.spec.key_fields do k[i] = t[7 + i] end
-                    local candidate = {k, t.raw_pk, t.pkid, t.source, t.seq}
-                    local n = #mp.encode(candidate)
-                    if n > BYTES - 8192 then bad(1041, 'Lazy candidate exceeds page limit') end
-                    if #rows > 0 and bytes + n > BYTES - 8192 then cut = true; break end
-                    rows[#rows + 1], bytes = candidate, bytes + n
+                    -- A receiving or previously sent copy is not an owner.
+                    -- Bound inspected tuples too: stale copies may fill a page.
+                    visited = visited + 1
+                    if not c.bk.bad(t.bucket_id, false) then
+                        local k = {}
+                        for i = 1, #d.spec.key_fields do k[i] = t[7 + i] end
+                        local candidate = {k, t.raw_pk, t.pkid, t.source, t.seq}
+                        local n = #mp.encode(candidate)
+                        if n > BYTES - 8192 then bad(1041, 'Lazy candidate exceeds page limit') end
+                        if #rows > 0 and bytes + n > BYTES - 8192 then cut = true; break end
+                        rows[#rows + 1], bytes = candidate, bytes + n
+                    end
                     next = sp.index.ordered:tuple_pos(t)
-                    if #rows >= limit then cut = true; break end
+                    if visited >= limit then cut = true; break end
                 end
                 return {'ok', gen, rows, cut and next or box.NULL}
             end)
@@ -1120,6 +1133,11 @@ function M.new(c)
         if not ok or type(cap) ~= 'table' or cap[1] ~= 'ok' or cap[2] ~= 1
            or type(cap[3]) ~= 'table' or cap[3].aux_names ~= 1 then
             return {'error', 1412, 'Bucket destination lacks lazy auxiliary-name transport capability'}
+        end
+        for _, d in box.space._tarn_lazy_defs:pairs() do
+            if d.spec.route_parts > 1 and (cap[3].route_parts or 1) < d.spec.route_parts then
+                return {'error', 1412, 'Bucket destination lacks composite lazy routing capability'}
+            end
         end
         return nil
     end
@@ -1254,7 +1272,7 @@ function M.new(c)
         else return {'error', 1210, 'Unknown lazy test control'} end
         return {'ok', L.paused, L.inflight, L.uncertain}
     end
-    L.capabilities = function() return {'ok', 1, {max_entries = BATCH, max_bytes = BYTES, max_seq = MAX_SEQ, aux_names = 1}} end
+    L.capabilities = function() return {'ok', 1, {max_entries = BATCH, max_bytes = BYTES, max_seq = MAX_SEQ, aux_names = 1, route_parts = 16}} end
     function L.final_check(buckets, plans)
         c.writable()
         if c.bk.stale then return {'moved', 1213, 'Lazy ownership cache became stale'} end

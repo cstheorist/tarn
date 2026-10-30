@@ -194,7 +194,10 @@ return tarn_prepare('backup-pending',1,{1,2},{{'replace',88001,{KEY,'committed-c
             except ValueError:
                 checked('real sending/receiving bucket move refuses capture')
             stage('move_finish')
+            for i in range(6):
+                wait(i, 'return box.space._tarn_recv.index[0]:min()==nil and box.space._tarn_move.index[0]:min()==nil')
             cb.wait_ready(c,nodes,cb.expected_groups(nodes),30)
+            checked('completed move drains logical Vinyl staging without waiting for compaction')
             checked('completed move preserves exact rows and lazy metadata under the new owner')
         finally:
             c.close()
