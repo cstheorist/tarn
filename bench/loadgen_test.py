@@ -116,6 +116,14 @@ class Accounting(unittest.TestCase):
         self.assertAlmostEqual(result['scheduled_latency_ms']['p99'],800)
         self.assertFalse(result['objectives_pass'])
 
+    def test_slo_goodput_counts_drain_even_when_latency_objective_allows_it(self):
+        self.args.p99_ms=1000
+        self.attempts[-1]['finished']=1.1
+        result=self.run_audit()
+        self.assertAlmostEqual(result['goodput_within_slo_per_second'],1)
+        self.assertLessEqual(result['goodput_within_slo_per_second'],
+                             result['verified_goodput_per_second'])
+
 
 class Connection:
     def close(self):

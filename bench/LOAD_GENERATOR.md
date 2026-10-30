@@ -70,7 +70,7 @@ summaries. Acknowledged latency runs from the **scheduled arrival** to completio
 service latency starts when a worker takes the slot. Both p50/p99/p99.9/max are
 retained. Refusals and generator rejections count against the error objective.
 Verified goodput includes any time needed to drain measured work beyond the
-planned window. Goodput within the declared latency SLO is also reported.
+planned window. Goodput within the declared latency SLO uses the same window.
 This avoids inflating goodput by completing an accumulated queue after timing.
 
 There is no retry. Only recognized 1213/40001 or 1205/HY000/40001 refusals with

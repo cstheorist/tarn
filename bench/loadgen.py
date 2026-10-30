@@ -352,7 +352,7 @@ def audit(root, args):
         db.commit()
         return dict(complete=complete, exact_effects=True, counts=counts, all_counts=all_counts,
                     scheduled_latency_ms=latency, service_latency_ms=service,
-                    verified_goodput_per_second=n/window, goodput_within_slo_per_second=within/args.seconds,
+                    verified_goodput_per_second=n/window, goodput_within_slo_per_second=within/window,
                     measured_cohort_seconds_including_drain=window, error_fraction=bad/offered if offered else 1,
                     objectives_pass=bool(complete and n and latency['p99']<=args.p99_ms and bad/offered<=args.max_error_rate))
     finally:
