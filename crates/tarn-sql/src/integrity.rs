@@ -46,6 +46,7 @@ mod tests {
     fn declarations_are_rejected_before_a_plan_can_publish() {
         let empty = Catalog::new(1, vec!["db".into()], vec![]);
         let context = |catalog| PlanCtx {
+            statistics: None,
             catalog,
             db: Some("db"),
             params: &[],
@@ -92,6 +93,7 @@ mod tests {
     fn old_catalogs_remain_unknown_after_metadata_removal_and_alter() {
         let empty = Catalog::new(1, vec!["db".into()], vec![]);
         let context = |catalog| PlanCtx {
+            statistics: None,
             catalog,
             db: Some("db"),
             params: &[],

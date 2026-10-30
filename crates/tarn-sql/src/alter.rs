@@ -2300,6 +2300,7 @@ mod tests {
 
     fn alter(def: &TableDef, cat: &Catalog, sql: &str) -> SqlResult<Change> {
         let ctx = PlanCtx {
+            statistics: None,
             catalog: cat,
             db: Some("db"),
             params: &[],

@@ -4326,6 +4326,7 @@ mod tests {
     fn schema_output_exposes_legacy_integrity_without_certifying_rows() {
         let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],
