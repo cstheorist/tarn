@@ -43,7 +43,9 @@ def quorum_sql_outcome(error, expected_shard):
     if (isinstance(error, pymysql.OperationalError) and error.args[0] == 2013 and state is None
             and error.args[1] == "Lost connection to MySQL server during query (timed out)"):
         return "client_read_timeout"
-    if (isinstance(error, pymysql.OperationalError) and error.args[0] == 2003 and state == "HY000"
+    # PyMySQL 1.1.2 discards the packet's SQLSTATE. Preserve that absence;
+    # a contradictory supplied state must still reject this classification.
+    if (isinstance(error, pymysql.OperationalError) and error.args[0] == 2003 and state in (None, "HY000")
             and type(expected_shard) is int and expected_shard > 0 and isinstance(error.args[1], str)):
         prefix = f"shard {expected_shard} has no reachable leader ("
         message = error.args[1]

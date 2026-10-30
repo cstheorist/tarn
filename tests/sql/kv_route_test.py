@@ -187,12 +187,14 @@ class ReadonlyRouteControls(unittest.TestCase):
         # Source integration control for Cluster::discover's format string;
         # this does not claim a live occurrence in the retained histories.
         message = "shard 1 has no reachable leader (127.0.0.1:3301 is read-only)"
-        self.assertEqual(kvfaults.quorum_sql_outcome(refusal(message, "HY000", 2003), 1),
-                         "leader_discovery_unavailable")
-        cases = [refusal(message, "HY000", 2003), refusal(message, None, 2003),
+        for state in (None, "HY000"):
+            self.assertEqual(kvfaults.quorum_sql_outcome(refusal(message, state, 2003), 1),
+                             "leader_discovery_unavailable")
+        cases = [refusal(message, "HY000", 2003),
                  refusal(message, "40003", 2003), refusal(message, "40001", 2003),
+                 refusal(message, "HY001", 2003), refusal(message, b"HY000", 2003),
                  refusal(message, "HY000", 2013)]
-        expected = [2, 1, 1, 1, 1]
+        expected = [2, 1, 1, 1, 1, 1]
         for error, shard in zip(cases, expected):
             with self.subTest(error=error, expected_shard=shard):
                 self.assertIsNone(kvfaults.quorum_sql_outcome(error, shard))
@@ -219,6 +221,30 @@ class ReadonlyRouteControls(unittest.TestCase):
             wrong.scenario_quorum("memtx")
         wrong.sql.assert_called_once()
         wrong.restore.assert_called_once()
+
+    def test_actual_driver_packet_preserves_observed_state_without_retry_or_guard_claim(self):
+        # Both pinned 1.1.2 (no SQLSTATE attribute) and newer clients decode
+        # this exact ERR packet. Never manufacture the discarded field.
+        message = "shard 1 has no reachable leader (127.0.0.1:50485: tarantool operation timed out)"
+        packet = b"\xff" + (2003).to_bytes(2, "little") + b"#HY000" + message.encode()
+        try:
+            kvfaults.pymysql.err.raise_mysql_exception(packet)
+        except kvfaults.pymysql.OperationalError as error:
+            observed = getattr(error, "sqlstate", None)
+            self.assertIn(observed, (None, "HY000"))
+            test = quorum_driver(error)
+            test.scenario_quorum("memtx")
+            test.sql.assert_called_once()
+            test.restore.assert_called_once()
+            self.assertEqual(test.paired_values.call_count, 2)
+            event = next(e for e in test.events if e["event"] == "no_quorum_classification")
+            outcome = event["sql_outcome"]
+            self.assertEqual(outcome["kind"], "leader_discovery_unavailable")
+            self.assertEqual(outcome["error"]["sqlstate"], observed)
+            self.assertFalse(outcome["guard_coverage"])
+            self.assertFalse(outcome["row_result_returned"])
+        else:
+            self.fail("ERR packet did not raise its actual client error")
 
     def test_healed_route_still_rejects_discovery_unavailability_without_retry(self):
         test = driver()
