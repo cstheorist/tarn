@@ -386,6 +386,9 @@ InsertsFree(S) == BugInsertNoExistCheck \/ \A k \in S : data[k] = NoVal
 \* is simply not enabled in that state.  A scan reads one shard here when
 \* its server knows one (a transaction routed before MTo joined).
 SnapshotRead(t) ==
+    \* Typed projection/reduction (#135) uses the same full read footprint:
+    \* rejected rows are not removed from RSet/SSet or commit validation.
+    \* TypedRead.tla checks its bounded result/overlay/page refinement.
     LET at == {place[k] : k \in RSet[t]} \cup (IF SSet[t] # {} THEN KnownShards(t) ELSE {})
         s  == CHOOSE x \in at : TRUE
     IN

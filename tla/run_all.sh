@@ -43,6 +43,7 @@ for cfg in "$@"; do
     StrongStreamCompletion|Bug_StreamCompletion*) module=StrongStreamCompletion.tla ;;
     LockReplyOwnership|Bug_LockReply*) module=LockReplyOwnership.tla ;;
     NativeKeyBatch|Bug_KeyBatch*) module=NativeKeyBatch.tla ;;
+    TypedRead|Bug_TypedRead*) module=TypedRead.tla ;;
     LockCopy|Bug_Lock*) module=NativeLockCopy.tla ;;
     Fairness*|Bug_Fairness*) module=RecoveryFairness.tla ;;
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
