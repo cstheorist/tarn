@@ -7,7 +7,7 @@
 //! instead of full scans.
 
 use crate::admin::Admin;
-use crate::catalog::{self, Catalog, ColumnDef, ForeignKeyDef, IndexDef, TableDef};
+use crate::catalog::{self, Catalog, ColumnDef, IndexDef, TableDef};
 use crate::collation::{self, coercibility, Collation, Derived};
 use crate::expr::{column_expr_type, infer, CastTo, CmpOp, Expr, ExprType, Func};
 use crate::plan::*;
@@ -2667,6 +2667,7 @@ pub(crate) struct ColumnSpec {
 
 /// Convert a parsed column definition.
 pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
+    crate::integrity::check_column_type(&c.data_type.to_string())?;
     let ty = SqlType::parse(&c.data_type.to_string())?;
     let mut nullable = true;
     let mut default = None;
@@ -2712,6 +2713,8 @@ pub(crate) fn column_spec(c: &A::ColumnDef) -> SqlResult<ColumnSpec> {
                 nullable = false;
             }
             A::ColumnOption::Unique(_) => unique = true,
+            A::ColumnOption::ForeignKey(_) => return Err(crate::integrity::reject("FOREIGN KEY")),
+            A::ColumnOption::Check(_) => return Err(crate::integrity::reject("CHECK")),
             A::ColumnOption::DialectSpecific(toks) => {
                 let s: String = toks
                     .iter()
@@ -2844,28 +2847,6 @@ pub(crate) fn index_comment(opts: &[A::IndexOption]) -> String {
         .unwrap_or_default()
 }
 
-/// A FOREIGN KEY constraint as written (name None: generated).
-pub(crate) fn foreign_key_spec(
-    fk: &A::ForeignKeyConstraint,
-    ctx: &PlanCtx,
-) -> SqlResult<(Option<String>, ForeignKeyDef)> {
-    let (ref_db, ref_table) = table_name(&fk.foreign_table, ctx)?;
-    let action = |a: &Option<A::ReferentialAction>| a.as_ref().map(|a| a.to_string());
-    let name = fk.name.as_ref().or(fk.index_name.as_ref()).map(ident);
-    Ok((
-        name.clone(),
-        ForeignKeyDef {
-            name: name.unwrap_or_default(),
-            cols: fk.columns.iter().map(ident).collect(),
-            ref_db,
-            ref_table,
-            ref_cols: fk.referred_columns.iter().map(ident).collect(),
-            on_delete: action(&fk.on_delete),
-            on_update: action(&fk.on_update),
-        },
-    ))
-}
-
 /// MySQL's name for an index nobody named: its first column, made unique
 /// with _2, _3, ...
 pub(crate) fn generated_index_name(first_col: &str, taken: &dyn Fn(&str) -> bool) -> String {
@@ -2876,72 +2857,6 @@ pub(crate) fn generated_index_name(first_col: &str, taken: &dyn Fn(&str) -> bool
         .map(|i| format!("{}_{}", first_col, i))
         .find(|n| !taken(n))
         .expect("a free name")
-}
-
-/// Record a foreign key on `def`: names an unnamed one `<table>_ibfk_<n>`
-/// and, as MySQL does, adds an index on its columns unless one starts with
-/// them. Not enforced.
-pub(crate) fn add_foreign_key(def: &mut TableDef, name: Option<String>, mut fk: ForeignKeyDef) -> SqlResult<()> {
-    let mut cols = Vec::new();
-    for k in 0..fk.cols.len() {
-        let c = def.col_index(&fk.cols[k]).ok_or_else(|| {
-            SqlError::new(
-                1072,
-                "42000",
-                format!("Key column '{}' doesn't exist in table", fk.cols[k]),
-            )
-        })?;
-        fk.cols[k] = def.columns[c].name.clone();
-        cols.push(c);
-    }
-    fk.name = match name {
-        Some(n) => {
-            if def.foreign_keys.iter().any(|f| f.name.eq_ignore_ascii_case(&n)) {
-                return Err(SqlError::new(
-                    1826,
-                    "HY000",
-                    format!("Duplicate foreign key constraint name '{}'", n),
-                ));
-            }
-            n
-        }
-        None => {
-            let prefix = format!("{}_ibfk_", def.name);
-            let n = def
-                .foreign_keys
-                .iter()
-                .filter_map(|f| f.name.strip_prefix(&prefix).and_then(|x| x.parse::<u32>().ok()))
-                .max()
-                .unwrap_or(0);
-            format!("{}{}", prefix, n + 1)
-        }
-    };
-    let covered = def
-        .indexes
-        .iter()
-        .any(|ix| ix.cols.len() >= cols.len() && ix.cols[..cols.len()] == cols[..]);
-    if !covered {
-        let explicit = !fk.name.starts_with(&format!("{}_ibfk_", def.name));
-        let iname = if explicit && def.index_by_name(&fk.name).is_none() {
-            fk.name.clone()
-        } else {
-            let first = def.columns[cols[0]].name.clone();
-            generated_index_name(&first, &|n| def.index_by_name(n).is_some())
-        };
-        let id = next_index_id(def);
-        def.indexes.push(IndexDef {
-            name: iname,
-            id,
-            cols,
-            unique: false,
-            invisible: false,
-            global: None,
-            lazy: None,
-            comment: String::new(),
-        });
-    }
-    def.foreign_keys.push(fk);
-    Ok(())
 }
 
 /// Tarantool id for a new index: past every index id in use, including the
@@ -3085,7 +3000,6 @@ fn plan_create_table(
     let index_cols = |list: &[A::IndexColumn], cols: &[ColumnDef]| -> SqlResult<Vec<usize>> {
         index_col_names(list)?.iter().map(|n| col_ix(n, cols)).collect()
     };
-    let mut fks = Vec::new();
     for con in &ct.constraints {
         match con {
             A::TableConstraint::PrimaryKey(p) => {
@@ -3109,8 +3023,8 @@ fn plan_create_table(
                     index_comment(&ix.index_options),
                 ));
             }
-            A::TableConstraint::ForeignKey(fk) => fks.push(foreign_key_spec(fk, ctx)?),
-            A::TableConstraint::Check(_) => {} // accepted, not enforced
+            A::TableConstraint::ForeignKey(_) => return Err(crate::integrity::reject("FOREIGN KEY")),
+            A::TableConstraint::Check(_) => return Err(crate::integrity::reject("CHECK")),
             other => return Err(SqlError::unsupported(format!("table constraint {}", other))),
         }
     }
@@ -3239,24 +3153,12 @@ fn plan_create_table(
         dropped: Vec::new(),
         collation: Some(table_collation),
         foreign_keys: Vec::new(),
+        integrity_policy: crate::integrity::DECLARATION_POLICY,
         bucket_index: None,
         layout: Default::default(),
         globals: Vec::new(),
         base: None,
     };
-    // Index ids so far are 0..n; the bucket_id index takes n at creation,
-    // so indexes a foreign key adds come after it.
-    def.bucket_index = Some(def.indexes.len() as u32);
-    let n_declared = def.indexes.len();
-    for (n, fk) in fks {
-        add_foreign_key(&mut def, n, fk)?;
-    }
-    // Implicit foreign key indexes are ordinary secondary indexes created
-    // with the table: renumber them before the bucket_id index.
-    for (k, ix) in def.indexes.iter_mut().enumerate().skip(n_declared) {
-        ix.id = k as u32;
-    }
-    def.bucket_index = None;
     if let Some(ai) = def.auto_inc {
         if !def.indexes.iter().any(|ix| ix.cols.first() == Some(&ai)) {
             return Err(SqlError::new(

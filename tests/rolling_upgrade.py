@@ -75,6 +75,7 @@ class Cluster:
         self.gateway_ports = allocated
         self.processes, self.logs, self.expected = {}, {}, {i: 0 for i in range(1, 17)}
         self.stage = 0
+        self.gateway_versions = {}
         self.config = self.work / "cluster.json"
         self.config.write_text(json.dumps({"shards": [
             {"id": i, "replicas": [self.nodes[f"{i}.{j}"] for j in range(1, replicas + 1)]}
@@ -168,6 +169,7 @@ return n >= ...
     def gateway(self, version, slot=0, refuse=False):
         binary = self.args.old_bin if version == "old" else self.args.new_bin
         key = "g" + str(slot)
+        self.gateway_versions[slot] = version
         self.spawn(key, [str(binary), "--config", str(self.config), "--listen",
                          f"127.0.0.1:{self.gateway_ports[slot]}", "--allow-all", "--node-id", str(slot + 1),
                          "--default-engine", self.args.engine], dict(os.environ, TARN_LOG="info"))
@@ -205,11 +207,34 @@ return n >= ...
                                      "out[#out+1]={r.id,r.v} end return out"))
         assert sorted(map(tuple, physical)) == sorted(self.expected.items()), physical
 
+    def legacy_write_refusal(self, slot):
+        # A predecessor-created catalog has unknown declaration provenance.
+        # Check the new gateway's default before deliberately opting into the
+        # old policy for this fixture's separately recorded mixed-version DML.
+        with self.sql(slot, "upgrade") as c:
+            assert q(c, "SELECT @@tarn_legacy_integrity") == (("REJECT",),)
+            before = q(c, "SELECT id,v FROM t ORDER BY id")
+            try:
+                q(c, "UPDATE t SET v=v+9999 WHERE id=1")
+            except pymysql.MySQLError as error:
+                assert error.args[0] == 1235 and "legacy integrity" in error.args[1], error
+            else:
+                raise AssertionError("new gateway admitted legacy DML without acknowledgement")
+            assert q(c, "SELECT id,v FROM t ORDER BY id") == before
+            assert q(c, "SELECT @@tarn_legacy_integrity") == (("REJECT",),)
+        self.event("legacy_integrity_default_refused_without_effect", slot=slot)
+
     def canary(self, slots=(0,)):
         self.stage += 1
         nodes = self.leaders()
         for slot in slots:
             with self.sql(slot, "upgrade") as c:
+                if self.work.name == "maintenance" and self.gateway_versions[slot] == "new":
+                    # Explicit test-only acceptance of the known fixture's old
+                    # declaration policy; never a gateway/pool-wide default.
+                    assert q(c, "SELECT @@tarn_legacy_integrity") == (("REJECT",),)
+                    q(c, "SET SESSION tarn_legacy_integrity='ALLOW'")
+                    self.event("legacy_integrity_canary_explicit_allow", slot=slot)
                 q(c, "BEGIN")
                 q(c, "UPDATE t SET v=v+9999 WHERE id=1")
                 assert q(c, "SELECT v FROM t WHERE id=1") == ((self.expected[1] + 9999,),)
@@ -323,8 +348,10 @@ def maintenance(args):
             c.joined(shard)
         c.gateway('old', slot=1, refuse=True)
         c.gateway('new')
+        c.legacy_write_refusal(0)
         c.canary()
         c.gateway('new', slot=1)
+        c.legacy_write_refusal(1)
         for shard in range(1, c.shards + 1):
             leader = c.leader(shard)
             target = next(k for k in c.nodes if k.startswith(f'{shard}.') and k != leader)

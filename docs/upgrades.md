@@ -14,6 +14,17 @@ Other releases and Tarantool upgrades require separate validation. In
 particular, `2e8aaeb` predates the disk-format guard: never start it on a
 format-2 directory, even if it appears to open the files.
 
+The new gateway also rejects writes to predecessor-created tables by default:
+old catalogs lack declaration provenance, including discarded CHECK/ENUM/SET
+history. Inspect `SHOW TARN INTEGRITY` and follow [the migration contract](integrity.md)
+before replacing gateways. A deliberate session-only `tarn_legacy_integrity='ALLOW'`
+acknowledges the old unenforced behavior; it is never enabled automatically.
+This SQL admission boundary is separate from format-2 disk admission; an old
+gateway is refused against the upgraded storage.
+The upgrade matrix checks default refusal without an effect before explicitly
+acknowledging only its owned, known-schema legacy canary sessions. This is a
+SQL admission change, not a data-validation certificate or format conversion.
+
 ## Compatibility matrix
 
 | Gateway | Storage | Admission |
