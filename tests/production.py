@@ -234,6 +234,7 @@ class Fixture:
                 "lua/*.lua",
                 "scripts/production.py",
                 "tests/production.py",
+                "tests/proxy.py",
                 "Cargo.toml",
                 "Cargo.lock",
             )
@@ -622,10 +623,10 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
                     stderr=subprocess.PIPE,
                     timeout=15,
                 )
-                assert p.returncode != 0, name
                 (self.work / ("reject-" + name + ".log")).write_bytes(
                     p.stdout + p.stderr
                 )
+                assert p.returncode != 0, name
             finally:
                 path.write_bytes(old)
             self.record(name)
@@ -659,6 +660,26 @@ assert(repl:is_connected()); assert(not pcall(repl.call,repl,'tarn_role')); asse
             lambda c: c.update(password="unsafe-inline-password"),
             cmd,
         )
+        startup = [part for part in cmd if str(part) != "--check-deployment"]
+        startup += ["--listen", "127.0.0.1:0"]
+        bad(
+            "startup incompatible transaction age rejected",
+            path,
+            lambda c: c.update(max_txn_age=121),
+            startup,
+        )
+        assert b"incompatible Tarn storage" in (
+            self.work / "reject-startup incompatible transaction age rejected.log"
+        ).read_bytes()
+        bad(
+            "incompatible transaction age rejected",
+            path,
+            lambda c: c.update(max_txn_age=121),
+            cmd,
+        )
+        assert b"incompatible Tarn storage" in (
+            self.work / "reject-incompatible transaction age rejected.log"
+        ).read_bytes()
         p = self.config / "gateway.production.json"
         bad(
             "duplicate failure domains rejected",

@@ -60,7 +60,9 @@ fn validate(data: &[u8], shard: u32, max_txn_age: f64) -> SqlResult<()> {
     Ok(())
 }
 
-pub(crate) async fn admit(client: &Client, shard: u32, max_txn_age: f64, completion: bool) -> SqlResult<()> {
+/// Check the read-only protocol, format, layout and expiry contract before
+/// using a physical connection. Failed admission retires that connection.
+pub async fn admit(client: &Client, shard: u32, max_txn_age: f64, completion: bool) -> SqlResult<()> {
     let result = async {
         let call = async {
             if completion {
