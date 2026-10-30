@@ -9,6 +9,7 @@ One host measures contention and costs, not independent failure domains.
 """
 import argparse
 import concurrent.futures
+import gzip
 import hashlib
 import json
 import math
@@ -107,6 +108,35 @@ def process_sample(directory, extra=None):
 
 def status(c):
     return {k: int(v) for k, v in q(c, 'SHOW GLOBAL STATUS') if k.startswith('Tarn_') and str(v).isdigit()}
+
+
+def retain_latencies(sample, output):
+    """Keep exact samples without accumulating every arm in the parent heap.
+
+    This runs after measurement. json.dump streams encoder chunks; json.dumps
+    would allocate another complete copy and inflate subsequent fork workers.
+    """
+    workers = sample.get('workers', [])
+    if not workers or 'latencies' not in workers[0]:
+        return
+    directory = output.with_suffix('.samples')
+    directory.mkdir(exist_ok=True)
+    path = directory / ('%s-%s-%s-%s.json.gz' % tuple(
+        sample[k] for k in ('shape', 'lanes', 'pair', 'route_parts')))
+    with gzip.open(path, 'wt') as stream:
+        json.dump([dict(worker_id=w['worker_id'], latencies=w['latencies'])
+                   for w in workers], stream, separators=(',', ':'))
+    sample['raw_latencies'] = dict(path=str(path.relative_to(output.parent)),
+                                   sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                                   bytes=path.stat().st_size)
+    for worker in workers:
+        latencies = worker.pop('latencies')
+        worker['completed'] = len(latencies)
+        worker['latency_kinds'] = {}
+        for kind in sorted({row[2] for row in latencies}):
+            values = [row[1] for row in latencies if row[2] == kind]
+            worker['latency_kinds'][kind] = dict(count=len(values), p50=percentile(values,.5),
+                                                p99=percentile(values,.99))
 
 
 def main():
@@ -299,6 +329,7 @@ def main():
                         finally:
                             for node in installed:
                                 ev(node,"if __lazy185 then __lazy185.restore() end return true")
+                            retain_latencies(sample, output)
                             save()
     finally: c.close()
 
