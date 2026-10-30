@@ -2081,10 +2081,10 @@ tla/check.sh BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta \
 
 ### Configuration counts
 
-The default list contains 316 unique configurations: 78 positive
-outcomes and 238 expected broken/trade-off outcomes. The 319 generated
+The default list contains 319 unique configurations: 79 positive
+outcomes and 240 expected broken/trade-off outcomes. The 322 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 329 total. Explicit
+placement and query-budget configurations are maintained directly, for 332 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57

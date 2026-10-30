@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/tmp/bootstrap-before/lua/test/clock_bootstrap.py", line 156, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/tmp/bootstrap-before/lua/test/clock_bootstrap.py", line 108, in main
+    assert not state['marker'] and not state['policy'] and not state['loaded'] and not state['admitted'],state
+AssertionError: {'loaded': True, 'quorum': 'N / 2 + 1', 'policy': True, 'marker': False, 'ro': False, 'wal': 'fsync', 'running': True, 'admitted': True}
