@@ -2306,7 +2306,6 @@ mod tests {
             params: &[],
             conn_coll: "utf8mb4_bin",
             default_coll: "utf8mb4_bin",
-            statistics: None,
         };
         let mut plans = plan(sql, &ctx)?.expect("a schema change");
         assert_eq!(plans.len(), 1);
