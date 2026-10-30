@@ -1,0 +1,11 @@
+   Compiling tarn-sql v0.1.0 (/Users/jeremiahbrazeau/Documents/ChatGPT/Fast Postgres/.tools/tarn-issue179/crates/tarn-sql)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.12s
+     Running unittests src/lib.rs (/private/tmp/tarn-issue179/host-target/debug/deps/tarn_sql-26cca6a78c65d5ec)
+
+running 3 tests
+test session::tests::schema_output_exposes_legacy_integrity_without_certifying_rows ... ok
+test integrity::tests::old_catalogs_remain_unknown_after_metadata_removal_and_alter ... ok
+test integrity::tests::declarations_are_rejected_before_a_plan_can_publish ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 180 filtered out; finished in 0.01s
+
