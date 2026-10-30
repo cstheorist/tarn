@@ -2579,7 +2579,7 @@ MemTX and Vinyl. Resource exhaustion returns a complete fallback or error;
 no prefix of a failed merge is published.
 
 The [retained executable evidence](../tests/evidence/lazy-routing/README.md)
-includes 60 native lifecycle checks, source/target and JOIN restart faults,
+includes 60 Lua lifecycle checks, source/target and JOIN restart faults,
 composite RF3/fsync leader recovery, both full 11-case lazy SQL suites
 against MariaDB and the 1,092-case differential pass. The
 [routing cost study](lazy-routing-cost.md) retains five paired RF3/fsync

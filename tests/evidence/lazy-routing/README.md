@@ -23,7 +23,7 @@ attempts. No failed or incomplete attempt is counted as qualification.
   read-heavy/prefix and scheduled low-load work on four x86_64 CPUs.
   It retains the measured regressions. This archive predates the `KEEP=1`
   cleanup correction and therefore lacks the cluster node logs.
-* `validation-local.tar.gz`: 60 native lifecycle checks; source/target
+* `validation-local.tar.gz`: 60 Lua lifecycle checks; source/target
   movement and JOIN/restart controls; composite RF3/fsync leader-death and
   recovery on MemTX and Vinyl; ordered SQL merge, stale-key rechecks,
   failed-owner refusal and incarnation migration; both full lazy SQL
