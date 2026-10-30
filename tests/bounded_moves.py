@@ -68,7 +68,7 @@ def main():
     ap.add_argument('--engine', choices=['memtx', 'vinyl', 'mixed'], default='vinyl')
     ap.add_argument('--mib', type=int, default=32, help='payload MiB per moving bucket')
     ap.add_argument('--moves', type=int, choices=[1, 2], default=1)
-    ap.add_argument('--fault', choices=['none', 'source', 'receiver', 'coordinator', 'disk', 'reply'], default='none')
+    ap.add_argument('--fault', choices=['none', 'source', 'receiver', 'coordinator', 'disk', 'reply', 'lazy'], default='none')
     a = ap.parse_args()
     work = Path(a.work).absolute(); work.mkdir(mode=0o700)
     assert a.mib >= 1
@@ -218,6 +218,15 @@ for first=1,n,4 do local writes={}
   require('fiber').sleep(.05)
  until false
 end return true''',[tables,key,b,count],timeout=600)
+        if a.fault == 'lazy':
+            assert a.moves == 1, 'lazy target fault uses one source bucket'
+            query(0, "CREATE TABLE l (id INT PRIMARY KEY,k INT,KEY lk(k) COMMENT 'tarn:lazy') ENGINE="+engines[0])
+            lazy_key = next(k for k in range(1, 1000) if bucket_of(k, 16) > 8)
+            for i in range(3, 6):
+                rpc(i).call("__lazy_apply=tarn_lazy_apply; tarn_lazy_apply=function(...) return {'error',1235,'injected lazy target unavailable'} end; return true")
+            query(0, f'INSERT INTO l VALUES ({keys[0]},{lazy_key})')
+            assert rpc(ls[0]).call('return tarn_lazy_stats()[2].depth') > 0
+            checked('lazy target RPC unavailable with acknowledged source outbox retained')
         checked('RF3/fsync payload loaded through checked mutations')
         for i in ls:rpc(i).call('box.snapshot();return true',timeout=60)
         result['initial_vclocks']={str(i):rpc(i).call('return box.info.vclock') for i in range(6)}
@@ -225,7 +234,7 @@ end return true''',[tables,key,b,count],timeout=600)
         # datasets cannot accidentally skip the intended fault.
         hook='bucket_rows' if a.fault in ('source','coordinator','disk') else 'move_install_batch'
         hi=ls[0] if hook=='bucket_rows' else ls[1]
-        if a.fault not in ('none','reply'):rpc(hi).call('return tarn_test_hook(..., "hold")',[hook])
+        if a.fault not in ('none','reply','lazy'):rpc(hi).call('return tarn_test_hook(..., "hold")',[hook])
         if a.fault=='reply':(work/'armed').touch()
         moves={};t0=time.monotonic()
         def move(b):
@@ -233,7 +242,7 @@ end return true''',[tables,key,b,count],timeout=600)
             except Exception as e:moves[str(b)]=dict(error=repr(e))
         for b in buckets:
             th=threading.Thread(target=move,args=(b,),daemon=True);threads.append(th);th.start()
-        injected=a.fault=='reply';restored=False;restarted=None;disk_retried=False
+        injected=a.fault in ('reply','lazy');restored=False;restarted=None;disk_retried=False
         if injected:result['fault_at_seconds']=0
         finished=False;fence_start=None;unavailable_start=None;cleanup_start=None
         peak_rss={};peak_disk=0
@@ -283,6 +292,12 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
                 if restarted is not None:start_storage(restarted)
                 if a.fault=='coordinator':start_sql(0)
                 if a.fault=='disk':rpc(ls[1]).call('tarn.cfg.move_disk_reserve_bytes=1073741824;return true')
+                if a.fault=='lazy':
+                    assert rpc(ls[0]).call('return tarn_lazy_stats()[2].depth') > 0
+                    assert sample['states']['1']['states'][str(buckets[0])] == 'fenced'
+                    assert sample['states']['2']['states'][str(buckets[0])] == 'held'
+                    checked('unavailable lazy target blocks ownership withdrawal and publication')
+                    for i in range(3, 6):rpc(i).call('tarn_lazy_apply=__lazy_apply; return true')
                 restored=True
             target=sample['states'].get('2',{});source=sample['states'].get('1',{})
             if all(target.get('states',{}).get(str(b))=='active' for b in buckets) and \
@@ -320,12 +335,27 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
         result.update(moves=moves,elapsed_seconds=elapsed,peak_rss_bytes=peak_rss,peak_allocated_disk_bytes=peak_disk,
             payload_bytes=a.moves*a.mib*1024*1024,payload_mib_per_second=a.moves*a.mib/elapsed,
             peak_encoded_staging_bytes=max(s['staged_bytes'] for s in metrics),
+            peak_simultaneous_moves=max((state['movement']['active'] for sample in metrics for state in sample['states'].values()), default=0),
             sampled_write_fence_seconds=None if fence_start is None else elapsed-fence_start,
             sampled_unavailable_seconds=None if unavailable_start is None else elapsed-unavailable_start,
             sampled_cleanup_seconds=None if cleanup_start is None else elapsed-cleanup_start,
             sampling_note='phase boundaries sampled; durations are lower-bound intervals plus final completion latency; HWM includes load')
         exact(ls[0],tables,keys,count,0);exact(ls[1],tables,keys,count,count*a.moves)
         checked('exact acknowledged rows and payloads present once on destination')
+        if a.fault=='lazy':
+            wait(lambda: all(rpc(i).call('return tarn_lazy_stats()[2].depth') == 0 for i in ls))
+            front = rpc(ls[1]).call('return tarn_lazy_frontiers({...},{...})', [buckets[0]])
+            assert front[0]=='ok' and front[1][0][1:3] == [1,1], front
+            assert query(1,f'SELECT id,k FROM l FORCE INDEX(lk) WHERE k={lazy_key}') == ((keys[0],lazy_key),)
+            old_lazy_key = lazy_key
+            lazy_key = next(k for k in range(lazy_key+1, 1000) if bucket_of(k, 16) > 8)
+            query(1,f'UPDATE l SET k={lazy_key} WHERE id={keys[0]}')
+            wait(lambda: all(rpc(i).call('return tarn_lazy_stats()[2].depth') == 0 for i in ls))
+            front = rpc(ls[1]).call('return tarn_lazy_frontiers({...},{...})', [buckets[0]])
+            assert front[0]=='ok' and front[1][0][1:3] == [2,2], front
+            assert query(1,f'SELECT id,k FROM l FORCE INDEX(lk) WHERE k={lazy_key}') == ((keys[0],lazy_key),)
+            assert query(1,f'SELECT id,k FROM l FORCE INDEX(lk) WHERE k={old_lazy_key}') == ()
+            checked('lazy exact membership and transferred counter/frontier continue without reset')
         if a.fault=='reply':
             dropped=sum((work/f'proxy{i}.log').read_text().count('swallowed the reply') for i in range(6))
             assert dropped>=1,'proxy did not swallow an executed page reply'

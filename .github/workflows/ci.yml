@@ -162,7 +162,7 @@ jobs:
             for engine in memtx vinyl mixed; do
               python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$engine" --engine "$engine" --mib 1
             done
-            for fault in source receiver coordinator disk reply; do
+            for fault in source receiver coordinator disk reply lazy; do
               python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$fault" --engine mixed --mib 1 --fault "$fault"
             done
           done
