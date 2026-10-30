@@ -7,6 +7,13 @@ stored tuples as MessagePack. It uses the same memtx or Vinyl engine,
 replication and WAL as Lua; changing the procedure language does not
 remove those costs.
 
+External clients can use the versioned, read-only
+[strong Key/Value API](strong-kv.md) for full-primary-key points and bounded
+multi-get. It reuses Tarn's strong read guards and exposes schema/ownership
+handles. Direct native GET/SELECT remains available with Tarantool's local
+visibility; it does not acquire Tarn's request-specific freshness or
+prepared-write checks. These two contracts must be measured separately.
+
 [Issue #28](https://github.com/cstheorist/tarn/issues/28) is closed. It
 introduced native reads, autocommit writes, one-shard commits and read-only
 validation, followed by narrower key/range lock checks and stream guards.

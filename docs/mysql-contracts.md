@@ -51,4 +51,22 @@ These Tarn diagnostics are read-only session variables. `@@global.transaction_is
 
 ## Extending the gate
 
-Add a uniquely named `case_<id>` and matching manifest entry, with paired assertions for both outcomes and precise scope. Run `python3 scripts/check_contracts.py` and commit the generated page. `--check` rejects missing/duplicate/unregistered cases or stale generated documentation. Follow-ups for integrity declarations (#179), key/collation behavior (#180), strong KV (#181), lazy consistency (#182) and retry contracts (#183) extend this manifest; they are not implied complete by its initial entries.
+Add a uniquely named `case_<id>` and matching manifest entry, with paired assertions for both outcomes and precise scope. Run `python3 scripts/check_contracts.py` and commit the generated page. `--check` rejects missing/duplicate/unregistered cases or stale generated documentation. Register Tarn-specific suites through the extensions list, with unique case functions and a matching source manifest. The checker validates those registrations and renders their scope below. Unregistered integrity, key/collation, KV and lazy-consistency histories remain outside the certified scope.
+
+## Registered extension: outcomes
+
+Registered Tarn outcome extension: error namespaces, transaction state and retry permissions across PyMySQL text, MySQL Connector/Python text and binary prepared SQL, registered strong KV v1 and the Rust SDK. Equivalent/difference entries describe the stated SQL behavior; Tarn-specific storage faults and KV histories are not paired MySQL oracle claims.
+
+Source: `contracts/outcomes.json`. These histories run in their own required workflow; the paired oracle runner above does not execute storage-specific faults.
+
+| Contract/test ID | Classification | Guaranteed scope / observed difference |
+|---|---|---|
+| `outcomes:statement_rollback` | equivalent | 1062/23000 rolls back the statement and preserves preceding transaction writes. |
+| `outcomes:known_abort` | difference | Strict serializable validation returns 1213/40001 and ends the transaction without its writes. |
+| `outcomes:lock_timeout` | equivalent | 1205/HY000 for a row-lock wait rolls back the statement; earlier writes can commit. |
+| `outcomes:mutation_replies` | extension | Autocommit, local and RC commits preserve 1180/40003 for lost, malformed or explicitly unknown replies; one completed increment at most. |
+| `outcomes:client_loss` | extension | A lost SQL connection cannot deliver a server SQLSTATE; a possibly executed mutation remains unknown and is not replayed. |
+| `outcomes:pending_apply` | extension | Confirmed logical COMMIT can precede physical APPLY; raw native reads lag while SQL, registered KV and the Rust SDK refuse the unfinished row, then agree after APPLY. |
+| `outcomes:prepare_outcomes` | extension | Lost durable PREPARE receipts with unavailable participant status stay 1180/40003 until resolved; a confirmed COMMITTED decision returns success despite missing status and pending APPLY. |
+| `outcomes:operation_id` | extension | A unique operation record committed with the effect resolves a lost local COMMIT reply without a second increment. |
+| `outcomes:kv_errors` | extension | Strong KV retains contract/MySQL/Tarantool error namespaces, rejects stale schema/ownership and oversized batches, and cannot inherit or commit buffered SQL work. |

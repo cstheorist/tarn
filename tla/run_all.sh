@@ -17,6 +17,7 @@ for cfg in "$@"; do
     DecisionPlacement|Bug_Decision*) module=DecisionPlacement.tla ;;
     PipelineAdmission|Bug_Pipeline*) module=PipelineAdmission.tla ;;
     LazyRouting|Bug_LazyRouting*) module=LazyRouting.tla ;;
+    LazyBaseline|Bug_LazyBaseline*) module=LazyBaseline.tla ;;
     LazyIndex|Bug_LazyIndex*) module=LazyIndex.tla ;;
     LazyCapacity|Bug_LazyCapacity*) module=LazyCapacity.tla ;;
     LazyBarrier|Bug_LazyBarrier*) module=LazyBarrier.tla ;;
@@ -50,6 +51,7 @@ for cfg in "$@"; do
     BackfillDDL|Bug_BackfillDDL*) module=BackfillDDL.tla ;;
     Backfill|Bug_Backfill*) module=InstantBackfill.tla ;;
     EngineBuildReentry|Bug_EngineBuild*) module=EngineBuildReentry.tla ;;
+    ExternalStrongKV|Bug_KV*) module=ExternalStrongKV.tla ;;
     *) module=MC.tla ;;
   esac
   start=$(date +%s)

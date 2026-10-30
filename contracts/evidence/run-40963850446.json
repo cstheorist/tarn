@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40963850446",
+  "head": "de29ec1cff86a477d51bdb702114e435cc463289",
+  "merge_source": "5018b098969a6adac3f728a951e5b6f1e00b334e",
+  "status": "failure_retained",
+  "variants": [
+    {
+      "artifact": "outcomes-memtx-native-0-40963850446",
+      "complete": true,
+      "case_records": 27,
+      "passed_cases": 27,
+      "admission_scope_runs": 9,
+      "admission_key_outcomes": 216,
+      "failed_cases": [],
+      "source_sha256": "5207991dbc46d4c379336581276ccce272f3a638094b18f10a491e03e43eb1ee",
+      "results_sha256": "45937f7234dec8810ba65ebc6ad95bad38856744c968fad25fa5d1e02ed115c8"
+    },
+    {
+      "artifact": "outcomes-memtx-native-1-40963850446",
+      "complete": true,
+      "case_records": 27,
+      "passed_cases": 27,
+      "admission_scope_runs": 9,
+      "admission_key_outcomes": 216,
+      "failed_cases": [],
+      "source_sha256": "9d2123af7fdafe46bd1fe710084bd27de824c5d9d581e14de4a870136a02dd2c",
+      "results_sha256": "7fa56cd7a755793b7bea33763294bb3c6d265aa5f12e5dfba8df39e032fed582"
+    },
+    {
+      "artifact": "outcomes-vinyl-native-0-40963850446",
+      "complete": false,
+      "case_records": 6,
+      "passed_cases": 5,
+      "admission_scope_runs": 0,
+      "admission_key_outcomes": 0,
+      "failed_cases": [
+        {
+          "case": "pending_apply",
+          "driver": "pymysql",
+          "error": "OperationalError(1180, 'Lost connection to shard 1 during commit (tarantool connection closed); the statement may or may not have been applied')"
+        }
+      ],
+      "source_sha256": "3eba52d92f360535b6dd0fb1a3dbaf3905f5a182fa13572740c349aca88b1eed",
+      "results_sha256": "dbe63cddad2ec9b80c5d1c9dd1acd9ebdaabe913f23b1d0eb417a516c888d5bc"
+    },
+    {
+      "artifact": "outcomes-vinyl-native-1-40963850446",
+      "complete": true,
+      "case_records": 27,
+      "passed_cases": 27,
+      "admission_scope_runs": 9,
+      "admission_key_outcomes": 216,
+      "failed_cases": [],
+      "source_sha256": "bc1e7ab8d1942a1c3638195f13f63ce7a0130abea10c48895594c0e1e9f13034",
+      "results_sha256": "4439b90cbf1f8af67e51b7ea707e6bde7e034ee6469ec61cc37244a5c3598395"
+    }
+  ],
+  "diagnosis": "Lua/Vinyl completed the client-loss case, then the held socket retired asynchronously after plan removal and interrupted the next fixture reset write with 1180/40003. The reset was not replayed. This is a retained failure, not a green matrix.",
+  "correction": "Wait for a token-bound physical-close event and zero gateway pending RPC ownership before any subsequent fixture mutation; record positive pending/byte charges after client loss and zero pending after retirement.",
+  "focused_correction_validation": {
+    "scope": "local owned Lua/Vinyl RF3/fsync, all three client modes",
+    "complete": true,
+    "passed_cases": 27,
+    "source": "de29ec1cff86a477d51bdb702114e435cc463289",
+    "diff_sha256": "63e0e4dd104af539d8caa780170384ad2d2bd67f8a1bd7148c5ed3a2956e860f",
+    "file_sha256": {
+      "tests/outcome_proxy.py": "29670894b88b286b1257e6cbc4982c3919edf9a9d61a021b0a09fc6f6060c79f",
+      "tests/sql/outcomes.py": "ab4b930735f0638750d343bbab6ac66265d4dfdf45cc504ffa26d343a38d3143"
+    },
+    "results_sha256": "19de6837d19bf17c2ed8123f32891c8de762efe4728cfdac5b53d627f0beefbf",
+    "boundary": "The complete isolated matrix is required again; this local check does not erase the failure."
+  }
+}
