@@ -1,0 +1,77 @@
+name: Composite lazy routing costs
+on:
+  pull_request:
+    paths:
+      - 'tests/sql/lazy_routing_cost.py'
+      - '.github/workflows/lazy-routing.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lazy-routing-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cost:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        lanes: [1, 4, 16]
+        shape: [uniform, skewed]
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL
+      - uses: actions/cache@v6
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+      - run: cargo build --release --locked -p tarn-server -p tarn-storage
+      - name: Record source, binaries and host
+        run: |
+          mkdir -p /tmp/lazy-routing-evidence
+          git rev-parse HEAD > /tmp/lazy-routing-evidence/source.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/lazy-routing-evidence/binaries.txt
+          lscpu > /tmp/lazy-routing-evidence/cpu.txt
+          df -h > /tmp/lazy-routing-evidence/storage.txt
+          uname -a > /tmp/lazy-routing-evidence/uname.txt
+      - name: Start four real RF3/fsync groups
+        env:
+          TARN_TEST_HOOKS: '1'
+          TARN_VINYL_MEMORY_MB: '16'
+          TARN_VINYL_CACHE_MB: '0'
+        run: scripts/cluster.sh start -n 4 -r 3 -m 96 -w fsync -t 4 -d /tmp/lazy-routing-cluster
+      - name: Five matched pairs for write-heavy, read-heavy and low-load operation
+        run: |
+          for workload in write-heavy read-heavy low-load; do
+            every=1; prefix=10; rate=0
+            if [ "$workload" != write-heavy ]; then every=10; prefix=20; fi
+            if [ "$workload" = low-load ]; then rate=50; fi
+            python3 tests/sql/lazy_routing_cost.py \
+              --nodes 127.0.0.1:3311,127.0.0.1:3321,127.0.0.1:3331,127.0.0.1:3341 \
+              --cluster-dir /tmp/lazy-routing-cluster --pairs 5 --seconds 10 --threads 16 --batch 8 \
+              --lanes '${{ matrix.lanes }}' --shapes '${{ matrix.shape }}' \
+              --write-every "$every" --prefix-every "$prefix" --rate "$rate" --p99-ms 250 \
+              --source "$(git rev-parse HEAD)" --binary target/release/tarn-server --native target/release/libtarn_storage.so \
+              --output "/tmp/lazy-routing-evidence/$workload.json" \
+              > "/tmp/lazy-routing-evidence/$workload.log" 2>&1
+          done
+      - name: Stop only the owned fixture
+        if: always()
+        run: scripts/cluster.sh stop -d /tmp/lazy-routing-cluster
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: lazy-routing-${{ matrix.shape }}-${{ matrix.lanes }}
+          path: |
+            /tmp/lazy-routing-evidence
+            /tmp/lazy-routing-cluster/*.log
+            /tmp/lazy-routing-cluster/cluster.json

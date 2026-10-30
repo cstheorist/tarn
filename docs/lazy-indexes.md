@@ -33,7 +33,7 @@ change lane values automatically. Adding lanes distributes independent
 rows; it cannot parallelize concurrent updates to one row.
 
 A query binding every routing column reads one index destination. A shorter
-nonempty equality prefix reads every live index shard, up to 64, and merges
+nonempty equality prefix reads every live index shard, up to 16, and merges
 pages by normalized typed index columns and typed primary keys. Each shard
 retains one page (128 inspected entries, at most 1 MiB); the gateway caps
 buffered page bytes at 16 MiB, total candidates at 65,536 and page calls at

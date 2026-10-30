@@ -146,6 +146,22 @@ class T:
             assert plan["routing_parts"] == 2 and plan["routing"]["shard_count"] == len(self.nodes), plan
             exact = "SELECT id,n FROM t_composite WHERE k=7 AND n=128 ORDER BY id"
             assert self.lazy(c, exact) == ((256, 128), (257, 128))
+            keyset = "SELECT id,n FROM t_composite WHERE k=7 AND (n>128 OR (n=128 AND id>257)) ORDER BY n,id LIMIT 7"
+            assert self.lazy(c, keyset) == expected[257:264]
+            # One failed owner must refuse the whole statement, even when
+            # another owner has enough rows to satisfy LIMIT already.
+            failing = self.nodes[-1]
+            ev(failing, "assert(tarn.cfg.test_hooks and not __lazy185_select); __lazy185_select=tarn_lazy_select; "
+                        "tarn_lazy_select=function() return {'error',1041,'owned incomplete-prefix control'} end; return true")
+            try:
+                try:
+                    self.lazy(c, sql + " LIMIT 1")
+                except pymysql.MySQLError as e:
+                    assert e.args[0] == 1041, e
+                else:
+                    raise AssertionError("partial owner set returned a successful LIMIT")
+            finally:
+                ev(failing, "tarn_lazy_select=assert(__lazy185_select); __lazy185_select=nil; return true")
             plan = json.loads(q(c, "EXPLAIN FORMAT=JSON " + exact)[0][0])["plan"]["lazy_index_alternative"]
             assert plan["routing"]["status"] == "single_destination" and plan["routing"]["shard_count"] == 1, plan
             q(c, "SET tarn_lazy_read_your_writes=OFF")

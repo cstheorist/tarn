@@ -26,7 +26,7 @@ const HISTORY_BUCKETS: usize = 4096;
 const HISTORY_PENDING: usize = 128;
 const HISTORY_BYTES: usize = 1_048_576;
 const SCAN_ENTRIES: usize = 65_536;
-pub const MAX_READ_SHARDS: usize = 64;
+pub const MAX_READ_SHARDS: usize = 16;
 const MAX_PAGE_READS: usize = 1024;
 const RESULT_BYTES: usize = 16 * 1_048_576;
 
@@ -533,45 +533,64 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
     let mut kept = Vec::new();
     let (mut scanned, mut bytes, mut pages) = (0usize, 0usize, 0usize);
     let mut dummy = Txn::new(cluster, false);
+    let mut page_limit = want.unwrap_or(PAGE_ENTRIES as u64).clamp(1, PAGE_ENTRIES as u64) as usize;
     loop {
-        let mut candidates = Vec::with_capacity(PAGE_ENTRIES);
-        while candidates.len() < PAGE_ENTRIES {
+        let mut candidates = Vec::with_capacity(page_limit);
+        while candidates.len() < page_limit {
             // Every non-exhausted owner must have a head before choosing
             // the next candidate. A drained page can precede every other
             // head; refill it before continuing the typed merge.
-            for lane in &mut lanes {
-                while lane.rows.is_empty() && !lane.done {
+            while lanes.iter().any(|lane| lane.rows.is_empty() && !lane.done) {
+                let mut reads = Vec::new();
+                for (n, lane) in lanes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, lane)| lane.rows.is_empty() && !lane.done)
+                {
                     pages += 1;
                     if pages > MAX_PAGE_READS {
                         return Ok(None);
                     }
-                    let mut m = Mp::new();
-                    m.arr(6)
-                        .uint(l.space_id as u64)
-                        .vals(&key)
-                        .uint(if *reverse { Iter::Req as u64 } else { Iter::Eq as u64 })
-                        .uint(PAGE_ENTRIES as u64);
-                    match &lane.after {
-                        Some(a) => {
-                            m.raw(a);
+                    let key = &key;
+                    let count = map.count;
+                    reads.push(async move {
+                        let mut m = Mp::new();
+                        m.arr(6)
+                            .uint(l.space_id as u64)
+                            .vals(key)
+                            .uint(if *reverse { Iter::Req as u64 } else { Iter::Eq as u64 })
+                            .uint(page_limit as u64);
+                        match &lane.after {
+                            Some(a) => {
+                                m.raw(a);
+                            }
+                            None => {
+                                m.nil();
+                            }
                         }
-                        None => {
-                            m.nil();
+                        crate::observe::shard(lane.shard);
+                        crate::observe::read(&lane.route);
+                        lane.route.encode(&mut m);
+                        let (d, _wire) =
+                            crate::budget::cluster_read(cluster, lane.shard, "tarn_lazy_select", &m.0).await?;
+                        let (rows, next) = decode_page(&d, l.space_id, t, ix, count)?;
+                        if next.is_some() && next == lane.after {
+                            return Err(proto("lazy cursor did not advance"));
                         }
-                    }
-                    crate::observe::shard(lane.shard);
-                    crate::observe::read(&lane.route);
-                    lane.route.encode(&mut m);
-                    let (d, _wire) = crate::budget::cluster_read(cluster, lane.shard, "tarn_lazy_select", &m.0).await?;
-                    let (rows, next) = decode_page(&d, l.space_id, t, ix, map.count)?;
-                    if next.is_some() && next == lane.after {
-                        return Err(proto("lazy cursor did not advance"));
-                    }
+                        // Decode/charge retained rows before releasing the wire
+                        // reservation. Returning guards to the fanout collector
+                        // would pin every read permit while later heads wait.
+                        Ok((n, rows, next, d.len()))
+                    });
+                }
+                for read in cluster.read_fanout(reads).await {
+                    let (n, rows, next, size) = read?;
                     scanned += rows.len();
                     if scanned > SCAN_ENTRIES {
                         return Ok(None);
                     }
-                    lane.bytes = d.len();
+                    let lane = &mut lanes[n];
+                    lane.bytes = size;
                     lane.done = next.is_none();
                     lane.after = next;
                     lane.rows = rows.into();
@@ -646,6 +665,10 @@ pub async fn select(cluster: &Arc<Cluster>, p: &SelectPlan, cx: &EvalCtx<'_>) ->
         if want.is_some_and(|n| kept.len() as u64 >= n) {
             break;
         }
+        // Selective predicates and stale candidates need progressively
+        // larger pages; a small successful LIMIT should not read 128 rows
+        // from every owner merely to discard nearly all of them.
+        page_limit = (page_limit * 2).min(PAGE_ENTRIES);
     }
     let current = cluster.bucket_map();
     if current.count != map.count
