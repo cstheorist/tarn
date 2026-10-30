@@ -18,6 +18,7 @@
 #                TARN_QUERY_PUSHDOWN=true|false (opt-in typed reads; default false),
 #                TARN_DDL_JOB_STALE=SECS (ddl_job_stale in cluster.json: tests),
 #                TARN_BUCKET_COUNT=N (bucket_count in cluster.json: buckets of a new cluster)
+#                TARN_RESOURCE_LIMITS=JSON (gateway SQL resource budgets: load fixtures)
 #                TARN_TOPOLOGY_LIMITS=JSON (gateway topology object: resource-pressure fixtures)
 #   scripts/cluster.sh stop  [-d DIR]
 #   scripts/cluster.sh status [-d DIR]
@@ -117,6 +118,7 @@ write_config() {
   [ -n "${TARN_DDL_JOB_STALE:-}" ] && out+=",\"ddl_job_stale\":$TARN_DDL_JOB_STALE"
   [ -n "${TARN_BUCKET_COUNT:-}" ] && out+=",\"bucket_count\":$TARN_BUCKET_COUNT"
   [ -n "${TARN_TOPOLOGY_LIMITS:-}" ] && out+=",\"topology\":$TARN_TOPOLOGY_LIMITS"
+  [ -n "${TARN_RESOURCE_LIMITS:-}" ] && out+=",\"resources\":$TARN_RESOURCE_LIMITS"
   echo "$out}" > "$DIR/cluster.json"
 }
 

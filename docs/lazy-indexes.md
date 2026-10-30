@@ -18,12 +18,49 @@ CREATE TABLE t (
 ) PARTITION BY KEY (tenant_id);
 ```
 
-The first normalized index column determines the index bucket. An equality
-on `status` can therefore read one index shard, then fetch base rows from
-their owning shards. It can still require several base-shard calls. A
-range or ordering column after `status` does not spread one busy status
-across index shards. Prepending a tenant or explicit bucket column can
-spread that load, provided queries bind that routing column.
+By default, the first normalized index column determines the index bucket.
+An equality on `status` reads one index shard, then fetches base rows from
+their owning shards. A later ordering column alone does not spread a busy
+status across index shards.
+
+Opt into composite routing with `COMMENT 'tarn:lazy=N'`, where `N` is the
+number of leading index columns to hash together (1–16, at most the index
+width). For example, `KEY by_status(status, created_at) COMMENT 'tarn:lazy=2'`
+spreads one status across the distinct timestamps. Or choose an explicit
+application lane: `KEY by_status(status, lane, created_at) COMMENT 'tarn:lazy=2'`.
+The application assigns and persists `lane`; Tarn does not invent a salt or
+change lane values automatically. Adding lanes distributes independent
+rows; it cannot parallelize concurrent updates to one row.
+
+A query binding every routing column reads one index destination. A shorter
+nonempty equality prefix reads every live index shard, up to 16, and merges
+pages by normalized typed index columns and typed primary keys. Each shard
+retains one page (128 inspected entries, at most 1 MiB); the gateway caps
+buffered page bytes at 16 MiB, total candidates at 65,536 and page calls at
+1,024. Empty pages containing only obsolete ownership copies still advance
+the cursor. Larger reads use the complete strong fallback or fail explicitly
+under the statement resource budget. ORDER BY that does not follow the
+index requires collecting and sorting the complete qualifying bounded result.
+EXPLAIN FORMAT=JSON shows the routing columns, incarnation, destination or
+fanout, merge order and separate base-row rechecks.
+
+Routing metadata is immutable within an incarnation. To migrate, add a new
+index with the desired annotation, wait for ALTER to return successfully,
+then drop the old index. Bootstrap captures the current committed rows and
+publishes only after delivery completes. This uses the existing bounded,
+write-fenced bootstrap (including its row/time limits); it is not an
+unbounded online build. Comment edits do not change existing routing.
+Upgrade every gateway and replica before creating composite metadata.
+DDL checks every configured replica's routing capability; movement checks
+the destination. Schema exports with active **or retired** composite
+incarnations use lazy envelope version 2 and require a version-2 coordinator
+token. Older importers reject the envelope before native schema effects.
+Legacy single-column declarations and version-1 exports remain supported.
+
+The [paired routing cost study](lazy-routing-cost.md) describes the workload,
+resource configuration, accounting and uncertainty for hotspot measurements.
+Adding lanes can also add shipping work and prefix-read fanout; choose the
+routing columns for the queries that actually bind them.
 
 ## Read contract
 

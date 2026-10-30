@@ -24,6 +24,7 @@ use tarn_common::{SqlError, SqlResult, Value};
 struct SchemaImport<'a> {
     export: &'a [u8],
     lazy: bool,
+    lazy_version: u64,
 }
 
 impl<'a> SchemaImport<'a> {
@@ -32,11 +33,16 @@ impl<'a> SchemaImport<'a> {
         // Old Lua can encode an empty table as an empty map.
         if rd.peek_map().is_some() {
             if rd.map()? == 0 && rd.buf.is_empty() {
-                return Ok(Self { export, lazy: false });
+                return Ok(Self {
+                    export,
+                    lazy: false,
+                    lazy_version: 1,
+                });
             }
             return Err(crate::mpw::proto("schema export must be an array"));
         }
         let mut lazy = false;
+        let mut lazy_version = 1;
         for pos in 0..rd.array()? {
             let mut tag = false;
             let mut schema_version = false;
@@ -52,9 +58,11 @@ impl<'a> SchemaImport<'a> {
                         for _ in 0..rd.map()? {
                             match rd.string()?.as_str() {
                                 "version" => {
-                                    if version || !matches!(rd.value()?, Value::Int(1) | Value::UInt(1)) {
+                                    let v = rd.value()?;
+                                    if version || !matches!(v, Value::Int(1..=2) | Value::UInt(1..=2)) {
                                         return Err(SqlError::unsupported("unsupported lazy schema export version"));
                                     }
+                                    lazy_version = v.as_i64().unwrap() as u64;
                                     version = true;
                                 }
                                 "active" => {
@@ -101,14 +109,18 @@ impl<'a> SchemaImport<'a> {
         if !rd.buf.is_empty() {
             return Err(crate::mpw::proto("trailing schema export data"));
         }
-        Ok(Self { export, lazy })
+        Ok(Self {
+            export,
+            lazy,
+            lazy_version,
+        })
     }
 
     fn args(&self) -> Vec<u8> {
         let mut m = Mp::new();
         m.arr(if self.lazy { 2 } else { 1 }).raw(self.export);
         if self.lazy {
-            m.uint(1);
+            m.uint(self.lazy_version);
         }
         m.0
     }
@@ -729,7 +741,15 @@ impl Cluster {
             // Check EVERY configured candidate replica before sending the
             // coordinator token. A capable leader alone is insufficient:
             // an older follower could later promote without row capture.
-            self.lazy_capabilities_on(replicas).await?;
+            self.lazy_capabilities_on(
+                replicas,
+                if schema.lazy_version == 2 {
+                    crate::catalog::MAX_LAZY_ROUTE_PARTS
+                } else {
+                    1
+                },
+            )
+            .await?;
         }
         lua_status(&call("tarn_schema_import", schema.args()).await?)?;
         // A bucket map with no buckets.
@@ -881,8 +901,23 @@ mod tests {
     }
 
     #[test]
+    fn composite_schema_import_requires_a_version_two_coordinator() {
+        let mut export = Mp::new();
+        export.arr(1);
+        lazy_tag(&mut export, false, true, Value::UInt(2));
+        let parsed = SchemaImport::parse(&export.0).unwrap();
+        assert!(parsed.lazy);
+        assert_eq!(parsed.lazy_version, 2);
+        let args = parsed.args();
+        let mut rd = Rd::new(&args);
+        assert_eq!(rd.array().unwrap(), 2);
+        rd.skip().unwrap();
+        assert_eq!(rd.value().unwrap().as_i64(), Some(2));
+    }
+
+    #[test]
     fn unsupported_or_malformed_lazy_join_tag_fails_before_import() {
-        for version in [Value::UInt(0), Value::UInt(2), Value::Float(1.0), Value::str("1")] {
+        for version in [Value::UInt(0), Value::UInt(3), Value::Float(1.0), Value::str("1")] {
             let mut export = Mp::new();
             export.arr(1);
             lazy_tag(&mut export, true, false, version);
