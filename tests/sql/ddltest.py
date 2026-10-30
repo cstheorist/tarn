@@ -1237,7 +1237,7 @@ function tarn_alter_build(name,a,gen)
  if name=='ddltest.bigt' and r[1]=='ok' and #(a.builds or {})>0 then
   local sp=assert(box.space[name]); h.built=true
   for _,b in ipairs(a.builds) do h.built=h.built and sp.index[b[1]]~=nil end
-  h.unfenced=box.space._tarn_meta:get{'hold:'..sp.id}==nil
+  h.no_drop_hold=box.space._tarn_meta:get{'hold:'..sp.id}==nil
   h.key=require('key_def').new(sp.index[0].parts):extract_key(sp.index[0]:min())[1]
   h.reached=true
   local deadline=require('clock').monotonic()+15
@@ -1260,18 +1260,19 @@ return true""")
                 for node in nodes:
                     state = None
                     while time.monotonic() < deadline and not ddl_finished.is_set():
-                        state = ev(node, "local h=assert(__index_build_review); return {reached=h.reached,built=h.built,unfenced=h.unfenced,key=h.key}")
+                        state = ev(node, "local h=assert(__index_build_review); return {reached=h.reached,built=h.built,no_drop_hold=h.no_drop_hold,key=h.key}")
                         if state['reached']:
                             break
                         time.sleep(.01)
-                    assert state and state['reached'] and state['built'] and state['unfenced'], (node,state,ddl_errors)
+                    assert state and state['reached'] and state['built'] and state['no_drop_hold'], (node,state,ddl_errors)
                     witnesses.append(state)
                 for state in witnesses:
                     for _ in range(10):
                         q(c, "UPDATE bigt SET v=v+1 WHERE id=%s", (state['key'],))
+                        assert not ddl_finished.is_set(), "write completed after the held BUILD phase ended"
                     assert q(c, "SELECT v FROM bigt WHERE id=%s", (state['key'],))[0][0] >= 10
                 assert not ddl_finished.is_set(), ddl_errors
-                print(f"    completed unfenced BUILD and ten acknowledged writes on each of {len(nodes)} shards")
+                print(f"    completed BUILD before PREPARE and ten acknowledged writes on each of {len(nodes)} shards")
             for node in installed:
                 ev(node, "__index_build_review.release=true; return true")
             ddl.join(30)
