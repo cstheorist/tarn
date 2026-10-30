@@ -252,8 +252,35 @@ def run_pressure_phases(schedule, io_limit, wait, now=time.monotonic, record=lam
     return result
 
 
+def keyset_readback(connection, table, projection, tenant, row_limit, *, query=q, progress=None):
+    """Fixed fixture shapes with bounded server pages and total client rows."""
+    assert table in ("p", "c") and projection in ("id", "id,v")
+    progress = {} if progress is None else progress
+    rows, last = [], None
+    progress.update(page_size=128, queries=0, observed_ids=[], row_count=0)
+    while len(rows) < row_limit:
+        limit = min(128, row_limit - len(rows))
+        sql = f"SELECT {projection} FROM {table} WHERE tenant_id=%s"
+        args = (tenant,)
+        if last is not None:
+            sql += " AND id>%s"
+            args += (last,)
+        progress["queries"] += 1
+        page = query(connection, sql + " ORDER BY id LIMIT " + str(limit), args)
+        assert len(page) <= limit, "oversized pressure readback page"
+        for row in page:
+            assert len(row) == (2 if projection == "id,v" else 1) and type(row[0]) is int, "invalid pressure key"
+            assert last is None or row[0] > last, "pressure readback cursor did not advance"
+            last = row[0]
+            rows.append(row)
+        progress.update(observed_ids=[row[0] for row in rows], row_count=len(rows))
+        if len(page) < limit:
+            break
+    return rows
+
+
 def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=q):
-    """One bounded read-only observation; it never settles/replays unknown work."""
+    """Bounded keyset pages after drain; never settle/replay unknown work."""
     success = {row["id"] for row in records if row["result"] == "ok"}
     refused = {row["id"] for row in records if row["result"] == "error" and row.get("error", [None])[0] == 1205}
     unknown = {row["id"] for row in records if row["id"] not in success | refused}
@@ -264,7 +291,8 @@ def audit_pressure_keys(connect, tenant, records, inflight, workers_live, query=
               "workers_live": workers_live, "stored_ids_match_acknowledgements": None, "refused_ids_absent": None}
     try:
         with connect() as connection:
-            rows = query(connection, "SELECT id FROM p WHERE tenant_id=%s ORDER BY id LIMIT 20001", (tenant,))
+            rows = keyset_readback(connection, "p", "id", tenant, PRESSURE_ATTEMPT_CAP + 1,
+                                   query=query, progress=result)
         actual = {row[0] for row in rows}
         clipped = len(rows) > PRESSURE_ATTEMPT_CAP
         unsettled = bool(workers_live or pending or unknown or clipped)
@@ -803,7 +831,7 @@ local s=assert(box.space[name]);return {engine=s.engine,index=s.index[0]:stat(),
                   'unknown_ids': unknown}
         try:
             with self.connect() as c:
-                rows = q(c, 'SELECT id,v FROM c WHERE tenant_id=%s ORDER BY id LIMIT 529', (tenant,))
+                rows = keyset_readback(c, "c", "id,v", tenant, COMPACTION_SEED_ROWS + 1, query=q, progress=result)
             actual = dict(rows)
             result.update(status='incomplete' if unknown else 'complete',
                           matches=actual == self.compaction_expected if not unknown else None,

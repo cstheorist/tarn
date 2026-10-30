@@ -89,6 +89,7 @@ impl Tarantool {
             user: Some("tarn".into()),
             password: Some("tarn".into()),
             connect_timeout: Duration::from_secs(5),
+            max_response_bytes: tarn_iproto::iproto::BODY_LEN_MAX,
             ..Opts::new("")
         }
     }

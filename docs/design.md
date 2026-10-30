@@ -50,6 +50,13 @@ specifies capture, delivery, session catch-up, bootstrap and topology rules.
 | `crates/tarn-storage` | Native procedures: a Tarantool C module the storage nodes load, which serves the most frequent reads, writes and commits without running Lua (§1.5). Their MessagePack goes through the Verus-verified codec, their lock checks through the Verus-verified counts of a copy of the lock index. |
 | `tla/` | TLA+ specification `TarnCommit.tla`, model configurations, TLC results. |
 
+Optional [cardinality hints](operations.md#optional-cardinality-statistics)
+can reorder eligible two-table integer-equality inner joins. A bounded,
+explicit ANALYZE samples index prefixes; schema/expiry generations invalidate
+plans. Estimates affect physical order only: predicates, read sets, OCC and
+buffered-write overlays retain their existing contracts. SQL column layout
+and metadata are preserved through the physical permutation.
+
 ### 1.1 Data layout and routing
 
 * Table `db.t` is the Tarantool space `"db.t"` with one field per column (same
@@ -2383,6 +2390,9 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_PlainLazyGlobalStale | violates UnrelatedOneCommit | 15 | 22 | 7 | 00s | 7 |
 | Bug_PlainLazyPending | violates NoMissingMembership | 10 | 13 | 7 | 00s | 7 |
 | Bug_PlainLazyReplaceReadset | violates NoStaleReadCommit | 9 | 12 | 6 | 00s | 6 |
+| Bug_QueryEarlyResultRelease | violates Ownership | 24 | 30 | 5 | 00s | 5 |
+| Bug_QueryEarlyWireRelease | violates Ownership | 5 | 5 | 3 | 00s | 3 |
+| Bug_QueryPostDecisionRefusal | violates NoPartialBudgetDML | 39 | 58 | 6 | 00s | 6 |
 | Bug_RCLockIgnoresWLocks | violates StrictSerializable | 3223 | 10869 | 11 | 02s | 11 |
 | Bug_RCLockReadsInFlight | violates StrictSerializable | 84 | 160 | 5 | 01s | 5 |
 | Bug_RCNoLockCheck | violates StrictSerializable | 27837 | 84090 | 11 | 05s | 10 |
@@ -2491,6 +2501,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Placement_Recov | no errors | 352013 | 2355575 | 22 | 01min 08s |  |
 | PlainLazyBinding | no errors | 115 | 137 | 7 | 00s |  |
 | PrepareConfirm | no errors | 9 | 14 | 5 | 00s |  |
+| QueryBudget | no errors | 142 | 249 | 13 | 00s |  |
 | RC_Counter | no errors | 2164653 | 17141464 | 26 | 05min 07s |  |
 | RC_CounterFailover | no errors | 1153174 | 8224685 | 26 | 03min 15s |  |
 | RC_Counter_AckOnPrepare | no errors | 1180127 | 8944009 | 26 | 04min 27s |  |

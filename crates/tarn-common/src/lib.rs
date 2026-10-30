@@ -3,6 +3,26 @@
 
 use bytes::Bytes;
 use std::fmt;
+use std::sync::Arc;
+
+/// Opaque shared ownership of resources retained by a result or buffer.
+#[derive(Clone)]
+pub struct ResourceGuard(Arc<dyn Send + Sync>);
+pub trait ResourceMemory: fmt::Debug + Send + Sync {
+    fn reserve(self: Arc<Self>, bytes: u64) -> SqlResult<ResourceGuard>;
+}
+impl ResourceGuard {
+    pub fn new(owner: Arc<dyn Send + Sync>) -> Self {
+        Self(owner)
+    }
+}
+impl fmt::Debug for ResourceGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResourceGuard")
+            .field("owners", &Arc::strong_count(&self.0))
+            .finish()
+    }
+}
 
 /// A SQL value as it flows between the MySQL protocol layer, the executor
 /// and the Tarantool storage layer.

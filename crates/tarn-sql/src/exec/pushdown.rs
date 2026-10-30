@@ -104,6 +104,7 @@ pub(super) async fn reduce(
     let ta = table(p).unwrap();
     let t = &ta.table;
     let ap = p.agg.as_ref().unwrap();
+    crate::budget::charge((ap.aggs.len() as u64).saturating_mul(256))?;
     let mut states: Vec<_> = ap.aggs.iter().map(AggState::new).collect();
     let mut written = Vec::new();
     if let ReadMode::Txn(txn) | ReadMode::Committed(txn) | ReadMode::Statement(txn) = &*mode {
@@ -112,6 +113,7 @@ pub(super) async fn reduce(
             .range((t.space_id, Bytes::new())..)
             .take_while(|((s, _), _)| *s == t.space_id)
         {
+            crate::budget::charge(crate::budget::row_bytes(&w.pk).saturating_mul(2))?;
             written.push((w.shard, w.pk.clone()));
             if let Some(r) = &w.row {
                 if match &p.filter {
@@ -216,7 +218,7 @@ pub(super) async fn reduce(
             ReadMode::Txn(txn) => {
                 txn.mark_begun(c.shard);
                 if let Some(r) = &c.range {
-                    txn.note_range(c.shard, r.clone());
+                    txn.note_range(c.shard, r.clone())?;
                 }
             }
             ReadMode::Auto { calls } => *calls += 1,
@@ -288,6 +290,7 @@ pub(super) async fn project(
         _ => BTreeSet::new(),
     };
     let keep = Keep {
+        topk: None,
         filter: p.filter.as_ref(),
         cx,
         t,
@@ -315,6 +318,7 @@ pub(super) async fn project(
                 Some(f) => f.eval_bool(r, cx)?,
                 None => true,
             } {
+                crate::budget::row(r)?;
                 rows.push(r.clone());
             }
         }
