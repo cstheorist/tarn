@@ -104,7 +104,7 @@ jobs:
           TARN_CHECK_LOCKS: '1'
           TARN_TEST_HOOKS: '1'
         run: |
-          scripts/cluster.sh start -d /tmp/tarn-contract-cluster -n 2 -r 3 -p 4000 -s 2 -m 256 -e '${{ matrix.engine }}'
+          scripts/cluster.sh start -d /tmp/tarn-contract-cluster -n 2 -r 3 -w fsync -p 4000 -s 2 -m 256 -e '${{ matrix.engine }}'
           mkdir -p /tmp/contract-results
           tarantool --version > /tmp/contract-results/tarantool.txt
           python3 tests/sql/contracts.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 \

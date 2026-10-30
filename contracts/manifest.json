@@ -164,6 +164,18 @@
       "classification": "rejected",
       "description": "Tarn supports max_error_count=64/DEFAULT and refuses other limits with 1235/42000 without changing the limit; MySQL supports a configurable limit.",
       "test": "tests/sql/contracts.py::case_warning_limit_refusal"
+    },
+    {
+      "id": "diagnostic_assignment_protocol",
+      "classification": "difference",
+      "description": "Text SET captures prior warning totals. Tarn binary SET captures each execution's prior total on fresh/reused handles; MySQL rejects the binary form with 1295/HY000 without assigning the variable.",
+      "test": "tests/sql/contracts.py::case_diagnostic_assignment_protocol"
+    },
+    {
+      "id": "diagnostic_select_protocol",
+      "classification": "difference",
+      "description": "Text warning-count readers and arithmetic agree. Binary bare readers return the prior total on Tarn; MySQL rejects them with 1295/HY000. Binary arithmetic is refused with Tarn 1235/42000 versus MySQL 1295/HY000.",
+      "test": "tests/sql/contracts.py::case_diagnostic_select_protocol"
     }
   ],
   "extensions": [
