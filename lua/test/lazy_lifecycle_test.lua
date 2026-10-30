@@ -25,9 +25,11 @@ local function wait(fn)
     return false
 end
 ok(tarn_bucket_init(16, {{1, 16}}))
-for i, engine in ipairs({'memtx', 'vinyl'}) do
+for i, case in ipairs({{'memtx',1}, {'vinyl',1}, {'memtx',2}, {'vinyl',2}}) do
+    local engine, route_parts = case[1], case[2]
+    local label = engine .. ' routing=' .. route_parts
     local sid, gen = 61000 + i * 10, 61001 + i * 10
-    local name = 'test.lazy_lifecycle_' .. engine
+    local name = 'test.lazy_lifecycle_' .. engine .. '_' .. route_parts
     local def = {name = name, id = sid, ver = 0, engine = engine, json = '{}',
         format = {{name = 'id', type = 'unsigned'}, {name = 'v', type = 'string', is_nullable = true},
                   {name = 'bucket_id', type = 'unsigned'}},
@@ -37,25 +39,44 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
         lazy = {{gen = gen, base_space_id = sid, local_index_id = 2, route_parts = 1,
                  key_fields = {2}, key_types = {'string'}, pk_fields = {1}, pk_native_fields = {1},
                  pk_types = {'unsigned'}, bucket_field = 3}}}
+    if route_parts == 2 then
+        def.lazy[1].route_parts = 2
+        def.lazy[1].key_fields, def.lazy[1].key_types = {2,1}, {'string','unsigned'}
+        def.indexes[3].parts[2] = {field = 1, type = 'unsigned'}
+    end
     local a = {def = def, timeout = 5}
     ok(tarn_create_prepare(name, a, 1))
     local early = tarn_create_apply(name, a)
-    check(engine .. ' cannot publish a building lazy descriptor', early[1] == 'error' and early[2] == 1412, early)
+    check(label .. ' cannot publish a building lazy descriptor', early[1] == 'error' and early[2] == 1412, early)
     repeat local r = ok(tarn_lazy_bootstrap(name, a, 1)); if r[2] then break end until false
-    check(engine .. ' empty bootstrap reaches done with no pending', ok(tarn_lazy_bootstrap_status(name, a, 1))[2])
+    check(label .. ' empty bootstrap reaches done with no pending', ok(tarn_lazy_bootstrap_status(name, a, 1))[2])
     ok(tarn_lazy_ready(name, a, 1)); ok(tarn_create_apply(name, a))
     local function write(w) return tarn_autocommit({w}, {fence = {sid, def.ver}, wb = {1}}) end
     for _, id in ipairs({256, 2, 128, 1, 255}) do ok(write({'insert', sid, {id, 'same', 1}})) end
-    check(engine .. ' leader shipper delivers and durably drains local outbox', wait(function()
+    check(label .. ' leader shipper delivers and durably drains local outbox', wait(function()
         return tarn_lazy_stats()[2].depth == 0
     end))
     local after, seen = box.NULL, {}
     repeat
-        local r = ok(tarn_lazy_select(gen, {'same'}, box.index.EQ, 2, after, {tarn.lazy.bucket(def.lazy[1], {'same'})}))
+        local map = ok(tarn_buckets())
+        local route = route_parts == 1 and {tarn.lazy.bucket(def.lazy[1], {'same'})} or {e=map[3],m=map[6]}
+        local r = ok(tarn_lazy_select(gen, {'same'}, box.index.EQ, 2, after, route))
         for _, row in ipairs(r[3]) do seen[#seen + 1] = row[2][1] end
         after = r[4]
     until after == box.NULL
-    check(engine .. ' opaque cursor orders numeric PK ties by native type', mp.encode(seen) == mp.encode({1, 2, 128, 255, 256}), seen)
+    check(label .. ' opaque cursor orders numeric PK ties by native type', mp.encode(seen) == mp.encode({1, 2, 128, 255, 256}), seen)
+    if route_parts == 2 then
+        local exact = ok(tarn_lazy_select(gen, {'same',128}, box.index.EQ, 2, box.NULL,
+            {tarn.lazy.bucket(def.lazy[1], {'same',128})}))
+        check(label .. ' complete composite identity uses one destination', #exact[3] == 1 and exact[3][1][2][1] == 128, exact)
+        local unfenced = tarn_lazy_select(gen, {'same'}, box.index.EQ, 2, box.NULL, box.NULL)
+        check(label .. ' partial identity requires epoch and membership fencing', unfenced[1] == 'error' and unfenced[2] == 1210, unfenced)
+        local export = ok(tarn_schema_export())[2]
+        check(label .. ' composite schema advertises version two', export[1].lazy_v1.version == 2, export[1])
+        local old = pcall(tarn.lazy.import_envelope, export, 1)
+        check(label .. ' old coordinator cannot import a composite schema', not old)
+        assert(tarn.lazy.import_envelope(export, 2))
+    end
     ok(tarn_lazy_control('pause'))
     ok(write({'update', sid, {1}, {{'=', 2, 'old-pending'}}}))
     local nd = {}
@@ -67,12 +88,12 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
     ok(tarn_truncate_prepare(name, clear, 2))
     repeat local r = ok(tarn_lazy_bootstrap(name, clear, 2)); if r[2] then break end until false
     local status = ok(tarn_lazy_bootstrap_status(name, clear, 2))
-    check(engine .. ' empty rotation ignores pending frames for the retiring generation', status[2] and status[3] == 0, status)
+    check(label .. ' empty rotation ignores pending frames for the retiring generation', status[2] and status[3] == 0, status)
     ok(tarn_lazy_ready(name, clear, 2)); ok(tarn_truncate_apply(name, clear))
     def = nd
     ok(write({'insert', sid, {1, 'new', 1}}))
     ok(tarn_lazy_control('resume'))
-    check(engine .. ' retired frames drain without repopulating the new generation', wait(function()
+    check(label .. ' retired frames drain without repopulating the new generation', wait(function()
         return tarn_lazy_stats()[2].depth == 0
     end) and box.space[sid]:len() == 1 and box.space[gen + 1].index.ordered:count{true} == 1)
     -- Add another global copy over existing committed rows. The first
@@ -85,14 +106,14 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
     local alt = {ver = 2, timeout = 5, def = more, builds = {}, checks = {}, lazy_drop = {}}
     ok(tarn_alter_prepare(name, alt, 3))
     local future = tarn_autocommit({{'replace', sid, {99, 'too-early', 1}}}, {fence = {sid, 2}, wb = {1}})
-    check(engine .. ' forward-schema writes cannot pass a merely PREPARED capture registry',
+    check(label .. ' forward-schema writes cannot pass a merely PREPARED capture registry',
           future[1] == 'error' and future[2] == 1412 and box.space[sid]:get{99} == nil, future)
     repeat local r = ok(tarn_lazy_bootstrap(name, alt, 3)); if r[2] then break end until false
-    check(engine .. ' confirmed baseline is delivered before READY', wait(function()
+    check(label .. ' confirmed baseline is delivered before READY', wait(function()
         local r = ok(tarn_lazy_bootstrap_status(name, alt, 3)); return r[2] and r[3] == 0
     end))
     ok(tarn_lazy_ready(name, alt, 3)); ok(tarn_alter_apply(name, alt, 3))
-    check(engine .. ' bootstrap indexes the existing physical row exactly once', box.space[gen + 2].index.ordered:count{true} == 1)
+    check(label .. ' bootstrap indexes the existing physical row exactly once', box.space[gen + 2].index.ordered:count{true} == 1)
     def = more
     local clear_def = {}; for k, v in pairs(def) do clear_def[k] = v end
     clear_def.ver, clear_def.lazy = 3, {}
@@ -112,16 +133,16 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
     assert(tarn_test_hook('lazy_clear_schema', 'reached')[2] == 1)
     local retry_args = {}; for k, v in pairs(clear_args) do retry_args[k] = v end; retry_args.timeout = .03
     local competing = tarn_truncate_apply(name, retry_args, 4)
-    check(engine .. ' an overlapping clear finisher cannot pass native DDL publication',
+    check(label .. ' an overlapping clear finisher cannot pass native DDL publication',
           competing[1] == 'timeout' and box.space._tarn_catalog:get{name}.def.ver == 2, competing)
     ok(tarn_test_hook('lazy_clear_schema', 'release')); assert(held_clear:join()); ok(finished)
     def = clear_def
     ok(write({'insert', sid, {99, 'after-clear', 1}}))
     ok(tarn_truncate_apply(name, clear_args, 4))
-    check(engine .. ' late clear replay does not erase post-publication writes', box.space[sid]:get{99} ~= nil)
+    check(label .. ' late clear replay does not erase post-publication writes', box.space[sid]:get{99} ~= nil)
     local legacy = {ver = 4, timeout = 5, def = {id = sid, ver = 4, name = name}}
     local r = tarn_alter_prepare(name, legacy, 3)
-    check(engine .. ' old gateway DDL without lazy presence fails before effects', r[1] == 'error' and r[2] == 1412, r)
+    check(label .. ' old gateway DDL without lazy presence fails before effects', r[1] == 'error' and r[2] == 1412, r)
     -- The intended wire ID must survive DROP+CREATE of the same name.
     box.space[sid]:drop()
     local replacement = {name = name, id = sid + 200, ver = 0, engine = engine,
@@ -129,7 +150,7 @@ for i, engine in ipairs({'memtx', 'vinyl'}) do
     ok(tarn_create_table(replacement)); box.space[replacement.id]:replace{7, 'replacement', 1}
     r = tarn_truncate_apply(name, clear_args, 4)
     local stale_drop = tarn_drop_apply(name, {id = sid, ver = 4, timeout = 1, lazy_drop = retired}, 5)
-    check(engine .. ' stale clear arguments cannot mutate a replacement space', r[1] == 'error' and r[2] == 1412
+    check(label .. ' stale clear arguments cannot mutate a replacement space', r[1] == 'error' and r[2] == 1412
           and stale_drop[1] == 'error' and stale_drop[2] == 1412
           and box.space[replacement.id]:get{7}[2] == 'replacement', {r, stale_drop})
 end

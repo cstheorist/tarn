@@ -6,6 +6,30 @@ use super::test_support as common;
 
 const MARK: u32 = 1; // Session's autocommit native-unavailable mark.
 
+#[tokio::test]
+async fn uncertain_native_reply_never_replays_a_committed_increment() {
+    for mode in [
+        "malformed_error",
+        "malformed_lua",
+        "malformed_returns",
+        "malformed_missing",
+        "unknown",
+    ] {
+        let (_t, _c, control, mut s) = setup(1).await;
+        eval(
+            &control,
+            &format!("fallback_mode = '{mode}'; fallback_log = {{native = {{}}, lua = {{}}, active = {{}}}}"),
+        )
+        .await;
+        let err = s.query("UPDATE t SET v = v + 1 WHERE id = 1").await.unwrap_err();
+        assert_eq!((err.code, err.sqlstate), (1180, *b"40003"), "{mode}: {err}");
+        assert_eq!(value(&mut s).await, 1, "{mode}: no replay after effects");
+        let got = log(&control).await;
+        assert_eq!(ids(&got, "native").len(), 1, "{mode}: {got}");
+        assert!(ids(&got, "lua").is_empty(), "{mode}: no handback after effects: {got}");
+    }
+}
+
 async fn setup(n: usize) -> (common::Tarantool, Arc<Cluster>, Client, Session) {
     let lua = concat!(env!("CARGO_MANIFEST_DIR"), "/../../lua");
     let t = common::Tarantool::start_with(include_str!("cluster_fallback_test.lua"), &[("TARN_TEST_LUA_DIR", lua)]);

@@ -63,6 +63,8 @@ jobs:
     name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      TARN_QUERY_PUSHDOWN: 'true'
     services:
       mysql:
         image: mysql:8.4.4
@@ -92,7 +94,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python packages
-        run: pip install PyMySQL
+        run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
       # Restore and save separately, so that the (slow) Tarantool build is
@@ -129,6 +131,10 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Strong KV example and benchmark codec tests
+        run: |
+          cargo test --release -p tarn-sql --example strong_kv
+          cargo test --release -p tarn-sql --example strong_kv_bench
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Storage protocol tests
@@ -143,6 +149,7 @@ jobs:
       - name: Cluster-consistent backup and isolated restore
         run: |
           python3 tests/test_cluster_backup.py
+          tarantool tests/test_fixture_retry.lua "$PWD/tests/fixture_retry.lua"
           for engine in memtx vinyl; do
             for mode in native lua; do
               native="$PWD/target/release/libtarn_storage.so"
@@ -175,6 +182,7 @@ jobs:
       - name: SQL differential tests against MariaDB 10.11
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh pushdowntest python3 tests/sql/pushdowntest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
       - name: Integrity declarations and supported SQL mutations
         run: |
@@ -213,6 +221,7 @@ jobs:
           # move reads from disk, a runner moves too few buckets to tell)
           ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh vinyl-pushdowntest python3 tests/sql/pushdowntest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh integrity-vinyl python3 tests/sql/integritytest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 --reference mysql --kv 127.0.0.1:3311,127.0.0.1:3321 --output integrity-evidence/vinyl-mysql.json
           ci/annotate.sh vinyl-explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
           ci/annotate.sh vinyl-statisticstest python3 tests/sql/statisticstest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
@@ -276,6 +285,29 @@ jobs:
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+      - name: Strong KV paired SQL histories and RF3 faults
+        run: |
+          python3 tests/test_kv_control.py
+          ci/annotate.sh strong-kv tests/kv.sh
+          TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+      - name: Retain strong KV histories and fixture evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: strong-kv-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-kv181-*/source.json
+            /tmp/tarn-kv181-*/owner.json
+            /tmp/tarn-kv181-*/manifest.json
+            /tmp/tarn-kv181-*/processes.jsonl
+            /tmp/tarn-kv181-*/lifecycle.json
+            /tmp/tarn-kv181-*/preflight.json
+            /tmp/tarn-kv181-*/broker-preflight.json
+            /tmp/tarn-kv181-*/*.log
+            /tmp/tarn-kv181-*/functional/*
+            /tmp/tarn-kv181-*/faults/*
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Retain integrity outcomes
         if: always()
         uses: actions/upload-artifact@v4
@@ -378,6 +410,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Reject changed upgrade build receipts
         run: python3 tests/test_upgrade_build_receipt.py
+      - name: Reject unsafe upgrade witness replay
+        run: python3 tests/test_upgrade_prepare.py
       - name: Maintenance migration, component admission and downgrade refusal
         run: ENGINE=${{ matrix.engine }} bash tests/rolling_upgrade.sh
       - name: Retain upgrade evidence

@@ -136,3 +136,18 @@ same-host functional drills; they do not establish rolling availability,
 independent failure domains or production throughput. The movement and
 commit TLA+ models cover movement visibility and transaction obligations;
 they do not prove filesystem migration or Tarantool's implementation.
+
+Preparing the restart witness may receive a confirmed Vinyl admission NO.
+Setup records each vote and admits a fresh transaction identity only after
+the prior decision and every participant are durably aborted, all fixture
+values remain zero, and row/range locks are absent. It permits at most 32
+attempts within 45 seconds; each PREPARE/cleanup RPC is bounded by the remaining deadline
+and its normal timeout. A lost reply, unknown/expired vote, unrelated error,
+or failed cleanup stops the fixture without replay. Every successful
+witness still requires durable YES across restart and exact once-only APPLY.
+The Vinyl lane forces first- and second-participant refusals under a leased
+test pressure hook, then verifies the admitted identity across follower
+restarts. Ordinary maintenance stages use genuine admission settings and pressure.
+Run `python3 tests/test_upgrade_prepare.py` for the uncertainty, cleanup,
+deadline and attempt-limit negative controls. The original failed CI run and
+focused control receipts remain in `tests/evidence/upgrade-admission/`.

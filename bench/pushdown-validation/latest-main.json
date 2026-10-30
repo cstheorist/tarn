@@ -1,0 +1,285 @@
+{
+  "source_commit": "56d9ed8563e827861eb6ac239f969900a2767deb",
+  "main_integrated": "700ce887",
+  "workspace_tests": 285,
+  "sql_per_mode": {
+    "native": {
+      "differential": 1106,
+      "exact_pushdown": 47,
+      "transactions": 27,
+      "read_committed": 30,
+      "routing_diagnostics": "pass"
+    },
+    "lua": {
+      "differential": 1106,
+      "exact_pushdown": 47,
+      "transactions": 27,
+      "read_committed": 30,
+      "routing_diagnostics": "pass"
+    },
+    "vinyl": {
+      "differential": 1106,
+      "exact_pushdown": 47,
+      "transactions": 27,
+      "read_committed": 30,
+      "routing_diagnostics": "pass"
+    }
+  },
+  "focused_storage": "Memtx/Vinyl exact reductions/projections, NULL/fills, excluded keys, original page coverage, overwritten-stream validation, rejected-row W locks, prepare/apply crossing Vinyl reduction, exact sum-promotion boundary: pass.",
+  "mutation_faults": "Lost and invalid-type replies in native memtx, Lua-only memtx and uncached native Vinyl: all six passed; no replay of the uncertain mutation.",
+  "formal": "TypedRead (99,328 distinct), five expected negative controls, Local_ROValidate (66,348 distinct), GroupedRead and GroupedDDL: all outcomes as expected.",
+  "host_lint": "Rust 1.98.1 strict workspace/all-target clippy and formatting: pass.",
+  "environment": {
+    "cpu_quota": 3,
+    "memory_limit_gib": 5,
+    "gateway": "unoptimized debug, Rust 1.98.1",
+    "worker_stack_bytes": 16777216,
+    "storage": "Tarantool 3.9.0; same native module as measured checkpoint; RF1, two shards/two gateways, fsync; Vinyl cache disabled, read/write threads 1/2"
+  },
+  "limitations": "Latest optimized build exceeded shared VM memory. Initial default-stack debug run aborted on SET @floor135=-2 (worker stack overflow); the isolated statement and matrix pass with RUST_MIN_STACK=16777216. This does not establish release/default-stack behavior. Performance and RF3 evidence remain pinned to 721d420; no new performance or RF3 claim for this merged commit. Release CI is separate.",
+  "logs": {
+    "latest-main-sql-faults.log": {
+      "sha256": "9233fa40fbd7f1e8b4876075c641e228f9995c9c9b66af9d2ed32a1b10f2d876",
+      "last_lines": [
+        "PASS latest-invalid-lua",
+        "START latest-invalid-vinyl",
+        "PASS latest-invalid-vinyl",
+        "ALL LATEST MAIN CHECKS PASSED"
+      ]
+    },
+    "latest-main-workspace.log": {
+      "sha256": "0f1e959e387cd2a67145cb34d41d16e78f8c4715536ce02ac26b685526f81753",
+      "last_lines": [
+        "running 0 tests",
+        "",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        ""
+      ]
+    },
+    "latest-main-debug-build.log": {
+      "sha256": "d361342a28c965f273f5de292a36863f7bac3f96f0f4ffee0aacee3a6064275a",
+      "last_lines": [
+        "   Compiling tarn-iproto v0.1.0 (/work/crates/tarn-iproto)",
+        "   Compiling tarn-sql v0.1.0 (/work/crates/tarn-sql)",
+        "   Compiling tarn-server v0.1.0 (/work/crates/tarn-server)",
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 25.42s"
+      ]
+    },
+    "latest-main-models.log": {
+      "sha256": "73be9b712590dc778f79cf1ddf7d867b21ecc8ac6614ea8bfad06380af08d332",
+      "last_lines": [
+        "Local_ROValidate             no errors                                     66348 distinct states found  depth=19       8s",
+        "GroupedRead                  no errors                                     15 distinct states found     depth=6        0s",
+        "GroupedDDL                   no errors                                     77 distinct states found     depth=7        0s",
+        "all outcomes as expected"
+      ]
+    },
+    "latest-focused-storage.log": {
+      "sha256": "a515d3e335c284b4e2c7d288f42c730cedbe9d59de058efe1cdc3bcf3f8b8546",
+      "last_lines": [
+        "  ok   Vinyl reduction retries across taken/released W lock",
+        "  ok   seed sum promotion boundary",
+        "  ok   vinyl promotes the exact small-number sum before precision loss",
+        "typed storage read controls passed"
+      ]
+    },
+    "latest-debug-default-stack.log": {
+      "sha256": "8d621a692028ba954861cf6b8ae480e82a0f0dce1fdc738873f9d60ac1caf62d",
+      "last_lines": [
+        "\u001b[2m2026-10-28T21:07:05.377416Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtarn_server\u001b[0m\u001b[2m:\u001b[0m tarn-server listening on 127.0.0.1:4000 (2 shards, 3 threads)",
+        "",
+        "thread 'tokio-rt-worker' (2808) has overflowed its stack",
+        "fatal runtime error: stack overflow, aborting"
+      ]
+    },
+    "latest-main-sql-default-stack-failure.log": {
+      "sha256": "7fc47c00528c269ee47a7ea265e18b3b55c284cf64e43f3ddb8a50d89a3fc680",
+      "last_lines": [
+        "                    ^^^^^^^^^^^^^^^^^^^",
+        "  File \"/usr/lib/python3/dist-packages/pymysql/connections.py\", line 748, in _read_bytes",
+        "    raise err.OperationalError(",
+        "pymysql.err.OperationalError: (2013, 'Lost connection to MySQL server during query')"
+      ]
+    },
+    "latest-pushdown-native.log": {
+      "sha256": "c0541f040d88534c08907781a01f2b859533ad5df3807d35e341c4e86d6cccda",
+      "last_lines": [
+        "47 exact pushdown comparisons; overlays, pages, fills and OCC controls passed"
+      ]
+    },
+    "latest-explain-native.log": {
+      "sha256": "9a5e2125eff87c8c4b0eeb87cac7fba448d1187baea169b7c68dad97bd3be93d",
+      "last_lines": [
+        "PASS named/binary prepared plans, unbound markers, explicit unsupported syntax",
+        "PASS equal 16-row joins; shard-key alignment changes observed fanout from 2 to 1",
+        "PASS literal redaction, prepared/text aggregation, 256-entry eviction, no false cancellations",
+        "EXPLAIN/routing diagnostics: all checks passed"
+      ]
+    },
+    "latest-diff-native.log": {
+      "sha256": "9a96c45c7a1392667ff0c6fa61da8cc7dd845c913e98fbb84e0bb4d2d13a4d8d",
+      "last_lines": [
+        "1106 cases, 0 failed, 0 warnings"
+      ]
+    },
+    "latest-txn-native.log": {
+      "sha256": "68e2d577442d41fba655dd08152b63e3546b65b53f4581a9a4f8215e0069a036",
+      "last_lines": [
+        "    counters: 4219 acknowledged increments, 0 with unknown outcome",
+        "    commits per 3 s: 1363 1497 952",
+        "ok   test_bank (16.6s)",
+        "27 tests, 0 failures"
+      ]
+    },
+    "latest-rc-native.log": {
+      "sha256": "f3f77ae0ab99e8a8e0739535c762c7d64d981f816e3fbc5f7f35767c7eb8a3c4",
+      "last_lines": [
+        "ok   test_upsert_row_alias (0.0s)",
+        "    bank (READ COMMITTED): 6128 commits, 16 deadlocks, 0 lock timeouts, 0 unknown outcomes, 0 other errors",
+        "ok   test_zz_bank (8.2s)",
+        "30 tests, 0 failures"
+      ]
+    },
+    "latest-fault-native.log": {
+      "sha256": "a127b4041223832e4ecfccd7b007c6361dc5452447667b95de3d3ac710d02009",
+      "last_lines": [
+        "v = 1",
+        "SQLSTATE = 40003",
+        "FAULTS TEST PASSED",
+        "proxy: swallowed the reply, closing the connection"
+      ]
+    },
+    "latest-invalid-native.log": {
+      "sha256": "2c1b2af661afd5d37b310972a91dd708902b50310e51daab08f150bd05176449",
+      "last_lines": [
+        "SQLSTATE = 40003",
+        "FAULTS TEST PASSED",
+        "proxy: injected invalid response type after execution",
+        "proxy: swallowed the reply, closing the connection"
+      ]
+    },
+    "latest-pushdown-lua.log": {
+      "sha256": "c0541f040d88534c08907781a01f2b859533ad5df3807d35e341c4e86d6cccda",
+      "last_lines": [
+        "47 exact pushdown comparisons; overlays, pages, fills and OCC controls passed"
+      ]
+    },
+    "latest-explain-lua.log": {
+      "sha256": "9a5e2125eff87c8c4b0eeb87cac7fba448d1187baea169b7c68dad97bd3be93d",
+      "last_lines": [
+        "PASS named/binary prepared plans, unbound markers, explicit unsupported syntax",
+        "PASS equal 16-row joins; shard-key alignment changes observed fanout from 2 to 1",
+        "PASS literal redaction, prepared/text aggregation, 256-entry eviction, no false cancellations",
+        "EXPLAIN/routing diagnostics: all checks passed"
+      ]
+    },
+    "latest-diff-lua.log": {
+      "sha256": "9a96c45c7a1392667ff0c6fa61da8cc7dd845c913e98fbb84e0bb4d2d13a4d8d",
+      "last_lines": [
+        "1106 cases, 0 failed, 0 warnings"
+      ]
+    },
+    "latest-txn-lua.log": {
+      "sha256": "8a881f53531917fb54f6c522c180edcc51206023d687701af634c821fa0281d0",
+      "last_lines": [
+        "    counters: 4678 acknowledged increments, 0 with unknown outcome",
+        "    commits per 3 s: 1690 1472 907",
+        "ok   test_bank (16.3s)",
+        "27 tests, 0 failures"
+      ]
+    },
+    "latest-rc-lua.log": {
+      "sha256": "5492588629713e77de814df7b7bb8ba12efefe3e146a51e36f9b417371abe6bb",
+      "last_lines": [
+        "ok   test_upsert_row_alias (0.0s)",
+        "    bank (READ COMMITTED): 6211 commits, 11 deadlocks, 0 lock timeouts, 0 unknown outcomes, 0 other errors",
+        "ok   test_zz_bank (8.1s)",
+        "30 tests, 0 failures"
+      ]
+    },
+    "latest-fault-lua.log": {
+      "sha256": "56d7df5e84760d3aeec831f32850e83b44f28fb6955a3047751d3d17ab09d215",
+      "last_lines": [
+        "v = 1",
+        "SQLSTATE = 40003",
+        "FAULTS TEST PASSED",
+        "proxy: swallowed the reply, closing the connection"
+      ]
+    },
+    "latest-invalid-lua.log": {
+      "sha256": "0c38bba6eed34a0cb6c3eed3deaffca6a0fce886facd8026dc0b75cb20940b3f",
+      "last_lines": [
+        "SQLSTATE = 40003",
+        "FAULTS TEST PASSED",
+        "proxy: injected invalid response type after execution",
+        "proxy: swallowed the reply, closing the connection"
+      ]
+    },
+    "latest-pushdown-vinyl.log": {
+      "sha256": "c0541f040d88534c08907781a01f2b859533ad5df3807d35e341c4e86d6cccda",
+      "last_lines": [
+        "47 exact pushdown comparisons; overlays, pages, fills and OCC controls passed"
+      ]
+    },
+    "latest-explain-vinyl.log": {
+      "sha256": "9a5e2125eff87c8c4b0eeb87cac7fba448d1187baea169b7c68dad97bd3be93d",
+      "last_lines": [
+        "PASS named/binary prepared plans, unbound markers, explicit unsupported syntax",
+        "PASS equal 16-row joins; shard-key alignment changes observed fanout from 2 to 1",
+        "PASS literal redaction, prepared/text aggregation, 256-entry eviction, no false cancellations",
+        "EXPLAIN/routing diagnostics: all checks passed"
+      ]
+    },
+    "latest-diff-vinyl.log": {
+      "sha256": "9a96c45c7a1392667ff0c6fa61da8cc7dd845c913e98fbb84e0bb4d2d13a4d8d",
+      "last_lines": [
+        "1106 cases, 0 failed, 0 warnings"
+      ]
+    },
+    "latest-txn-vinyl.log": {
+      "sha256": "3f764d3b45c1d5ed01c6aac5bb159c3c1d88020688d3fc02f383792a854573ed",
+      "last_lines": [
+        "    counters: 4730 acknowledged increments, 0 with unknown outcome",
+        "    commits per 3 s: 1696 1421 995",
+        "ok   test_bank (16.4s)",
+        "27 tests, 0 failures"
+      ]
+    },
+    "latest-rc-vinyl.log": {
+      "sha256": "30617fcf2a919b2a6fb8fbcb479518268ed4cbd6dca131508186e6b58816615c",
+      "last_lines": [
+        "ok   test_upsert_row_alias (0.0s)",
+        "    bank (READ COMMITTED): 7599 commits, 12 deadlocks, 0 lock timeouts, 0 unknown outcomes, 0 other errors",
+        "ok   test_zz_bank (8.1s)",
+        "30 tests, 0 failures"
+      ]
+    },
+    "latest-fault-vinyl.log": {
+      "sha256": "56d7df5e84760d3aeec831f32850e83b44f28fb6955a3047751d3d17ab09d215",
+      "last_lines": [
+        "v = 1",
+        "SQLSTATE = 40003",
+        "FAULTS TEST PASSED",
+        "proxy: swallowed the reply, closing the connection"
+      ]
+    },
+    "latest-invalid-vinyl.log": {
+      "sha256": "0c38bba6eed34a0cb6c3eed3deaffca6a0fce886facd8026dc0b75cb20940b3f",
+      "last_lines": [
+        "SQLSTATE = 40003",
+        "FAULTS TEST PASSED",
+        "proxy: injected invalid response type after execution",
+        "proxy: swallowed the reply, closing the connection"
+      ]
+    },
+    "latest-main-build.log": {
+      "sha256": "c89fa9e58fb58358a62058df343282506de4f932af9791cab606fa217215c6bf",
+      "last_lines": [
+        "error: could not compile `tarn-sql` (lib)",
+        "",
+        "Caused by:",
+        "  process didn't exit successfully: `/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/rustc --crate-name tarn_sql --edition=2021 crates/tarn-sql/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C opt-level=3 -C linker-plugin-lto -C codegen-units=4 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d9adf7134b4df1b1 -C extra-filename=-0bb2a3a4d57aa7b5 --out-dir /out/target/release/deps -C strip=debuginfo -L dependency=/out/target/release/deps --extern bytes=/out/target/release/deps/libbytes-79c3cd70a71af184.rmeta --extern futures=/out/target/release/deps/libfutures-c26d2d9ffba5265c.rmeta --extern parking_lot=/out/target/release/deps/libparking_lot-b0af05d833a2e525.rmeta --extern rmp=/out/target/release/deps/librmp-5251c5e910d8dd32.rmeta --extern serde=/out/target/release/deps/libserde-d4d3331b746ea2ad.rmeta --extern serde_json=/out/target/release/deps/libserde_json-827d88c844e2b695.rmeta --extern sha1=/out/target/release/deps/libsha1-00ace42730ed292c.rmeta --extern sqlparser=/out/target/release/deps/libsqlparser-68c8b52c1b94523a.rmeta --extern tarn_common=/out/target/release/deps/libtarn_common-83b3d1cf3bb8e67f.rmeta --extern tarn_iproto=/out/target/release/deps/libtarn_iproto-9d342814c24219da.rmeta --extern tarn_verified=/out/target/release/deps/libtarn_verified-f112058bfe5dfe24.rmeta --extern thiserror=/out/target/release/deps/libthiserror-5ae0e1695e2ae000.rmeta --extern tokio=/out/target/release/deps/libtokio-bf53a596f1c085f4.rmeta --extern tracing=/out/target/release/deps/libtracing-c36438ff0afe1169.rmeta -L native=/out/target/release/build/psm-c214719378f0527e/out` (signal: 9, SIGKILL: kill)"
+      ]
+    }
+  }
+}

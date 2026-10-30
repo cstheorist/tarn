@@ -396,8 +396,35 @@ class T:
         q(c, "DROP TABLE IF EXISTS ec_online")
         q(c, "CREATE TABLE ec_online (tenant INT NOT NULL,id INT NOT NULL,n INT,tag VARCHAR(20),"
              "PRIMARY KEY(tenant,id)) PARTITION BY KEY(tenant) ENGINE=memtx")
-        expected = {(tenant, identity): [0, "seed"] for tenant in range(1, 17) for identity in range(128)}
-        for tenant in range(1, 17):
+        # An earlier movement suite may leave the first fixed tenant keys
+        # on one shard. Bind the seed to the current confirmed bucket map,
+        # then independently check the actual native rows below.
+        from movetest import bucket_of
+        maps = [rpc(node, "tarn_buckets", []) for node in nodes]
+        count = maps[0][1]
+        assert count > 0 and all(m[0] == "ok" and m[1] == count
+                                 and all(note[1] == "sent" for note in m[4]) for m in maps), maps
+        owners = {}
+        for shard, m in enumerate(maps):
+            for lo, hi in m[3]:
+                for bucket in range(lo, hi + 1):
+                    assert bucket not in owners, (bucket, maps)
+                    owners[bucket] = shard
+        assert len(owners) == count, "copy fixture requires a complete stable bucket map"
+        for shard, m in enumerate(maps):
+            assert all(owners[note[0]] != shard for note in m[4]), maps
+        selected = [[], []]
+        for tenant in range(1, count * 64 + 1):
+            shard = owners[bucket_of(tenant, count)]
+            if len(selected[shard]) < 8:
+                selected[shard].append(tenant)
+            if all(len(keys) == 8 for keys in selected):
+                break
+        assert all(len(keys) == 8 for keys in selected), ("no bounded two-shard tenant seed", selected)
+        tenants = sorted(key for keys in selected for key in keys)
+        print(f"    copy fixture tenants by current shard: {selected}")
+        expected = {(tenant, identity): [0, "seed"] for tenant in tenants for identity in range(128)}
+        for tenant in tenants:
             q(c, "INSERT INTO ec_online VALUES " + ",".join(f"({tenant},{identity},0,'seed')" for identity in range(128)))
 
         for engine in ("vinyl", "memtx"):
@@ -984,7 +1011,9 @@ class T:
         w = warnings(a)
         self.check(w == [("Warning", 1105, f"{DB}.tt_line: tarn:parent=tt_orders: table {DB}.tt_orders does not exist (yet)")],
                    f"missing parent: {w}")
-        self.check(q(a, "SELECT @@warning_count")[0][0] == 1 and len(warnings(a)) == 1, "SHOW WARNINGS keeps them")
+        self.check(warnings(a) == w, "SHOW WARNINGS keeps them")
+        self.check(q(a, "SELECT @@warning_count")[0][0] == 1, "warning_count reads the previous total")
+        self.check(warnings(a) == [], "SELECT warning_count clears diagnostics, as in MySQL")
         q(a, "SELECT 1")
         self.check(warnings(a) == [], "the next statement clears them")
         q(a, "SET tarn_tree_checks = DEFAULT")
@@ -1382,9 +1411,11 @@ class T:
               f"SUM(x) {sums[1]} (acknowledged {st['x']})")
         kinds = {}
         for e in st["errors"]:
-            kinds.setdefault(e[:90], 0)
-            kinds[e[:90]] += 1
-        for e, n in sorted(kinds.items(), key=lambda x: -x[1])[:10]:
+            kinds.setdefault(e, 0)
+            kinds[e] += 1
+        # Preserve the actual storage cause; an ALTER prefix alone cannot
+        # distinguish a known refusal from an unresolved effect.
+        for e, n in sorted(kinds.items(), key=lambda x: -x[1]):
             print(f"      error x{n}: {e}")
         self.check(not st["errors"], f"{len(st['errors'])} errors")
         self.check(st["ddl"] >= 8 or self.args.no_ddl, "schema changes ran")

@@ -4,18 +4,6 @@ local c = {net.connect(os.getenv('CB_NODE_0'), {wait_connected=5, reconnect_afte
            net.connect(os.getenv('CB_NODE_3'), {wait_connected=5, reconnect_after=0})}
 local function call(i, fn, ...) return c[i]:call(fn, {...}, {timeout=30}) end
 local function ok(r) assert(r[1]=='ok', require('json').encode(r)); return r end
-local function retry_conflict(i, fn, ...)
-    local args, deadline = {...}, fiber.clock()+5
-    repeat
-        local r = call(i, fn, unpack(args))
-        -- The shipper/GC may race this fixture's next transaction. Only a
-        -- confirmed serialization abort permits a new attempt. Transport
-        -- exceptions, unknown outcomes and every other refusal propagate.
-        if r[1] ~= 'conflict' or r[2] ~= 1213 or fiber.clock() >= deadline then return ok(r) end
-        require('log').info('backup fixture retries confirmed conflict in %s', fn)
-        fiber.sleep(.01)
-    until false
-end
 local function ev(i, code, args) return c[i]:eval(code, args or {}, {timeout=30}) end
 local sid, gen, name = 88003, 88004, 'test.lazy_backup'
 local spec = {gen=gen, base_space_id=sid, local_index_id=2, route_parts=1,
@@ -77,9 +65,13 @@ elseif action == 'lazy_pending' then
 elseif action == 'lazy_drain' then
     local saved=ev(1,"return box.space._tarn_meta:get{'test.backup.lazy'}[2]")
     ok(call(1,'tarn_lazy_control','resume')); await(function() return depth(1)==0 end)
-    retry_conflict(1,'tarn_autocommit',{{'replace',sid,{1,saved.keys[2],1}}},{fence={sid,0},wb={1}})
+    -- Background lazy delivery/GC can win an MVCC conflict. Only this
+    -- atomic known-aborted operation may repeat; never replay the stage.
+    ok(retry('lazy_drain.tarn_autocommit', function()
+        return call(1,'tarn_autocommit',{{'replace',sid,{1,saved.keys[2],1}}},{fence={sid,0},wb={1}})
+    end))
     await(function() return depth(1)==0 end)
-    retry_conflict(2,'tarn_lazy_gc',gen,2,{2})
+    ok(retry('lazy_drain.tarn_lazy_gc', function() return call(2,'tarn_lazy_gc',gen,2,{2}) end))
     assert(ev(2,'local g=...;return box.space._tarn_lazy_floor:get{g,2,1}.seq',{gen})>=2)
 elseif action == 'move_begin' then
     local r=ok(call(1,'tarn_bucket_send_begin',1,2,'backup-move',5))

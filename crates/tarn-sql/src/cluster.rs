@@ -64,6 +64,10 @@ pub struct ClusterConfig {
     /// remain enabled when this is false, for isolated profiling.
     #[serde(default)]
     pub native_batch_reads: bool,
+    /// Opt into exact projected scans and integer partial aggregates after
+    /// measuring the workload. Narrow-row scans can regress; isolation is unchanged.
+    #[serde(default)]
+    pub query_pushdown: bool,
     /// Distinguishes Tarn servers in transaction ids.
     #[serde(default)]
     pub node_id: u32,
@@ -621,6 +625,8 @@ pub struct Stats {
     pub deadlock_calls: AtomicU64,
     /// COUNTs the shards computed without returning rows (issue #52).
     pub storage_counts: AtomicU64,
+    pub storage_reductions: AtomicU64,
+    pub storage_projections: AtomicU64,
     /// Rows read from storage by SELECT, UPDATE and DELETE.
     pub rows_read: AtomicU64,
     /// Storage reads (pages) of index scans and multi-key lookups that
@@ -1378,12 +1384,15 @@ impl Cluster {
         if !c.marked(mark) {
             match c.call(0, func, args).await {
                 Ok(r) => {
-                    let d = r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data"))?;
-                    if crate::mpw::status_is(&d, "lua") && crate::mpw::status_arg_is(&d, 1, "all") {
+                    let d = r
+                        .data()
+                        .ok_or_else(|| crate::mpw::ambiguous(s.id, &"CALL reply without data"))?;
+                    let handback = crate::mpw::native_write_handback(&d);
+                    if handback == Some(true) {
                         tracing::debug!(shard = s.id, "{} hands back every call", func);
                         c.mark(mark);
                     }
-                    if !crate::mpw::status_is(&d, "lua") {
+                    if handback.is_none() {
                         return Ok(d);
                     }
                 }
@@ -1449,7 +1458,15 @@ impl Cluster {
                 c.call(0, func, args).await
             };
             match reply {
-                Ok(r) => return r.data().ok_or_else(|| crate::mpw::proto("CALL reply without data")),
+                Ok(r) => {
+                    return r.data().ok_or_else(|| {
+                        if idempotent {
+                            crate::mpw::proto("CALL reply without data")
+                        } else {
+                            crate::mpw::ambiguous(s.id, &"CALL reply without data")
+                        }
+                    });
+                }
                 Err(tarn_iproto::Error::Server { code, message }) if code == tarn_iproto::ER_READONLY && tries < 3 => {
                     tracing::warn!(shard = s.id, "leader changed: {}", message);
                     s.invalidate();
@@ -1742,7 +1759,7 @@ impl Cluster {
             .filter(|&i| def.indexes[i].lazy.is_some())
             .collect();
         if !lazies.is_empty() {
-            self.require_lazy_capabilities().await?;
+            self.require_lazy_capabilities(def.lazy_route_parts()).await?;
         }
         let first = self
             .alloc_space_ids(1 + globals.len() as u64 + lazies.len() as u64)
@@ -1811,7 +1828,7 @@ impl Cluster {
                 .filter_map(|i| i.lazy.as_ref().map(|l| l.space_id))
                 .collect();
             if !lazy_drop.is_empty() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
             }
             let ver = self.next_catalog_version().await?;
             let mut a = Mp::new();
@@ -1854,7 +1871,7 @@ impl Cluster {
             nd.ver = ver;
             let mut lazy_drop = Vec::new();
             if def.has_lazy() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
                 let count = nd.indexes.iter().filter(|i| i.lazy.is_some()).count();
                 let first = self.alloc_space_ids(count as u64).await?;
                 for (n, i) in nd.indexes.iter_mut().filter(|i| i.lazy.is_some()).enumerate() {
@@ -1969,7 +1986,8 @@ impl Cluster {
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
             if def.has_lazy() || ch.def.indexes.iter().any(|i| i.lazy.is_some()) {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts().max(ch.def.lazy_route_parts()))
+                    .await?;
             }
             // New unique keys without the shard key: space ids for their
             // global indexes, which the job fills from the existing rows.
