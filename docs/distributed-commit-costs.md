@@ -84,7 +84,9 @@ from stdin with a 128 MiB raw limit and 4 KiB line limit. It retains the exact
 bounded prefix, SHA-256 and explicit incomplete status on overflow/truncation;
 directory reuse is refused. `audit --input DIRECTORY --counters COUNTERS.json
 --output RESULT.json` uses disk-backed joins with a 128 MiB SQLite limit and
-2 MiB page cache. At most 4096 connection/phase-owner summary entries are
+2 MiB page cache. The limit applies to the main database; SQLite sort files
+can use additional temporary disk space derived from the bounded input.
+At most 4096 connection/phase-owner summary entries are
 accepted. It rejects malformed events, duplicate identities, absent/misowned
 responses, invalid terminal types/times, CHUNKs after a final frame and
 counter disagreement. Exit 2 and `qualified=false` preserve an incomplete
@@ -99,6 +101,13 @@ remain explicitly unqualified. Receiver cancellation is retained as such;
 terminal delivery never becomes an SQL acknowledgement. A real TCP peer
 control exercises the actual colored default formatter and independently
 checks complete request and fragmented CHUNK/final response lengths.
+
+[The retained formatter control](../bench/commit-cost-evidence/formatter-20261030/)
+joins the actual colored log to the independently counted 53 request bytes
+and 15 response bytes. Its source inventory and actual test-executable hash
+are retained. Thirty-six transport library tests, the formatter/peer test,
+thirteen Python evidence controls and strict all-target transport clippy pass
+locally. This is mock-peer validation, not storage or performance evidence.
 
 Add transaction phase/participant timelines and storage observations
 for logical WAL/replication bytes, kernel disk-write bytes where available,
