@@ -36,6 +36,22 @@ def known_ro_serialization(error):
                        "(Can't modify data on a read-only instance)")
 
 
+def known_ro_discovery(error, expected_shard, endpoints):
+    # This is narrower than quorum_sql_outcome: only an actual owned endpoint's
+    # definite read-only discovery reply can warm the leader route.
+    if (not isinstance(error, pymysql.OperationalError) or len(error.args) < 2
+            or type(error.args[0]) is not int or error.args[0] != 2003
+            or not isinstance(error.args[1], str)
+            or getattr(error, "sqlstate", None) not in (None, "HY000")
+            or type(expected_shard) is not int or expected_shard <= 0
+            or not isinstance(endpoints, (list, tuple)) or not endpoints
+            or any(not isinstance(node, str) or not node for node in endpoints)):
+        return False
+    return error.args[1] in {
+        f"shard {expected_shard} has no reachable leader ({node} is read-only)" for node in endpoints
+    }
+
+
 def quorum_sql_outcome(error, expected_shard):
     if not isinstance(error, pymysql.MySQLError) or len(error.args) < 2:
         return None
@@ -449,33 +465,48 @@ class FaultTest(Test):
                 self.check("exact SQL ACK-dependent value", rows == (() if value is None else ((value,),)),
                            key=[tenant, key], expected=value, rows=rows)
 
-    def warm_readonly_route(self, connection, table, tenant, expected, label):
-        # Independent autocommit reads only, before either caller's BEGIN.
+    def warm_readonly_route(self, connection, table, tenant, expected, label, *,
+                            readonly_shard=None, readonly_endpoints=()):
+        # Independent autocommit reads only, before the caller's BEGIN.
         # Each known RO reply retires its physical client. Allow the explicit
         # configured pool's stale clients plus one positive SELECT; individual
         # socket IDs are not inferred from a refusal. Never replay SQL history,
         # a mutation, or an uncertain transport result.
+        # Discovery retries are an explicit leader-warmup opt-in: quorum/healed
+        # reads do not inherit a generic 2003 retry policy.
+        def independent():
+            assert connection.get_autocommit() and not connection.server_status & 1, \
+                "route warm-up requires an independent autocommit read"
+
+        independent()
+        readonly_endpoints = tuple(readonly_endpoints)
         deadline = time.monotonic() + 10
         pool_size = self.args.sql_pool_size
         max_attempts = pool_size + 1
         statement = f"SELECT v FROM {table} WHERE tenant=%s AND id=1"
         for attempt in range(1, max_attempts + 1):
+            independent()
             try:
                 rows = self.sql(connection, statement, (tenant,))
             except pymysql.MySQLError as error:
-                retry = known_ro_serialization(error)
+                retry = (known_ro_serialization(error)
+                         or known_ro_discovery(error, readonly_shard, readonly_endpoints))
                 self.record("known_ro_readonly_warmup_refusal", attempt=attempt, table=table,
                             sql_pool_size=pool_size, max_attempts=max_attempts,
                             error={"type": type(error).__name__, "args": list(error.args),
                                    "sqlstate": getattr(error, "sqlstate", None)},
                             retry_eligible=retry, guard_coverage=False,
+                            readonly_discovery_shard=readonly_shard,
+                            readonly_discovery_endpoints=list(readonly_endpoints),
                             scope="independent read-only route warm-up; no mutation or transaction replay")
                 if not retry or attempt == max_attempts or time.monotonic() >= deadline:
                     raise
+                independent()
                 time.sleep(.05)
                 if time.monotonic() >= deadline:
                     raise
             else:
+                independent()
                 self.check(label, rows == ((expected,),), rows=rows, attempt=attempt, table=table,
                            sql_pool_size=pool_size, max_attempts=max_attempts,
                            scope="exact positive SELECT required before the subsequent once-only mutation")
@@ -580,7 +611,9 @@ class FaultTest(Test):
                         scope="known-RO witness; no old-writable-role or A-B-A promotion claim")
             with self.connect() as c:
                 self.warm_readonly_route(c, table, tenant, self.values[engine][1],
-                                         "SQL read warms the replacement route without a mutation")
+                                         "SQL read warms the replacement route without a mutation",
+                                         readonly_shard=self.identities[0]["id"],
+                                         readonly_endpoints=[node["endpoint"] for node in self.group_nodes(0)])
                 self.signal(old["node_id"], "STOP")
                 current, _ = self.leader(0, table, exclude=(old["node_id"],))
                 self.check("replacement remains current while the former leader is paused",

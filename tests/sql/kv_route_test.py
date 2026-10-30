@@ -23,6 +23,10 @@ def refusal(message=WIRE_RO, state="40001", code=1213):
     return error
 
 
+def connection(autocommit=True, server_status=0):
+    return SimpleNamespace(get_autocommit=Mock(return_value=autocommit), server_status=server_status)
+
+
 def driver():
     test = object.__new__(kvfaults.FaultTest)
     test.events, test.completed, test.ack = [], 0, 42
@@ -67,7 +71,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         test, error = driver(), refusal()
         with patch.object(kvtest, "q", side_effect=[error, ((10,),)]) as query, \
                 patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
-            result = test.warm_readonly_route(object(), "owned_memtx", 7, 10, "exact positive")
+            result = test.warm_readonly_route(connection(), "owned_memtx", 7, 10, "exact positive")
         self.assertEqual(result, ((10,),))
         self.assertEqual(query.call_count, 2)
         self.assertEqual(test.ack, 42)
@@ -85,7 +89,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         test = driver()
         with patch.object(kvtest, "q", side_effect=[refusal(INNER_RO, None), ((10,),)]) as query, \
                 patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
-            test.warm_readonly_route(object(), "owned", 7, 10, "exact positive")
+            test.warm_readonly_route(connection(), "owned", 7, 10, "exact positive")
         event = next(e for e in test.events if e["event"] == "known_ro_readonly_warmup_refusal")
         self.assertIsNone(event["error"]["sqlstate"])
         self.assertEqual(query.call_count, 2)
@@ -95,7 +99,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         responses = [refusal() for _ in range(test.args.sql_pool_size)] + [((10,),)]
         with patch.object(kvtest, "q", side_effect=responses) as query, \
                 patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
-            result = test.warm_readonly_route(object(), "owned", 7, 10, "exact positive")
+            result = test.warm_readonly_route(connection(), "owned", 7, 10, "exact positive")
         self.assertEqual(result, ((10,),))
         self.assertEqual(query.call_count, 5)
         self.assertEqual(test.ack, 42)
@@ -113,7 +117,7 @@ class ReadonlyRouteControls(unittest.TestCase):
                 test, error = driver(), refusal(state=state)
                 with patch.object(kvtest, "q", side_effect=error) as query:
                     with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
-                        test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                        test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
                 self.assertIs(caught.exception, error)
                 self.assertEqual(query.call_count, 1)
                 self.assertEqual(test.ack, 42)
@@ -130,7 +134,7 @@ class ReadonlyRouteControls(unittest.TestCase):
                 test, error = driver(), refusal(message)
                 with patch.object(kvtest, "q", side_effect=error) as query:
                     with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
-                        test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                        test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
                 self.assertIs(caught.exception, error)
                 self.assertEqual(query.call_count, 1)
 
@@ -140,7 +144,7 @@ class ReadonlyRouteControls(unittest.TestCase):
                 test = driver()
                 with patch.object(kvtest, "q", side_effect=error) as query:
                     with self.assertRaises(type(error)) as caught:
-                        test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                        test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
                 self.assertIs(caught.exception, error)
                 self.assertEqual(query.call_count, 1)
 
@@ -149,7 +153,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         with patch.object(kvtest, "q", side_effect=errors) as query, \
                 patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
             with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
-                test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
         self.assertIs(caught.exception, errors[-1])
         self.assertEqual(query.call_count, 5)
         self.assertEqual(test.completed, 0)
@@ -159,7 +163,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         with patch.object(kvtest, "q", side_effect=error) as query, \
                 patch.object(kvfaults.time, "monotonic", side_effect=[0, 11]):
             with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
-                test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
         self.assertIs(caught.exception, error)
         self.assertEqual(query.call_count, 1)
 
@@ -167,7 +171,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         test = driver()
         with patch.object(kvtest, "q", return_value=((99,),)) as query:
             with self.assertRaises(AssertionError):
-                test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
         self.assertEqual(query.call_count, 1)
         self.assertEqual(test.completed, 0)
         self.assertEqual(test.ack, 42)
@@ -251,7 +255,7 @@ class ReadonlyRouteControls(unittest.TestCase):
         error = refusal("shard 1 has no reachable leader (no replicas configured)", "HY000", 2003)
         with patch.object(kvtest, "q", side_effect=error) as query:
             with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
-                test.warm_readonly_route(object(), "owned", 7, 10, "positive")
+                test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
         self.assertIs(caught.exception, error)
         query.assert_called_once()
         self.assertEqual(test.completed, 0)
@@ -283,6 +287,7 @@ class ReadonlyRouteControls(unittest.TestCase):
     def test_shared_healed_path_requires_exact_sql_and_sdk_positives(self):
         test = driver()
         test.db, test.connect = "owned", MagicMock()
+        test.connect.return_value.__enter__.return_value = connection()
         test.sdk = Mock(return_value={"status": "ok", "rows": [{"tenant": 7, "id": 1, "v": 11}, None],
                                     "schema": {"db": "owned", "name": "t", "columns": [
                                         {"name": "tenant"}, {"name": "id"}, {"name": "v"}]}})
@@ -296,12 +301,193 @@ class ReadonlyRouteControls(unittest.TestCase):
     def test_bad_healed_sql_image_cannot_proceed_to_sdk_or_count_success(self):
         test = driver()
         test.connect, test.sdk = MagicMock(), Mock()
+        test.connect.return_value.__enter__.return_value = connection()
         with patch.object(kvtest, "q", return_value=((999,),)) as query:
             with self.assertRaises(AssertionError):
                 test.paired_values("t", 7, {1: 11, 99: None})
         query.assert_called_once()
         test.sdk.assert_not_called()
         self.assertEqual(test.completed, 0)
+
+
+class ReadonlyDiscoveryControls(unittest.TestCase):
+    endpoints = ("127.0.0.1:3311", "127.0.0.1:3312", "127.0.0.1:3313")
+
+    def message(self, endpoint=None):
+        return "shard 1 has no reachable leader (" + (endpoint or self.endpoints[0]) + " is read-only)"
+
+    def warm(self, test, c, **changes):
+        options = {"readonly_shard": 1, "readonly_endpoints": self.endpoints}
+        options.update(changes)
+        return test.warm_readonly_route(c, "owned_memtx", 7, 10, "exact positive", **options)
+
+    def test_exact_actual_group_endpoints_and_observed_states_allow_positive_select(self):
+        for endpoint in self.endpoints:
+            for state in (None, "HY000"):
+                with self.subTest(endpoint=endpoint, state=state):
+                    test, c = driver(), connection()
+                    error = refusal(self.message(endpoint), state, 2003)
+                    with patch.object(kvtest, "q", side_effect=[error, ((10,),)]) as query, \
+                            patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
+                        self.assertEqual(self.warm(test, c), ((10,),))
+                    self.assertEqual(query.call_count, 2)
+                    self.assertEqual(test.ack, 42)
+                    self.assertEqual(test.completed, 1)
+                    self.assertTrue(all(call.args[1] == "SELECT v FROM owned_memtx WHERE tenant=%s AND id=1"
+                                        and call.args[2] == (7,) for call in query.call_args_list))
+                    event = next(e for e in test.events if e["event"] == "known_ro_readonly_warmup_refusal")
+                    self.assertEqual(event["error"]["args"], [2003, self.message(endpoint)])
+                    self.assertEqual(event["error"]["sqlstate"], state)
+                    self.assertEqual(event["readonly_discovery_shard"], 1)
+                    self.assertEqual(event["readonly_discovery_endpoints"], list(self.endpoints))
+                    self.assertTrue(event["retry_eligible"])
+                    self.assertFalse(event["guard_coverage"])
+
+    def test_wrong_near_shard_endpoint_generic_discovery_and_timeout_never_retry(self):
+        messages = [self.message().replace("shard 1 ", "shard 2 "), self.message().replace("shard 1 ", "shard 11 "),
+                    self.message().replace("shard 1 ", "shard 01 "), self.message("127.0.0.1:33110"),
+                    self.message("127.0.0.1:3314"), self.message("127.0.0.1:3321"),
+                    "shard 1 has no reachable leader (no replicas configured)",
+                    "shard 1 has no reachable leader (127.0.0.1:3311: tarantool operation timed out)",
+                    self.message()[:-1], "prefix " + self.message(), self.message() + " suffix",
+                    self.message().replace(" is read-only)", " is unavailable)"),
+                    self.message().replace("leader (", "leader("), "Lost connection to MySQL server during query (timed out)"]
+        for message in messages:
+            with self.subTest(message=message):
+                test, error = driver(), refusal(message, None, 2003)
+                with patch.object(kvtest, "q", side_effect=error) as query:
+                    with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
+                        self.warm(test, connection())
+                self.assertIs(caught.exception, error)
+                self.assertEqual(query.call_count, 1)
+                self.assertEqual(test.completed, 0)
+                self.assertEqual(test.ack, 42)
+
+    def test_contradictory_states_wrong_namespace_or_code_never_retry(self):
+        errors = [refusal(self.message(), state, 2003) for state in
+                  ("40003", b"40003", "40001", "HY001", b"HY000", "", False)]
+        errors += [refusal(self.message(), None, code) for code in (2013, 1041, "2003", 2003.0)]
+        errors += [kvfaults.pymysql.MySQLError(2003, self.message()),
+                   refusal({"message": self.message()}, None, 2003), TimeoutError("unknown transport")]
+        for error in errors:
+            with self.subTest(error=error):
+                test = driver()
+                with patch.object(kvtest, "q", side_effect=error) as query:
+                    with self.assertRaises(type(error)) as caught:
+                        self.warm(test, connection())
+                self.assertIs(caught.exception, error)
+                self.assertEqual(query.call_count, 1)
+                self.assertEqual(test.ack, 42)
+
+    def test_other_warmups_do_not_opt_into_discovery_retries(self):
+        test, error = driver(), refusal(self.message(), None, 2003)
+        with patch.object(kvtest, "q", side_effect=error) as query:
+            with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
+                test.warm_readonly_route(connection(), "owned", 7, 10, "positive")
+        self.assertIs(caught.exception, error)
+        query.assert_called_once()
+        for shard in (2, 0, True, "1"):
+            with self.subTest(shard=shard):
+                self.assertFalse(kvfaults.known_ro_discovery(error, shard, self.endpoints))
+
+    def test_serialization_and_discovery_share_pool_plus_one_bound(self):
+        test = driver()
+        responses = [refusal(), refusal(self.message(), None, 2003), refusal(),
+                     refusal(self.message(self.endpoints[1]), "HY000", 2003), ((10,),)]
+        with patch.object(kvtest, "q", side_effect=responses) as query, \
+                patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
+            self.assertEqual(self.warm(test, connection()), ((10,),))
+        self.assertEqual(query.call_count, test.args.sql_pool_size + 1)
+        self.assertEqual(test.completed, 1)
+        self.assertEqual(test.ack, 42)
+
+    def test_leader_controller_warms_owned_group_before_one_transaction(self):
+        test, c = driver(), connection()
+        old = {"node_id": "s1r1", "endpoint": self.endpoints[0]}
+        new = {"node_id": "s1r2", "endpoint": self.endpoints[1]}
+        test.identities = [{"id": 1}, {"id": 2}]
+        test.tenant, test.values = 7, {"memtx": {1: 10, 2: None, 99: None}}
+        test.leader = Mock(side_effect=[(old, {"table": {}, "ownership": {}}), (new, {}), (new, {})])
+        test.group_nodes = Mock(return_value=[old, new, {"node_id": "s1r3", "endpoint": self.endpoints[2]}])
+        test.configuration = Mock(side_effect=[{"term": 1}, {"term": 2}])
+        test.state = Mock(return_value={"ro": True, "term": 2})
+        test.signal, test.restore, test.retarget, test.caught_up, test.paired_values = Mock(), Mock(), Mock(), Mock(), Mock()
+        test.public = Mock(return_value={"status": "error", "error": {"kind": "moved", "domain": "contract"}})
+        test.connect = MagicMock()
+        test.connect.return_value.__enter__.return_value = c
+        reads = 0
+        def query(_c, statement, params):
+            nonlocal reads
+            if statement.startswith("SELECT "):
+                reads += 1
+                if reads == 1:
+                    raise refusal(self.message(self.endpoints[2]), None, 2003)
+                return ((10,),)
+            if statement == "BEGIN":
+                c.server_status = 1
+            elif statement == "COMMIT":
+                c.server_status = 0
+            return ()
+        with patch.object(kvtest, "q", side_effect=query) as sql, patch.object(kvfaults.time, "sleep"):
+            test.scenario_leader("memtx")
+        self.assertEqual([call.args[1] for call in sql.call_args_list], [
+            "SELECT v FROM fault_memtx WHERE tenant=%s AND id=1",
+            "SELECT v FROM fault_memtx WHERE tenant=%s AND id=1", "BEGIN",
+            "UPDATE fault_memtx SET v=11 WHERE tenant=%s AND id=1",
+            "INSERT INTO fault_memtx VALUES (%s,2,12)", "COMMIT"])
+        test.group_nodes.assert_called_once_with(0)
+        test.restore.assert_called_once()
+        self.assertEqual(test.values["memtx"], {1: 11, 2: 12, 99: None})
+
+    def test_discovery_exhaustion_and_deadline_preserve_original_error(self):
+        test = driver()
+        errors = [refusal(self.message(), None, 2003) for _ in range(5)]
+        with patch.object(kvtest, "q", side_effect=errors) as query, \
+                patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
+            with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
+                self.warm(test, connection())
+        self.assertIs(caught.exception, errors[-1])
+        self.assertEqual(query.call_count, 5)
+        self.assertEqual(test.completed, 0)
+        test, error = driver(), errors[0]
+        with patch.object(kvtest, "q", side_effect=error) as query, \
+                patch.object(kvfaults.time, "monotonic", side_effect=[0, 11]):
+            with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
+                self.warm(test, connection())
+        self.assertIs(caught.exception, error)
+        query.assert_called_once()
+
+    def test_active_or_non_autocommit_connection_rejected_before_first_query(self):
+        for c in (connection(autocommit=False), connection(server_status=1)):
+            with self.subTest(connection=c):
+                test = driver()
+                with patch.object(kvtest, "q") as query:
+                    with self.assertRaisesRegex(AssertionError, "independent autocommit"):
+                        self.warm(test, c)
+                query.assert_not_called()
+                self.assertEqual(test.completed, 0)
+                self.assertEqual(test.ack, 42)
+
+    def test_transaction_state_is_rechecked_before_sleep_and_before_retry(self):
+        for when in ("reply", "sleep"):
+            with self.subTest(when=when):
+                test, c = driver(), connection()
+                error = refusal(self.message(), None, 2003)
+                def failed(*args):
+                    if when == "reply":
+                        c.server_status = 1
+                    raise error
+                def sleep(_):
+                    c.get_autocommit.return_value = False
+                with patch.object(kvtest, "q", side_effect=failed) as query, \
+                        patch.object(kvfaults.time, "monotonic", return_value=0), \
+                        patch.object(kvfaults.time, "sleep", side_effect=sleep) as waited:
+                    with self.assertRaisesRegex(AssertionError, "independent autocommit"):
+                        self.warm(test, c)
+                query.assert_called_once()
+                self.assertEqual(waited.call_count, 0 if when == "reply" else 1)
+                self.assertEqual(test.completed, 0)
+                self.assertEqual(test.ack, 42)
 
 
 class ReaderCleanupControls(unittest.TestCase):

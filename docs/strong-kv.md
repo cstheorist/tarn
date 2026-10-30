@@ -94,6 +94,11 @@ reinterprets old positional keys under a changed primary key. Ownership-only
 rediscovery can restart the whole vector under the same table token and
 shared finite attempt/deadline budget.
 
+Movement reports include bounded `installing`, `reclaiming` and `aborting`
+phases. The SDK uses the shared bucket-map routing rules for them. A report
+is a routing hint: each data RPC still checks authoritative ownership and
+refuses a partial install or reclaim rather than returning incomplete rows.
+
 ## Reads and limits
 
 `tarn_kv_v1.get` accepts exactly one map:
