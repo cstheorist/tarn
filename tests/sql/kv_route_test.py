@@ -6,6 +6,7 @@ history sequence133. It includes SqlError::conflict's outer wire text.
 These controls mock SQL execution, start no services and perform no writes.
 """
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import kvfaults
@@ -25,6 +26,7 @@ def refusal(message=WIRE_RO, state="40001", code=1213):
 def driver():
     test = object.__new__(kvfaults.FaultTest)
     test.events, test.completed, test.ack = [], 0, 42
+    test.args = SimpleNamespace(sql_pool_size=4)
 
     def record(event, **values):
         test.events.append({"event": event, **values})
@@ -61,6 +63,23 @@ class ReadonlyRouteControls(unittest.TestCase):
         event = next(e for e in test.events if e["event"] == "known_ro_readonly_warmup_refusal")
         self.assertIsNone(event["error"]["sqlstate"])
         self.assertEqual(query.call_count, 2)
+
+    def test_all_configured_stale_clients_allow_one_exact_positive_attempt(self):
+        test = driver()
+        responses = [refusal() for _ in range(test.args.sql_pool_size)] + [((10,),)]
+        with patch.object(kvtest, "q", side_effect=responses) as query, \
+                patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
+            result = test.warm_readonly_route(object(), "owned", 7, 10, "exact positive")
+        self.assertEqual(result, ((10,),))
+        self.assertEqual(query.call_count, 5)
+        self.assertEqual(test.ack, 42)
+        self.assertEqual(test.completed, 1)
+        refusals = [e for e in test.events if e["event"] == "known_ro_readonly_warmup_refusal"]
+        self.assertEqual([e["attempt"] for e in refusals], [1, 2, 3, 4])
+        self.assertTrue(all(e["sql_pool_size"] == 4 and e["max_attempts"] == 5
+                            and not e["guard_coverage"] for e in refusals))
+        for call in query.call_args_list:
+            self.assertTrue(call.args[1].startswith("SELECT "))
 
     def test_40003_and_other_provided_states_are_never_retried(self):
         for state in ("40003", b"40003", "HY000", "40P01"):
@@ -100,13 +119,13 @@ class ReadonlyRouteControls(unittest.TestCase):
                 self.assertEqual(query.call_count, 1)
 
     def test_attempt_limit_preserves_the_final_original_error(self):
-        test, errors = driver(), [refusal() for _ in range(4)]
+        test, errors = driver(), [refusal() for _ in range(5)]
         with patch.object(kvtest, "q", side_effect=errors) as query, \
                 patch.object(kvfaults.time, "monotonic", return_value=0), patch.object(kvfaults.time, "sleep"):
             with self.assertRaises(kvfaults.pymysql.OperationalError) as caught:
                 test.warm_readonly_route(object(), "owned", 7, 10, "positive")
         self.assertIs(caught.exception, errors[-1])
-        self.assertEqual(query.call_count, 4)
+        self.assertEqual(query.call_count, 5)
         self.assertEqual(test.completed, 0)
 
     def test_retry_deadline_preserves_the_original_error(self):

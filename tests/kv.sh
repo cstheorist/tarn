@@ -11,6 +11,8 @@ KV_SDK=${KV_SDK:-$ROOT/target/release/examples/strong_kv}
 KV_BENCH=${KV_BENCH:-$ROOT/target/release/examples/strong_kv_bench}
 KV_STUDY_ENGINE=${KV_STUDY_ENGINE:-}
 KV_CLOCK_FAULT=${KV_CLOCK_FAULT:-0}
+# Bound route warm-up by the same physical pool configured on both gateways.
+KV_SQL_POOL_SIZE=4
 TARN_NATIVE=${TARN_NATIVE:-$ROOT/target/release/libtarn_storage.so}
 KV_SCENARIOS=${KV_SCENARIOS:-leader,quorum,stall,move,ddl,partition}
 HOOKS=1
@@ -263,7 +265,7 @@ GROUP2=$("$PYTHON" -c 'import json,sys;print(",".join(json.loads(sys.argv[1])[1]
 for gateway in 1 2; do
     start "gw$gateway" "${PORTS[$((5+gateway))]}" "$WORK/gw$gateway" "$TARN_SERVER" "$TARN_SERVER" \
         --shard "$GROUP1" --shard "$GROUP2" --listen "127.0.0.1:${PORTS[$((5+gateway))]}" \
-        --node-id "$gateway" --threads 2 --allow-all --user sb:
+        --node-id "$gateway" --threads 2 --pool "$KV_SQL_POOL_SIZE" --allow-all --user sb:
 done
 "$PYTHON" - "${PORTS[@]:6:2}" <<'PY'
 import pymysql,sys,time
@@ -304,5 +306,6 @@ fi
     --sdk "$KV_SDK" --evidence "$WORK/functional" > "$WORK/functional.log" 2>&1
 cat "$WORK/functional.log"
 "$PYTHON" "$ROOT/tests/sql/kvfaults.py" --tarn "$TARN" --shards "$LEADERS" --replicas "$REPLICAS" \
-    --sdk "$KV_SDK" --evidence "$WORK/faults" --fault-control "$CONTROL" --scenarios "$KV_SCENARIOS" > "$WORK/faults.log" 2>&1
+    --sdk "$KV_SDK" --evidence "$WORK/faults" --fault-control "$CONTROL" --scenarios "$KV_SCENARIOS" \
+    --sql-pool-size "$KV_SQL_POOL_SIZE" > "$WORK/faults.log" 2>&1
 cat "$WORK/faults.log"

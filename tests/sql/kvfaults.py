@@ -368,28 +368,33 @@ class FaultTest(Test):
 
     def warm_readonly_route(self, connection, table, tenant, expected, label):
         # Independent autocommit reads only, before either caller's BEGIN.
-        # The known RO serialization refusal invalidates the gateway pool;
-        # the next SELECT may discover the replacement. Never replay SQL
-        # transaction history, a mutation, or an uncertain transport result.
+        # Each known RO reply retires its physical client. Allow the explicit
+        # configured pool's stale clients plus one positive SELECT; individual
+        # socket IDs are not inferred from a refusal. Never replay SQL history,
+        # a mutation, or an uncertain transport result.
         deadline = time.monotonic() + 10
+        pool_size = self.args.sql_pool_size
+        max_attempts = pool_size + 1
         statement = f"SELECT v FROM {table} WHERE tenant=%s AND id=1"
-        for attempt in range(1, 5):
+        for attempt in range(1, max_attempts + 1):
             try:
                 rows = self.sql(connection, statement, (tenant,))
             except pymysql.MySQLError as error:
                 retry = known_ro_serialization(error)
                 self.record("known_ro_readonly_warmup_refusal", attempt=attempt, table=table,
+                            sql_pool_size=pool_size, max_attempts=max_attempts,
                             error={"type": type(error).__name__, "args": list(error.args),
                                    "sqlstate": getattr(error, "sqlstate", None)},
                             retry_eligible=retry, guard_coverage=False,
                             scope="independent read-only route warm-up; no mutation or transaction replay")
-                if not retry or attempt == 4 or time.monotonic() >= deadline:
+                if not retry or attempt == max_attempts or time.monotonic() >= deadline:
                     raise
                 time.sleep(.05)
                 if time.monotonic() >= deadline:
                     raise
             else:
                 self.check(label, rows == ((expected,),), rows=rows, attempt=attempt,
+                           sql_pool_size=pool_size, max_attempts=max_attempts,
                            scope="exact positive SELECT required before the subsequent once-only mutation")
                 return rows
 
@@ -871,6 +876,8 @@ def main():
     for name in ("tarn", "shards", "replicas", "sdk", "evidence", "fault-control", "scenarios"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--user", default="sb")
+    parser.add_argument("--sql-pool-size", required=True, type=int, choices=(4,),
+                        help="fixed physical pool configured by the owned RF3 launcher")
     args = parser.parse_args()
     scenarios = args.scenarios.split(",")
     if not scenarios or len(set(scenarios)) != len(scenarios) or set(scenarios) - IMPLEMENTED:
@@ -903,6 +910,7 @@ def main():
     finally:
         errors = test.cleanup(success)
         summary = {"success": success and not errors, "completed_checks": test.completed,
+                   "sql_pool_size": args.sql_pool_size,
                    "requested_scenarios": scenarios, "completed_scenarios": test.finished_scenarios,
                    "primary_error": failure, "cleanup_errors": errors, "database_preserved": test.created,
                    "scope": "Requested RF3 histories include bounded replication-ingress cuts, not arbitrary networking or snapshots"}
