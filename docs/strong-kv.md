@@ -208,6 +208,8 @@ A failed cohort remains failed while the other isolated cohorts finish and
 retain their evidence.
 The optional `strong_kv_scope: histories` selects just the two fault-history
 cohorts when investigating a history-fixture change.
+Manual qualification keeps in-progress cohorts running; the two scopes use
+separate concurrency groups so a history rerun cannot cancel measurements.
 
 Each engine uses two RF3 shards, quorum two, synchronous spaces and fsync,
 with test hooks disabled. The workload reads an unchanged 10,000-row,

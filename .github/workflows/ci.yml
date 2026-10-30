@@ -32,8 +32,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification && 'kv' || 'ci' }}
-  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.strong_read_cost) }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification && format('kv-{0}', inputs.strong_kv_scope || 'all') || 'ci' }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.strong_read_cost || inputs.strong_kv_qualification)) }}
 
 env:
   CARGO_TERM_COLOR: always
