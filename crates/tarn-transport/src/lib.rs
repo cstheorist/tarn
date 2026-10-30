@@ -245,3 +245,47 @@ impl AsyncWrite for PrefixedIo {
 }
 
 pub mod host;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn secrets_refuse_other_readers_and_symlinks() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("tarn-secret-test-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("secret");
+        std::fs::write(&file, b"sensitive\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_secret(&file).is_err());
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_secret(&file).unwrap(), "sensitive");
+        let link = dir.join("link");
+        symlink(&file, &link).unwrap();
+        assert!(read_secret(&link).is_err());
+        assert!(read_config(&link, 100).is_err());
+        assert!(read_private(&dir, 100).is_err());
+        assert!(read_private(&file, 2).is_err());
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(read_config(&file, 100).is_err());
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&file, b"line1\nline2").unwrap();
+        assert!(read_secret(&file).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tls_authorities_cannot_override_identity_verification() {
+        for bad in [
+            "localhost:3301",
+            "tls://localhost",
+            "tls://user@localhost:3301",
+            "tls://localhost:0",
+            "tls://localhost:3301?verify=false",
+            "tls://localhost:3301/path",
+        ] {
+            assert!(tls_endpoint(bad).is_err(), "{bad}");
+        }
+        assert!(tls_endpoint("tls://localhost:3301").is_ok());
+        assert!(tls_endpoint("tls://[::1]:3301").is_ok());
+    }
+}

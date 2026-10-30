@@ -39,7 +39,15 @@ fn convert(o: Output, warnings: u16) -> QueryResult {
             info,
             warnings,
         },
-        Output::Rows { columns, rows } => QueryResult::Rows { columns, rows },
+        Output::Rows {
+            columns,
+            rows,
+            resource_guard,
+        } => QueryResult::Rows {
+            columns,
+            rows,
+            resource_guard,
+        },
     }
 }
 
@@ -402,6 +410,7 @@ async fn run(args: Args, mut cfg: ClusterConfig) {
         }
     };
     let opts = Arc::new(ServerOpts {
+        memory: Some(cluster.resources.clone()),
         server_version: tarn_sql::SERVER_VERSION.to_string(),
         auth,
         tls,

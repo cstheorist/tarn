@@ -125,7 +125,10 @@ present, physical/cgroup memory limits, and available disk on their data
 filesystem against explicit positive minima. Storage memory pools must fit
 within 75% of the declared minimum and observed memory. Keep one storage
 instance per declared host budget, or account for the aggregate separately.
-Minima are startup prerequisites, not reservations or a bound on process RSS,
+The SQL server accounting budget must also leave 25% of declared host memory
+as headroom. TLS socket envelopes are charged before admitting a connection;
+result charges remain held until encrypted output flushes. Minima are startup
+prerequisites, not reservations or a bound on process RSS,
 query plans/results, allocator overhead, WAL growth, bridge buffers or page
 cache. Size admission and pools using the actual workload; monitor process,
 container, disk and RPC pressure continuously. Nested/custom cgroup mounts and

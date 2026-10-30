@@ -39,6 +39,8 @@ pub struct Opts {
     /// Bound on TCP connect + greeting + `IPROTO_ID` + `IPROTO_AUTH`.
     /// `Duration::ZERO` means no limit.
     pub connect_timeout: Duration,
+    /// Retire a connection before reserving an oversized response frame.
+    pub max_response_bytes: usize,
     /// Hard limits for this physical connection, including abandoned callers.
     pub request_limits: Limits,
     /// Lifetime from enqueue to exact terminal reply or physical retirement.
@@ -59,6 +61,7 @@ impl Opts {
             password: None,
             tls: None,
             connect_timeout: Duration::from_secs(5),
+            max_response_bytes: iproto::BODY_LEN_MAX,
             request_limits: Limits::default(),
             request_timeout: Duration::from_secs(120),
             admission: Vec::new(),
@@ -75,6 +78,7 @@ impl std::fmt::Debug for Opts {
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("tls", &self.tls.is_some())
             .field("connect_timeout", &self.connect_timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("request_limits", &self.request_limits)
             .field("request_timeout", &self.request_timeout)
             .field("admission", &self.admission)

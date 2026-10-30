@@ -108,6 +108,17 @@ def render(inventory, output):
         )
         dump(output / (n["name"] + ".tls.json"), bridge)
     cfg = dict(
+        resources=inv.get(
+            "resources",
+            dict(
+                query_bytes=64 * 1024**2,
+                transaction_bytes=32 * 1024**2,
+                server_bytes=512 * 1024**2,
+                query_work=100000000,
+                server_work=1000000000,
+                read_timeout_ms=10000,
+            ),
+        ),
         shards=[
             dict(id=int(s), replicas=r)
             for s, r in sorted(peers.items(), key=lambda p: int(p[0]))

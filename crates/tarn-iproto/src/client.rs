@@ -322,6 +322,7 @@ pub(crate) struct Shared {
     /// leader. The connection still works, but callers that need the leader
     /// should stop using it (see [`Client::is_stale`]).
     stale: AtomicBool,
+    response_limit_exceeded: AtomicBool,
     /// Marks the connection's user set: what it learned of the server, such
     /// as a procedure it lacks (see [`Client::marked`]).
     marks: AtomicU32,
@@ -496,7 +497,12 @@ fn terminal_type(rtype: u32) -> bool {
 
 /// Split one complete packet off the front of `buf`, if there is one. When
 /// the packet is incomplete, makes sure `buf` has room for all of it.
+#[cfg(test)]
 fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
+    next_frame_limited(buf, iproto::BODY_LEN_MAX)
+}
+
+fn next_frame_limited(buf: &mut BytesMut, max_response_bytes: usize) -> Result<Option<Frame>, Error> {
     let b = &buf[..];
     let Some(&first) = b.first() else { return Ok(None) };
     let (plen, len) = match first {
@@ -510,7 +516,7 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     };
     // Check every encoding before narrowing or reserving, including an
     // incomplete uint32-prefixed reply advertising more than BODY_LEN_MAX.
-    if len > iproto::BODY_LEN_MAX as u64 {
+    if len > max_response_bytes.min(iproto::BODY_LEN_MAX) as u64 {
         return Err(Error::Protocol(format!("packet too large: {len} bytes")));
     }
     let total = plen
@@ -579,15 +585,25 @@ fn next_frame(buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
     }))
 }
 
-async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: IoOwner<R>, mut buf: BytesMut) {
+async fn reader_task<R: AsyncRead + Unpin>(
+    shared: Arc<Shared>,
+    mut rd: IoOwner<R>,
+    mut buf: BytesMut,
+    max_response_bytes: usize,
+) {
     let mut done: Vec<Frame> = Vec::with_capacity(64);
     let mut ready: Vec<(Waiter, Frame)> = Vec::with_capacity(64);
     let why: Error = 'outer: loop {
         loop {
-            match next_frame(&mut buf) {
+            match next_frame_limited(&mut buf, max_response_bytes) {
                 Ok(Some(f)) => done.push(f),
                 Ok(None) => break,
-                Err(e) => break 'outer e,
+                Err(e) => {
+                    if matches!(&e, Error::Protocol(m) if m.starts_with("packet too large:")) {
+                        shared.response_limit_exceeded.store(true, Ordering::Release);
+                    }
+                    break 'outer e;
+                }
             }
         }
         if !done.is_empty() {
@@ -628,6 +644,9 @@ async fn reader_task<R: AsyncRead + Unpin>(shared: Arc<Shared>, mut rd: IoOwner<
                     body: f.body,
                 });
             }
+        }
+        if buf.is_empty() && buf.capacity() > READ_CHUNK {
+            buf = BytesMut::with_capacity(READ_CHUNK);
         }
         if buf.capacity() - buf.len() < READ_MIN_FREE {
             buf.reserve(READ_CHUNK);
@@ -886,7 +905,7 @@ impl Client {
         let mut auth_reply: Option<Frame> = None;
         let want_auth = opts.user.is_some();
         while id_reply.is_none() || (want_auth && auth_reply.is_none()) {
-            match next_frame(&mut buf)? {
+            match next_frame_limited(&mut buf, opts.max_response_bytes)? {
                 Some(f) if !terminal_type(f.rtype) => {
                     return Err(Error::Protocol("nonterminal handshake reply".into()));
                 }
@@ -962,6 +981,7 @@ impl Client {
             physical: physical.clone(),
             closed: AtomicBool::new(false),
             stale: AtomicBool::new(false),
+            response_limit_exceeded: AtomicBool::new(false),
             marks: AtomicU32::new(0),
             tasks: Mutex::new(Vec::with_capacity(3)),
             counters: Counters::default(),
@@ -980,6 +1000,7 @@ impl Client {
                     _guard: IoGuard(physical.clone()),
                 },
                 buf,
+                opts.max_response_bytes,
             ));
             let w = tokio::spawn(writer_task(
                 shared.clone(),
@@ -1025,6 +1046,11 @@ impl Client {
 
     /// True once the server answered some request with ER_READONLY (it was
     /// demoted, or is a replica), or after [`Client::mark_stale`].
+    /// The peer advertised a frame beyond this connection's admission limit.
+    pub fn response_limit_exceeded(&self) -> bool {
+        self.inner.shared.response_limit_exceeded.load(Ordering::Acquire)
+    }
+
     pub fn is_stale(&self) -> bool {
         self.inner.shared.stale.load(Ordering::Acquire)
     }

@@ -387,6 +387,7 @@ pub fn check_schema(statements: &[&str], db: Option<&str>, default_coll: &str) -
             ("CREATE", "TABLE" | "TEMPORARY") => {
                 let cat = Catalog::new(0, databases.clone(), defs.clone());
                 let ctx = PlanCtx {
+                    statistics: None,
                     catalog: &cat,
                     db: current.as_deref(),
                     params: &[],
@@ -417,6 +418,7 @@ mod tests {
         for (i, sql) in sqls.iter().enumerate() {
             let cat = Catalog::new(1, vec!["d".into()], defs.clone());
             let ctx = PlanCtx {
+                statistics: None,
                 catalog: &cat,
                 db: Some("d"),
                 params: &[],

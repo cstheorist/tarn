@@ -866,8 +866,12 @@ function M.new(c)
     function L.owners(buckets)
         local now, out, missing = clock.monotonic(), {}, {}
         local cache = L.owner_cache
-        if cache == nil or cache.until_at <= now or cache.mver ~= c.bk.mver or cache.gen ~= c.bk.gen then
-            cache = {rows = {}, n = 0, until_at = now + .25, mver = c.bk.mver, gen = c.bk.gen}
+        -- A local handoff advances ver without changing membership or the
+        -- leadership generation. Discard hints as soon as that map changes.
+        if cache == nil or cache.until_at <= now or cache.mver ~= c.bk.mver or cache.gen ~= c.bk.gen
+           or cache.bucket_ver ~= c.bk.ver then
+            cache = {rows = {}, n = 0, until_at = now + .25, mver = c.bk.mver, gen = c.bk.gen,
+                     bucket_ver = c.bk.ver}
             L.owner_cache = cache
         end
         for _, bucket in ipairs(buckets) do

@@ -203,7 +203,7 @@ class Fixture:
             vinyl_memory_mb=16,
             vinyl_cache_mb=0,
             storage_host=host,
-            gateway_host=host,
+            gateway_host=dict(host, min_memory_bytes=1024**3),
             bridge_max_connections=256,
             gateway_max_connections=32,
             gateway_node_id=139,
@@ -488,6 +488,7 @@ class Fixture:
                 self.query(f"UPDATE {engine}_t SET n=n+1 WHERE id=1", c)
                 self.query("COMMIT", c)
                 self.query(f"ALTER TABLE {engine}_t ADD COLUMN extra INT DEFAULT 0", c)
+                self.query(f"ANALYZE TABLE {engine}_t", c)
                 assert self.query(f"SELECT * FROM {engine}_t ORDER BY n", c) == (
                     (1, 11, 0),
                 )

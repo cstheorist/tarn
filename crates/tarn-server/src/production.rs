@@ -40,6 +40,13 @@ impl Production {
                 "invalid production admission/durability configuration",
             ));
         }
+        cfg.rpc.validate().map_err(|e| io::Error::other(e.message))?;
+        tarn_sql::budget::Pool::new(cfg.resources.clone()).map_err(|e| io::Error::other(e.message))?;
+        if u128::from(cfg.resources.server_bytes) * 4 > u128::from(self.host.min_memory_bytes) * 3 {
+            return Err(io::Error::other(
+                "SQL server budget requires at least 25% declared host memory headroom",
+            ));
+        }
         let mut seen = HashSet::new();
         let mut ids = HashSet::new();
         for shard in &cfg.shards {

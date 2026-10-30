@@ -45,6 +45,7 @@ local decimal = require('decimal')
 local uuid = require('uuid')
 
 local M = {
+    compatibility = require('tarn_compat'),
     cfg = {
         shard_id = 0,
         peers = {},              -- shard_id -> {uri, uri, ...} (all replicas)
@@ -1457,12 +1458,14 @@ function BK.ns_init()
     if f == nil then return end
     local ok, addr = pcall(f.call, f, {BK.NS_LAYOUT})
     if not ok then
+        BK.ns_status = 'load_failed'
         log.warn('tarn: native procedures not loaded (%s): the Lua ones serve every request', tostring(addr))
         M.cfg.native = false
         return
     end
     local ns = ffi.cast('struct tarn_ns *', addr)
     if ns.layout ~= BK.NS_LAYOUT then
+        BK.ns_status = 'abi_mismatch'
         log.warn('tarn: native procedures of state layout %d, %d expected: not used', ns.layout, BK.NS_LAYOUT)
         M.cfg.native = false
         return
@@ -1488,6 +1491,7 @@ function BK.ns_init()
     BK.ns_window()
     BK.ns_hooks()
     ns.ready = 1
+    BK.ns_status = 'ready'
     log.info('tarn: native procedures loaded')
 end
 
@@ -5259,6 +5263,36 @@ local function catalog_ver(name)
     return r and r.def.ver or 0
 end
 
+-- Optional optimizer hints, never a user/transaction read. Size is an
+-- estimate on vinyl; the first primary page is deliberately bounded and
+-- biased. Prepared intents, bucket copies and concurrent writes may make
+-- these hints stale. No read set or consistency guarantee relies on them.
+function tarn_analyze(space_id, ver, limit, fields)
+    local sp = box.space[space_id]
+    if sp == nil then return {'error', 1146, 'no such space'} end
+    if catalog_ver(sp.name) ~= ver then return {'error', 1412, STALE_DEF_MSG} end
+    if type(limit) ~= 'number' or limit < 1 or limit > 256 or limit ~= math.floor(limit)
+        or type(fields) ~= 'table' or #fields > 16 then
+        return {'error', 1235, 'ANALYZE sample budget exceeded'}
+    end
+    local format = sp:format()
+    for _, f in ipairs(fields) do
+        if type(f) ~= 'number' or f < 1 or f > #format or f ~= math.floor(f)
+            or (format[f].type ~= 'integer' and format[f].type ~= 'unsigned') then
+            return {'error', 1235, 'ANALYZE supports integer fields only'}
+        end
+    end
+    local size, rows = sp.index[0]:len(), {}
+    for _, tuple in sp.index[0]:pairs({}, {iterator = 'ALL'}) do
+        local row = {}
+        for i, f in ipairs(fields) do row[i] = tuple[f] or box.NULL end
+        rows[#rows + 1] = row
+        if #rows >= limit then break end
+    end
+    if catalog_ver(sp.name) ~= ver then return {'error', 1412, STALE_DEF_MSG} end
+    return {'ok', size, rows}
+end
+
 local function tmp_index_name(id) return TMP_PREFIX .. id end
 
 local function has_locks(sid, uix)
@@ -7405,6 +7439,7 @@ function tarn_info()
         if st == 'active' or st == 'sending' or st == 'fenced' then nb = nb + 1 end
     end
     return {shard_id = M.cfg.shard_id, ro = box.info.ro, stats = M.stats, buckets = nb, bucket_epoch = BK.epoch,
+            compatibility = tarn_compatibility(),
             locks = box.space._tarn_locks:len(), lock_index = NLOCK, row_locks = PL_N, plock_txns = ptx,
             ddl_held = DDL_N, prepared = box.space._tarn_part.index.state:count({'prepared'}),
             part_records = box.space._tarn_part:len(), txn_records = box.space._tarn_txn:len(),
@@ -7439,6 +7474,7 @@ end
 -- replication. Every step is idempotent and writes nothing when its object
 -- exists.
 local function setup_schema()
+    M.compatibility.check()
     if not M.cfg.production then
         box.schema.user.create(M.cfg.user, {password = M.cfg.password, if_not_exists = true})
         box.schema.user.grant(M.cfg.user, 'super', nil, nil, {if_not_exists = true})
@@ -7464,6 +7500,11 @@ local function setup_schema()
             fiber.sleep(0.1)
         end
         box.space._tarn_meta:replace{'shard_id', M.cfg.shard_id}
+    end
+    -- Keep shard_id as the first synchronous metadata write: the joining
+    -- replicas must be able to acknowledge it before any marker is added.
+    if box.space._tarn_meta:get{'storage_format'} == nil then
+        box.space._tarn_meta:replace{'storage_format', M.compatibility.format}
     end
     migrate_legacy_job()
     M.engine.fresh()
@@ -7491,6 +7532,8 @@ local function setup_when_writable()
 end
 
 function M.init(cfg)
+    M.compatibility.check()
+    M.compat_ready = false
     M.clock.stop()
     M.clock_sampler_close()
     M.clock.invalidate('configuration reload')
@@ -7498,6 +7541,7 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')
     pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
     if not M.cfg.sync and not box.info.ro then
         setup_schema()          -- a single instance: before it serves requests
@@ -7543,7 +7587,12 @@ function M.init(cfg)
     M.lazy.start()
     PG.watch_heap()
     rawset(_G, 'tarn', M)
+    M.compat_ready = true
     return M
+end
+
+function tarn_compatibility()
+    return M.compatibility.report(M.cfg, BK.NS_LAYOUT, BK.ns_status, M.compat_ready)
 end
 
 -- Clock samples cover configured logical shards, current joined shards and
@@ -7605,6 +7654,8 @@ function tarn_clock_status() return M.clock.status() end
 function tarn_clock_test_time(wall, mono) return M.clock.test_time(wall, mono) end
 -- Code capability only: never a leader/clock/data freshness certificate.
 BK.production_functions = {
+        'tarn_analyze',
+        'tarn_compatibility',
         'tarn_abort',
         'tarn_alter_abort',
         'tarn_alter_apply',
@@ -7765,6 +7816,7 @@ M.engine = require('tarn_engine').new{
 tarn_lock = M.engine.rpc_errors(tarn_lock, pl_failed)
 tarn_lock_range = M.engine.rpc_errors(tarn_lock_range, pl_failed)
 tarn_estimate = M.engine.rpc_errors(tarn_estimate)
+tarn_analyze = M.engine.rpc_errors(tarn_analyze)
 function tarn_engine_capabilities() return {'ok', 1} end
 function tarn_engine_decision(name, old_id, new_id, ver, gen)
     M.fresh.barrier()

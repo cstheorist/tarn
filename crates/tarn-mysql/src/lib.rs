@@ -49,6 +49,8 @@ pub const MAX_PREPARED_STMTS: usize = 16382;
 
 #[derive(Clone, Debug)]
 pub struct ServerOpts {
+    /// Shared admission for retained socket buffers and prepared long data.
+    pub memory: Option<Arc<dyn tarn_common::ResourceMemory>>,
     /// Version string in the handshake, e.g. "8.0.40-tarn".
     pub server_version: String,
     pub auth: AuthConfig,
@@ -60,6 +62,7 @@ pub struct ServerOpts {
 impl Default for ServerOpts {
     fn default() -> Self {
         ServerOpts {
+            memory: None,
             server_version: "8.0.40-tarn".to_string(),
             auth: AuthConfig::AllowAll,
             tls: None,
@@ -97,6 +100,7 @@ pub enum QueryResult {
     Rows {
         columns: Arc<[Column]>,
         rows: Vec<Vec<Value>>,
+        resource_guard: Option<tarn_common::ResourceGuard>,
     },
 }
 
@@ -139,6 +143,9 @@ struct Stmt {
     /// the next EXECUTE fails.
     long_bytes: usize,
     long_overflow: bool,
+    long_error: Option<SqlError>,
+    long_charge: u64,
+    long_guards: Vec<tarn_common::ResourceGuard>,
 }
 
 struct Conn<B> {
@@ -146,6 +153,9 @@ struct Conn<B> {
     peer: String,
     rbuf: BytesMut,
     wbuf: Vec<u8>,
+    result_guards: Vec<tarn_common::ResourceGuard>,
+    buffer_charge: u64,
+    buffer_guards: Vec<tarn_common::ResourceGuard>,
     scratch: Vec<u8>,
     seq: u8,
     caps: u32,
@@ -382,13 +392,17 @@ impl<B: Backend> Conn<B> {
                 .write_all(&self.wbuf)
                 .await?;
             self.wbuf.clear();
-            if self.wbuf.capacity() > 4 << 20 {
-                self.wbuf = Vec::with_capacity(64 << 10);
+            if self.wbuf.capacity() > 64 << 10 {
+                self.wbuf = Vec::with_capacity(16 << 10);
             }
         }
         // Rustls may have accepted plaintext into its record buffer; drain
         // encrypted bytes before waiting for a request/reply.
         self.stream.as_mut().expect("connected stream").flush().await?;
+        if self.scratch.capacity() > 64 << 10 {
+            self.scratch = Vec::with_capacity(1024);
+        }
+        self.result_guards.clear();
         Ok(())
     }
 
@@ -399,9 +413,20 @@ impl<B: Backend> Conn<B> {
             }
             // Nothing complete buffered: answer everything so far, then block.
             self.flush().await?;
-            if self.rbuf.capacity() - self.rbuf.len() < 4096 {
-                self.rbuf.reserve(64 << 10);
+            let need = (self.rbuf.len().saturating_add(16 << 10).next_power_of_two() as u64)
+                .saturating_mul(4)
+                .saturating_add(256 << 10);
+            if need > self.buffer_charge {
+                if let Some(pool) = &self.opts.memory {
+                    let guard = pool
+                        .clone()
+                        .reserve(need - self.buffer_charge)
+                        .map_err(io::Error::other)?;
+                    self.buffer_guards.push(guard);
+                }
+                self.buffer_charge = need;
             }
+            self.rbuf.reserve(16 << 10);
             if self
                 .stream
                 .as_mut()
@@ -559,7 +584,11 @@ impl<B: Backend> Conn<B> {
                 info,
                 warnings,
             }) => self.send_ok(affected_rows, last_insert_id, warnings, &info),
-            Ok(QueryResult::Rows { columns, rows }) => {
+            Ok(QueryResult::Rows {
+                columns,
+                rows,
+                resource_guard,
+            }) => {
                 if columns.is_empty() {
                     self.send_ok(0, 0, 0, "");
                     return Ok(());
@@ -581,6 +610,9 @@ impl<B: Backend> Conn<B> {
                     }
                 }
                 self.send_eof_or_ok();
+                if let Some(guard) = resource_guard {
+                    self.result_guards.push(guard);
+                }
             }
         }
         Ok(())
@@ -660,9 +692,20 @@ impl<B: Backend> Conn<B> {
                     ));
                     return Ok(true);
                 }
+                if let Some(error) = st.long_error.take() {
+                    st.long_data.clear();
+                    st.long_bytes = 0;
+                    st.long_charge = 0;
+                    st.long_guards.clear();
+                    self.send_err(&error);
+                    return Ok(true);
+                }
                 let params = packets::decode_params(&mut r, st.num_params as usize, &mut st.types, &mut st.long_data);
+                let _long_guards = std::mem::take(&mut st.long_guards);
                 st.long_data.clear();
                 st.long_bytes = 0;
+                st.long_charge = 0;
+                st.long_guards.clear();
                 match params {
                     None => self.send_err(&malformed()),
                     Some(params) => {
@@ -697,6 +740,9 @@ impl<B: Backend> Conn<B> {
                                 long_data: HashMap::new(),
                                 long_bytes: 0,
                                 long_overflow: false,
+                                long_error: None,
+                                long_charge: 0,
+                                long_guards: Vec::new(),
                             },
                         );
                         let ncols = info.columns.len() as u16;
@@ -726,7 +772,30 @@ impl<B: Backend> Conn<B> {
                             st.long_overflow = true;
                             st.long_data.clear();
                             st.long_bytes = 0;
+                            st.long_charge = 0;
+                            st.long_guards.clear();
                         } else {
+                            if st.long_error.is_some() {
+                                return Ok(true);
+                            }
+                            let need =
+                                ((st.long_bytes + chunk.len()).max(1).next_power_of_two() as u64).saturating_mul(4);
+                            if need > st.long_charge {
+                                if let Some(pool) = &self.opts.memory {
+                                    match pool.clone().reserve(need - st.long_charge) {
+                                        Ok(guard) => st.long_guards.push(guard),
+                                        Err(error) => {
+                                            st.long_error = Some(error);
+                                            st.long_data.clear();
+                                            st.long_bytes = 0;
+                                            st.long_charge = 0;
+                                            st.long_guards.clear();
+                                            return Ok(true);
+                                        }
+                                    }
+                                }
+                                st.long_charge = need;
+                            }
                             st.long_bytes += chunk.len();
                             st.long_data.entry(param).or_default().extend_from_slice(chunk);
                         }
@@ -748,6 +817,9 @@ impl<B: Backend> Conn<B> {
                         st.long_data.clear();
                         st.long_bytes = 0;
                         st.long_overflow = false;
+                        st.long_error = None;
+                        st.long_charge = 0;
+                        st.long_guards.clear();
                         self.send_ok(0, 0, 0, "");
                     }
                     None => self.send_err(&unknown_stmt(id, "mysqld_stmt_reset")),
@@ -833,11 +905,28 @@ pub async fn serve_connection<B: Backend>(
         ));
     }
     let peer = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+    let initial_charge = ((256 + 4 * 16) << 10) + if opts.tls.is_some() { 128 << 10 } else { 0 };
+    let buffer_guard = match opts
+        .memory
+        .as_ref()
+        .map(|pool| pool.clone().reserve(initial_charge))
+        .transpose()
+        .map_err(io::Error::other)
+    {
+        Ok(guard) => guard,
+        Err(error) => {
+            backend.on_disconnect().await;
+            return Err(error);
+        }
+    };
     let mut c = Conn {
         stream: Some(Box::new(stream)),
         peer,
         rbuf: BytesMut::with_capacity(16 << 10),
         wbuf: Vec::with_capacity(16 << 10),
+        result_guards: Vec::new(),
+        buffer_charge: initial_charge,
+        buffer_guards: buffer_guard.into_iter().collect(),
         scratch: Vec::with_capacity(1024),
         seq: 0,
         caps: 0,
@@ -895,6 +984,58 @@ mod tests {
             vec!["/* c; */ SELECT 1", "/*!40101 SET x=1 */"]
         );
         assert!(split_statements(" ; -- only\n; ").is_empty());
+    }
+
+    #[tokio::test]
+    async fn connection_admission_refusal_still_disconnects_the_backend() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        #[derive(Debug)]
+        struct Full;
+        impl tarn_common::ResourceMemory for Full {
+            fn reserve(self: Arc<Self>, _: u64) -> SqlResult<tarn_common::ResourceGuard> {
+                Err(SqlError::new(1041, "HY000", "full"))
+            }
+        }
+        struct OwnedBackend(Arc<AtomicUsize>);
+        impl Backend for OwnedBackend {
+            async fn on_connect(&mut self, _: &str, _: Option<&str>, _: bool, _: u8) -> SqlResult<()> {
+                unreachable!()
+            }
+            async fn on_query(&mut self, _: &str) -> SqlResult<QueryResult> {
+                unreachable!()
+            }
+            async fn on_prepare(&mut self, _: u32, _: &str) -> SqlResult<PrepareInfo> {
+                unreachable!()
+            }
+            async fn on_execute(&mut self, _: u32, _: &[Value]) -> SqlResult<QueryResult> {
+                unreachable!()
+            }
+            async fn on_close_stmt(&mut self, _: u32) {
+                unreachable!()
+            }
+            async fn on_init_db(&mut self, _: &str) -> SqlResult<()> {
+                unreachable!()
+            }
+            fn status_flags(&self) -> u16 {
+                0
+            }
+            async fn on_disconnect(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let disconnected = Arc::new(AtomicUsize::new(0));
+        let opts = Arc::new(ServerOpts {
+            memory: Some(Arc::new(Full)),
+            ..ServerOpts::default()
+        });
+        assert!(serve_connection(server, 1, opts, OwnedBackend(disconnected.clone()))
+            .await
+            .is_err());
+        assert_eq!(disconnected.load(Ordering::Relaxed), 1);
+        drop(client);
     }
 
     #[test]
