@@ -101,6 +101,20 @@ in the run artifacts. Ordinary format/clippy, Tests, TLA+ and Verus jobs
 These bounded negative results do not explain the original crash or establish
 its recovered effects; #160 remains open.
 
+The later [five-lane matrix 41101928521](https://github.com/cstheorist/tarn/actions/runs/41101928521)
+also completed all fifteen 45-second failover trials: the original observed
+source with Vinyl/native/JIT on, Vinyl/Lua/JIT on and Vinyl/native/JIT off,
+plus source `952623f` with memtx/native/JIT on and Vinyl/native/JIT on.
+[Its independent audit](../tests/evidence/native-gc-crash/matrix-41101928521.json)
+reconciles actual ELF hashes, all recorded compiled and fixture Git blobs,
+every retained trial-log hash, runtime/JIT/native mode, and the original
+ledger and acknowledgement checks. Every lane has an empty real-core
+inventory and no observed crash signature; READ COMMITTED reports zero
+unexpected errors. Unknown outcomes and the serializable bank's original
+error counts remain in the receipt. Full logs and binaries remain local.
+These short, source-bound negative results establish neither a crash fix
+nor a performance comparison or qualification of newer main.
+
 ## Second retained observation and ordinary CI capture
 
 [Run 41070288089, job 124112263428](https://github.com/cstheorist/tarn/actions/runs/41070288089/job/124112263428)
