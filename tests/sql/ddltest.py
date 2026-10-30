@@ -984,7 +984,9 @@ class T:
         w = warnings(a)
         self.check(w == [("Warning", 1105, f"{DB}.tt_line: tarn:parent=tt_orders: table {DB}.tt_orders does not exist (yet)")],
                    f"missing parent: {w}")
-        self.check(q(a, "SELECT @@warning_count")[0][0] == 1 and len(warnings(a)) == 1, "SHOW WARNINGS keeps them")
+        self.check(warnings(a) == w, "SHOW WARNINGS keeps them")
+        self.check(q(a, "SELECT @@warning_count")[0][0] == 1, "warning_count reads the previous total")
+        self.check(warnings(a) == [], "SELECT warning_count clears diagnostics, as in MySQL")
         q(a, "SELECT 1")
         self.check(warnings(a) == [], "the next statement clears them")
         q(a, "SET tarn_tree_checks = DEFAULT")
@@ -1382,9 +1384,11 @@ class T:
               f"SUM(x) {sums[1]} (acknowledged {st['x']})")
         kinds = {}
         for e in st["errors"]:
-            kinds.setdefault(e[:90], 0)
-            kinds[e[:90]] += 1
-        for e, n in sorted(kinds.items(), key=lambda x: -x[1])[:10]:
+            kinds.setdefault(e, 0)
+            kinds[e] += 1
+        # Preserve the actual storage cause; an ALTER prefix alone cannot
+        # distinguish a known refusal from an unresolved effect.
+        for e, n in sorted(kinds.items(), key=lambda x: -x[1]):
             print(f"      error x{n}: {e}")
         self.check(not st["errors"], f"{len(st['errors'])} errors")
         self.check(st["ddl"] >= 8 or self.args.no_ddl, "schema changes ran")

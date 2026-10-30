@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "scope": "Registered Tarn outcome extension: error namespaces, transaction state and retry permissions across PyMySQL text, MySQL Connector/Python text and binary prepared SQL, registered strong KV v1 and the Rust SDK. Equivalent/difference entries describe the stated SQL behavior; Tarn-specific storage faults and KV histories are not paired MySQL oracle claims.",
+  "contracts": [
+    {
+      "id": "statement_rollback",
+      "classification": "equivalent",
+      "test": "tests/sql/outcomes.py::case_statement_rollback",
+      "description": "1062/23000 rolls back the statement and preserves preceding transaction writes."
+    },
+    {
+      "id": "known_abort",
+      "classification": "difference",
+      "test": "tests/sql/outcomes.py::case_known_abort",
+      "description": "Strict serializable validation returns 1213/40001 and ends the transaction without its writes."
+    },
+    {
+      "id": "lock_timeout",
+      "classification": "equivalent",
+      "test": "tests/sql/outcomes.py::case_lock_timeout",
+      "description": "1205/HY000 for a row-lock wait rolls back the statement; earlier writes can commit."
+    },
+    {
+      "id": "mutation_replies",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_mutation_replies",
+      "description": "Autocommit, local and RC commits preserve 1180/40003 for lost, malformed or explicitly unknown replies; one completed increment at most."
+    },
+    {
+      "id": "client_loss",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_client_loss",
+      "description": "A lost SQL connection cannot deliver a server SQLSTATE; a possibly executed mutation remains unknown and is not replayed."
+    },
+    {
+      "id": "pending_apply",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_pending_apply",
+      "description": "Confirmed logical COMMIT can precede physical APPLY; raw native reads lag while SQL, registered KV and the Rust SDK refuse the unfinished row, then agree after APPLY."
+    },
+    {
+      "id": "prepare_outcomes",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_prepare_outcomes",
+      "description": "Lost durable PREPARE receipts with unavailable participant status stay 1180/40003 until resolved; a confirmed COMMITTED decision returns success despite missing status and pending APPLY."
+    },
+    {
+      "id": "operation_id",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_operation_id",
+      "description": "A unique operation record committed with the effect resolves a lost local COMMIT reply without a second increment."
+    },
+    {
+      "id": "kv_errors",
+      "classification": "extension",
+      "test": "tests/sql/outcomes.py::case_kv_errors",
+      "description": "Strong KV retains contract/MySQL/Tarantool error namespaces, rejects stale schema/ownership and oversized batches, and cannot inherit or commit buffered SQL work."
+    }
+  ],
+  "existing_release_gates": [
+    "tests/rpcs.sh: before-enqueue admission versus lost enqueued replies, request and byte accounting",
+    "tests/decision.sh: lost durable PREPARE reply and coordinator crash with exact reconciliation",
+    "tests/sql/lazyfaults.py: unresolved PREPARE, confirmed decision, incomplete and unconfirmed APPLY",
+    "crates/tarn-iproto/src/client/tests.rs: matched errors, unowned responses, caller abandonment and deadline retirement",
+    "tla/NativeHandback.tla: AtMostOnce and ReplyHolds including malformed envelopes",
+    "tla/PipelineAdmission.tla: retained ownership after cancellation and no replay after uncertainty"
+  ]
+}

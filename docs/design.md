@@ -122,6 +122,49 @@ the stored versions of the rows it has written, and the SQL server adds
 those of its buffered rows that match; the counted ranges are recorded for
 validation exactly as reading the rows would record them.
 
+**Typed scans and partial aggregates** (#135). An ungrouped range scan can
+compute integer-column `SUM`, `MIN` and `MAX`, mixed with independent
+`COUNT(*)`/`COUNT(column)`, in `tarn_reduce`. It reuses the count path's
+snapshot, full-range lock/DDL checks and routing guards. NULLs are ignored;
+empty/all-NULL inputs return NULL for SUM/MIN/MAX. Signed and unsigned
+64-bit sums use exact integer arithmetic, then guarded decimal arithmetic
+at storage and an integer string partial merged into Rust's i128 sum.
+The guard refuses a fold before decimal precision can be lost. No partial
+from any shard is usable when one fold is incomplete. Stored versions of
+buffered writes are excluded before aggregation; Rust adds qualifying own
+rows. Every scanned range remains recorded for validation.
+Multi-shard READ COMMITTED statements first retain ordinary paging. Small
+scans acquire no new validation or conflicts; when paging needs the existing
+validated statement snapshot, that snapshot's transaction may reduce.
+Partials do not introduce independently captured views that fracture an
+aggregate which ordinary paging would have validated.
+
+Plain column projections over a range scan, without aggregation, ordering,
+DISTINCT or LIMIT, use `tarn_select_projected` when they omit at least one
+column and retain at most 256 columns. A reduction has at most 256 aggregate
+slots. The ordinary checked SELECT captures one bounded page first;
+storage then filters its immutable tuples and returns only needed columns
+(including predicate, primary and index key columns). Page positions and
+read coverage describe the original page even when no row qualifies. The
+boundary tuple contains only key columns. ALTER defaults and physical field
+positions are carried in descriptors, as in COUNT. The existing scan's
+page/heap bounds still apply; this is not a whole-query memory bound.
+
+Both paths require every WHERE conjunct to be an exact supported COUNT
+predicate: integer comparisons/IN, byte string comparisons/IN, and NULL
+tests, with index-covered conditions omitted where exact. Joins,
+DISTINCT aggregates, GROUP BY, aggregate expressions, DECIMAL/float sums
+and extrema, boolean sums/extrema, and collation-sensitive comparisons or
+extrema keep the ordinary executor. An absent optional procedure permits
+complete read-only fallback; malformed or other errored responses fail.
+The existing COUNT and ordered-page algorithms remain in use. Numeric
+predicates ignore the connection's fallback text collation; text predicates
+still require byte comparison. These extensions are opt in with
+`query_pushdown: true`; the default `false` keeps ordinary execution.
+The [matched RF3 study](../bench/PUSHDOWN.md#expanded-release-results)
+finds wide-row gains and narrow-row regressions, so measure the actual
+workload before enabling them.
+
 **Autocommit single-shard DML** (`UPDATE ... WHERE pk = ?`, single-shard
 `INSERT`, `DELETE ... WHERE pk = ?`): one call to `tarn_autocommit`, which runs
 one local Tarantool transaction (lock check + apply + commit). On a memtx
@@ -2269,16 +2312,24 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_GroupedDDLIgnoreStale | violates NoHeldSnapshot | 37 | 47 | 5 | 00s | 5 |
 | Bug_GroupedReadSeparateSnapshots | violates CoherentSnapshot | 18 | 18 | 6 | 00s | 6 |
 | Bug_GroupedTablesNoWLockCheck | violates StrictSerializable | 1194 | 5093 | 13 | 00s | 13 |
-| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 34 | 56 | 8 | 00s | 8 |
-| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 23 | 42 | 7 | 00s | 7 |
-| Bug_HandbackKeepsWrites | violates AtMostOnce | 32 | 52 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss | violates ReplyHolds | 35 | 66 | 7 | 00s | 7 |
-| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 29 | 55 | 7 | 00s | 7 |
+| Bug_HandbackAfterCommitBegan | violates ReplyHolds | 57 | 107 | 8 | 00s | 8 |
+| Bug_HandbackAfterCommitBegan_Autocommit | violates AtMostOnce | 34 | 69 | 7 | 00s | 7 |
+| Bug_HandbackKeepsWrites | violates AtMostOnce | 51 | 85 | 7 | 00s | 7 |
+| Bug_HandbackMalformedReply | violates ReplyHolds | 26 | 40 | 5 | 00s | 5 |
+| Bug_HandbackMalformedReply_Autocommit | violates ReplyHolds | 21 | 36 | 5 | 00s | 5 |
+| Bug_HandbackResendAfterLoss | violates ReplyHolds | 51 | 96 | 7 | 00s | 7 |
+| Bug_HandbackResendAfterLoss_Autocommit | violates AtMostOnce | 38 | 79 | 7 | 00s | 7 |
 | Bug_IgnorePLocks | violates StrictSerializable | 3213 | 10214 | 11 | 02s | 11 |
 | Bug_InsertNoExistCheck | violates UniqueHolds | 119 | 196 | 6 | 01s | 6 |
 | Bug_JoinNoCheck | violates StrictSerializable | 993 | 2673 | 8 | 01s | 8 |
 | Bug_JoinNoCheck3 | violates StrictSerializable | 30142 | 129908 | 13 | 07s | 13 |
 | Bug_JoinNoCheck3Prepare | violates StrictSerializable | 44422 | 199259 | 13 | 07s | 13 |
+| Bug_KVClippedComplete | violates FullVector | 5 | 5 | 5 | 00s | 5 |
+| Bug_KVFalseAtomic | violates AdvertisedSnapshot | 20 | 20 | 7 | 00s | 7 |
+| Bug_KVIncarnation | violates FrozenObjectData | 20 | 21 | 7 | 00s | 7 |
+| Bug_KVMissingClaim | violates PointMeaning | 33 | 43 | 9 | 00s | 8 |
+| Bug_KVOwnerFence | violates PointMeaning | 17 | 19 | 7 | 00s | 7 |
+| Bug_KVSchemaAsOwner | violates FrozenColumns | 12 | 12 | 9 | 00s | 9 |
 | Bug_KeyBatchMissingClaim | violates NoMissingClaim | 101 | 110 | 7 | 00s | 7 |
 | Bug_KeyBatchMixedSnapshots | violates OneSnapshot | 174 | 298 | 9 | 00s | 9 |
 | Bug_KeyBatchTruncatedComplete | violates FullBatch | 46 | 53 | 4 | 00s | 4 |
@@ -2396,6 +2447,11 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | Bug_StrongStreamMarkBeforeBarrier | violates CertificateHasProvenance | 58 | 69 | 5 | 00s | 3 |
 | Bug_StrongStreamNoCleanup | violates RegistryOnlyLive | 200 | 293 | 6 | 00s | 5 |
 | Bug_StrongStreamWrongTxnID | violates ReadHasOwnCertificate | 373 | 614 | 6 | 00s | 6 |
+| Bug_TypedReadCoverage | violates FullCoverage | 52255 | 315679 | 5 | 00s | 5 |
+| Bug_TypedReadEmptyPage | violates ExactFold | 23455 | 55439 | 4 | 00s | 4 |
+| Bug_TypedReadMixedSnapshots | violates ExactProjection | 115726 | 701474 | 6 | 00s | 6 |
+| Bug_TypedReadOverlay | violates ExactFold | 56285 | 352989 | 5 | 00s | 5 |
+| Bug_TypedReadPartial | violates CompleteOnly | 2065 | 2066 | 3 | 00s | 3 |
 | Bug_UnconfirmedAck | violates DrainedObligationSafe | 17 | 20 | 5 | 00s | 5 |
 | Bug_UnconfirmedApply | violates OwnReadSafe | 10 | 12 | 5 | 00s | 5 |
 | Bug_UnconfirmedPrepare | violates CertifiedYesDurable | 6 | 6 | 4 | 00s | 4 |
@@ -2417,6 +2473,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | EngineCopy | no errors | 5316 | 16466 | 19 | 00s |  |
 | EngineCutover | no errors | 856 | 3899 | 20 | 00s |  |
 | EngineSourceDrain | no errors | 18 | 21 | 8 | 00s |  |
+| ExternalStrongKV | no errors | 103 | 115 | 11 | 00s |  |
 | Fairness | no errors | 2048 | 2048 | 8 | 00s |  |
 | FileBackup | no errors | 356 | 983 | 15 | 00s |  |
 | Frac | no errors | 1182650 | 9429589 | 23 | 02min 33s |  |
@@ -2428,8 +2485,8 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | GroupedDDL | no errors | 77 | 107 | 7 | 00s |  |
 | GroupedRead | no errors | 15 | 17 | 6 | 00s |  |
 | GroupedTables | no errors | 1909 | 10272 | 17 | 00s |  |
-| Handback | no errors | 28 | 48 | 7 | 00s |  |
-| Handback_Autocommit | no errors | 23 | 42 | 6 | 00s |  |
+| Handback | no errors | 46 | 96 | 7 | 00s |  |
+| Handback_Autocommit | no errors | 33 | 78 | 7 | 00s |  |
 | Join3_Scan | no errors | 3633874 | 25756506 | 30 | 12min 05s |  |
 | Join3_ScanPrepare | no errors | 1975971 | 16369248 | 33 | 09min 14s |  |
 | Join_Scan | no errors | 83565 | 431359 | 24 | 13s |  |
@@ -2489,6 +2546,7 @@ serializable configurations of `tla/check.sh` with the final spec confirms
 | StrongStreamCompletion | no errors | 3369 | 7585 | 19 | 00s |  |
 | Tradeoff_AckOnPrepare_DirectRYW | violates DirectReadYourWrites | 598 | 1108 | 7 | 01s | 7 |
 | Tradeoff_DirectReadAtomic | violates DirectReadAtomic | 3110 | 9575 | 9 | 02s | 9 |
+| TypedRead | no errors | 99328 | 870400 | 6 | 00s |  |
 | Uniq | no errors | 657499 | 5210697 | 22 | 01min 29s |  |
 | UniqFailover | no errors | 1444398 | 11344964 | 24 | 03min 55s |  |
 | Uniq_RC | no errors | 966902 | 7892907 | 23 | 02min 16s |  |

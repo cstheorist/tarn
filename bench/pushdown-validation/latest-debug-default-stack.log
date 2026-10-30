@@ -1,0 +1,8 @@
+[2m2026-10-28T21:07:05.312308Z[0m [32m INFO[0m [2mtarn_sql::cluster[0m[2m:[0m connected to shard leader [3mshard[0m[2m=[0m1 [3mleader[0m[2m=[0m127.0.0.1:3311
+[2m2026-10-28T21:07:05.314144Z[0m [32m INFO[0m [2mtarn_sql::cluster[0m[2m:[0m connected to shard leader [3mshard[0m[2m=[0m2 [3mleader[0m[2m=[0m127.0.0.1:3321
+[2m2026-10-28T21:07:05.333879Z[0m [32m INFO[0m [2mtarn_sql::buckets[0m[2m:[0m made the bucket map: 15000 of 30000 buckets (1-15000) [3mshard[0m[2m=[0m1
+[2m2026-10-28T21:07:05.351798Z[0m [32m INFO[0m [2mtarn_sql::buckets[0m[2m:[0m made the bucket map: 15000 of 30000 buckets (15001-30000) [3mshard[0m[2m=[0m2
+[2m2026-10-28T21:07:05.377416Z[0m [32m INFO[0m [2mtarn_server[0m[2m:[0m tarn-server listening on 127.0.0.1:4000 (2 shards, 3 threads)
+
+thread 'tokio-rt-worker' (2808) has overflowed its stack
+fatal runtime error: stack overflow, aborting
