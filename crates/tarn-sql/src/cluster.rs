@@ -42,6 +42,10 @@ pub struct ShardConfig {
 
 #[derive(Clone, Deserialize)]
 pub struct ClusterConfig {
+    /// Set by the production launcher after validation, never by JSON.
+    /// Production cannot fall back to legacy EVAL-based role discovery.
+    #[serde(skip)]
+    pub production: bool,
     /// Query/transaction and gateway-wide SQL resource budgets.
     #[serde(default)]
     pub resources: crate::budget::Limits,
@@ -525,34 +529,34 @@ impl Shard {
             };
             // Routing a completion must not first spend ordinary capacity
             // on its leader probe, or normal overload could strand it.
-            let probe = if completion {
-                c.call_control(0, "tarn_role", &[0x90]).await
-            } else {
-                c.call(0, "tarn_role", &[0x90]).await
-            };
-            let ro = match probe {
-                // DATA = [ro]; Tarantool may use any array header width.
-                Ok(r) => r
-                    .data()
-                    .and_then(|d| {
-                        let mut rd = Rd::new(&d);
-                        let n = rd.array().ok()?;
-                        if n == 0 {
-                            return None;
-                        }
-                        rd.value().ok().map(|v| v.as_i64() != Some(0))
-                    })
-                    .unwrap_or(true),
+            let probe = role_probe(&c, self.id, cluster.cfg.max_txn_age, completion, cluster.cfg.production).await;
+            let (probe, admitted) = match probe {
+                Ok(r) => r,
+                Err(e) if e.code == 1235 => return Err(e),
                 Err(e) => {
                     last_err = format!("{}: {}", addr, e);
                     continue;
                 }
             };
+            // DATA = [ro]; Tarantool may use any array header width.
+            let ro = probe
+                .data()
+                .and_then(|d| {
+                    let mut rd = Rd::new(&d);
+                    let n = rd.array().ok()?;
+                    if n == 0 {
+                        return None;
+                    }
+                    rd.value().ok().map(|v| v.as_i64() != Some(0))
+                })
+                .unwrap_or(true);
             if ro {
                 last_err = format!("{} is read-only", addr);
                 continue;
             }
-            crate::compat::admit(&c, self.id, cluster.cfg.max_txn_age, completion).await?;
+            if !admitted {
+                crate::compat::admit(&c, self.id, cluster.cfg.max_txn_age, completion).await?;
+            }
             if let Err(e) = require_strong_reads(&c, completion).await {
                 last_err = format!("{}: {}", addr, e);
                 continue;
@@ -588,6 +592,40 @@ impl Shard {
             "HY000",
             format!("shard {} has no reachable leader ({})", self.id, last_err),
         ))
+    }
+}
+
+/// Bounded role discovery is mandatory in production. Development can
+/// inspect a protocol-compatible predecessor during a rolling upgrade;
+/// the compatibility rejection still precedes any user work or EVAL.
+async fn role_probe(
+    c: &Client,
+    shard: u32,
+    age: f64,
+    completion: bool,
+    production: bool,
+) -> SqlResult<(tarn_iproto::Response, bool)> {
+    let role = if completion {
+        c.call_control(0, "tarn_role", &[0x90]).await
+    } else {
+        c.call(0, "tarn_role", &[0x90]).await
+    };
+    match role {
+        Err(e) if e.server_code() == Some(tarn_iproto::errcode::ER_NO_SUCH_PROC) => {
+            if production {
+                return Err(SqlError::unsupported(
+                    "production storage requires the bounded tarn_role RPC",
+                ));
+            }
+            crate::compat::admit(c, shard, age, completion).await?;
+            let role = if completion {
+                c.eval_control(0, "return box.info.ro", &[0x90]).await
+            } else {
+                c.eval(0, "return box.info.ro", &[0x90]).await
+            };
+            Ok((role.map_err(from_iproto)?, true))
+        }
+        other => Ok((other.map_err(from_iproto)?, false)),
     }
 }
 
@@ -2678,6 +2716,87 @@ mod tests {
                 .unwrap()
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn role_probe_never_uses_eval_in_production_and_checks_legacy_compatibility() {
+        use super::wire_test::{accept, reply, request};
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+        fn function(body: &[u8]) -> String {
+            let mut rd = Rd::new(body);
+            assert_eq!(rd.map().unwrap(), 2);
+            assert_eq!(rd.value().unwrap().as_i64(), Some(0x22));
+            rd.string().unwrap()
+        }
+        // Production refuses a missing bounded RPC. Development falls back
+        // only after a valid compatibility contract; legacy refusal is 1235.
+        for mode in 0..3 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let mut socket = accept(&listener).await;
+                let (kind, sync, _, body) = request(&mut socket).await;
+                assert_eq!(kind, 10);
+                assert_eq!(function(&body), "tarn_role");
+                let mut error = Mp::new();
+                error.map(1).uint(0x31).str("missing role");
+                reply(&mut socket, sync, 0x8000 | 33, &error.0).await;
+                if mode != 0 {
+                    let (kind, sync, _, body) = request(&mut socket).await;
+                    assert_eq!(kind, 10);
+                    assert_eq!(function(&body), "tarn_compatibility");
+                    if mode == 2 {
+                        reply(&mut socket, sync, 0x8000 | 33, &error.0).await;
+                        assert_eq!(
+                            tokio::time::timeout(Duration::from_secs(3), socket.read(&mut [0]))
+                                .await
+                                .unwrap()
+                                .unwrap(),
+                            0
+                        );
+                        return;
+                    }
+                    let mut report = Mp::new();
+                    report
+                        .map(1)
+                        .uint(0x30)
+                        .arr(1)
+                        .arr(8)
+                        .str("ok")
+                        .uint(1)
+                        .uint(1)
+                        .uint(1)
+                        .str("3.9.0")
+                        .uint(14)
+                        .str("ready")
+                        .f64(120.0);
+                    reply(&mut socket, sync, 0, &report.0).await;
+                    let (kind, sync, _, _) = request(&mut socket).await;
+                    assert_eq!(kind, 8, "only compatible development storage may receive EVAL");
+                    reply(&mut socket, sync, 0, &[0x81, 0x30, 0x91, 0xc2]).await;
+                }
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), socket.read_u8())
+                        .await
+                        .is_err(),
+                    "unexpected follow-up request"
+                );
+            });
+            let c = Client::connect(&Opts::new(addr.to_string())).await.unwrap();
+            let got = role_probe(&c, 1, 120.0, false, mode == 0).await;
+            if mode == 1 {
+                let (reply, admitted) = got.unwrap();
+                assert!(admitted);
+                assert_eq!(reply.data().unwrap().as_ref(), &[0x91, 0xc2]);
+            } else {
+                assert_eq!(got.unwrap_err().code, 1235);
+            }
+            peer.await.unwrap();
+            c.close();
+        }
+        let cfg: ClusterConfig = serde_json::from_value(serde_json::json!({"shards":[],"production":true})).unwrap();
+        assert!(!cfg.production, "the launcher's production gate is not deserializable");
     }
 
     #[tokio::test]

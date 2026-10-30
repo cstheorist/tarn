@@ -347,6 +347,7 @@ async fn run(args: Args, mut cfg: ClusterConfig) {
         std::process::exit(2);
     }
     let (auth, tls) = if let Some(p) = &profile {
+        cfg.production = true;
         let users = p.validate(&cfg).unwrap_or_else(|e| {
             eprintln!("production validation: {e}");
             std::process::exit(2)

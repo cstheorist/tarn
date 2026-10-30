@@ -53,7 +53,9 @@ setuid procedure mechanism; their bodies and the service binaries are trusted.
 The separate `tarn_repl` account has only session/usage and the replication
 role. Production removes inherited/public, guest and legacy `tarn` grants.
 Existing unexpected function definitions cause refusal, not a permissive
-fallback. Internal net.box clients request no schema-view privileges.
+fallback. Internal net.box clients request no schema-view privileges. Development
+rolling upgrades retain the predecessor EVAL role probe for mixed storage;
+production disables that fallback, and the switch cannot be set in JSON.
 
 ## Provision and start
 

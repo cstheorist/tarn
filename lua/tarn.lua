@@ -4744,6 +4744,11 @@ local function shard_conn(shard, recovery)
                                                            wait_connected = 1, connect_timeout = 1})
             if ok1 and cand:is_connected() then
                 local ok2, ro = pcall(cand.call, cand, 'tarn_role', {}, {timeout = 1})
+                -- A development rolling upgrade may still recover through a
+                -- legacy peer. Production never acquires EVAL privileges.
+                if not ok2 and not M.cfg.production and type(ro) == 'cdata' and ro.code == box.error.NO_SUCH_PROC then
+                    ok2, ro = pcall(cand.eval, cand, 'return box.info.ro', {}, {timeout = 1})
+                end
                 if ok2 and ro == false then
                     conns[shard] = cand
                     return cand

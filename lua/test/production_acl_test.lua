@@ -1,7 +1,7 @@
 -- Exact production role reconciliation, including incomplete migrations.
 local fio = require('fio')
 local here = debug.getinfo(1, 'S').source:sub(2):match('(.*/)') or './'
-package.path = here .. '../?.lua;' .. package.path
+package.path = fio.abspath(here) .. '/../?.lua;' .. package.path
 local work = assert(arg[1]); fio.mktree(work)
 box.cfg{work_dir=work, wal_mode='fsync', memtx_memory=64*1024*1024,
     vinyl_memory=16*1024*1024, log_level=3}
