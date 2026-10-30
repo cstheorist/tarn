@@ -47,6 +47,10 @@ On real hardware, give each shard leader its own machine (Tarantool runs
 transactions on one thread per instance) and put `tarn-server` next to the
 clients or on the storage machines.
 
+For gateway socket, fanout, encoded-response and diagnostic polling limits,
+see [Gateway resource limits](gateway-resources.md). `pool_size` is a lazy
+per-leader maximum; the `topology` object supplies gateway-wide caps.
+
 ## Storage nodes
 
 `lua/storage.lua` is configured through environment variables:
@@ -1285,6 +1289,18 @@ write replies, pending APPLY, client disconnects and operation-ID recovery.
   in the process list); without any, every login is accepted.
 * The storage user `tarn`/`tarn` has full privileges on the storage nodes.
 * See [SECURITY.md](../SECURITY.md) to report a vulnerability.
+
+
+## Integrity admission and legacy schemas
+
+Unsupported FOREIGN KEY/CHECK/ENUM/SET declarations are refused on CREATE/ALTER.
+Upgrade every gateway before relying on this gate. Old catalogs have incomplete
+integrity history; their SQL writes now require an explicit session opt-in.
+`SHOW TARN INTEGRITY [FROM db]` and SHOW CREATE expose that status.
+See [the integrity contract and migration procedure](integrity.md), including
+`SET SESSION tarn_legacy_integrity='ALLOW'` / DEFAULT, bounded copy/validation,
+rollback boundaries, and privileged raw-write exclusions. No legacy data is
+certified by a schema-provenance marker or a successful metadata-only ALTER.
 
 ## Physical shard backups and backup-seeded replicas
 

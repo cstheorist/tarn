@@ -647,22 +647,33 @@ class T:
 
     def test_dump(self):
         """A mysqldump file (executable comments, SET with variables, LOCK
-        TABLES, DISABLE KEYS, INVISIBLE indexes, foreign keys, table
-        options) loads without errors."""
+        TABLES, DISABLE KEYS, INVISIBLE indexes and table options) loads
+        after explicitly removing an unsupported foreign-key declaration."""
         c = self.c(db=None)
         q(c, "DROP DATABASE IF EXISTS ddl_dump")
         q(c, "CREATE DATABASE ddl_dump")
         path = os.path.join(HERE, "data", "mysql8_dump.sql")
+        original = open(path).read()
+        declaration = (",\n  CONSTRAINT `fk_rails_61ac11da2b` FOREIGN KEY (`account_id`) "
+                       "REFERENCES `accounts` (`id`)")
+        assert original.count(declaration) == 1
+        # This known fixture is migrated deliberately; the server never strips
+        # arbitrary constraints from a dump or accepts them as enforcement.
+        migrated = original.replace(declaration, "")
+        q(c, "USE ddl_dump")
+        self.check(code(lambda: q(c, "CREATE TABLE unsupported_fk (id INT PRIMARY KEY, p INT, "
+                                  "FOREIGN KEY(p) REFERENCES accounts(id))")) == 1235,
+                   "unmodified foreign-key declarations are refused")
         cli = shutil.which("mysql") or shutil.which("mariadb")
         host, port = self.servers[0].split(":")
         if cli:
-            r = subprocess.run([cli, "-h", host, "-P", port, "-u", "sb", "ddl_dump"], stdin=open(path),
+            r = subprocess.run([cli, "-h", host, "-P", port, "-u", "sb", "ddl_dump"], input=migrated,
                                capture_output=True, text=True)
             self.check(r.returncode == 0 and not r.stderr.strip(), f"mysql client: {r.stderr.strip()[:400]}")
         else:
             m = self.c(db="ddl_dump", multi=True)
             cur = m.cursor()
-            cur.execute(open(path).read())
+            cur.execute(migrated)
             while cur.nextset():
                 pass
         d = self.c(db="ddl_dump")
@@ -673,7 +684,7 @@ class T:
         self.check("KEY `index_accounts_on_created_at` (`created_at`) COMMENT 'for reports'" in create,
                    f"index comment kept: {create}")
         create = q(d, "SHOW CREATE TABLE users")[0][1]
-        self.check("CONSTRAINT `fk_rails_61ac11da2b` FOREIGN KEY" in create, f"foreign key kept: {create}")
+        self.check("FOREIGN KEY" not in create, f"explicitly migrated schema: {create}")
         # AUTO_INCREMENT=4 in the dump: the next generated id is 4
         q(d, "INSERT INTO accounts (name, created_at, updated_at) VALUES ('new', NOW(), NOW())")
         self.check(q(d, "SELECT LAST_INSERT_ID()")[0][0] == 4, "AUTO_INCREMENT table option")

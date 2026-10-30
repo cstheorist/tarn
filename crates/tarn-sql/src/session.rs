@@ -677,6 +677,23 @@ impl Session {
                     format!("Variable '{}' is a read only variable", name),
                 ));
             }
+            "tarn_legacy_integrity" => {
+                if scope == VarScope::Global {
+                    return Err(SqlError::new(
+                        1228,
+                        "HY000",
+                        "tarn_legacy_integrity is a SESSION variable",
+                    ));
+                }
+                let policy = match value.as_ref() {
+                    None => "REJECT",
+                    Some(Value::Str(v)) if v.eq_ignore_ascii_case(b"ALLOW") => "ALLOW",
+                    Some(Value::Str(v)) if v.eq_ignore_ascii_case(b"REJECT") => "REJECT",
+                    _ => return Err(admin::bad_value(name, &text)),
+                };
+                self.sys_vars.insert(name.into(), Value::str(policy));
+                return Ok(());
+            }
             "tarn_lazy_read_your_writes" | "tarn_lazy_wait_timeout" => {
                 if scope == VarScope::Global {
                     return Err(SqlError::new(
@@ -1614,6 +1631,17 @@ impl Session {
     // ---- DML -------------------------------------------------------------------
 
     async fn run_dml(&mut self, stmt: &Stmt, params: &[Value]) -> SqlResult<Output> {
+        let table = match stmt {
+            Stmt::Insert(p) => &p.table,
+            Stmt::Update(p) => &p.access.table,
+            Stmt::Delete(p) => &p.access.table,
+            _ => unreachable!("DML target"),
+        };
+        if !table.current_integrity_policy() {
+            let legacy_allowed =
+                matches!(self.sys_vars.get("tarn_legacy_integrity"), Some(Value::Str(v)) if v.as_ref() == b"ALLOW");
+            crate::integrity::check_write(table, legacy_allowed)?;
+        }
         let now = now_string();
         if self.txn_needed() {
             self.ensure_txn();
@@ -3339,6 +3367,40 @@ impl Session {
                 }
                 rows_out(cols(&[(&name, ColumnType::VarString)]), rows)
             }
+            Admin::ShowTarnIntegrity { db } => {
+                let db = self.resolve_db(db)?;
+                let rows = catalog
+                    .tables_in(&db)
+                    .iter()
+                    .map(|t| {
+                        vec![
+                            Value::str(&t.name),
+                            Value::str(if t.current_integrity_policy() {
+                                "REJECT_UNSUPPORTED_V1"
+                            } else {
+                                "LEGACY_UNENFORCED"
+                            }),
+                            Value::UInt(t.foreign_keys.len() as u64),
+                            Value::str(if t.current_integrity_policy() {
+                                "SUPPORTED_DECLARATIONS_ONLY"
+                            } else {
+                                "UNKNOWN_CHECK_ENUM_SET"
+                            }),
+                            Value::str("NOT_CERTIFIED"),
+                        ]
+                    })
+                    .collect();
+                rows_out(
+                    cols(&[
+                        ("Table", ColumnType::VarString),
+                        ("Declaration_policy", ColumnType::VarString),
+                        ("Legacy_foreign_keys", ColumnType::LongLong),
+                        ("Historical_declarations", ColumnType::VarString),
+                        ("Data_validation", ColumnType::VarString),
+                    ]),
+                    rows,
+                )
+            }
             Admin::ShowTables { db, full, like } => {
                 let db = self.resolve_db(db)?;
                 let name = format!("Tables_in_{}", db);
@@ -4213,6 +4275,9 @@ fn show_create(t: &TableDef) -> String {
     if !t.comment.is_empty() {
         s.push_str(&format!(" COMMENT='{}'", sql_str(&t.comment)));
     }
+    if !t.current_integrity_policy() {
+        s.push_str(crate::integrity::LEGACY_NOTICE);
+    }
     if t.shard_key.iter().all(|&c| !t.columns[c].hidden) {
         s.push_str(&format!("\n/*!50100 PARTITION BY KEY ({}) */", sk.join(",")));
     }
@@ -4348,5 +4413,28 @@ mod tests {
             .iter()
             .all(|ix| ix.comment.as_bytes() == value.as_bytes()));
         assert_eq!(show_create(&reloaded).as_bytes(), ddl.as_bytes());
+    }
+
+    #[test]
+    fn schema_output_exposes_legacy_integrity_without_certifying_rows() {
+        let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
+        let ctx = PlanCtx {
+            statistics: None,
+            catalog: &cat,
+            db: Some("db"),
+            params: &[],
+            conn_coll: "utf8mb4_bin",
+            default_coll: "utf8mb4_bin",
+        };
+        let Stmt::CreateTable { mut def, .. } = planner::plan("CREATE TABLE t(id INT PRIMARY KEY)", &ctx).unwrap()
+        else {
+            panic!()
+        };
+        assert!(!show_create(&def).contains("LEGACY_UNENFORCED"));
+        def.integrity_policy = 0;
+        assert!(show_create(&def).contains("LEGACY_UNENFORCED"));
+        // Unknown future provenance cannot become a current certificate.
+        def.integrity_policy = 2;
+        assert!(show_create(&def).contains("LEGACY_UNENFORCED"));
     }
 }

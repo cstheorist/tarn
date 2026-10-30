@@ -400,7 +400,9 @@ impl Cluster {
             return Ok(());
         }
         let t0 = Instant::now();
-        let sizes = futures::future::join_all(active.iter().map(|&p| self.call(p, "tarn_bucket_sizes", &[0x90]))).await;
+        let sizes = self
+            .read_fanout(active.iter().map(|&p| self.call(p, "tarn_bucket_sizes", &[0x90])))
+            .await;
         let mut bytes = HashMap::new();
         for d in sizes {
             let d = d?;
@@ -415,8 +417,9 @@ impl Cluster {
         let mut load = HashMap::new();
         let mut load_secs = f64::MAX;
         if by == "load" {
-            let stats =
-                futures::future::join_all(active.iter().map(|&p| self.call(p, "tarn_bucket_stats", &[0x90]))).await;
+            let stats = self
+                .read_fanout(active.iter().map(|&p| self.call(p, "tarn_bucket_stats", &[0x90])))
+                .await;
             for d in stats {
                 let d = d?;
                 let (_, mut rd) = lua_status(&d)?;

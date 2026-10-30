@@ -15,6 +15,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transaction and mutation requests fail explicitly. See the
   [contract and raw-native visibility boundaries](docs/strong-kv.md).
 
+- Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
+  schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
+  and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
+  old catalog decoding and provide inspection/migration and pinned-reference
+  mutation/refusal controls. Declaration provenance does not certify old data.
+
 - A quiescent whole-cluster backup/restore workflow with durable replica fences,
   complete membership/routing and transaction/DDL/lazy drain checks, source-bound
   physical manifests, exact isolated restore audits and guarded activation
@@ -31,6 +37,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including statement/transaction rollback, pending APPLY and operation IDs.
   The primary contract manifest includes SQL/public-KV/Rust-SDK outcome
   histories with preserved error domains and exact strong/raw visibility.
+
+- Gateway sockets now grow on demand and share a hard physical-connection
+  budget with completion capacity. Idle eviction preserves transaction and
+  pending-reply owners. Read fanouts have bounded windows and admission;
+  response frames retain byte charges until their last owner drops.
+  Concurrent refreshes coalesce and diagnostic polling rotates through a
+  fixed shard budget. Saturation returns an explicit failure, preserving
+  unknown mutation outcomes ([#188](https://github.com/cstheorist/tarn/issues/188)).
+  See [configuration and limits](docs/gateway-resources.md).
 
 - Lazy-index owner hints now expire immediately when the local bucket map
   changes. A completed handoff can no longer leave immediate garbage

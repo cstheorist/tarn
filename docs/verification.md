@@ -1983,12 +1983,37 @@ role/clock checks and DDL/movement implementations remain compositional
 or runtime premises. [The public API contract](strong-kv.md) and paired
 runtime histories define those separate obligations. No Verus body changes.
 
+### Gateway resource ownership
+
+`GatewayResources.tla` models connecting, pooled and retiring sockets,
+two physical I/O owners, externally pinned handles, abandoned pending RPCs,
+normal/completion admission, and encoded response slices. It asserts that
+physical owners remain charged, eviction never closes a pinned/pending
+socket, normal discovery leaves the completion reserve, and a response is
+charged through its last slice. The passing finite instance explores 24,388
+distinct states to depth 24. Four controls fail their intended invariants:
+`Bug_GatewayEarlyRelease` / `SocketCharged`, `Bug_GatewayEvictPinned` /
+`EvictionSafe`, `Bug_GatewayReserve` / `CompletionReserve`, and
+`Bug_GatewayResponseRelease` / `ResponseOwned`.
+
+This is an abstract resource safety contract, not a refinement proof of
+Tokio/Bytes or a liveness guarantee. Buffers have unit size in the model;
+Rust tests exercise byte counts, partial frames, cancellation and physical
+retirement. SQL/decoded allocations remain outside this bound. The five
+cases add five configurations to the registry; their separate
+run does not certify an execution of the entire expanded suite.
+
+```sh
+tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
+  Bug_GatewayReserve Bug_GatewayResponseRelease
+```
+
 ### Configuration counts
 
-The default list contains 288 unique configurations: 73 positive
-outcomes and 215 expected broken/trade-off outcomes. The 291 generated
+The default list contains 293 unique configurations: 74 positive
+outcomes and 219 expected broken/trade-off outcomes. The 296 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 301 total. Explicit
+placement and query-budget configurations are maintained directly, for 306 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2029,12 +2054,12 @@ and cluster-backup registrations add twelve configurations, and seven
 external-KV checks passed separately through the registered checker.
 Integration preserves both groups, their model/config bytes and dispatch.
 This is an input union; prior CI runs did not execute the integrated list.
-The current proof inventory is 359 files: 343 TLA+ model/config files,
+The current proof inventory is 365 files: 349 TLA+ model/config files,
 11 verified-crate source/test/manifest files and five formal runner/inspection
-scripts. The complete 288-case CI run remains a separate validation gate.
+scripts. The complete 293-case CI run remains a separate validation gate.
 Four query-budget configurations add one positive and three expected
 violations. Verus bodies are unchanged.
-The two malformed-handback controls complete this union. The prior 277-case
+The two malformed-handback controls and five gateway-resource configurations complete this union. The prior 277-case
 list passed in [CI 40945628982](https://github.com/cstheorist/tarn/actions/runs/40945628982);
 that result does not certify the added KV model or this combined source.
 
