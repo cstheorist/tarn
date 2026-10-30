@@ -1,14 +1,14 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 78 and seed 4895287406469419835 with 1 worker on 2 cores with 711MB heap and 64MB offheap memory [pid: 219] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /work/tla/MC.tla
-Parsing file /work/tla/TarnCommit.tla
-Parsing file /tmp/tlc-17465702707959988966/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-17465702707959988966/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-17465702707959988966/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-17465702707959988966/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-17465702707959988966/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-17465702707959988966/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-17465702707959988966/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 34 and seed -8973957653807443549 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 22269] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/MC.tla
+Parsing file /private/tmp/tarn-issue176/tla/TarnCommit.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9514896623402633382/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -22,9 +22,9 @@ Linting of module TarnCommit
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MC
-Starting... (2026-10-29 22:52:05)
+Starting... (2026-10-30 09:04:33)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-29 22:52:05.
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:04:33.
 Error: Invariant StrictSerializable is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -84,7 +84,7 @@ State 1: <Initial predicate>
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 2: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit>
+State 2: <MoveFenceH line 1040, col 15 to line 1040, col 28 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -141,7 +141,7 @@ State 2: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 3: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnCommit>
+State 3: <MoveDrainedH line 1041, col 17 to line 1041, col 32 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -198,7 +198,7 @@ State 3: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnComm
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 4: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCommit>
+State 4: <MoveSendFlipH line 1042, col 18 to line 1042, col 34 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -255,7 +255,7 @@ State 4: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCom
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 5: <StaleCommitLocalH("T2") line 1006, col 25 to line 1006, col 108 of module TarnCommit>
+State 5: <StaleCommitLocalH("T2") line 1012, col 25 to line 1012, col 108 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -312,7 +312,7 @@ State 5: <StaleCommitLocalH("T2") line 1006, col 25 to line 1006, col 108 of mod
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "exec"]
 
-State 6: <ReadH("T3","y") line 1001, col 16 to line 1001, col 40 of module TarnCommit>
+State 6: <ReadH("T3","y") line 1007, col 16 to line 1007, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -369,7 +369,7 @@ State 6: <ReadH("T3","y") line 1001, col 16 to line 1001, col 40 of module TarnC
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "exec"]
 
-State 7: <MoveReclaimedH line 1037, col 19 to line 1037, col 36 of module TarnCommit>
+State 7: <MoveReclaimedH line 1043, col 19 to line 1043, col 36 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -426,7 +426,7 @@ State 7: <MoveReclaimedH line 1037, col 19 to line 1037, col 36 of module TarnCo
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "exec"]
 
-State 8: <MoveInstallingH line 1038, col 20 to line 1038, col 38 of module TarnCommit>
+State 8: <MoveInstallingH line 1044, col 20 to line 1044, col 38 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -483,7 +483,7 @@ State 8: <MoveInstallingH line 1038, col 20 to line 1038, col 38 of module TarnC
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "exec"]
 
-State 9: <MoveRecvFlipH line 1039, col 18 to line 1039, col 34 of module TarnCommit>
+State 9: <MoveRecvFlipH line 1045, col 18 to line 1045, col 34 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -540,7 +540,7 @@ State 9: <MoveRecvFlipH line 1039, col 18 to line 1039, col 34 of module TarnCom
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "exec"]
 
-State 10: <ReadH("T3","x") line 1001, col 16 to line 1001, col 40 of module TarnCommit>
+State 10: <ReadH("T3","x") line 1007, col 16 to line 1007, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -597,7 +597,7 @@ State 10: <ReadH("T3","x") line 1001, col 16 to line 1001, col 40 of module Tarn
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "exec"]
 
-State 11: <CommitLocalH("T3") line 1005, col 20 to line 1005, col 98 of module TarnCommit>
+State 11: <CommitLocalH("T3") line 1011, col 20 to line 1011, col 98 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -655,7 +655,7 @@ State 11: <CommitLocalH("T3") line 1005, col 20 to line 1005, col 98 of module T
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "finished", T3 |-> "finished"]
 
-37701 states generated, 12352 distinct states found, 5190 states left on queue.
-The depth of the complete state graph search is 11.
-Finished in 01s at (2026-10-29 22:52:06)
-Trace exploration spec path: ./MC_TTrace_1793314324.tla
+52067 states generated, 15863 distinct states found, 6442 states left on queue.
+The depth of the complete state graph search is 13.
+Finished in 01s at (2026-10-30 09:04:34)
+Trace exploration spec path: ./MC_TTrace_1793365472.tla

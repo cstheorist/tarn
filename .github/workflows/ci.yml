@@ -164,10 +164,10 @@ jobs:
             export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"
             [ "$mode" != lua ] || export TARN_NATIVE=0
             for engine in memtx vinyl mixed; do
-              python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$engine" --engine "$engine" --mib 1
+              python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$engine" --engine "$engine" --mib 1 --traffic
             done
             for fault in source receiver coordinator disk reply lazy; do
-              python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$fault" --engine mixed --mib 1 --fault "$fault"
+              python3 tests/bounded_moves.py --work "/tmp/tarn-bounded-$mode-$fault" --engine mixed --mib 1 --fault "$fault" --traffic
             done
           done
       - name: Start a 2-shard cluster (two SQL servers)

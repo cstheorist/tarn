@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 1 and seed -6282521405830493389 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 90120] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 9 and seed -2604059228632835626 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 20509] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4934669430275692271/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-2544269865081010763/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
 Semantic processing of module Naturals
 Semantic processing of module Integers
 Semantic processing of module Sequences
@@ -19,9 +19,9 @@ Semantic processing of module BoundedMove
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module BoundedMove
-Starting... (2026-10-29 20:15:49)
+Starting... (2026-10-30 09:00:12)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-29 20:15:49.
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:00:12.
 Error: Invariant NoPartialReads is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -157,9 +157,9 @@ State 7: <Send line 57, col 9 to line 60, col 107 of module BoundedMove>
 /\ staged = <<0, 0, 0>>
 /\ diskOK = TRUE
 
-State 8: <Reclaim({1}) line 62, col 5 to line 67, col 92 of module BoundedMove>
+State 8: <Reclaim({2}) line 62, col 5 to line 67, col 92 of module BoundedMove>
 /\ phase = "reclaim"
-/\ src = <<-1, 0, 0>>
+/\ src = <<0, -1, 0>>
 /\ dirty = {}
 /\ truth = <<0, 0, 0>>
 /\ lastBatch = 1
@@ -176,9 +176,9 @@ State 8: <Reclaim({1}) line 62, col 5 to line 67, col 92 of module BoundedMove>
 /\ staged = <<0, 0, 0>>
 /\ diskOK = TRUE
 
-State 9: <Reclaim({2}) line 62, col 5 to line 67, col 92 of module BoundedMove>
+State 9: <Reclaim({3}) line 62, col 5 to line 67, col 92 of module BoundedMove>
 /\ phase = "reclaim"
-/\ src = <<-1, -1, 0>>
+/\ src = <<0, -1, -1>>
 /\ dirty = {}
 /\ truth = <<0, 0, 0>>
 /\ lastBatch = 1
@@ -195,7 +195,7 @@ State 9: <Reclaim({2}) line 62, col 5 to line 67, col 92 of module BoundedMove>
 /\ staged = <<0, 0, 0>>
 /\ diskOK = TRUE
 
-State 10: <Reclaim({3}) line 62, col 5 to line 67, col 92 of module BoundedMove>
+State 10: <Reclaim({1}) line 62, col 5 to line 67, col 92 of module BoundedMove>
 /\ phase = "reclaim"
 /\ src = <<-1, -1, -1>>
 /\ dirty = {}
@@ -233,7 +233,7 @@ State 11: <BeginInstall line 69, col 5 to line 72, col 103 of module BoundedMove
 /\ staged = <<0, 0, 0>>
 /\ diskOK = TRUE
 
-State 12: <Install(1) line 74, col 5 to line 78, col 83 of module BoundedMove>
+State 12: <Install(2) line 74, col 5 to line 78, col 83 of module BoundedMove>
 /\ phase = "install"
 /\ src = <<-1, -1, -1>>
 /\ dirty = {}
@@ -245,11 +245,11 @@ State 12: <Install(1) line 74, col 5 to line 78, col 83 of module BoundedMove>
 /\ restarted = FALSE
 /\ copied = {1, 2, 3}
 /\ pending = {}
-/\ dst = <<0, -1, -1>>
+/\ dst = <<-1, 0, -1>>
 /\ lost = FALSE
 /\ todo = {}
 /\ live = TRUE
-/\ staged = <<-1, 0, 0>>
+/\ staged = <<0, -1, 0>>
 /\ diskOK = TRUE
 
 State 13: <ReadPartial line 85, col 5 to line 91, col 90 of module BoundedMove>
@@ -264,14 +264,14 @@ State 13: <ReadPartial line 85, col 5 to line 91, col 90 of module BoundedMove>
 /\ restarted = FALSE
 /\ copied = {1, 2, 3}
 /\ pending = {}
-/\ dst = <<0, -1, -1>>
+/\ dst = <<-1, 0, -1>>
 /\ lost = FALSE
 /\ todo = {}
 /\ live = TRUE
-/\ staged = <<-1, 0, 0>>
+/\ staged = <<0, -1, 0>>
 /\ diskOK = TRUE
 
-12585 states generated, 4786 distinct states found, 412 states left on queue.
+12545 states generated, 4773 distinct states found, 412 states left on queue.
 The depth of the complete state graph search is 13.
-Finished in 01s at (2026-10-29 20:15:50)
-Trace exploration spec path: ./BoundedMove_TTrace_1793319348.tla
+Finished in 00s at (2026-10-30 09:00:12)
+Trace exploration spec path: ./BoundedMove_TTrace_1793365212.tla

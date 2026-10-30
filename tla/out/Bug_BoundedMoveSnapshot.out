@@ -1,13 +1,13 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 51 and seed 8891311100400042841 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 90205] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 97 and seed -8839559668555593968 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 20578] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-5382703633169197462/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8182109889473797280/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
 Semantic processing of module Naturals
 Semantic processing of module Integers
 Semantic processing of module Sequences
@@ -19,9 +19,9 @@ Semantic processing of module BoundedMove
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module BoundedMove
-Starting... (2026-10-29 20:15:57)
+Starting... (2026-10-30 09:00:13)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-29 20:15:57.
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:00:13.
 Error: Invariant NoPartialReads is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -233,7 +233,7 @@ State 11: <BeginInstall line 69, col 5 to line 72, col 103 of module BoundedMove
 /\ staged = <<0, 0, 0>>
 /\ diskOK = TRUE
 
-State 12: <Install(1) line 74, col 5 to line 78, col 83 of module BoundedMove>
+State 12: <Install(2) line 74, col 5 to line 78, col 83 of module BoundedMove>
 /\ phase = "install"
 /\ src = <<-1, -1, -1>>
 /\ dirty = {}
@@ -245,11 +245,11 @@ State 12: <Install(1) line 74, col 5 to line 78, col 83 of module BoundedMove>
 /\ restarted = FALSE
 /\ copied = {1, 2, 3}
 /\ pending = {}
-/\ dst = <<0, -1, -1>>
+/\ dst = <<-1, 0, -1>>
 /\ lost = FALSE
 /\ todo = {}
 /\ live = TRUE
-/\ staged = <<-1, 0, 0>>
+/\ staged = <<0, -1, 0>>
 /\ diskOK = TRUE
 
 State 13: <Snapshot line 93, col 5 to line 96, col 86 of module BoundedMove>
@@ -264,14 +264,14 @@ State 13: <Snapshot line 93, col 5 to line 96, col 86 of module BoundedMove>
 /\ restarted = FALSE
 /\ copied = {1, 2, 3}
 /\ pending = {}
-/\ dst = <<0, -1, -1>>
+/\ dst = <<-1, 0, -1>>
 /\ lost = FALSE
 /\ todo = {}
 /\ live = TRUE
-/\ staged = <<-1, 0, 0>>
+/\ staged = <<0, -1, 0>>
 /\ diskOK = TRUE
 
-State 14: <Install(2) line 74, col 5 to line 78, col 83 of module BoundedMove>
+State 14: <Install(1) line 74, col 5 to line 78, col 83 of module BoundedMove>
 /\ phase = "install"
 /\ src = <<-1, -1, -1>>
 /\ dirty = {}
@@ -347,7 +347,7 @@ State 17: <ReadPartial line 85, col 5 to line 91, col 90 of module BoundedMove>
 /\ staged = <<-1, -1, -1>>
 /\ diskOK = TRUE
 
-15227 states generated, 5542 distinct states found, 140 states left on queue.
-The depth of the complete state graph search is 17.
-Finished in 01s at (2026-10-29 20:15:58)
-Trace exploration spec path: ./BoundedMove_TTrace_1793319356.tla
+15579 states generated, 5673 distinct states found, 128 states left on queue.
+The depth of the complete state graph search is 18.
+Finished in 00s at (2026-10-30 09:00:14)
+Trace exploration spec path: ./BoundedMove_TTrace_1793365213.tla

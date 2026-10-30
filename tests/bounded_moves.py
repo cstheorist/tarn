@@ -69,11 +69,14 @@ def main():
     ap.add_argument('--mib', type=int, default=32, help='payload MiB per moving bucket')
     ap.add_argument('--moves', type=int, choices=[1, 2], default=1)
     ap.add_argument('--fault', choices=['none', 'source', 'receiver', 'coordinator', 'disk', 'reply', 'lazy'], default='none')
+    ap.add_argument('--traffic', action='store_true', help='SER/RC writes and exact ledgers on the moving bucket')
     a = ap.parse_args()
     work = Path(a.work).absolute(); work.mkdir(mode=0o700)
     assert a.mib >= 1
     storage, sqlprocs, bridges, logs, threads, proxies = {}, {}, {}, [], [], []
     metrics = []; errors = []; checks = []
+    load_stop=threading.Event();load_threads=[]
+    load=[dict(acked=set(),unknown=set(),aborted=set(),errors=[],codes={}) for _ in range(2)]
     result = dict(format='tarn-bounded-movement-v1', settings=dict(vars(a)), checks=checks, errors=errors,
         source_revision=os.getenv('TARN_SOURCE_REVISION', 'uncommitted'),
         source_sha256={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
@@ -235,6 +238,45 @@ end return true''',[tables,key,b,count],timeout=600)
         checked('RF3/fsync payload loaded through checked mutations')
         for i in ls:rpc(i).call('box.snapshot();return true',timeout=60)
         result['initial_vclocks']={str(i):rpc(i).call('return box.info.vclock') for i in range(6)}
+        if a.traffic:
+            for worker in range(2):
+                engine=engines[worker % len(engines)]
+                query(0,f'CREATE TABLE w{worker}(k INT,id INT,v INT,PRIMARY KEY(k,id)) ENGINE={engine} PARTITION BY KEY(k)')
+                query(0,f'CREATE TABLE ledger{worker}(k INT,id INT,PRIMARY KEY(k,id)) ENGINE={engine} PARTITION BY KEY(k)')
+                query(0,f'INSERT INTO w{worker} VALUES ({keys[0]},1,0)')
+            def traffic(worker):
+                conn=None;seq=0;record=load[worker]
+                def sql(statement):
+                    with conn.cursor() as cur:cur.execute(statement);return cur.fetchall() if cur.description else cur.rowcount
+                try:
+                    while not load_stop.is_set():
+                        seq+=1;stage='body'
+                        try:
+                            if conn is None:
+                                conn=pymysql.connect(host='127.0.0.1',port=ports[6+worker],user='t',password='',database='bounded',
+                                    autocommit=True,connect_timeout=2,read_timeout=5,write_timeout=5)
+                                sql("SET SESSION transaction_isolation='"+('READ-COMMITTED' if worker else 'SERIALIZABLE')+"'")
+                            sql('BEGIN')
+                            rows=sql(f'SELECT v FROM w{worker} WHERE k={keys[0]} AND id=1'+(' FOR UPDATE' if worker else ''))
+                            assert len(rows)==1,rows
+                            sql(f'UPDATE w{worker} SET v={rows[0][0]+1} WHERE k={keys[0]} AND id=1')
+                            sql(f'INSERT INTO ledger{worker} VALUES ({keys[0]},{seq})')
+                            stage='commit';sql('COMMIT');record['acked'].add(seq)
+                        except pymysql.MySQLError as error:
+                            code=error.args[0];record['codes'][str(code)]=record['codes'].get(str(code),0)+1
+                            if stage=='commit':record['aborted' if code==1213 else 'unknown'].add(seq)
+                            if code not in (1213,1180,1205,1041,2003,2006,2013):raise
+                            # Each attempt has a fresh identity. Even an uncertain
+                            # COMMIT is never replayed; reconciliation uses its ledger.
+                            if conn is not None:conn.close();conn=None
+                        time.sleep(.005)
+                except BaseException:record['errors'].append(traceback.format_exc())
+                finally:
+                    if conn is not None:conn.close()
+            for worker in range(2):
+                th=threading.Thread(target=traffic,args=(worker,),daemon=True);load_threads.append(th);th.start()
+            wait(lambda: all(len(r['acked'])>=2 for r in load))
+            checked('SER and RC ledger writers active on the moving bucket')
         # Hold at a real phase boundary when injecting a failure, so small
         # datasets cannot accidentally skip the intended fault.
         hook='bucket_rows' if a.fault in ('source','coordinator','disk') else 'move_install_batch'
@@ -308,6 +350,9 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
             if all(target.get('states',{}).get(str(b))=='active' for b in buckets) and \
                 all(source.get('states',{}).get(str(b))=='sent' for b in buckets) and \
                 all(s['movement']['active']==0 and s['jobs']==0 for s in sample['states'].values()) and len(sample['states'])==2:
+                if injected and a.fault in ('source','receiver','coordinator','disk') and not restored:
+                    time.sleep(.05)
+                    continue
                 finished=True;break
             # A pre-flip disk refusal cancels safely. After reclamation, retry a
             # new administrative move explicitly; never replay a user mutation.
@@ -319,6 +364,19 @@ return {states=out,movement=tarn_info().movement,jobs=#tarn_jobs(),events=__move
             time.sleep(.05)
         assert finished,'move did not complete'
         for th in threads:th.join(5)
+        if a.traffic:
+            before=[len(r['acked']) for r in load]
+            wait(lambda: all(len(r['acked'])>n for r,n in zip(load,before)), seconds=180)
+            load_stop.set()
+            for th in load_threads:th.join(15);assert not th.is_alive()
+            for worker, record in enumerate(load):
+                assert not record['errors'],record['errors']
+                actual={row[0] for row in query(1,f'SELECT id FROM ledger{worker} WHERE k={keys[0]}')}
+                assert record['acked']<=actual and actual<=record['acked']|record['unknown'], (worker,record,actual)
+                assert not actual & record['aborted'], (worker,record,actual)
+                assert query(1,f'SELECT v FROM w{worker} WHERE k={keys[0]} AND id=1') == ((len(actual),),)
+                record['committed']=actual
+            checked('SER/RC exact ledgers retain every acknowledgement, no aborted or duplicate effect, and post-move progress')
         elapsed=time.monotonic()-t0
         events={}
         for sample in metrics:
@@ -397,6 +455,11 @@ end return {max_reencoded_bytes=maxbytes,max_rows=maxrows}''',[result['initial_v
     except BaseException:
         result['passed']=False;errors.append(traceback.format_exc());save();raise
     finally:
+        load_stop.set()
+        for th in load_threads:th.join(10)
+        if a.traffic:
+            result['traffic']=[{k:sorted(v) if isinstance(v,set) else v for k,v in record.items()} for record in load]
+            save()
         for p in [*sqlprocs.values(),*storage.values(),*proxies]:
             if p.poll() is None:p.terminate()
         for p in [*sqlprocs.values(),*storage.values(),*proxies]:

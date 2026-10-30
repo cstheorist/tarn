@@ -1,14 +1,14 @@
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 26 and seed 8712055748061368774 with 1 worker on 2 cores with 711MB heap and 64MB offheap memory [pid: 180] (Linux 6.10.14-linuxkit aarch64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /work/tla/MC.tla
-Parsing file /work/tla/TarnCommit.tla
-Parsing file /tmp/tlc-11596581042782441291/_TLCTrace.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-11596581042782441291/Naturals.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-11596581042782441291/FiniteSets.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-11596581042782441291/Sequences.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-11596581042782441291/TLC.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-11596581042782441291/TLCExt.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-11596581042782441291/Integers.tla (jar:file:/tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 129 and seed 5602757943331144621 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 22252] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/MC.tla
+Parsing file /private/tmp/tarn-issue176/tla/TarnCommit.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-18087818207550764310/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -22,9 +22,9 @@ Linting of module TarnCommit
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MC
-Starting... (2026-10-29 22:52:04)
+Starting... (2026-10-30 09:04:31)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-29 22:52:04.
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:04:32.
 Error: Invariant StrictSerializable is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
@@ -84,7 +84,7 @@ State 1: <Initial predicate>
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 2: <ScanH("T1","B") line 1003, col 16 to line 1003, col 40 of module TarnCommit>
+State 2: <ReadH("T3","x") line 1007, col 16 to line 1007, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -102,7 +102,7 @@ State 2: <ScanH("T1","B") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -113,7 +113,64 @@ State 2: <ScanH("T1","B") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T3"}
+/\ scanned = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ data = [x |-> "init", y |-> "init"]
+/\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
+/\ part = [ A |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"],
+  B |-> [T1 |-> "none", T2 |-> "none", T3 |-> "none"] ]
+/\ mv = "idle"
+/\ lost = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ mver = [A |-> 0, B |-> 0]
+/\ dirty = <<>>
+/\ staged = [x |-> "init", y |-> "init"]
+/\ sobs = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
+/\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "A", y |-> "none"] ]
+/\ plocks = [A |-> {}, B |-> {}]
+/\ wh = [x |-> <<>>, y |-> <<>>]
+/\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
+  T2 |-> [x |-> "none", y |-> "none"],
+  T3 |-> [x |-> "none", y |-> "none"] ]
+/\ validated = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ parts = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ nTimeout = 0
+/\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
+
+State 3: <ScanH("T1","B") line 1009, col 16 to line 1009, col 40 of module TarnCommit>
+/\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
+  T2 |-> [x |-> {}, y |-> {}],
+  T3 |-> [x |-> {}, y |-> {}] ]
+/\ lobs = [ T1 |-> [x |-> "unread", y |-> "unread"],
+  T2 |-> [x |-> "unread", y |-> "unread"],
+  T3 |-> [x |-> "unread", y |-> "unread"] ]
+/\ rec = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
+/\ dpos = <<>>
+/\ msgs = {}
+/\ expired = {}
+/\ rcpos = [ T1 |-> [x |-> 0, y |-> 0],
+  T2 |-> [x |-> 0, y |-> 0],
+  T3 |-> [x |-> 0, y |-> 0] ]
+/\ dacked = <<>>
+/\ nCrash = 0
+/\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
+  T2 |-> [x |-> "unread", y |-> "unread"],
+  T3 |-> [x |-> "init", y |-> "unread"] ]
+/\ place = [x |-> "A", y |-> "B"]
+/\ acked = {}
+/\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
+/\ dobs = <<>>
+/\ lostUpd = FALSE
+/\ locks = [A |-> {}, B |-> {}]
+/\ infl = {}
+/\ nLoss = 0
+/\ nFail = 0
+/\ recovering = {}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -130,7 +187,7 @@ State 2: <ScanH("T1","B") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -141,7 +198,7 @@ State 2: <ScanH("T1","B") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 3: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit>
+State 4: <MoveFenceH line 1040, col 15 to line 1040, col 28 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -159,7 +216,7 @@ State 3: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -170,7 +227,7 @@ State 3: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -187,7 +244,7 @@ State 3: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -198,7 +255,7 @@ State 3: <MoveFenceH line 1034, col 15 to line 1034, col 28 of module TarnCommit
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 4: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnCommit>
+State 5: <MoveDrainedH line 1041, col 17 to line 1041, col 32 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -216,7 +273,7 @@ State 4: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnComm
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "A", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -227,7 +284,7 @@ State 4: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnComm
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -244,7 +301,7 @@ State 4: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnComm
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -255,7 +312,7 @@ State 4: <MoveDrainedH line 1035, col 17 to line 1035, col 32 of module TarnComm
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 5: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCommit>
+State 6: <MoveSendFlipH line 1042, col 18 to line 1042, col 34 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -273,7 +330,7 @@ State 5: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCom
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "none", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -284,7 +341,7 @@ State 5: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCom
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -301,7 +358,7 @@ State 5: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCom
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -312,7 +369,7 @@ State 5: <MoveSendFlipH line 1036, col 18 to line 1036, col 34 of module TarnCom
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 6: <ScanH("T1","A") line 1003, col 16 to line 1003, col 40 of module TarnCommit>
+State 7: <ScanH("T1","A") line 1009, col 16 to line 1009, col 40 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -330,7 +387,7 @@ State 6: <ScanH("T1","A") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "none", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -341,7 +398,7 @@ State 6: <ScanH("T1","A") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -358,7 +415,7 @@ State 6: <ScanH("T1","A") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -369,7 +426,7 @@ State 6: <ScanH("T1","A") line 1003, col 16 to line 1003, col 40 of module TarnC
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 7: <ValidateROH("T1","A") line 1020, col 22 to line 1020, col 57 of module TarnCommit>
+State 8: <ValidateROH("T1","A") line 1026, col 22 to line 1026, col 57 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -387,7 +444,7 @@ State 7: <ValidateROH("T1","A") line 1020, col 22 to line 1020, col 57 of module
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "none", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -398,7 +455,7 @@ State 7: <ValidateROH("T1","A") line 1020, col 22 to line 1020, col 57 of module
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -415,7 +472,7 @@ State 7: <ValidateROH("T1","A") line 1020, col 22 to line 1020, col 57 of module
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -426,7 +483,7 @@ State 7: <ValidateROH("T1","A") line 1020, col 22 to line 1020, col 57 of module
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 8: <ValidateROH("T1","B") line 1020, col 22 to line 1020, col 57 of module TarnCommit>
+State 9: <ValidateROH("T1","B") line 1026, col 22 to line 1026, col 57 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -444,7 +501,7 @@ State 8: <ValidateROH("T1","B") line 1020, col 22 to line 1020, col 57 of module
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "none", y |-> "B"]
 /\ acked = {}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -455,7 +512,7 @@ State 8: <ValidateROH("T1","B") line 1020, col 22 to line 1020, col 57 of module
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> FALSE, T2 |-> FALSE, T3 |-> FALSE]
@@ -472,7 +529,7 @@ State 8: <ValidateROH("T1","B") line 1020, col 22 to line 1020, col 57 of module
 /\ local = [T1 |-> "none", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -483,7 +540,7 @@ State 8: <ValidateROH("T1","B") line 1020, col 22 to line 1020, col 57 of module
 /\ nTimeout = 0
 /\ coord = [T1 |-> "exec", T2 |-> "exec", T3 |-> "exec"]
 
-State 9: <FinishROH("T1") line 1021, col 17 to line 1021, col 47 of module TarnCommit>
+State 10: <FinishROH("T1") line 1027, col 17 to line 1027, col 47 of module TarnCommit>
 /\ rcacked = [ T1 |-> [x |-> {}, y |-> {}],
   T2 |-> [x |-> {}, y |-> {}],
   T3 |-> [x |-> {}, y |-> {}] ]
@@ -501,7 +558,7 @@ State 9: <FinishROH("T1") line 1021, col 17 to line 1021, col 47 of module TarnC
 /\ nCrash = 0
 /\ obs = [ T1 |-> [x |-> "unread", y |-> "unread"],
   T2 |-> [x |-> "unread", y |-> "unread"],
-  T3 |-> [x |-> "unread", y |-> "unread"] ]
+  T3 |-> [x |-> "init", y |-> "unread"] ]
 /\ place = [x |-> "none", y |-> "B"]
 /\ acked = {"T1"}
 /\ rtPred = [T1 |-> {}, T2 |-> {}, T3 |-> {}]
@@ -512,7 +569,7 @@ State 9: <FinishROH("T1") line 1021, col 17 to line 1021, col 47 of module TarnC
 /\ nLoss = 0
 /\ nFail = 0
 /\ recovering = {}
-/\ started = {"T1"}
+/\ started = {"T1", "T3"}
 /\ scanned = [T1 |-> {"A", "B"}, T2 |-> {}, T3 |-> {}]
 /\ data = [x |-> "init", y |-> "init"]
 /\ everC = [T1 |-> TRUE, T2 |-> FALSE, T3 |-> FALSE]
@@ -529,7 +586,7 @@ State 9: <FinishROH("T1") line 1021, col 17 to line 1021, col 47 of module TarnC
 /\ local = [T1 |-> "committed", T2 |-> "none", T3 |-> "none"]
 /\ loc = [ T1 |-> [x |-> "none", y |-> "none"],
   T2 |-> [x |-> "none", y |-> "none"],
-  T3 |-> [x |-> "none", y |-> "none"] ]
+  T3 |-> [x |-> "A", y |-> "none"] ]
 /\ plocks = [A |-> {}, B |-> {}]
 /\ wh = [x |-> <<>>, y |-> <<>>]
 /\ wt = [ T1 |-> [x |-> "none", y |-> "none"],
@@ -540,7 +597,7 @@ State 9: <FinishROH("T1") line 1021, col 17 to line 1021, col 47 of module TarnC
 /\ nTimeout = 0
 /\ coord = [T1 |-> "finished", T2 |-> "exec", T3 |-> "exec"]
 
-8519 states generated, 3216 distinct states found, 1453 states left on queue.
-The depth of the complete state graph search is 9.
-Finished in 01s at (2026-10-29 22:52:04)
-Trace exploration spec path: ./MC_TTrace_1793314323.tla
+12727 states generated, 4424 distinct states found, 1985 states left on queue.
+The depth of the complete state graph search is 10.
+Finished in 00s at (2026-10-30 09:04:32)
+Trace exploration spec path: ./MC_TTrace_1793365471.tla
