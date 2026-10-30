@@ -8,12 +8,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- An explicit Linux production profile with fsync/RF/quorum and declared
-  failure-domain validation, private-file credentials, required MySQL TLS,
-  mutual TLS bridges for Community Edition storage/replication, restricted
-  service/replication roles, resource/clock deployment checks, certificate
-  rotation and driver/failure tests ([#139](https://github.com/cstheorist/tarn/issues/139)).
-  See [the deployment procedure and proof boundaries](docs/production.md).
 - Reject new unsupported FOREIGN KEY, CHECK and ENUM/SET declarations before
   schema effects. Expose legacy integrity history with SHOW TARN INTEGRITY
   and SHOW CREATE; legacy SQL writes require explicit session opt-in. Preserve
@@ -27,7 +21,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restores remain unavailable; source release requires explicit process restart.
   See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
 
+- An explicit Linux production profile with fsync/RF/quorum and declared
+  failure-domain validation, private-file credentials, required MySQL TLS,
+  mutual TLS bridges for Community Edition storage/replication, restricted
+  service/replication roles, resource/clock deployment checks, certificate
+  rotation and driver/failure tests ([#139](https://github.com/cstheorist/tarn/issues/139)).
+  See [the deployment procedure and proof boundaries](docs/production.md).
+
 ### Fixed
+
+- Gateway sockets now grow on demand and share a hard physical-connection
+  budget with completion capacity. Idle eviction preserves transaction and
+  pending-reply owners. Read fanouts have bounded windows and admission;
+  response frames retain byte charges until their last owner drops.
+  Concurrent refreshes coalesce and diagnostic polling rotates through a
+  fixed shard budget. Saturation returns an explicit failure, preserving
+  unknown mutation outcomes ([#188](https://github.com/cstheorist/tarn/issues/188)).
+  See [configuration and limits](docs/gateway-resources.md).
 
 - Lazy-index owner hints now expire immediately when the local bucket map
   changes. A completed handoff can no longer leave immediate garbage

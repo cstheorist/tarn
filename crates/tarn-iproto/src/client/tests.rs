@@ -418,8 +418,10 @@ async fn slow_peer_bounds_encoded_bytes_and_retires_a_blocked_writer() {
 fn retirement_does_not_refund_until_both_physical_owners_drop() {
     let budget = Budget::new("test", crate::Limits::default()).unwrap();
     let permit = Permit::acquire(&budget, &[], 128, Class::Normal).unwrap();
+    let sockets = crate::ConnectionBudget::new(2, 1).unwrap();
     let physical = Arc::new(Physical {
         state: Mutex::new((2, Vec::new())),
+        connection: Mutex::new(Some(sockets.acquire(false).unwrap())),
     });
     let a = IoGuard(physical.clone());
     let b = IoGuard(physical.clone());
@@ -427,8 +429,112 @@ fn retirement_does_not_refund_until_both_physical_owners_drop() {
     assert_eq!(budget.stats().pending, 1);
     drop(a);
     assert_eq!(budget.stats().pending, 1);
+    assert_eq!(sockets.stats().open, 1);
     drop(b);
     assert_eq!(budget.stats().pending, 0);
+    assert_eq!(sockets.stats().open, 0);
+}
+
+#[tokio::test]
+async fn socket_budget_covers_handshake_cancellation_and_pinned_handles() {
+    let sockets = crate::ConnectionBudget::new(2, 1).unwrap();
+    let mut opts = Opts::new("in-memory");
+    opts.connections = Some(sockets.clone());
+    let (task, mut peer) = connecting_options(opts.clone()).await;
+    assert_eq!(sockets.stats().open, 1);
+    assert!(sockets.acquire(false).is_err());
+    // No capability/ID response. Abandon the connecting caller.
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert_eq!(sockets.stats().open, 0);
+    let mut bytes = Vec::new();
+    bounded(peer.read_to_end(&mut bytes)).await.unwrap();
+
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let client = bounded(task).await.unwrap().unwrap();
+    assert!(client.exclusively_idle());
+    let stream_owner = client.clone();
+    assert!(!client.exclusively_idle());
+    drop(stream_owner);
+    let (_, reply) = pending(&client, &mut peer).await;
+    drop(reply);
+    assert!(!client.exclusively_idle(), "cancelled request pins its socket");
+    client.close();
+    // Closed handles can survive physical retirement; they consume no socket.
+    bounded(async {
+        while sockets.stats().open != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(sockets.stats().peak, 1);
+    assert_eq!(sockets.traffic().requests, 1);
+    assert!(sockets.traffic().bytes_written > 0);
+}
+
+#[tokio::test]
+async fn response_budget_survives_response_slices_and_refuses_before_large_reserve() {
+    let budget = crate::ResponseBudget::new(256);
+    let mut opts = Opts::new("in-memory");
+    opts.responses = Some(budget.clone());
+    opts.response_frame_bytes = 256;
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let c = bounded(task).await.unwrap().unwrap();
+    let (sync, rx) = pending(&c, &mut peer).await;
+    let mut body = vec![0x81, key::DATA, 0x91];
+    mp::write_str(&mut body, &[b'x'; 120]);
+    peer.write_all(&response(iproto::OK, sync, &body)).await.unwrap();
+    let reply = bounded(rx).await.unwrap().into_response().unwrap();
+    let slice = reply.data().unwrap().slice(0..1);
+    drop(reply);
+    let charged = budget.stats().bytes;
+    assert!(charged >= body.len());
+    let (sync, rx) = pending(&c, &mut peer).await;
+    peer.write_all(&response(iproto::OK, sync, &body)).await.unwrap();
+    assert!(
+        bounded(rx).await.is_err(),
+        "post-enqueue exhaustion cannot report a successful prefix"
+    );
+    assert!(c.is_closed());
+    assert_eq!(budget.stats().bytes, charged);
+    drop(slice);
+    assert_eq!(budget.stats().bytes, 0);
+    assert_eq!(budget.stats().refusals, 1);
+
+    let mut opts = Opts::new("in-memory");
+    opts.response_frame_bytes = 256;
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let c = bounded(task).await.unwrap().unwrap();
+    let (_, rx) = pending(&c, &mut peer).await;
+    // A length alone must retire; no advertised payload is sent or allocated.
+    peer.write_all(&[0xce, 0x01, 0x00, 0x00, 0x00]).await.unwrap();
+    assert!(bounded(rx).await.is_err());
+    assert!(c.is_closed());
+}
+
+#[tokio::test]
+async fn sql_frame_limit_composes_with_aggregate_response_ownership() {
+    let budget = crate::ResponseBudget::new(4096);
+    let mut opts = Opts::new("in-memory");
+    opts.max_response_bytes = 256;
+    opts.response_frame_bytes = 1024;
+    opts.responses = Some(budget.clone());
+    let (task, mut peer) = connecting_options(opts).await;
+    peer.write_all(&response(iproto::OK, SYNC_ID, &[0x80])).await.unwrap();
+    let c = bounded(task).await.unwrap().unwrap();
+    let (_, rx) = pending(&c, &mut peer).await;
+    peer.write_all(&[0xcd, 0x01, 0x01]).await.unwrap();
+    assert!(bounded(rx).await.is_err(), "an enqueued request is uncertain");
+    assert!(c.is_closed());
+    assert!(
+        c.response_limit_exceeded(),
+        "read-only SQL budget classification survives"
+    );
+    assert_eq!(budget.stats().bytes, 0);
+    assert_eq!(budget.stats().peak, 0, "reject before aggregate allocation");
 }
 
 #[tokio::test]
@@ -490,4 +596,31 @@ async fn shared_scopes_cover_multiple_connections_and_reserved_calls() {
 
 async fn peer_reply(peer: &mut DuplexStream, id: u64) {
     peer.write_all(&response(iproto::OK, id, &[0x80])).await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_tls_handshake_keeps_its_physical_socket_charge_until_drop() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let budget = crate::ConnectionBudget::new(2, 1).unwrap();
+    let mut opts = Opts::new(format!("tls://{}", listener.local_addr().unwrap()));
+    opts.connections = Some(budget.clone());
+    opts.tls = Some(Arc::new(
+        tarn_transport::rustls::ClientConfig::builder_with_provider(Arc::new(
+            tarn_transport::rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(tarn_transport::rustls::RootCertStore::empty())
+        .with_no_client_auth(),
+    ));
+    let connecting = tokio::spawn(async move { Client::connect(&opts).await });
+    let (mut peer, _) = bounded(listener.accept()).await.unwrap();
+    assert_eq!(bounded(peer.read_u8()).await.unwrap(), 0x16); // TLS ClientHello, no IPROTO/application request.
+    assert_eq!(budget.stats().open, 1);
+    assert!(budget.acquire(false).is_err(), "handshake donated its socket slot");
+    connecting.abort();
+    assert!(connecting.await.unwrap_err().is_cancelled());
+    assert_eq!(budget.stats().open, 0);
+    let mut remaining = Vec::new();
+    let _ = bounded(peer.read_to_end(&mut remaining)).await;
 }

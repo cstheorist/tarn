@@ -16,12 +16,16 @@
 
 mod admission;
 mod client;
+mod connections;
 pub mod iproto;
 pub mod mp;
+mod responses;
 
 pub use admission::{AdmissionStats, Budget, Limits};
 pub use client::{Client, Response, ServerInfo, Stats};
+pub use connections::{ConnectionBudget, ConnectionStats, TrafficStats};
 pub use errcode::*;
+pub use responses::{ResponseBudget, ResponseStats};
 
 use std::time::Duration;
 
@@ -50,6 +54,14 @@ pub struct Opts {
     pub admission: Vec<Budget>,
     /// Application-defined scope ID for cached connection observations.
     pub observation_scope: Option<u32>,
+    /// Optional gateway-wide physical socket budget, charged before connect.
+    pub connections: Option<ConnectionBudget>,
+    /// Discovery for an existing transaction's completion may use the reserve.
+    pub completion_connection: bool,
+    /// Optional shared encoded-response budget, including retained Bytes.
+    pub responses: Option<ResponseBudget>,
+    /// Largest accepted frame (including length prefix); checked before reserve.
+    pub response_frame_bytes: usize,
 }
 
 impl Opts {
@@ -66,6 +78,10 @@ impl Opts {
             request_timeout: Duration::from_secs(120),
             admission: Vec::new(),
             observation_scope: None,
+            connections: None,
+            completion_connection: false,
+            responses: None,
+            response_frame_bytes: iproto::BODY_LEN_MAX + 9,
         }
     }
 }
