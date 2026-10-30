@@ -30,6 +30,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Prepared administrative assignments capture prior diagnostic counts before
+  clearing messages on each execution, including reused statement handles.
+  Register the exact text/binary diagnostic-reader differences from pinned
+  MySQL, with explicit unsupported-expression refusals.
+
 - Preserve 1180/40003 for native commit uncertainty, missing write DATA and
   malformed mutation replies. Require complete error and handback envelopes
   before retry/fallback so a plausible prefix cannot replay an increment.

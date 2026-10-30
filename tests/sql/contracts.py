@@ -438,6 +438,90 @@ def case_bounded_warnings(s):
             [row[:2] for row in dml_messages]]
 
 
+def diagnostic_result(cursor, statement):
+    try:
+        cursor.execute(statement)
+        return {"value": [list(row) for row in cursor.fetchall()] if cursor.with_rows else cursor.rowcount}
+    except mysql.connector.Error as e:
+        return {"error": [e.errno, e.sqlstate]}
+
+
+def diagnostic_handle(cursor, prepared):
+    # Connector/Python 9.5.0 is pinned. Its retained statement ID proves
+    # that the second successful execution reused the binary handle.
+    return cursor._prepared["statement_id"] if prepared and cursor._prepared is not None else None
+
+
+def case_diagnostic_assignment_protocol(s):
+    c = s.fresh()
+    control = c.cursor(prepared=s.prepared)
+    handles = []
+    try:
+        for _ in range(2):
+            assert diagnostic_result(control, "SET @capture=7") == {"value": 0}
+            assert q(c, "SELECT @capture") == [[7]]
+            handles.append(diagnostic_handle(control, s.prepared))
+        assert not s.prepared or handles[0] is not None and handles[0] == handles[1], handles
+    finally:
+        control.close()
+    cursor = c.cursor(prepared=s.prepared)
+    outcomes, handles = [], []
+    try:
+        for count in (1, 70):
+            q(c, "SET @capture=7")
+            assert q(c, "INSERT IGNORE INTO t VALUES " + ",".join("(1,99,99)" for _ in range(count))) == 0
+            result = diagnostic_result(cursor, "SET @capture=@@warning_count")
+            messages = [row[:2] for row in q(c, "SHOW WARNINGS")]
+            saved = q(c, "SELECT @capture")
+            refused = s.prepared and s.kind == "mysql"
+            assert result == ({"error": [1295, "HY000"]} if refused else {"value": 0}), result
+            expected = [["Error", 1295]] if refused else [["Warning", 1062]] * min(count, 64) if s.kind == "mariadb" else []
+            assert messages == expected, messages
+            assert saved == [[7 if refused else count]], (count, saved)
+            handles.append(diagnostic_handle(cursor, s.prepared))
+            outcomes.append(dict(prior_count=count, result=result, messages=messages, saved=saved))
+        if s.prepared:
+            assert handles == [None, None] if s.kind == "mysql" else handles[0] is not None and handles[0] == handles[1], handles
+    finally:
+        cursor.close()
+    assert q(c, "SELECT id,v FROM t ORDER BY id") == [[1,10],[2,20]]
+    return outcomes
+
+
+def case_diagnostic_select_protocol(s):
+    c = s.fresh()
+    control = c.cursor(prepared=s.prepared)
+    handles = []
+    try:
+        for _ in range(2):
+            assert diagnostic_result(control, "SELECT @@autocommit") == {"value": [[1]]}
+            handles.append(diagnostic_handle(control, s.prepared))
+        assert not s.prepared or handles[0] is not None and handles[0] == handles[1], handles
+    finally:
+        control.close()
+    outcomes = []
+    for statement in ("SELECT @@warning_count", "SELECT @@warning_count+0"):
+        cursor = c.cursor(prepared=s.prepared)
+        handles = []
+        try:
+            for count in (1, 70):
+                assert q(c, "INSERT IGNORE INTO t VALUES " + ",".join("(1,99,99)" for _ in range(count))) == 0
+                result = diagnostic_result(cursor, statement)
+                messages = [row[:2] for row in q(c, "SHOW WARNINGS")]
+                code = 1295 if s.prepared and s.kind == "mysql" else 1235 if s.prepared and s.kind == "tarn" and statement.endswith("+0") else None
+                assert result == ({"error": [code, "HY000" if code == 1295 else "42000"]} if code else {"value": [[count]]}), result
+                expected = [["Error", 1295]] if code == 1295 else [["Warning", 1062]] * min(count, 64) if code or s.kind == "mariadb" else []
+                assert messages == expected, (statement, count, messages)
+                handles.append(diagnostic_handle(cursor, s.prepared))
+                outcomes.append(dict(statement=statement, prior_count=count, result=result, messages=messages))
+            if s.prepared:
+                assert handles == [None, None] if code else handles[0] is not None and handles[0] == handles[1], handles
+        finally:
+            cursor.close()
+    assert q(c, "SELECT id,v FROM t ORDER BY id") == [[1,10],[2,20]]
+    return outcomes
+
+
 def case_rc_paged_snapshot(s):
     c=s.fresh()
     q(c,"TRUNCATE TABLE t")

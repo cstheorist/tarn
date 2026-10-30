@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "scope": "Functional Linux ARM64 debug validation; no performance or normal-release CI claim.",
+  "base_commit": "6a120f1b7ce2f59672100039b8b93dbec1c6a40f",
+  "modified_source_sha256": {
+    "crates/tarn-sql/src/session.rs": "1865a05d82684ccef2502925d9c5ccbb110ccbd6edec611fcd23cdec65da0a85",
+    "tests/sql/contracts.py": "c8fe4d7277f713d02db615fce70e4d56bb2a2065e46ed8bd4899022d04c1c32d",
+    "contracts/manifest.json": "6a8d4389156a098b0ac1f0735b9358a6b547a53601d1d8afa4d6cce7ab30907d"
+  },
+  "binaries": {
+    "before_gateway": "9ae73bd193c6c8f9e1e62422e9125afb827fbea7c60ebaa6cabc518ac14038bd",
+    "after_gateway": "10681b0644c640b3a0605d314050262c7c2c3e7401f72e7db576b8902e7fed3d",
+    "native": "86ec8b83194a441d279657615399f471876690ba820e11e3ebd8c25b0ee08eaf"
+  },
+  "before": {
+    "target_source": "326dfb92cb91844ec0ffcdb48af4ac0d7d50b5b6",
+    "regression": "text assignment passes; prepared assignment saves 0 instead of prior count 1",
+    "relevant_method": "execute_budgeted is byte-identical in the old target and current base before this fix"
+  },
+  "after": {
+    "records": 240,
+    "modes": 4,
+    "all_passed": true,
+    "mode": "RF3/fsync; runtime proves engine/quorum/native readiness; actual native fallback counts retained"
+  },
+  "build": {
+    "profile": "debug, one build job, debug info disabled, incremental disabled; Rust 1.98.1; locked offline dependencies",
+    "first_attempt": "SIGKILL while owned oracle/probe fixtures consumed shared VM memory; original log retained locally",
+    "first_attempt_log_sha256": "f900a6ac4d2690107320a2b43b1414db1c48f34802d52054ec95120a9dec9b47",
+    "retry": "unchanged source succeeds after stopping only owned fixtures",
+    "retry_log_sha256": "6904afd6cc99136b3fdd7acb4dc09c01caee83a0522493f5385903a5a049bbe0",
+    "input_files_matched": 99
+  },
+  "supplemental": {
+    "server": "MariaDB 10.11.19",
+    "connector": "mysql-connector-python 9.5.0",
+    "histories": 4,
+    "all_passed": true,
+    "scope": "These two explicit histories only; message retention differs from MySQL."
+  },
+  "archive": {
+    "path": "prepared-diagnostics-20261030.tar.gz",
+    "bytes": 23260,
+    "sha256": "e2e2081d38b2ce9ea32d28a74fe575b9a1b6b30c0b1864a5d135dfcfcb757bda"
+  },
+  "members": [
+    {
+      "path": "before.json",
+      "bytes": 4108,
+      "sha256": "8fa690f271226df8235cf7a467ceb2baa73d9ec0c7d1d75c327122be0bb5694a"
+    },
+    {
+      "path": "build-inputs.json",
+      "bytes": 10896,
+      "sha256": "69bfd7b5c85dd4a244357abb3a848c7b7e347f9def0ee902b53bb1fd63640d32"
+    },
+    {
+      "path": "mariadb-controls.json",
+      "bytes": 28463,
+      "sha256": "1c11f03a06ac315ce27e249b42a2efc1f2c4c95d78c913ed52502ad032e8d1b2"
+    },
+    {
+      "path": "memtx-lua/full.json",
+      "bytes": 51771,
+      "sha256": "c021a81c5d9d7b063008273e15d89c5eeeca1fe03c7851b6046a2c629e0f1626"
+    },
+    {
+      "path": "memtx-lua/runtime.json",
+      "bytes": 11813,
+      "sha256": "4af4d649921a7018bce18417417d314d9633326524fb896075f7442c14b96f17"
+    },
+    {
+      "path": "memtx-native/full.json",
+      "bytes": 51931,
+      "sha256": "7308663eb7773cedb10a077f84a8c01cca08551ef930a0d5affd19447f050a4e"
+    },
+    {
+      "path": "memtx-native/runtime.json",
+      "bytes": 12070,
+      "sha256": "925734ea8ff8182c2ca3289bc81ef3a3440513b8e46f96a0ef23e2f44253fc1e"
+    },
+    {
+      "path": "vinyl-lua/full.json",
+      "bytes": 52261,
+      "sha256": "bfcb5c93ab3bce83788a485a45f36cc743395bdaaecca3c24d8a8167a897abb5"
+    },
+    {
+      "path": "vinyl-lua/runtime.json",
+      "bytes": 11710,
+      "sha256": "34fbdc44b5a31c7555e4cd4ce9b8aa0c338a8192438421d998a0ec384ffab6c2"
+    },
+    {
+      "path": "vinyl-native/full.json",
+      "bytes": 51928,
+      "sha256": "990603b689368341a190a1a17da6e060b01d468d92d5576fddc5969ab98a3078"
+    },
+    {
+      "path": "vinyl-native/runtime.json",
+      "bytes": 12038,
+      "sha256": "da3c77e24b018bcbf1fcea78c027beceec97b2dd01728872c6b490c06d4083a3"
+    }
+  ],
+  "local_checks": {
+    "format": "passed",
+    "strict_workspace_clippy": "passed",
+    "manifest_and_generated_docs": "passed",
+    "host_units": {
+      "passed": 209,
+      "failed": 17,
+      "result": "failure retained; sandbox TCP bind denial and missing local Tarantool",
+      "log_sha256": "e5d6a9164ad56032095088ee611b0973b6c230fc0b32debabfacd7c92f04ff06"
+    },
+    "linux_units": {
+      "passed": 226,
+      "failed": 0,
+      "ignored": 0,
+      "result": "passed in the owned Linux/Tarantool container",
+      "log_sha256": "9a4cabcb14d25159048c02b4669b3fe028fe8dfab48f4f6b93ba6cbaf35ffc16"
+    }
+  }
+}
