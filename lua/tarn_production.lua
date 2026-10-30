@@ -118,6 +118,12 @@ function P.readable(space)
         box.schema.user.grant('tarn_service', 'read', 'space', space.id, {if_not_exists=true})
     end
 end
+local function expected_function(name, language)
+    local f = box.func[name]
+    if not f or f.setuid ~= true or f.language ~= language then return false end
+    local tuple = box.space._func:get{f.id}
+    return tuple[2] == 1 and tuple[6] == ''
+end
 function P.install(c, functions, native)
     reset_user('tarn_service', c.password); reset_user('tarn_repl', c.replication_password)
     -- Public's default Lua console functions must not remain inherited.
@@ -144,14 +150,16 @@ function P.install(c, functions, native)
     for _, name in ipairs(functions) do
         local f = box.func[name]
         if f then
-            assert(f.setuid == true and f.language == 'LUA' and box.space._func:get{f.id}[2] == 1 and box.space._func:get{f.id}[6] == '', 'production needs an offline function migration: ' .. name)
+            assert(expected_function(name, 'LUA'), 'production needs an offline function migration: ' .. name)
         else box.schema.func.create(name, {setuid=true}) end
         box.schema.user.grant('tarn_service', 'execute', 'function', name, {if_not_exists=true})
     end
-    if native then for _, name in ipairs({'ts_select','ts_autocommit','ts_commit_local','ts_validate'}) do
-        local f = assert(box.func['tarn_storage.' .. name])
-        assert(f.setuid == true, 'production native procedure must use setuid')
-        box.schema.user.grant('tarn_service', 'execute', 'function', f.name, {if_not_exists=true})
+    if native then for _, name in ipairs({'ts_state','ts_select','ts_autocommit','ts_commit_local','ts_validate'}) do
+        local full = 'tarn_storage.' .. name
+        assert(expected_function(full, 'C'), 'production needs an offline native function migration: ' .. full)
+        if name ~= 'ts_state' then
+            box.schema.user.grant('tarn_service', 'execute', 'function', full, {if_not_exists=true})
+        end
     end end
 end
 -- Read-only validation works on followers too. A half-finished migration or
@@ -160,16 +168,14 @@ function P.valid(functions, native)
     local wanted = {['universe:0'] = 24}
     for _, name in ipairs(functions) do
         local f = box.func[name]
-        if not f or not f.setuid or f.language ~= 'LUA' then return false end
-        local tuple = box.space._func:get{f.id}
-        if tuple[2] ~= 1 or tuple[6] ~= '' then return false end
+        if not expected_function(name, 'LUA') then return false end
         wanted['function:' .. f.id] = 4
     end
     for _, t in box.space._space:pairs() do if t[1] >= 10000 then wanted['space:' .. t[1]] = 1 end end
-    if native then for _, name in ipairs({'ts_select','ts_autocommit','ts_commit_local','ts_validate'}) do
-        local f = box.func['tarn_storage.' .. name]
-        if not f or not f.setuid or f.language ~= 'C' then return false end
-        wanted['function:' .. f.id] = 4
+    if native then for _, name in ipairs({'ts_state','ts_select','ts_autocommit','ts_commit_local','ts_validate'}) do
+        local full = 'tarn_storage.' .. name
+        if not expected_function(full, 'C') then return false end
+        if name ~= 'ts_state' then wanted['function:' .. box.func[full].id] = 4 end
     end end
     local function exact(user, want)
         local t = box.space._user.index.name:get{user}; if not t then return false end

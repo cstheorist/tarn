@@ -39,5 +39,27 @@ end
 local before=box.info.lsn
 P.install(c,functions,false)
 assert(box.info.lsn==before, 'unchanged ACL installation wrote WAL')
-print('production ACL: exact grants, seven negative controls, function migrations and idempotent setup passed')
+-- Definitions are checked before a native module is called. A Lua function
+-- masquerading as the internal state installer must not attest to readiness.
+for _, name in ipairs({'ts_state','ts_select','ts_autocommit','ts_commit_local','ts_validate'}) do
+    box.schema.func.create('tarn_storage.' .. name, {language='C',setuid=true})
+end
+P.install(c,functions,true); assert(P.valid(functions,true))
+local name = 'tarn_storage.ts_state'
+box.schema.func.drop(name); box.schema.func.create(name,{setuid=true})
+assert(not P.valid(functions,true), 'wrong-language native installer attested')
+assert(not pcall(P.install,c,functions,true), 'unsafe native installer accepted')
+box.schema.func.drop(name); box.schema.func.create(name,{language='C',setuid=true})
+P.install(c,functions,true); assert(P.valid(functions,true))
+local full = 'tarn_storage.ts_select'
+box.schema.func.drop(full)
+box.schema.user.create('another_admin')
+box.schema.user.grant('another_admin','super')
+box.session.su('another_admin',function() box.schema.func.create(full,{language='C',setuid=true}) end)
+assert(not P.valid(functions,true), 'unexpected native owner attested')
+assert(not pcall(P.install,c,functions,true), 'unexpected native owner accepted')
+box.schema.func.drop(full); box.schema.user.drop('another_admin')
+box.schema.func.create(full,{language='C',setuid=true})
+P.install(c,functions,true); assert(P.valid(functions,true))
+print('production ACL: exact grants, seven grant controls, Lua/native definition migrations and idempotent setup passed')
 os.exit()
