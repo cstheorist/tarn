@@ -58,6 +58,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   freshness/cache checks, preserves stream/read-set and no-replay assertions,
   records the real status payload, and exports source/module/process and
   pre-pause/pending/post-yield evidence from CI on success or failure.
+- Exact decimal comparisons, grouping keys, integer assignments and typed
+  index probes preserve distinctions above 2^53; VARBINARY length checks
+  preserve byte limits. Invalid UTF-8 SQL text is refused before effects
+  instead of replacing bytes inside keys ([#180](https://github.com/cstheorist/tarn/issues/180)).
+  The opt-in `tarn_key_contract=MYSQL` profile admits a documented bounded
+  key subset and `utf8mb4_0900_bin`, refusing legacy approximations before
+  execution. Legacy encodings remain unchanged and visible in EXPLAIN.
+  See [key semantics](docs/key-semantics.md) for migration and proof limits.
+
 - The Vinyl pressure fixture reserves and paces its existing 20,000 attempts
   across the warmup, limited-I/O and release windows, so fast writers cannot
   consume later phases' work ([#174](https://github.com/cstheorist/tarn/issues/174)).

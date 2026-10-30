@@ -652,7 +652,7 @@ pub fn decode_param(r: &mut Reader, t: u8, unsigned: bool) -> Option<Value> {
         5 => Value::Float(f64::from_le_bytes(r.take(8)?.try_into().unwrap())),
         0 | 246 => {
             let s = r.lenenc_str()?;
-            Value::Decimal(String::from_utf8_lossy(s).trim().to_string())
+            Value::Decimal(std::str::from_utf8(s).ok()?.trim().to_string())
         }
         7 | 10 | 12 => decode_date(r, t)?,
         11 => decode_time(r)?,
@@ -744,6 +744,19 @@ mod tests {
         assert_eq!(h.database, Some(&b"db1"[..]));
         assert_eq!(h.plugin, Some(&b"caching_sha2_password"[..]));
         assert!(parse_handshake_response(&p[..20]).is_none());
+    }
+
+    #[test]
+    fn decimal_parameters_do_not_replace_invalid_bytes() {
+        let mut invalid = Vec::new();
+        write_lenenc_str(&mut invalid, b"12\xff.3");
+        assert!(decode_param(&mut Reader::new(&invalid), 246, false).is_none());
+        let mut binary = Vec::new();
+        write_lenenc_str(&mut binary, b"\xff\0");
+        assert_eq!(
+            decode_param(&mut Reader::new(&binary), 252, false),
+            Some(Value::Bin(Bytes::from_static(b"\xff\0")))
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@
 |---|---|
 | [Getting started](getting-started.md) | Build from source, run a local cluster, use SQL and direct key/value reads, try a failover, run the tests. |
 | [SQL compatibility](sql-compatibility.md) | Protocol features, supported statements, types and functions, and where Tarn differs from MySQL. |
+| [Key semantics](key-semantics.md) | Opt-in exact key subset, legacy collation visibility, decimal precision, binary inputs and pinned MySQL cases. |
 | [Strong Key/Value reads](strong-kv.md) | Supported read-only point/multi-get API, authentication, schema and ownership handles, and raw-native visibility boundaries. |
 | [Operations](operations.md) | Deployment layout, storage-node and `tarn-server` configuration, monitoring, failure behaviour, error codes, security. |
 | [Gateway resource limits](gateway-resources.md) | Lazy pools, physical socket and response budgets, fanout admission, refresh and polling bounds. |

@@ -2192,6 +2192,18 @@ cases).
 
 ## Test suites
 
+`tests/sql/key_semantics.py` compares the registered bounded key shapes
+against digest-pinned MySQL 8.4.13 through PyMySQL text and Connector/Python
+binary execution. It retains source hashes and every trace/error. Cases
+cover NO PAD byte keys, case/accent/combining distinctions, large exact
+decimals, unsigned boundaries, raw binary values, global uniqueness,
+joins/pagination, settled lazy indexes, physical ALTER layouts and
+pre-effect refusal. The separate legacy temporal control is not an exact
+profile admission claim. [`key semantics`](key-semantics.md) states the
+scope and migration boundary; `contracts/key-semantics.json` is the
+versioned companion to #178's broader release manifest. These are runtime
+tests, not a refinement proof of collation or SQL conversion code.
+
 | Suite | Command | Needs | Checks |
 |---|---|---|---|
 | Unit tests | `cargo test --workspace` | Tarantool (IPROTO tests start their own) | codec, packets, SQL normalization, expressions, collation weights, coordinator decisions, the cross-shard deadlock search, IPROTO client against a real Tarantool |
