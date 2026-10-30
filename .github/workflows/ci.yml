@@ -256,11 +256,15 @@ jobs:
         id: failover-evidence
         run: |
           python3 tests/test_retain_failover.py
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/failover-core-probe/core.%e.%p.%t"
+          python3 ci/probe_core.py --runtime "$(command -v tarantool)" \
+            --output "$RUNNER_TEMP/failover-core-probe"
           sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/failover-cores/core.%e.%p.%t"
           python3 ci/retain_failover.py begin --output "$RUNNER_TEMP/failover-evidence" \
             --cores "$RUNNER_TEMP/failover-cores"
           tarantool --version > "$RUNNER_TEMP/failover-evidence/tarantool-version.txt"
           rustc -Vv > "$RUNNER_TEMP/failover-evidence/rustc.txt"
+          cp "$RUNNER_TEMP/failover-core-probe/probe.json" "$RUNNER_TEMP/failover-evidence/core-probe.json"
       - name: Failover (2 shards x 3 replicas)
         env:
           TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
@@ -295,7 +299,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: failover-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/failover-evidence
+          path: |
+            ${{ runner.temp }}/failover-evidence
+            ${{ runner.temp }}/failover-core-probe/probe.json
+            ${{ runner.temp }}/failover-core-probe/crash.txt
           retention-days: 30
           compression-level: 1
           if-no-files-found: ignore

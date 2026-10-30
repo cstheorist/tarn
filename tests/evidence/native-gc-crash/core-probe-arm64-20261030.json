@@ -1,0 +1,25 @@
+{
+  "complete": true,
+  "scope": "Intentional empty-runtime core-generation control; not a failover crash.",
+  "runtime": {
+    "bytes": 108872680,
+    "sha256": "5756027a1a8711e76f0a1781ebb8f90bada0c391a0fab4eb87d85859c42e33af"
+  },
+  "child_environment": "empty",
+  "architecture": "aarch64",
+  "system": "Linux",
+  "requested_signal": "SIGSEGV",
+  "expected_exit_signal": "SIGABRT",
+  "core_pattern": "core",
+  "returncode": -6,
+  "crash_log": {
+    "bytes": 181,
+    "sha256": "b5f5df029acb2299f7d4d9c058c88c85c9f0c96a7d34e8c8737692058beebf6b"
+  },
+  "core": {
+    "name": "core",
+    "header_hex": "7f454c460201010000000000000000000400b7000100000000000000000000004000000000000000000000000000000000000000400038003800000000000000",
+    "bytes": 25468928,
+    "sha256": "62c9cb9c30e4d7175fb35fdd275c979bbb02aaf4d0e2e8f8f59ec6c7c33dc1b1"
+  }
+}

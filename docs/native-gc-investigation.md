@@ -144,3 +144,24 @@ collection fails the collector while preserving available evidence. Its
 `complete` flag describes artifact collection only; `job_status` independently
 retains the test result. Original failover assertions and mutation behavior
 remain unchanged. Artifacts still expire after 30 days.
+
+The first ordinary-CI capture [passed in run 41093908604](https://github.com/cstheorist/tarn/actions/runs/41093908604).
+[Its audited receipt](../tests/evidence/native-gc-crash/ci-capture-41093908604.json)
+binds merge source `1829a54df66ec3d20467c3e94f82e9fadd9e3e9f` to all 363
+recorded tracked source files and three actual binaries. Their post-run
+identities match. The only working-tree status entry is generated, untracked
+`integrity-evidence/`. Both successful failover fixtures were removed by their
+existing cleanup, and the actual core inventory is empty. This verifies the
+collector's successful-run path, not kernel core generation or a crash fix.
+
+An additional isolated control now verifies core generation before failover:
+an empty Tarantool child with an empty environment intentionally raises
+SIGSEGV, terminates through the pinned crash handler's SIGABRT, and must
+produce exactly one ELF core. Its directory and minimal identity/header
+receipt are separate from actual failover cores. Only the probe receipt and
+expected crash log are uploaded; the synthetic core is excluded. A
+[local Linux ARM64 control](../tests/evidence/native-gc-crash/core-probe-arm64-20261030.json)
+produces a 25,468,928-byte ELF core. The updated x86-64 CI gate remains
+required separately. Unexpected READ COMMITTED errors also retain their
+statement, timestamp and ledger token for investigation under #215; their
+classification and the failover assertions remain unchanged.
