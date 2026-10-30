@@ -21,6 +21,9 @@ pub enum Admin {
     ShowDatabases {
         like: Option<String>,
     },
+    ShowTarnIntegrity {
+        db: Option<String>,
+    },
     ShowTables {
         db: Option<String>,
         full: bool,
@@ -145,6 +148,7 @@ impl Admin {
                 | Admin::ShowIndex { .. }
                 | Admin::ShowTableStatus { .. }
                 | Admin::Describe { .. }
+                | Admin::ShowTarnIntegrity { .. }
         )
     }
 }
@@ -347,6 +351,7 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
         "warning_count" => Value::Int(sv.warning_count as i64),
         "error_count" => Value::Int(0),
         "tarn_tree_checks" => Value::str(TREE_CHECKS_DEFAULT),
+        "tarn_legacy_integrity" => Value::str("REJECT"),
         "tarn_lazy_read_your_writes" => Value::Int(0),
         "tarn_lazy_wait_timeout" => Value::Int(5),
         "default_authentication_plugin" => Value::str("mysql_native_password"),
@@ -358,6 +363,7 @@ pub fn system_var(name: &str, sv: &SessionVars) -> Option<Value> {
 }
 
 pub const SHOWN_VARIABLES: &[&str] = &[
+    "tarn_legacy_integrity",
     "autocommit",
     "character_set_client",
     "character_set_connection",
@@ -1161,6 +1167,13 @@ fn parse_show(t: &mut Toks) -> SqlResult<Admin> {
         "COLLATION" => Admin::ShowCollation,
         "CHARSET" | "CHARACTER" => Admin::ShowCharset,
         "PROCESSLIST" => Admin::ShowProcesslist,
+        "TARN" if t.is("INTEGRITY") => {
+            let db = from_db(t);
+            if !t.done() {
+                return Err(SqlError::parse("SHOW TARN INTEGRITY [FROM database]"));
+            }
+            Admin::ShowTarnIntegrity { db }
+        }
         "TARN" if t.is("STATISTICS") => {
             if !t.done() {
                 return Err(SqlError::parse("unexpected text after SHOW TARN STATISTICS"));
