@@ -104,6 +104,19 @@ Tarantool's fiber slice; that failure and the bounded pairs remain in
 probe, prototype diff and source hashes. This local experiment does not
 qualify the issue's required durable paired measurements.
 
+`rc_compare.py` extends this hypothesis to an isolated RF3/fsync pilot. It
+copies the Lua/fixture scripts into an owned temporary directory, applies
+only the two-line allocation change to the candidate copy, and retains both
+source hashes. Five alternating pairs use the same release binaries,
+configuration and exact-accounting worker, with separate ordinary warmups
+and all three contention shapes. Each lane starts fresh and must fully
+stop before the next starts. Attempts, partial failures and both fixture
+states are retained; failed samples are never restarted. Timing disables
+the condition wrapper and additional lock/yield debug checks in both lanes.
+This pilot cannot qualify a production change without the separate
+concurrent/differential and fault gates, and it does not alter production
+code or enable an optimization. Its results remain pending.
+
 ## Retained collector failure
 
 [The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)
