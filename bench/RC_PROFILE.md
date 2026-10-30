@@ -277,6 +277,38 @@ The small hot-memtx result and lower allocation do not establish a repeatable
 resource-capacity gain, all-mode benefit or full semantic/fault qualification.
 Production guards remain unchanged and the candidate stays experimental.
 
+The repeated [run 41070288021](https://github.com/cstheorist/tarn/actions/runs/41070288021)
+completes all four modes at compiled source
+`a1eb5dd890e8ac363c097ed60852e639ef330366` (head `c5fe418` merged with
+`dacd3cb`). Independent audits reconcile 348,816 baseline acknowledgements
+and 525,298 paired acknowledgements, with no refusals or unknowns. Its 132
+baseline and 240 paired samples retain the same separate warmup/timing
+schedule. All raw records and the [full paired audit](rc-evidence/run-41070288021/paired-audit.json)
+remain source-bound; this successful startup does not explain or fix the
+earlier failed startup.
+
+| Engine / native | Shape | Median goodput ratio [range] | Median allocation ratio |
+|---|---|---:|---:|
+| memtx / disabled | Uncontended | 1.069 [1.017, 1.159] | 0.871 |
+| memtx / disabled | Unrelated | 1.021 [0.970, 1.068] | 0.879 |
+| memtx / disabled | Hot | 0.963 [0.961, 1.135] | 0.885 |
+| memtx / enabled | Uncontended | 1.014 [1.008, 1.033] | 0.885 |
+| memtx / enabled | Unrelated | 1.014 [0.994, 1.030] | 0.885 |
+| memtx / enabled | Hot | 1.006 [0.988, 1.026] | 0.890 |
+| vinyl / disabled | Uncontended | 1.001 [0.976, 1.017] | 0.881 |
+| vinyl / disabled | Unrelated | 1.018 [0.987, 1.026] | 0.881 |
+| vinyl / disabled | Hot | 1.020 [0.999, 1.020] | 0.883 |
+| vinyl / enabled | Uncontended | 0.988 [0.971, 1.053] | 0.888 |
+| vinyl / enabled | Unrelated | 1.004 [0.977, 1.010] | 0.884 |
+| vinyl / enabled | Hot | 1.001 [0.983, 1.012] | 0.886 |
+
+Allocation again falls by approximately 11–13%, while ten of twelve goodput
+ranges cross one. Both uncontended memtx lanes have positive ranges in this
+run, but the earlier Lua-only range crosses one and the earlier native lane
+has no completed pair. These five-second windows do not establish a repeatable
+capacity gain. A predeclared longer-window study is needed to resolve the
+small CPU/goodput effect before any production proposal.
+
 ## Retained collector failure
 
 [The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)
