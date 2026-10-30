@@ -10,8 +10,8 @@ use crate::expr::{EvalCtx, Expr};
 use crate::normalize::LitName;
 use crate::plan::*;
 use crate::txn::{
-    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, RangeRead, Route, Row,
-    StoragePred, Txn,
+    count_rows, select_keys, select_rows, LockKey, LockOpts, LockRange, Locked, PredOp, Projection, RangeRead, Route,
+    Row, StoragePred, Txn,
 };
 use crate::types::{key_val_coll, sort_cmp, sort_cmp_coll, to_num, BaseType, KeyVal, SqlType};
 use bytes::Bytes;
@@ -23,6 +23,7 @@ use tarn_iproto::Iter;
 
 mod colocated;
 pub(crate) mod diagnostics;
+mod pushdown;
 mod topk;
 
 async fn read_client(cluster: &Cluster, shard: usize) -> SqlResult<tarn_iproto::Client> {
@@ -69,6 +70,7 @@ struct Keep<'a, 'c> {
     cx: &'a EvalCtx<'c>,
     t: &'a TableDef,
     written: &'a BTreeSet<Bytes>,
+    project: Option<&'a Projection>,
 }
 
 impl Keep<'_, '_> {
@@ -126,6 +128,44 @@ async fn scan_pages(
     let mut left = c.limit;
     let mut top = keep.topk.map(topk::TopK::new).transpose()?;
     loop {
+        // Projection and top-K have disjoint eligibility. Keep the ordinary
+        // top-K page lifetime if a future caller supplies both options.
+        if top.is_none() {
+            if let Some(project) = keep.project {
+                reads.fetch_add(1, AtomicOrdering::Relaxed);
+                if let Some(page) = crate::txn::project_rows(
+                    client,
+                    stream,
+                    t,
+                    index,
+                    &c.key,
+                    c.iter,
+                    end,
+                    lock_check,
+                    begin,
+                    after.as_deref(),
+                    route,
+                    project,
+                )
+                .await?
+                {
+                    begin = false;
+                    out.read += page.read;
+                    if let Some(r) = page.last {
+                        out.last = Some(r);
+                    }
+                    keep.extend(&mut out.rows, page.rows)?;
+                    match (page.next, pages) {
+                        (None, _) => return Ok(out),
+                        (Some(_), Pages::One(e)) => return Err(e()),
+                        (Some(n), Pages::All) => {
+                            after = Some(n);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         let frame = top.as_ref().map(|_| crate::budget::Frame::new());
         let page = async {
             reads.fetch_add(1, AtomicOrdering::Relaxed);
@@ -590,9 +630,9 @@ pub(crate) async fn fetch_keys(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
-                let client = read_client(cluster, *s).await?;
                 let route = &routes[s];
                 futs.push(async move {
+                    let client = read_client(cluster, *s).await?;
                     keys_pages(
                         &client,
                         0,
@@ -610,11 +650,15 @@ pub(crate) async fn fetch_keys(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 rows.extend(r?);
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(per_shard.keys().copied()),
+            )?;
             let mut futs = Vec::new();
             for (s, (ks, _)) in &per_shard {
                 let st = txn.stream(cluster, *s).await?;
@@ -626,7 +670,7 @@ pub(crate) async fn fetch_keys(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 match r {
                     Ok(v) => rows.extend(v),
                     Err(e) => {
@@ -931,6 +975,7 @@ async fn fetch_stored_from(
         cx,
         t,
         written: &written,
+        project: None,
     };
     let scans = read_calls(cluster, &map, mode, t, index, calls, unique_point, keep).await?;
     Ok(scans.into_iter().flat_map(|s| s.rows).collect())
@@ -978,18 +1023,22 @@ async fn read_calls(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
-                let client = read_client(cluster, c.shard).await?;
-                futs.push(
-                    async move { scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await },
-                );
+                futs.push(async move {
+                    let client = read_client(cluster, c.shard).await?;
+                    scan_pages(&client, 0, false, t, index, c, true, pages, keep, reads, route).await
+                });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 let s = r?;
                 read += s.read;
                 out.push(s);
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for (c, route) in calls.iter().zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -1000,7 +1049,7 @@ async fn read_calls(
                     .await
                 });
             }
-            let results = futures::future::join_all(futs).await;
+            let results = cluster.read_fanout(futs).await;
             // A call that a limit cut short read its range only up to the
             // last row it returned: record that much (issue #41), so that
             // writes to the unread rest of the range do not conflict.
@@ -2116,13 +2165,16 @@ struct Atom<'e> {
 /// The comparisons a conjunct consists of, if it is a column compared with
 /// constants by bytes (not under a case-insensitive collation); `IS [NOT]
 /// NULL` and `IN` lists come back as storage predicates directly.
-fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Option<(usize, bool, &'e [Expr])>)> {
+fn conjunct_atoms<'e>(e: &'e Expr, t: &TableDef) -> Option<(Vec<Atom<'e>>, Option<(usize, bool, &'e [Expr])>)> {
     let col = |x: &Expr| match x {
-        Expr::Col(c) if *c < ncols => Some(*c),
+        Expr::Col(c) if *c < t.columns.len() => Some(*c),
         _ => None,
     };
+    // Numeric comparisons ignore the connection's fallback collation.
+    // Text still needs the exact byte-comparison contract below.
+    let allowed = |c: usize, coll: &Collation| t.columns[c].ty().is_integer() || !coll.is_ci();
     match e {
-        Expr::Cmp(a, op, b, coll) if !coll.is_ci() => {
+        Expr::Cmp(a, op, b, coll) => {
             let (c, arg, op) = match (col(a), col(b)) {
                 (Some(c), None) if b.is_constant() => (c, &**b, *op),
                 (None, Some(c)) if a.is_constant() => (
@@ -2138,10 +2190,16 @@ fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Optio
                 ),
                 _ => return None,
             };
+            if !allowed(c, coll) {
+                return None;
+            }
             Some((vec![Atom { col: c, op, arg }], None))
         }
-        Expr::Between(x, lo, hi, false, coll) if !coll.is_ci() && lo.is_constant() && hi.is_constant() => {
+        Expr::Between(x, lo, hi, false, coll) if lo.is_constant() && hi.is_constant() => {
             let c = col(x)?;
+            if !allowed(c, coll) {
+                return None;
+            }
             Some((
                 vec![
                     Atom {
@@ -2158,8 +2216,11 @@ fn conjunct_atoms<'e>(e: &'e Expr, ncols: usize) -> Option<(Vec<Atom<'e>>, Optio
                 None,
             ))
         }
-        Expr::InList(x, list, false, coll) if !coll.is_ci() && list.iter().all(|v| v.is_constant()) => {
+        Expr::InList(x, list, false, coll) if list.iter().all(|v| v.is_constant()) => {
             let c = col(x)?;
+            if !allowed(c, coll) {
+                return None;
+            }
             if list.len() == 1 {
                 return Some((
                     vec![Atom {
@@ -2272,13 +2333,27 @@ fn count_preds(p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<Vec<Storage
             int: false,
         });
     }
+    let Some(residual) = storage_preds(p, cx)? else {
+        return Ok(None);
+    };
+    preds.extend(residual);
+    Ok(Some(preds))
+}
+
+/// Exact, deterministic residual predicates shared by COUNT, projection,
+/// and typed partial aggregates. An unsupported conjunct rejects the whole
+/// pushdown; no partially filtered result can replace ordinary execution.
+fn storage_preds(p: &SelectPlan, cx: &EvalCtx<'_>) -> SqlResult<Option<Vec<StoragePred>>> {
+    let Source::Table(ta) = &p.source else { return Ok(None) };
+    let t = &ta.table;
+    let mut preds = Vec::new();
     let mut conj = Vec::new();
     if let Some(f) = &p.filter {
         split_conj(f, &mut conj);
     }
     let covered = path_atoms(t, &ta.path);
     for e in conj {
-        let Some((atoms, other)) = conjunct_atoms(e, ncols) else {
+        let Some((atoms, other)) = conjunct_atoms(e, t) else {
             return Ok(None);
         };
         if let Some((c, not_null, list)) = other {
@@ -2459,18 +2534,22 @@ async fn storage_count(
         ReadMode::Committed(_) | ReadMode::Statement(_) => {
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
-                let client = read_client(cluster, c.shard).await?;
                 let preds = &preds;
                 futs.push(async move {
+                    let client = read_client(cluster, c.shard).await?;
                     let end = c.end.as_ref().map(|(k, i)| (k.as_slice(), *i));
                     count_rows(&client, 0, t, index, &c.key, c.iter, end, preds, ex, true, false, route).await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 n += r?;
             }
         }
         ReadMode::Txn(txn) => {
+            crate::topology::check_pinned_reads(
+                &cluster.cfg.topology,
+                txn.streams.keys().copied().chain(calls.iter().map(|c| c.shard)),
+            )?;
             let mut futs = Vec::new();
             for ((c, ex), route) in calls.iter().zip(&excl).zip(&routes) {
                 let st = txn.stream(cluster, c.shard).await?;
@@ -2483,7 +2562,7 @@ async fn storage_count(
                     .await
                 });
             }
-            for r in futures::future::join_all(futs).await {
+            for r in cluster.read_fanout(futs).await {
                 match r {
                     Ok(k) => n += k,
                     Err(e) => {
@@ -2543,6 +2622,14 @@ async fn select_once(
         let ap = p.agg.as_ref().expect("a count is an aggregate");
         let row: Row = ap.aggs.iter().map(|_| Value::Int(n as i64)).collect();
         return finish_aggregated(vec![row], p, cx);
+    }
+    if cluster.cfg.query_pushdown {
+        if let Some(row) = pushdown::reduce(cluster, mode, p, cx).await? {
+            return finish_aggregated(vec![row], p, cx);
+        }
+        if let Some(rows) = pushdown::project(cluster, mode, p, cx).await? {
+            return finish_select(rows, p, cx);
+        }
     }
     let ordered = ordered_instead(cluster, p, cx).await?;
     if let Some(rows) = paged_select(cluster, mode, p, ordered.as_ref(), cx).await? {
@@ -3799,6 +3886,7 @@ impl Pager {
             cx,
             t,
             written: &none,
+            project: None,
         };
         let index = path_index(&self.ta.path);
         let scans = read_calls(cluster, &self.map, mode, t, index, calls, false, keep).await?;
@@ -3987,6 +4075,28 @@ mod tests {
             now: "2026-01-02 03:04:05",
         };
         count_preds(&p, &cx).unwrap()
+    }
+
+    #[test]
+    fn numeric_storage_atoms_ignore_the_connection_collation() {
+        let t = catalog().get("d", "o").unwrap();
+        let ci = Collation::General { pad: true };
+        let lit = || Box::new(Expr::Lit(Value::Int(1)));
+        let integer = || Box::new(Expr::Col(1));
+        for e in [
+            Expr::Cmp(integer(), CmpOp::Eq, lit(), ci),
+            Expr::Between(integer(), lit(), lit(), false, ci),
+            Expr::InList(integer(), vec![Expr::Lit(Value::Int(1))], false, ci),
+        ] {
+            assert!(conjunct_atoms(&e, &t).is_some());
+        }
+        let text = Expr::Cmp(
+            Box::new(Expr::Col(4)),
+            CmpOp::Eq,
+            Box::new(Expr::Lit(Value::str("x"))),
+            ci,
+        );
+        assert!(conjunct_atoms(&text, &t).is_none());
     }
 
     #[test]

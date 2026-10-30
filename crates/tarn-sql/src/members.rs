@@ -274,9 +274,16 @@ impl Cluster {
     /// is passed over when another answers (it may be one that left, which
     /// the others' membership says).
     pub(crate) async fn load_members(&self) -> SqlResult<()> {
+        use std::sync::atomic::Ordering;
+        let seen = self.member_reads.load(Ordering::Acquire);
         let _g = self.members_mu.lock().await;
+        if self.member_reads.load(Ordering::Acquire) != seen {
+            return Ok(());
+        }
         let live: Vec<usize> = self.live_shards().collect();
-        let replies = futures::future::join_all(live.iter().map(|&i| self.call(i, "tarn_members", &[0x90]))).await;
+        let replies = self
+            .read_fanout(live.iter().map(|&i| self.call(i, "tarn_members", &[0x90])))
+            .await;
         let mut best: Option<Members> = None;
         let mut failed: Option<SqlError> = None;
         let mut answered = false;
@@ -304,8 +311,12 @@ impl Cluster {
                 return Err(e);
             }
         }
-        let Some(m) = best else { return Ok(()) };
+        let Some(m) = best else {
+            self.member_reads.fetch_add(1, Ordering::Release);
+            return Ok(());
+        };
         if m.ver <= self.member_ver() {
+            self.member_reads.fetch_add(1, Ordering::Release);
             return Ok(());
         }
         for s in &m.shards {
@@ -319,6 +330,7 @@ impl Cluster {
             }
         }
         self.set_members(m);
+        self.member_reads.fetch_add(1, Ordering::Release);
         Ok(())
     }
 

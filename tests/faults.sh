@@ -81,6 +81,9 @@ cat "$W/proxy.log"
 if [ "${TARN_FAULT_REPLY:-drop}" = invalid-type ]; then
   grep -q 'injected invalid response type after execution' "$W/proxy.log" || rc=1
 fi
+if [ "${TARN_FAULT_REPLY:-drop}" = oversized-frame ]; then
+  grep -q 'injected oversized frame after execution' "$W/proxy.log" || rc=1
+fi
 # (TARN_CHECK_LOCKS: the native module's copy of the lock index held what
 # the index held)
 if grep -h "lock copy differs" "$W"/s1.log | head -3 | grep .; then

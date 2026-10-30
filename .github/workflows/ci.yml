@@ -18,12 +18,16 @@ on:
         description: Run only the manual matched strong-read cost study
         type: boolean
         default: false
+      topology_only:
+        description: Run only the matched gateway topology scale study
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || 'ci' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.topology_only && 'topology' || (github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || 'ci') }}
   cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.strong_read_cost) }}
 
 env:
@@ -39,7 +43,7 @@ defaults:
 
 jobs:
   lint:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
     name: Format and clippy
     runs-on: ubuntu-24.04
     steps:
@@ -55,10 +59,12 @@ jobs:
         run: cargo clippy -p tarn-storage --features alloc-metrics --all-targets -- -D warnings
 
   test:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
     name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      TARN_QUERY_PUSHDOWN: 'true'
     services:
       mysql:
         image: mysql:8.4.4
@@ -88,7 +94,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python packages
-        run: pip install PyMySQL
+        run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
       - name: Vinyl pressure scheduling and readback controls
         run: python3 tests/sql/vinylpressure_phase_test.py
       # Restore and save separately, so that the (slow) Tarantool build is
@@ -125,6 +131,10 @@ jobs:
         run: cargo build --release --workspace --all-targets
       - name: Unit and IPROTO integration tests
         run: cargo test --release --workspace
+      - name: Strong KV example and benchmark codec tests
+        run: |
+          cargo test --release -p tarn-sql --example strong_kv
+          cargo test --release -p tarn-sql --example strong_kv_bench
       - name: Native allocation instrumentation units
         run: cargo test -p tarn-storage --features alloc-metrics --lib
       - name: Storage protocol tests
@@ -159,6 +169,7 @@ jobs:
       - name: SQL differential tests against MariaDB 10.11
         run: |
           ci/annotate.sh difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh pushdowntest python3 tests/sql/pushdowntest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh fuzzdiff python3 tests/sql/fuzzdiff.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407 -n 1000
       - name: Integrity declarations and supported SQL mutations
         run: |
@@ -197,6 +208,7 @@ jobs:
           # move reads from disk, a runner moves too few buckets to tell)
           ci/annotate.sh vinyl-movetest python3 tests/sql/movetest.py --tarn 127.0.0.1:4000,127.0.0.1:4001 --seconds 30
           ci/annotate.sh vinyl-difftest python3 tests/sql/difftest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
+          ci/annotate.sh vinyl-pushdowntest python3 tests/sql/pushdowntest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3407
           ci/annotate.sh integrity-vinyl python3 tests/sql/integritytest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 --reference mysql --kv 127.0.0.1:3311,127.0.0.1:3321 --output integrity-evidence/vinyl-mysql.json
           ci/annotate.sh vinyl-explaintest python3 tests/sql/explaintest.py --tarn 127.0.0.1:4000
           ci/annotate.sh vinyl-statisticstest python3 tests/sql/statisticstest.py --tarn 127.0.0.1:4000,127.0.0.1:4001
@@ -224,29 +236,65 @@ jobs:
           TARN_NATIVE=0 ci/annotate.sh rpcs-lua tests/rpcs.sh
           ENGINE=vinyl ci/annotate.sh rpcs-vinyl tests/rpcs.sh
       - name: Fault injection
+        env:
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
           TARN_CHECK_LOCKS=1 ci/annotate.sh faults tests/faults.sh
           TARN_NATIVE=0 ci/annotate.sh faults-lua tests/faults.sh
           TARN_FAULT_REPLY=invalid-type ci/annotate.sh faults-invalid-reply tests/faults.sh
           TARN_NATIVE=0 TARN_FAULT_REPLY=invalid-type ci/annotate.sh faults-invalid-reply-lua tests/faults.sh
+          TARN_FAULT_REPLY=oversized-frame ci/annotate.sh faults-response-limit tests/faults.sh
+          TARN_NATIVE=0 TARN_FAULT_REPLY=oversized-frame ci/annotate.sh faults-response-limit-lua tests/faults.sh
+          ENGINE=vinyl TARN_FAULT_REPLY=oversized-frame ci/annotate.sh faults-response-limit-vinyl tests/faults.sh
           ci/annotate.sh ddlfaults tests/ddlfaults.sh
           ci/annotate.sh movefaults tests/movefaults.sh
           ci/annotate.sh joinfaults tests/joinfaults.sh
       - name: Bucket count of new and older clusters
         run: ci/annotate.sh bucketcount tests/bucketcount.sh
       - name: A shard joins under load
+        env:
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
           ci/annotate.sh jointest tests/jointest.sh
           R=3 ENGINE=vinyl DIR=/tmp/tarn-join-vinyl ci/annotate.sh vinyl-jointest tests/jointest.sh
       - name: Grow from 2 shards to 4 and shrink to 3 under load
+        env:
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 ci/annotate.sh growshrink tests/growshrink.sh
       - name: Failover (2 shards x 3 replicas)
+        env:
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: SECS=45 TARN_CHECK_LOCKS=1 ci/annotate.sh failover tests/failover.sh
       - name: Fault injection and failover with vinyl tables
+        env:
+          TARN_TOPOLOGY_LIMITS: '{"max_connections":20,"completion_connections":4,"idle_secs":1,"fanout":2,"active_branches":8,"queued_branches":32,"stats_shards_per_tick":2}'
         run: |
           ENGINE=vinyl TARN_CHECK_LOCKS=1 ci/annotate.sh vinyl-faults tests/faults.sh
           ENGINE=vinyl TARN_CHECK_LOCKS=1 TARN_FAULT_REPLY=invalid-type ci/annotate.sh vinyl-faults-invalid-reply tests/faults.sh
           ENGINE=vinyl SECS=45 TARN_CHECK_LOCKS=1 DIR=/tmp/tarn-failover-vinyl ci/annotate.sh vinyl-failover tests/failover.sh
+      - name: Strong KV paired SQL histories and RF3 faults
+        run: |
+          python3 tests/test_kv_control.py
+          ci/annotate.sh strong-kv tests/kv.sh
+          TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
+      - name: Retain strong KV histories and fixture evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: strong-kv-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/tarn-kv181-*/source.json
+            /tmp/tarn-kv181-*/owner.json
+            /tmp/tarn-kv181-*/manifest.json
+            /tmp/tarn-kv181-*/processes.jsonl
+            /tmp/tarn-kv181-*/lifecycle.json
+            /tmp/tarn-kv181-*/preflight.json
+            /tmp/tarn-kv181-*/broker-preflight.json
+            /tmp/tarn-kv181-*/*.log
+            /tmp/tarn-kv181-*/functional/*
+            /tmp/tarn-kv181-*/faults/*
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Retain integrity outcomes
         if: always()
         uses: actions/upload-artifact@v4
@@ -307,6 +355,7 @@ jobs:
             /tmp/tarn-lua-test.*/native-freshness-*/s*/status-events.jsonl
 
   upgrade:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
     name: Rolling upgrade (${{ matrix.engine }})
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -356,7 +405,7 @@ jobs:
           retention-days: 30
 
   tla:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
     name: TLA+ model checking
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -372,7 +421,7 @@ jobs:
         run: WORKERS=auto tla/check.sh
 
   verus:
-    if: github.event_name != 'workflow_dispatch' || !inputs.strong_read_cost
+    if: github.event_name != 'workflow_dispatch' || (!inputs.strong_read_cost && !inputs.topology_only)
     name: Verus proofs
     runs-on: ubuntu-24.04
     steps:
@@ -395,6 +444,11 @@ jobs:
     permissions:
       contents: read
 
+  topology:
+    if: github.event_name == 'workflow_dispatch' && inputs.topology_only
+    uses: ./.github/workflows/topology.yml
+    permissions:
+      contents: read
   file-backup-scale:
     if: github.event_name == 'workflow_dispatch' && inputs.file_backup_scale
     uses: ./.github/workflows/file-backup.yml
