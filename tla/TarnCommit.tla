@@ -1,6 +1,9 @@
 ------------------------------ MODULE TarnCommit ------------------------------
 (***************************************************************************)
 (* Tarn's transaction protocol over Tarantool shards.                      *)
+(* Connection/version admission precedes these unchanged actions. The     *)
+(* runtime compatibility matrix is tested separately (docs/upgrades.md);  *)
+(* this model does not prove arbitrary mixed-version refinement.          *)
 (* Resource refusal is confined to execution before these commit actions. *)
 (* QueryBudget checks admission/retained-output ownership separately; it   *)
 (* does not prove Rust allocation sizes or refine the complete executor.  *)
