@@ -143,3 +143,16 @@ ports cause refusal rather than stopping another service. Deterministic controls
 cover wrong-key/equal-sum effects, refused/missing/duplicate ledger entries,
 missing arrivals, rebased timing, unknown replies, SQLSTATE, drain accounting
 and bounded journals.
+
+[Release workflow 41091959096](https://github.com/cstheorist/tarn/actions/runs/41091959096)
+passed all four memtx/Vinyl and native-enabled/disabled modes, plus pinned
+MySQL 8.4.13, at target source `4c4e06210a3f86f2877fe28071c7f089197151fc`.
+[The retained raw outcomes and receipts](loadgen-evidence/ci-41091959096.json)
+reproduce all 19 run audits offline, including the four expected overload
+objective failures. Normal phases each acknowledge 24 scheduled arrivals,
+except Vinyl/Lua SI transactions, which acknowledge 23 and confirm one refusal.
+All four overload runs account for 6,000 arrivals with zero unknown outcomes.
+Downloaded release binaries match the deployment receipts. Native-enabled
+means the module is loaded; the runtime receipts retain its actual fallback
+counts. These are functional checks with loose latency limits, not performance
+measurements or physical-host acceptance.
