@@ -63,6 +63,7 @@ jobs:
           python-version: '3.12'
       - run: pip install PyMySQL==1.1.2
       - run: python3 bench/rc_profile_test.py
+      - run: python3 bench/rc_profile_audit.py bench/rc-evidence/run-40972150228/manifest.json
       - uses: actions/cache/restore@v6
         id: tarantool-cache
         with:

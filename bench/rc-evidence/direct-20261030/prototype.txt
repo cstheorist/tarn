@@ -1,0 +1,22 @@
+c1d933402a065e7bf0552762ab6898eb96f9b8b70207350c4b4cd20b52a3fcfd  /tmp/tarn186-pair-source/tarn.lua
+9c3020481d1aa124fed673330ac91cef042ae09d80403adbd0f974017782b940  /tmp/tarn186-pair-deferred/tarn.lua
+9da6cd2c09a76cf4d3928e524b5e0123f06f21603547ba0fa7a6500eb584a2fa  /tmp/tarn186-pair-probe-bounded.lua
+--- /tmp/tarn186-pair-source/tarn.lua	2026-10-29 23:16:34.000000000 +0000
++++ /tmp/tarn186-pair-deferred/tarn.lua	2026-10-30 11:51:43.058223009 +0000
+@@ -2266,7 +2266,7 @@
+     -- sent them; reported with the wait to the cross-shard detector.
+     local held = opts.held
+     if type(held) ~= 'table' then held = nil end
+-    local req = {txid = txid, mode = mode, entry = e, cond = fiber.cond(), held = held}
++    local req = {txid = txid, mode = mode, entry = e, held = held}
+     if pl_grantable(e, req, #e.queue) then
+         pl_hold(txid, sid, iid, kb, e, mode)
+         return 'granted'
+@@ -2279,6 +2279,7 @@
+         pl_drop_if_free(sid, iid, kb, e)
+         return {'locked', 3572, NOWAIT_MSG}
+     end
++    req.cond = fiber.cond()
+     if cur ~= nil then table.insert(e.queue, 1, req) else e.queue[#e.queue + 1] = req end
+     local p = pl_txn(txid)
+     if pl_deadlock(txid, req) then

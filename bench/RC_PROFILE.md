@@ -39,6 +39,71 @@ allocation measurements. Clock-tick quantization, background work, client
 contention and shared-runner variance remain visible limitations. The small
 fixture is not a disk-capacity or open-loop overload experiment.
 
+## Completed baseline
+
+[Run 40972150228](https://github.com/cstheorist/tarn/actions/runs/40972150228)
+passes all four configurations at compiled merge source
+`d4875d8442f0c7d1af698b8e8f746c240ef0ebe2` (PR head `7b1117c`).
+The 132 samples include 12 warmups, 60 ordinary measurements and 60 profiled
+measurements. An independent audit reconciles 357,376 acknowledged tokens
+and five explicit refusals across 357,381 attempts, with exact per-key
+effects and no unknown outcomes. All profiler histograms satisfy their
+bounds and no watchdog expiry qualifies as a completed sample.
+
+The following ordinary-sample goodput is median [minimum, maximum] of five
+five-second repeats, in committed transactions per second. Each mode uses
+its own runner; differences between columns or modes are not matched
+native-versus-Lua comparisons.
+
+| Engine / native mode | Uncontended | Eight unrelated keys | Eight clients / hot key |
+|---|---:|---:|---:|
+| memtx / disabled | 398 [255, 442] | 892 [526, 1171] | 405 [257, 503] |
+| memtx / enabled | 367 [358, 369] | 895 [885, 900] | 421 [407, 432] |
+| vinyl / disabled | 353 [340, 354] | 859 [844, 868] | 407 [390, 416] |
+| vinyl / enabled | 322 [321, 357] | 982 [909, 1082] | 366 [310, 405] |
+
+The hot-key fixture reports approximately two combined row-lock/commit
+waits per acknowledged transaction, versus zero in the uncontended and
+unrelated-key fixtures. Lua allocation medians range from about 40–45 KiB
+per acknowledgement across these modes, including diagnostic/background
+work. Guest stacks frequently include `box.commit` and freshness barriers;
+these samples cannot distinguish C CPU from engine/quorum waiting or
+attribute a precise allocation fraction to condition creation.
+
+The [retained archives and manifest](rc-evidence/run-40972150228/manifest.json)
+contain all attempts, exact readback, metrics/histograms, logs, configurations
+and source/compiler/binary hashes. The original workflow artifacts also
+contain the exact Tarantool executable; the repository archives omit that
+executable and retain its hash. Reproduce the archive/effect audit with:
+
+```sh
+python3 bench/rc_profile_audit.py bench/rc-evidence/run-40972150228/manifest.json
+```
+
+The corresponding ordinary CI run `40972150184` passed format/clippy,
+TLA+ and Verus, then failed the cluster-backup fixture's `lazy_drain` stage
+with an explicit 1213 conflict. Later SQL/fault steps were skipped. The
+successful profiling matrix does not override that separate failed gate.
+
+## Condition-allocation hypothesis
+
+An isolated two-line prototype creates the condition immediately before
+queue publication instead of creating it for every immediate grant. It
+does not modify repository production code. Five alternating direct RF1
+memtx/Lua pairs each execute 100,000 checked lock/unlock operations in a
+fresh process, yielding every 1,000 operations. Ordinary timings disable
+the condition-counting wrapper.
+
+Deferred/eager elapsed ratios are 0.937, 1.009, 0.942, 1.014 and 0.969;
+the median is 0.969. Lua-allocation ratios range from 0.952 to 1.005.
+Three timing pairs improve and two regress. This does not establish a
+repeatable improvement beyond uncertainty or an SQL/RF3 benefit, so the
+prototype is not enabled or shipped. The original unbounded loop exceeded
+Tarantool's fiber slice; that failure and the bounded pairs remain in
+[the direct evidence](rc-evidence/direct-20261030/summary.json), with the
+probe, prototype diff and source hashes. This local experiment does not
+qualify the issue's required durable paired measurements.
+
 ## Retained collector failure
 
 [The first run](https://github.com/cstheorist/tarn/actions/runs/40963530299)
@@ -67,8 +132,9 @@ premise, not a new proof of FIFO, deadlocks, upgrades, storage freshness,
 durability or liveness. Those remain covered by existing models and live
 contracts when an implementation is proposed.
 
-Pending work: complete and interpret the release baseline, select a bounded
-optimization with an explicit matched control, preserve all semantics and
+Pending work: separate remaining CPU/allocation and engine/WAL costs more
+precisely, select a useful bounded optimization with an explicit matched
+control, preserve all semantics and
 failure boundaries, and run at least five alternating paired measurements
 plus the required concurrent, model, Verus and RF3 fault gates. #186 remains
 open until its acceptance is demonstrated.
