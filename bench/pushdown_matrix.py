@@ -105,6 +105,10 @@ def main():
     cluster, output = Path(args.cluster_dir), Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     config = json.loads((cluster / 'cluster.json').read_text())
+    # The complete 64 KiB/full-projection control returns ~64 MiB. Its
+    # conservative decoded/result charges exceed production defaults. Keep
+    # explicit finite caps identical in both lanes, at every width/phase.
+    study_resources = dict(config.get('resources', {}), query_bytes=2 << 30, server_bytes=4 << 30)
     assert len(config['shards']) == 2 and all(len(s['replicas']) == 3 for s in config['shards'])
     storage = [int(p.read_text()) for p in sorted(cluster.glob('s*.pid'))]
     assert len(storage) == 6
@@ -118,6 +122,7 @@ def main():
                     engine=args.engine, native=args.native, replication_factor=3,
                     storage_parameters=(cluster / 'params').read_text(),
                     fixture=dict(rows=args.rows, payload_bytes=args.wide_bytes, tenants=16),
+                    resources=study_resources,
                     pairs=args.pairs, iterations=args.iterations,
                     limitations='Shared CI host; closed-loop single client. CPU tick quantization. Instrumented latency includes copying proxies. Direct timing is separate. Payload width excludes other columns/tuple framing. No disk-bound, throughput-capacity or general speedup claim.')
     def save():
@@ -128,11 +133,8 @@ def main():
         for phase in ('instrumented', 'direct'):
             lanes = {}
             for enabled in (False, True):
-                cfg = dict(config, query_pushdown=enabled, node_id=1350 + int(enabled), pool_size=4)
-                # Matched study policy admits the complete 64 KiB x 1024-row
-                # ordinary control; neither path may silently clip or skip it.
-                cfg['resources'] = dict(query_bytes=512 << 20, server_bytes=2 << 30,
-                                        query_work=1_000_000_000, server_work=4_000_000_000)
+                cfg = dict(config, query_pushdown=enabled, node_id=1350 + int(enabled), pool_size=4,
+                           resources=study_resources)
                 proxies = []
                 if phase == 'instrumented':
                     shards = []

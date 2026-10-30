@@ -189,6 +189,19 @@ earlier source.
 
 ## Expanded release results
 
+After integrating the bounded-query executor, the initial current-main
+study [41051026290](https://github.com/cstheorist/tarn/actions/runs/41051026290)
+refused a wide-row setup INSERT with 1041: its conservative SQL allocation
+charge was 125,902,336 bytes against the default 64 MiB query envelope.
+This failed study is retained separately; its partial samples are not a
+complete comparison. The study now declares identical finite 2 GiB query
+and 4 GiB gateway envelopes for both lanes at every width and phase. These
+also admit the full 64 MiB result and its conservative decoded-row charges.
+The caps are included in every configuration/receipt; production defaults,
+transaction limits, wire bounds, and admission-refusal behavior are unchanged.
+These elevated matched caps are a benchmark condition, not evidence that
+the full-projection control fits the default production budget.
+
 [Run 40935962215](https://github.com/cstheorist/tarn/actions/runs/40935962215)
 passes all four RF3/fsync correctness configurations: 47 exact MySQL
 comparisons plus overlay, missing/malformed-procedure and OCC controls
