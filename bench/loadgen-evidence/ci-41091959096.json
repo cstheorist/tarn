@@ -1,0 +1,1114 @@
+{
+  "schema": 1,
+  "run": 41091959096,
+  "source": "4c4e06210a3f86f2877fe28071c7f089197151fc",
+  "archive": {
+    "path": "ci-41091959096.tar.gz",
+    "bytes": 388777,
+    "sha256": "c87a5cafb9f65d7371eb18d5a4171b789fee33b36451f44525b615e771bfa5c5"
+  },
+  "members": [
+    {
+      "path": "independent-audit.json",
+      "bytes": 4824,
+      "sha256": "942c5a3ca149c16d6c93a43b98564ad6d6737e0c2cc458641d91776314fa0f4c"
+    },
+    {
+      "path": "loadgen-build-41091959096/binaries.sha256",
+      "bytes": 193,
+      "sha256": "eaf1eae3971947ecc59ceaf6a3ed0a52b87df7cfbb4b8446128d8b2cdd05b5d5"
+    },
+    {
+      "path": "loadgen-build-41091959096/rustc.txt",
+      "bytes": 196,
+      "sha256": "778fbc643a806f0dd123c056e66201d7e8a56a61928ec0a33171be8d6c2d5a37"
+    },
+    {
+      "path": "loadgen-build-41091959096/source.txt",
+      "bytes": 41,
+      "sha256": "cfce6a48e56c5724be005073cad5f279cd2c474d4ec30e1238d438c7906d9c36"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-build/binaries.sha256",
+      "bytes": 193,
+      "sha256": "eaf1eae3971947ecc59ceaf6a3ed0a52b87df7cfbb4b8446128d8b2cdd05b5d5"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-build/rustc.txt",
+      "bytes": 196,
+      "sha256": "778fbc643a806f0dd123c056e66201d7e8a56a61928ec0a33171be8d6c2d5a37"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-build/source.txt",
+      "bytes": 41,
+      "sha256": "cfce6a48e56c5724be005073cad5f279cd2c474d4ec30e1238d438c7906d9c36"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot-audit.json",
+      "bytes": 576,
+      "sha256": "396d3d6347155a4de9a856cf116c5f7ac6a853136069c5e253142c774eca34ed"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/readback.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/receipt.json",
+      "bytes": 2652,
+      "sha256": "2ed345efb7894606ab3b02bb580d11f3d75140201343523f15993fd578ea8b44"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/worker-0.jsonl",
+      "bytes": 677,
+      "sha256": "a30f25241e226505348118dbbe444c0056a17aa75288d603e79b95ceb03b66b9"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/worker-1.jsonl",
+      "bytes": 679,
+      "sha256": "f7014650594bc7bb8e61863889475a2a694a64b45f1edaebbf021d56ef433480"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/worker-2.jsonl",
+      "bytes": 685,
+      "sha256": "08b755ff9e46d6ebb53f88ae21261f5831021089653aeb02910dcf40e0aa7590"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/hot/worker-3.jsonl",
+      "bytes": 685,
+      "sha256": "dc0c75e7c8ff94cb693c6966b2ebd18226dd4fff3a8bb9aaa6eaa4e178eafeba"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/inputs.sha256",
+      "bytes": 232,
+      "sha256": "78f9535b49a0b0a9011ec9944c42225c6032831291d0e562c272ba6b4dd67d8b"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload-audit.json",
+      "bytes": 650,
+      "sha256": "56a7963c3f21ae536976190b2bce9b32318934299f55d893087c5ee930223994"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload/baseline.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload/ledger.jsonl",
+      "bytes": 9101,
+      "sha256": "6560bfce75f8eaadf0a143701a63b7deaa9c1e7a7189232dd10ed8e670d0d083"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload/readback.jsonl",
+      "bytes": 4020,
+      "sha256": "203c82d3ca9269c0c78cd208c96f9322f6f03e13c1ce62d167bb3f1cdb4252c1"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload/receipt.json",
+      "bytes": 2422,
+      "sha256": "114ebf7b04e2c4250de2118ec8ab2e0de096019fb8320223919a5cbdfcd9720a"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload/scheduler.jsonl",
+      "bytes": 590574,
+      "sha256": "47fff6b05205ba3ee86710fd39fec4347a8fd72d678707faa8b6dcfeacb0d61e"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/overload/worker-0.jsonl",
+      "bytes": 22834,
+      "sha256": "1eebab881495a635237cb7590f7ce14acb6dae8fca5bf6f2a3df868523b6598f"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point-audit.json",
+      "bytes": 578,
+      "sha256": "4d5fd2371f7f00b55cac3b3dccc14fc5c92eb0084e608ba223ef6911b053400d"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/receipt.json",
+      "bytes": 2447,
+      "sha256": "822e0932d45aded97ca4db8a91c6e1b682f859abf08be9dbba64d2efbe97eb60"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/worker-0.jsonl",
+      "bytes": 1371,
+      "sha256": "6b24c641da49b77258c9a9d44b7e3d0d3735718d9e9a5e324e19fb5a196c2c3d"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/point/worker-1.jsonl",
+      "bytes": 1360,
+      "sha256": "c8509b9b9cb8d6a6e259a12a7b24ca1bd0ff9e8c046b274edc1ac8c5a943a429"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/prepare/receipt.json",
+      "bytes": 1289,
+      "sha256": "5e1b5f0638dea52379b9dc45e419c90359b1ac0e442be4c2bda17f2b8d27c70c"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/runtime-after.json",
+      "bytes": 11586,
+      "sha256": "daee851c38508884a9989db1e2303c3eeed446bad36b3cd4dadbf0d5f970df8d"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/runtime-before.json",
+      "bytes": 11548,
+      "sha256": "cebdd033680db153ac095a8d6f24b7f621d6fbc59c270d8d1b1940eb516f332b"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/tarantool-version.txt",
+      "bytes": 851,
+      "sha256": "d4ed4b8d774bdded20a560d9b6f47ef8a0d38907e3e87db59d572c82a21a31aa"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/tarantool.sha256",
+      "bytes": 110,
+      "sha256": "69a35bd51bcbe2d19c0702c2ee0df2d52f0a817a4cb2c752f763793692d2480c"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction-audit.json",
+      "bytes": 570,
+      "sha256": "a13a11d27dca65c7a4c013b0c4feb66dee99b00c006da6eb61abf43c63ef0e13"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/ledger.jsonl",
+      "bytes": 1023,
+      "sha256": "4d98527fff8c4ed38e1aa21c01ad06985edf4a8aecd835bbf933de2f90797329"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/receipt.json",
+      "bytes": 2657,
+      "sha256": "5bc2b3d066bed67c5d3b5216085c6781c06a8b44e5cdc76d86478062b3e71128"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/worker-0.jsonl",
+      "bytes": 675,
+      "sha256": "f3fb49e2bf3a090cd671c5a9a9e4e6e14d57a55cf4044662c9e87df880e309b2"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/worker-1.jsonl",
+      "bytes": 671,
+      "sha256": "2aedd3a7df1a99a42f5d6423e1f6b41563fa2f18d594c0211224fb00017c237d"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/worker-2.jsonl",
+      "bytes": 683,
+      "sha256": "ed650d946fb36ab49ea0e9323cc97730c8ebfeb5b1b80ea7951ca44464151d90"
+    },
+    {
+      "path": "loadgen-memtx-disabled-41091959096/loadgen-smoke/transaction/worker-3.jsonl",
+      "bytes": 687,
+      "sha256": "31d9601c4fdc818d0be451270b23724b63d591ec2ef5d91799e45731c638afee"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-build/binaries.sha256",
+      "bytes": 193,
+      "sha256": "eaf1eae3971947ecc59ceaf6a3ed0a52b87df7cfbb4b8446128d8b2cdd05b5d5"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-build/rustc.txt",
+      "bytes": 196,
+      "sha256": "778fbc643a806f0dd123c056e66201d7e8a56a61928ec0a33171be8d6c2d5a37"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-build/source.txt",
+      "bytes": 41,
+      "sha256": "cfce6a48e56c5724be005073cad5f279cd2c474d4ec30e1238d438c7906d9c36"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot-audit.json",
+      "bytes": 575,
+      "sha256": "a2e22a7dda9e85bfef1346ddf3f30daf895230fd65d5158d0e6aa4c0faec2db6"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/readback.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/receipt.json",
+      "bytes": 2660,
+      "sha256": "945c9859bafefed893b207eb2d3dd7a587922919e981d1f70781bd12cf6ef5d1"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/worker-0.jsonl",
+      "bytes": 676,
+      "sha256": "e83b19e31933f1f2ac6c1e12ea8eec633cdf08d8d4c1afc4bc59cd75dddd9ccf"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/worker-1.jsonl",
+      "bytes": 688,
+      "sha256": "310fc5f44ce1a1f6825a587cc752a46ad46247c285e0092f3e4fc14b55ef5075"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/worker-2.jsonl",
+      "bytes": 683,
+      "sha256": "375d0a43ad00d8aaf4dacc79f465f9ac2e54f3b14b1f71316236799417a09fc0"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/hot/worker-3.jsonl",
+      "bytes": 681,
+      "sha256": "d56b9f002c850a56d43f0f1625d95c115937f3e6e823f047d8ffbaa25f7b063d"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/inputs.sha256",
+      "bytes": 336,
+      "sha256": "11b76d155a17f54a47f33b854fa668195188535fbe11776ba672fc6bac3d76a7"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload-audit.json",
+      "bytes": 649,
+      "sha256": "a36b5256817ccdd22a07a0caade077945300c1478a2934a6e7168487d759406b"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload/baseline.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload/ledger.jsonl",
+      "bytes": 9446,
+      "sha256": "ee9eee90eee62fee065d12e4bfbd6b8d76c86d6775feb90f2276dc2cd0527ccc"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload/readback.jsonl",
+      "bytes": 4022,
+      "sha256": "7025cab99a93767d9e816b4ba2d338e48a5b68f1e7d5724efa104eaf2127a36d"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload/receipt.json",
+      "bytes": 2413,
+      "sha256": "c3ec09917ac989250005a08a6bbf4f5738f846cd77e8979219d96b13a37e25a4"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload/scheduler.jsonl",
+      "bytes": 590161,
+      "sha256": "bb881d6d649bece790de3163d95f00f346ab98fed73cdc9a341359890f75db19"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/overload/worker-0.jsonl",
+      "bytes": 23703,
+      "sha256": "951dcc623f149a3bb88e89922cdff9d4045293bf5e767fd59aeb2f2d6810f8de"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point-audit.json",
+      "bytes": 578,
+      "sha256": "a0100097fe057e5f872f5e41a9a070c26383b2f65a98e5f15488a3105a00cc9e"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/receipt.json",
+      "bytes": 2446,
+      "sha256": "0c32d68939ecf942d08ccc6b4b8472fadd6439f3ef4941b535c65c270b16d0ee"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/worker-0.jsonl",
+      "bytes": 1371,
+      "sha256": "8c65792be01f5faec77d69fbb7c838cd7945edf704c747003f30e6ebc1a1a1b1"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/point/worker-1.jsonl",
+      "bytes": 1359,
+      "sha256": "04094517c0f03091362afd6716df692259816d29ab379c047c455f5e1b4f74a5"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/prepare/receipt.json",
+      "bytes": 1289,
+      "sha256": "93ce62f76bb06c0326a931aba141e89a412ac6bdad9fbd3dc41f7ded6465f6fa"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/runtime-after.json",
+      "bytes": 12034,
+      "sha256": "b4fad64df582e73a3e44b8b42fcf1fa9e43e0e18b80adbf3814e06fd317d4f39"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/runtime-before.json",
+      "bytes": 11879,
+      "sha256": "39ae79d99dba0abda395a6a11a357da76e37babdfa8163defcc06d1daa346b84"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/tarantool-version.txt",
+      "bytes": 851,
+      "sha256": "d4ed4b8d774bdded20a560d9b6f47ef8a0d38907e3e87db59d572c82a21a31aa"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/tarantool.sha256",
+      "bytes": 110,
+      "sha256": "69a35bd51bcbe2d19c0702c2ee0df2d52f0a817a4cb2c752f763793692d2480c"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction-audit.json",
+      "bytes": 570,
+      "sha256": "073d97c675dbdda3e3442d21fe9d8356efb27851b1beeeb5304f76c2aa933c3f"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/ledger.jsonl",
+      "bytes": 1023,
+      "sha256": "4d98527fff8c4ed38e1aa21c01ad06985edf4a8aecd835bbf933de2f90797329"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/receipt.json",
+      "bytes": 2665,
+      "sha256": "329e3d7a8bf8d379f2ec0b1d507eb386c476ab4962e6290a01a5a0f344528dd5"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/worker-0.jsonl",
+      "bytes": 678,
+      "sha256": "8cddd9fc3627a2715c00ff507042c46bf4ad7f9b4351ae9031bbc2308583e49f"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/worker-1.jsonl",
+      "bytes": 685,
+      "sha256": "5cd8b7d4351ce6418d77b830feed1cffd1e9ff0ad624c3aec780e6879661355a"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/worker-2.jsonl",
+      "bytes": 680,
+      "sha256": "5c2819782e2fb59155d67c212f7b455ee643941c274ef4f780f8f6d82cf41d05"
+    },
+    {
+      "path": "loadgen-memtx-enabled-41091959096/loadgen-smoke/transaction/worker-3.jsonl",
+      "bytes": 683,
+      "sha256": "87d523f862e05c630cd9d707879fa48bb6da16e5623c9e08b2c0208b3133a069"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/baseline.jsonl",
+      "bytes": 16018,
+      "sha256": "8ff833eafc82f695d438e7b45c2ef5f3f01c20d9fc01f5cf2dc9d773300cebb6"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/readback.jsonl",
+      "bytes": 16025,
+      "sha256": "d69bedc91340ec24aba4f3d05e9e5857d5dbd36e466e5d474c1eb640a318b9ee"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/receipt.json",
+      "bytes": 3082,
+      "sha256": "7e8922f880efea20352c8fc1c8cd93a71ceb5952585b369d8b9c83efdf901472"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-0.jsonl",
+      "bytes": 340,
+      "sha256": "3c0082db44586548f54e0e821174f236b9579add1cfff04969749ecd5e4cc4f4"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-1.jsonl",
+      "bytes": 343,
+      "sha256": "9012a0fbbcbf16801a965f72c812c6580647ac7ca061e072027491a2ae7f5f58"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-2.jsonl",
+      "bytes": 340,
+      "sha256": "aa2083fca2637a79f890a0129704b41116791d7a3baa2e87f7839a352c230bfd"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-3.jsonl",
+      "bytes": 338,
+      "sha256": "1220d5a9f4a86fd4623ed5b2aac2d51140d1f93ee1ef645d02aa6debb84f8f73"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-4.jsonl",
+      "bytes": 344,
+      "sha256": "5be0511d0ababc19e845f72e0cfa7c0670a22a21faeb0d291e146cf87e7e035c"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-5.jsonl",
+      "bytes": 343,
+      "sha256": "3ef2e0a51c7cfb84d0f8e54c154abc4fc0ffa828fcbb543a5045f4dc8eb395b4"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-6.jsonl",
+      "bytes": 343,
+      "sha256": "865a166b455832ac987b18f192e05743febcbb689dc551bd9ee28db44b308698"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/hot/worker-7.jsonl",
+      "bytes": 339,
+      "sha256": "ecaf848b8bdc89d476ee38dac729aa9cea31c25f9a185552da7a25644deab29b"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/baseline.jsonl",
+      "bytes": 16018,
+      "sha256": "0b6995772931b489552044960cbd36f5676fa8d4bf23ffc9185e1b9b734c8510"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/readback.jsonl",
+      "bytes": 16018,
+      "sha256": "0b6995772931b489552044960cbd36f5676fa8d4bf23ffc9185e1b9b734c8510"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/receipt.json",
+      "bytes": 3086,
+      "sha256": "c69a62b905286bfeb9aad38a215ba4dcd3e8888947bdebca79302ec6d0c70ce3"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-0.jsonl",
+      "bytes": 339,
+      "sha256": "41823eff51ee01df3eea25f674ad157c3c2d1eff3f39b03da471ad127684ca6b"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-1.jsonl",
+      "bytes": 339,
+      "sha256": "1abad360cc62906d484034e0cfafd4a28885b484cb12e2bcc056f45f70ef6a7a"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-2.jsonl",
+      "bytes": 341,
+      "sha256": "dde515e6104138493ce011b79e272ba4db46c78882c4130eb325690c77f271b7"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-3.jsonl",
+      "bytes": 344,
+      "sha256": "0503aadbd66279109621bdaf38cfb8389338e33822464eb2dc35f8219d9dbf86"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-4.jsonl",
+      "bytes": 336,
+      "sha256": "38c1dc3974173085a72bd32e3542c65760bb93dac5b8a8c632a85b1cbb4d3f97"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-5.jsonl",
+      "bytes": 342,
+      "sha256": "fa70ec303ac096d6c52add753aa0841dce4a2167eb9a814e3c1803d6f62b0028"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-6.jsonl",
+      "bytes": 343,
+      "sha256": "98975847cf7df29067982ecfb01baeb8be05342ab8a15ab509a36bf843dd0bea"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/point/worker-7.jsonl",
+      "bytes": 342,
+      "sha256": "1e2b8281534dc734f36d5658b24661ecce0589e78a406b7634c2697424d1cce2"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/prepare/receipt.json",
+      "bytes": 1290,
+      "sha256": "89c6003d5cd90ef8da729a61daf43804c9e7da97af752e3b1bbadac56c02304a"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/baseline.jsonl",
+      "bytes": 16018,
+      "sha256": "0b6995772931b489552044960cbd36f5676fa8d4bf23ffc9185e1b9b734c8510"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/ledger.jsonl",
+      "bytes": 522,
+      "sha256": "f0c89863d6e30cb5b6f60f1466ba0ba7a88e2dc5f415fec602ee0aa67c04ffe9"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/readback.jsonl",
+      "bytes": 16018,
+      "sha256": "8ff833eafc82f695d438e7b45c2ef5f3f01c20d9fc01f5cf2dc9d773300cebb6"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/receipt.json",
+      "bytes": 3097,
+      "sha256": "ee5f97ac330d111d7f4b26c029ea6c86328a3595832d846155d011d2b6710765"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-0.jsonl",
+      "bytes": 341,
+      "sha256": "78e604b574181f49e04e74fe3a44d0279fcb58b6f9e8481bf8901e863e1546a2"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-1.jsonl",
+      "bytes": 339,
+      "sha256": "164a945308b44831f2594b86961eb7d21efee692a32f390bb6fd1954a5b7114b"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-2.jsonl",
+      "bytes": 342,
+      "sha256": "6a28e08588247addc9e44f675ce2034664b5fe4adcfeb571756c3432249b4346"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-3.jsonl",
+      "bytes": 343,
+      "sha256": "f1d7daa0220eb63d81fdd5300e02c8bd46edaf6ceb5863d1bcb3e9e43c1bc99e"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-4.jsonl",
+      "bytes": 340,
+      "sha256": "99fc002da519ee74014fc40c3d16ed3305334df9f7c34aaf12a7c57dd712cd12"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-5.jsonl",
+      "bytes": 340,
+      "sha256": "b65d0536c0e0aac0e35109390bcf446b2ab32863b755750397967821e67fc67e"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-6.jsonl",
+      "bytes": 340,
+      "sha256": "651617d396f9e83cbe12448418242a38dc9758fc4e9b6ec0080c46956033c4c8"
+    },
+    {
+      "path": "loadgen-mysql-reference-41091959096/transaction/worker-7.jsonl",
+      "bytes": 344,
+      "sha256": "d96d8d048a977997a0eabe4fee3b19a7f97549b506897ed1f50464b67bdeeae0"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-build/binaries.sha256",
+      "bytes": 193,
+      "sha256": "eaf1eae3971947ecc59ceaf6a3ed0a52b87df7cfbb4b8446128d8b2cdd05b5d5"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-build/rustc.txt",
+      "bytes": 196,
+      "sha256": "778fbc643a806f0dd123c056e66201d7e8a56a61928ec0a33171be8d6c2d5a37"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-build/source.txt",
+      "bytes": 41,
+      "sha256": "cfce6a48e56c5724be005073cad5f279cd2c474d4ec30e1238d438c7906d9c36"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot-audit.json",
+      "bytes": 606,
+      "sha256": "06e5f08eb953a5b59e4e26be2d8116c772fe8040261750f9f4e06cbcb161c2b8"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "a8dfeceaf0b75004e751a470185bc7bfa57756b073e57b96d2712dc82f739b30"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/readback.jsonl",
+      "bytes": 3997,
+      "sha256": "c5d6c4c02d208b872e170bf9025d1a3092e5b83833032d473e0f5336814dd3b0"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/receipt.json",
+      "bytes": 2692,
+      "sha256": "af586fae284a18fc111631f162656f92ec4ca4de61b2b6e6de569bb1e1950bfa"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/worker-0.jsonl",
+      "bytes": 682,
+      "sha256": "14bd7eab7d83fcef1fb637581c3cee94cd8b1be32a5b0d05622cbcf8be9d0a34"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/worker-1.jsonl",
+      "bytes": 677,
+      "sha256": "dd7a926b70de4e2b6f7e4d68543a977e3acb819d74e500e9c9dbf7aa3bc45d7b"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/worker-2.jsonl",
+      "bytes": 560,
+      "sha256": "e563aff6b3d1fb65fc90fb159d5e71cdb6274dc0a4f774697c00a2cf47cb490b"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/hot/worker-3.jsonl",
+      "bytes": 797,
+      "sha256": "8ec92a1e0a6a15e93f04b560f4ef9583137efb0c0e55ba6f357b62f292d48d04"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/inputs.sha256",
+      "bytes": 232,
+      "sha256": "78f9535b49a0b0a9011ec9944c42225c6032831291d0e562c272ba6b4dd67d8b"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload-audit.json",
+      "bytes": 643,
+      "sha256": "d0aa76c8e48e2e4445317f65659db493df27788467a8d89c37c70f54f4cda75c"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload/baseline.jsonl",
+      "bytes": 3997,
+      "sha256": "c5d6c4c02d208b872e170bf9025d1a3092e5b83833032d473e0f5336814dd3b0"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload/ledger.jsonl",
+      "bytes": 5773,
+      "sha256": "72b12ab19f0a37adec57cb6ea503c5347636df2246ed2fd727f83992709af59c"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload/readback.jsonl",
+      "bytes": 4010,
+      "sha256": "505dbfd158470efedd8ea8d95efafa9e059a735c49e380d8be846f0a61a000e5"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload/receipt.json",
+      "bytes": 2408,
+      "sha256": "d4f1ae4638f7e72f19ac1b039a25c77a6f7ccfdcf0b74edd606eb58e0bf10656"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload/scheduler.jsonl",
+      "bytes": 597596,
+      "sha256": "65b17dcd6e4fd736af5547b18d283704183ec7a96f662bca6f9affccd61809a4"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/overload/worker-0.jsonl",
+      "bytes": 14436,
+      "sha256": "c3a8956dc11ee15ac1aa75281ef451730c228dd4a014de766e39b7da20369600"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point-audit.json",
+      "bytes": 575,
+      "sha256": "451e11a833c0585847536abbc8416b43042bff1716ed7af3a17fc367eb17522b"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/receipt.json",
+      "bytes": 2444,
+      "sha256": "1a5dc30b7c281afb4de1fefe74516370daa03249dd22eaeaf6f75068ab4195dc"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/worker-0.jsonl",
+      "bytes": 1367,
+      "sha256": "2e2476fc1fc719ecbdc1969b59d01d47bc535a0ce468b78a5f105c9f486baa47"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/point/worker-1.jsonl",
+      "bytes": 1361,
+      "sha256": "0f7e22e098510700e2773dbf785e296192674e467a9c4415aeb02cdd9133d738"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/prepare/receipt.json",
+      "bytes": 1288,
+      "sha256": "212148c57fba7eb3c6cbfcedbed8e067fcdd863c4d75f0930076b4900a40dbe1"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/runtime-after.json",
+      "bytes": 11625,
+      "sha256": "1668c6b4ea0bbb4440bf5fd77054cc19f58c906a6d43b6a7041acf742d6f3919"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/runtime-before.json",
+      "bytes": 11574,
+      "sha256": "ec27283e4391e0a6fd7b0691d41bf2af309dd8523748daa5ca455977fc3d0ce7"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/tarantool-version.txt",
+      "bytes": 851,
+      "sha256": "d4ed4b8d774bdded20a560d9b6f47ef8a0d38907e3e87db59d572c82a21a31aa"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/tarantool.sha256",
+      "bytes": 110,
+      "sha256": "69a35bd51bcbe2d19c0702c2ee0df2d52f0a817a4cb2c752f763793692d2480c"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction-audit.json",
+      "bytes": 629,
+      "sha256": "a5b5d776432587a6b35fe35daf9d199763e5adb098bf784f886409cb105753a9"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/ledger.jsonl",
+      "bytes": 981,
+      "sha256": "662f07d1f314a9b9f8fb54af1e000af10bfc8672ed0a85fbc4e62ea5f6308211"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "a8dfeceaf0b75004e751a470185bc7bfa57756b073e57b96d2712dc82f739b30"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/receipt.json",
+      "bytes": 2719,
+      "sha256": "ecc1c298c8219bd537ef735ea37c9d36c1e21a2d7fb3e19981011f081235a7c7"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/worker-0.jsonl",
+      "bytes": 565,
+      "sha256": "a7ce4ff3f54baf0e034f81de38e1b2a71bd00f09acca6bcc094b572053ba98fc"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/worker-1.jsonl",
+      "bytes": 683,
+      "sha256": "c4418095c93214098b8d7408cf7c9c6d5f661fe52433194bf76b0d010e9dbaa0"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/worker-2.jsonl",
+      "bytes": 843,
+      "sha256": "6b9fae36776796e3f5416b53522fff123448a3269ee4bb28c01880d86bc7bcf1"
+    },
+    {
+      "path": "loadgen-vinyl-disabled-41091959096/loadgen-smoke/transaction/worker-3.jsonl",
+      "bytes": 681,
+      "sha256": "84e8d94c76cba6dad577df5ec3bd96cb8956f4a7aa10065cfc82621d8a3954c5"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-build/binaries.sha256",
+      "bytes": 193,
+      "sha256": "eaf1eae3971947ecc59ceaf6a3ed0a52b87df7cfbb4b8446128d8b2cdd05b5d5"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-build/rustc.txt",
+      "bytes": 196,
+      "sha256": "778fbc643a806f0dd123c056e66201d7e8a56a61928ec0a33171be8d6c2d5a37"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-build/source.txt",
+      "bytes": 41,
+      "sha256": "cfce6a48e56c5724be005073cad5f279cd2c474d4ec30e1238d438c7906d9c36"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot-audit.json",
+      "bytes": 571,
+      "sha256": "1e484daf7297eebc6638be578179c11c62b31a9cecd5a63aaafe5b590d7b062b"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/ledger.jsonl",
+      "bytes": 1980,
+      "sha256": "e7fdae938276df57ff57e132901691bec28f3e3525249be95a5741db8371c95e"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/readback.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/receipt.json",
+      "bytes": 2648,
+      "sha256": "5ed3698ebc9aa637f6a187c050e34379236efac313b0327920f2f0e9e1a8f6bc"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/worker-0.jsonl",
+      "bytes": 793,
+      "sha256": "2688a1ddeb49a7cf0a8674a236d0f02a1ec971052fb0accefdcffff530b71dd4"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/worker-1.jsonl",
+      "bytes": 681,
+      "sha256": "106ba6dd7bf537814e957c61de6bc0e1141ad1b676f4be6bb0465acc6b56929c"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/worker-2.jsonl",
+      "bytes": 559,
+      "sha256": "a5f0ac26ec4421d425568e0f1beda6c24312317c61437a0f9facae13ce8e08e8"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/hot/worker-3.jsonl",
+      "bytes": 677,
+      "sha256": "b429792a40642ffd549abaf731f109c5e9bfcbb61993cd9dea318b6c14f67d75"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/inputs.sha256",
+      "bytes": 336,
+      "sha256": "11b76d155a17f54a47f33b854fa668195188535fbe11776ba672fc6bac3d76a7"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload-audit.json",
+      "bytes": 649,
+      "sha256": "ee422dfbc65295c9cc6e79544c5437bd507f8f50b917a5f8f7573dc7289394ae"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload/baseline.jsonl",
+      "bytes": 3997,
+      "sha256": "b41ddf8ce8e82ef548ca80940fb78c99b4bf8cc6919fe7f4f358ddcb48ab1b1b"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload/ledger.jsonl",
+      "bytes": 8915,
+      "sha256": "b43a94e43fe3492e28a923da23e026ce859e87c2f2eafd0c368bc20bfda09cd2"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload/readback.jsonl",
+      "bytes": 4019,
+      "sha256": "202a04cb8791cc2edf34733a9e032abd28908ce5777d9512c4ae5a8230316e21"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload/receipt.json",
+      "bytes": 2413,
+      "sha256": "ed0d16fa4c5de6196274f980771025337c78475441fc2f0f08a044a2d16b6147"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload/scheduler.jsonl",
+      "bytes": 590722,
+      "sha256": "1faddadd5c8543ef7c9f438fa7f94a23956c8529158533c6d2f8071612e28d6f"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/overload/worker-0.jsonl",
+      "bytes": 22400,
+      "sha256": "b70f0ed99b16c938b41c716e50acaded8dad13616b604ec36937fd05ff7323fc"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point-audit.json",
+      "bytes": 574,
+      "sha256": "a12fb20a9a3cb870ccc97be5236ac5316690cb17c6db778bf5e6f8464a473c46"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/ledger.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/receipt.json",
+      "bytes": 2443,
+      "sha256": "71b3d63ffc72a1b2028215d3a90b4ffbc63d8efef49157737823402b722e28b9"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/worker-0.jsonl",
+      "bytes": 1371,
+      "sha256": "673c74d66006d3862770c9bcc626104c8b532977f5fb018295785989600ab3ab"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/point/worker-1.jsonl",
+      "bytes": 1362,
+      "sha256": "2edfcd396e287cce215693b15060d3d80c5959f46c89fc029d6772fac804e3cc"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/prepare/receipt.json",
+      "bytes": 1289,
+      "sha256": "24e03b507f13c349ee161d1b05e6451e04ed30361bc0d69dee4ef8c81a2f379a"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/runtime-after.json",
+      "bytes": 11965,
+      "sha256": "a7da14b6458fa72b0ed844e4ebb2cad6fc0ab7b21d070915c00412fb9f8ead39"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/runtime-before.json",
+      "bytes": 11842,
+      "sha256": "efe2258087daf0448f85f6365f4c5ef83afa781d04d8997654291531174b486f"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/tarantool-version.txt",
+      "bytes": 851,
+      "sha256": "d4ed4b8d774bdded20a560d9b6f47ef8a0d38907e3e87db59d572c82a21a31aa"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/tarantool.sha256",
+      "bytes": 110,
+      "sha256": "69a35bd51bcbe2d19c0702c2ee0df2d52f0a817a4cb2c752f763793692d2480c"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction-audit.json",
+      "bytes": 573,
+      "sha256": "fafac27771b4fcb01f42f641b8f9be7fbad5b833e5aacff10ed0f739587e03de"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/baseline.jsonl",
+      "bytes": 3990,
+      "sha256": "590e06f7237e1ec06bf7c0c8c7af5ae6a013b667722a71a9f2119fae72932816"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/ledger.jsonl",
+      "bytes": 1023,
+      "sha256": "4d98527fff8c4ed38e1aa21c01ad06985edf4a8aecd835bbf933de2f90797329"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/readback.jsonl",
+      "bytes": 3990,
+      "sha256": "1ca6ca7016dc3afc1c61cd0ff239589f93b14230af9e58d11a05740096cb7924"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/receipt.json",
+      "bytes": 2669,
+      "sha256": "498bc3e7439c20dc54fb1536e7b323a69654260a9885652d184b97e02e581c18"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/scheduler.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/worker-0.jsonl",
+      "bytes": 684,
+      "sha256": "ee5612a60db1525160e7193b49e59ffec634e08f00ed08e3332c6f2a35f81611"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/worker-1.jsonl",
+      "bytes": 680,
+      "sha256": "be05a5deda81175606b024ac7f634da514c96e55f256e0fdcdbfad988393cf75"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/worker-2.jsonl",
+      "bytes": 675,
+      "sha256": "1441e83f422ffcb853bb403dcf1f8c38e324089ed98dffba8ab2e90bdafd5d91"
+    },
+    {
+      "path": "loadgen-vinyl-enabled-41091959096/loadgen-smoke/transaction/worker-3.jsonl",
+      "bytes": 687,
+      "sha256": "d0f28c4e08d21c430eca0c2049dc9db3955401fc32c83d60d099f9d92373f295"
+    }
+  ],
+  "scope": "Functional release checks on four same-host RF3/fsync engine/native modes and pinned MySQL 8.4.13. All 19 offline run audits reproduce. Native enabled means loaded; runtime receipts retain actual fallback counts. No performance or physical-scale claim.",
+  "excluded": "Full CI logs, cluster logs/storage/WAL, SQLite work files and executable binaries; raw outcome rows, receipts, runtime observations and binary/source identities retained."
+}
