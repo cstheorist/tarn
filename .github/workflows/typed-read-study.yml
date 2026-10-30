@@ -1,0 +1,137 @@
+name: Typed read release study
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'lua/**'
+      - 'bench/pushdown*.py'
+      - 'tests/sql/pushdowntest.py'
+      - '.github/workflows/typed-read-study.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typed-read-study-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the unchanged release profile
+        run: |
+          cargo build --release --locked -p tarn-server -p tarn-storage
+          mkdir -p /tmp/pushdown-build
+          cp target/release/tarn-server target/release/libtarn_storage.so /tmp/pushdown-build/
+          git rev-parse HEAD > /tmp/pushdown-build/source.txt
+          rustc -Vv > /tmp/pushdown-build/rustc.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/pushdown-build/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pushdown-build-${{ github.run_id }}
+          path: /tmp/pushdown-build
+          retention-days: 30
+
+  study:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        engine: [memtx, vinyl]
+        native: [enabled, disabled]
+    services:
+      mysql:
+        image: mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_ROOT_HOST: '%'
+        ports: ['3408:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: pushdown-build-${{ github.run_id }}
+          path: /tmp/pushdown-build
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - run: python3 bench/pushdown_matrix_test.py
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          chmod +x /tmp/pushdown-build/tarn-server
+          test "$(cat /tmp/pushdown-build/source.txt)" = "$(git rev-parse HEAD)"
+          mkdir -p target/release /tmp/pushdown-results
+          cp /tmp/pushdown-build/tarn-server /tmp/pushdown-build/libtarn_storage.so target/release/
+          sha256sum -c /tmp/pushdown-build/binaries.sha256
+          python3 - <<'PY'
+          import pymysql
+          c=pymysql.connect(host='127.0.0.1',port=3408,user='root',password='',autocommit=True)
+          with c.cursor() as q:
+              q.execute("CREATE USER 'sb'@'%' IDENTIFIED BY ''")
+              q.execute("GRANT ALL ON *.* TO 'sb'@'%'")
+          c.close()
+          PY
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: RF3 exact SQL and fallback controls
+        env:
+          TARN_QUERY_PUSHDOWN: 'true'
+          TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/pushdown-build/libtarn_storage.so' || '0' }}
+          TARN_BIN: /tmp/pushdown-build/tarn-server
+          TARN_CHECK_LOCKS: '1'
+          TARN_TEST_HOOKS: '1'
+          TARN_VINYL_CACHE_MB: '0'
+        run: |
+          scripts/cluster.sh start -d /tmp/pushdown-cluster -n 2 -r 3 -w fsync -p 4000 -s 1 -m 256 -e '${{ matrix.engine }}'
+          tarantool --version > /tmp/pushdown-results/tarantool.txt
+          python3 tests/sql/pushdowntest.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 | tee /tmp/pushdown-results/correctness.log
+      - name: Five alternating pairs per width and query, instrumented and direct
+        if: matrix.native == 'enabled'
+        run: |
+          for width in 256 4096 65536; do
+            python3 bench/pushdown_matrix.py --cluster-dir /tmp/pushdown-cluster \
+              --bin /tmp/pushdown-build/tarn-server --engine '${{ matrix.engine }}' --native '${{ matrix.native }}' \
+              --wide-bytes "$width" --pairs 5 --iterations 10 --out "/tmp/pushdown-results/width-$width.json"
+          done
+      - name: Stop the owned fixture
+        if: always()
+        run: KEEP=1 scripts/cluster.sh stop -d /tmp/pushdown-cluster
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pushdown-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          path: |
+            /tmp/pushdown-results
+            /tmp/pushdown-cluster/*.log
+            /tmp/pushdown-cluster/cluster.json
+            /tmp/pushdown-cluster/params
+            /tmp/pushdown-build/*.txt
+            /tmp/pushdown-build/*.sha256
+          retention-days: 30

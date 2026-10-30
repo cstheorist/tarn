@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "run": "https://github.com/cstheorist/tarn/actions/runs/40934854310",
+  "head": "d16f3a5e237723431aea3a33961dcb9ff014c110",
+  "variants": [
+    {
+      "artifact": "outcomes-memtx-native-0-40934854310",
+      "merge_source": "cf1000b8e11dd764aa353054787f31ca5f162d96",
+      "engine": "memtx",
+      "native": "0",
+      "replicas": 3,
+      "wal_mode": "fsync",
+      "cases": 24,
+      "clients": {
+        "PyMySQL": "1.1.2",
+        "mysql-connector-python": "9.5.0",
+        "msgpack": "1.1.2"
+      },
+      "results_sha256": "cc6d8cb4ae7303639debe11dbaa956352c0a7504873acdc347856f7f37b4a0b0",
+      "source_receipt_sha256": "295e4a95405077c0d350d242b6c1913e54d9636a078b54a3486992ae041df637",
+      "server_binary_sha256": "9a504340d694a2ce52d30a0a0a5f39d911e33605d1c0c02691cb97537ce86215",
+      "native_binary_sha256": null,
+      "rpc_log_sha256": {
+        "rpcs-pymysql.log": "ddcb214311a10b1f8ab4277ddd085590e98b5aa82adb373ce345bbaf279bf388",
+        "rpcs-connector.log": "779d206b2651d7d17e84619b9122a9c1ab51df4fdcb813fd842ab74bd8210d2e",
+        "rpcs-prepared.log": "2443246cd67ed67d6f24109d478bfc34a0398b41a5cc838751f2a3e517895f7c"
+      }
+    },
+    {
+      "artifact": "outcomes-memtx-native-1-40934854310",
+      "merge_source": "cf1000b8e11dd764aa353054787f31ca5f162d96",
+      "engine": "memtx",
+      "native": "/home/runner/work/tarn/tarn/target/release/libtarn_storage.so",
+      "replicas": 3,
+      "wal_mode": "fsync",
+      "cases": 24,
+      "clients": {
+        "PyMySQL": "1.1.2",
+        "mysql-connector-python": "9.5.0",
+        "msgpack": "1.1.2"
+      },
+      "results_sha256": "0633182400ea7d1a93183b5dacf67eb9a793f4f03d2e192c8c0c5ad73e467347",
+      "source_receipt_sha256": "31de7a1de9671b44fc07eabd434369f2d40beb8662297390432a8e0c8cb30592",
+      "server_binary_sha256": "764c77a0a189a4dc87e65ba2f2ea8bc8cfd5a39c52a10ff862dd23cc5a2cf15a",
+      "native_binary_sha256": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae",
+      "rpc_log_sha256": {
+        "rpcs-pymysql.log": "e417daa8acc3de358c8fa130eaa89e1664b01d91dbe72379aafaf659f9fe355f",
+        "rpcs-connector.log": "750484683272530496163f01033ce98c06479843965e01b967a48c7de9a493e5",
+        "rpcs-prepared.log": "da1e1107fc1beaaa13258d0ce7d9ea2fcbcc891d935082d6ab1d5e645ded9dd6"
+      }
+    },
+    {
+      "artifact": "outcomes-vinyl-native-0-40934854310",
+      "merge_source": "cf1000b8e11dd764aa353054787f31ca5f162d96",
+      "engine": "vinyl",
+      "native": "0",
+      "replicas": 3,
+      "wal_mode": "fsync",
+      "cases": 24,
+      "clients": {
+        "PyMySQL": "1.1.2",
+        "mysql-connector-python": "9.5.0",
+        "msgpack": "1.1.2"
+      },
+      "results_sha256": "e1d22ee822a60da5994b325bfbe0d7ce32b1e1c2d7d844952545315ae41ccb75",
+      "source_receipt_sha256": "7fb101fa8ee76a8ca1856f09f46689bfbcafa36170293ca3556c56e871f99d1b",
+      "server_binary_sha256": "1360412dcbb4735bf40de16d957a6a7488f5557f88cbcdd843f311e58eaf7fae",
+      "native_binary_sha256": null,
+      "rpc_log_sha256": {
+        "rpcs-pymysql.log": "d5bf5ff0c9c586a70c4677cd21bcb8b667371605ab6c2e4dfec9df96094be423",
+        "rpcs-connector.log": "b0bc54387336409584da730eaaac98fe0a9fe87927cbdae5ce6801163da90274",
+        "rpcs-prepared.log": "1e11038b4e268d0da6e62dbb92a31efd19ed12c257db5e63ae599bdf34df4b60"
+      }
+    },
+    {
+      "artifact": "outcomes-vinyl-native-1-40934854310",
+      "merge_source": "cf1000b8e11dd764aa353054787f31ca5f162d96",
+      "engine": "vinyl",
+      "native": "/home/runner/work/tarn/tarn/target/release/libtarn_storage.so",
+      "replicas": 3,
+      "wal_mode": "fsync",
+      "cases": 24,
+      "clients": {
+        "PyMySQL": "1.1.2",
+        "mysql-connector-python": "9.5.0",
+        "msgpack": "1.1.2"
+      },
+      "results_sha256": "9c071cd1a1fe85188a1373a2041219e20694ab3bd051fc48c8d7925d272b1f3a",
+      "source_receipt_sha256": "04783d2b8f6b1625811aab96fbf07c1a1bbe47b0c184915e090a5e9d76f69343",
+      "server_binary_sha256": "5bcbf7b7b3fe0836d546f081b3bf7771ea81fc73e11447e1940659d88617c976",
+      "native_binary_sha256": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae",
+      "rpc_log_sha256": {
+        "rpcs-pymysql.log": "fd6d7f15f3347bdc58df0fffcc2bfdb50c87bb30e71a86feb2494fd6a111ad7b",
+        "rpcs-connector.log": "c2520a6566fac8b62b4b5578f6d3a1a9997e8a9dd7f56e8b8f604c8f591f3939",
+        "rpcs-prepared.log": "bfa9e97d19b9cd4192579d22224275b0dc3e479f480639180ee6026564b67c51"
+      }
+    }
+  ],
+  "prior_failure": {
+    "run": "https://github.com/cstheorist/tarn/actions/runs/40933119369",
+    "head": "f47bbb9653aad80be6598efb5822eca0d1a7a3af",
+    "phase": "fixture startup, before outcome cases",
+    "observed": "Gateway connection to the fault proxy was refused; proxy stderr was empty.",
+    "fix": "Wait for the owned proxy process to listen before starting the gateway. All four initial failures remain in their workflow artifacts."
+  },
+  "limitations": [
+    "This receipt covers the outcome workflow, not the independent full regression/model workflow.",
+    "The next change retains additional per-key RPC admission JSON and must pass CI at its own head.",
+    "Supported KV integration (#181) and registration in the primary compatibility manifest (#178) remain dependent work."
+  ]
+}

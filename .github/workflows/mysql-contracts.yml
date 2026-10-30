@@ -1,0 +1,126 @@
+name: MySQL release contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mysql-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate executable manifest and generated documentation
+        run: python3 scripts/check_contracts.py --check
+      - name: Build unchanged release profile
+        run: |
+          cargo build --release --locked -p tarn-server -p tarn-storage
+          mkdir -p /tmp/contract-build
+          cp target/release/tarn-server target/release/libtarn_storage.so /tmp/contract-build/
+          git rev-parse HEAD > /tmp/contract-build/source.txt
+          rustc -Vv > /tmp/contract-build/rustc.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/contract-build/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: contract-build-${{ github.run_id }}
+          path: /tmp/contract-build
+          retention-days: 30
+
+  contracts:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        engine: [memtx, vinyl]
+        native: [enabled, disabled]
+    services:
+      mysql:
+        image: mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+        ports: ['3408:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: contract-build-${{ github.run_id }}
+          path: /tmp/contract-build
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2 mysql-connector-python==9.5.0
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          chmod +x /tmp/contract-build/tarn-server
+          test "$(cat /tmp/contract-build/source.txt)" = "$(git rev-parse HEAD)"
+          mkdir -p target/release
+          cp /tmp/contract-build/tarn-server /tmp/contract-build/libtarn_storage.so target/release/
+          sha256sum -c /tmp/contract-build/binaries.sha256
+          python3 - <<'PY'
+          import mysql.connector
+          c=mysql.connector.connect(host='127.0.0.1',port=3408,user='root',password='',use_pure=True)
+          x=c.cursor()
+          x.execute("CREATE USER 'sb'@'%' IDENTIFIED BY ''")
+          x.execute("GRANT ALL ON *.* TO 'sb'@'%'")
+          c.close()
+          PY
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: RF3 paired contracts
+        env:
+          TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/contract-build/libtarn_storage.so' || '0' }}
+          TARN_BIN: /tmp/contract-build/tarn-server
+          TARN_CHECK_LOCKS: '1'
+          TARN_TEST_HOOKS: '1'
+        run: |
+          scripts/cluster.sh start -d /tmp/tarn-contract-cluster -n 2 -r 3 -p 4000 -s 2 -m 256 -e '${{ matrix.engine }}'
+          mkdir -p /tmp/contract-results
+          tarantool --version > /tmp/contract-results/tarantool.txt
+          python3 tests/sql/contracts.py --tarn 127.0.0.1:4000 --ref 127.0.0.1:3408 \
+            --engine '${{ matrix.engine }}' --output /tmp/contract-results/results.json
+          tarantool tests/sql/contract_runtime.lua '${{ matrix.native }}' /tmp/contract-results/storage.json
+      - name: Stop owned fixture
+        if: always()
+        run: KEEP=1 scripts/cluster.sh stop -d /tmp/tarn-contract-cluster
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contracts-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          path: |
+            /tmp/contract-results
+            /tmp/tarn-contract-cluster/*.log
+            /tmp/tarn-contract-cluster/cluster.json
+            /tmp/contract-build/*.txt
+            /tmp/contract-build/*.sha256
+          retention-days: 30

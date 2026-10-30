@@ -16,6 +16,8 @@ import sys
 import time
 import traceback
 
+from upgrade_prepare import prepare_witness
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / "sql"))
 from lazytest import ev, rpc, q, wait_empty  # noqa: E402
 from movetest import bucket_of  # noqa: E402
@@ -262,10 +264,13 @@ return n >= ...
         self.check_rows(slots)
         self.event("SQL_DDL_move_lazy_canaries_passed", slots=list(slots), expected=self.expected)
 
-    def prepare(self, txid):
-        for shard, node in enumerate(self.leaders(), 1):
-            result = ev(node, """
-local txid, shard, engine = ...
+    def prepare(self, txid, event=None):
+        nodes = self.leaders()
+        for shard, node in enumerate(nodes, 1):
+            # Seed once, before any PREPARE. A lost setup reply fails the
+            # fixture; it must never enter the admission-attempt loop.
+            assert ev(node, """
+local shard, engine = ...
 local sid=99001
 -- A fixture space outside the SQL catalog: incomplete native definitions
 -- must never be inserted into the gateway's catalog as if they were SQL.
@@ -277,13 +282,85 @@ local bucket
 for _,b in box.space._tarn_buckets:pairs() do if b.state=='active' then bucket=b.bucket;break end end
 assert(bucket)
 box.space[sid]:replace{shard,0,bucket}
+return true
+""", [shard, self.args.engine]) is True
+
+        def prepare(node, identity, timeout):
+            return ev(node, """
+local txid=...
+local sid, shard=99001,tarn.cfg.shard_id
+local bucket=box.space[sid]:get{shard}.bucket_id
 local r=tarn_prepare(txid,1,{1,2},{{'replace',sid,{shard,1,bucket}}},{},{},require('fiber').time(),
                      nil,{sid,0},{bucket})
-assert(r[1]=='yes',require('json').encode(r))
-return box.space._tarn_part:get{txid}.state
-""", [txid, shard, self.args.engine])
-            assert result == "prepared"
-        self.event("durable_YES_before_restart", txid=txid)
+local p=box.space._tarn_part:get{txid}
+return {reply=r,state=p and p.state or 'none'}
+""", [identity], timeout=timeout)
+
+        def abort_and_verify(identity, remaining):
+            # A confirmed NO makes commit impossible. The decision must be
+            # durably ABORT before releasing any earlier participant's YES.
+            decision = rpc(nodes[0], "tarn_txn_cas", [identity, "staging", "aborted", [1, 2]],
+                           timeout=remaining())
+            assert decision == "aborted", decision
+            evidence = []
+            for node in nodes:
+                result = rpc(node, "tarn_abort", [identity, 1, [1, 2]], timeout=remaining())
+                assert result == ["ok", "aborted"], result
+                state = ev(node, """
+local txid=...
+tarn.fresh.barrier(nil,true)
+box.begin{txn_isolation='read-confirmed'}
+local p=box.space._tarn_part:get{txid}
+local d=box.space._tarn_txn:get{txid}
+local result={participant=p and p.state or 'none',decision=d and d.status or 'none',
+    value=box.space['upgrade.prepared']:get{tarn.cfg.shard_id}.v,
+    locks=box.space._tarn_locks.index.txid:count{txid},
+    range_locks=box.space._tarn_rlocks.index.pk:count{txid}}
+box.rollback()
+return result
+""", [identity], timeout=remaining())
+                assert state == dict(participant="aborted", decision="aborted" if node == nodes[0] else "none",
+                                     value=0, locks=0, range_locks=0), state
+                evidence.append(dict(node=node, abort=result, state=state))
+            return evidence
+
+        return prepare_witness(txid, nodes, prepare, abort_and_verify, event or self.event)
+
+    def prepare_admission_controls(self):
+        if self.args.engine != "vinyl":
+            return
+        # Leased pressure applies only to this owned control, and must yield
+        # a real durable NO. Ordinary rolling stages use real pressure only.
+        for participant, node in enumerate(self.leaders(), 1):
+            owner = f"upgrade-admission-control-{participant}"
+            observed = []
+            pressure = dict(rate_limit=0, dump_bandwidth=1, blocked_writers=1,
+                            memory_level0=0, memory_limit=16 << 20, compaction_queue=0)
+            assert ev(node, "return tarn.vinyl.test_pressure(...)", [owner, pressure, 30]) == ["ok"]
+
+            def record(kind, **data):
+                self.event(kind, **data)
+                if (kind == "prepare_attempt_reply" and data["node"] == node
+                        and data["result"]["reply"][:2] == ["no", 1205]):
+                    observed.append(data)
+                    assert ev(node, "return tarn.vinyl.test_pressure(...)", [owner, None]) == ["ok"]
+
+            try:
+                base = f"upgrade-admission-{participant}"
+                txid = self.prepare(base, event=record)
+                assert observed and txid != base, (observed, txid)
+                for shard in range(1, self.shards + 1):
+                    leader = self.leader(shard)
+                    follower = next(k for k in self.nodes if k.startswith(f"{shard}.") and k != leader)
+                    self.stop("s" + follower)
+                    self.storage(follower, "new")
+                    self.ready(follower)
+                    self.joined(shard)
+                    assert ev(self.nodes[follower], "return box.space._tarn_part:get{...}.state", [txid]) == "prepared"
+                self.finish(txid)
+                self.event("admission_refusal_control_passed", participant=participant, txid=txid)
+            finally:
+                assert ev(node, "return tarn.vinyl.test_pressure(...)", [owner, None]) == ["ok"]
 
     def finish(self, txid):
         for node in self.leaders():
@@ -298,7 +375,7 @@ return box.space._tarn_part:get{txid}.state
             followers = [k for k in self.nodes if k.startswith(f"{shard}.") and k != leader]
             for key in followers:
                 txid = f"upgrade-{version}-{key}"
-                self.prepare(txid)
+                txid = self.prepare(txid)
                 self.stop("s" + key)
                 self.storage(key, version)
                 self.ready(key)
@@ -343,6 +420,7 @@ def fresh_cluster(args):
             c.joined(shard)
         c.gateway("new")
         c.setup()
+        c.prepare_admission_controls()
         c.canary()
         c.event("fresh_RF3_bootstrap_passed")
     finally:
@@ -374,11 +452,11 @@ def rolling(args):
             c.check_rows((0, 1))
         c.event("both_gateways_follow_upgraded_leaders")
         # Swap gateway versions independently, leaving durable prepared state.
-        c.prepare("upgrade-gateway-restart")
+        txid = c.prepare("upgrade-gateway-restart")
         c.stop("g0")
         c.gateway("new", slot=0)
         c.legacy_write_refusal(0)
-        c.finish("upgrade-gateway-restart")
+        c.finish(txid)
         c.canary((0, 1))
         c.stop("g0")
         c.gateway("old", slot=0)
