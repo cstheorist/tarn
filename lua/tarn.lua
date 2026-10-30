@@ -7656,6 +7656,14 @@ M.clock_sampler, M.clock_sampler_close = require('tarn_clock').sampler{
 M.clock = require('tarn_clock').new{
     cfg = M.cfg, required_peers = BK.clock_required, certifier = M.clock_sampler, publish = BK.ns_sync,
     can_run = PG.heap_available,
+    can_install = function()
+        -- Called inside the clock loader's own read-confirmed transaction.
+        -- The schema marker remains the first synchronous metadata write.
+        -- Its historical presence alone does not prove current join readiness.
+        local meta = box.space._tarn_meta
+        return meta ~= nil and meta:get{'shard_id'} ~= nil
+               and (not M.cfg.sync or replicas_follow())
+    end,
 }
 M.fresh.set_clock(M.clock)
 
