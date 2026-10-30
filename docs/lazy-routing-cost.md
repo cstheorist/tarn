@@ -21,41 +21,56 @@ pilot: both arms returned an explicit resource error. That pilot is
 retained and is not counted as a successful comparison.
 
 The local optimized build disables LTO, strips debug information and uses
-64 codegen units, after the standard release dependency compilation
-exceeded the container's memory limit. This is not a measurement of the
-standard release profile. CI uses the repository's normal release profile
+64 codegen units, after the standard release dependency compilation was
+killed with SIGKILL in the bounded-memory local environment. This is not a
+measurement of the standard release profile. CI uses the normal release profile
 and a separate host configuration. Comparisons are within each fixture;
 results from different configurations are never pooled.
 
-The complete local matrix has 60 successful arms with zero workload errors,
-each below the fixed p99 ceiling. Results are medians across five arms per
+The final isolated-source matrix (`841aee2`, including main's MySQL contract
+changes) has 60 successful arms with zero workload errors, each below the
+fixed p99 ceiling. Results are medians across five arms per
 configuration; the paired interval is calculated separately and is not a
 ratio of those medians.
 
 | Shape | Lanes | Baseline / composite ops/s (median) | Paired ratio (95% interval) | Baseline / composite p99 ms (median) |
 |---|---:|---:|---:|---:|
-| uniform | 1 | 15,342 / 14,564 | 0.982 (0.943–1.022) | 17.30 / 17.37 |
-| uniform | 4 | 15,203 / 14,868 | 0.983 (0.927–1.042) | 16.88 / 17.39 |
-| uniform | 16 | 14,632 / 14,895 | 1.025 (0.984–1.067) | 17.53 / 17.36 |
-| skewed | 1 | 10,958 / 11,033 | 1.005 (0.997–1.014) | 18.10 / 18.26 |
-| skewed | 4 | 10,905 / 14,546 | 1.296 (1.208–1.390) | 18.57 / 13.31 |
-| skewed | 16 | 10,963 / 14,537 | 1.345 (1.288–1.405) | 18.44 / 13.30 |
+| uniform | 1 | 14,514 / 14,551 | 1.009 (0.953–1.068) | 17.80 / 17.81 |
+| uniform | 4 | 13,467 / 13,546 | 1.003 (0.967–1.042) | 17.85 / 18.14 |
+| uniform | 16 | 14,632 / 14,495 | 1.002 (0.960–1.047) | 17.69 / 17.66 |
+| skewed | 1 | 11,240 / 11,407 | 1.010 (0.986–1.036) | 17.82 / 17.91 |
+| skewed | 4 | 11,173 / 15,097 | 1.355 (1.325–1.385) | 17.99 / 12.19 |
+| skewed | 16 | 15,982 / 16,084 | 1.036 (0.969–1.108) | 14.23 / 12.02 |
 
-The skewed four- and sixteen-lane cases improved in every pair. Their
-largest target's median index-read share fell from 96.4% to 26.1%; the
-assignment distribution moved similarly. The uniform and single-lane
-intervals include one. These controls support the narrower conclusion
-that distributed targets relieve this fully bound hot-prefix workload.
+The skewed four-lane case improved in every pair, with its largest target's
+median index-read share falling from 96.5% to 26.2%. The sixteen-lane case
+also distributed reads (96.4% to 25.2%), but its throughput interval includes
+one, as do the uniform and single-lane controls. Only the four-lane case
+supports improvement beyond measured uncertainty in this final matrix.
+
+The first sixteen-lane attempt stopped after three complete pairs when a
+leader statistics call timed out amid replica leadership churn. A fresh
+fixture then refused CREATE DATABASE because clock safety was unavailable,
+before any timed arm. Neither attempt qualifies. The table's sixteen-lane
+case is a new complete five-pair run after all four leaders reported healthy
+clock safety; it does not splice together partial runs. The root cause of
+the first interruption was not established. No timeout or clock guard was
+relaxed. Full node logs and failed attempts are retained.
+
+The earlier `d233805` matrix, also retained, found 1.296 (1.208–1.390) at four
+lanes and 1.345 (1.288–1.405) at sixteen. The later sixteen-lane result does
+not reproduce that advantage. These separate runs are not pooled; routing
+distribution alone is insufficient to predict throughput on a shared host.
 
 The improvement consumes more storage CPU per completed operation:
-0.407 to 0.437 ms at four lanes and 0.408 to 0.439 ms at sixteen. Median
-process physical writes increased from 716 to 748 bytes/op and 713 to
-749 bytes/op respectively. Gateway RPCs remained about 2.04/op. Encoded
+0.405 to 0.436 ms at four lanes and 0.362 to 0.401 ms at sixteen. Median
+process physical writes increased from 720 to 749 bytes/op and 716 to
+741 bytes/op respectively. Gateway RPCs remained about 2.04/op. Encoded
 apply traffic was about 5 bytes/op, amortized over the read-heavy mix.
-Median observed maximum source lag was 68.5 to 81.8 ms at four lanes and
-107.5 to 60.8 ms at sixteen; median outage catch-up stayed near one second,
+Median observed maximum source lag was 91.7 to 84.8 ms at four lanes and
+39.1 to 86.5 ms at sixteen; median outage catch-up stayed near one second,
 including control overhead. Full per-arm counters and extrema are in the
-[machine-readable summary](../tests/evidence/lazy-routing/summary-bound.json).
+[machine-readable summary](../tests/evidence/lazy-routing/summary-isolated-final.json).
 
 Every case uses five paired ten-second arms in alternating AB/BA order.
 The fixed latency ceiling is 250 ms at p99; any workload error or an arm
@@ -166,3 +181,13 @@ These results favor explicit opt-in routing and workload-specific sizing,
 not a universal recommendation to add lanes. The
 [retained CI summary](../tests/evidence/lazy-routing/summary-ci-41073441278.json)
 includes all per-arm costs and exact settings.
+
+A later standard-release run on source `841aee2` completed the uniform and
+skewed single-lane cases before an external branch update cancelled its
+remaining jobs. Uniform write-heavy work is **unqualified**: eight of ten
+arms exceeded 250 ms p99 (including all five composite arms), despite zero
+workload errors. No positive throughput ratio is assigned to that case.
+Uniform read-heavy was 0.963 (0.875–1.060); skewed write-heavy was 1.015
+(0.990–1.040), and skewed read-heavy was 0.962 (0.911–1.016). Scheduled
+low-load ratios stayed near one. These results and the cancellation record
+remain separate from the local fully bound comparisons.

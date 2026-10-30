@@ -22,5 +22,24 @@
     "The initial differential run had 1091 cases and one fixture failure: unsupported first case-insensitive index added to populated rows. A fresh two-shard RF1/fsync fixture with the corrected local-index-then-lazy migration passed all 1092 cases.",
     "KEEP=1 was added to the CI cost cleanup after discovering the default helper removed node logs before artifact upload.",
     "Standard-profile local compilation and a concurrent bounded build were killed; compiler and pilot failures are retained in development-attempts.tar.gz."
-  ]
+  ],
+  "isolated_final": {
+    "runtime_source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+    "runtime_tree": "730fe03fc4e251eb112596b8169b002438e2f82c",
+    "summary": "summary-isolated-final.json",
+    "configuration": "same local resource/build settings; fresh fixture for final skewed-16 case",
+    "validation": "330 workspace tests pass with Tarantool present; workspace clippy passes",
+    "interruptions": [
+      "Original skewed-16 attempt completed three pairs, then leader statistics timed out amid leadership churn; root cause not established. All twelve replicas later responded and memory.events reported zero OOM kills.",
+      "Fresh r2 refused CREATE DATABASE with clock-safety wall/monotonic drift error before any timed arm.",
+      "Fresh r3 verified clock safety healthy/read_ready on all leaders and completed all five pairs. No guards were relaxed and no uncertain mutation was replayed."
+    ],
+    "ci_predecessor": {
+      "run": 41077514469,
+      "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+      "conclusion": "cancelled by external branch update; two completed cases retained",
+      "uniform_write_heavy": "unqualified: eight of ten p99 ceilings exceeded, no workload errors"
+    },
+    "scope": "User explicitly requested #185 isolated; PR213 replaces PR208, whose externally combined branch remains intact."
+  }
 }

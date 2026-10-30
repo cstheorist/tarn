@@ -30,9 +30,29 @@ attempts. No failed or incomplete attempt is counted as qualification.
   suites against MariaDB (11 tests each, zero failures/skips); the final
   1,092-case differential pass and earlier failed attempts.
 * `development-attempts.tar.gz`: exploratory workload/resource probes,
-  compiler failures and the raw-retention OOM attempt. Probes differ in
+  compiler failures and the raw-retention SIGKILL attempt. Probes differ in
   CPU quota, client processes, base/target distribution and reader version;
   they must not be pooled with qualification.
+* `isolated-{uniform,skewed}-{1,4,16}.tar.gz` and
+  `summary-isolated-final.json`: the complete sixty-arm matrix rebuilt from
+  isolated source `841aee2`. The skewed sixteen-lane case uses a fresh fixture
+  after two unsuccessful attempts. Every qualifying arm has its own raw
+  samples, counters and source/binary hashes. Four-lane improvement repeats;
+  sixteen-lane improvement is within uncertainty in this later run.
+* `isolated-interrupted-attempt.tar.gz`,
+  `integrated-first-cluster-logs.tar.gz`, `integrated-r2-clock-refusal.tar.gz`
+  and `isolated-r3-cluster-logs.tar.gz`: the interrupted three-pair attempt,
+  original cluster logs, pre-measurement clock refusal, and successful fresh
+  fixture logs respectively. "Integrated" here means main's MySQL contracts
+  merged with #185 at `841aee2`; none of these measurements use the externally
+  combined `caf39e6` branch.
+* `validation-isolated.tar.gz`: the `841aee2` build, all 330 workspace tests
+  passing, workspace clippy, and commands/configuration for the final study.
+  `sql-final-cluster-logs.tar.gz` retains the fresh cluster used for the full
+  1,092-case SQL differential pass already recorded in `validation-local`.
+* `ci-41077514469-{uniform,skewed}-1.tar.gz` and corresponding summaries:
+  completed cases from the cancelled predecessor workflow on source
+  `841aee2`, including the unqualified uniform write-heavy latency result.
 
 The new `LazyRouting` model and six expected-failure outputs are retained
 under `tla/`. They cover a finite frozen generation, not unbounded SQL,

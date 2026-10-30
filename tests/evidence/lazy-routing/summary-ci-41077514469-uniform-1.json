@@ -1,0 +1,3982 @@
+{
+  "method": "Summarize paired routing studies without pooling different fixture settings.\n\nThe interval is a two-sided Student-t interval on five paired log ratios.\nIt describes variation in this finite, single-host fixture, not independent\nhardware replications or a production capacity guarantee. Failed arms stay in\nthe output and cannot contribute to a positive qualification claim.\n",
+  "reports": [
+    {
+      "path": "/private/tmp/tarn-issue185-ci-cost-077558/uniform-1/lazy-routing-evidence/write-heavy.json",
+      "sha256": "44b5ad00e51c1ba889b49e72aab7446377118029a563d94031c8f4402bc02eb0",
+      "arguments": {
+        "tarn": "127.0.0.1:4000",
+        "nodes": "127.0.0.1:3311,127.0.0.1:3321,127.0.0.1:3331,127.0.0.1:3341",
+        "cluster_dir": "/tmp/lazy-routing-cluster",
+        "output": "/tmp/lazy-routing-evidence/write-heavy.json",
+        "pairs": 5,
+        "seconds": 10.0,
+        "threads": 16,
+        "processes": 2,
+        "batch": 8,
+        "write_every": 1,
+        "prefix_every": 10,
+        "rate": 0.0,
+        "p99_ms": 250.0,
+        "lanes": "1",
+        "shapes": "uniform",
+        "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+        "binary": "target/release/tarn-server",
+        "native": "target/release/libtarn_storage.so"
+      },
+      "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+      "binaries": {
+        "target/release/tarn-server": "fff012b090e12bf3cf2705390831b8162c731c0ae9ace4babccae8ca75236324",
+        "target/release/libtarn_storage.so": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae"
+      },
+      "host": {
+        "uname": [
+          "Linux",
+          "runnervm48cm3",
+          "7.0.0-1017-azure",
+          "#17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026",
+          "x86_64"
+        ],
+        "cpu_count": 4,
+        "cgroup": {
+          "cpuset.cpus.effective": "0-3\n"
+        }
+      },
+      "results": [
+        {
+          "shape": "uniform",
+          "lanes": 1,
+          "qualified": false,
+          "paired_ratios": [],
+          "paired_ratio_interval": null,
+          "by_route_parts": {
+            "1": {
+              "goodput": {
+                "median": 256.76474700888093,
+                "minimum": 101.96373054741838,
+                "maximum": 328.54693276895927
+              },
+              "goodput_at_p99_ceiling": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 328.54693276895927
+              },
+              "p50_ms": {
+                "median": 46.569728999998006,
+                "minimum": 43.89210299999036,
+                "maximum": 47.93999499997881
+              },
+              "p99_ms": {
+                "median": 256.1820199999829,
+                "minimum": 133.14690400000018,
+                "maximum": 1595.1914990000091
+              },
+              "rows_inserted": {
+                "median": 20600,
+                "minimum": 8304,
+                "maximum": 26376
+              },
+              "completed": {
+                "median": 2575,
+                "minimum": 1038,
+                "maximum": 3297
+              },
+              "skipped": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "outage_catchup_ms": {
+                "median": 716.9624449999787,
+                "minimum": 701.5621749999923,
+                "maximum": 760.8539199999882
+              },
+              "gateway_rpc_per_op": {
+                "median": 7.776730699528815,
+                "minimum": 7.64907491659084,
+                "maximum": 8.717726396917149
+              },
+              "gateway_wire_bytes_per_op": {
+                "median": 2044.4262636789995,
+                "minimum": 2029.2538671519562,
+                "maximum": 2120.087668593449
+              },
+              "leader_iproto_bytes_per_op": {
+                "median": 3221.907572815534,
+                "minimum": 2980.773127085229,
+                "maximum": 6618.37668593449
+              },
+              "encoded_apply_bytes_per_op": {
+                "median": 465.03082851637765,
+                "minimum": 463.9939338792842,
+                "maximum": 466.95614353026457
+              },
+              "max_source_lag_seconds": {
+                "median": 0.54037714004517,
+                "minimum": 0.19279456138611,
+                "maximum": 1.7916338443756
+              },
+              "sum_source_peak_backlog_entries": {
+                "median": 128,
+                "minimum": 128,
+                "maximum": 128
+              },
+              "sum_source_peak_backlog_bytes": {
+                "median": 7552,
+                "minimum": 7424,
+                "maximum": 7552
+              },
+              "max_target_assignment_share": {
+                "median": 0.32543689320388347,
+                "minimum": 0.3202911737943585,
+                "maximum": 0.32947976878612717
+              },
+              "max_target_select_share": {
+                "median": 0.3246017699115044,
+                "minimum": 0.31648715824357915,
+                "maximum": 0.3293726235741445
+              },
+              "initial_calls_per_op": {
+                "median": 1.0,
+                "minimum": 1.0,
+                "maximum": 1.0
+              },
+              "capture_calls_per_op": {
+                "median": 1.0,
+                "minimum": 1.0,
+                "maximum": 1.0
+              },
+              "apply_calls_per_op": {
+                "median": 0.869155491119971,
+                "minimum": 0.8651252408477842,
+                "maximum": 0.870244919228765
+              },
+              "select_calls_per_op": {
+                "median": 1.0970873786407767,
+                "minimum": 1.092485549132948,
+                "maximum": 1.0982711555959963
+              },
+              "frontiers_calls_per_op": {
+                "median": 4.486770569046756,
+                "minimum": 4.35092508340916,
+                "maximum": 5.405587668593449
+              },
+              "base_fetch_calls_per_op": {
+                "median": 1.1615533980582524,
+                "minimum": 1.1502890173410405,
+                "maximum": 1.164998483469821
+              },
+              "initial_elapsed_ms_per_op": {
+                "median": 0.13732801703564188,
+                "minimum": 0.11418358285167728,
+                "maximum": 0.14026346563102562
+              },
+              "capture_elapsed_ms_per_op": {
+                "median": 0.503649828631841,
+                "minimum": 0.42686701445032754,
+                "maximum": 0.5327124644668194
+              },
+              "apply_elapsed_ms_per_op": {
+                "median": 3.646586418640427,
+                "minimum": 3.008277166211616,
+                "maximum": 14.37988751541474
+              },
+              "select_elapsed_ms_per_op": {
+                "median": 0.1569402310679367,
+                "minimum": 0.12363638150343739,
+                "maximum": 0.16999142371818016
+              },
+              "frontiers_elapsed_ms_per_op": {
+                "median": 0.1400065799580578,
+                "minimum": 0.12160112454494111,
+                "maximum": 0.17026742917776158
+              },
+              "base_fetch_elapsed_ms_per_op": {
+                "median": 2.719761866796078,
+                "minimum": 1.8405805265389443,
+                "maximum": 8.170488802503854
+              },
+              "storage_cpu_ms_per_op": {
+                "median": 9.12233009708738,
+                "minimum": 9.009900990099013,
+                "maximum": 9.903660886319853
+              },
+              "gateway_cpu_ms_per_op": {
+                "median": 0.524271844660194,
+                "minimum": 0.5002605523710266,
+                "maximum": 0.545950864422202
+              },
+              "clients_cpu_ms_per_op": {
+                "median": 0.3468208092485548,
+                "minimum": 0.3178738926524232,
+                "maximum": 0.36700030330603584
+              },
+              "process_read_bytes_per_op": {
+                "median": 0.0,
+                "minimum": 0.0,
+                "maximum": 0.0
+              },
+              "process_write_bytes_per_op": {
+                "median": 64790.59508644222,
+                "minimum": 64716.8,
+                "maximum": 64906.531351939106
+              },
+              "process_rchar_per_op": {
+                "median": 31900.20504854369,
+                "minimum": 30514.21383075523,
+                "maximum": 40946.51637764933
+              },
+              "process_wchar_per_op": {
+                "median": 26482.254368932037,
+                "minimum": 25238.11889596603,
+                "maximum": 35480.11753371869
+              },
+              "_tarn_lazy_version_rows": {
+                "median": 20600,
+                "minimum": 8304,
+                "maximum": 26376
+              },
+              "_tarn_lazy_version_bytes": {
+                "median": 453288,
+                "minimum": 182704,
+                "maximum": 573784
+              },
+              "_tarn_lazy_counter_rows": {
+                "median": 17,
+                "minimum": 16,
+                "maximum": 17
+              },
+              "_tarn_lazy_counter_bytes": {
+                "median": 117,
+                "minimum": 112,
+                "maximum": 117
+              },
+              "_tarn_lazy_outbox_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_outbox_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              }
+            },
+            "2": {
+              "goodput": {
+                "median": 200.9241555826784,
+                "minimum": 159.64071627750204,
+                "maximum": 313.6823745431472
+              },
+              "goodput_at_p99_ceiling": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "p50_ms": {
+                "median": 46.366513999998915,
+                "minimum": 42.735480999994024,
+                "maximum": 48.35225099998297
+              },
+              "p99_ms": {
+                "median": 938.846146000003,
+                "minimum": 270.5120200000124,
+                "maximum": 1618.8200059999929
+              },
+              "rows_inserted": {
+                "median": 16240,
+                "minimum": 13336,
+                "maximum": 25184
+              },
+              "completed": {
+                "median": 2030,
+                "minimum": 1667,
+                "maximum": 3148
+              },
+              "skipped": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "outage_catchup_ms": {
+                "median": 731.441880999995,
+                "minimum": 708.3652040000175,
+                "maximum": 742.9676050000182
+              },
+              "gateway_rpc_per_op": {
+                "median": 8.053013392857142,
+                "minimum": 7.82071840923669,
+                "maximum": 8.844631073785242
+              },
+              "gateway_wire_bytes_per_op": {
+                "median": 2060.8303571428573,
+                "minimum": 2050.951250801796,
+                "maximum": 2140.1667666466706
+              },
+              "leader_iproto_bytes_per_op": {
+                "median": 3623.946305418719,
+                "minimum": 3018.5908513341806,
+                "maximum": 4723.556088782244
+              },
+              "encoded_apply_bytes_per_op": {
+                "median": 465.5626874625075,
+                "minimum": 464.7689732142857,
+                "maximum": 468.00317662007626
+              },
+              "max_source_lag_seconds": {
+                "median": 1.2092988491058,
+                "minimum": 0.32318687438965,
+                "maximum": 2.8650259971619
+              },
+              "sum_source_peak_backlog_entries": {
+                "median": 128,
+                "minimum": 128,
+                "maximum": 128
+              },
+              "sum_source_peak_backlog_bytes": {
+                "median": 7472,
+                "minimum": 7424,
+                "maximum": 7552
+              },
+              "max_target_assignment_share": {
+                "median": 0.29852216748768473,
+                "minimum": 0.29408482142857145,
+                "maximum": 0.30400254129606097
+              },
+              "max_target_select_share": {
+                "median": 0.2850035536602701,
+                "minimum": 0.281957928802589,
+                "maximum": 0.2887773722627737
+              },
+              "initial_calls_per_op": {
+                "median": 1.0,
+                "minimum": 1.0,
+                "maximum": 1.0
+              },
+              "capture_calls_per_op": {
+                "median": 1.0,
+                "minimum": 1.0,
+                "maximum": 1.0
+              },
+              "apply_calls_per_op": {
+                "median": 0.8632273545290942,
+                "minimum": 0.859375,
+                "maximum": 0.8675432969852469
+              },
+              "select_calls_per_op": {
+                "median": 1.3862068965517242,
+                "minimum": 1.3794642857142858,
+                "maximum": 1.3926302414231257
+              },
+              "frontiers_calls_per_op": {
+                "median": 4.474888392857143,
+                "minimum": 4.241500962155228,
+                "maximum": 5.260947810437912
+              },
+              "base_fetch_calls_per_op": {
+                "median": 1.1591133004926109,
+                "minimum": 1.1556919642857142,
+                "maximum": 1.1639135959339264
+              },
+              "initial_elapsed_ms_per_op": {
+                "median": 0.13600899580071746,
+                "minimum": 0.12596479409879702,
+                "maximum": 0.1382534384228655
+              },
+              "capture_elapsed_ms_per_op": {
+                "median": 0.4890694352680078,
+                "minimum": 0.4468625644644259,
+                "maximum": 0.529007877064479
+              },
+              "apply_elapsed_ms_per_op": {
+                "median": 4.738284675222713,
+                "minimum": 3.421464988881067,
+                "maximum": 8.116657826634674
+              },
+              "select_elapsed_ms_per_op": {
+                "median": 0.16894118896261368,
+                "minimum": 0.1608879666453239,
+                "maximum": 0.18324667471372938
+              },
+              "frontiers_elapsed_ms_per_op": {
+                "median": 0.12830542058243424,
+                "minimum": 0.11023860134641342,
+                "maximum": 0.17096182543519317
+              },
+              "base_fetch_elapsed_ms_per_op": {
+                "median": 3.4413706256150745,
+                "minimum": 2.1714234656921536,
+                "maximum": 8.83557680383911
+              },
+              "storage_cpu_ms_per_op": {
+                "median": 9.179687500000002,
+                "minimum": 8.745991019884542,
+                "maximum": 9.898020395920815
+              },
+              "gateway_cpu_ms_per_op": {
+                "median": 0.5163566388710711,
+                "minimum": 0.5114358322744599,
+                "maximum": 0.6118776244751049
+              },
+              "clients_cpu_ms_per_op": {
+                "median": 0.3251231527093596,
+                "minimum": 0.3208386277001271,
+                "maximum": 0.3659268146370726
+              },
+              "process_read_bytes_per_op": {
+                "median": 0.0,
+                "minimum": 0.0,
+                "maximum": 0.0
+              },
+              "process_write_bytes_per_op": {
+                "median": 64759.217280813216,
+                "minimum": 64253.71428571428,
+                "maximum": 64814.79923027582
+              },
+              "process_rchar_per_op": {
+                "median": 32786.52266009852,
+                "minimum": 31365.916454891994,
+                "maximum": 36934.38812237552
+              },
+              "process_wchar_per_op": {
+                "median": 27364.90147783251,
+                "minimum": 25962.870711562897,
+                "maximum": 30172.155968806237
+              },
+              "_tarn_lazy_version_rows": {
+                "median": 16240,
+                "minimum": 13336,
+                "maximum": 25184
+              },
+              "_tarn_lazy_version_bytes": {
+                "median": 357200,
+                "minimum": 293384,
+                "maximum": 554176
+              },
+              "_tarn_lazy_counter_rows": {
+                "median": 17,
+                "minimum": 17,
+                "maximum": 17
+              },
+              "_tarn_lazy_counter_bytes": {
+                "median": 117,
+                "minimum": 117,
+                "maximum": 117
+              },
+              "_tarn_lazy_outbox_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_outbox_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              }
+            }
+          },
+          "arms": [
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 0,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 328.54693276895927,
+                "goodput_at_p99_ceiling": 328.54693276895927,
+                "p50_ms": 45.560891999997466,
+                "p99_ms": 133.14690400000018,
+                "rows_inserted": 26376,
+                "completed": 3297,
+                "skipped": 0,
+                "outage_catchup_ms": 760.8539199999882,
+                "gateway_rpc_per_op": 7.64907491659084,
+                "gateway_wire_bytes_per_op": 2029.2538671519562,
+                "leader_iproto_bytes_per_op": 2980.773127085229,
+                "encoded_apply_bytes_per_op": 463.9939338792842,
+                "max_source_lag_seconds": 0.19279456138611,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7552,
+                "target_assignment_counts": [
+                  8448,
+                  6304,
+                  6336,
+                  5288
+                ],
+                "target_select_counts": [
+                  1146,
+                  871,
+                  873,
+                  731
+                ],
+                "max_target_assignment_share": 0.3202911737943585,
+                "max_target_select_share": 0.31648715824357915,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.569999999999999,
+                  "s1.2": 1.66,
+                  "s1.3": 1.6400000000000001,
+                  "s2.1": 4.4399999999999995,
+                  "s2.2": 1.57,
+                  "s2.3": 1.56,
+                  "s3.1": 4.359999999999999,
+                  "s3.2": 1.56,
+                  "s3.3": 1.56,
+                  "s4.1": 4.33,
+                  "s4.2": 1.5,
+                  "s4.3": 1.51
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.8698817106460418,
+                "select_calls_per_op": 1.0982711555959963,
+                "frontiers_calls_per_op": 4.35092508340916,
+                "base_fetch_calls_per_op": 1.164998483469821,
+                "initial_elapsed_ms_per_op": 0.1374013236273764,
+                "capture_elapsed_ms_per_op": 0.503649828631841,
+                "apply_elapsed_ms_per_op": 3.008277166211616,
+                "select_elapsed_ms_per_op": 0.16999142371818016,
+                "frontiers_elapsed_ms_per_op": 0.17026742917776158,
+                "base_fetch_elapsed_ms_per_op": 1.8405805265389443,
+                "storage_cpu_ms_per_op": 9.178040643008794,
+                "gateway_cpu_ms_per_op": 0.545950864422202,
+                "clients_cpu_ms_per_op": 0.36700030330603584,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64790.59508644222,
+                "process_rchar_per_op": 30514.21383075523,
+                "process_wchar_per_op": 25238.11889596603,
+                "_tarn_lazy_version_rows": 26376,
+                "_tarn_lazy_version_bytes": 573784,
+                "_tarn_lazy_counter_rows": 16,
+                "_tarn_lazy_counter_bytes": 112,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 0,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 159.64071627750204,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 48.35225099998297,
+                "p99_ms": 1618.8200059999929,
+                "rows_inserted": 13336,
+                "completed": 1667,
+                "skipped": 0,
+                "outage_catchup_ms": 742.9676050000182,
+                "gateway_rpc_per_op": 8.844631073785242,
+                "gateway_wire_bytes_per_op": 2140.1667666466706,
+                "leader_iproto_bytes_per_op": 4723.556088782244,
+                "encoded_apply_bytes_per_op": 465.5626874625075,
+                "max_source_lag_seconds": 2.8650259971619,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7424,
+                "target_assignment_counts": [
+                  3936,
+                  3184,
+                  3432,
+                  2800
+                ],
+                "target_select_counts": [
+                  652,
+                  557,
+                  589,
+                  509
+                ],
+                "max_target_assignment_share": 0.29478729778310364,
+                "max_target_select_share": 0.28261811876896403,
+                "storage_cpu_seconds": {
+                  "s1.1": 2.45,
+                  "s1.2": 0.8500000000000001,
+                  "s1.3": 0.8300000000000001,
+                  "s2.1": 2.4400000000000004,
+                  "s2.2": 0.8200000000000003,
+                  "s2.3": 0.8300000000000001,
+                  "s3.1": 2.5700000000000003,
+                  "s3.2": 0.8500000000000001,
+                  "s3.3": 0.8400000000000003,
+                  "s4.1": 2.3899999999999997,
+                  "s4.2": 0.8099999999999998,
+                  "s4.3": 0.8199999999999998
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.8632273545290942,
+                "select_calls_per_op": 1.3839232153569285,
+                "frontiers_calls_per_op": 5.260947810437912,
+                "base_fetch_calls_per_op": 1.1571685662867426,
+                "initial_elapsed_ms_per_op": 0.13600899580071746,
+                "capture_elapsed_ms_per_op": 0.47297497660451115,
+                "apply_elapsed_ms_per_op": 8.116657826634674,
+                "select_elapsed_ms_per_op": 0.16894118896261368,
+                "frontiers_elapsed_ms_per_op": 0.17096182543519317,
+                "base_fetch_elapsed_ms_per_op": 8.83557680383911,
+                "storage_cpu_ms_per_op": 9.898020395920815,
+                "gateway_cpu_ms_per_op": 0.6118776244751049,
+                "clients_cpu_ms_per_op": 0.3659268146370726,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64766.925014997,
+                "process_rchar_per_op": 36934.38812237552,
+                "process_wchar_per_op": 30172.155968806237,
+                "_tarn_lazy_version_rows": 13336,
+                "_tarn_lazy_version_bytes": 293384,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 1,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 301.5525833600631,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 42.735480999994024,
+                "p99_ms": 318.3882539999843,
+                "rows_inserted": 24944,
+                "completed": 3118,
+                "skipped": 0,
+                "outage_catchup_ms": 731.441880999995,
+                "gateway_rpc_per_op": 7.82071840923669,
+                "gateway_wire_bytes_per_op": 2050.951250801796,
+                "leader_iproto_bytes_per_op": 3153.732841565106,
+                "encoded_apply_bytes_per_op": 467.94451571520204,
+                "max_source_lag_seconds": 0.4879834651947,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7552,
+                "target_assignment_counts": [
+                  7552,
+                  5672,
+                  6456,
+                  5264
+                ],
+                "target_select_counts": [
+                  1248,
+                  1013,
+                  1111,
+                  962
+                ],
+                "max_target_assignment_share": 0.3027581783194355,
+                "max_target_select_share": 0.28795569912321184,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.03,
+                  "s1.2": 1.48,
+                  "s1.3": 1.46,
+                  "s2.1": 3.96,
+                  "s2.2": 1.4099999999999997,
+                  "s2.3": 1.4099999999999997,
+                  "s3.1": 3.950000000000001,
+                  "s3.2": 1.4500000000000002,
+                  "s3.3": 1.44,
+                  "s4.1": 3.8899999999999997,
+                  "s4.2": 1.4,
+                  "s4.3": 1.3900000000000001
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.8675432969852469,
+                "select_calls_per_op": 1.3899935856318153,
+                "frontiers_calls_per_op": 4.241500962155228,
+                "base_fetch_calls_per_op": 1.1629249518922387,
+                "initial_elapsed_ms_per_op": 0.12596479409879702,
+                "capture_elapsed_ms_per_op": 0.4468625644644259,
+                "apply_elapsed_ms_per_op": 3.482580745990988,
+                "select_elapsed_ms_per_op": 0.1608879666453239,
+                "frontiers_elapsed_ms_per_op": 0.11023860134641342,
+                "base_fetch_elapsed_ms_per_op": 2.320345598460584,
+                "storage_cpu_ms_per_op": 8.745991019884542,
+                "gateway_cpu_ms_per_op": 0.5163566388710711,
+                "clients_cpu_ms_per_op": 0.3335471456061578,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64814.79923027582,
+                "process_rchar_per_op": 31797.18922386145,
+                "process_wchar_per_op": 26375.5590121873,
+                "_tarn_lazy_version_rows": 24944,
+                "_tarn_lazy_version_bytes": 548880,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 1,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 190.4023361980493,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 43.89210299999036,
+                "p99_ms": 1235.7705539999984,
+                "rows_inserted": 15352,
+                "completed": 1919,
+                "skipped": 0,
+                "outage_catchup_ms": 701.5621749999923,
+                "gateway_rpc_per_op": 7.8478374153204795,
+                "gateway_wire_bytes_per_op": 2044.4262636789995,
+                "leader_iproto_bytes_per_op": 4288.149035956228,
+                "encoded_apply_bytes_per_op": 464.8890046899427,
+                "max_source_lag_seconds": 1.2896630764008,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7424,
+                "target_assignment_counts": [
+                  5032,
+                  3496,
+                  3720,
+                  3104
+                ],
+                "target_select_counts": [
+                  693,
+                  478,
+                  510,
+                  423
+                ],
+                "max_target_assignment_share": 0.327774882751433,
+                "max_target_select_share": 0.3293726235741445,
+                "storage_cpu_seconds": {
+                  "s1.1": 2.59,
+                  "s1.2": 0.9299999999999997,
+                  "s1.3": 0.9199999999999999,
+                  "s2.1": 2.5,
+                  "s2.2": 0.8799999999999999,
+                  "s2.3": 0.8700000000000001,
+                  "s3.1": 2.5500000000000007,
+                  "s3.2": 0.9000000000000004,
+                  "s3.3": 0.8900000000000006,
+                  "s4.1": 2.5,
+                  "s4.2": 0.8700000000000001,
+                  "s4.3": 0.8899999999999997
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.870244919228765,
+                "select_calls_per_op": 1.0964043772798333,
+                "frontiers_calls_per_op": 4.5534132360604485,
+                "base_fetch_calls_per_op": 1.1589369463262116,
+                "initial_elapsed_ms_per_op": 0.11621835747800052,
+                "capture_elapsed_ms_per_op": 0.43090069046358515,
+                "apply_elapsed_ms_per_op": 5.202703386139082,
+                "select_elapsed_ms_per_op": 0.13056598540932934,
+                "frontiers_elapsed_ms_per_op": 0.12160112454494111,
+                "base_fetch_elapsed_ms_per_op": 3.47859354872345,
+                "storage_cpu_ms_per_op": 9.009900990099013,
+                "gateway_cpu_ms_per_op": 0.5002605523710266,
+                "clients_cpu_ms_per_op": 0.3178738926524232,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64782.54090672225,
+                "process_rchar_per_op": 34767.16362688901,
+                "process_wchar_per_op": 29341.99478895258,
+                "_tarn_lazy_version_rows": 15352,
+                "_tarn_lazy_version_bytes": 337704,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 2,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 101.96373054741838,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 47.93999499997881,
+                "p99_ms": 1595.1914990000091,
+                "rows_inserted": 8304,
+                "completed": 1038,
+                "skipped": 0,
+                "outage_catchup_ms": 709.2346370000087,
+                "gateway_rpc_per_op": 8.717726396917149,
+                "gateway_wire_bytes_per_op": 2120.087668593449,
+                "leader_iproto_bytes_per_op": 6618.37668593449,
+                "encoded_apply_bytes_per_op": 465.03082851637765,
+                "max_source_lag_seconds": 1.7916338443756,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7424,
+                "target_assignment_counts": [
+                  2736,
+                  1808,
+                  2016,
+                  1744
+                ],
+                "target_select_counts": [
+                  372,
+                  248,
+                  278,
+                  236
+                ],
+                "max_target_assignment_share": 0.32947976878612717,
+                "max_target_select_share": 0.328042328042328,
+                "storage_cpu_seconds": {
+                  "s1.1": 1.5800000000000018,
+                  "s1.2": 0.54,
+                  "s1.3": 0.54,
+                  "s2.1": 1.5000000000000018,
+                  "s2.2": 0.5,
+                  "s2.3": 0.4900000000000002,
+                  "s3.1": 1.5500000000000025,
+                  "s3.2": 0.5099999999999998,
+                  "s3.3": 0.5100000000000007,
+                  "s4.1": 1.5399999999999991,
+                  "s4.2": 0.5100000000000007,
+                  "s4.3": 0.5099999999999998
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.8651252408477842,
+                "select_calls_per_op": 1.092485549132948,
+                "frontiers_calls_per_op": 5.405587668593449,
+                "base_fetch_calls_per_op": 1.1502890173410405,
+                "initial_elapsed_ms_per_op": 0.11418358285167728,
+                "capture_elapsed_ms_per_op": 0.42686701445032754,
+                "apply_elapsed_ms_per_op": 14.37988751541474,
+                "select_elapsed_ms_per_op": 0.12363638150343739,
+                "frontiers_elapsed_ms_per_op": 0.1400065799580578,
+                "base_fetch_elapsed_ms_per_op": 8.170488802503854,
+                "storage_cpu_ms_per_op": 9.903660886319853,
+                "gateway_cpu_ms_per_op": 0.5394990366088629,
+                "clients_cpu_ms_per_op": 0.3468208092485548,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64794.14258188825,
+                "process_rchar_per_op": 40946.51637764933,
+                "process_wchar_per_op": 35480.11753371869,
+                "_tarn_lazy_version_rows": 8304,
+                "_tarn_lazy_version_bytes": 182704,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 2,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 166.5437620945571,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 47.20417200002203,
+                "p99_ms": 1122.0944050000412,
+                "rows_inserted": 14336,
+                "completed": 1792,
+                "skipped": 0,
+                "outage_catchup_ms": 713.0605870000295,
+                "gateway_rpc_per_op": 8.053013392857142,
+                "gateway_wire_bytes_per_op": 2060.8303571428573,
+                "leader_iproto_bytes_per_op": 4348.04296875,
+                "encoded_apply_bytes_per_op": 464.7689732142857,
+                "max_source_lag_seconds": 1.4435064792633,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7424,
+                "target_assignment_counts": [
+                  4216,
+                  3360,
+                  3752,
+                  3008
+                ],
+                "target_select_counts": [
+                  697,
+                  590,
+                  639,
+                  546
+                ],
+                "max_target_assignment_share": 0.29408482142857145,
+                "max_target_select_share": 0.281957928802589,
+                "storage_cpu_seconds": {
+                  "s1.1": 2.4200000000000017,
+                  "s1.2": 0.8700000000000001,
+                  "s1.3": 0.8700000000000001,
+                  "s2.1": 2.3999999999999986,
+                  "s2.2": 0.8399999999999999,
+                  "s2.3": 0.8300000000000001,
+                  "s3.1": 2.4200000000000017,
+                  "s3.2": 0.8599999999999994,
+                  "s3.3": 0.8499999999999996,
+                  "s4.1": 2.469999999999999,
+                  "s4.2": 0.8099999999999996,
+                  "s4.3": 0.8100000000000005
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.859375,
+                "select_calls_per_op": 1.3794642857142858,
+                "frontiers_calls_per_op": 4.474888392857143,
+                "base_fetch_calls_per_op": 1.1556919642857142,
+                "initial_elapsed_ms_per_op": 0.12968609988859933,
+                "capture_elapsed_ms_per_op": 0.4890694352680078,
+                "apply_elapsed_ms_per_op": 4.738284675222713,
+                "select_elapsed_ms_per_op": 0.16587429240904353,
+                "frontiers_elapsed_ms_per_op": 0.1183659107135692,
+                "base_fetch_elapsed_ms_per_op": 5.2179045128347115,
+                "storage_cpu_ms_per_op": 9.179687500000002,
+                "gateway_cpu_ms_per_op": 0.5133928571428571,
+                "clients_cpu_ms_per_op": 0.3236607142857143,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64253.71428571428,
+                "process_rchar_per_op": 34824.713169642855,
+                "process_wchar_per_op": 29403.700334821428,
+                "_tarn_lazy_version_rows": 14336,
+                "_tarn_lazy_version_bytes": 315232,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 3,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 200.9241555826784,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 46.366513999998915,
+                "p99_ms": 938.846146000003,
+                "rows_inserted": 16240,
+                "completed": 2030,
+                "skipped": 0,
+                "outage_catchup_ms": 708.3652040000175,
+                "gateway_rpc_per_op": 8.240886699507389,
+                "gateway_wire_bytes_per_op": 2083.5039408866996,
+                "leader_iproto_bytes_per_op": 3623.946305418719,
+                "encoded_apply_bytes_per_op": 465.0128078817734,
+                "max_source_lag_seconds": 1.2092988491058,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7472,
+                "target_assignment_counts": [
+                  4848,
+                  3728,
+                  4216,
+                  3448
+                ],
+                "target_select_counts": [
+                  802,
+                  662,
+                  723,
+                  627
+                ],
+                "max_target_assignment_share": 0.29852216748768473,
+                "max_target_select_share": 0.2850035536602701,
+                "storage_cpu_seconds": {
+                  "s1.1": 2.900000000000002,
+                  "s1.2": 0.96,
+                  "s1.3": 0.9500000000000002,
+                  "s2.1": 2.66,
+                  "s2.2": 0.9499999999999993,
+                  "s2.3": 0.9500000000000002,
+                  "s3.1": 2.6999999999999993,
+                  "s3.2": 0.9600000000000009,
+                  "s3.3": 0.96,
+                  "s4.1": 2.799999999999997,
+                  "s4.2": 0.9200000000000008,
+                  "s4.3": 0.9300000000000006
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.865024630541872,
+                "select_calls_per_op": 1.3862068965517242,
+                "frontiers_calls_per_op": 4.658128078817734,
+                "base_fetch_calls_per_op": 1.1591133004926109,
+                "initial_elapsed_ms_per_op": 0.1382534384228655,
+                "capture_elapsed_ms_per_op": 0.5267281044328029,
+                "apply_elapsed_ms_per_op": 6.840300846305073,
+                "select_elapsed_ms_per_op": 0.17562755270942118,
+                "frontiers_elapsed_ms_per_op": 0.14124775123291478,
+                "base_fetch_elapsed_ms_per_op": 3.4413706256150745,
+                "storage_cpu_ms_per_op": 9.182266009852217,
+                "gateway_cpu_ms_per_op": 0.5320197044334976,
+                "clients_cpu_ms_per_op": 0.3251231527093596,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64567.487684729065,
+                "process_rchar_per_op": 32786.52266009852,
+                "process_wchar_per_op": 27364.90147783251,
+                "_tarn_lazy_version_rows": 16240,
+                "_tarn_lazy_version_bytes": 357200,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 3,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 274.60198560424107,
+                "goodput_at_p99_ceiling": 274.60198560424107,
+                "p50_ms": 46.569728999998006,
+                "p99_ms": 223.57202700004564,
+                "rows_inserted": 22072,
+                "completed": 2759,
+                "skipped": 0,
+                "outage_catchup_ms": 731.3281980000284,
+                "gateway_rpc_per_op": 7.776730699528815,
+                "gateway_wire_bytes_per_op": 2045.0025371511417,
+                "leader_iproto_bytes_per_op": 3042.5357013410658,
+                "encoded_apply_bytes_per_op": 466.95614353026457,
+                "max_source_lag_seconds": 0.2263240814209,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7552,
+                "target_assignment_counts": [
+                  7168,
+                  5080,
+                  5320,
+                  4504
+                ],
+                "target_select_counts": [
+                  978,
+                  698,
+                  731,
+                  621
+                ],
+                "max_target_assignment_share": 0.32475534613990575,
+                "max_target_select_share": 0.3229854689564069,
+                "storage_cpu_seconds": {
+                  "s1.1": 3.889999999999997,
+                  "s1.2": 1.33,
+                  "s1.3": 1.3200000000000003,
+                  "s2.1": 3.5700000000000003,
+                  "s2.2": 1.2699999999999996,
+                  "s2.3": 1.2899999999999991,
+                  "s3.1": 3.5600000000000023,
+                  "s3.2": 1.29,
+                  "s3.3": 1.2799999999999994,
+                  "s4.1": 3.6099999999999994,
+                  "s4.2": 1.2300000000000004,
+                  "s4.3": 1.2399999999999993
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.869155491119971,
+                "select_calls_per_op": 1.0974990938745923,
+                "frontiers_calls_per_op": 4.486770569046756,
+                "base_fetch_calls_per_op": 1.163102573396158,
+                "initial_elapsed_ms_per_op": 0.13732801703564188,
+                "capture_elapsed_ms_per_op": 0.5303155440379231,
+                "apply_elapsed_ms_per_op": 3.415574109822472,
+                "select_elapsed_ms_per_op": 0.1615373378031131,
+                "frontiers_elapsed_ms_per_op": 0.13507994961806413,
+                "base_fetch_elapsed_ms_per_op": 2.396291498731497,
+                "storage_cpu_ms_per_op": 9.017760057992025,
+                "gateway_cpu_ms_per_op": 0.5183037332366799,
+                "clients_cpu_ms_per_op": 0.3262051467923161,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64906.531351939106,
+                "process_rchar_per_op": 31409.80137731062,
+                "process_wchar_per_op": 26002.166364624863,
+                "_tarn_lazy_version_rows": 22072,
+                "_tarn_lazy_version_bytes": 485480,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 4,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 256.76474700888093,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 46.68164299999944,
+                "p99_ms": 256.1820199999829,
+                "rows_inserted": 20600,
+                "completed": 2575,
+                "skipped": 0,
+                "outage_catchup_ms": 716.9624449999787,
+                "gateway_rpc_per_op": 7.660582524271844,
+                "gateway_wire_bytes_per_op": 2032.28,
+                "leader_iproto_bytes_per_op": 3221.907572815534,
+                "encoded_apply_bytes_per_op": 466.7631067961165,
+                "max_source_lag_seconds": 0.54037714004517,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7552,
+                "target_assignment_counts": [
+                  6704,
+                  4768,
+                  4944,
+                  4184
+                ],
+                "target_select_counts": [
+                  917,
+                  655,
+                  679,
+                  574
+                ],
+                "max_target_assignment_share": 0.32543689320388347,
+                "max_target_select_share": 0.3246017699115044,
+                "storage_cpu_seconds": {
+                  "s1.1": 3.66,
+                  "s1.2": 1.2400000000000002,
+                  "s1.3": 1.2300000000000004,
+                  "s2.1": 3.370000000000001,
+                  "s2.2": 1.2100000000000009,
+                  "s2.3": 1.200000000000001,
+                  "s3.1": 3.389999999999997,
+                  "s3.2": 1.209999999999999,
+                  "s3.3": 1.200000000000001,
+                  "s4.1": 3.450000000000003,
+                  "s4.2": 1.1600000000000001,
+                  "s4.3": 1.17
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.8656310679611651,
+                "select_calls_per_op": 1.0970873786407767,
+                "frontiers_calls_per_op": 4.37126213592233,
+                "base_fetch_calls_per_op": 1.1615533980582524,
+                "initial_elapsed_ms_per_op": 0.14026346563102562,
+                "capture_elapsed_ms_per_op": 0.5327124644668194,
+                "apply_elapsed_ms_per_op": 3.646586418640427,
+                "select_elapsed_ms_per_op": 0.1569402310679367,
+                "frontiers_elapsed_ms_per_op": 0.14389595572830097,
+                "base_fetch_elapsed_ms_per_op": 2.719761866796078,
+                "storage_cpu_ms_per_op": 9.12233009708738,
+                "gateway_cpu_ms_per_op": 0.524271844660194,
+                "clients_cpu_ms_per_op": 0.34951456310679613,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64716.8,
+                "process_rchar_per_op": 31900.20504854369,
+                "process_wchar_per_op": 26482.254368932037,
+                "_tarn_lazy_version_rows": 20600,
+                "_tarn_lazy_version_bytes": 453288,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 4,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 313.6823745431472,
+                "goodput_at_p99_ceiling": 0,
+                "p50_ms": 43.52670499997657,
+                "p99_ms": 270.5120200000124,
+                "rows_inserted": 25184,
+                "completed": 3148,
+                "skipped": 0,
+                "outage_catchup_ms": 736.6829729999722,
+                "gateway_rpc_per_op": 7.872935196950444,
+                "gateway_wire_bytes_per_op": 2057.5212833545106,
+                "leader_iproto_bytes_per_op": 3018.5908513341806,
+                "encoded_apply_bytes_per_op": 468.00317662007626,
+                "max_source_lag_seconds": 0.32318687438965,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7552,
+                "target_assignment_counts": [
+                  7656,
+                  5704,
+                  6496,
+                  5328
+                ],
+                "target_select_counts": [
+                  1266,
+                  1022,
+                  1121,
+                  975
+                ],
+                "max_target_assignment_share": 0.30400254129606097,
+                "max_target_select_share": 0.2887773722627737,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.319999999999997,
+                  "s1.2": 1.4700000000000006,
+                  "s1.3": 1.459999999999999,
+                  "s2.1": 4.0,
+                  "s2.2": 1.4299999999999997,
+                  "s2.3": 1.42,
+                  "s3.1": 4.050000000000001,
+                  "s3.2": 1.4600000000000009,
+                  "s3.3": 1.4499999999999993,
+                  "s4.1": 4.059999999999999,
+                  "s4.2": 1.3800000000000008,
+                  "s4.3": 1.3900000000000006
+                },
+                "initial_calls_per_op": 1.0,
+                "capture_calls_per_op": 1.0,
+                "apply_calls_per_op": 0.8627700127064803,
+                "select_calls_per_op": 1.3926302414231257,
+                "frontiers_calls_per_op": 4.290343074968233,
+                "base_fetch_calls_per_op": 1.1639135959339264,
+                "initial_elapsed_ms_per_op": 0.136195402477933,
+                "capture_elapsed_ms_per_op": 0.529007877064479,
+                "apply_elapsed_ms_per_op": 3.421464988881067,
+                "select_elapsed_ms_per_op": 0.18324667471372938,
+                "frontiers_elapsed_ms_per_op": 0.12830542058243424,
+                "base_fetch_elapsed_ms_per_op": 2.1714234656921536,
+                "storage_cpu_ms_per_op": 8.859593392630241,
+                "gateway_cpu_ms_per_op": 0.5114358322744599,
+                "clients_cpu_ms_per_op": 0.3208386277001271,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 64759.217280813216,
+                "process_rchar_per_op": 31365.916454891994,
+                "process_wchar_per_op": 25962.870711562897,
+                "_tarn_lazy_version_rows": 25184,
+                "_tarn_lazy_version_bytes": 554176,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/tarn-issue185-ci-cost-077558/uniform-1/lazy-routing-evidence/read-heavy.json",
+      "sha256": "6ccb5f7d5c18520e9038569986dbaf23f7f1d94b0f9ab7c1132d8f292d6a011f",
+      "arguments": {
+        "tarn": "127.0.0.1:4000",
+        "nodes": "127.0.0.1:3311,127.0.0.1:3321,127.0.0.1:3331,127.0.0.1:3341",
+        "cluster_dir": "/tmp/lazy-routing-cluster",
+        "output": "/tmp/lazy-routing-evidence/read-heavy.json",
+        "pairs": 5,
+        "seconds": 10.0,
+        "threads": 16,
+        "processes": 2,
+        "batch": 8,
+        "write_every": 10,
+        "prefix_every": 20,
+        "rate": 0.0,
+        "p99_ms": 250.0,
+        "lanes": "1",
+        "shapes": "uniform",
+        "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+        "binary": "target/release/tarn-server",
+        "native": "target/release/libtarn_storage.so"
+      },
+      "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+      "binaries": {
+        "target/release/tarn-server": "fff012b090e12bf3cf2705390831b8162c731c0ae9ace4babccae8ca75236324",
+        "target/release/libtarn_storage.so": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae"
+      },
+      "host": {
+        "uname": [
+          "Linux",
+          "runnervm48cm3",
+          "7.0.0-1017-azure",
+          "#17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026",
+          "x86_64"
+        ],
+        "cpu_count": 4,
+        "cgroup": {
+          "cpuset.cpus.effective": "0-3\n"
+        }
+      },
+      "results": [
+        {
+          "shape": "uniform",
+          "lanes": 1,
+          "qualified": true,
+          "paired_ratios": [
+            0.8998969168189306,
+            1.011484780797195,
+            0.9019061764114197,
+            1.0739167632496933,
+            0.939299535069717
+          ],
+          "paired_ratio_interval": {
+            "geometric_mean": 0.9629808289909303,
+            "lower95": 0.875015860011438,
+            "upper95": 1.0597888785603697
+          },
+          "by_route_parts": {
+            "1": {
+              "goodput": {
+                "median": 2046.365015927805,
+                "minimum": 1803.547347258469,
+                "maximum": 2182.674759427479
+              },
+              "goodput_at_p99_ceiling": {
+                "median": 2046.365015927805,
+                "minimum": 1803.547347258469,
+                "maximum": 2182.674759427479
+              },
+              "p50_ms": {
+                "median": 3.4333680000031563,
+                "minimum": 3.3839249999800813,
+                "maximum": 3.4817939999811642
+              },
+              "p99_ms": {
+                "median": 58.36477799999784,
+                "minimum": 54.42265299996052,
+                "maximum": 89.89857199998141
+              },
+              "rows_inserted": {
+                "median": 16536,
+                "minimum": 14608,
+                "maximum": 17624
+              },
+              "completed": {
+                "median": 20555,
+                "minimum": 18108,
+                "maximum": 21910
+              },
+              "skipped": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "outage_catchup_ms": {
+                "median": 706.8067179999957,
+                "minimum": 701.7592820000118,
+                "maximum": 726.7614709999748
+              },
+              "gateway_rpc_per_op": {
+                "median": 2.6096326927754805,
+                "minimum": 2.60629849383843,
+                "maximum": 2.6190633973934174
+              },
+              "gateway_wire_bytes_per_op": {
+                "median": 653.5188944178942,
+                "minimum": 653.1448795913403,
+                "maximum": 653.837033355423
+              },
+              "leader_iproto_bytes_per_op": {
+                "median": 780.1747993189005,
+                "minimum": 777.5564582382474,
+                "maximum": 785.5247404462116
+              },
+              "encoded_apply_bytes_per_op": {
+                "median": 48.14824850963196,
+                "minimum": 48.09012131715771,
+                "maximum": 48.243704440026505
+              },
+              "max_source_lag_seconds": {
+                "median": 0.17597675323486,
+                "minimum": 0.15980362892151,
+                "maximum": 0.21023225784302
+              },
+              "sum_source_peak_backlog_entries": {
+                "median": 120,
+                "minimum": 104,
+                "maximum": 128
+              },
+              "sum_source_peak_backlog_bytes": {
+                "median": 7112,
+                "minimum": 6104,
+                "maximum": 7424
+              },
+              "max_target_assignment_share": {
+                "median": 0.32414126753749395,
+                "minimum": 0.3200181570585565,
+                "maximum": 0.3276199804113614
+              },
+              "max_target_select_share": {
+                "median": 0.32495944380069525,
+                "minimum": 0.31969565217391305,
+                "maximum": 0.32812353327701116
+              },
+              "initial_calls_per_op": {
+                "median": 0.10055947458039406,
+                "minimum": 0.10047178894665897,
+                "maximum": 0.10083940799646565
+              },
+              "capture_calls_per_op": {
+                "median": 0.10055947458039406,
+                "minimum": 0.10047178894665897,
+                "maximum": 0.10083940799646565
+              },
+              "apply_calls_per_op": {
+                "median": 0.09829038774203085,
+                "minimum": 0.09799178457325422,
+                "maximum": 0.09851617611286792
+              },
+              "select_calls_per_op": {
+                "median": 1.0497017892644136,
+                "minimum": 1.049622962782778,
+                "maximum": 1.0497489730716567
+              },
+              "frontiers_calls_per_op": {
+                "median": 0.37431281926538557,
+                "minimum": 0.3708808763121862,
+                "maximum": 0.3833664678595096
+              },
+              "base_fetch_calls_per_op": {
+                "median": 1.0813427389929458,
+                "minimum": 1.0806825712392312,
+                "maximum": 1.0815039476217985
+              },
+              "initial_elapsed_ms_per_op": {
+                "median": 0.01505141503672671,
+                "minimum": 0.013663508169824373,
+                "maximum": 0.015235145998544737
+              },
+              "capture_elapsed_ms_per_op": {
+                "median": 0.0609706131355602,
+                "minimum": 0.05446038151536285,
+                "maximum": 0.06290149194463517
+              },
+              "apply_elapsed_ms_per_op": {
+                "median": 0.3587660853552378,
+                "minimum": 0.3216280973984345,
+                "maximum": 0.45855444157277453
+              },
+              "select_elapsed_ms_per_op": {
+                "median": 0.13346382284051028,
+                "minimum": 0.11669250419893198,
+                "maximum": 0.13480678627430953
+              },
+              "frontiers_elapsed_ms_per_op": {
+                "median": 0.013273804281162637,
+                "minimum": 0.012331246097591373,
+                "maximum": 0.014079073064966991
+              },
+              "base_fetch_elapsed_ms_per_op": {
+                "median": 1.9832897695935927,
+                "minimum": 1.7223584750342356,
+                "maximum": 2.396156565606362
+              },
+              "storage_cpu_ms_per_op": {
+                "median": 1.4006324495256632,
+                "minimum": 1.3706070287539933,
+                "maximum": 1.4148442677269717
+              },
+              "gateway_cpu_ms_per_op": {
+                "median": 0.1624828845276129,
+                "minimum": 0.16175621028307335,
+                "maximum": 0.16346366246962674
+              },
+              "clients_cpu_ms_per_op": {
+                "median": 0.130945503562488,
+                "minimum": 0.13038190221357335,
+                "maximum": 0.13198586260216477
+              },
+              "process_read_bytes_per_op": {
+                "median": 0.0,
+                "minimum": 0.0,
+                "maximum": 0.0
+              },
+              "process_write_bytes_per_op": {
+                "median": 7310.370113614481,
+                "minimum": 7291.0519107576765,
+                "maximum": 7314.015276088543
+              },
+              "process_rchar_per_op": {
+                "median": 3575.99320096566,
+                "minimum": 3557.5052031036057,
+                "maximum": 3589.654683013033
+              },
+              "process_wchar_per_op": {
+                "median": 3230.434300635562,
+                "minimum": 3212.93788224555,
+                "maximum": 3240.9146233708857
+              },
+              "_tarn_lazy_version_rows": {
+                "median": 16536,
+                "minimum": 14608,
+                "maximum": 17624
+              },
+              "_tarn_lazy_version_bytes": {
+                "median": 363912,
+                "minimum": 321552,
+                "maximum": 388008
+              },
+              "_tarn_lazy_counter_rows": {
+                "median": 17,
+                "minimum": 17,
+                "maximum": 17
+              },
+              "_tarn_lazy_counter_bytes": {
+                "median": 117,
+                "minimum": 117,
+                "maximum": 117
+              },
+              "_tarn_lazy_outbox_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_outbox_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              }
+            },
+            "2": {
+              "goodput": {
+                "median": 1944.4972450758244,
+                "minimum": 1845.6292470575404,
+                "maximum": 2045.156575252811
+              },
+              "goodput_at_p99_ceiling": {
+                "median": 1944.4972450758244,
+                "minimum": 1845.6292470575404,
+                "maximum": 2045.156575252811
+              },
+              "p50_ms": {
+                "median": 3.4645129999830715,
+                "minimum": 3.4355710000113504,
+                "maximum": 3.4794910000073287
+              },
+              "p99_ms": {
+                "median": 64.742917999979,
+                "minimum": 58.87329500001215,
+                "maximum": 70.7792990000371
+              },
+              "rows_inserted": {
+                "median": 15728,
+                "minimum": 15016,
+                "maximum": 16512
+              },
+              "completed": {
+                "median": 19528,
+                "minimum": 18654,
+                "maximum": 20514
+              },
+              "skipped": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "outage_catchup_ms": {
+                "median": 708.0954700000461,
+                "minimum": 701.9865670000058,
+                "maximum": 720.1343560000169
+              },
+              "gateway_rpc_per_op": {
+                "median": 2.759300954218934,
+                "minimum": 2.7550453348932438,
+                "maximum": 2.7609244121505703
+              },
+              "gateway_wire_bytes_per_op": {
+                "median": 667.5618601930389,
+                "minimum": 667.301436689182,
+                "maximum": 667.9490866888688
+              },
+              "leader_iproto_bytes_per_op": {
+                "median": 797.5135774531989,
+                "minimum": 794.6151896265965,
+                "maximum": 818.0268332650553
+              },
+              "encoded_apply_bytes_per_op": {
+                "median": 48.13376728226864,
+                "minimum": 48.11595368285622,
+                "maximum": 48.1735887686458
+              },
+              "max_source_lag_seconds": {
+                "median": 0.2381763458252,
+                "minimum": 0.15936636924744,
+                "maximum": 0.34381222724915
+              },
+              "sum_source_peak_backlog_entries": {
+                "median": 120,
+                "minimum": 104,
+                "maximum": 128
+              },
+              "sum_source_peak_backlog_bytes": {
+                "median": 6984,
+                "minimum": 6104,
+                "maximum": 7552
+              },
+              "max_target_assignment_share": {
+                "median": 0.30010172939979657,
+                "minimum": 0.2988811933937134,
+                "maximum": 0.3013565891472868
+              },
+              "max_target_select_share": {
+                "median": 0.2922505126452495,
+                "minimum": 0.29102942491727035,
+                "maximum": 0.29301228341332464
+              },
+              "initial_calls_per_op": {
+                "median": 0.10061421468265574,
+                "minimum": 0.10056514279947522,
+                "maximum": 0.10067595247849243
+              },
+              "capture_calls_per_op": {
+                "median": 0.10061421468265574,
+                "minimum": 0.10056514279947522,
+                "maximum": 0.10067595247849243
+              },
+              "apply_calls_per_op": {
+                "median": 0.09844585730144313,
+                "minimum": 0.09751259783424467,
+                "maximum": 0.09861557960417276
+              },
+              "select_calls_per_op": {
+                "median": 1.198777742039241,
+                "minimum": 1.198498586331286,
+                "maximum": 1.1989302612631145
+              },
+              "frontiers_calls_per_op": {
+                "median": 0.3747721668274901,
+                "minimum": 0.3706249390660037,
+                "maximum": 0.3761731759006963
+              },
+              "base_fetch_calls_per_op": {
+                "median": 1.0810018514708908,
+                "minimum": 1.0807558377714053,
+                "maximum": 1.0813103246563323
+              },
+              "initial_elapsed_ms_per_op": {
+                "median": 0.015049339899227267,
+                "minimum": 0.014616518165326671,
+                "maximum": 0.015375158839940816
+              },
+              "capture_elapsed_ms_per_op": {
+                "median": 0.061066398520406885,
+                "minimum": 0.0583713176854709,
+                "maximum": 0.061520669602666944
+              },
+              "apply_elapsed_ms_per_op": {
+                "median": 0.37504694049584447,
+                "minimum": 0.36896346446332257,
+                "maximum": 0.40298068473251314
+              },
+              "select_elapsed_ms_per_op": {
+                "median": 0.1428144396725895,
+                "minimum": 0.12946250204731746,
+                "maximum": 0.14437204926275143
+              },
+              "frontiers_elapsed_ms_per_op": {
+                "median": 0.013422240382615098,
+                "minimum": 0.012682727698203323,
+                "maximum": 0.013762704031016352
+              },
+              "base_fetch_elapsed_ms_per_op": {
+                "median": 2.1418013212825686,
+                "minimum": 1.981726232280355,
+                "maximum": 2.266620519674011
+              },
+              "storage_cpu_ms_per_op": {
+                "median": 1.420489611191112,
+                "minimum": 1.397094667056644,
+                "maximum": 1.424359386726708
+              },
+              "gateway_cpu_ms_per_op": {
+                "median": 0.16847603441212614,
+                "minimum": 0.16611808269903297,
+                "maximum": 0.16954283984256735
+              },
+              "clients_cpu_ms_per_op": {
+                "median": 0.1316058992216305,
+                "minimum": 0.130155016086575,
+                "maximum": 0.13187520102926986
+              },
+              "process_read_bytes_per_op": {
+                "median": 0.0,
+                "minimum": 0.0,
+                "maximum": 0.0
+              },
+              "process_write_bytes_per_op": {
+                "median": 7313.566571077427,
+                "minimum": 7294.178625491977,
+                "maximum": 7339.016086575022
+              },
+              "process_rchar_per_op": {
+                "median": 3586.4667631607163,
+                "minimum": 3574.3460490463217,
+                "maximum": 3643.4243650143385
+              },
+              "process_wchar_per_op": {
+                "median": 3239.6902004931917,
+                "minimum": 3227.7327177313555,
+                "maximum": 3298.1756452273657
+              },
+              "_tarn_lazy_version_rows": {
+                "median": 15728,
+                "minimum": 15016,
+                "maximum": 16512
+              },
+              "_tarn_lazy_version_bytes": {
+                "median": 346000,
+                "minimum": 330296,
+                "maximum": 363456
+              },
+              "_tarn_lazy_counter_rows": {
+                "median": 17,
+                "minimum": 17,
+                "maximum": 17
+              },
+              "_tarn_lazy_counter_bytes": {
+                "median": 117,
+                "minimum": 117,
+                "maximum": 117
+              },
+              "_tarn_lazy_outbox_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_outbox_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              }
+            }
+          },
+          "arms": [
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 0,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 2182.674759427479,
+                "goodput_at_p99_ceiling": 2182.674759427479,
+                "p50_ms": 3.3839249999800813,
+                "p99_ms": 54.42265299996052,
+                "rows_inserted": 17624,
+                "completed": 21910,
+                "skipped": 0,
+                "outage_catchup_ms": 726.7614709999748,
+                "gateway_rpc_per_op": 2.60629849383843,
+                "gateway_wire_bytes_per_op": 653.5692834322227,
+                "leader_iproto_bytes_per_op": 777.5564582382474,
+                "encoded_apply_bytes_per_op": 48.16079415791876,
+                "max_source_lag_seconds": 0.16670823097229,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7424,
+                "target_assignment_counts": [
+                  5640,
+                  4120,
+                  4256,
+                  3608
+                ],
+                "target_select_counts": [
+                  7353,
+                  5366,
+                  5571,
+                  4710
+                ],
+                "max_target_assignment_share": 0.3200181570585565,
+                "max_target_select_share": 0.31969565217391305,
+                "storage_cpu_seconds": {
+                  "s1.1": 5.299999999999997,
+                  "s1.2": 1.3499999999999996,
+                  "s1.3": 1.33,
+                  "s2.1": 4.669999999999995,
+                  "s2.2": 1.2899999999999991,
+                  "s2.3": 1.2799999999999994,
+                  "s3.1": 4.75,
+                  "s3.2": 1.3200000000000003,
+                  "s3.3": 1.290000000000001,
+                  "s4.1": 4.910000000000004,
+                  "s4.2": 1.2599999999999998,
+                  "s4.3": 1.2799999999999994
+                },
+                "initial_calls_per_op": 0.10054769511638521,
+                "capture_calls_per_op": 0.10054769511638521,
+                "apply_calls_per_op": 0.09799178457325422,
+                "select_calls_per_op": 1.0497489730716567,
+                "frontiers_calls_per_op": 0.3708808763121862,
+                "base_fetch_calls_per_op": 1.0813783660429028,
+                "initial_elapsed_ms_per_op": 0.013663508169824373,
+                "capture_elapsed_ms_per_op": 0.05446038151536285,
+                "apply_elapsed_ms_per_op": 0.3216280973984345,
+                "select_elapsed_ms_per_op": 0.11669250419893198,
+                "frontiers_elapsed_ms_per_op": 0.012331246097591373,
+                "base_fetch_elapsed_ms_per_op": 1.7223584750342356,
+                "storage_cpu_ms_per_op": 1.3706070287539933,
+                "gateway_cpu_ms_per_op": 0.1624828845276129,
+                "clients_cpu_ms_per_op": 0.1305340027384756,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7311.294568690096,
+                "process_rchar_per_op": 3557.5052031036057,
+                "process_wchar_per_op": 3212.93788224555,
+                "_tarn_lazy_version_rows": 17624,
+                "_tarn_lazy_version_bytes": 388008,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 0,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 1964.1822864272892,
+                "goodput_at_p99_ceiling": 1964.1822864272892,
+                "p50_ms": 3.4355710000113504,
+                "p99_ms": 64.742917999979,
+                "rows_inserted": 15944,
+                "completed": 19818,
+                "skipped": 0,
+                "outage_catchup_ms": 720.1343560000169,
+                "gateway_rpc_per_op": 2.7609244121505703,
+                "gateway_wire_bytes_per_op": 667.9490866888688,
+                "leader_iproto_bytes_per_op": 796.4853668382278,
+                "encoded_apply_bytes_per_op": 48.13376728226864,
+                "max_source_lag_seconds": 0.15936636924744,
+                "sum_source_peak_backlog_entries": 120,
+                "sum_source_peak_backlog_bytes": 6984,
+                "target_assignment_counts": [
+                  4784,
+                  3680,
+                  4112,
+                  3368
+                ],
+                "target_select_counts": [
+                  6928,
+                  5559,
+                  6094,
+                  5177
+                ],
+                "max_target_assignment_share": 0.3000501756146513,
+                "max_target_select_share": 0.2916070376294301,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.789999999999999,
+                  "s1.2": 1.2300000000000004,
+                  "s1.3": 1.2100000000000009,
+                  "s2.1": 4.659999999999997,
+                  "s2.2": 1.17,
+                  "s2.3": 1.1600000000000001,
+                  "s3.1": 4.469999999999999,
+                  "s3.2": 1.2199999999999989,
+                  "s3.3": 1.1899999999999995,
+                  "s4.1": 4.560000000000002,
+                  "s4.2": 1.1600000000000001,
+                  "s4.3": 1.1899999999999995
+                },
+                "initial_calls_per_op": 0.10056514279947522,
+                "capture_calls_per_op": 0.10056514279947522,
+                "apply_calls_per_op": 0.09844585730144313,
+                "select_calls_per_op": 1.19880916338682,
+                "frontiers_calls_per_op": 0.3761731759006963,
+                "base_fetch_calls_per_op": 1.0812392774245636,
+                "initial_elapsed_ms_per_op": 0.014616518165326671,
+                "capture_elapsed_ms_per_op": 0.0590807074880654,
+                "apply_elapsed_ms_per_op": 0.39018687137953884,
+                "select_elapsed_ms_per_op": 0.13383632303964327,
+                "frontiers_elapsed_ms_per_op": 0.013483828993857654,
+                "base_fetch_elapsed_ms_per_op": 2.042680614946054,
+                "storage_cpu_ms_per_op": 1.413361590473307,
+                "gateway_cpu_ms_per_op": 0.16954283984256735,
+                "clients_cpu_ms_per_op": 0.13068927237864567,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7294.178625491977,
+                "process_rchar_per_op": 3574.3460490463217,
+                "process_wchar_per_op": 3227.7327177313555,
+                "_tarn_lazy_version_rows": 15944,
+                "_tarn_lazy_version_bytes": 350904,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 1,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 2045.156575252811,
+                "goodput_at_p99_ceiling": 2045.156575252811,
+                "p50_ms": 3.4645129999830715,
+                "p99_ms": 58.87329500001215,
+                "rows_inserted": 16512,
+                "completed": 20514,
+                "skipped": 0,
+                "outage_catchup_ms": 707.2065090000024,
+                "gateway_rpc_per_op": 2.7550453348932438,
+                "gateway_wire_bytes_per_op": 667.5618601930389,
+                "leader_iproto_bytes_per_op": 794.6151896265965,
+                "encoded_apply_bytes_per_op": 48.1735887686458,
+                "max_source_lag_seconds": 0.18734645843506,
+                "sum_source_peak_backlog_entries": 120,
+                "sum_source_peak_backlog_bytes": 7080,
+                "target_assignment_counts": [
+                  4976,
+                  3784,
+                  4304,
+                  3448
+                ],
+                "target_select_counts": [
+                  7204,
+                  5718,
+                  6347,
+                  5317
+                ],
+                "max_target_assignment_share": 0.3013565891472868,
+                "max_target_select_share": 0.29301228341332464,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.910000000000004,
+                  "s1.2": 1.259999999999998,
+                  "s1.3": 1.2299999999999986,
+                  "s2.1": 4.810000000000002,
+                  "s2.2": 1.2400000000000002,
+                  "s2.3": 1.1999999999999993,
+                  "s3.1": 4.539999999999999,
+                  "s3.2": 1.25,
+                  "s3.3": 1.2199999999999989,
+                  "s4.1": 4.619999999999997,
+                  "s4.2": 1.1799999999999997,
+                  "s4.3": 1.200000000000001
+                },
+                "initial_calls_per_op": 0.10061421468265574,
+                "capture_calls_per_op": 0.10061421468265574,
+                "apply_calls_per_op": 0.09861557960417276,
+                "select_calls_per_op": 1.198498586331286,
+                "frontiers_calls_per_op": 0.3706249390660037,
+                "base_fetch_calls_per_op": 1.0813103246563323,
+                "initial_elapsed_ms_per_op": 0.014780907087934387,
+                "capture_elapsed_ms_per_op": 0.0583713176854709,
+                "apply_elapsed_ms_per_op": 0.36896346446332257,
+                "select_elapsed_ms_per_op": 0.12946250204731746,
+                "frontiers_elapsed_ms_per_op": 0.012682727698203323,
+                "base_fetch_elapsed_ms_per_op": 1.981726232280355,
+                "storage_cpu_ms_per_op": 1.397094667056644,
+                "gateway_cpu_ms_per_op": 0.16769035780442632,
+                "clients_cpu_ms_per_op": 0.130155016086575,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7339.016086575022,
+                "process_rchar_per_op": 3579.431266452179,
+                "process_wchar_per_op": 3231.2067856098274,
+                "_tarn_lazy_version_rows": 16512,
+                "_tarn_lazy_version_bytes": 363456,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 1,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 2021.9350939130636,
+                "goodput_at_p99_ceiling": 2021.9350939130636,
+                "p50_ms": 3.4817939999811642,
+                "p99_ms": 59.96671299999434,
+                "rows_inserted": 16336,
+                "completed": 20297,
+                "skipped": 0,
+                "outage_catchup_ms": 716.9695560000378,
+                "gateway_rpc_per_op": 2.6107306498497316,
+                "gateway_wire_bytes_per_op": 653.5188944178942,
+                "leader_iproto_bytes_per_op": 781.1049908853525,
+                "encoded_apply_bytes_per_op": 48.14824850963196,
+                "max_source_lag_seconds": 0.17597675323486,
+                "sum_source_peak_backlog_entries": 112,
+                "sum_source_peak_backlog_bytes": 6544,
+                "target_assignment_counts": [
+                  5352,
+                  3736,
+                  3936,
+                  3312
+                ],
+                "target_select_counts": [
+                  6991,
+                  4862,
+                  5117,
+                  4336
+                ],
+                "max_target_assignment_share": 0.3276199804113614,
+                "max_target_select_share": 0.32812353327701116,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.939999999999998,
+                  "s1.2": 1.2699999999999996,
+                  "s1.3": 1.2600000000000016,
+                  "s2.1": 4.640000000000001,
+                  "s2.2": 1.1899999999999995,
+                  "s2.3": 1.1799999999999997,
+                  "s3.1": 4.869999999999997,
+                  "s3.2": 1.1999999999999993,
+                  "s3.3": 1.1700000000000017,
+                  "s4.1": 4.539999999999999,
+                  "s4.2": 1.1600000000000001,
+                  "s4.3": 1.200000000000001
+                },
+                "initial_calls_per_op": 0.10060600088683057,
+                "capture_calls_per_op": 0.10060600088683057,
+                "apply_calls_per_op": 0.09829038774203085,
+                "select_calls_per_op": 1.0497117800660196,
+                "frontiers_calls_per_op": 0.3750800610927723,
+                "base_fetch_calls_per_op": 1.0812928018919052,
+                "initial_elapsed_ms_per_op": 0.01505141503672671,
+                "capture_elapsed_ms_per_op": 0.06290149194463517,
+                "apply_elapsed_ms_per_op": 0.3569979424545302,
+                "select_elapsed_ms_per_op": 0.13480678627430953,
+                "frontiers_elapsed_ms_per_op": 0.014079073064966991,
+                "base_fetch_elapsed_ms_per_op": 2.009853384638045,
+                "storage_cpu_ms_per_op": 1.4100606000886828,
+                "gateway_cpu_ms_per_op": 0.1625856037838103,
+                "clients_cpu_ms_per_op": 0.13105385032270778,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7299.222545203725,
+                "process_rchar_per_op": 3575.99320096566,
+                "process_wchar_per_op": 3230.434300635562,
+                "_tarn_lazy_version_rows": 16336,
+                "_tarn_lazy_version_bytes": 359504,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 2,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 2046.365015927805,
+                "goodput_at_p99_ceiling": 2046.365015927805,
+                "p50_ms": 3.4660059999964687,
+                "p99_ms": 58.36477799999784,
+                "rows_inserted": 16536,
+                "completed": 20555,
+                "skipped": 0,
+                "outage_catchup_ms": 701.7592820000118,
+                "gateway_rpc_per_op": 2.6096326927754805,
+                "gateway_wire_bytes_per_op": 653.1448795913403,
+                "leader_iproto_bytes_per_op": 780.1747993189005,
+                "encoded_apply_bytes_per_op": 48.12984675261494,
+                "max_source_lag_seconds": 0.15980362892151,
+                "sum_source_peak_backlog_entries": 104,
+                "sum_source_peak_backlog_bytes": 6104,
+                "target_assignment_counts": [
+                  5360,
+                  3784,
+                  4008,
+                  3384
+                ],
+                "target_select_counts": [
+                  7011,
+                  4935,
+                  5211,
+                  4418
+                ],
+                "max_target_assignment_share": 0.32414126753749395,
+                "max_target_select_share": 0.32495944380069525,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.970000000000006,
+                  "s1.2": 1.2699999999999996,
+                  "s1.3": 1.2299999999999969,
+                  "s2.1": 4.700000000000003,
+                  "s2.2": 1.2200000000000024,
+                  "s2.3": 1.1899999999999977,
+                  "s3.1": 4.840000000000003,
+                  "s3.2": 1.2100000000000009,
+                  "s3.3": 1.1899999999999977,
+                  "s4.1": 4.579999999999998,
+                  "s4.2": 1.1799999999999997,
+                  "s4.3": 1.2100000000000009
+                },
+                "initial_calls_per_op": 0.10055947458039406,
+                "capture_calls_per_op": 0.10055947458039406,
+                "apply_calls_per_op": 0.09851617611286792,
+                "select_calls_per_op": 1.049622962782778,
+                "frontiers_calls_per_op": 0.37431281926538557,
+                "base_fetch_calls_per_op": 1.0813427389929458,
+                "initial_elapsed_ms_per_op": 0.015235145998544737,
+                "capture_elapsed_ms_per_op": 0.0609706131355602,
+                "apply_elapsed_ms_per_op": 0.3625425728046704,
+                "select_elapsed_ms_per_op": 0.13349368713209195,
+                "frontiers_elapsed_ms_per_op": 0.013273804281162637,
+                "base_fetch_elapsed_ms_per_op": 1.9832897695935927,
+                "storage_cpu_ms_per_op": 1.4006324495256632,
+                "gateway_cpu_ms_per_op": 0.16200437849671603,
+                "clients_cpu_ms_per_op": 0.13038190221357335,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7314.015276088543,
+                "process_rchar_per_op": 3578.8552177085867,
+                "process_wchar_per_op": 3231.674191194357,
+                "_tarn_lazy_version_rows": 16536,
+                "_tarn_lazy_version_bytes": 363912,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 2,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 1845.6292470575404,
+                "goodput_at_p99_ceiling": 1845.6292470575404,
+                "p50_ms": 3.4794910000073287,
+                "p99_ms": 70.7792990000371,
+                "rows_inserted": 15016,
+                "completed": 18654,
+                "skipped": 0,
+                "outage_catchup_ms": 701.9865670000058,
+                "gateway_rpc_per_op": 2.759300954218934,
+                "gateway_wire_bytes_per_op": 667.301436689182,
+                "leader_iproto_bytes_per_op": 797.6214216789965,
+                "encoded_apply_bytes_per_op": 48.11595368285622,
+                "max_source_lag_seconds": 0.29113531112671,
+                "sum_source_peak_backlog_entries": 128,
+                "sum_source_peak_backlog_bytes": 7552,
+                "target_assignment_counts": [
+                  4488,
+                  3504,
+                  3856,
+                  3168
+                ],
+                "target_select_counts": [
+                  6508,
+                  5272,
+                  5714,
+                  4868
+                ],
+                "max_target_assignment_share": 0.2988811933937134,
+                "max_target_select_share": 0.29102942491727035,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.530000000000008,
+                  "s1.2": 1.1600000000000001,
+                  "s1.3": 1.129999999999999,
+                  "s2.1": 4.359999999999999,
+                  "s2.2": 1.0899999999999999,
+                  "s2.3": 1.0899999999999999,
+                  "s3.1": 4.530000000000001,
+                  "s3.2": 1.110000000000003,
+                  "s3.3": 1.1099999999999994,
+                  "s4.1": 4.25,
+                  "s4.2": 1.0899999999999999,
+                  "s4.3": 1.120000000000001
+                },
+                "initial_calls_per_op": 0.10062185054143884,
+                "capture_calls_per_op": 0.10062185054143884,
+                "apply_calls_per_op": 0.09751259783424467,
+                "select_calls_per_op": 1.198777742039241,
+                "frontiers_calls_per_op": 0.3747721668274901,
+                "base_fetch_calls_per_op": 1.0807869625817519,
+                "initial_elapsed_ms_per_op": 0.015375158839940816,
+                "capture_elapsed_ms_per_op": 0.061066398520406885,
+                "apply_elapsed_ms_per_op": 0.40298068473251314,
+                "select_elapsed_ms_per_op": 0.14298355816435346,
+                "frontiers_elapsed_ms_per_op": 0.013762704031016352,
+                "base_fetch_elapsed_ms_per_op": 2.266620519674011,
+                "storage_cpu_ms_per_op": 1.424359386726708,
+                "gateway_cpu_ms_per_op": 0.1688645866838211,
+                "clients_cpu_ms_per_op": 0.13187520102926986,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7303.14999463922,
+                "process_rchar_per_op": 3586.4667631607163,
+                "process_wchar_per_op": 3239.6902004931917,
+                "_tarn_lazy_version_rows": 15016,
+                "_tarn_lazy_version_bytes": 330296,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 3,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 1936.8597295353857,
+                "goodput_at_p99_ceiling": 1936.8597295353857,
+                "p50_ms": 3.4772419999740123,
+                "p99_ms": 65.10803100002249,
+                "rows_inserted": 15648,
+                "completed": 19444,
+                "skipped": 0,
+                "outage_catchup_ms": 708.0954700000461,
+                "gateway_rpc_per_op": 2.7583316190084344,
+                "gateway_wire_bytes_per_op": 667.5392923266818,
+                "leader_iproto_bytes_per_op": 797.5135774531989,
+                "encoded_apply_bytes_per_op": 48.11839127751492,
+                "max_source_lag_seconds": 0.2381763458252,
+                "sum_source_peak_backlog_entries": 112,
+                "sum_source_peak_backlog_bytes": 6544,
+                "target_assignment_counts": [
+                  4704,
+                  3624,
+                  4016,
+                  3304
+                ],
+                "target_select_counts": [
+                  6829,
+                  5459,
+                  5947,
+                  5077
+                ],
+                "max_target_assignment_share": 0.3006134969325153,
+                "max_target_select_share": 0.2929392587508579,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.709999999999994,
+                  "s1.2": 1.1999999999999993,
+                  "s1.3": 1.1899999999999977,
+                  "s2.1": 4.560000000000009,
+                  "s2.2": 1.139999999999997,
+                  "s2.3": 1.1400000000000006,
+                  "s3.1": 4.679999999999993,
+                  "s3.2": 1.1600000000000001,
+                  "s3.3": 1.129999999999999,
+                  "s4.1": 4.419999999999995,
+                  "s4.2": 1.129999999999999,
+                  "s4.3": 1.1600000000000001
+                },
+                "initial_calls_per_op": 0.10059658506480149,
+                "capture_calls_per_op": 0.10059658506480149,
+                "apply_calls_per_op": 0.09843653569224439,
+                "select_calls_per_op": 1.1989302612631145,
+                "frontiers_calls_per_op": 0.37379140094630736,
+                "base_fetch_calls_per_op": 1.0810018514708908,
+                "initial_elapsed_ms_per_op": 0.015049339899227267,
+                "capture_elapsed_ms_per_op": 0.06128952664059865,
+                "apply_elapsed_ms_per_op": 0.37504694049584447,
+                "select_elapsed_ms_per_op": 0.1428144396725895,
+                "frontiers_elapsed_ms_per_op": 0.013422240382615098,
+                "base_fetch_elapsed_ms_per_op": 2.1448571494548965,
+                "storage_cpu_ms_per_op": 1.420489611191112,
+                "gateway_cpu_ms_per_op": 0.16611808269903297,
+                "clients_cpu_ms_per_op": 0.131660152232051,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7334.418432421313,
+                "process_rchar_per_op": 3591.090053486937,
+                "process_wchar_per_op": 3243.999845710759,
+                "_tarn_lazy_version_rows": 15648,
+                "_tarn_lazy_version_bytes": 344224,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 3,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 1803.547347258469,
+                "goodput_at_p99_ceiling": 1803.547347258469,
+                "p50_ms": 3.3874800000148753,
+                "p99_ms": 89.89857199998141,
+                "rows_inserted": 14608,
+                "completed": 18108,
+                "skipped": 0,
+                "outage_catchup_ms": 706.4787840000122,
+                "gateway_rpc_per_op": 2.6190633973934174,
+                "gateway_wire_bytes_per_op": 653.837033355423,
+                "leader_iproto_bytes_per_op": 785.5247404462116,
+                "encoded_apply_bytes_per_op": 48.243704440026505,
+                "max_source_lag_seconds": 0.18720436096191,
+                "sum_source_peak_backlog_entries": 120,
+                "sum_source_peak_backlog_bytes": 7112,
+                "target_assignment_counts": [
+                  4768,
+                  3304,
+                  3560,
+                  2976
+                ],
+                "target_select_counts": [
+                  6199,
+                  4292,
+                  4636,
+                  3881
+                ],
+                "max_target_assignment_share": 0.3263964950711939,
+                "max_target_select_share": 0.32612584175084175,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.420000000000002,
+                  "s1.2": 1.1400000000000006,
+                  "s1.3": 1.1099999999999994,
+                  "s2.1": 4.170000000000002,
+                  "s2.2": 1.0700000000000003,
+                  "s2.3": 1.0599999999999987,
+                  "s3.1": 4.290000000000006,
+                  "s3.2": 1.0899999999999999,
+                  "s3.3": 1.0799999999999983,
+                  "s4.1": 4.049999999999997,
+                  "s4.2": 1.0599999999999987,
+                  "s4.3": 1.0800000000000018
+                },
+                "initial_calls_per_op": 0.10083940799646565,
+                "capture_calls_per_op": 0.10083940799646565,
+                "apply_calls_per_op": 0.09802297327148221,
+                "select_calls_per_op": 1.0497017892644136,
+                "frontiers_calls_per_op": 0.3833664678595096,
+                "base_fetch_calls_per_op": 1.0806825712392312,
+                "initial_elapsed_ms_per_op": 0.014927259167287165,
+                "capture_elapsed_ms_per_op": 0.0606833853545433,
+                "apply_elapsed_ms_per_op": 0.45855444157277453,
+                "select_elapsed_ms_per_op": 0.13346382284051028,
+                "frontiers_elapsed_ms_per_op": 0.013809670311452674,
+                "base_fetch_elapsed_ms_per_op": 2.396156565606362,
+                "storage_cpu_ms_per_op": 1.4148442677269717,
+                "gateway_cpu_ms_per_op": 0.16346366246962674,
+                "clients_cpu_ms_per_op": 0.13198586260216477,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7291.0519107576765,
+                "process_rchar_per_op": 3589.654683013033,
+                "process_wchar_per_op": 3240.9146233708857,
+                "_tarn_lazy_version_rows": 14608,
+                "_tarn_lazy_version_bytes": 321552,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 4,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 2070.1567204879957,
+                "goodput_at_p99_ceiling": 2070.1567204879957,
+                "p50_ms": 3.4333680000031563,
+                "p99_ms": 58.31005699997149,
+                "rows_inserted": 16696,
+                "completed": 20772,
+                "skipped": 0,
+                "outage_catchup_ms": 706.8067179999957,
+                "gateway_rpc_per_op": 2.60947429231658,
+                "gateway_wire_bytes_per_op": 653.265357211631,
+                "leader_iproto_bytes_per_op": 780.0559406893896,
+                "encoded_apply_bytes_per_op": 48.09012131715771,
+                "max_source_lag_seconds": 0.21023225784302,
+                "sum_source_peak_backlog_entries": 120,
+                "sum_source_peak_backlog_bytes": 7112,
+                "target_assignment_counts": [
+                  5408,
+                  3808,
+                  4072,
+                  3408
+                ],
+                "target_select_counts": [
+                  7085,
+                  4980,
+                  5283,
+                  4456
+                ],
+                "max_target_assignment_share": 0.3239099185433637,
+                "max_target_select_share": 0.3249403779123097,
+                "storage_cpu_seconds": {
+                  "s1.1": 5.0,
+                  "s1.2": 1.2899999999999991,
+                  "s1.3": 1.2699999999999996,
+                  "s2.1": 4.769999999999996,
+                  "s2.2": 1.2300000000000004,
+                  "s2.3": 1.2000000000000028,
+                  "s3.1": 4.859999999999999,
+                  "s3.2": 1.2299999999999969,
+                  "s3.3": 1.1999999999999993,
+                  "s4.1": 4.579999999999998,
+                  "s4.2": 1.1900000000000013,
+                  "s4.3": 1.2199999999999989
+                },
+                "initial_calls_per_op": 0.10047178894665897,
+                "capture_calls_per_op": 0.10047178894665897,
+                "apply_calls_per_op": 0.09849797804737147,
+                "select_calls_per_op": 1.049682264586944,
+                "frontiers_calls_per_op": 0.3738686693626035,
+                "base_fetch_calls_per_op": 1.0815039476217985,
+                "initial_elapsed_ms_per_op": 0.015177910937758278,
+                "capture_elapsed_ms_per_op": 0.061256046456854896,
+                "apply_elapsed_ms_per_op": 0.3587660853552378,
+                "select_elapsed_ms_per_op": 0.13257769242286588,
+                "frontiers_elapsed_ms_per_op": 0.013201611977633882,
+                "base_fetch_elapsed_ms_per_op": 1.9314013250046986,
+                "storage_cpu_ms_per_op": 1.3980358174465624,
+                "gateway_cpu_ms_per_op": 0.16175621028307335,
+                "clients_cpu_ms_per_op": 0.130945503562488,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7310.370113614481,
+                "process_rchar_per_op": 3573.60090506451,
+                "process_wchar_per_op": 3228.6998363181206,
+                "_tarn_lazy_version_rows": 16696,
+                "_tarn_lazy_version_bytes": 367432,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 4,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 1944.4972450758244,
+                "goodput_at_p99_ceiling": 1944.4972450758244,
+                "p50_ms": 3.456292000009853,
+                "p99_ms": 64.0723390000062,
+                "rows_inserted": 15728,
+                "completed": 19528,
+                "skipped": 0,
+                "outage_catchup_ms": 715.5162569999902,
+                "gateway_rpc_per_op": 2.7595247849242113,
+                "gateway_wire_bytes_per_op": 667.6079987709956,
+                "leader_iproto_bytes_per_op": 818.0268332650553,
+                "encoded_apply_bytes_per_op": 48.16012904547317,
+                "max_source_lag_seconds": 0.34381222724915,
+                "sum_source_peak_backlog_entries": 104,
+                "sum_source_peak_backlog_bytes": 6104,
+                "target_assignment_counts": [
+                  4720,
+                  3616,
+                  4056,
+                  3336
+                ],
+                "target_select_counts": [
+                  6841,
+                  5473,
+                  5983,
+                  5111
+                ],
+                "max_target_assignment_share": 0.30010172939979657,
+                "max_target_select_share": 0.2922505126452495,
+                "storage_cpu_seconds": {
+                  "s1.1": 4.719999999999999,
+                  "s1.2": 1.2099999999999973,
+                  "s1.3": 1.1900000000000013,
+                  "s2.1": 4.61999999999999,
+                  "s2.2": 1.1600000000000001,
+                  "s2.3": 1.139999999999997,
+                  "s3.1": 4.719999999999999,
+                  "s3.2": 1.1700000000000017,
+                  "s3.3": 1.1400000000000006,
+                  "s4.1": 4.429999999999993,
+                  "s4.2": 1.129999999999999,
+                  "s4.3": 1.1499999999999986
+                },
+                "initial_calls_per_op": 0.10067595247849243,
+                "capture_calls_per_op": 0.10067595247849243,
+                "apply_calls_per_op": 0.09847398607128226,
+                "select_calls_per_op": 1.1986890618598935,
+                "frontiers_calls_per_op": 0.37525604260548956,
+                "base_fetch_calls_per_op": 1.0807558377714053,
+                "initial_elapsed_ms_per_op": 0.015066188601028317,
+                "capture_elapsed_ms_per_op": 0.061520669602666944,
+                "apply_elapsed_ms_per_op": 0.3744397563498208,
+                "select_elapsed_ms_per_op": 0.14437204926275143,
+                "frontiers_elapsed_ms_per_op": 0.013234906237067799,
+                "base_fetch_elapsed_ms_per_op": 2.1418013212825686,
+                "storage_cpu_ms_per_op": 1.4225727160999577,
+                "gateway_cpu_ms_per_op": 0.16847603441212614,
+                "clients_cpu_ms_per_op": 0.1316058992216305,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 7313.566571077427,
+                "process_rchar_per_op": 3643.4243650143385,
+                "process_wchar_per_op": 3298.1756452273657,
+                "_tarn_lazy_version_rows": 15728,
+                "_tarn_lazy_version_bytes": 346000,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/tarn-issue185-ci-cost-077558/uniform-1/lazy-routing-evidence/low-load.json",
+      "sha256": "2a6f9dafd93ac6476fc682423acbc41584697c2f4f93df2f7c1b44c8472fafbc",
+      "arguments": {
+        "tarn": "127.0.0.1:4000",
+        "nodes": "127.0.0.1:3311,127.0.0.1:3321,127.0.0.1:3331,127.0.0.1:3341",
+        "cluster_dir": "/tmp/lazy-routing-cluster",
+        "output": "/tmp/lazy-routing-evidence/low-load.json",
+        "pairs": 5,
+        "seconds": 10.0,
+        "threads": 16,
+        "processes": 2,
+        "batch": 8,
+        "write_every": 10,
+        "prefix_every": 20,
+        "rate": 50.0,
+        "p99_ms": 250.0,
+        "lanes": "1",
+        "shapes": "uniform",
+        "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+        "binary": "target/release/tarn-server",
+        "native": "target/release/libtarn_storage.so"
+      },
+      "source": "841aee24f0c5539c02a03e043407fbee817aed8b",
+      "binaries": {
+        "target/release/tarn-server": "fff012b090e12bf3cf2705390831b8162c731c0ae9ace4babccae8ca75236324",
+        "target/release/libtarn_storage.so": "1ac18f31dc0b2a9ccee9efcf601c99d8d99a520437fcb63a3cd3ec79771cd0ae"
+      },
+      "host": {
+        "uname": [
+          "Linux",
+          "runnervm48cm3",
+          "7.0.0-1017-azure",
+          "#17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026",
+          "x86_64"
+        ],
+        "cpu_count": 4,
+        "cgroup": {
+          "cpuset.cpus.effective": "0-3\n"
+        }
+      },
+      "results": [
+        {
+          "shape": "uniform",
+          "lanes": 1,
+          "qualified": true,
+          "paired_ratios": [
+            0.9999879655652637,
+            0.9999881991648479,
+            1.000022413361459,
+            0.9999321450400954,
+            0.999953554855255
+          ],
+          "paired_ratio_interval": {
+            "geometric_mean": 0.999976855110415,
+            "lower95": 0.9999335329127069,
+            "upper95": 1.0000201791850607
+          },
+          "by_route_parts": {
+            "1": {
+              "goodput": {
+                "median": 50.08562173598245,
+                "minimum": 50.08440784353401,
+                "maximum": 50.087315890477996
+              },
+              "goodput_at_p99_ceiling": {
+                "median": 50.08562173598245,
+                "minimum": 50.08440784353401,
+                "maximum": 50.087315890477996
+              },
+              "p50_ms": {
+                "median": 0.8454000000028827,
+                "minimum": 0.8084050000434218,
+                "maximum": 0.9410410000327829
+              },
+              "p99_ms": {
+                "median": 18.680698999901324,
+                "minimum": 17.85067900004833,
+                "maximum": 104.03255800008537
+              },
+              "rows_inserted": {
+                "median": 512,
+                "minimum": 512,
+                "maximum": 512
+              },
+              "completed": {
+                "median": 500,
+                "minimum": 500,
+                "maximum": 500
+              },
+              "skipped": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "outage_catchup_ms": {
+                "median": 706.0126090000267,
+                "minimum": 694.6761990000141,
+                "maximum": 710.7867280000164
+              },
+              "gateway_rpc_per_op": {
+                "median": 2.752,
+                "minimum": 2.74,
+                "maximum": 2.766
+              },
+              "gateway_wire_bytes_per_op": {
+                "median": 622.63,
+                "minimum": 621.02,
+                "maximum": 624.066
+              },
+              "leader_iproto_bytes_per_op": {
+                "median": 2929.644,
+                "minimum": 2911.066,
+                "maximum": 2935.616
+              },
+              "encoded_apply_bytes_per_op": {
+                "median": 59.504,
+                "minimum": 59.504,
+                "maximum": 59.506
+              },
+              "max_source_lag_seconds": {
+                "median": 0.014269828796387,
+                "minimum": 0.0040178298950195,
+                "maximum": 0.088315010070801
+              },
+              "sum_source_peak_backlog_entries": {
+                "median": 32,
+                "minimum": 16,
+                "maximum": 40
+              },
+              "sum_source_peak_backlog_bytes": {
+                "median": 1856,
+                "minimum": 976,
+                "maximum": 2344
+              },
+              "max_target_assignment_share": {
+                "median": 0.40625,
+                "minimum": 0.40625,
+                "maximum": 0.40625
+              },
+              "max_target_select_share": {
+                "median": 0.4069767441860465,
+                "minimum": 0.4069767441860465,
+                "maximum": 0.4069767441860465
+              },
+              "initial_calls_per_op": {
+                "median": 0.128,
+                "minimum": 0.128,
+                "maximum": 0.128
+              },
+              "capture_calls_per_op": {
+                "median": 0.128,
+                "minimum": 0.128,
+                "maximum": 0.128
+              },
+              "apply_calls_per_op": {
+                "median": 0.128,
+                "minimum": 0.126,
+                "maximum": 0.128
+              },
+              "select_calls_per_op": {
+                "median": 1.032,
+                "minimum": 1.032,
+                "maximum": 1.032
+              },
+              "frontiers_calls_per_op": {
+                "median": 0.382,
+                "minimum": 0.382,
+                "maximum": 0.4
+              },
+              "base_fetch_calls_per_op": {
+                "median": 1.042,
+                "minimum": 1.042,
+                "maximum": 1.042
+              },
+              "initial_elapsed_ms_per_op": {
+                "median": 0.0155862879989854,
+                "minimum": 0.014402203998543198,
+                "maximum": 0.017791073999887802
+              },
+              "capture_elapsed_ms_per_op": {
+                "median": 0.0427451620000738,
+                "minimum": 0.0419667040002878,
+                "maximum": 0.049867962000235
+              },
+              "apply_elapsed_ms_per_op": {
+                "median": 0.18895998799917002,
+                "minimum": 0.165876726000532,
+                "maximum": 0.43355381399897797
+              },
+              "select_elapsed_ms_per_op": {
+                "median": 0.12048836600069761,
+                "minimum": 0.113461276001317,
+                "maximum": 0.132129645999156
+              },
+              "frontiers_elapsed_ms_per_op": {
+                "median": 0.0124840479993506,
+                "minimum": 0.0114022360012314,
+                "maximum": 0.0143385740013856
+              },
+              "base_fetch_elapsed_ms_per_op": {
+                "median": 0.30046530000072197,
+                "minimum": 0.296343935998264,
+                "maximum": 0.31169237599829197
+              },
+              "storage_cpu_ms_per_op": {
+                "median": 4.500000000000014,
+                "minimum": 4.3999999999999915,
+                "maximum": 4.920000000000002
+              },
+              "gateway_cpu_ms_per_op": {
+                "median": 0.2600000000000051,
+                "minimum": 0.23999999999999488,
+                "maximum": 0.28000000000000114
+              },
+              "clients_cpu_ms_per_op": {
+                "median": 0.24,
+                "minimum": 0.21999999999999997,
+                "maximum": 0.26000000000000006
+              },
+              "process_read_bytes_per_op": {
+                "median": 0.0,
+                "minimum": 0.0,
+                "maximum": 0.0
+              },
+              "process_write_bytes_per_op": {
+                "median": 10125.312,
+                "minimum": 9822.208,
+                "maximum": 10141.696
+              },
+              "process_rchar_per_op": {
+                "median": 7538.166,
+                "minimum": 7470.104,
+                "maximum": 7606.734
+              },
+              "process_wchar_per_op": {
+                "median": 6618.456,
+                "minimum": 6555.12,
+                "maximum": 6686.848
+              },
+              "_tarn_lazy_version_rows": {
+                "median": 512,
+                "minimum": 512,
+                "maximum": 512
+              },
+              "_tarn_lazy_version_bytes": {
+                "median": 11264,
+                "minimum": 11264,
+                "maximum": 11264
+              },
+              "_tarn_lazy_counter_rows": {
+                "median": 17,
+                "minimum": 17,
+                "maximum": 17
+              },
+              "_tarn_lazy_counter_bytes": {
+                "median": 117,
+                "minimum": 117,
+                "maximum": 117
+              },
+              "_tarn_lazy_outbox_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_outbox_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              }
+            },
+            "2": {
+              "goodput": {
+                "median": 50.08545824802447,
+                "minimum": 50.081009368047944,
+                "maximum": 50.086713117943795
+              },
+              "goodput_at_p99_ceiling": {
+                "median": 50.08545824802447,
+                "minimum": 50.081009368047944,
+                "maximum": 50.086713117943795
+              },
+              "p50_ms": {
+                "median": 0.8474339999793301,
+                "minimum": 0.8160969999835288,
+                "maximum": 0.9032299999489624
+              },
+              "p99_ms": {
+                "median": 18.59877000003962,
+                "minimum": 17.303824000009627,
+                "maximum": 121.82195599996248
+              },
+              "rows_inserted": {
+                "median": 512,
+                "minimum": 512,
+                "maximum": 512
+              },
+              "completed": {
+                "median": 500,
+                "minimum": 500,
+                "maximum": 500
+              },
+              "skipped": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "outage_catchup_ms": {
+                "median": 705.5806800000255,
+                "minimum": 703.7684580000132,
+                "maximum": 739.9071779999531
+              },
+              "gateway_rpc_per_op": {
+                "median": 2.848,
+                "minimum": 2.846,
+                "maximum": 2.87
+              },
+              "gateway_wire_bytes_per_op": {
+                "median": 632.072,
+                "minimum": 631.858,
+                "maximum": 634.206
+              },
+              "leader_iproto_bytes_per_op": {
+                "median": 2921.356,
+                "minimum": 2870.398,
+                "maximum": 2932.958
+              },
+              "encoded_apply_bytes_per_op": {
+                "median": 59.504,
+                "minimum": 59.504,
+                "maximum": 59.504
+              },
+              "max_source_lag_seconds": {
+                "median": 0.0055756568908691,
+                "minimum": 0.0041475296020508,
+                "maximum": 0.16334104537964
+              },
+              "sum_source_peak_backlog_entries": {
+                "median": 24,
+                "minimum": 16,
+                "maximum": 32
+              },
+              "sum_source_peak_backlog_bytes": {
+                "median": 1368,
+                "minimum": 880,
+                "maximum": 1856
+              },
+              "max_target_assignment_share": {
+                "median": 0.375,
+                "minimum": 0.375,
+                "maximum": 0.375
+              },
+              "max_target_select_share": {
+                "median": 0.36347517730496454,
+                "minimum": 0.36347517730496454,
+                "maximum": 0.36347517730496454
+              },
+              "initial_calls_per_op": {
+                "median": 0.128,
+                "minimum": 0.128,
+                "maximum": 0.128
+              },
+              "capture_calls_per_op": {
+                "median": 0.128,
+                "minimum": 0.128,
+                "maximum": 0.128
+              },
+              "apply_calls_per_op": {
+                "median": 0.128,
+                "minimum": 0.124,
+                "maximum": 0.128
+              },
+              "select_calls_per_op": {
+                "median": 1.128,
+                "minimum": 1.128,
+                "maximum": 1.128
+              },
+              "frontiers_calls_per_op": {
+                "median": 0.386,
+                "minimum": 0.384,
+                "maximum": 0.408
+              },
+              "base_fetch_calls_per_op": {
+                "median": 1.042,
+                "minimum": 1.042,
+                "maximum": 1.042
+              },
+              "initial_elapsed_ms_per_op": {
+                "median": 0.0153302079997958,
+                "minimum": 0.0137801739992936,
+                "maximum": 0.0174267580002834
+              },
+              "capture_elapsed_ms_per_op": {
+                "median": 0.047319310000147996,
+                "minimum": 0.040320029999293204,
+                "maximum": 0.04840844000091259
+              },
+              "apply_elapsed_ms_per_op": {
+                "median": 0.22367363600074,
+                "minimum": 0.171828778000188,
+                "maximum": 0.717818881999402
+              },
+              "select_elapsed_ms_per_op": {
+                "median": 0.13499198399836082,
+                "minimum": 0.126703882001039,
+                "maximum": 0.14426243999400717
+              },
+              "frontiers_elapsed_ms_per_op": {
+                "median": 0.0120561460018962,
+                "minimum": 0.0109664859985514,
+                "maximum": 0.0198277800013784
+              },
+              "base_fetch_elapsed_ms_per_op": {
+                "median": 0.298185185999498,
+                "minimum": 0.286685134000208,
+                "maximum": 0.32799957599991
+              },
+              "storage_cpu_ms_per_op": {
+                "median": 4.539999999999978,
+                "minimum": 4.439999999999941,
+                "maximum": 4.780000000000015
+              },
+              "gateway_cpu_ms_per_op": {
+                "median": 0.2599999999999909,
+                "minimum": 0.23999999999999488,
+                "maximum": 0.2600000000000051
+              },
+              "clients_cpu_ms_per_op": {
+                "median": 0.20000000000000007,
+                "minimum": 0.19999999999999996,
+                "maximum": 0.24
+              },
+              "process_read_bytes_per_op": {
+                "median": 0.0,
+                "minimum": 0.0,
+                "maximum": 0.0
+              },
+              "process_write_bytes_per_op": {
+                "median": 10108.928,
+                "minimum": 9396.224,
+                "maximum": 10133.504
+              },
+              "process_rchar_per_op": {
+                "median": 7521.94,
+                "minimum": 7274.456,
+                "maximum": 7578.894
+              },
+              "process_wchar_per_op": {
+                "median": 6601.858,
+                "minimum": 6376.554,
+                "maximum": 6659.612
+              },
+              "_tarn_lazy_version_rows": {
+                "median": 512,
+                "minimum": 512,
+                "maximum": 512
+              },
+              "_tarn_lazy_version_bytes": {
+                "median": 11264,
+                "minimum": 11264,
+                "maximum": 11264
+              },
+              "_tarn_lazy_counter_rows": {
+                "median": 17,
+                "minimum": 17,
+                "maximum": 17
+              },
+              "_tarn_lazy_counter_bytes": {
+                "median": 117,
+                "minimum": 117,
+                "maximum": 117
+              },
+              "_tarn_lazy_outbox_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_outbox_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_rows": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              },
+              "_tarn_lazy_floor_bytes": {
+                "median": 0,
+                "minimum": 0,
+                "maximum": 0
+              }
+            }
+          },
+          "arms": [
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 0,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.087315890477996,
+                "goodput_at_p99_ceiling": 50.087315890477996,
+                "p50_ms": 0.8592400000111411,
+                "p99_ms": 17.85067900004833,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 694.6761990000141,
+                "gateway_rpc_per_op": 2.748,
+                "gateway_wire_bytes_per_op": 622.32,
+                "leader_iproto_bytes_per_op": 2935.616,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.014269828796387,
+                "sum_source_peak_backlog_entries": 32,
+                "sum_source_peak_backlog_bytes": 1856,
+                "target_assignment_counts": [
+                  208,
+                  80,
+                  104,
+                  120
+                ],
+                "target_select_counts": [
+                  210,
+                  83,
+                  98,
+                  125
+                ],
+                "max_target_assignment_share": 0.40625,
+                "max_target_select_share": 0.4069767441860465,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.4200000000000017,
+                  "s1.2": 0.10000000000000142,
+                  "s1.3": 0.10999999999999943,
+                  "s2.1": 0.39000000000000057,
+                  "s2.2": 0.10000000000000142,
+                  "s2.3": 0.10999999999999943,
+                  "s3.1": 0.4200000000000017,
+                  "s3.2": 0.09999999999999787,
+                  "s3.3": 0.10000000000000142,
+                  "s4.1": 0.4099999999999966,
+                  "s4.2": 0.09999999999999787,
+                  "s4.3": 0.10000000000000142
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.032,
+                "frontiers_calls_per_op": 0.382,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.017791073999887802,
+                "capture_elapsed_ms_per_op": 0.049867962000235,
+                "apply_elapsed_ms_per_op": 0.18895998799917002,
+                "select_elapsed_ms_per_op": 0.1318713840028068,
+                "frontiers_elapsed_ms_per_op": 0.0133949079995544,
+                "base_fetch_elapsed_ms_per_op": 0.30046530000072197,
+                "storage_cpu_ms_per_op": 4.920000000000002,
+                "gateway_cpu_ms_per_op": 0.2600000000000051,
+                "clients_cpu_ms_per_op": 0.24000000000000005,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10133.504,
+                "process_rchar_per_op": 7606.734,
+                "process_wchar_per_op": 6686.848,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 0,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.086713117943795,
+                "goodput_at_p99_ceiling": 50.086713117943795,
+                "p50_ms": 0.8474339999793301,
+                "p99_ms": 18.59877000003962,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 739.9071779999531,
+                "gateway_rpc_per_op": 2.848,
+                "gateway_wire_bytes_per_op": 632.072,
+                "leader_iproto_bytes_per_op": 2932.958,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.0051617622375488,
+                "sum_source_peak_backlog_entries": 16,
+                "sum_source_peak_backlog_bytes": 880,
+                "target_assignment_counts": [
+                  192,
+                  168,
+                  88,
+                  64
+                ],
+                "target_select_counts": [
+                  205,
+                  189,
+                  100,
+                  70
+                ],
+                "max_target_assignment_share": 0.375,
+                "max_target_select_share": 0.36347517730496454,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.4200000000000017,
+                  "s1.2": 0.09999999999999787,
+                  "s1.3": 0.10000000000000142,
+                  "s2.1": 0.4300000000000068,
+                  "s2.2": 0.10000000000000142,
+                  "s2.3": 0.09999999999999787,
+                  "s3.1": 0.39000000000000057,
+                  "s3.2": 0.08999999999999986,
+                  "s3.3": 0.08999999999999986,
+                  "s4.1": 0.39000000000000057,
+                  "s4.2": 0.08999999999999986,
+                  "s4.3": 0.08999999999999986
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.128,
+                "frontiers_calls_per_op": 0.386,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.0137801739992936,
+                "capture_elapsed_ms_per_op": 0.0420844439997836,
+                "apply_elapsed_ms_per_op": 0.22367363600074,
+                "select_elapsed_ms_per_op": 0.13499198399836082,
+                "frontiers_elapsed_ms_per_op": 0.0144578759995966,
+                "base_fetch_elapsed_ms_per_op": 0.32799957599991,
+                "storage_cpu_ms_per_op": 4.780000000000015,
+                "gateway_cpu_ms_per_op": 0.2600000000000051,
+                "clients_cpu_ms_per_op": 0.24,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10125.312,
+                "process_rchar_per_op": 7578.894,
+                "process_wchar_per_op": 6659.612,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 1,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.08545824802447,
+                "goodput_at_p99_ceiling": 50.08545824802447,
+                "p50_ms": 0.8933809999689402,
+                "p99_ms": 121.82195599996248,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 703.7684580000132,
+                "gateway_rpc_per_op": 2.87,
+                "gateway_wire_bytes_per_op": 634.206,
+                "leader_iproto_bytes_per_op": 2870.398,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.15919208526611,
+                "sum_source_peak_backlog_entries": 32,
+                "sum_source_peak_backlog_bytes": 1856,
+                "target_assignment_counts": [
+                  192,
+                  168,
+                  88,
+                  64
+                ],
+                "target_select_counts": [
+                  205,
+                  189,
+                  100,
+                  70
+                ],
+                "max_target_assignment_share": 0.375,
+                "max_target_select_share": 0.36347517730496454,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.4399999999999977,
+                  "s1.2": 0.09999999999999787,
+                  "s1.3": 0.0799999999999983,
+                  "s2.1": 0.4099999999999966,
+                  "s2.2": 0.09999999999999787,
+                  "s2.3": 0.09999999999999787,
+                  "s3.1": 0.4000000000000057,
+                  "s3.2": 0.09999999999999787,
+                  "s3.3": 0.07000000000000028,
+                  "s4.1": 0.39000000000000057,
+                  "s4.2": 0.08000000000000185,
+                  "s4.3": 0.08999999999999986
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.124,
+                "select_calls_per_op": 1.128,
+                "frontiers_calls_per_op": 0.408,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.017291222000267,
+                "capture_elapsed_ms_per_op": 0.04840844000091259,
+                "apply_elapsed_ms_per_op": 0.717818881999402,
+                "select_elapsed_ms_per_op": 0.14426243999400717,
+                "frontiers_elapsed_ms_per_op": 0.0198277800013784,
+                "base_fetch_elapsed_ms_per_op": 0.303323147998526,
+                "storage_cpu_ms_per_op": 4.719999999999985,
+                "gateway_cpu_ms_per_op": 0.2599999999999909,
+                "clients_cpu_ms_per_op": 0.2,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 9396.224,
+                "process_rchar_per_op": 7274.456,
+                "process_wchar_per_op": 6376.554,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 1,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.08604930523574,
+                "goodput_at_p99_ceiling": 50.08604930523574,
+                "p50_ms": 0.8084050000434218,
+                "p99_ms": 104.03255800008537,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 708.2291030000079,
+                "gateway_rpc_per_op": 2.766,
+                "gateway_wire_bytes_per_op": 624.066,
+                "leader_iproto_bytes_per_op": 2911.066,
+                "encoded_apply_bytes_per_op": 59.506,
+                "max_source_lag_seconds": 0.088315010070801,
+                "sum_source_peak_backlog_entries": 40,
+                "sum_source_peak_backlog_bytes": 2344,
+                "target_assignment_counts": [
+                  208,
+                  80,
+                  104,
+                  120
+                ],
+                "target_select_counts": [
+                  210,
+                  83,
+                  98,
+                  125
+                ],
+                "max_target_assignment_share": 0.40625,
+                "max_target_select_share": 0.4069767441860465,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.39000000000000057,
+                  "s1.2": 0.10999999999999943,
+                  "s1.3": 0.11000000000000298,
+                  "s2.1": 0.35999999999999943,
+                  "s2.2": 0.0799999999999983,
+                  "s2.3": 0.08999999999999986,
+                  "s3.1": 0.37000000000000455,
+                  "s3.2": 0.08000000000000185,
+                  "s3.3": 0.08999999999999986,
+                  "s4.1": 0.37999999999999545,
+                  "s4.2": 0.09999999999999787,
+                  "s4.3": 0.08999999999999986
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.126,
+                "select_calls_per_op": 1.032,
+                "frontiers_calls_per_op": 0.4,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.014887400001043799,
+                "capture_elapsed_ms_per_op": 0.0419667040002878,
+                "apply_elapsed_ms_per_op": 0.43355381399897797,
+                "select_elapsed_ms_per_op": 0.1151920520001108,
+                "frontiers_elapsed_ms_per_op": 0.0143385740013856,
+                "base_fetch_elapsed_ms_per_op": 0.303187431999502,
+                "storage_cpu_ms_per_op": 4.5,
+                "gateway_cpu_ms_per_op": 0.23999999999999488,
+                "clients_cpu_ms_per_op": 0.21999999999999997,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 9822.208,
+                "process_rchar_per_op": 7470.104,
+                "process_wchar_per_op": 6555.12,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 2,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.08527288670264,
+                "goodput_at_p99_ceiling": 50.08527288670264,
+                "p50_ms": 0.8277099999531856,
+                "p99_ms": 17.880702999946152,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 702.8096530000312,
+                "gateway_rpc_per_op": 2.752,
+                "gateway_wire_bytes_per_op": 622.63,
+                "leader_iproto_bytes_per_op": 2931.266,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.0043857097625732,
+                "sum_source_peak_backlog_entries": 32,
+                "sum_source_peak_backlog_bytes": 1856,
+                "target_assignment_counts": [
+                  208,
+                  80,
+                  104,
+                  120
+                ],
+                "target_select_counts": [
+                  210,
+                  83,
+                  98,
+                  125
+                ],
+                "max_target_assignment_share": 0.40625,
+                "max_target_select_share": 0.4069767441860465,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.37000000000000455,
+                  "s1.2": 0.10999999999999943,
+                  "s1.3": 0.09999999999999787,
+                  "s2.1": 0.3400000000000034,
+                  "s2.2": 0.09999999999999787,
+                  "s2.3": 0.08999999999999986,
+                  "s3.1": 0.3499999999999943,
+                  "s3.2": 0.08999999999999986,
+                  "s3.3": 0.10000000000000142,
+                  "s4.1": 0.35999999999999943,
+                  "s4.2": 0.08999999999999986,
+                  "s4.3": 0.09999999999999787
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.032,
+                "frontiers_calls_per_op": 0.382,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.014402203998543198,
+                "capture_elapsed_ms_per_op": 0.0427451620000738,
+                "apply_elapsed_ms_per_op": 0.165876726000532,
+                "select_elapsed_ms_per_op": 0.113461276001317,
+                "frontiers_elapsed_ms_per_op": 0.0114022360012314,
+                "base_fetch_elapsed_ms_per_op": 0.296343935998264,
+                "storage_cpu_ms_per_op": 4.3999999999999915,
+                "gateway_cpu_ms_per_op": 0.2600000000000051,
+                "clients_cpu_ms_per_op": 0.24,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10108.928,
+                "process_rchar_per_op": 7481.526,
+                "process_wchar_per_op": 6561.632,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 2,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.086395466027625,
+                "goodput_at_p99_ceiling": 50.086395466027625,
+                "p50_ms": 0.8344450000095094,
+                "p99_ms": 96.43114599998626,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 703.8034700000253,
+                "gateway_rpc_per_op": 2.852,
+                "gateway_wire_bytes_per_op": 632.44,
+                "leader_iproto_bytes_per_op": 2923.698,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.16334104537964,
+                "sum_source_peak_backlog_entries": 24,
+                "sum_source_peak_backlog_bytes": 1368,
+                "target_assignment_counts": [
+                  192,
+                  168,
+                  88,
+                  64
+                ],
+                "target_select_counts": [
+                  205,
+                  189,
+                  100,
+                  70
+                ],
+                "max_target_assignment_share": 0.375,
+                "max_target_select_share": 0.36347517730496454,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.4000000000000057,
+                  "s1.2": 0.10000000000000142,
+                  "s1.3": 0.09999999999999787,
+                  "s2.1": 0.36999999999999034,
+                  "s2.2": 0.10000000000000142,
+                  "s2.3": 0.08999999999999986,
+                  "s3.1": 0.37999999999999545,
+                  "s3.2": 0.09999999999999787,
+                  "s3.3": 0.08999999999999986,
+                  "s4.1": 0.35999999999999943,
+                  "s4.2": 0.08999999999999986,
+                  "s4.3": 0.08999999999999986
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.128,
+                "frontiers_calls_per_op": 0.39,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.0174267580002834,
+                "capture_elapsed_ms_per_op": 0.0477565360006338,
+                "apply_elapsed_ms_per_op": 0.295550399999912,
+                "select_elapsed_ms_per_op": 0.126703882001039,
+                "frontiers_elapsed_ms_per_op": 0.011701438000727801,
+                "base_fetch_elapsed_ms_per_op": 0.286685134000208,
+                "storage_cpu_ms_per_op": 4.539999999999978,
+                "gateway_cpu_ms_per_op": 0.2599999999999909,
+                "clients_cpu_ms_per_op": 0.24,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 9928.704,
+                "process_rchar_per_op": 7549.102,
+                "process_wchar_per_op": 6633.098,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 3,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.081009368047944,
+                "goodput_at_p99_ceiling": 50.081009368047944,
+                "p50_ms": 0.8160969999835288,
+                "p99_ms": 17.303824000009627,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 705.5806800000255,
+                "gateway_rpc_per_op": 2.846,
+                "gateway_wire_bytes_per_op": 631.858,
+                "leader_iproto_bytes_per_op": 2921.356,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.0041475296020508,
+                "sum_source_peak_backlog_entries": 24,
+                "sum_source_peak_backlog_bytes": 1368,
+                "target_assignment_counts": [
+                  192,
+                  168,
+                  88,
+                  64
+                ],
+                "target_select_counts": [
+                  205,
+                  189,
+                  100,
+                  70
+                ],
+                "max_target_assignment_share": 0.375,
+                "max_target_select_share": 0.36347517730496454,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.38999999999998636,
+                  "s1.2": 0.11000000000000298,
+                  "s1.3": 0.09999999999999787,
+                  "s2.1": 0.36999999999999034,
+                  "s2.2": 0.10000000000000142,
+                  "s2.3": 0.10000000000000142,
+                  "s3.1": 0.35999999999999943,
+                  "s3.2": 0.08999999999999986,
+                  "s3.3": 0.09000000000000341,
+                  "s4.1": 0.3399999999999892,
+                  "s4.2": 0.0799999999999983,
+                  "s4.3": 0.08999999999999986
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.128,
+                "frontiers_calls_per_op": 0.384,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.0144765939996888,
+                "capture_elapsed_ms_per_op": 0.040320029999293204,
+                "apply_elapsed_ms_per_op": 0.171828778000188,
+                "select_elapsed_ms_per_op": 0.127379257995699,
+                "frontiers_elapsed_ms_per_op": 0.0109664859985514,
+                "base_fetch_elapsed_ms_per_op": 0.29318603000115,
+                "storage_cpu_ms_per_op": 4.439999999999941,
+                "gateway_cpu_ms_per_op": 0.23999999999999488,
+                "clients_cpu_ms_per_op": 0.19999999999999996,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10108.928,
+                "process_rchar_per_op": 7521.94,
+                "process_wchar_per_op": 6601.858,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 3,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.08440784353401,
+                "goodput_at_p99_ceiling": 50.08440784353401,
+                "p50_ms": 0.9410410000327829,
+                "p99_ms": 18.680698999901324,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 706.0126090000267,
+                "gateway_rpc_per_op": 2.74,
+                "gateway_wire_bytes_per_op": 621.02,
+                "leader_iproto_bytes_per_op": 2929.644,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.0040178298950195,
+                "sum_source_peak_backlog_entries": 16,
+                "sum_source_peak_backlog_bytes": 976,
+                "target_assignment_counts": [
+                  208,
+                  80,
+                  104,
+                  120
+                ],
+                "target_select_counts": [
+                  210,
+                  83,
+                  98,
+                  125
+                ],
+                "max_target_assignment_share": 0.40625,
+                "max_target_select_share": 0.4069767441860465,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.4200000000000017,
+                  "s1.2": 0.10999999999999943,
+                  "s1.3": 0.10000000000000142,
+                  "s2.1": 0.37000000000000455,
+                  "s2.2": 0.09999999999999787,
+                  "s2.3": 0.10999999999999943,
+                  "s3.1": 0.38000000000000966,
+                  "s3.2": 0.10999999999999943,
+                  "s3.3": 0.10000000000000142,
+                  "s4.1": 0.39000000000000057,
+                  "s4.2": 0.10000000000000142,
+                  "s4.3": 0.09999999999999787
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.032,
+                "frontiers_calls_per_op": 0.382,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.0158279320005478,
+                "capture_elapsed_ms_per_op": 0.047331112001302196,
+                "apply_elapsed_ms_per_op": 0.184492217999604,
+                "select_elapsed_ms_per_op": 0.132129645999156,
+                "frontiers_elapsed_ms_per_op": 0.0124840479993506,
+                "base_fetch_elapsed_ms_per_op": 0.31169237599829197,
+                "storage_cpu_ms_per_op": 4.780000000000029,
+                "gateway_cpu_ms_per_op": 0.28000000000000114,
+                "clients_cpu_ms_per_op": 0.26000000000000006,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10125.312,
+                "process_rchar_per_op": 7570.762,
+                "process_wchar_per_op": 6650.582,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 4,
+              "route_parts": 1,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.08562173598245,
+                "goodput_at_p99_ceiling": 50.08562173598245,
+                "p50_ms": 0.8454000000028827,
+                "p99_ms": 23.876866000023256,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 710.7867280000164,
+                "gateway_rpc_per_op": 2.752,
+                "gateway_wire_bytes_per_op": 622.708,
+                "leader_iproto_bytes_per_op": 2922.452,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.015274047851562,
+                "sum_source_peak_backlog_entries": 32,
+                "sum_source_peak_backlog_bytes": 1856,
+                "target_assignment_counts": [
+                  208,
+                  80,
+                  104,
+                  120
+                ],
+                "target_select_counts": [
+                  210,
+                  83,
+                  98,
+                  125
+                ],
+                "max_target_assignment_share": 0.40625,
+                "max_target_select_share": 0.4069767441860465,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.39000000000000057,
+                  "s1.2": 0.10999999999999943,
+                  "s1.3": 0.09999999999999787,
+                  "s2.1": 0.3499999999999943,
+                  "s2.2": 0.08999999999999986,
+                  "s2.3": 0.08999999999999986,
+                  "s3.1": 0.37000000000000455,
+                  "s3.2": 0.08999999999999986,
+                  "s3.3": 0.10000000000000142,
+                  "s4.1": 0.3500000000000085,
+                  "s4.2": 0.10000000000000142,
+                  "s4.3": 0.10999999999999943
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.032,
+                "frontiers_calls_per_op": 0.386,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.0155862879989854,
+                "capture_elapsed_ms_per_op": 0.0425520399996912,
+                "apply_elapsed_ms_per_op": 0.232788816000494,
+                "select_elapsed_ms_per_op": 0.12048836600069761,
+                "frontiers_elapsed_ms_per_op": 0.0116244580003694,
+                "base_fetch_elapsed_ms_per_op": 0.29703429999927,
+                "storage_cpu_ms_per_op": 4.500000000000014,
+                "gateway_cpu_ms_per_op": 0.2600000000000051,
+                "clients_cpu_ms_per_op": 0.24,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10141.696,
+                "process_rchar_per_op": 7538.166,
+                "process_wchar_per_op": 6618.456,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            },
+            {
+              "shape": "uniform",
+              "lanes": 1,
+              "pair": 4,
+              "route_parts": 2,
+              "complete": true,
+              "errors": [],
+              "failure": null,
+              "raw_sample_hash_valid": true,
+              "metrics": {
+                "goodput": 50.08329550203128,
+                "goodput_at_p99_ceiling": 50.08329550203128,
+                "p50_ms": 0.9032299999489624,
+                "p99_ms": 18.0346180000015,
+                "rows_inserted": 512,
+                "completed": 500,
+                "skipped": 0,
+                "outage_catchup_ms": 708.980219999944,
+                "gateway_rpc_per_op": 2.846,
+                "gateway_wire_bytes_per_op": 631.858,
+                "leader_iproto_bytes_per_op": 2895.28,
+                "encoded_apply_bytes_per_op": 59.504,
+                "max_source_lag_seconds": 0.0055756568908691,
+                "sum_source_peak_backlog_entries": 32,
+                "sum_source_peak_backlog_bytes": 1856,
+                "target_assignment_counts": [
+                  192,
+                  168,
+                  88,
+                  64
+                ],
+                "target_select_counts": [
+                  205,
+                  189,
+                  100,
+                  70
+                ],
+                "max_target_assignment_share": 0.375,
+                "max_target_select_share": 0.36347517730496454,
+                "storage_cpu_seconds": {
+                  "s1.1": 0.4099999999999966,
+                  "s1.2": 0.10000000000000142,
+                  "s1.3": 0.09999999999999787,
+                  "s2.1": 0.37000000000000455,
+                  "s2.2": 0.08999999999999986,
+                  "s2.3": 0.10999999999999943,
+                  "s3.1": 0.3499999999999943,
+                  "s3.2": 0.08999999999999986,
+                  "s3.3": 0.09999999999999787,
+                  "s4.1": 0.35999999999999943,
+                  "s4.2": 0.08000000000000185,
+                  "s4.3": 0.0799999999999983
+                },
+                "initial_calls_per_op": 0.128,
+                "capture_calls_per_op": 0.128,
+                "apply_calls_per_op": 0.128,
+                "select_calls_per_op": 1.128,
+                "frontiers_calls_per_op": 0.384,
+                "base_fetch_calls_per_op": 1.042,
+                "initial_elapsed_ms_per_op": 0.0153302079997958,
+                "capture_elapsed_ms_per_op": 0.047319310000147996,
+                "apply_elapsed_ms_per_op": 0.1742662899996498,
+                "select_elapsed_ms_per_op": 0.1423103779998196,
+                "frontiers_elapsed_ms_per_op": 0.0120561460018962,
+                "base_fetch_elapsed_ms_per_op": 0.298185185999498,
+                "storage_cpu_ms_per_op": 4.479999999999983,
+                "gateway_cpu_ms_per_op": 0.2600000000000051,
+                "clients_cpu_ms_per_op": 0.20000000000000007,
+                "process_read_bytes_per_op": 0.0,
+                "process_write_bytes_per_op": 10133.504,
+                "process_rchar_per_op": 7416.508,
+                "process_wchar_per_op": 6497.268,
+                "_tarn_lazy_version_rows": 512,
+                "_tarn_lazy_version_bytes": 11264,
+                "_tarn_lazy_counter_rows": 17,
+                "_tarn_lazy_counter_bytes": 117,
+                "_tarn_lazy_outbox_rows": 0,
+                "_tarn_lazy_outbox_bytes": 0,
+                "_tarn_lazy_floor_rows": 0,
+                "_tarn_lazy_floor_bytes": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
