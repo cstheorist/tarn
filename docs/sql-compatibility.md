@@ -287,7 +287,7 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   participants; its JSON fields are engine-specific. `SHOW TARN PLAN FOR`
   diagnoses unbound prepared statements and `SHOW TARN QUERIES` reports
   bounded completed-query observations. Neither executes the diagnosed
-  query. ANALYZE, other plan formats and unsupported complex shapes fail
+  query. EXPLAIN ANALYZE, other plan formats and unsupported complex shapes fail
   explicitly. See [query plans and fanout](operations.md#query-plans-and-fanout).
 * `information_schema.TABLES`, with MySQL 8's columns: one row per table
   (`TABLE_TYPE` `BASE TABLE`, `ENGINE` memtx or vinyl, `TABLE_COMMENT`) and
@@ -295,7 +295,10 @@ TABLES` commits the open transaction and takes no lock, `UNLOCK TABLES` and
   is read from the catalog, so it takes no locks and needs no transaction
   (`FOR UPDATE` on it alone is a plain read); writing it is 1044, and the
   other `information_schema` tables are 1109.
-* `UNLOCK`, `FLUSH`, `ANALYZE`, `OPTIMIZE`, `CHECKSUM`, `DO` are accepted
+* `ANALYZE TABLE one_table` collects bounded, gateway-local integer-prefix
+  hints and implicitly commits. `SHOW TARN STATISTICS` and EXPLAIN expose
+  the advisory estimates; [scope and limits](operations.md#optional-cardinality-statistics).
+* `UNLOCK`, `FLUSH`, `OPTIMIZE`, `CHECKSUM`, `DO` are accepted
   and do nothing; `LOCK TABLES` commits the open transaction.
 
 ## Isolation and locking

@@ -30,6 +30,7 @@ pub enum Output {
     Rows {
         columns: Arc<[Column]>,
         rows: Vec<Vec<Value>>,
+        resource_guard: Option<tarn_common::ResourceGuard>,
     },
 }
 
@@ -98,7 +99,7 @@ pub struct Prepared {
     diagnostic: Option<crate::observe::Descriptor>,
     pub n_params: usize,
     pub columns: Arc<[Column]>,
-    plan: Option<(u64, Stmt)>,
+    plan: Option<((u64, Option<u64>), Stmt)>,
     admin: Option<Admin>,
     /// Statement with subqueries/UNION: the parsed template (placeholders
     /// ?1..?N), bound and run through `run_complex` at execute time.
@@ -106,6 +107,7 @@ pub struct Prepared {
 }
 
 pub struct Session {
+    retained: crate::budget::Account,
     pub cluster: Arc<Cluster>,
     pub db: Option<String>,
     pub user: String,
@@ -183,7 +185,7 @@ pub(crate) const MAX_RETRIES: usize = 20;
 
 /// The mark (`Client::mark`) of a connection to a shard without the native
 /// autocommit procedure.
-const MARK_NO_NATIVE_WRITE: u32 = 1;
+pub(crate) const MARK_NO_NATIVE_WRITE: u32 = 1;
 
 /// Statements that met a stale catalog: a table definition an ALTER TABLE
 /// replaced (1412; the shards refuse writes made with it while the ALTER
@@ -395,6 +397,29 @@ fn cols(names: &[(&str, ColumnType)]) -> Arc<[Column]> {
     names.iter().map(|(n, t)| Column::new(n, *t)).collect::<Vec<_>>().into()
 }
 
+fn analyze_columns() -> Arc<[Column]> {
+    cols(&[
+        ("Table", ColumnType::VarString),
+        ("Op", ColumnType::VarString),
+        ("Msg_type", ColumnType::VarString),
+        ("Msg_text", ColumnType::VarString),
+    ])
+}
+
+fn statistics_columns() -> Arc<[Column]> {
+    cols(&[
+        ("Table", ColumnType::VarString),
+        ("Index", ColumnType::VarString),
+        ("Prefix_parts", ColumnType::LongLong),
+        ("Estimated_table_rows", ColumnType::Double),
+        ("Sample_rows", ColumnType::LongLong),
+        ("Observed_distinct", ColumnType::LongLong),
+        ("Estimated_distinct", ColumnType::Double),
+        ("Age_ms", ColumnType::LongLong),
+        ("Generation", ColumnType::LongLong),
+    ])
+}
+
 fn like_ci(s: &str, pat: &Option<String>) -> bool {
     match pat {
         None => true,
@@ -409,6 +434,7 @@ impl Session {
             (g.isolation, g.lock_wait_timeout)
         };
         Session {
+            retained: cluster.resources.account(cluster.cfg.resources.query_bytes),
             db: None,
             user: "root".into(),
             conn_id,
@@ -552,7 +578,7 @@ impl Session {
     async fn set_var(&mut self, scope: VarScope, name: &str, rhs: &str) -> SqlResult<()> {
         if let Some(user) = name.strip_prefix('@') {
             let v = self.eval_set_value(rhs, false).await?.unwrap_or(Value::Null);
-            self.user_vars.insert(user.to_string(), v);
+            self.set_user_value(user.to_string(), v)?;
             return Ok(());
         }
         if name == "names" {
@@ -593,7 +619,7 @@ impl Session {
                 "character_set_connection",
                 "character_set_results",
             ] {
-                self.sys_vars.insert(v.into(), Value::str(&cs));
+                self.set_system_value(v.into(), Value::str(&cs))?;
             }
             self.collation_connection = co;
             return Ok(());
@@ -640,7 +666,7 @@ impl Session {
                     self.lazy_wait_timeout = crate::lazy::wait_seconds(value.as_ref())?;
                     Value::Int(self.lazy_wait_timeout as i64)
                 };
-                self.sys_vars.insert(name.to_string(), v);
+                self.set_system_value(name.to_string(), v)?;
                 return Ok(());
             }
             n if n.starts_with("character_set_") && n != "character_set_system" => {
@@ -697,7 +723,7 @@ impl Session {
                     }
                     Some(_) => {
                         let v = admin::TreeChecks::parse(&text).ok_or_else(|| admin::bad_value(name, &text))?;
-                        self.sys_vars.insert(name.to_string(), Value::str(v.name()));
+                        self.set_system_value(name.to_string(), Value::str(v.name()))?;
                     }
                 }
                 return Ok(());
@@ -719,7 +745,7 @@ impl Session {
                 self.sys_vars.remove(name);
             }
             Some(v) => {
-                self.sys_vars.insert(name.to_string(), v);
+                self.set_system_value(name.to_string(), v)?;
             }
         }
         Ok(())
@@ -759,10 +785,36 @@ impl Session {
 
     pub async fn query(&mut self, sql: &str) -> SqlResult<Output> {
         let cluster = self.cluster.clone();
-        crate::observe::track(&cluster.stats.query_digests, self.query_inner(sql)).await
+        let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
+        crate::budget::scope(query.clone(), async {
+            let result = crate::observe::track(&cluster.stats.query_digests, async {
+                crate::budget::charge((sql.len() as u64).saturating_mul(128).saturating_add(4096))?;
+                crate::budget::work(sql.len() as u64)?;
+                Box::pin(self.query_budgeted(sql)).await
+            })
+            .await;
+            self.finish_budgeted(result, &query)
+        })
+        .await
     }
 
-    async fn query_inner(&mut self, sql: &str) -> SqlResult<Output> {
+    fn finish_budgeted(
+        &mut self,
+        mut result: SqlResult<Output>,
+        query: &Arc<crate::budget::Query>,
+    ) -> SqlResult<Output> {
+        if result.as_ref().is_err_and(crate::budget::is_exhausted) {
+            if let Some(txn) = self.txn.take() {
+                txn.rollback(&self.cluster);
+            }
+        }
+        if let Ok(Output::Rows { resource_guard, .. }) = &mut result {
+            *resource_guard = Some(query.guard());
+        }
+        result
+    }
+
+    async fn query_budgeted(&mut self, sql: &str) -> SqlResult<Output> {
         self.cluster.stats.queries.fetch_add(1, Ordering::Relaxed);
         if !admin::reads_diagnostics(sql) {
             self.warnings.clear();
@@ -879,15 +931,48 @@ impl Session {
             ));
         }
         for (v, x) in vars.iter().zip(row) {
-            self.user_vars.insert(v.clone(), x);
+            self.set_user_value(v.clone(), x)?;
         }
         Ok(Output::ok(1))
     }
 
     pub fn prepare(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
+        let query = self.cluster.resources.query();
+        crate::budget::scope_sync(query, || {
+            let old = self.retained.used();
+            self.retained.resize(
+                old.saturating_add((sql.len() as u64).saturating_mul(128))
+                    .saturating_add(4096),
+            )?;
+            let result = self.prepare_budgeted(id, sql);
+            if result.is_err() {
+                self.retained.resize(old)?;
+            }
+            result
+        })
+    }
+
+    fn prepare_budgeted(&mut self, id: u32, sql: &str) -> SqlResult<(usize, Arc<[Column]>)> {
         let sql = crate::prep::expand_comments(sql);
         let sql: &str = &sql;
         if let Some(a) = admin::recognize(sql)? {
+            let columns = match &a {
+                Admin::Analyze(text) => {
+                    let catalog = self.cluster.catalog();
+                    let ctx = PlanCtx {
+                        statistics: None,
+                        catalog: &catalog,
+                        db: self.db.as_deref(),
+                        params: &[],
+                        conn_coll: &self.collation_connection,
+                        default_coll: &self.cluster.cfg.default_collation,
+                    };
+                    planner::analyze_target(text, &ctx)?;
+                    analyze_columns()
+                }
+                Admin::ShowTarnStatistics => statistics_columns(),
+                _ => Arc::from(Vec::new()),
+            };
             self.prepared.insert(
                 id,
                 Prepared {
@@ -895,13 +980,13 @@ impl Session {
                     diagnostic: matches!(a, Admin::Commit)
                         .then(|| crate::observe::Descriptor::new(self.db.as_deref(), "COMMIT")),
                     n_params: 0,
-                    columns: Arc::from(Vec::new()),
+                    columns: columns.clone(),
                     plan: None,
                     admin: Some(a),
                     complex: None,
                 },
             );
-            return Ok((0, Arc::from(Vec::new())));
+            return Ok((0, columns));
         }
         if crate::prep::has_var_refs(sql) {
             return Err(SqlError::unsupported("variables in prepared statements"));
@@ -930,7 +1015,7 @@ impl Session {
             Stmt::Explain { .. } => vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             _ => Arc::from(Vec::new()),
         };
-        let version = self.cluster.catalog().version;
+        let version = self.plan_version(&stmt);
         let diagnostic = if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
@@ -956,10 +1041,19 @@ impl Session {
 
     pub async fn execute(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         let cluster = self.cluster.clone();
-        crate::observe::track(&cluster.stats.query_digests, self.execute_inner(id, params)).await
+        let query = crate::budget::current().unwrap_or_else(|| self.cluster.resources.query());
+        crate::budget::scope(query.clone(), async {
+            let result = crate::observe::track(&cluster.stats.query_digests, async {
+                crate::budget::charge(crate::budget::row_bytes(params).saturating_mul(4))?;
+                self.execute_budgeted(id, params).await
+            })
+            .await;
+            self.finish_budgeted(result, &query)
+        })
+        .await
     }
 
-    async fn execute_inner(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
+    async fn execute_budgeted(&mut self, id: u32, params: &[Value]) -> SqlResult<Output> {
         match self.prepared.get(&id).and_then(|p| p.diagnostic.clone()) {
             Some(diagnostic) => crate::observe::describe(diagnostic),
             None => crate::observe::disable(),
@@ -1008,9 +1102,8 @@ impl Session {
                     "Incorrect arguments to mysqld_stmt_execute",
                 ));
             }
-            let version = self.cluster.catalog().version;
             let stmt = match &p.plan {
-                Some((v, s)) if *v == version => Some(s.clone()),
+                Some((v, s)) if *v == self.plan_version(s) => Some(s.clone()),
                 _ => None,
             };
             (p.admin.clone(), stmt)
@@ -1025,12 +1118,33 @@ impl Session {
                 let template = self.prepared[&id].template.clone();
                 self.plan_cached(&template, params)?
             }
+            Some(Stmt::Select(p))
+                if !params.is_empty()
+                    && matches!(&p.source,Source::Join { left, .. } if matches!(left.as_ref(),Source::Table(_)))
+                    && p.project.iter().all(|e| matches!(e, Expr::Col(_) | Expr::Lit(_)))
+                    && p.agg.is_none()
+                    && p.limit.is_none()
+                    && !p.distinct
+                    && p.source.tables().iter().all(|a| {
+                        self.cluster
+                            .statistics
+                            .snapshot(self.cluster.catalog().version)
+                            .tables
+                            .contains_key(&a.table.space_id)
+                    }) =>
+            {
+                // The projection's metadata is independent of parameters.
+                // Use the shared type-keyed cache so bound integer predicates
+                // can use hints, while unbound/noninteger plans stay conservative.
+                let template = self.prepared[&id].template.clone();
+                self.plan_cached(&template, params)?
+            }
             Some(s) => s,
             None => {
                 // catalog changed since PREPARE: re-plan
                 let template = self.prepared[&id].template.clone();
                 let s = self.plan_cached(&template, &[])?;
-                let version = self.cluster.catalog().version;
+                let version = self.plan_version(&s);
                 self.prepared.get_mut(&id).unwrap().plan = Some((version, s.clone()));
                 s
             }
@@ -1040,6 +1154,53 @@ impl Session {
 
     pub fn close(&mut self, id: u32) {
         self.prepared.remove(&id);
+        let _ = self.retained.resize(self.retained_size());
+    }
+
+    fn retained_size(&self) -> u64 {
+        let vars = self
+            .user_vars
+            .iter()
+            .chain(self.sys_vars.iter())
+            .fold(0u64, |n, (k, v)| {
+                n.saturating_add((256 + k.len() as u64 + crate::budget::value_bytes(v)).saturating_mul(8))
+            });
+        let plans = self.prepared.values().fold(0u64, |n, p| {
+            n.saturating_add(4096 + (p.template.len() as u64).saturating_mul(128))
+        });
+        self.sql_prepared
+            .iter()
+            .fold(vars.saturating_add(plans), |n, (name, (sql, _))| {
+                n.saturating_add(4096 + (name.len() as u64 + sql.len() as u64).saturating_mul(128))
+            })
+    }
+
+    fn set_user_value(&mut self, name: String, value: Value) -> SqlResult<()> {
+        let old = self
+            .user_vars
+            .get(&name)
+            .map_or(0, |v| (256 + name.len() as u64 + crate::budget::value_bytes(v)) * 8);
+        let desired = self
+            .retained_size()
+            .saturating_sub(old)
+            .saturating_add((256 + name.len() as u64 + crate::budget::value_bytes(&value)) * 8);
+        self.retained.resize(self.retained.used().max(desired))?;
+        drop(self.user_vars.insert(name, crate::budget::own_value(value)));
+        self.retained.resize(desired)
+    }
+
+    fn set_system_value(&mut self, name: String, value: Value) -> SqlResult<()> {
+        let old = self
+            .sys_vars
+            .get(&name)
+            .map_or(0, |v| (256 + name.len() as u64 + crate::budget::value_bytes(v)) * 8);
+        let desired = self
+            .retained_size()
+            .saturating_sub(old)
+            .saturating_add((256 + name.len() as u64 + crate::budget::value_bytes(&value)) * 8);
+        self.retained.resize(self.retained.used().max(desired))?;
+        drop(self.sys_vars.insert(name, crate::budget::own_value(value)));
+        self.retained.resize(desired)
     }
 
     pub fn disconnect(&mut self) {
@@ -1085,7 +1246,9 @@ impl Session {
             return Ok(p.stmt.clone());
         }
         let catalog = self.cluster.catalog();
+        let statistics = self.cluster.statistics.snapshot(catalog.version);
         let ctx = PlanCtx {
+            statistics: Some(&statistics),
             catalog: &catalog,
             db: self.db.as_deref(),
             params,
@@ -1093,6 +1256,11 @@ impl Session {
             default_coll: &self.cluster.cfg.default_collation,
         };
         let stmt = planner::plan(template, &ctx)?;
+        let cache_guard = tarn_common::ResourceMemory::reserve(
+            self.cluster.resources.clone(),
+            4096 + (template.len() as u64 + key.len() as u64).saturating_mul(128),
+        )
+        .ok();
         if matches!(
             stmt,
             Stmt::Select(_) | Stmt::Insert(_) | Stmt::Update(_) | Stmt::Delete(_)
@@ -1101,17 +1269,30 @@ impl Session {
             if let Some(diagnostic) = &diagnostic {
                 crate::observe::describe(diagnostic.clone());
             }
-            self.cluster.cache_plan(
-                &db,
-                &key,
-                Arc::new(CachedPlan {
-                    version: catalog.version,
-                    stmt: stmt.clone(),
-                    diagnostic,
-                }),
-            );
+            if let Some(cache_guard) = cache_guard {
+                self.cluster.cache_plan(
+                    &db,
+                    &key,
+                    Arc::new(CachedPlan {
+                        resource_guard: cache_guard,
+                        statistics_generation: stmt.uses_statistics().then_some(statistics.generation),
+                        version: catalog.version,
+                        stmt: stmt.clone(),
+                        diagnostic,
+                    }),
+                );
+            }
         }
         Ok(stmt)
+    }
+
+    fn plan_version(&self, stmt: &Stmt) -> (u64, Option<u64>) {
+        let v = self.cluster.catalog().version;
+        (
+            v,
+            stmt.uses_statistics()
+                .then(|| self.cluster.statistics.snapshot(v).generation),
+        )
     }
 
     // ---- dispatch -------------------------------------------------------------
@@ -1149,6 +1330,7 @@ impl Session {
         let value = exec::diagnostics::render(&self.cluster, stmt, version, &cx, committed, &buffered)?;
         let text = serde_json::to_string(&value).map_err(|e| SqlError::internal(e.to_string()))?;
         Ok(Output::Rows {
+            resource_guard: None,
             columns: vec![Column::new("EXPLAIN", ColumnType::VarString)].into(),
             rows: vec![vec![Value::str(&text)]],
         })
@@ -1213,7 +1395,14 @@ impl Session {
                     }
                 }
             };
-            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+            return self.finish_txn_stmt(
+                txn,
+                res.map(|rows| Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                }),
+            );
         }
         if crate::lazy::eligible(p) && !self.lazy_history.strong {
             if self.lazy_read_your_writes && !self.lazy_history.catch_up(&self.cluster, self.lazy_wait_timeout).await {
@@ -1227,7 +1416,11 @@ impl Session {
             if let Some(rows) = crate::lazy::select(&self.cluster, p, &cx).await? {
                 self.cluster.stats.lazy_reads.fetch_add(1, Ordering::Relaxed);
                 self.found_rows = rows.len() as u64;
-                return Ok(Output::Rows { columns, rows });
+                return Ok(Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                });
             }
         }
         if crate::lazy::eligible(p) {
@@ -1243,7 +1436,11 @@ impl Session {
                 run_select(&self.cluster, &mut mode, p, &cx).await?
             };
             self.found_rows = rows.len() as u64;
-            return Ok(Output::Rows { columns, rows });
+            return Ok(Output::Rows {
+                columns,
+                rows,
+                resource_guard: None,
+            });
         }
         // Autocommit: one lock-aware storage read if the plan allows it,
         // otherwise an implicit read-only transaction (validated at the end).
@@ -1253,7 +1450,11 @@ impl Session {
             match run_select(&self.cluster, &mut mode, p, &cx).await {
                 Ok(rows) => {
                     self.found_rows = rows.len() as u64;
-                    return Ok(Output::Rows { columns, rows });
+                    return Ok(Output::Rows {
+                        columns,
+                        rows,
+                        resource_guard: None,
+                    });
                 }
                 Err(e) if e.code == NEED_TXN => {}
                 Err(e) => return Err(e),
@@ -1277,7 +1478,11 @@ impl Session {
             match res {
                 Ok(rows) => {
                     self.found_rows = rows.len() as u64;
-                    return Ok(Output::Rows { columns, rows });
+                    return Ok(Output::Rows {
+                        columns,
+                        rows,
+                        resource_guard: None,
+                    });
                 }
                 Err(e) if e.code == 1213 && !e.moved && attempt < MAX_RETRIES => {
                     attempt += 1;
@@ -1313,7 +1518,14 @@ impl Session {
             if let Ok(rows) = &res {
                 self.found_rows = rows.len() as u64;
             }
-            return self.finish_txn_stmt(txn, res.map(|rows| Output::Rows { columns, rows }));
+            return self.finish_txn_stmt(
+                txn,
+                res.map(|rows| Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                }),
+            );
         }
         let mut txn = self.new_txn(false);
         let res = {
@@ -1324,7 +1536,11 @@ impl Session {
             Ok(rows) => {
                 self.commit_tracked(txn).await?;
                 self.found_rows = rows.len() as u64;
-                Ok(Output::Rows { columns, rows })
+                Ok(Output::Rows {
+                    columns,
+                    rows,
+                    resource_guard: None,
+                })
             }
             Err(e) => {
                 txn.rollback(&self.cluster);
@@ -1350,7 +1566,7 @@ impl Session {
     /// a conflict ends the transaction (as a MySQL deadlock does).
     pub(crate) fn finish_txn_stmt(&mut self, txn: Txn, res: SqlResult<Output>) -> SqlResult<Output> {
         match res {
-            Err(e) if e.code == 1213 || e.code == 1412 || txn.doomed.is_some() => {
+            Err(e) if e.code == 1213 || e.code == 1412 || crate::budget::is_exhausted(&e) || txn.doomed.is_some() => {
                 txn.rollback(&self.cluster);
                 Err(e)
             }
@@ -1379,6 +1595,10 @@ impl Session {
         if self.txn_needed() {
             self.ensure_txn();
             let mut txn = self.txn.take().unwrap();
+            if let Err(error) = txn.snapshot_charge() {
+                txn.rollback(&self.cluster);
+                return Err(error);
+            }
             let snapshot = txn.writes.clone();
             let res = match check_defs(&txn, stmt_tables(stmt)) {
                 Err(e) => Err(e),
@@ -1593,20 +1813,15 @@ impl Session {
             // Lazy sources require Lua capture. Avoid a predictable extra
             // native call; the shard also enforces capture exclusions for
             // stale gateways that do not yet know this metadata.
-            let result = if matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy() {
-                self.cluster
-                    .call_native_or_lua_once(
-                        shard,
-                        "tarn_storage.ts_autocommit",
-                        "tarn_autocommit",
-                        &writes.0,
-                        MARK_NO_NATIVE_WRITE,
-                    )
-                    .await
-            } else {
-                self.cluster.call_once(shard, "tarn_autocommit", &writes.0).await
-            };
-            let d = match result {
+            let result = crate::budget::autocommit(
+                &self.cluster,
+                shard,
+                matches!(table.engine, crate::catalog::Engine::Memtx) && !table.has_lazy(),
+                &writes.0,
+                self.lock_wait_timeout,
+            )
+            .await;
+            let (d, _wire) = match result {
                 Ok(d) => d,
                 Err(e) => {
                     if table.has_lazy() {
@@ -2012,7 +2227,7 @@ impl Session {
             )
             .await?;
             txn.mark_begun(shard);
-            txn.note_point(shard, g.table.space_id, 0, key, bucket);
+            txn.note_point(shard, g.table.space_id, 0, key, bucket)?;
             rows.into_iter().next()
         };
         let Some(entry) = entry else { return Ok(None) };
@@ -2059,7 +2274,7 @@ impl Session {
         )
         .await?;
         txn.mark_begun(shard);
-        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket);
+        txn.note_point(shard, t.space_id, 0, pk.to_vec(), bucket)?;
         Ok(rows.into_iter().next())
     }
 
@@ -2402,7 +2617,7 @@ impl Session {
             for (((l, _), r), b) in pending.into_iter().zip(results).zip(buckets) {
                 let (r, _) = r?;
                 txn.mark_begun(l.2);
-                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b);
+                txn.note_point(l.2, t.space_id, l.3, l.4.clone(), b)?;
                 place(&mut out, l.0, l.1, r.into_iter().next());
             }
         }
@@ -2491,7 +2706,7 @@ impl Session {
                 )
                 .await?;
                 txn.mark_begun(shard);
-                txn.note_point(shard, t.space_id, id, key, bucket);
+                txn.note_point(shard, t.space_id, id, key, bucket)?;
                 stored.push(rows.into_iter().next());
             }
         }
@@ -2788,7 +3003,13 @@ impl Session {
             self.cluster.refresh_if_newer().await?;
         }
         let catalog = self.cluster.catalog();
-        let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| Ok(Output::Rows { columns, rows });
+        let rows_out = |columns: Arc<[Column]>, rows: Vec<Vec<Value>>| {
+            Ok(Output::Rows {
+                columns,
+                rows,
+                resource_guard: None,
+            })
+        };
         match a {
             Admin::Begin { .. } => {
                 self.implicit_commit().await?;
@@ -2852,6 +3073,8 @@ impl Session {
                 if let Some(t) = self.txn.as_mut() {
                     // A savepoint of the same name is replaced.
                     t.savepoints.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                    t.snapshot_charge()?;
+                    t.savepoint_name_charge(name.len())?;
                     t.savepoints.push((name, t.writes.clone()));
                 }
                 Ok(Output::ok(0))
@@ -2866,6 +3089,7 @@ impl Session {
                     .ok_or_else(missing)?;
                 // Undo the writes since the savepoint; keep the row locks and
                 // the read set (as InnoDB keeps the locks).
+                t.snapshot_charge()?;
                 t.writes = t.savepoints[i].1.clone();
                 t.savepoints.truncate(i + 1);
                 Ok(Output::ok(0))
@@ -2884,6 +3108,7 @@ impl Session {
             Admin::Prepare { name, source } => {
                 // A failed PREPARE leaves no statement of that name, as in MySQL.
                 self.sql_prepared.remove(&name);
+                let _ = self.retained.resize(self.retained_size());
                 let text = match source {
                     admin::PrepareSource::Text(s) => s,
                     admin::PrepareSource::Var(v) => match self.user_vars.get(&v) {
@@ -2910,6 +3135,8 @@ impl Session {
                     return Err(SqlError::parse("You have an error in your SQL syntax: empty statement"));
                 }
                 let n = crate::prep::count_markers(&text);
+                let additional = 4096 + (name.len() as u64 + text.len() as u64).saturating_mul(128);
+                self.retained.charge(additional)?;
                 self.sql_prepared.insert(name, (text, n));
                 Ok(Output::Ok {
                     affected: 0,
@@ -2947,6 +3174,73 @@ impl Session {
                 )),
             },
             Admin::Noop => Ok(Output::ok(0)),
+            Admin::Analyze(sql) => {
+                // As in MariaDB, ANALYZE is an implicit-commit statement.
+                self.cluster.refresh_if_newer().await?;
+                let catalog = self.cluster.catalog();
+                let ctx = PlanCtx {
+                    statistics: None,
+                    catalog: &catalog,
+                    db: self.db.as_deref(),
+                    params: &[],
+                    conn_coll: &self.collation_connection,
+                    default_coll: &self.cluster.cfg.default_collation,
+                };
+                let t = planner::analyze_target(&sql, &ctx)?;
+                self.implicit_commit().await?;
+                let _collector = self.cluster.statistics.collecting.try_lock().map_err(|_| {
+                    SqlError::new(1205, "HY000", "ANALYZE collector is already running on this gateway")
+                })?;
+                let stats = crate::statistics::collect(&self.cluster, &t).await?;
+                self.cluster.refresh_if_newer().await?;
+                if self.cluster.catalog().version != catalog.version {
+                    return Err(SqlError::new(
+                        1412,
+                        "HY000",
+                        "Table definition changed during ANALYZE; retry",
+                    ));
+                }
+                self.cluster.statistics.publish(catalog.version, vec![stats]);
+                rows_out(
+                    analyze_columns(),
+                    vec![vec![
+                        Value::str(&format!("{}.{}", t.db, t.name)),
+                        Value::str("analyze"),
+                        Value::str("status"),
+                        Value::str("OK"),
+                    ]],
+                )
+            }
+            Admin::ShowTarnStatistics => {
+                let snapshot = self.cluster.statistics.snapshot(catalog.version);
+                let mut tables: Vec<_> = snapshot.tables.values().collect();
+                tables.sort_by_key(|t| t.space);
+                let mut rows = Vec::new();
+                for s in tables {
+                    let t = catalog.all().find(|t| t.space_id == s.space);
+                    let Some(t) = t else { continue };
+                    for p in s.prefixes.iter().map(Some).chain(s.prefixes.is_empty().then_some(None)) {
+                        let index = t
+                            .indexes
+                            .iter()
+                            .find(|i| p.is_some_and(|p| i.id == p.index))
+                            .map(|i| i.name.as_str())
+                            .unwrap_or("");
+                        rows.push(vec![
+                            Value::str(&format!("{}.{}", t.db, t.name)),
+                            if p.is_some() { Value::str(index) } else { Value::Null },
+                            Value::UInt(p.map_or(0, |p| p.parts as u64)),
+                            Value::Float(s.rows),
+                            Value::UInt(s.sampled as u64),
+                            p.map_or(Value::Null, |p| Value::UInt(p.observed_distinct as u64)),
+                            p.map_or(Value::Null, |p| Value::Float(p.distinct)),
+                            Value::UInt(s.collected.elapsed().as_millis().min(u64::MAX as u128) as u64),
+                            Value::UInt(snapshot.generation),
+                        ]);
+                    }
+                }
+                rows_out(statistics_columns(), rows)
+            }
             Admin::LockTables => {
                 self.implicit_commit().await?;
                 Ok(Output::ok(0))
@@ -3170,6 +3464,7 @@ impl Session {
                     "Distributed_commits",
                     "Commit_errors",
                     "Total_us",
+                    "Storage_rows",
                 ] {
                     columns.push(Column::new(name, ColumnType::LongLong));
                 }
@@ -3597,6 +3892,17 @@ impl Session {
             ),
             ("Tarn_lazy_session_strong_fallback", self.lazy_history.strong as u64),
         ];
+        let resources = self.cluster.resources.stats();
+        stats.extend([
+            ("Tarn_resource_bytes", resources[0]),
+            ("Tarn_resource_peak_bytes", resources[1]),
+            ("Tarn_resource_work", resources[2]),
+            ("Tarn_resource_peak_work", resources[3]),
+            ("Tarn_resource_queries", resources[4]),
+            ("Tarn_resource_refusals", resources[5]),
+            ("Tarn_resource_read_deadlines", resources[6]),
+            ("Tarn_topk_scans", self.cluster.stats.topk_scans.load(Ordering::Relaxed)),
+        ]);
         stats.extend(s.query_digests.counters());
         stats.extend(crate::rpcs::counters(&self.cluster));
         stats.retain(|(n, _)| like_ci(n, like));
@@ -3617,6 +3923,7 @@ impl Session {
                 .map(|(n, v)| vec![Value::str(&n), Value::str(&v)]),
         );
         Output::Rows {
+            resource_guard: None,
             columns: cols(&[
                 ("Variable_name", ColumnType::VarString),
                 ("Value", ColumnType::VarString),
@@ -3975,6 +4282,7 @@ mod tests {
     fn show_create_control_strings_round_trip() {
         let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],
@@ -4018,6 +4326,7 @@ mod tests {
     fn schema_output_exposes_legacy_integrity_without_certifying_rows() {
         let cat = crate::catalog::Catalog::new(1, vec!["db".into()], vec![]);
         let ctx = PlanCtx {
+            statistics: None,
             catalog: &cat,
             db: Some("db"),
             params: &[],

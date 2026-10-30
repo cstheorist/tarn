@@ -549,6 +549,81 @@ python3 bench/decision_placement.py \
   machine and several SQL servers.
 
 
+## Cardinality-guided inner join components (issue #136)
+
+Complete [unique-key](results_join_statistics.json) and
+[nonunique-prefix](results_join_statistics_prefix.json) records retain all
+20 final timed samples, every query latency, exact results, foreground
+counter deltas, both plans, exact source/build/binary/driver/fixture settings
+and environment. Both gateways use source
+`3fbbd8c` and the **same** Rust 1.98.1 macOS aarch64 release binary
+(thin LTO, four codegen units, debug 1), with two threads and a
+two-connection pool per shard. Only one gateway receives explicit ANALYZE
+hints. There is no old/new binary or consistency-setting difference within
+these paired comparisons. Storage Lua and the driver use integrated tree
+`4d851d2`, including the owner-hint invalidation prerequisite (#163); the
+records include every Lua module hash and confirm unchanged compiled Rust
+inputs. Both gateways disable the optional native-batch read flag and use
+the same default bounded RPC admission settings.
+
+The generic fixture has 8,192 unique outer primary keys and 20 inner rows
+referring to one outer key. The unique-key query fixes one inner primary
+key and returns exactly `(777,7)`. The nonunique-prefix query fixes that
+shared foreign-key value and returns exactly 20 `(777, inner_id)` rows.
+The selected order reads the inner key/prefix before its outer lookup;
+the control scans the outer table. Both retain normal checked reads and
+read-only transaction validation. Each study has ten warmup queries per
+gateway and five alternating-order, four-second pairs. Setup, ANALYZE and
+warmup are outside the timed phase. These are single-client, closed-loop
+SELECT component experiments.
+
+| Observation | Unique: absent / present hints | Prefix: absent / present hints |
+|---|---:|---:|
+| Decoded storage tuples/query, including attempts | 8,224 / 3 | 8,212 / 21 |
+| Encoded data read attempts/query | 35 / 3 | 67 / 3 |
+| Median queries/s across five repetitions | 54.96 / 704.41 | 20.00 / 765.29 |
+| Queries/s range, absent hints | 47.93–60.71 | 18.91–20.50 |
+| Queries/s range, present hints | 670.18–784.75 | 555.86–793.87 |
+| Per-repetition median latency range, absent hints, ms | 14.85–19.87 | 49.52–53.31 |
+| Per-repetition median latency range, present hints, ms | 1.21–1.32 | 1.20–1.69 |
+| Per-repetition p99 latency range, absent hints, ms | 26.75–36.85 | 63.97–69.25 |
+| Per-repetition p99 latency range, present hints, ms | 3.62–4.85 | 2.41–3.09 |
+| Successful queries, absent / present hints | 1,094 / 14,302 | 399 / 14,208 |
+| Query errors, either gateway | 0 | 0 |
+
+The median closed-loop rates are about 12.8 and 38.3 times the controls
+for these shapes, supported by directly observed reductions in returned
+tuples and read attempts. Attempts exclude validation/metadata RPCs and
+include the unique-key candidate's initial autocommit probe before its
+implicit transaction. They are not index entries examined, response bytes
+or complete protocol RPC totals. Planner tuple-work costs include repeated
+logical join candidates and exclude batch-key deduplication; they are not
+observed storage-tuple counts or latency predictions.
+
+The [initial unique](results_join_statistics_unique_initial.json) and
+[initial prefix](results_join_statistics_prefix_initial.json) studies retain
+all 20 earlier samples at gateway source `3e21e6e`. The
+[preintegration unique](results_join_statistics_unique_preintegration.json)
+and [preintegration prefix](results_join_statistics_prefix_preintegration.json)
+studies retain all 20 samples at `61cf087`. The cache fix keeps statistics
+checks and generation churn off unrelated point-plan cache hits; a live
+cache-miss regression fails on the initial binary and passes on the fixed
+source and integrated binary. No cross-revision point-read throughput gain
+is inferred from these join studies. Controls drift between studies; the comparisons above
+are within the same-binary final pairs.
+
+Two RF1 Tarantool 3.9.0 memtx shards run in one Linux aarch64 Docker
+container (two CPUs, 768 MiB limit; 128 MiB memtx configured per shard),
+with MVCC, WAL `write`, native procedures and test lock/yield guards. The
+Apple M4 Max host gateways reach them through Docker-forwarded local TCP;
+there is no TLS. The timed workload is read-only and fits in memory. This
+task's other builds/checks and reference database were stopped during each
+measurement; other host/VM workloads remained uncontrolled. All samples
+are retained, without replacement or exclusion. These establish component
+improvements under these settings, not production capacity, RF3/durable
+writes, SSD/steady-state, arbitrary-skew or competitor results. Biased or
+stale samples can still choose a slower valid order on other data.
+
 ## Storage RPC admission component measurements (issue #127)
 
 The complete [initial](results_rpc_admission_initial.json) and

@@ -181,6 +181,13 @@ local unknown_ok,unknown_error=pcall(call,3,'tarn_bucket_recv_rows',1,'heterogen
 check('unknown auxiliary names fail rather than silently discard bucket data',not unknown_ok
       and unknown_error.code==1210 and c[3]:eval('return box.space._tarn_recv:count{1}')==0)
 copy_rows(2,3,1,'heterogeneous-source')
+-- Keep the old owner's hint live across the entire move. Membership and
+-- leadership stay fixed; the local bucket-map revision must invalidate it.
+local cached_owner=c[3]:eval([[tarn_buckets()
+    local owner=tarn.lazy.owners({1})[1]
+    tarn.lazy.owner_cache.until_at=require('clock').monotonic()+60
+    return owner]])
+check('receiving shard caches the current source owner before handoff',cached_owner==2,cached_owner)
 -- Change after initial copy while the source is SENDING. Counter/version
 -- must come from the final delta, not remain at their first-copy values.
 ok(write(2,1,other)); assert(wait(function() return depth(2)==0 end))
@@ -193,6 +200,8 @@ local aux=c[3]:eval([[local sid=... return {box.space._tarn_lazy_counter.id,box.
     box.space._tarn_lazy_version.index.bucket_id:count{1}}]],{sid})
 check('heterogeneous-ID copy, counter delta and version deletion use stable auxiliary names',
       aux[1]==9051 and aux[2]==9052 and aux[3]==9053 and aux[4]==5 and aux[5]==0,aux)
+check('completed source handoff refreshes owner hints without waiting for TTL',
+      c[3]:eval('return tarn.lazy.owners({1})[1]')==3)
 ok(call(3,'tarn_lazy_gc',gen,target,{target}))
 c[3]:eval([[box.space._tarn_meta:replace{'test.lazy.join_restart',{sid=...,gen=select(2,...),target=select(3,...),
     replay=select(4,...),counter=5,aux={9051,9052,9053}}}]],{sid,gen,target,oldadd})
