@@ -412,7 +412,13 @@ def case_bounded_warnings(s):
     assert s.sql(c,"SELECT 1 /* error_count */")==[[1]]
     comment_cleared=q(c,"SHOW WARNINGS")
     assert literal_cleared==[] and comment_cleared==[], (literal_cleared,comment_cleared)
-    return [affected,total,len(messages),cleared,rows,literal_cleared,comment_cleared]
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    q(c,"SET @saved_warning_count=@@warning_count")
+    saved=q(c,"SELECT @saved_warning_count")
+    s.sql(c,"INSERT IGNORE INTO t VALUES (1,99,99)")
+    expression=q(c,"SELECT @@warning_count+0")
+    assert saved==[[1]] and expression==[[1]], (saved,expression)
+    return [affected,total,len(messages),cleared,rows,literal_cleared,comment_cleared,saved,expression]
 
 
 def case_rc_paged_snapshot(s):
