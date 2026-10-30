@@ -25,5 +25,7 @@
     "negative.out": "07dffed488a71ee71667adabe53c4fe43d4fcf2bf121647631979b6fcf3ed51d",
     "positive-lua-before-cleanup.out": "f8ad492061c4ef9c6a4173a29a9d38aadbc49915e6bb46b1698493aa80593515",
     "positive-native.out": "2e8f057fc9a925f932ebf57546bee5bc0f85c002e1ab34bc15a1c170ceb44965"
-  }
+  },
+  "negative_harness": "830c8a72566f535ffb9194d0c31f50ae55035d09",
+  "source_label_boundary": "The retained negative controller used a placeholder source label; index.json identifies its actual harness revision. The final positive cohorts use b219feb. Only cleanup handling changed between those harnesses; no original receipt is relabeled."
 }
