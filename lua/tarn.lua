@@ -7564,6 +7564,7 @@ function M.init(cfg)
     M.lazy.quota_invalidate()
     M.vinyl.reset()
     for k, v in pairs(cfg or {}) do M.cfg[k] = v end
+    M.move.limits() -- validate on every replica, before setup or admission
     BK.ns_status = BK.ns ~= nil and 'ready' or (M.cfg.native and 'pending' or 'disabled')
     pcall(BK.term_mark)   -- (no stream yet: else lk_reload makes it)
     if not M.cfg.sync and not box.info.ro then

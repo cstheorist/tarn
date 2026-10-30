@@ -13,6 +13,9 @@ if [ -z "${TEST:-}" ]; then
   timeout 60 "$T" "$DIR/test/vinyl_admission_test.lua" "$WORK/vinyl-admission" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r
+  TARANTOOL="$T" bash "$DIR/test/move_config.sh" "$WORK/move-config" 2>&1 | tee -a "$WORK/test.out"
+  r=${PIPESTATUS[0]}
+  [ "$r" -ne 0 ] && rc=$r
   TEST="$DIR/test/bounded_move_test.lua" bash "$DIR/test/run.sh" 2>&1 | tee -a "$WORK/test.out"
   r=${PIPESTATUS[0]}
   [ "$r" -ne 0 ] && rc=$r

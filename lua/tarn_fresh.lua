@@ -198,10 +198,11 @@ function M.new(c)
         return not token.partial and token.movement == gen
     end
     function F.native_mark(id) return native_guard(F.mark, id) end
-    function F.native_ok(id)
+    local function native_ok(id)
         if not F.move_safe() then return 0 end -- Lua returns the movement refusal
-        return native_guard(F.ok, id)
+        return F.ok(id)
     end
+    function F.native_ok(id) return native_guard(native_ok, id) end
     function F.stream()
         c.writable()
         if F.ok(current()) ~= 1 then unavailable('ambient stream has no first-read freshness proof') end
