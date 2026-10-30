@@ -30,6 +30,10 @@ fn string(rd: &mut Rd<'_>) -> SqlResult<String> {
 }
 
 fn validate(data: &[u8], shard: u32, max_txn_age: f64) -> SqlResult<()> {
+    validate_report(data, shard, max_txn_age, false)
+}
+
+fn validate_report(data: &[u8], shard: u32, max_txn_age: f64, read_only_replica: bool) -> SqlResult<()> {
     let mut rd = Rd::new(data);
     if rd.array()? != 1 || rd.array()? != 8 || string(&mut rd)? != "ok" {
         return Err(incompatible("invalid compatibility reply"));
@@ -50,7 +54,8 @@ fn validate(data: &[u8], shard: u32, max_txn_age: f64) -> SqlResult<()> {
         || id != u64::from(shard)
         || runtime.split('-').next() != Some("3.9.0")
         || layout != 14
-        || !matches!(native.as_str(), "ready" | "disabled" | "load_failed" | "abi_mismatch")
+        || !(matches!(native.as_str(), "ready" | "disabled" | "load_failed" | "abi_mismatch")
+            || read_only_replica && native == "pending")
         || age != max_txn_age
     {
         return Err(incompatible(format!(
@@ -60,9 +65,24 @@ fn validate(data: &[u8], shard: u32, max_txn_age: f64) -> SqlResult<()> {
     Ok(())
 }
 
-/// Check the read-only protocol, format, layout and expiry contract before
-/// using a physical connection. Failed admission retires that connection.
-pub async fn admit(client: &Client, shard: u32, max_txn_age: f64, completion: bool) -> SqlResult<()> {
+pub(crate) async fn admit(client: &Client, shard: u32, max_txn_age: f64, completion: bool) -> SqlResult<()> {
+    check(client, shard, max_txn_age, completion, false).await
+}
+
+/// Validate deployment metadata after the endpoint's read-only role is checked.
+/// Followers may defer native state attachment until promotion; this does not
+/// admit them to routed work. Protocol, format, layout and expiry still match.
+pub async fn check_deployment(client: &Client, shard: u32, max_txn_age: f64, read_only_replica: bool) -> SqlResult<()> {
+    check(client, shard, max_txn_age, false, read_only_replica).await
+}
+
+async fn check(
+    client: &Client,
+    shard: u32,
+    max_txn_age: f64,
+    completion: bool,
+    read_only_replica: bool,
+) -> SqlResult<()> {
     let result = async {
         let call = async {
             if completion {
@@ -78,7 +98,12 @@ pub async fn admit(client: &Client, shard: u32, max_txn_age: f64, completion: bo
         let data = reply
             .data()
             .ok_or_else(|| incompatible("compatibility reply has no data"))?;
-        validate(&data, shard, max_txn_age).map_err(incompatible)
+        if read_only_replica {
+            validate_report(&data, shard, max_txn_age, true)
+        } else {
+            validate(&data, shard, max_txn_age)
+        }
+        .map_err(incompatible)
     }
     .await;
     if result.is_err() {
@@ -126,6 +151,22 @@ mod tests {
             report(1, 1, 2, "3.9.0", "ready", 60.0),
         ] {
             assert!(validate(&data, 2, 120.0).is_err());
+        }
+    }
+
+    #[test]
+    fn deployment_pending_is_only_for_read_only_replicas_with_the_same_contract() {
+        let pending = report(1, 1, 2, "3.9.0", "pending", 120.0);
+        assert!(validate(&pending, 2, 120.0).is_err());
+        assert!(validate_report(&pending, 2, 120.0, true).is_ok());
+        for data in [
+            report(2, 1, 2, "3.9.0", "pending", 120.0),
+            report(1, 2, 2, "3.9.0", "pending", 120.0),
+            report(1, 1, 1, "3.9.0", "pending", 120.0),
+            report(1, 1, 2, "3.9.0", "pending", 121.0),
+            report(1, 1, 2, "3.9.0", "unknown", 120.0),
+        ] {
+            assert!(validate_report(&data, 2, 120.0, true).is_err());
         }
     }
 

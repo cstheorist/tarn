@@ -106,7 +106,6 @@ impl Production {
                 opts.tls = cfg.tls_config.clone();
                 opts.request_timeout = std::time::Duration::from_secs(3);
                 let c = Client::connect(&opts).await?;
-                tarn_sql::compat::admit(&c, shard.id, cfg.max_txn_age, false).await?;
                 let r = c.call(0, "tarn_deployment_status", &[0x90]).await?;
                 let bytes = r.data().ok_or("missing deployment status")?;
                 let mut b = bytes.as_ref();
@@ -144,6 +143,7 @@ impl Production {
                         format!("production replica failed identity/durability/readiness checks: {addr} profile={production} wal={wal:?} rf={rf} quorum={quorum} domain={domain} shard={id} ready={ready} strict={strict} ro={ro}").into(),
                     );
                 }
+                tarn_sql::compat::check_deployment(&c, shard.id, cfg.max_txn_age, ro).await?;
                 for denied in [
                     c.eval(0, "return 1", &[0x90]).await,
                     c.call(0, "box.session.user", &[0x90]).await,
