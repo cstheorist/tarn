@@ -116,6 +116,7 @@ class Test:
         self.identities = []
         self.users = []
         self.user_attempts = []
+        self.user_created_origins = set()
         self.workers = []
         self.pending_completed = []
         self.evidence = Path(args.evidence)
@@ -244,6 +245,7 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
 """, [self.user, self.password], stage="create_reader", sensitive=(self.password,))
             assert isinstance(result, dict) and isinstance(result.get("uid"), int), result
             self.users.append((node, result["uid"]))  # Cleanup only a definite creation ACK.
+            self.user_created_origins.add(node)  # Creation origin is stable across leader retargeting.
             self.record("admin_reader_create", node=node, result=result)
 
     def paired(self, c, table, keys, columns, where, sql_keys=None):
@@ -334,22 +336,28 @@ return {uid=assert(box.space._user.index.name:get{user}).id}
         binary_keys = [[b"\x00\xff"], [b"missing"]]
         self.paired(c, binary, binary_keys, "id,v", "id=X%s",
                     sql_keys=[[key[0].hex()] for key in binary_keys])
+        self.reply_cap_fixture(c, engine)
+
+    def reply_cap_fixture(self, c, engine):
         cap = "reply_cap_" + engine
         self.sql(c, f"CREATE TABLE {cap} (tenant INT,id INT,v LONGBLOB,PRIMARY KEY(tenant,id)) "
                  f"PARTITION BY KEY(tenant) ENGINE={engine}", mutation=True)
         # Each stored row fits the engine's default 1 MiB tuple limit.
         # The shared tenant routes both keys to one server-side batch.
-        # Keep the default SQL parser/query budgets: a megabyte of escaped
-        # text is unnecessary to construct these two exact stored values.
-        for row_id, letter in ((1, 'x'), (2, 'y')):
-            self.sql(c, f"INSERT INTO {cap} VALUES (1,%s,REPEAT(%s,%s))",
-                     (row_id, letter, 600 * 1024), mutation=True)
-        lengths = self.sql(c, f"SELECT id,OCTET_LENGTH(v) FROM {cap} WHERE tenant=1 ORDER BY id")
-        assert lengths == ((1, 600 * 1024), (2, 600 * 1024)), lengths
+        # Generate the same payloads inside SQL: quoting 1.2 MiB of client
+        # bytes needlessly exceeds the default query-text memory budget.
+        size = 600 * 1024
+        self.sql(c, f"INSERT INTO {cap} VALUES (1,1,REPEAT('x',{size})),"
+                 f"(1,2,REPEAT('y',{size}))", mutation=True)
+        lengths = self.sql(c, f"SELECT id,LENGTH(v) FROM {cap} WHERE tenant=1 ORDER BY id")
+        self.check(engine + " reply cap fixture exact lengths", lengths == ((1, size), (2, size)), rows=lengths)
         self.grant(cap)
         oversized = self.sdk(cap, [[1, 1], [1, 2]])
         self.check(engine + " final tuple crosses whole batch cap", oversized.get("status") == "error"
                    and oversized["error"]["kind"] == "limit_exceeded" and "rows" not in oversized, reply=oversized)
+
+    def uncertain_reader_attempts(self):
+        return [node for node in self.user_attempts if node not in self.user_created_origins]
 
     def cleanup(self, success):
         errors = []
@@ -379,7 +387,7 @@ return {absent=box.space._user.index.name:get{name}==nil,uid=uid}
             self.private.cleanup()
         except Exception as error:
             errors.append("private credential cleanup: " + str(error))
-        uncertain_users = [node for node in self.user_attempts if node not in {n for n, _ in self.users}]
+        uncertain_users = self.uncertain_reader_attempts()
         self.record("cleanup", database_preserved=self.created,
                     database_possibly_preserved=self.created or self.database_attempted and not self.database_ack,
                     uncertain_reader_attempts_preserved=uncertain_users, success=not errors, errors=errors)
@@ -542,7 +550,7 @@ def main():
         summary = {"completed_checks": test.completed, "success": success and not cleanup,
                    "primary_error": failure, "cleanup_errors": cleanup, "database_preserved": test.created,
                    "database_possibly_preserved": test.created or test.database_attempted and not test.database_ack,
-                   "uncertain_reader_attempts_preserved": [n for n in test.user_attempts if n not in {x for x, _ in test.users}],
+                   "uncertain_reader_attempts_preserved": test.uncertain_reader_attempts(),
                    "pending_apply_completed_engines": test.pending_completed,
                    "live_read_workers": [t.name for t in test.workers if t.is_alive()]}
         (test.evidence / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

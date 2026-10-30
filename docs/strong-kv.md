@@ -94,6 +94,11 @@ reinterprets old positional keys under a changed primary key. Ownership-only
 rediscovery can restart the whole vector under the same table token and
 shared finite attempt/deadline budget.
 
+Movement reports include bounded `installing`, `reclaiming` and `aborting`
+phases. The SDK uses the shared bucket-map routing rules for them. A report
+is a routing hint: each data RPC still checks authoritative ownership and
+refuses a partial install or reclaim rather than returning incomplete rows.
+
 ## Reads and limits
 
 `tarn_kv_v1.get` accepts exactly one map:
@@ -131,6 +136,11 @@ size is checked before encoding it into a reply; the final tuple and full
 reply are checked too. The SDK applies the data-reply bound across all
 shard replies in one attempt, with metadata counted separately. An
 oversized result fails; no clipped prefix is acknowledged as a batch.
+The Rust SDK also caps advertised IPROTO response frames at 1 MiB plus
+4 KiB of protocol overhead, before reserving their bodies. The envelope
+and aggregate data limits above still apply.
+The SDK's request and per-response limits are independent of SQL gateway
+connection and response-memory budgets.
 Storage's own allocation/tuple limits remain separate. Deadline checkpoints
 do not establish a universal engine, network or quorum latency bound.
 
@@ -171,11 +181,56 @@ EVAL, raw fallback or write mode.
 ordered vectors and the independent-points label. Its six controls reach
 actual false absence, wrong-incarnation data, mixed schemas, clipped replies,
 missing prepared-claim protection and a falsely advertised atomic snapshot.
-It composes with existing freshness and commit models; it does not implement
-Tarantool replication, ACLs, codecs or MVCC.
+It assumes the existing freshness and commit contracts; there is no composed
+refinement proof. It does not implement Tarantool replication, ACLs, codecs
+or MVCC.
 
 Storage/network tests, paired SQL/SDK histories and RF3 faults establish the
 runtime mapping separately. Measurements of SQL, strong KV and raw native
 reads must retain their distinct contracts, RPC/byte/CPU scopes and complete
 repeated evidence. The legacy `kvbench` measures raw reads and is not a
 strong-KV benchmark.
+
+## Matched read measurements
+
+`bench/strong_kv.py` records SQL, strong KV and raw native reads separately.
+It uses six balanced trial orders, batches of one or 32 independent points,
+and one or 16 clients. A batch's latency is the latency of that complete
+operation; its key throughput is reported separately. SQL batch 32 issues
+32 independent autocommit statements, strong KV uses its bounded API, and
+raw native reads pipeline full-primary-key SELECTs.
+
+On Linux, the owned fixture can prepare and audit a fresh measurement cohort:
+
+```sh
+cargo build --release --workspace --all-targets --locked
+KV_STUDY_ENGINE=memtx tests/kv.sh
+KV_STUDY_ENGINE=vinyl tests/kv.sh
+```
+
+The manual CI input `strong_kv_qualification` runs native and Lua fault
+histories, native and Lua terminal clock faults, and the two measurement
+engines on six separate runners, with at most three running concurrently.
+A failed cohort remains failed while the other isolated cohorts finish and
+retain their evidence.
+The optional `strong_kv_scope: histories` selects just the two fault-history
+cohorts when investigating a history-fixture change.
+Manual qualification keeps in-progress cohorts running; the two scopes use
+separate concurrency groups so a history rerun cannot cancel measurements.
+
+Each engine uses two RF3 shards, quorum two, synchronous spaces and fsync,
+with test hooks disabled. The workload reads an unchanged 10,000-row,
+64-byte-payload corpus for one hot tenant on one owning shard. This is a
+read-path study, not a distributed OLTP or production-capacity result.
+The fixture checks complete replica images before and after the study.
+Warmup and engine caches remain part of the recorded environment; a Vinyl
+cohort does not by itself establish cold-disk performance.
+
+Raw samples, errors, source/executable identities, discovery costs and
+timed RPC/protocol-byte counters are retained. CPU counters bracket each
+phase and identify client, gateways, storage processes and TX threads.
+TX-thread CPU is already included in storage-process CPU; those scopes
+must not be added together. Protocol bytes exclude TCP headers. The SQL
+and KV drivers also use different client stacks, so these observations
+do not isolate SQL parsing costs. Raw reads have the weaker visibility
+contract above and cannot establish an acceleration of strong reads.

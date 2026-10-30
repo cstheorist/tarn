@@ -2121,18 +2121,33 @@ the original 259-case prefix, model/config bytes and module dispatch. This
 formed a 263-case union. The full list subsequently passed in
 [CI 40910653977](https://github.com/cstheorist/tarn/actions/runs/40910653977),
 alongside all four required jobs on the exact #191 source tree. File-backup
-and cluster-backup registrations add twelve configurations, and seven
-external-KV checks passed separately through the registered checker.
-Integration preserves both groups, their model/config bytes and dispatch.
-This is an input union; prior CI runs did not execute the integrated list.
-The current proof inventory is 365 files: 349 TLA+ model/config files,
+and cluster-backup registrations added twelve configurations. The seven
+external-KV checks completed in
+[CI 40960762644](https://github.com/cstheorist/tarn/actions/runs/40960762644)
+as part of its successful 282-case TLA+ job; that run's Tests job failed.
+Four query-budget checks then formed 286 cases, whose TLA+ job passed in
+[CI 41052583469](https://github.com/cstheorist/tarn/actions/runs/41052583469)
+while Tests failed separately. Five gateway-resource cases formed 291;
+the complete 291-case TLA+ job passed in
+[CI 41080428388](https://github.com/cstheorist/tarn/actions/runs/41080428388),
+whose Tests job failed in the existing backup fixture. None of those is
+represented as a whole-CI pass.
+
+Six typed-read checks subsequently formed a 297-case source union. The
+outcome-contract integration adds two malformed-handback controls. The lazy
+baseline integration adds a positive and a sensitivity control, revises the
+handoff contract and intentionally retires the obsolete per-row live-version
+control. That union formed 300 default cases. The bounded-movement integration
+adds nine checks, composite lazy routing adds seven, and clock bootstrap adds
+three, forming 319 cases. Their model/config bytes and revised commit model
+remain those of the upstream integration; the new full integrated run is a
+separate validation gate.
+
+The current proof inventory is 396 files: 380 TLA+ model/config files,
 11 verified-crate source/test/manifest files and five formal runner/inspection
-scripts. The complete 293-case CI run remains a separate validation gate.
-Four query-budget configurations add one positive and three expected
-violations. Verus bodies are unchanged.
-The two malformed-handback controls and five gateway-resource configurations complete this union. The prior 277-case
-list passed in [CI 40945628982](https://github.com/cstheorist/tarn/actions/runs/40945628982);
-that result does not certify the added KV model or this combined source.
+scripts. Verus bodies are unchanged. Source/generator preservation and
+inherited outcome logs do not substitute for execution of the integrated
+319-case list.
 
 ## Verus proofs
 
