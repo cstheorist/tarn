@@ -1971,10 +1971,10 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
 
 ### Configuration counts
 
-The default list contains 284 unique configurations: 73 positive
-outcomes and 211 expected broken/trade-off outcomes. The 287 generated
+The default list contains 291 unique configurations: 74 positive
+outcomes and 217 expected broken/trade-off outcomes. The 294 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 297 total. Explicit
+placement and query-budget configurations are maintained directly, for 304 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2442,3 +2442,31 @@ online-backup guarantee, arbitrary-time PITR, whole-code refinement or automatic
 liveness/restart bound follows. The [operations contract](cluster-backup.md)
 and [live evidence index](../tests/evidence/cluster-backup/index.json) retain
 these boundaries and all source-bound outcomes.
+
+
+### Composite lazy routing (#185)
+
+`LazyRouting.tla` checks immutable routing metadata, refusal by old
+capabilities, all-owner prefix coverage, typed ordered merging, LIMIT after
+base rechecks and epoch fencing. Its six negative controls independently
+remove these protections. The model fixes a caught-up generation and uses
+small typed integer streams; it does not prove hash distribution or SQL
+normalization. Existing LazyIndex, LazyBarrier and LazyHandoff models cover
+assignment versions, source frontiers and movement obligations.
+
+Executable checks exercise partial and complete routing identities,
+ascending/descending cursor pages, stale base keys, migration/backfill,
+case-insensitive and nullable identities, old import tokens, received/sent
+copies, heterogeneous auxiliary IDs, and RF3/fsync leader death/restart on
+MemTX and Vinyl. Resource exhaustion returns a complete fallback or error;
+no prefix of a failed merge is published.
+
+The [retained executable evidence](../tests/evidence/lazy-routing/README.md)
+includes 60 native lifecycle checks, source/target and JOIN restart faults,
+composite RF3/fsync leader recovery, both full 11-case lazy SQL suites
+against MariaDB and the 1,092-case differential pass. The
+[routing cost study](lazy-routing-cost.md) retains five paired RF3/fsync
+comparisons for each uniform/skewed 1/4/16-lane case, all raw samples and
+failed attempts. It reports repeatable gains for the declared fully bound
+skewed workload and separate write-heavy/prefix regressions; it makes no
+universal throughput, independent-host or beyond-RAM claim.

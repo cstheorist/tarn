@@ -1739,7 +1739,7 @@ impl Cluster {
             .filter(|&i| def.indexes[i].lazy.is_some())
             .collect();
         if !lazies.is_empty() {
-            self.require_lazy_capabilities().await?;
+            self.require_lazy_capabilities(def.lazy_route_parts()).await?;
         }
         let first = self
             .alloc_space_ids(1 + globals.len() as u64 + lazies.len() as u64)
@@ -1808,7 +1808,7 @@ impl Cluster {
                 .filter_map(|i| i.lazy.as_ref().map(|l| l.space_id))
                 .collect();
             if !lazy_drop.is_empty() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
             }
             let ver = self.next_catalog_version().await?;
             let mut a = Mp::new();
@@ -1851,7 +1851,7 @@ impl Cluster {
             nd.ver = ver;
             let mut lazy_drop = Vec::new();
             if def.has_lazy() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
                 let count = nd.indexes.iter().filter(|i| i.lazy.is_some()).count();
                 let first = self.alloc_space_ids(count as u64).await?;
                 for (n, i) in nd.indexes.iter_mut().filter(|i| i.lazy.is_some()).enumerate() {
@@ -1966,7 +1966,8 @@ impl Cluster {
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
             if def.has_lazy() || ch.def.indexes.iter().any(|i| i.lazy.is_some()) {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts().max(ch.def.lazy_route_parts()))
+                    .await?;
             }
             // New unique keys without the shard key: space ids for their
             // global indexes, which the job fills from the existing rows.
