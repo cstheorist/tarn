@@ -198,6 +198,12 @@ KV_STUDY_ENGINE=memtx tests/kv.sh
 KV_STUDY_ENGINE=vinyl tests/kv.sh
 ```
 
+The manual CI input `strong_kv_qualification` runs native and Lua fault
+histories, native and Lua terminal clock faults, and the two measurement
+engines on six separate runners, with at most three running concurrently.
+A failed cohort remains failed while the other isolated cohorts finish and
+retain their evidence.
+
 Each engine uses two RF3 shards, quorum two, synchronous spaces and fsync,
 with test hooks disabled. The workload reads an unchanged 10,000-row,
 64-byte-payload corpus for one hot tenant on one owning shard. This is a

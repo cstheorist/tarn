@@ -24,11 +24,16 @@ IMPLEMENTED = {"leader", "quorum", "stall", "move", "ddl", "partition"}
 
 def known_ro_serialization(error):
     state = getattr(error, "sqlstate", None)
-    return (isinstance(error, pymysql.MySQLError) and len(error.args) >= 2
-            and error.args[0] == 1213 and state in (None, "40001", b"40001")
-            and isinstance(error.args[1], str)
-            and error.args[1].startswith("shard leader changed, retry the transaction (")
-            and "read-only instance" in error.args[1] and error.args[1].endswith(")"))
+    if (not isinstance(error, pymysql.MySQLError) or len(error.args) < 2
+            or error.args[0] != 1213 or state not in (None, "40001", b"40001")
+            or not isinstance(error.args[1], str)):
+        return False
+    message = error.args[1]
+    wrapper = "Deadlock found when trying to get lock; try restarting transaction ("
+    if message.startswith(wrapper) and message.endswith(")"):
+        message = message[len(wrapper):-1]  # SqlError::conflict's actual SQL wire wrapper.
+    return message == ("shard leader changed, retry the transaction "
+                       "(Can't modify data on a read-only instance)")
 
 
 STATE = """

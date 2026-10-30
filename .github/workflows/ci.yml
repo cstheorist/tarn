@@ -87,6 +87,8 @@ jobs:
         run: python3 tests/sql/vinylpressure_phase_test.py
       - name: Strong KV administrative transport privacy controls
         run: python3 tests/sql/kv_transport_test.py
+      - name: Strong KV read-only route controls
+        run: python3 tests/sql/kv_route_test.py
       # Restore and save separately, so that the (slow) Tarantool build is
       # cached even when a later step fails.
       - name: Restore Tarantool
@@ -324,9 +326,14 @@ jobs:
 
   strong-kv-qualification:
     if: github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification
-    name: Strong KV histories and matched measurements
+    name: Strong KV / ${{ matrix.cohort }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        cohort: [native-history, lua-history, native-clock, lua-clock, memtx, vinyl]
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -336,6 +343,8 @@ jobs:
           python-version: "3.12"
       - name: Install Python packages
         run: pip install PyMySQL
+      - name: Strong KV read-only route controls
+        run: python3 tests/sql/kv_route_test.py
       - name: Restore Tarantool
         id: tarantool-cache
         uses: actions/cache/restore@v6
@@ -359,23 +368,28 @@ jobs:
           rustc -Vv > /tmp/tarn-kv-study-build/rustc.txt
           tarantool --version > /tmp/tarn-kv-study-build/tarantool.txt
           sha256sum target/release/tarn-server target/release/libtarn_storage.so target/release/examples/strong_kv target/release/examples/strong_kv_bench > /tmp/tarn-kv-study-build/binaries.sha256
-      - name: Paired SQL and strong KV RF3 histories
+      # Separate runners keep faulted fixtures out of measurements and retain
+      # every cohort's result even when a different cohort fails.
+      - name: Run the isolated qualification cohort
+        env:
+          KV_COHORT: ${{ matrix.cohort }}
         run: |
-          TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh strong-kv tests/kv.sh
-          TARN_NATIVE=0 ci/annotate.sh strong-kv-lua tests/kv.sh
-          KV_CLOCK_FAULT=1 TARN_NATIVE="$PWD/target/release/libtarn_storage.so" ci/annotate.sh strong-kv-clock tests/kv.sh
-          KV_CLOCK_FAULT=1 TARN_NATIVE=0 ci/annotate.sh strong-kv-clock-lua tests/kv.sh
-      - name: Matched read measurements on both storage engines
-        run: |
-          for engine in memtx vinyl; do
-            KV_STUDY_ENGINE="$engine" TARN_NATIVE="$PWD/target/release/libtarn_storage.so" \
-              ci/annotate.sh "strong-kv-study-$engine" tests/kv.sh
-          done
+          printf '%s\n' "$KV_COHORT" > /tmp/tarn-kv-study-build/cohort.txt
+          export TARN_NATIVE="$PWD/target/release/libtarn_storage.so"
+          case "$KV_COHORT" in
+            native-history) ;;
+            lua-history) export TARN_NATIVE=0 ;;
+            native-clock) export KV_CLOCK_FAULT=1 ;;
+            lua-clock) export KV_CLOCK_FAULT=1 TARN_NATIVE=0 ;;
+            memtx|vinyl) export KV_STUDY_ENGINE="$KV_COHORT" ;;
+            *) exit 2 ;;
+          esac
+          ci/annotate.sh "strong-kv-$KV_COHORT" tests/kv.sh
       - name: Retain histories, measurements, failures and source identities
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: strong-kv-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: strong-kv-qualification-${{ matrix.cohort }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             /tmp/tarn-kv-study-build/*
             /tmp/tarn-kv181-*/*.json
