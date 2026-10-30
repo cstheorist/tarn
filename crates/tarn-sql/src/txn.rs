@@ -47,6 +47,9 @@ use tarn_verified::coord::{self, Decision, Vote};
 
 pub type Row = Vec<Value>;
 
+mod pushdown;
+pub(crate) use pushdown::{project_rows, reduce_rows, Projection, Reduced, StorageAgg};
+
 /// Only a complete, explicit durable NO can justify aborting a parallel
 /// commit. Expiry, unavailable freshness, malformed and future statuses
 /// are no vote: a previous PREPARE might already have committed.

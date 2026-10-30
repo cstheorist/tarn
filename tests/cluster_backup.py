@@ -42,8 +42,7 @@ def main():
         source_revision=os.getenv('TARN_SOURCE_REVISION') or subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
         source_sha256={str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
             [ROOT/'scripts/cluster_backup.py', ROOT/'scripts/backup.py', ROOT/'scripts/backup_rpc.lua',
-             ROOT/'tests/cluster_backup.py', ROOT/'tests/cluster_backup_setup.lua', ROOT/'tests/cluster_backup_retry.lua',
-             *sorted((ROOT/'lua').glob('*.lua'))]},
+             ROOT/'tests/cluster_backup.py', ROOT/'tests/cluster_backup_setup.lua', ROOT/'tests/fixture_retry.lua', *sorted((ROOT/'lua').glob('*.lua'))]},
         native=os.getenv('TARN_NATIVE', '0'), boundary='same-host RF3 correctness and outage timings; not independent failure domains or production capacity')
     native_path = pathlib.Path(record['native'])
     record['native_sha256'] = hashlib.sha256(native_path.read_bytes()).hexdigest() if native_path.is_file() else None
@@ -76,6 +75,9 @@ def main():
         try:
             r = subprocess.run([T, str(ROOT/'tests/backup_rpc.lua'), uris[i], str(p), str(timeout)],
                                capture_output=True, text=True, timeout=timeout+10)
+            if r.stderr:
+                with (work/'fixture-rpc.log').open('a') as evidence:
+                    evidence.write(r.stderr)
             if r.returncode:
                 raise RuntimeError(r.stderr[-3000:])
             return json.loads(r.stdout)
@@ -100,16 +102,9 @@ def main():
         checks.append(label); print('PASS ' + label, flush=True); save()
 
     def stage(action):
-        code = 'local action=' + json.dumps(action) + '\n'
-        if action == 'lazy_drain':
-            code += 'local fixture_retry=(function()\n' + (ROOT/'tests/cluster_backup_retry.lua').read_text() + '\nend)()\n'
-        reply = rpc(0, code + (ROOT/'tests/cluster_backup_setup.lua').read_text())
-        if action == 'lazy_drain':
-            record['lazy_drain'] = reply
-            save()  # Preserve exact returned attempts before raising a stage failure.
-            if not isinstance(reply, dict) or reply.get('status') != 'ok':
-                raise RuntimeError('lazy_drain failed: ' + json.dumps(reply))
-        return reply
+        return rpc(0, 'local action=' + json.dumps(action) + '\nlocal retry = dofile(' +
+                   json.dumps(str(ROOT/'tests/fixture_retry.lua')) + ')\n' +
+                   (ROOT/'tests/cluster_backup_setup.lua').read_text())
 
     try:
         for i, n in enumerate(nodes):

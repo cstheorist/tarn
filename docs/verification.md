@@ -2010,10 +2010,10 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
 
 ### Configuration counts
 
-The default list contains 291 unique configurations: 74 positive
-outcomes and 217 expected broken/trade-off outcomes. The 294 generated
+The default list contains 297 unique configurations: 75 positive
+outcomes and 222 expected broken/trade-off outcomes. The 300 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 304 total. Explicit
+placement and query-budget configurations are maintained directly, for 310 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2362,6 +2362,39 @@ This is a test-driver change. Production admission, commit, locking and
 recovery code, TLA+ inputs and Verus bodies are unchanged. These controls
 prove neither native-engine latency nor a comparative performance result;
 the complete release SQL and live-fault matrix remains required.
+
+## Typed range reads (issue #135)
+
+`TypedRead.tla` checks a local result refinement with two one-row pages,
+finite values, NULL/absence, and buffered replacements/deletes. Successful
+projection and COUNT/SUM/MIN/MAX folds must equal filtering the captured
+snapshot with the own-write overlay; their coverage includes rejected rows.
+An incomplete fold cannot publish success. The positive configuration visits
+99,328 distinct states. Five isolated negative controls violate ExactFold
+(stored-version overlay, early termination on an empty page), FullCoverage
+(recording only qualifying rows), CompleteOnly (publishing an incomplete
+fold), and ExactProjection (mixing snapshots).
+
+This is a bounded refinement under the existing MVCC snapshot, full-range
+lock/DDL checks, routing and commit-validation premises. It does not prove
+Lua/Rust parsing, integer arithmetic, decimal precision, collations, native
+storage, or liveness. `Local_ROValidate`, `Frac_ROValidate`,
+`LocalFailover_ROValidate`, `GroupedRead`, `GroupedDDL` and their relevant
+negative controls retain the read-contract checks. Protocol actions and
+verified executable bodies are unchanged.
+
+`lua/test/pushdown_test.lua` exercises the actual memtx/Vinyl procedures:
+signed/unsigned 64-bit and small-number promotion boundaries, NULLs, fills,
+excluded extrema, empty qualifying pages, stream invalidation, prepared
+locks on rejected rows, and a captured Vinyl reduction crossed by a
+prepared/applied write. The public SQL test `tests/sql/pushdowntest.py`
+compares exact MariaDB results, including aggregates above 2^53/64-bit
+sums, parameter changes, unsupported shapes, overlays at both isolation
+levels, absent procedures, incomplete/malformed partials, and OCC conflicts
+after a rejected row changes. Small multi-shard READ COMMITTED statements
+retain ordinary reads without new validation; their reduction counter must
+stay unchanged. The ordinary differential suite adds 30
+cases. Bucket tests reject both new procedures on the wrong owner.
 
 ## Continuous integration
 
