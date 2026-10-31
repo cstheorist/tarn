@@ -319,6 +319,11 @@ jobs:
           python3 ci/retain_failover.py finish --output "$RUNNER_TEMP/failover-evidence" \
             --cores "$RUNNER_TEMP/failover-cores" --job-status "$CAPTURE_JOB_STATUS" \
             --fixture /tmp/tarn-failover --fixture /tmp/tarn-failover-vinyl
+          # A clean run (no failure, no core) keeps the receipts, whose hashes
+          # identify the binaries, but not the binaries themselves (~170 MB).
+          if [ "$CAPTURE_JOB_STATUS" = success ] && [ -z "$(ls -A "$RUNNER_TEMP/failover-cores")" ]; then
+            rm -rf "$RUNNER_TEMP/failover-evidence/binaries"
+          fi
       - name: Retain failover inputs and crash evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

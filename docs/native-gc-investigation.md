@@ -157,7 +157,9 @@ snapshot. An empty core inventory is explicit. A changed binary or incomplete
 collection fails the collector while preserving available evidence. Its
 `complete` flag describes artifact collection only; `job_status` independently
 retains the test result. Original failover assertions and mutation behavior
-remain unchanged. Artifacts still expire after 30 days.
+remain unchanged. Artifacts still expire after 30 days. A run whose job
+passed with an empty core inventory keeps the receipts, whose hashes identify
+the binaries, but not the copies of the binaries themselves.
 
 The first ordinary-CI capture [passed in run 41093908604](https://github.com/cstheorist/tarn/actions/runs/41093908604).
 [Its audited receipt](../tests/evidence/native-gc-crash/ci-capture-41093908604.json)
@@ -175,7 +177,9 @@ produce exactly one ELF core. Its directory and minimal identity/header
 receipt are separate from actual failover cores. Only the probe receipt and
 expected crash log are uploaded; the synthetic core is excluded. A
 [local Linux ARM64 control](../tests/evidence/native-gc-crash/core-probe-arm64-20261030.json)
-produces a 25,468,928-byte ELF core. The updated x86-64 CI gate remains
-required separately. Unexpected READ COMMITTED errors also retain their
-statement, timestamp and ledger token for investigation under #215; their
-classification and the failover assertions remain unchanged.
+produces a 25,468,928-byte ELF core. The x86-64 control passed in ordinary
+CI [run 41220996772](https://github.com/cstheorist/tarn/actions/runs/41220996772/job/124595326098),
+before both failover stages, which passed too. Unexpected READ COMMITTED
+errors also retain their statement, timestamp and ledger token for
+investigation under #215; their classification and the failover assertions
+remain unchanged.
