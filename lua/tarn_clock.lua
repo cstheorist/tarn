@@ -265,7 +265,12 @@ function M.new(c)
             box.begin{txn_isolation = 'read-confirmed'}
             local t = space:get{KEY}
             if not t then
-                if box.info.ro then box.rollback(); return nil end
+                -- Initial policy writes must not race a joining replica's
+                -- first checkpoint. Existing confirmed policies still load
+                -- without requiring every configured replica to be present.
+                if box.info.ro or (c.can_install and not c.can_install()) then
+                    box.rollback(); return nil
+                end
                 local new = {version = 1, max_age = q.max_age, skew = q.skew,
                              max_gap = q.max_gap, max_drift = q.max_drift,
                              high = 0, created_wall = last_wall or 0, fault = C.fault}

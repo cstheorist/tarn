@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A bucket move whose SQL server dies (issue #24) is finished by another
-server: given up when it died before the flip, finished when after. Run by
+server from its durable page cursor, including before the flip. Run by
 tests/movefaults.sh, which starts a 2-shard cluster with three SQL servers,
 test hooks and ddl_job_stale = 2 s.
 
@@ -8,9 +8,9 @@ The server driving a move is killed while a test hook holds one of its
 steps, and started again after each case:
 
 1. while the move copies the bucket (on the sending shard): another server
-   gives the move up, and the bucket stays where it was;
+   resumes the copy, and the bucket lands on its destination;
 2. while the sending shard's fence waits for the transactions on the
-   bucket's rows: given up, the fence and the receiving shard's hold lifted;
+   bucket's rows: resumed, the fence drains before ownership transfers;
 3. after the flip, before the send: another server finishes the move, and
    the bucket is on the new shard;
 4. after the send, before the receive: finished;
@@ -206,9 +206,9 @@ class Test:
         si = s - 1
         print(f"bucket {self.b} (rows of k = 1) starts on shard {s}")
         print("1. the server driving the move dies while it copies")
-        self.killed_at("given up while copying", si, "bucket_rows", other, s)
+        self.killed_at("resumed while copying", si, "bucket_rows", other, other)
         print("2. ... while the fence drains")
-        self.killed_at("given up while fenced", si, "bucket_fence", other, s)
+        self.killed_at("resumed while fenced", other - 1, "bucket_fence", s, s)
         print("3. ... after the flip, before the send")
         self.killed_at("finished from the flip", si, "bucket_send", other, other)
         print("4. ... after the send, before the receive")

@@ -1,0 +1,24 @@
+  ok   actual ABI14 uses a reserved tail with normal JIT enabled
+  ok   healthy native RPC serves the exact tuple
+  ok   missing guard hands back without effects or stack changes
+  ok   nonfunction guard hands back without effects or stack changes
+  ok   wrong numeric guard hands back without effects or stack changes
+  ok   nonnumeric guard hands back without effects or stack changes
+  ok   erroring guard hands back without effects or stack changes
+  ok   200 ordinary C API errors leave no transaction, certificate or stack leak
+  ok   restoring the guard restores actual native service
+  ok   registration error before the first hook leaves no token, transaction or effects
+  ok   registration error after the first hook leaves no token, transaction or effects
+  ok   registration error before the second hook leaves no token, transaction or effects
+  ok   registration error after the second hook leaves no token, transaction or effects
+  ok   restoring hook registration restores actual native service
+  ok   native first read creates a certified stream
+  ok   the C bridge passes the exact current transaction identity to mark
+  ok   missing stream guard preserves the exact marked transaction across 200 handbacks
+  ok   movement guard errors return refusal and preserve the existing error
+  ok   movement guard error hands back without losing the marked snapshot
+  ok   handback retains the original MVCC read set and rollback clears its certificate
+  ok   restored guards serve a fresh native stream
+  ok   actual native validation commits and reclaims the restored stream certificate
+  ok   native lock mirrors remain exact
+23 passed, 0 failed

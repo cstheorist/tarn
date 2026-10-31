@@ -1763,5 +1763,12 @@ do
           c[1]:eval('return tarn.lazy.worker ~= nil and tarn.lazy.worker:status() ~= "dead"'))
 end
 
+-- This fixture deliberately applied global-index DDL on shard 1 alone.
+-- Later movement tests require matching schemas and must never silently
+-- drop the source-only index rows. Release this fixture after its checks.
+for i=1,2 do
+    check('release asymmetric ALTER fixture on shard '..i,
+          c[i]:call('tarn_drop_table', {'test.ua'})[1]=='ok')
+end
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

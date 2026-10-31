@@ -1,0 +1,9 @@
+2026-10-30 11:54:00.072 [9080] main/114/applier/tarn@127.0.0.1:41287 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-30 11:54:00.072 [9080] main/114/applier/tarn@127.0.0.1:41287 coio.c:207 E> connect, called on fd 19, aka 127.0.0.1:60692: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-30 11:54:00.072 [9080] main/113/applier/tarn@127.0.0.1:60017 applier.cc:121 E> Applier to unknown disconnected. Self: unknown
+2026-10-30 11:54:00.072 [9080] main/113/applier/tarn@127.0.0.1:60017 coio.c:207 E> connect, called on fd 18, aka 127.0.0.1:58790: Connection refused {"type":"SocketError","errno":111,"trace":[{"file":"./src/lib/core/coio.c","line":207}]}
+2026-10-30 11:54:00.574 [9080] main/104/storage.lua replication.cc:1406 C> failed to connect to 1 out of 3 replicas
+2026-10-30 11:54:59.834 [9080] relay/127.0.0.1:37274/101/main relay.cc:1157 E> Relay to shard2_127_0_0_1_41287 (id = 2, addr: 127.0.0.1:37274) disconnected. Self: shard2_127_0_0_1_43493 (id = 3, addr: 127.0.0.1:43493)
+2026-10-30 11:54:59.834 [9080] relay/127.0.0.1:37274/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}
+2026-10-30 11:54:59.834 [9080] relay/127.0.0.1:37252/101/main relay.cc:1157 E> Relay to shard2_127_0_0_1_60017 (id = 1, addr: 127.0.0.1:37252) disconnected. Self: shard2_127_0_0_1_43493 (id = 3, addr: 127.0.0.1:43493)
+2026-10-30 11:54:59.835 [9080] relay/127.0.0.1:37252/101/main coio.c:448 E> fiber is cancelled {"type":"FiberIsCancelled","trace":[{"file":"./src/lib/core/coio.c","line":448}]}

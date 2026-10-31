@@ -1,0 +1,134 @@
+storage test bounded_move_test.lua
+ok staging uses disk engine
+ok staging budget refusal rolls back rows and progress
+ok disk headroom refusal preserves progress
+ok duplicate receipt is idempotent
+ok missing target space refuses the whole page
+ok same sequence with changed checkpoint is refused
+ok out-of-order page refused
+ok concurrent move admission refuses excess reservation
+ok aggregate staging admission refuses other move
+ok cancellation reclaims reserved disk in batches
+ok late page cannot recreate cancelled resources
+ok bounded delta overflow requires frozen recopy
+ok clear uses bounded commits
+ok repeated reset receipt cannot clear a later page
+ok late reset retained staged page 3
+ok late reset retained staged page 4
+ok late reset retained staged page 5
+ok late reset retained staged page 6
+ok late reset retained staged page 7
+ok late reset retained staged page 8
+ok late reset retained staged page 9
+ok late reset retained staged page 10
+ok late reset retained staged page 11
+ok frozen recopy includes exact mixed-engine rows
+ok source reclaim is bounded
+ok unscoped reads refuse partial source
+ok reclaim cannot reverse ownership
+ok source reclamation needs multiple commits
+ok receiver install is bounded
+ok unscoped reads refuse partial receiver
+ok explicit native module is loaded
+ok native dispatch hands partial reads to Lua
+ok receiver install needs multiple commits
+ok snapshot opened during install stays refused after publication
+ok no source tuples remain memtx
+ok target exact row count memtx
+ok exact payload memtx 1
+ok exact payload memtx 2
+ok exact payload memtx 3
+ok exact payload memtx 4
+ok exact payload memtx 5
+ok exact payload memtx 6
+ok exact payload memtx 7
+ok exact payload memtx 8
+ok exact payload memtx 9
+ok exact payload memtx 10
+ok exact payload memtx 11
+ok exact payload memtx 12
+ok exact payload memtx 13
+ok no source tuples remain vinyl
+ok target exact row count vinyl
+ok exact payload vinyl 1
+ok exact payload vinyl 3
+ok exact payload vinyl 4
+ok exact payload vinyl 5
+ok exact payload vinyl 6
+ok exact payload vinyl 7
+ok exact payload vinyl 8
+ok exact payload vinyl 9
+ok exact payload vinyl 10
+ok exact payload vinyl 11
+ok exact payload vinyl 12
+ok exact payload vinyl 13
+ok all movement resources released
+ok observed batches respect fixed limits 1
+ok observed batches respect fixed limits 2
+66 bounded movement checks passed
+storage test bounded_move_test.lua
+ok staging uses disk engine
+ok staging budget refusal rolls back rows and progress
+ok disk headroom refusal preserves progress
+ok duplicate receipt is idempotent
+ok missing target space refuses the whole page
+ok same sequence with changed checkpoint is refused
+ok out-of-order page refused
+ok concurrent move admission refuses excess reservation
+ok aggregate staging admission refuses other move
+ok cancellation reclaims reserved disk in batches
+ok late page cannot recreate cancelled resources
+ok bounded delta overflow requires frozen recopy
+ok clear uses bounded commits
+ok repeated reset receipt cannot clear a later page
+ok late reset retained staged page 3
+ok late reset retained staged page 4
+ok late reset retained staged page 5
+ok late reset retained staged page 6
+ok late reset retained staged page 7
+ok late reset retained staged page 8
+ok late reset retained staged page 9
+ok late reset retained staged page 10
+ok late reset retained staged page 11
+ok frozen recopy includes exact mixed-engine rows
+ok source reclaim is bounded
+ok unscoped reads refuse partial source
+ok reclaim cannot reverse ownership
+ok source reclamation needs multiple commits
+ok receiver install is bounded
+ok unscoped reads refuse partial receiver
+ok receiver install needs multiple commits
+ok snapshot opened during install stays refused after publication
+ok no source tuples remain memtx
+ok target exact row count memtx
+ok exact payload memtx 1
+ok exact payload memtx 2
+ok exact payload memtx 3
+ok exact payload memtx 4
+ok exact payload memtx 5
+ok exact payload memtx 6
+ok exact payload memtx 7
+ok exact payload memtx 8
+ok exact payload memtx 9
+ok exact payload memtx 10
+ok exact payload memtx 11
+ok exact payload memtx 12
+ok exact payload memtx 13
+ok no source tuples remain vinyl
+ok target exact row count vinyl
+ok exact payload vinyl 1
+ok exact payload vinyl 3
+ok exact payload vinyl 4
+ok exact payload vinyl 5
+ok exact payload vinyl 6
+ok exact payload vinyl 7
+ok exact payload vinyl 8
+ok exact payload vinyl 9
+ok exact payload vinyl 10
+ok exact payload vinyl 11
+ok exact payload vinyl 12
+ok exact payload vinyl 13
+ok all movement resources released
+ok observed batches respect fixed limits 1
+ok observed batches respect fixed limits 2
+64 bounded movement checks passed

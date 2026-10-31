@@ -59,7 +59,7 @@ jobs:
             target/release/libtarn_storage.so
             /tmp/topology-evidence/source.txt
             /tmp/topology-evidence/binaries.txt
-      - name: Build the frozen comparison gateway with the same release profile
+      - name: Build the frozen format-1 gateway for admission refusal
         run: |
           git worktree add --detach /tmp/topology-baseline 8b12c4525bd677499a91b973afbc86cbcbb0cafd
           cd /tmp/topology-baseline
@@ -72,7 +72,7 @@ jobs:
           REPLICAS: ${{ matrix.replicas }}
           POOL_SIZE: ${{ matrix.pool }}
           GATEWAYS: ${{ matrix.gateways }}
-          BASELINE_BIN: /tmp/topology-baseline/target/release/tarn-server
+          INCOMPATIBLE_BASELINE_BIN: /tmp/topology-baseline/target/release/tarn-server
           TOPOLOGY_WORK: /tmp/topology-work
           TOPOLOGY_OUT: /tmp/topology-evidence
         run: bash tests/topology.sh

@@ -1,0 +1,21 @@
+{
+  "base": "ef4c690",
+  "scope": "two RF3/fsync shards, Vinyl fixture writes, native disabled, Tarantool 3.9.0 ARM64 Docker; focused refusal/restart controls only, not full old/new SQL upgrade qualification",
+  "unit_controls": 8,
+  "passed_live_controls": 2,
+  "follower_restarts": 4,
+  "original_local_adapter_failure": "The first restart adapter omitted its stop call; cluster.sh refused to restart an already-running follower. The failed fixture was stopped with pending records retained. The corrected adapter used a fresh fixture and did not replay those transactions. This adapter is not used by the production upgrade harness.",
+  "source_files": {
+    "tests/rolling_upgrade.py": "4c57241b2acbb8fec26357cc041d3b0b2ce4045f4b1f0429340369f8688073d5",
+    "tests/upgrade_prepare.py": "b142bb813b2a8df9e79884a0ebaafc48a8ab6842ac9908b1b8ecbb9b556836da",
+    "tests/test_upgrade_prepare.py": "0f503301ed813a9e9b072bd7d9a0d5305b9744c1a6ab377b3d0b4c8ce3f1b926",
+    "tests/sql/lazytest.py": "08b042db09b914e839d277c6f0d9b98ed1c975696c43491afb939fb80d7845ee"
+  },
+  "evidence": {
+    "focused-initial-controls.jsonl": "6a1f615da7a4e65321555f961655c52601307b0a3896a58bf2d1ea68687bd62b",
+    "focused-adapter-failure.jsonl": "8a687edcf3c8200691f923816001ba12a9903bb06d26ed910dd99304d401f5a5",
+    "focused-runtime.json": "cc8b663d0fcb6afd553acd61eab5f5acd534b696220852b675f73de9aa72f795",
+    "focused-rf3-restarts.jsonl": "9244369411ffa128e1d603e28db56bde246775d1ad7b6c4cb8eb18feaf71f5c3"
+  },
+  "full_matrix": "pending"
+}

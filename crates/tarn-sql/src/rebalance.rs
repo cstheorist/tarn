@@ -720,11 +720,22 @@ impl Cluster {
                     tries += 1;
                     tokio::time::sleep(Duration::from_millis(200 * tries)).await;
                 }
-                Err(e) if e.code == 1205 => return MoveEnd::Retry(e.message),
+                Err(e) if e.code == 1205 || movement_capacity_busy(&e) => return MoveEnd::Retry(e.message),
                 Err(e) => return MoveEnd::Failed(e.message),
             }
         }
     }
+}
+
+// move_bucket has abandoned the pre-publication attempt (or leaves its durable
+// job for recovery). Replanning waits for that job before starting another move.
+// Hard byte/disk limits and unknown outcomes must not enter this retry path.
+fn movement_capacity_busy(e: &SqlError) -> bool {
+    e.code == 1041
+        && matches!(
+            e.message.as_str(),
+            "Concurrent movement limit exhausted" | "Movement copy buffer budget exhausted"
+        )
 }
 
 fn busy() -> SqlError {
@@ -738,6 +749,24 @@ fn busy() -> SqlError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_temporary_movement_capacity_is_rescheduled() {
+        for message in [
+            "Concurrent movement limit exhausted",
+            "Movement copy buffer budget exhausted",
+        ] {
+            assert!(movement_capacity_busy(&SqlError::new(1041, "HY000", message)));
+            assert!(!movement_capacity_busy(&SqlError::new(1180, "40003", message)));
+        }
+        for message in [
+            "Movement staging byte budget exhausted",
+            "Movement filesystem headroom exhausted; progress retained",
+            "Movement batch byte limit exceeded",
+        ] {
+            assert!(!movement_capacity_busy(&SqlError::new(1041, "HY000", message)));
+        }
+    }
 
     #[test]
     fn plan_evens_the_shards_out() {

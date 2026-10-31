@@ -1,0 +1,52 @@
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 9 and seed 7536081928722946030 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 32947] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue185/tla/LazyRouting.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/Naturals.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/Sequences.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/FiniteSets.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/_TLCTrace.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/TLC.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/TLCExt.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-1149755183395979174/Integers.tla (jar:file:/Users/jeremiahbrazeau/Documents/ChatGPT/Fast%20Postgres/.tools/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyRouting
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyRouting
+Starting... (2026-10-30 09:30:07)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:30:07.
+Error: Invariant ImmutableRouting is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ result = <<>>
+/\ epoch = 0
+/\ done = FALSE
+/\ examined = 0
+/\ started = FALSE
+/\ at = <<1, 1>>
+/\ routing = 2
+/\ admitted = FALSE
+/\ captured = 0
+
+State 2: <Rewrite line 19, col 12 to line 20, col 83 of module LazyRouting>
+/\ result = <<>>
+/\ epoch = 0
+/\ done = FALSE
+/\ examined = 0
+/\ started = FALSE
+/\ at = <<1, 1>>
+/\ routing = 1
+/\ admitted = FALSE
+/\ captured = 0
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-10-30 09:30:07)
+Trace exploration spec path: ./LazyRouting_TTrace_1793367007.tla

@@ -1,0 +1,26 @@
+{
+  "runtime_source": "d233805b08d87d8b96cc3f02b4fbf9d5a1667bad",
+  "harness_source": "25046c4cf5f91fbb2da0b9dbbb075fcb3dae4dd1",
+  "image": "sha256:9c243201601db8e707a85cf19a6694aa48a5aad829ac08dfd82ca7c8ff52809d",
+  "local_build": "CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_CODEGEN_UNITS=64 cargo build --offline --locked --release -j1 -p tarn-server -p tarn-storage",
+  "docker_vm": {
+    "cpus": 16,
+    "memory_bytes": 8217190400,
+    "architecture": "aarch64",
+    "kernel": "6.10.14-linuxkit"
+  },
+  "container": {
+    "cpu_quota": 12,
+    "memory_bytes": 6442450944
+  },
+  "reference": "MariaDB 10.11.19-MariaDB-ubu2204",
+  "notes": [
+    "Local binaries were built at d233805; subsequent changes stream benchmark retention or change tests/docs only.",
+    "All 60 qualification arms completed, including zero-error workload, per-arm RF3/fsync checks, drain and exact outage catch-up verification.",
+    "Local cluster node logs were removed by the cluster helper default cleanup; complete per-arm JSON counters, identities, raw latencies and workload logs remain retained.",
+    "After benchmark completion and both full lazy SQL suites passed, the reused RF3 fixture encountered replica leadership churn during differential-suite cleanup. Diagnostic calls reported no reachable shard-1 leader; node excerpts showed relay timeouts and terms 4 through 7 around 15:00:49\u201315:01:11 UTC. Root cause was not established. OOM kill counter remained 3. No guards were weakened.",
+    "The initial differential run had 1091 cases and one fixture failure: unsupported first case-insensitive index added to populated rows. A fresh two-shard RF1/fsync fixture with the corrected local-index-then-lazy migration passed all 1092 cases.",
+    "KEEP=1 was added to the CI cost cleanup after discovering the default helper removed node logs before artifact upload.",
+    "Standard-profile local compilation and a concurrent bounded build were killed; compiler and pilot failures are retained in development-attempts.tar.gz."
+  ]
+}

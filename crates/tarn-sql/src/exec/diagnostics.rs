@@ -38,6 +38,43 @@ struct Context<'a, 'c> {
 }
 
 impl Context<'_, '_> {
+    fn lazy_alternative(&self, p: &SelectPlan) -> Option<Json> {
+        if !crate::lazy::eligible(p) {
+            return None;
+        }
+        let Source::Table(ta) = &p.source else { return None };
+        let AccessPath::Range { index, eq, null_eq, .. } = &ta.path else {
+            return None;
+        };
+        let ix = index_def(&ta.table, *index);
+        let lazy = ix.lazy.as_ref()?;
+        let parts = lazy.route_parts as usize;
+        let fanout = eq.len() < parts;
+        let routing = if fanout {
+            json!({"status":"all_index_shards", "shard_ids":self.live, "shard_count":self.live.len()})
+        } else if bound_path(&ta.path, self.cx.params) {
+            match range_prefix(&ta.table, ix, eq, null_eq, &[], self.cx) {
+                Ok(Some(key)) => {
+                    let bucket = crate::route::bucket_of(&key[..parts], self.map.count);
+                    let shard = self.cluster.shards[self.map.shard(bucket)].id;
+                    json!({"status":"single_destination", "shard_ids":[shard], "shard_count":1, "bucket_id":bucket})
+                }
+                Ok(None) => json!({"status":"empty", "shard_count":0}),
+                Err(_) => self.unknown("lazy routing key cannot be evaluated safely during planning"),
+            }
+        } else {
+            self.unknown("lazy routing key depends on unevaluated expressions")
+        };
+        Some(json!({"index":ix.name, "incarnation":lazy.space_id,
+            "routing_parts":parts,
+            "routing_columns":ix.cols[..parts].iter().map(|&c| &ta.table.columns[c].name).collect::<Vec<_>>(),
+            "routing":routing, "merge":if fanout { "typed index key then primary key" } else { "single stream" },
+            "max_index_shards":crate::lazy::MAX_READ_SHARDS,
+            "base_rechecks":"fetch current base rows, verify complete index key and WHERE, deduplicate, then LIMIT",
+            "base_fetch_max_shards":self.live.len(),
+            "condition":"eligible nonlocking autocommit session; incomplete or resource-limited execution falls back or fails explicitly"}))
+    }
+
     fn unknown(&self, reason: &str) -> Json {
         json!({"status":"unknown", "reason":reason, "shard_ids":null,
             "shard_count":null, "bucket_count":null, "max_shards":self.live.len()})
@@ -250,8 +287,7 @@ impl Context<'_, '_> {
             "runtime_alternative_access":p.ordered.as_ref().and_then(|path| steps.first().map(|(a,_,_)| json!({
                 "routing":self.path(&a.table,path,0),
                 "condition":"runtime row-count samples may choose the ordered index for LIMIT"}))),
-            "lazy_index_alternative":crate::lazy::eligible(p).then(|| self.unknown(
-                "an eligible nonlocking autocommit query may use lazy index routing and subsequent base-row fetches; this plan shows the strong path")),
+            "lazy_index_alternative":self.lazy_alternative(p),
             "runtime_participants":null,
             "runtime_observations":"SHOW TARN QUERIES reports completed foreground routing, separately from these estimates"})
     }

@@ -1,0 +1,211 @@
+  ok   memtx restricted metadata has actual definition/layout and limits
+  ok   memtx get returns exact present key/value
+  ok   memtx full ordered vector retains duplicate and missing positions and present SQL NULL
+  ok   memtx inherited table READ role works
+  ok   memtx no READ metadata remains protected table: 0x06a600371730
+  ok   memtx unauthorized hit/miss same read guard 1
+  ok   memtx unauthorized hit/miss same read guard 99
+  ok   memtx no READ metadata remains protected table: 0x06a5ffc39780
+  ok   memtx unauthorized hit/miss same read guard 1
+  ok   memtx unauthorized hit/miss same read guard 99
+  ok   memtx reader has no EVAL privilege
+  ok   memtx raw native mutation is denied before effects
+  ok   memtx no internal mutation CALL grant
+  ok   memtx no native mutation procedure grant
+  ok   memtx rejects unsupported consistency atomic
+  ok   memtx rejects unsupported consistency same_shard_snapshot
+  ok   memtx rejects unsupported consistency cross_shard_snapshot
+  ok   memtx unknown public knob stream
+  ok   memtx unknown public knob begin
+  ok   memtx unknown public knob index
+  ok   memtx unknown public knob after
+  ok   memtx unknown public knob write
+  ok   memtx extra positional get arg is rejected
+  ok   memtx extra positional meta arg is rejected
+  ok   memtx extra positional get_many arg is rejected
+  ok   memtx missing CALL argument is rejected
+  ok   memtx wrong metadata identifier type is rejected
+  ok   memtx unknown metadata map field is rejected
+  ok   memtx invalid complete native key shape/type
+  ok   memtx invalid complete native key shape/type
+  ok   memtx invalid complete native key shape/type
+  ok   memtx invalid complete native key shape/type
+  ok   memtx invalid complete native key shape/type
+  ok   memtx invalid complete native key shape/type
+  ok   memtx invalid complete native key shape/type
+  ok   memtx giant nested later key is typed error with no prefix
+  ok   memtx wrong version type is unsupported
+  ok   memtx wrong table token field type
+  ok   memtx noncanonical hash shape
+  ok   memtx forged physical SID cannot certify a missing row
+  ok   memtx wrong ownership field type is rejected
+  ok   memtx forged frozen definition
+  ok   memtx forged frozen layout
+  ok   memtx forged ownership shard_id cannot certify missing
+  ok   memtx forged ownership bucket_count cannot certify missing
+  ok   memtx forged ownership bucket_epoch cannot certify missing
+  ok   memtx forged ownership membership_version cannot certify missing
+  ok   memtx empty get_many is not a complete batch
+  ok   memtx outer batch actual numeric-map hole spans Lua length without becoming a dense array
+  ok   memtx sparse numeric-map batch rejects whole vector rather than returning a clipped prefix
+  ok   memtx dense point still succeeds after sparse batch refusal
+  ok   memtx exact 128 all-miss positions consume bounded work
+  ok   memtx 129 all-miss keys reject whole request
+  ok   memtx duplicate keys cannot evade 128 work cap
+  ok   memtx string primary key is supported
+  ok   memtx exact encoded 64KiB key boundary is a complete miss
+  ok   memtx encoded key-byte overflow rejects whole batch
+  ok   memtx giant native string is bounded before encoding
+  ok   memtx MP_BIN key and echo preserve binary identity
+  ok   memtx MP_STR is not silently reinterpreted as MP_BIN
+  ok   memtx giant native binary key is bounded
+  ok   memtx complete composite primary key works
+  ok   memtx primary prefix is unsupported as an incomplete key
+  ok   memtx inner PK actual numeric-map hole spans Lua length without becoming a dense array
+  ok   memtx sparse numeric-map full-arity PK is bad_request without any slots
+  ok   memtx complete four-part PK succeeds after sparse inner refusal
+  ok   memtx floating primary key metadata is explicitly unsupported
+  ok   memtx implicit non-PRIMARY key metadata is unsupported
+  ok   memtx outer catalog version and JSON provenance remain independently frozen
+  ok   memtx actual READ revocation after scan direct
+  ok   memtx positive same handle after READ regrant direct
+  ok   memtx actual READ revocation after scan role
+  ok   memtx positive same handle after READ regrant role
+  ok   memtx real durable PREPARE owns the currently missing key
+  ok   memtx missing-key prepared claim prevents complete partial vector
+  ok   memtx refusal reached the ordinary prepared-lock domain
+  ok   memtx abort releases missing claim and normal complete vector succeeds
+  ok   memtx oversized final tuple exposes no successful prefix
+  ok   memtx single oversized tuple cannot bypass reply cap
+  ok   memtx ambient refusal precedes even malformed request
+  ok   memtx ambient refusal preserves exact caller transaction
+  ok   memtx marked old stream is also refused without late refresh
+  ok   memtx marked stream transaction identity survives refusal
+  ok   memtx original MVCC read history still rejects a later stale write
+  ok   memtx fresh public request sees acknowledged replacement after old-stream refusal
+  ok   memtx metadata keeps TCP endpoint but removes URI credentials
+  ok   memtx unsupported secret-bearing URI is not exported
+  ok   memtx query/fragment and credentials absent even from error
+  ok   memtx unsupported secret-bearing URI is not exported
+  ok   memtx query/fragment and credentials absent even from error
+  ok   memtx local roundtrip has no remote lazy-transport prerequisites
+  ok   memtx supported send publishes actual unowned state and newer epoch
+  ok   memtx new token observes the actual sent cache before the missing-key oracle
+  ok   memtx current token still rejects a key whose recomputed bucket is unowned
+  ok   memtx unowned-key refusal is actual bucket guard, not token mismatch
+  ok   memtx supported receive restores ownership and exact whole bucket image
+  ok   memtx actual owned-map restore permits a normal missing result
+  ok   memtx real persisted DDL hold/fence makes frozen handle terminal
+  ok   memtx aborted DDL restores ordinary guarded read
+  ok   memtx actual catalog/format change invalidates old frozen handle
+  ok   memtx explicit new handle exposes new field names and same stored row
+  ok   memtx caller may explicitly resubmit compatible keys under new handle
+  ok   memtx old physical incarnation never reads recreated table rows
+  ok   memtx explicit reopened table binds the new incarnation
+  ok   memtx explicit new incarnation returns its own row data
+  ok   vinyl restricted metadata has actual definition/layout and limits
+  ok   vinyl get returns exact present key/value
+  ok   vinyl full ordered vector retains duplicate and missing positions and present SQL NULL
+  ok   vinyl inherited table READ role works
+  ok   vinyl no READ metadata remains protected table: 0x06a600371730
+  ok   vinyl unauthorized hit/miss same read guard 1
+  ok   vinyl unauthorized hit/miss same read guard 99
+  ok   vinyl no READ metadata remains protected table: 0x06a5ffc39780
+  ok   vinyl unauthorized hit/miss same read guard 1
+  ok   vinyl unauthorized hit/miss same read guard 99
+  ok   vinyl reader has no EVAL privilege
+  ok   vinyl raw native mutation is denied before effects
+  ok   vinyl no internal mutation CALL grant
+  ok   vinyl no native mutation procedure grant
+  ok   vinyl rejects unsupported consistency atomic
+  ok   vinyl rejects unsupported consistency same_shard_snapshot
+  ok   vinyl rejects unsupported consistency cross_shard_snapshot
+  ok   vinyl unknown public knob stream
+  ok   vinyl unknown public knob begin
+  ok   vinyl unknown public knob index
+  ok   vinyl unknown public knob after
+  ok   vinyl unknown public knob write
+  ok   vinyl extra positional get arg is rejected
+  ok   vinyl extra positional meta arg is rejected
+  ok   vinyl extra positional get_many arg is rejected
+  ok   vinyl missing CALL argument is rejected
+  ok   vinyl wrong metadata identifier type is rejected
+  ok   vinyl unknown metadata map field is rejected
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl invalid complete native key shape/type
+  ok   vinyl giant nested later key is typed error with no prefix
+  ok   vinyl wrong version type is unsupported
+  ok   vinyl wrong table token field type
+  ok   vinyl noncanonical hash shape
+  ok   vinyl forged physical SID cannot certify a missing row
+  ok   vinyl wrong ownership field type is rejected
+  ok   vinyl forged frozen definition
+  ok   vinyl forged frozen layout
+  ok   vinyl forged ownership shard_id cannot certify missing
+  ok   vinyl forged ownership bucket_count cannot certify missing
+  ok   vinyl forged ownership bucket_epoch cannot certify missing
+  ok   vinyl forged ownership membership_version cannot certify missing
+  ok   vinyl empty get_many is not a complete batch
+  ok   vinyl outer batch actual numeric-map hole spans Lua length without becoming a dense array
+  ok   vinyl sparse numeric-map batch rejects whole vector rather than returning a clipped prefix
+  ok   vinyl dense point still succeeds after sparse batch refusal
+  ok   vinyl exact 128 all-miss positions consume bounded work
+  ok   vinyl 129 all-miss keys reject whole request
+  ok   vinyl duplicate keys cannot evade 128 work cap
+  ok   vinyl string primary key is supported
+  ok   vinyl exact encoded 64KiB key boundary is a complete miss
+  ok   vinyl encoded key-byte overflow rejects whole batch
+  ok   vinyl giant native string is bounded before encoding
+  ok   vinyl MP_BIN key and echo preserve binary identity
+  ok   vinyl MP_STR is not silently reinterpreted as MP_BIN
+  ok   vinyl giant native binary key is bounded
+  ok   vinyl complete composite primary key works
+  ok   vinyl primary prefix is unsupported as an incomplete key
+  ok   vinyl inner PK actual numeric-map hole spans Lua length without becoming a dense array
+  ok   vinyl sparse numeric-map full-arity PK is bad_request without any slots
+  ok   vinyl complete four-part PK succeeds after sparse inner refusal
+  ok   vinyl floating primary key metadata is explicitly unsupported
+  ok   vinyl implicit non-PRIMARY key metadata is unsupported
+  ok   vinyl outer catalog version and JSON provenance remain independently frozen
+  ok   vinyl actual READ revocation after scan direct
+  ok   vinyl positive same handle after READ regrant direct
+  ok   vinyl actual READ revocation after scan role
+  ok   vinyl positive same handle after READ regrant role
+  ok   vinyl real durable PREPARE owns the currently missing key
+  ok   vinyl missing-key prepared claim prevents complete partial vector
+  ok   vinyl refusal reached the ordinary prepared-lock domain
+  ok   vinyl abort releases missing claim and normal complete vector succeeds
+  ok   vinyl oversized final tuple exposes no successful prefix
+  ok   vinyl single oversized tuple cannot bypass reply cap
+  ok   vinyl ambient refusal precedes even malformed request
+  ok   vinyl ambient refusal preserves exact caller transaction
+  ok   vinyl marked old stream is also refused without late refresh
+  ok   vinyl marked stream transaction identity survives refusal
+  ok   vinyl original MVCC read history still rejects a later stale write
+  ok   vinyl fresh public request sees acknowledged replacement after old-stream refusal
+  ok   vinyl metadata keeps TCP endpoint but removes URI credentials
+  ok   vinyl unsupported secret-bearing URI is not exported
+  ok   vinyl query/fragment and credentials absent even from error
+  ok   vinyl unsupported secret-bearing URI is not exported
+  ok   vinyl query/fragment and credentials absent even from error
+  ok   vinyl local roundtrip has no remote lazy-transport prerequisites
+  ok   vinyl supported send publishes actual unowned state and newer epoch
+  ok   vinyl new token observes the actual sent cache before the missing-key oracle
+  ok   vinyl current token still rejects a key whose recomputed bucket is unowned
+  ok   vinyl unowned-key refusal is actual bucket guard, not token mismatch
+  ok   vinyl supported receive restores ownership and exact whole bucket image
+  ok   vinyl actual owned-map restore permits a normal missing result
+  ok   vinyl real persisted DDL hold/fence makes frozen handle terminal
+  ok   vinyl aborted DDL restores ordinary guarded read
+  ok   vinyl actual catalog/format change invalidates old frozen handle
+  ok   vinyl explicit new handle exposes new field names and same stored row
+  ok   vinyl caller may explicitly resubmit compatible keys under new handle
+  ok   vinyl old physical incarnation never reads recreated table rows
+  ok   vinyl explicit reopened table binds the new incarnation
+  ok   vinyl explicit new incarnation returns its own row data
+210 passed, 0 failed (KV v1 actual restricted network storage-unit, memtx+vinyl)

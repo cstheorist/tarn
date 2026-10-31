@@ -389,6 +389,9 @@ local success, exception = xpcall(function()
             public(reader, 'get_many', request(m, {{1}, {3}}, true)), 'limit_exceeded')
         error_result(engine .. ' single oversized tuple cannot bypass reply cap',
             public(reader, 'get', request(m, {3})), 'limit_exceeded')
+        -- This reply-limit payload exceeds the default movement row budget.
+        -- Retire it before the separate ownership roundtrip at normal limits.
+        sp:delete{3}
 
         local stream = admin:new_stream(); stream:begin()
         local id = stream:eval('return tostring(box.txn_id())')
@@ -432,6 +435,8 @@ local success, exception = xpcall(function()
         tarn.cfg.peers['1'] = peers
 
         -- Local bucket-protocol roundtrip, not a full distributed move.
+        -- Both sides use the real local capability endpoint; this unit
+        -- does not establish a second shard. RF3 moves are checked separately.
         -- The supported RPCs update both durable state and the live cache;
         -- raw _tarn_buckets replacement is not a cache invalidation API.
         -- One bucket avoids copying a CRC implementation into this oracle.
@@ -456,14 +461,14 @@ local success, exception = xpcall(function()
         local old_report = ok(admin:call('tarn_buckets'))
         local rows = bucket_rows()
         local before_image, send = image(rows), 'kv-unit-send-' .. engine
-        ok(admin:call('tarn_bucket_send_begin', {1, 2, send, 1}))
+        ok(admin:call('tarn_bucket_send_begin', {1, 1, send, 1}))
         ok(admin:call('tarn_bucket_fence', {1, send, 1}))
         ok(admin:call('tarn_bucket_send', {1, send}))
         local sent_report = ok(admin:call('tarn_buckets'))
         check(engine .. ' supported send publishes actual unowned state and newer epoch',
             sent_report[2] == 1 and sent_report[3] > old_report[3] and #sent_report[4] == 0
             and #sent_report[5] == 1 and sent_report[5][1][1] == 1
-            and sent_report[5][1][2] == 'sent' and sent_report[5][1][3] == 2,
+            and sent_report[5][1][2] == 'sent' and sent_report[5][1][3] == 1,
             {before = old_report, sent = sent_report})
         local moved = meta(reader, name); assert(moved.status == 'ok', json.encode(moved))
         check(engine .. ' new token observes the actual sent cache before the missing-key oracle',
@@ -473,7 +478,7 @@ local success, exception = xpcall(function()
         check(engine .. ' unowned-key refusal is actual bucket guard, not token mismatch',
             r.error.domain == 'mysql' and r.error.message:find('bucket 1', 1, true) ~= nil, r)
         local receive = 'kv-unit-receive-' .. engine
-        ok(admin:call('tarn_bucket_recv_begin', {1, 2, receive}))
+        ok(admin:call('tarn_bucket_recv_begin', {1, 1, receive}))
         ok(admin:call('tarn_bucket_recv_rows', {1, receive, rows}))
         ok(admin:call('tarn_bucket_hold', {1, receive}))
         ok(admin:call('tarn_bucket_recv', {1, receive}))

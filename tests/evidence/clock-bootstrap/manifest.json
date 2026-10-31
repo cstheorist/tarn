@@ -1,0 +1,686 @@
+{
+  "issue": 209,
+  "base": "dacd3cb52d0719a23109c475fb17a39a3fc3d8cc",
+  "original_ci": {
+    "run": 41064465703,
+    "job": 124095799928,
+    "source": "9c38f9b69e13aeb18152d5205974bb158db84483",
+    "artifact": 12983727432,
+    "artifact_zip_sha256": "373b3b6f8d92d29631335ac9c5400424d80fc5f9348a829de83c78fd1ad25f4e"
+  },
+  "archive": {
+    "path": "controls-20261030.tar.gz",
+    "bytes": 254081,
+    "sha256": "80a782dc35cd906152d43e82b1caa4110aa41bad41085ce55d27b98f32964396"
+  },
+  "members": [
+    {
+      "path": "build-environment.txt",
+      "bytes": 531,
+      "sha256": "a028ea6e2fde084f106b9faafb346181d7765447b4f67ba2c67a2f946ef0ea00"
+    },
+    {
+      "path": "clippy.log",
+      "bytes": 1022,
+      "sha256": "7e54683e4e914ab8f76fab7696adff8e00a8d306e7195bc677a83e89cffce384"
+    },
+    {
+      "path": "handback-freshness/cleanup.txt",
+      "bytes": 69,
+      "sha256": "3d689ceea25d67af6269c6d09b7471ff8d652a3c5d0c0b22db3916736d3dec1c"
+    },
+    {
+      "path": "handback-freshness/control",
+      "bytes": 9,
+      "sha256": "ba385a790781bf7e0f2875aca72794d3998d3ab93ef2cfb82c8292b4ec0b8481"
+    },
+    {
+      "path": "handback-freshness/events.jsonl",
+      "bytes": 23215,
+      "sha256": "de4d45e956318f898090d0d8f2534dee178c46e8d269ffe1f14051c9bd4ff5e9"
+    },
+    {
+      "path": "handback-freshness/native.sha256",
+      "bytes": 111,
+      "sha256": "c29b45e523649b0e013e85908832bad350206feaace2da226aeb69511acf14a4"
+    },
+    {
+      "path": "handback-freshness/owner",
+      "bytes": 21,
+      "sha256": "cb0a5c26318d03b7390574470a9deae2cf9fe3d19f074e6739d974445a195fc3"
+    },
+    {
+      "path": "handback-freshness/s1.log",
+      "bytes": 3174,
+      "sha256": "b559c31b6e062210b1b0365cd7d5411576c117a1a11f76c518de9363e29442dd"
+    },
+    {
+      "path": "handback-freshness/s1.pid",
+      "bytes": 6,
+      "sha256": "10a677834b7e1df23657ab1328a9bc6a8316062b63f8e669ae245cebb52d1f30"
+    },
+    {
+      "path": "handback-freshness/s1.process-identity",
+      "bytes": 15,
+      "sha256": "8209df5e0603b4f96eefe51aa49c98786cfcfabe1e3d66046a7aeb6ee6ffb7a4"
+    },
+    {
+      "path": "handback-freshness/s1/00000000000000000000.snap",
+      "bytes": 5204,
+      "sha256": "5df4387ff6825b4f57aef2596051296997f2d487acf56777770919eaa644fedc"
+    },
+    {
+      "path": "handback-freshness/s1/00000000000000000000.xlog",
+      "bytes": 12473,
+      "sha256": "24c42656105d3fc41e667021f540c1f6ea1c9e9915c6e0eefe866d5a1f1f3683"
+    },
+    {
+      "path": "handback-freshness/s1/00000000000000000131.xlog",
+      "bytes": 129,
+      "sha256": "5271a5cea8183ba11922636bd804a47465927fd7418eebde6675a81af45f1d5c"
+    },
+    {
+      "path": "handback-freshness/s1/status-events.jsonl",
+      "bytes": 1180,
+      "sha256": "9793c6d7bec13b84a2b4939bfb6b6564cefc163462e013bd121f9578715c7d8e"
+    },
+    {
+      "path": "handback-freshness/s2.log",
+      "bytes": 2018,
+      "sha256": "5b75336201ea60185ea6f86be6f967477be79a18b660bbfe67fcb5ac36f80f54"
+    },
+    {
+      "path": "handback-freshness/s2.pid",
+      "bytes": 6,
+      "sha256": "6128db7082dd6b319fcc7ec1a42ed8dc6fd08005d4af97e777db8fd1db960a99"
+    },
+    {
+      "path": "handback-freshness/s2.process-identity",
+      "bytes": 15,
+      "sha256": "8209df5e0603b4f96eefe51aa49c98786cfcfabe1e3d66046a7aeb6ee6ffb7a4"
+    },
+    {
+      "path": "handback-freshness/s2/00000000000000000067.snap",
+      "bytes": 6580,
+      "sha256": "82d3158300312129355c7ceddfeaa17148c874ac43dde008416110ee78c923c7"
+    },
+    {
+      "path": "handback-freshness/s2/00000000000000000067.xlog",
+      "bytes": 4106,
+      "sha256": "addca1e297b9e792c6d44be8d9167dcbbfaaebd918ca06f262554ad56f10fdb2"
+    },
+    {
+      "path": "handback-freshness/s2/00000000000000000126.xlog",
+      "bytes": 134,
+      "sha256": "8ced49605731032be725b030b424694c0041383ef2e5ce60aeed86a2e2d0d357"
+    },
+    {
+      "path": "handback-freshness/s2/status-events.jsonl",
+      "bytes": 334,
+      "sha256": "3bd8456c7684f80ddb20f777ed52b3e0d4b86fa4b424b3fda7a5d882a6f7c459"
+    },
+    {
+      "path": "handback-freshness/s3.log",
+      "bytes": 3242,
+      "sha256": "9ce10a4d7fdd17fbe3a1254c19f7d1ca250e8eb69a6e627357d084e16de29e46"
+    },
+    {
+      "path": "handback-freshness/s3.pid",
+      "bytes": 6,
+      "sha256": "dcd30071a53dcf2e92179bc64017d67631f39498bf6470165ebe4407c76f251a"
+    },
+    {
+      "path": "handback-freshness/s3.process-identity",
+      "bytes": 15,
+      "sha256": "7d3d0e17759eede2e3e08262b07bff3f9ad7df1f8e29ef9424483de8255eeca8"
+    },
+    {
+      "path": "handback-freshness/s3/00000000000000000066.snap",
+      "bytes": 6538,
+      "sha256": "41c063bb8d0f0ec92c842b8a76043b847ff2b5d3b9ef62df9c27b5df593b4c3b"
+    },
+    {
+      "path": "handback-freshness/s3/00000000000000000066.xlog",
+      "bytes": 4172,
+      "sha256": "f45d959f4dbe5a3142498932fbf818dcbfd820ade10f22f945b6e4c531596c47"
+    },
+    {
+      "path": "handback-freshness/s3/00000000000000000126.xlog",
+      "bytes": 134,
+      "sha256": "e6f6b58106e83c2f7907ab8ed7f90d4ea6e21281c5d35db273bac5365e7966bc"
+    },
+    {
+      "path": "handback-freshness/s3/status-events.jsonl",
+      "bytes": 335,
+      "sha256": "d03440c9b9de3d5111d4e244253abe9c26ff45d1996767cda391394803f70099"
+    },
+    {
+      "path": "handback-freshness/source.sha256",
+      "bytes": 12600,
+      "sha256": "a215f0679b8531e5a07062ce10073e7b75590fe97e1d44396880fb351255f4e8"
+    },
+    {
+      "path": "handback-freshness/tarantool-version.txt",
+      "bytes": 707,
+      "sha256": "900f202fe69fce971c533c139c0e272d100eb6e3829c142e132c1f9fd635b048"
+    },
+    {
+      "path": "handback-freshness/tarantool.sha256",
+      "bytes": 91,
+      "sha256": "c16e84e3a231b0da5925345bd984abd331dab4b2ec1256396073f83ce15e5879"
+    },
+    {
+      "path": "lua-control.log",
+      "bytes": 391,
+      "sha256": "5fc430d983120b53a4ce2ce1681d975aed1fd74caf3848bbf6eeb6e7c25c3278"
+    },
+    {
+      "path": "lua-control/node0.log",
+      "bytes": 4327,
+      "sha256": "bec855e1688b65a52248f7604a2b2ae32a8a36050bdce07df04dc0aef3e8ddd5"
+    },
+    {
+      "path": "lua-control/node0/00000000000000000000.snap",
+      "bytes": 5206,
+      "sha256": "fa5ac558e484254a5438b73f8441965218b4e58d14c155653a75f955b8e7138f"
+    },
+    {
+      "path": "lua-control/node0/00000000000000000000.vylog",
+      "bytes": 252,
+      "sha256": "6bb3b61dea39912df3b254dd64bccb8340ef7b181fe921958bdeb82dc68df352"
+    },
+    {
+      "path": "lua-control/node0/00000000000000000000.xlog",
+      "bytes": 9635,
+      "sha256": "dcf3cfcb60d85e9d160e16570f99fe3a3661f5156a2d2a5a7624e42319fc45f9"
+    },
+    {
+      "path": "lua-control/node0/00000000000000000087.xlog",
+      "bytes": 408,
+      "sha256": "494b1dc03b54085e4a8896139ea66fcf62fa60377f2f38f5883fef06900588f9"
+    },
+    {
+      "path": "lua-control/node0/00000000000000000091.xlog",
+      "bytes": 140,
+      "sha256": "79903bf0f0385dfe30426185b6f6fa229b790cda29acb558b2943a8202b23fe3"
+    },
+    {
+      "path": "lua-control/node1.log",
+      "bytes": 3384,
+      "sha256": "ee373628eab946e6d2da77eff043041c474006dd2f6af204caed3eabf509f174"
+    },
+    {
+      "path": "lua-control/node1/00000000000000000062.snap",
+      "bytes": 6482,
+      "sha256": "51c9ab728e71c8152db6a8312d7a840f80607a29942bb12c022f903471b78d55"
+    },
+    {
+      "path": "lua-control/node1/00000000000000000062.vylog",
+      "bytes": 257,
+      "sha256": "e5fa25ed35dfeb285a181d1436d5acc1f91a315555819d5de3f2cdb1afd81001"
+    },
+    {
+      "path": "lua-control/node1/00000000000000000062.xlog",
+      "bytes": 2341,
+      "sha256": "b23cc9a89c788cb9843319d4f6dfb8ea9d8898bac19df9f6659dbec88bcb5734"
+    },
+    {
+      "path": "lua-control/node1/00000000000000000087.xlog",
+      "bytes": 133,
+      "sha256": "8a84e777eb9a6b700373f34d18e9f2f29ad694ece4c10d7f6ba4f8154866af91"
+    },
+    {
+      "path": "lua-control/node2.log",
+      "bytes": 4052,
+      "sha256": "8d335bb14b3aa7ccbeaf7b1314cb7d55664162b07b189e6969bf37964bfe52af"
+    },
+    {
+      "path": "lua-control/node2/00000000000000000061.snap",
+      "bytes": 6440,
+      "sha256": "b5c8226038b8a8a5f83f509f8932c8e93868c9ab704fd057810f312e5518ddf3"
+    },
+    {
+      "path": "lua-control/node2/00000000000000000061.vylog",
+      "bytes": 257,
+      "sha256": "2038c9e6b5d69802d9690fc8fe0ce6159cc370bd196b37dede2e54bcbc8800b4"
+    },
+    {
+      "path": "lua-control/node2/00000000000000000061.xlog",
+      "bytes": 2127,
+      "sha256": "91955a378f11798adee9d4405230bd7016682f9878ac500033ac51c0a10413e4"
+    },
+    {
+      "path": "lua-control/node2/00000000000000000082.xlog",
+      "bytes": 411,
+      "sha256": "1b0e2cfc91375965246585cf8a47017e520ee16b4ddbef1547f4e2e4f5e59b84"
+    },
+    {
+      "path": "lua-control/node2/00000000000000000086.xlog",
+      "bytes": 139,
+      "sha256": "94cb53f7d3739d8a124ee0dd19b5cbc26a852f7c4604521fe32cc00491ad3dc6"
+    },
+    {
+      "path": "lua-control/receipt.json",
+      "bytes": 2584,
+      "sha256": "6df300ef5cdc9d44638feda1e482e76583e194352a75156ccc0c3da87c00cd48"
+    },
+    {
+      "path": "lua-storage.log",
+      "bytes": 22568,
+      "sha256": "53acc2e532967cdc9d48ee2cb392184b1c2fc15aa10e2433c752b23ab40c6dd6"
+    },
+    {
+      "path": "misconfigured-native-attempt.log",
+      "bytes": 391,
+      "sha256": "5fc430d983120b53a4ce2ce1681d975aed1fd74caf3848bbf6eeb6e7c25c3278"
+    },
+    {
+      "path": "misconfigured-native-attempt/node0.log",
+      "bytes": 4836,
+      "sha256": "ec10e7ddf95df9e33a8cade781d5dff4ee774ab79ec5d09754004271419f553d"
+    },
+    {
+      "path": "misconfigured-native-attempt/node0/00000000000000000000.snap",
+      "bytes": 5207,
+      "sha256": "115c09245a226e538d069aab4ce49ea69a319d0cf4b0000ec9b1911e85f85ffe"
+    },
+    {
+      "path": "misconfigured-native-attempt/node0/00000000000000000000.vylog",
+      "bytes": 252,
+      "sha256": "e4d9c48397dbe68be372c90966c454ddce201b684399de4e94899137e2b2e346"
+    },
+    {
+      "path": "misconfigured-native-attempt/node0/00000000000000000000.xlog",
+      "bytes": 9635,
+      "sha256": "79dd2f0e2be1a0cdb7ee2c4b61eb965283adf5c1df163b2da22548025358dcfc"
+    },
+    {
+      "path": "misconfigured-native-attempt/node0/00000000000000000087.xlog",
+      "bytes": 408,
+      "sha256": "dea513a7aa5036dafe695d2997006c92db7553cc53e4121f126b412c6bf59dbf"
+    },
+    {
+      "path": "misconfigured-native-attempt/node0/00000000000000000091.xlog",
+      "bytes": 140,
+      "sha256": "404fedc141e524dd40a51f17bcfeb084a51e6ecc0ce331605e0cd50f52613132"
+    },
+    {
+      "path": "misconfigured-native-attempt/node1.log",
+      "bytes": 3632,
+      "sha256": "d8a4d9de56629d789507099c9ae1bdc39bde7b965337381da18163033a21e1c9"
+    },
+    {
+      "path": "misconfigured-native-attempt/node1/00000000000000000062.snap",
+      "bytes": 6486,
+      "sha256": "6993bf115168ba585851e0ff287af61c1ca538844a12de3222cd190d7eb9821b"
+    },
+    {
+      "path": "misconfigured-native-attempt/node1/00000000000000000062.vylog",
+      "bytes": 257,
+      "sha256": "561a60b2bfbd17cfd60c6f054d40bba4f02906b7dac297129b93f42bf15b6a47"
+    },
+    {
+      "path": "misconfigured-native-attempt/node1/00000000000000000062.xlog",
+      "bytes": 2341,
+      "sha256": "a0029fc1513fde47b1bdde0dfa77e8b12a5c213d278e8bbbff4369dce3d83bae"
+    },
+    {
+      "path": "misconfigured-native-attempt/node1/00000000000000000087.xlog",
+      "bytes": 133,
+      "sha256": "8ed48f2194370e3d99faabc1840250ed3cb60c27ba1092ad5933a06bf0d012d3"
+    },
+    {
+      "path": "misconfigured-native-attempt/node2.log",
+      "bytes": 4206,
+      "sha256": "0ca2d078edaef199f9b0fda5d4da6dd300be410d83d67d895c0264faf91b81c6"
+    },
+    {
+      "path": "misconfigured-native-attempt/node2/00000000000000000061.snap",
+      "bytes": 6444,
+      "sha256": "120733d211e0f5ae11ab20fcf339c3d8158eeff6fd70dcab711c6c9bbfbf6075"
+    },
+    {
+      "path": "misconfigured-native-attempt/node2/00000000000000000061.vylog",
+      "bytes": 257,
+      "sha256": "7421216f108413b7142fade70a9ee04a61c39a71b8e8c0a92779dbe46194ecef"
+    },
+    {
+      "path": "misconfigured-native-attempt/node2/00000000000000000061.xlog",
+      "bytes": 2108,
+      "sha256": "f7db2467e193bc332530f1e112d47125a22b3bfe6198afeff345157514c832b1"
+    },
+    {
+      "path": "misconfigured-native-attempt/node2/00000000000000000082.xlog",
+      "bytes": 411,
+      "sha256": "ed99f5fa69fa6ec82f699570bbea25295a2fd1576dbd2de7ed144382b8cb72f6"
+    },
+    {
+      "path": "misconfigured-native-attempt/node2/00000000000000000086.xlog",
+      "bytes": 139,
+      "sha256": "38e1c7b1b299ad115a8563b6c48d27ecfe2f3082ce12f678f66690397358a8c9"
+    },
+    {
+      "path": "misconfigured-native-attempt/receipt.json",
+      "bytes": 2636,
+      "sha256": "cb13d2a32b262962063b36b2a66b22847c23cae33d301697233bb13bc9866bde"
+    },
+    {
+      "path": "misconfigured-native-suite.log",
+      "bytes": 128211,
+      "sha256": "840540fc803d117744324b306ca753114634e471f0a3812e8de8856043794ab2"
+    },
+    {
+      "path": "model-check.log",
+      "bytes": 392,
+      "sha256": "417b513f9e1862d880e936a753903d02e51f438c6ad6bf98984253b0b3c03582"
+    },
+    {
+      "path": "native-build.log",
+      "bytes": 907,
+      "sha256": "15f074de4da9ff274b2541419c1d399e6c34319d28a5eb733e0284902bd4efb8"
+    },
+    {
+      "path": "native-control/node0.log",
+      "bytes": 4374,
+      "sha256": "54c387dbcd9cbe409c40c2010f7b47a00f77dc737f36dfb177372f16a1ff0c88"
+    },
+    {
+      "path": "native-control/node0/00000000000000000000.snap",
+      "bytes": 5204,
+      "sha256": "3f09c796735caff83d90f00b19de7c16539e6fe897f7717040179c9db1ae5b0c"
+    },
+    {
+      "path": "native-control/node0/00000000000000000000.vylog",
+      "bytes": 252,
+      "sha256": "c09daf78d5ff0f79c1f4744f4a0f79b7d9434aecf111e2ee830aa6da497074e1"
+    },
+    {
+      "path": "native-control/node0/00000000000000000000.xlog",
+      "bytes": 10391,
+      "sha256": "7f22d21faf1c9ad642534e09cdf43b6dff59449f929161ee6847746f19e1e818"
+    },
+    {
+      "path": "native-control/node0/00000000000000000092.xlog",
+      "bytes": 408,
+      "sha256": "454a8821dfed2732320aff0c84d75b7a71d94bc4c02ec3475e3af5f841ad210b"
+    },
+    {
+      "path": "native-control/node0/00000000000000000096.xlog",
+      "bytes": 140,
+      "sha256": "df4b10503d76dc8e73980975c306854b4b8e248b62e9c846948f156650b2eeba"
+    },
+    {
+      "path": "native-control/node1.log",
+      "bytes": 3282,
+      "sha256": "820c834894ed3e9ad74a6840c4487547c5ac6a784218f475f1115f28d29df382"
+    },
+    {
+      "path": "native-control/node1/00000000000000000067.snap",
+      "bytes": 6583,
+      "sha256": "3196f6bc9ebe628df72555b0e062a34bbeeb662a4b5a9231aca52b0ca33e9e8d"
+    },
+    {
+      "path": "native-control/node1/00000000000000000067.vylog",
+      "bytes": 257,
+      "sha256": "5f71f5bdbe0094a7ec2c2d633d25562da5dd9c61319dc7cfe79d5829c788986b"
+    },
+    {
+      "path": "native-control/node1/00000000000000000067.xlog",
+      "bytes": 2341,
+      "sha256": "66d2821a45e08725c9923b519b4694bfd9fbc3d476c4a384ffc4ee7695c8ae74"
+    },
+    {
+      "path": "native-control/node1/00000000000000000092.xlog",
+      "bytes": 133,
+      "sha256": "1b5cbaa6168193ea245b12a912932f4df0fcb4bdf7ecc22e434bbd9297687ade"
+    },
+    {
+      "path": "native-control/node2.log",
+      "bytes": 4208,
+      "sha256": "83753a6182c5140b0a20e64bbb84213cc27f14aa3bb67c3bcdc2725baedd35bd"
+    },
+    {
+      "path": "native-control/node2/00000000000000000066.snap",
+      "bytes": 6540,
+      "sha256": "7839a199eac7d938b26f85fcf2cad1bc6311813e8b721ff777d2659183009792"
+    },
+    {
+      "path": "native-control/node2/00000000000000000066.vylog",
+      "bytes": 257,
+      "sha256": "4d69f80901864a3d72d9a84fa58d20ace9b32d3eff16b1434a3cb2e8cf7be6a9"
+    },
+    {
+      "path": "native-control/node2/00000000000000000066.xlog",
+      "bytes": 2127,
+      "sha256": "1ebb592b3b3582a221680c51ea490bfd7d229eeb6f1319bcfacdf41801dce61a"
+    },
+    {
+      "path": "native-control/node2/00000000000000000087.xlog",
+      "bytes": 411,
+      "sha256": "b6090fc3b3a8f045d8e33934300cd6dad0578208e5ba4058b1118fd6f21860ce"
+    },
+    {
+      "path": "native-control/node2/00000000000000000091.xlog",
+      "bytes": 139,
+      "sha256": "24c62e68d6f2f68ff9d3ccc0192b36d5ec9bd5597250b2d72af935f11fb0c8f5"
+    },
+    {
+      "path": "native-control/receipt.json",
+      "bytes": 9766,
+      "sha256": "23de23e90e9d849889b1da6634ca3c9a2c5267e571bee30388712299b9c31e59"
+    },
+    {
+      "path": "native-freshness-completed.log",
+      "bytes": 84603,
+      "sha256": "128350b0b881ccbeafca4d20c610fa2e48dd7d8efa3d823eac1ead570a4a67ec"
+    },
+    {
+      "path": "native-freshness/cleanup.txt",
+      "bytes": 69,
+      "sha256": "829864efcb2ce8726a0cf8344d37fa8a5977430c7bae1fa47af4fa210ee86254"
+    },
+    {
+      "path": "native-freshness/control",
+      "bytes": 7,
+      "sha256": "c54b6fd77bc699a17876ed9b46dcf770b66d0bd01380e25cd620ec82adf9c736"
+    },
+    {
+      "path": "native-freshness/events.jsonl",
+      "bytes": 22175,
+      "sha256": "e5ac51b49bf10f34ff79ce8ea3aa4c6dd5624c05cb2c8263978b1070ccc0d10f"
+    },
+    {
+      "path": "native-freshness/native.sha256",
+      "bytes": 111,
+      "sha256": "c29b45e523649b0e013e85908832bad350206feaace2da226aeb69511acf14a4"
+    },
+    {
+      "path": "native-freshness/owner",
+      "bytes": 21,
+      "sha256": "cb0a5c26318d03b7390574470a9deae2cf9fe3d19f074e6739d974445a195fc3"
+    },
+    {
+      "path": "native-freshness/s1.log",
+      "bytes": 1965,
+      "sha256": "f39900139f4708648bc173288f1151052487290e5fed03f75d063a7cfbc549bb"
+    },
+    {
+      "path": "native-freshness/s1.pid",
+      "bytes": 6,
+      "sha256": "3bf21fdc9ea6e2a68a34d5e86e5eb76344d32fe95cf35c34c095e7f2cb020e74"
+    },
+    {
+      "path": "native-freshness/s1.process-identity",
+      "bytes": 15,
+      "sha256": "d092c3177b0d530fbc79ada11b2b980d2e82ff7773cc76b9a52b75aeb0d3551e"
+    },
+    {
+      "path": "native-freshness/s1/00000000000000000000.snap",
+      "bytes": 5207,
+      "sha256": "e04ca5dd6a7ca4194db2784e726fb17f71c4240ee9f387b5e6f14e8bd0871caa"
+    },
+    {
+      "path": "native-freshness/s1/00000000000000000000.xlog",
+      "bytes": 12473,
+      "sha256": "6c4a1de2af111508f8b62a876b1b203d8a455a737dd052076c26af590a192e83"
+    },
+    {
+      "path": "native-freshness/s1/00000000000000000131.xlog",
+      "bytes": 129,
+      "sha256": "514a9a6f1bc6ca18204c70ce27ad12ef9bb58ffa0366ad78b3dd1635e1539c59"
+    },
+    {
+      "path": "native-freshness/s1/status-events.jsonl",
+      "bytes": 1180,
+      "sha256": "6e7123f2706ee57a2a0d89f677a4fb44bce1573d1ca38385bc3652d4ee27c0b4"
+    },
+    {
+      "path": "native-freshness/s2.log",
+      "bytes": 2097,
+      "sha256": "47d780e0187e383ecaff69784b0ab202f340a49a4e37614824779a7b2054eb7b"
+    },
+    {
+      "path": "native-freshness/s2.pid",
+      "bytes": 6,
+      "sha256": "b38653592c86a244587f3378a2b73c4af4f1fc50abb63595586b26a1753239fb"
+    },
+    {
+      "path": "native-freshness/s2.process-identity",
+      "bytes": 15,
+      "sha256": "d092c3177b0d530fbc79ada11b2b980d2e82ff7773cc76b9a52b75aeb0d3551e"
+    },
+    {
+      "path": "native-freshness/s2/00000000000000000067.snap",
+      "bytes": 6581,
+      "sha256": "226dc00045f167063f0a9cff6f0d7f1c678517ea2048f35efd23b98f03362e37"
+    },
+    {
+      "path": "native-freshness/s2/00000000000000000067.xlog",
+      "bytes": 3970,
+      "sha256": "ed9dd642166ea1c7ce8dd666f38dd90d53049b031ec62c9461ec442e3a0c40f2"
+    },
+    {
+      "path": "native-freshness/s2/00000000000000000125.xlog",
+      "bytes": 134,
+      "sha256": "ed4148f61ce56feb2188079e2609c4b66b96aee45e77293322deeaa025fd162f"
+    },
+    {
+      "path": "native-freshness/s2/status-events.jsonl",
+      "bytes": 335,
+      "sha256": "227a4316dd884fbeb190e203da4d3a15528162ffb414a2bfdd62b4d863ae5070"
+    },
+    {
+      "path": "native-freshness/s3.log",
+      "bytes": 2702,
+      "sha256": "a2329fb41fb3eaab01d1352642aa0e42649632f284160a9d199700f38d3fbb68"
+    },
+    {
+      "path": "native-freshness/s3.pid",
+      "bytes": 6,
+      "sha256": "baace207d5f52b86c481f911e11affc301801a038ce51f94baa8556ce1e2a193"
+    },
+    {
+      "path": "native-freshness/s3.process-identity",
+      "bytes": 15,
+      "sha256": "d092c3177b0d530fbc79ada11b2b980d2e82ff7773cc76b9a52b75aeb0d3551e"
+    },
+    {
+      "path": "native-freshness/s3/00000000000000000009.snap",
+      "bytes": 5383,
+      "sha256": "dae4bde5c014e250155274a724908bf722f5e117314dd3ca88ef52959c446f2d"
+    },
+    {
+      "path": "native-freshness/s3/00000000000000000009.xlog",
+      "bytes": 11269,
+      "sha256": "8ccf49741fedba59e2f9e01f4bfce01fcb9a8dd98e04566f4474822a432c9315"
+    },
+    {
+      "path": "native-freshness/s3/00000000000000000126.xlog",
+      "bytes": 133,
+      "sha256": "68dbbd381a2c7364fb0f0446a41f356e0de9ab4a2aa3278eb08ac63e1ccec98b"
+    },
+    {
+      "path": "native-freshness/s3/status-events.jsonl",
+      "bytes": 335,
+      "sha256": "6c44d8f3418166b5b2870c9115e55bb3c5ef96418dd8dc9243dc776b47f16b81"
+    },
+    {
+      "path": "native-freshness/source.sha256",
+      "bytes": 12600,
+      "sha256": "a215f0679b8531e5a07062ce10073e7b75590fe97e1d44396880fb351255f4e8"
+    },
+    {
+      "path": "native-freshness/tarantool-version.txt",
+      "bytes": 707,
+      "sha256": "900f202fe69fce971c533c139c0e272d100eb6e3829c142e132c1f9fd635b048"
+    },
+    {
+      "path": "native-freshness/tarantool.sha256",
+      "bytes": 91,
+      "sha256": "c16e84e3a231b0da5925345bd984abd331dab4b2ec1256396073f83ce15e5879"
+    },
+    {
+      "path": "native-suite-missing-receipt.log",
+      "bytes": 240185,
+      "sha256": "097aa974c2e7bc230b06df3359611bc0410958b4f033d41bbcd7722fd6b48eb4"
+    },
+    {
+      "path": "original-ci/leader.xlog",
+      "bytes": 18351,
+      "sha256": "69038d474da51a0ffbf65161212a70521952261bcb648f7c90f74f166cdcb204"
+    },
+    {
+      "path": "original-ci/selected-wal.jsonl",
+      "bytes": 869,
+      "sha256": "4e53b6cdcec46a9d335c969f8d7d141828d1a789b06199889b694c360184adc1"
+    },
+    {
+      "path": "original-control.log",
+      "bytes": 527,
+      "sha256": "dc33ab2802d725b94faaf4265bf786ad2ea57d38ebeacc5003bd25c6279f525f"
+    },
+    {
+      "path": "original-control/node0.log",
+      "bytes": 994,
+      "sha256": "3ff606372537421a09ce389c5e21cba3a75c61a447cbc283484432f8dac5b180"
+    },
+    {
+      "path": "original-control/node0/00000000000000000000.snap",
+      "bytes": 5208,
+      "sha256": "4adf5e2891cff9af2fb3b68bb18833b9d9457d617b555caece543d679dd3b3b1"
+    },
+    {
+      "path": "original-control/node0/00000000000000000000.xlog",
+      "bytes": 7316,
+      "sha256": "93d15acae46a833d869edb02743875e01097282a260f5fa08087aac13ddb4397"
+    },
+    {
+      "path": "original-control/node0/00000000000000000063.xlog",
+      "bytes": 128,
+      "sha256": "72418f48b217c7729146ac3f836aa64e025c2f51464fa2c3d1419f2c7e859640"
+    },
+    {
+      "path": "original-control/receipt.json",
+      "bytes": 1026,
+      "sha256": "7828cd0f311d17739a104090db195196a34fabae5ccf32c2cb083bfafbed99a3"
+    }
+  ],
+  "observations": {
+    "original_control": "Fails: marker absent, policy installed, loaded/admitted true while both configured voters are absent.",
+    "lua_control": "Five delayed-join, exact memtx/Vinyl effects and partial-outage leader restart controls pass.",
+    "native_control": "Five controls pass with native ready=1 and binary SHA bound in receipt. All Lua and test input hashes are retained.",
+    "misconfigured_native": "The first requested native path did not exist because Cargo target_directory is /out/target. Its permissive first controller used Lua fallback; it is not native qualification. The subsequent strengthened controller refuses a missing explicit module. The initial broad suite failed on missing modules plus three early clock-readiness assertions; no successful qualification is claimed for it.",
+    "corrected_native_suite": "Nonzero full-run result retained. The requested module is present/ready; runtime assertions including 415 storage and 360 native checks pass. Two native freshness fixtures abort before starting because the temporary copied checkout lacked rust-toolchain.toml. After copying the exact file, the two source-matched fixtures pass 35 and 37 checks. This is component validation, not a relabelled successful full-run exit.",
+    "lua_storage": "Explicit native-disabled fixture passes all 415 storage checks. The earlier invalid native-path run and its three clock-readiness failures remain distinct, without an inferred cause or cure from this pass.",
+    "local_checks": "Format, strict workspace/all-target clippy, Python compilation and exact reproduction of 290 generated configurations pass. Registry: 287 default cases (74 positive, 213 broken), 300 total including 10 direct configs."
+  },
+  "models": {
+    "positive_states": 23,
+    "marker_counterexample_depth": 4,
+    "join_counterexample_depth": 3,
+    "scope": "Finite publication ordering. Does not verify Tarantool checkpoint/Raft implementation, clock bounds or general liveness."
+  },
+  "pending": [
+    "Full CI, Verus, complete TLA and both upgrade lanes"
+  ]
+}

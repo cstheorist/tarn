@@ -582,14 +582,22 @@ collection. `BugBaselineAboveCounter` gives the baseline the counter plus
 one: the delete of a later write at that sequence no longer supersedes it,
 and the deleted row stays in the index.
 
+The incarnation can also be retired (DROP or a rotation): its target is
+dropped, every later frame is acknowledged from the retirement alone, and
+its floors are deleted (`L.clear_retired`). `BugClearLiveFloors` deletes
+the floors of a ready incarnation too: a duplicate of a frame whose
+tombstone was collected under a floor is applied again, and the row's old
+key comes back.
+
 ```sh
-tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter
+tla/check.sh LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors
 ```
 
 | Configuration | Distinct states | Depth | Expected result |
 |---|---:|---:|---|
-| `LazyBaseline` | 169,572 | 25 | passes |
-| `Bug_LazyBaselineAboveCounter` | 587 | 8 | violates `DrainedConverges` |
+| `LazyBaseline` | 323,760 | 25 | passes |
+| `Bug_LazyBaselineAboveCounter` | 762 | 8 | violates `DrainedConverges` |
+| `Bug_LazyBaselineClearLiveFloors` | 87,841 | 14 | violates `DrainedConverges` |
 
 ### Conservative capacity meter
 
@@ -2046,12 +2054,45 @@ tla/check.sh GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned \
   Bug_GatewayReserve Bug_GatewayResponseRelease
 ```
 
+### Bounded bucket movement
+
+`BoundedMove.tla` separates physical copy/reclaim/install from serving
+ownership. Its three-key, one-row-batch instance permits concurrent pending
+writes, dirty-hint overflow/loss, a restart, disk refusal, cancellation and
+snapshots retained across publication. The positive configuration explores
+6,230 distinct states to depth 28. Eight controls expose their intended
+failures: omitted drain or lost deltas violate `AcknowledgedEffects`; early
+publication violates `CompletePublication`; exposed install/reclaim chunks
+or a stale partial snapshot violate `NoPartialReads`; oversized work violates
+`BoundedWork`; and a late page after cancel violates `CancelledResources`.
+
+`TarnCommit.tla` retains its predicate, prepared-transaction and RC lock
+interleavings through the new reclaim/install phases. The affected positive
+runs completed `Move_Scan` (1,746,444 states), `Move_RC` (1,531,251),
+`Move_ScanFailover` (1,012,888), `Join_Scan` (83,949), `Join_ScanFailover`
+(58,935), `Join3_Scan` (3,881,646) and `Join3_ScanPrepare` (2,150,603).
+The existing omitted-drain, omitted-hold and stale-serving controls still
+violate `StrictSerializable`. These focused runs do not certify all other
+registry configurations; CI runs the default registry separately.
+
+The models do not prove Tarantool, filesystem durability, actual byte/RSS
+accounting, format migration, or unbounded liveness. Live disk/memory/fault
+measurements and the maintenance migration drill supply separate evidence;
+see [the movement contract](bounded-moves.md). Shared executable Verus
+bodies are unchanged (140 verified, zero errors).
+
+```sh
+tla/check.sh BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta \
+  Bug_BoundedMovePublish Bug_BoundedMoveVisibility Bug_BoundedMoveReclaim \
+  Bug_BoundedMoveBatch Bug_BoundedMoveLatePage Bug_BoundedMoveSnapshot
+```
+
 ### Configuration counts
 
-The default list contains 300 unique configurations: 76 positive
-outcomes and 224 expected broken/trade-off outcomes. The 303 generated
+The default list contains 320 unique configurations: 79 positive
+outcomes and 241 expected broken/trade-off outcomes. The 323 generated
 configurations reproduce from `gen_cfgs.sh`; ten grouped-read, decision-
-placement and query-budget configurations are maintained directly, for 313 total. Explicit
+placement and query-budget configurations are maintained directly, for 333 total. Explicit
 check arguments override the default list.
 
 The premerge issue #130 list completed all 219 expected outcomes (57
@@ -2571,6 +2612,34 @@ online-backup guarantee, arbitrary-time PITR, whole-code refinement or automatic
 liveness/restart bound follows. The [operations contract](cluster-backup.md)
 and [live evidence index](../tests/evidence/cluster-backup/index.json) retain
 these boundaries and all source-bound outcomes.
+
+
+### Composite lazy routing (#185)
+
+`LazyRouting.tla` checks immutable routing metadata, refusal by old
+capabilities, all-owner prefix coverage, typed ordered merging, LIMIT after
+base rechecks and epoch fencing. Its six negative controls independently
+remove these protections. The model fixes a caught-up generation and uses
+small typed integer streams; it does not prove hash distribution or SQL
+normalization. Existing LazyIndex, LazyBarrier and LazyHandoff models cover
+assignment versions, source frontiers and movement obligations.
+
+Executable checks exercise partial and complete routing identities,
+ascending/descending cursor pages, stale base keys, migration/backfill,
+case-insensitive and nullable identities, old import tokens, received/sent
+copies, heterogeneous auxiliary IDs, and RF3/fsync leader death/restart on
+MemTX and Vinyl. Resource exhaustion returns a complete fallback or error;
+no prefix of a failed merge is published.
+
+The [retained executable evidence](../tests/evidence/lazy-routing/README.md)
+includes 60 native lifecycle checks, source/target and JOIN restart faults,
+composite RF3/fsync leader recovery, both full 11-case lazy SQL suites
+against MariaDB and the 1,092-case differential pass. The
+[routing cost study](lazy-routing-cost.md) retains five paired RF3/fsync
+comparisons for each uniform/skewed 1/4/16-lane case, all raw samples and
+failed attempts. It reports repeatable gains for the declared fully bound
+skewed workload and separate write-heavy/prefix regressions; it makes no
+universal throughput, independent-host or beyond-RAM claim.
 
 ## Mutation acknowledgement outcomes (issue #183)
 

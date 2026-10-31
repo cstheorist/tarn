@@ -1,0 +1,75 @@
+{
+  "issue": 185,
+  "artifacts": [
+    {
+      "path": "bound-skewed-1.tar.gz",
+      "bytes": 20375219,
+      "sha256": "7d801d45b1f36033b0730d0dcabe245b38a1d31626e09b8f3b6e246e5087f243"
+    },
+    {
+      "path": "bound-skewed-16.tar.gz",
+      "bytes": 23662402,
+      "sha256": "a3d771e946f5571ddc196588768b874fb329f2b3672ade70e486df5bc15147cf"
+    },
+    {
+      "path": "bound-skewed-4.tar.gz",
+      "bytes": 23061053,
+      "sha256": "23095e5751de9867264c66cc9f8d69876c0471d738a86e68daa862903d02f90a"
+    },
+    {
+      "path": "bound-uniform-1.tar.gz",
+      "bytes": 28259290,
+      "sha256": "476e8e93acee2b4eadae4da7b4fab64da019cfff877426acf51142be183b10ac"
+    },
+    {
+      "path": "bound-uniform-16.tar.gz",
+      "bytes": 27412332,
+      "sha256": "08542b25cfe0440fcd109e1f76ff90735dffdaf0a64a2ba337ae916fd66833f2"
+    },
+    {
+      "path": "bound-uniform-4.tar.gz",
+      "bytes": 27595051,
+      "sha256": "bf464dd219f51b7aae4c500679f4bbed1c78942f01811f91d5609ae803ea8f10"
+    },
+    {
+      "path": "ci-41073441278-skewed-4.tar.gz",
+      "bytes": 6969730,
+      "sha256": "2591d19fa9c5474a85befb21efdf83f2c258f6d554877d0fbcf96b2ab8b9093b"
+    },
+    {
+      "path": "development-attempts.tar.gz",
+      "bytes": 52037967,
+      "sha256": "c2ebba89c0aa60b6e4aae8104ed447456fcd7f330b68c3db0fde96e40f43d3f6"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 2069,
+      "sha256": "5f389cc28de9ba20af36701c390bcfb439570b3c11326365836342853df18483"
+    },
+    {
+      "path": "qualification-cluster.json",
+      "bytes": 345,
+      "sha256": "322823a15f91f37faee845cae380ba8d67b3a6cbcfc3778f0a2f0468243cbde4"
+    },
+    {
+      "path": "qualify-bound.sh",
+      "bytes": 659,
+      "sha256": "1cce285e1586d83c831185c5ac041b702839ef27798f90ceff1e355a36b588ff"
+    },
+    {
+      "path": "summary-bound.json",
+      "bytes": 330881,
+      "sha256": "54f1e61fa43e727fb2c45c044dc8f0da5e3a50c3c00ae7e618176a3ba86c5414"
+    },
+    {
+      "path": "summary-ci-41073441278.json",
+      "bytes": 162480,
+      "sha256": "0599e8313b9704c055365061f6c315babf899ff151dc2335d1010de8418d4114"
+    },
+    {
+      "path": "validation-local.tar.gz",
+      "bytes": 4625,
+      "sha256": "1be0be4b08d1736356466ceccc3049eba9f677fde4e4f5d8479520999c595adf"
+    }
+  ]
+}

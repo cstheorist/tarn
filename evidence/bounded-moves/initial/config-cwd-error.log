@@ -1,0 +1,215 @@
+BoundedMove                  ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: BoundedMove: error (expected pass)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 105 and seed 8892082564520866166 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88668] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16428546153653634314/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:42)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:42)
+Bug_BoundedMoveDrain         ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveDrain: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 125 and seed 401479827130336430 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88690] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4342551550411527203/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:43)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:43)
+Bug_BoundedMoveDelta         ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveDelta: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 124 and seed -8320910494158594589 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88712] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-8318750526874122133/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:43)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:43)
+Bug_BoundedMovePublish       ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMovePublish: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 62 and seed 1983654968666793820 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88734] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-16405660160654223677/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:43)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:43)
+Bug_BoundedMoveVisibility    ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveVisibility: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 67 and seed 2903872909017602105 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88756] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-4137918737750303823/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:44)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:44)
+Bug_BoundedMoveReclaim       ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveReclaim: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 74 and seed 3703702647352628903 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88778] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-15094956708132802523/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:44)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:44)
+Bug_BoundedMoveBatch         ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveBatch: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 63 and seed -6743693948552826044 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88800] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-3377087863013257244/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:44)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:44)
+Bug_BoundedMoveLatePage      ERROR: Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveLatePage: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 114 and seed 3373799479192047814 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88822] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/BoundedMove.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-86438859228911723/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module BoundedMove
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module BoundedMove
+Starting... (2026-10-29 20:14:45)
+Error: The constant parameter BugSnapshot is not assigned a value by the configuration file.
+Finished in 00s at (2026-10-29 20:14:45)
+Bug_BoundedMoveSnapshot      ERROR: Error: TLC encountered the following error when trying to read the configuration file Bug_BoundedMoveSnapshot.cfg:                              depth=-        0s
+UNEXPECTED: Bug_BoundedMoveSnapshot: error (expected violation)
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 113 and seed -5527215429704684986 with 1 worker on 16 cores with 491MB heap and 64MB offheap memory [pid: 88844] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Error: TLC encountered the following error when trying to read the configuration file Bug_BoundedMoveSnapshot.cfg:
+File not found.
+some outcomes were not as expected

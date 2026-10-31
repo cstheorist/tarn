@@ -1,0 +1,19 @@
+{
+  "source_head": "be95900747186fea5ab798d9452e3838de4ec675",
+  "failed_run": "https://github.com/cstheorist/tarn/actions/runs/41061997696/job/124083784488",
+  "stage": "cluster_backup.py -> lazy_drain",
+  "reply": [
+    "conflict",
+    1213,
+    "Transaction has been aborted by conflict"
+  ],
+  "scope": "The memtx rolling-upgrade job passed separately. Full Tests stopped in the unchanged backup fixture, after native/Lua storage passed. The failed full gate is not a passed release.",
+  "correction": "Reuse bb0131c: only one atomic call repeats after a complete known-aborted conflict; transport errors, malformed replies and unknown outcomes never authorize replay. Retain every observation.",
+  "fixture_retry_sha256": "c3538a2cf45b33d136f699d95a4f255a4575097ebf8af8bbfeec438948a31107",
+  "production_code_changed": false,
+  "local_controls": {
+    "upgrade_admission": 8,
+    "build_receipt": 1,
+    "known_abort_no_replay": "same exact helper/control blobs independently passed in the lazy-ledger review"
+  }
+}

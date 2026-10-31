@@ -1,5 +1,11 @@
 # Benchmarks
 
+The [scheduled-arrival load generator](LOAD_GENERATOR.md) supplies bounded
+offered-load scheduling and exact per-key/ledger audits for new SQL studies.
+Independent physical-host validation is tracked separately in
+[#211](https://github.com/cstheorist/tarn/issues/211). Its local functional
+controls do not replace or qualify the historical measurements below.
+
 The separate [typed range-read study](PUSHDOWN.md) records matched
 projection/partial-aggregate response bytes, RPCs, process CPU and timing,
 with complete repeated evidence and explicit shared-host/RF1 limits.

@@ -5,7 +5,7 @@
 # docs/verification.md. Arguments override the list of configurations.
 set -u
 cd "$(dirname "$0")"
-DEFAULT="GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned Bug_GatewayReserve Bug_GatewayResponseRelease Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
+DEFAULT="ClockBootstrap Bug_ClockBootstrapMarker Bug_ClockBootstrapJoin GatewayResources Bug_GatewayEarlyRelease Bug_GatewayEvictPinned Bug_GatewayReserve Bug_GatewayResponseRelease Bug_NoReadLocks Bug_LocalIgnoresRLocks Bug_NoWLockCheckOnRead Bug_NoTombstone
 Bug_LocalReadsIgnoreWLocks Bug_ROValidateNoWLockCheck Bug_ROValidateNoReadCheck Bug_ValidateLostStream
 Bug_GCIgnoresDecision Bug_GCNoExpiry Bug_FenceAfterExpiry
 Tradeoff_DirectReadAtomic Tradeoff_AckOnPrepare_DirectRYW
@@ -77,7 +77,7 @@ DEFAULT="$DEFAULT LockReplyOwnership Bug_LockReplyRelabelGeneration Bug_LockRepl
 DEFAULT="$DEFAULT LockCopy Bug_LockCopyAfterYield Bug_LockCopyReleaseFirst Bug_LockCopyOnQuorum Bug_LockReloadNoCopy"
 DEFAULT="$DEFAULT QueryBudget Bug_QueryEarlyWireRelease Bug_QueryEarlyResultRelease Bug_QueryPostDecisionRefusal"
 DEFAULT="$DEFAULT Fairness Bug_FairnessPrefix"
-DEFAULT="$DEFAULT LazyBaseline Bug_LazyBaselineAboveCounter"
+DEFAULT="$DEFAULT LazyBaseline Bug_LazyBaselineAboveCounter Bug_LazyBaselineClearLiveFloors"
 DEFAULT="$DEFAULT DecisionPlacement Bug_DecisionReadOnly Bug_DecisionIgnoreLeaving Bug_DecisionReselect
 Placement_Recov Placement_Failover Placement_RC Bug_PlacementNoTombstone Bug_PlacementFenceAfterExpiry"
 DEFAULT="$DEFAULT PipelineAdmission Bug_PipelineFreeOnCancel Bug_PipelineEarlyRetireRelease
@@ -93,6 +93,12 @@ Bug_ClusterBackupRestart Bug_ClusterBackupPartialRestore Bug_ClusterBackupMetada
 DEFAULT="$DEFAULT PlainLazyBinding Bug_PlainLazyDeclared Bug_PlainLazyCapture Bug_PlainLazyPending
 Bug_PlainLazyFirstWriteOnly Bug_PlainLazyReplaceReadset Bug_PlainLazyGlobalStale"
 DEFAULT="$DEFAULT EngineBuildReentry Bug_EngineBuildReusePage Bug_EngineBuildCallerOnlyCut Bug_EngineBuildKeepPrefix"
+DEFAULT="$DEFAULT BoundedMove Bug_BoundedMoveDrain Bug_BoundedMoveDelta Bug_BoundedMovePublish
+Bug_BoundedMoveVisibility Bug_BoundedMoveReclaim Bug_BoundedMoveBatch Bug_BoundedMoveLatePage Bug_BoundedMoveSnapshot"
+
+DEFAULT="$DEFAULT LazyRouting Bug_LazyRoutingCapability Bug_LazyRoutingRewrite Bug_LazyRoutingMissingOwner
+Bug_LazyRoutingLexical Bug_LazyRoutingEarlyLimit Bug_LazyRoutingEpoch"
+
 DEFAULT="$DEFAULT ExternalStrongKV Bug_KVOwnerFence Bug_KVIncarnation Bug_KVSchemaAsOwner
 Bug_KVClippedComplete Bug_KVMissingClaim Bug_KVFalseAtomic"
 CONFIGS=${*:-$DEFAULT}

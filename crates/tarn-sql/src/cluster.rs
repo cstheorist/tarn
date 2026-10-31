@@ -717,6 +717,32 @@ impl Drop for LockRequestGuard<'_> {
 /// if it still waits.
 const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
 
+/// How many more times a schema change sends APPLY to a shard where a
+/// transaction conflict rolled it back, before it reports the change
+/// unfinished (see `run_job_steps`).
+const APPLY_CONFLICT_RETRIES: u32 = 5;
+
+/// Run `attempt` again while it fails with a transaction conflict (1213), at
+/// most `retries` more times, waiting `backoff` and then twice as long each
+/// time in between. Only for steps that may be repeated.
+pub(crate) async fn retry_conflicts<T, F, Fut>(retries: u32, backoff: Duration, mut attempt: F) -> SqlResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = SqlResult<T>>,
+{
+    let (mut left, mut wait) = (retries, backoff);
+    loop {
+        match attempt().await {
+            Err(e) if e.code == 1213 && left > 0 => {
+                left -= 1;
+                tokio::time::sleep(wait).await;
+                wait = wait.saturating_mul(2);
+            }
+            r => return r,
+        }
+    }
+}
+
 /// A pending row-lock wait, as its shard reports it (`tarn_lock_waits`).
 #[derive(Clone, Debug, PartialEq)]
 struct Wait {
@@ -1128,13 +1154,8 @@ impl Cluster {
             loop {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 let Some(c) = weak.upgrade() else { break };
-                if let Ok(v) = c.catalog_version().await {
-                    if v != known {
-                        known = v;
-                        if let Err(e) = c.reload_catalog().await {
-                            tracing::warn!("catalog reload failed: {}", e);
-                        }
-                    }
+                if let Err(e) = c.poll_catalog(&mut known).await {
+                    tracing::warn!("catalog reload failed: {}", e);
                 }
             }
         });
@@ -1571,13 +1592,36 @@ impl Cluster {
     /// Reload the catalog after a statement met a newer table definition
     /// (1412); concurrent callers share one reload.
     pub async fn refresh_catalog(&self) -> SqlResult<()> {
-        self.reload_catalog().await
-    }
-
-    pub async fn reload_catalog(&self) -> SqlResult<()> {
         let seen = self.reloads.load(Ordering::Acquire);
         let _g = self.reload_mu.lock().await;
         if self.reloads.load(Ordering::Acquire) != seen {
+            return Ok(());
+        }
+        self.reload_catalog_inner().await
+    }
+
+    /// Read a catalog after this call began. DDL publication and catch-up
+    /// fences cannot reuse an overlapping read that captured an older schema.
+    pub async fn reload_catalog(&self) -> SqlResult<()> {
+        let _g = self.reload_mu.lock().await;
+        self.reload_catalog_inner().await
+    }
+
+    /// One poll of the catalog poller (every 0.3 s). Once the shards'
+    /// catalog version changes from `known`, it reloads the catalog, unless
+    /// this server's is that new already: a statement that met the version
+    /// reloaded it, and a reload discards every cached plan. A failed reload
+    /// waits for the next version, or for a statement that meets the fence.
+    async fn poll_catalog(&self, known: &mut u64) -> SqlResult<()> {
+        let Ok(v) = self.catalog_version().await else {
+            return Ok(());
+        };
+        if v == *known {
+            return Ok(());
+        }
+        *known = v;
+        let _g = self.reload_mu.lock().await;
+        if self.catalog().version >= v {
             return Ok(());
         }
         self.reload_catalog_inner().await
@@ -1756,7 +1800,7 @@ impl Cluster {
             .filter(|&i| def.indexes[i].lazy.is_some())
             .collect();
         if !lazies.is_empty() {
-            self.require_lazy_capabilities().await?;
+            self.require_lazy_capabilities(def.lazy_route_parts()).await?;
         }
         let first = self
             .alloc_space_ids(1 + globals.len() as u64 + lazies.len() as u64)
@@ -1825,7 +1869,7 @@ impl Cluster {
                 .filter_map(|i| i.lazy.as_ref().map(|l| l.space_id))
                 .collect();
             if !lazy_drop.is_empty() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
             }
             let ver = self.next_catalog_version().await?;
             let mut a = Mp::new();
@@ -1868,7 +1912,7 @@ impl Cluster {
             nd.ver = ver;
             let mut lazy_drop = Vec::new();
             if def.has_lazy() {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts()).await?;
                 let count = nd.indexes.iter().filter(|i| i.lazy.is_some()).count();
                 let first = self.alloc_space_ids(count as u64).await?;
                 for (n, i) in nd.indexes.iter_mut().filter(|i| i.lazy.is_some()).enumerate() {
@@ -1983,7 +2027,8 @@ impl Cluster {
             let ver = self.next_catalog_version().await?;
             ch.def.ver = ver;
             if def.has_lazy() || ch.def.indexes.iter().any(|i| i.lazy.is_some()) {
-                self.require_lazy_capabilities().await?;
+                self.require_lazy_capabilities(def.lazy_route_parts().max(ch.def.lazy_route_parts()))
+                    .await?;
             }
             // New unique keys without the shard key: space ids for their
             // global indexes, which the job fills from the existing rows.
@@ -2335,7 +2380,7 @@ impl Cluster {
             // all yet. No shard joins while the job is in progress.)
             self.load_members().await?;
             if job.kind == JobKind::Move {
-                return self.finish_move(&job).await;
+                return self.with_job_alive(&job.owner, self.finish_move(&job)).await;
             }
             if job.kind == JobKind::Members {
                 return self.finish_members(&job).await;
@@ -2477,8 +2522,15 @@ impl Cluster {
             vec![live.clone()]
         };
         for g in groups {
+            // APPLY may be repeated (a server that finishes the job repeats
+            // it). A shard where a transaction conflict rolled it back, as
+            // one can roll back a DDL statement of it, gets it again at once.
             for r in crate::topology::collect(
-                g.iter().map(|&i| step(i, job.kind.proc("apply"))),
+                g.iter().map(|&i| {
+                    retry_conflicts(APPLY_CONFLICT_RETRIES, Duration::from_millis(20), move || {
+                        step(i, job.kind.proc("apply"))
+                    })
+                }),
                 self.cfg.topology.fanout,
             )
             .await
@@ -2750,12 +2802,24 @@ pub(crate) mod wire_test {
     }
 }
 #[cfg(test)]
+#[path = "../../tarn-iproto/tests/common/mod.rs"]
+mod test_support;
+
+#[cfg(test)]
 #[path = "cluster_fallback_tests.rs"]
 mod fallback_tests;
 
 #[cfg(test)]
 #[path = "cluster_topology_tests.rs"]
 mod topology_tests;
+
+#[cfg(test)]
+#[path = "cluster_catalog_tests.rs"]
+mod catalog_tests;
+
+#[cfg(test)]
+#[path = "cluster_step_tests.rs"]
+mod step_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2875,7 +2939,7 @@ mod tests {
                 .arr(8)
                 .str("ok")
                 .uint(1)
-                .uint(1)
+                .uint(2)
                 .uint(1)
                 .str("3.9.0")
                 .uint(14)

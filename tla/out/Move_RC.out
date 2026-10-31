@@ -1,15 +1,14 @@
-Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=45515 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
 TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
-Running breadth-first search Model-Checking with fp 65 and seed 1469386547654788542 with 2 workers on 2 cores with 2731MB heap and 64MB offheap memory [pid: 23289] (Linux 6.18.44-fc-v153 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/MC.tla
-Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/TarnCommit.tla
-Parsing file /tmp/tlc-9473986669443180618/_TLCTrace.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /tmp/tlc-9473986669443180618/Naturals.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /tmp/tlc-9473986669443180618/FiniteSets.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /tmp/tlc-9473986669443180618/Sequences.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /tmp/tlc-9473986669443180618/TLC.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /tmp/tlc-9473986669443180618/TLCExt.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /tmp/tlc-9473986669443180618/Integers.tla (jar:file:/tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt25/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Running breadth-first search Model-Checking with fp 18 and seed -2350684845098656790 with 2 workers on 16 cores with 491MB heap and 64MB offheap memory [pid: 21029] (Mac OS X 27.0.1 aarch64, Eclipse Adoptium 21.0.13 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /private/tmp/tarn-issue176/tla/MC.tla
+Parsing file /private/tmp/tarn-issue176/tla/TarnCommit.tla
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/_TLCTrace.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/Naturals.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/FiniteSets.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/Sequences.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/TLC.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/TLCExt.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/_4/bpd1zb2j68n_63_vjmgc6r080000gn/T/tlc-9434074452656556644/Integers.tla (jar:file:/private/tmp/tarn-issue182-evidence/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -23,19 +22,17 @@ Linting of module TarnCommit
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MC
-Starting... (2026-10-26 14:26:08)
+Starting... (2026-10-30 09:01:50)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-10-26 14:26:08.
-Progress(12) at 2026-10-26 14:26:11: 44,707 states generated (44,707 s/min), 15,349 distinct states found (15,349 ds/min), 8,278 states left on queue.
-Progress(19) at 2026-10-26 14:27:11: 3,332,496 states generated (3,287,789 s/min), 608,039 distinct states found (592,690 ds/min), 132,390 states left on queue.
-Progress(23) at 2026-10-26 14:28:11: 6,732,993 states generated (3,400,497 s/min), 1,070,867 distinct states found (462,828 ds/min), 143,198 states left on queue.
-Progress(26) at 2026-10-26 14:29:11: 10,022,083 states generated (3,289,090 s/min), 1,409,931 distinct states found (339,064 ds/min), 51,806 states left on queue.
+Finished computing initial states: 1 distinct state generated at 2026-10-30 09:01:50.
+Progress(14) at 2026-10-30 09:01:53: 305,289 states generated (305,289 s/min), 75,299 distinct states found (75,299 ds/min), 33,294 states left on queue.
+Progress(24) at 2026-10-30 09:02:53: 6,961,996 states generated (6,656,707 s/min), 1,118,718 distinct states found (1,043,419 ds/min), 141,265 states left on queue.
 Model checking completed. No error has been found.
   Estimates of the probability that TLC did not check all reachable states
   because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = 7.2E-7
-  based on the actual fingerprints:  val = 1.2E-6
-10618984 states generated, 1450427 distinct states found, 0 states left on queue.
-The depth of the complete state graph search is 29.
-The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 13 and the 95th percentile is 4).
-Finished in 03min 17s at (2026-10-26 14:29:24)
+  calculated (optimistic):  val = 7.9E-7
+  based on the actual fingerprints:  val = 1.0E-7
+11100418 states generated, 1531251 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 31.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 12 and the 95th percentile is 3).
+Finished in 01min 41s at (2026-10-30 09:03:31)

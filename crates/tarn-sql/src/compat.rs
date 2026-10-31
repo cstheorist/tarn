@@ -8,7 +8,7 @@ use tarn_common::{SqlError, SqlResult, Value};
 use tarn_iproto::Client;
 
 pub const PROTOCOL: u64 = 1;
-pub const FORMAT: u64 = 1;
+pub const FORMAT: u64 = 2;
 
 fn incompatible(reason: impl std::fmt::Display) -> SqlError {
     SqlError::unsupported(format!("incompatible Tarn storage: {reason}; see docs/upgrades.md"))
@@ -109,19 +109,20 @@ mod tests {
     #[test]
     fn admits_supported_protocol_and_explicit_lua_fallbacks() {
         for native in ["ready", "disabled", "load_failed", "abi_mismatch"] {
-            assert!(validate(&report(1, 1, 2, "3.9.0-0-g8b9a0f59a9", native, 120.0), 2, 120.0).is_ok());
+            assert!(validate(&report(1, 2, 2, "3.9.0-0-g8b9a0f59a9", native, 120.0), 2, 120.0).is_ok());
         }
     }
 
     #[test]
     fn refuses_wrong_protocol_format_identity_runtime_or_expiry_contract() {
         for data in [
-            report(2, 1, 2, "3.9.0", "ready", 120.0),
-            report(1, 2, 2, "3.9.0", "ready", 120.0),
-            report(1, 1, 1, "3.9.0", "ready", 120.0),
-            report(1, 1, 2, "3.10.0", "ready", 120.0),
-            report(1, 1, 2, "3.9.0", "pending", 120.0),
-            report(1, 1, 2, "3.9.0", "ready", 60.0),
+            report(2, 2, 2, "3.9.0", "ready", 120.0),
+            report(1, 1, 2, "3.9.0", "ready", 120.0),
+            report(1, 3, 2, "3.9.0", "ready", 120.0),
+            report(1, 2, 1, "3.9.0", "ready", 120.0),
+            report(1, 2, 2, "3.10.0", "ready", 120.0),
+            report(1, 2, 2, "3.9.0", "pending", 120.0),
+            report(1, 2, 2, "3.9.0", "ready", 60.0),
         ] {
             assert!(validate(&data, 2, 120.0).is_err());
         }
@@ -135,7 +136,7 @@ mod tests {
                 .arr(8)
                 .str("ok")
                 .uint(1)
-                .uint(1)
+                .uint(2)
                 .uint(2)
                 .str("3.9.0")
                 .uint(layout)
@@ -147,7 +148,7 @@ mod tests {
 
     #[test]
     fn refuses_truncated_extended_and_coerced_reports() {
-        let data = report(1, 1, 2, "3.9.0", "ready", 120.0);
+        let data = report(1, 2, 2, "3.9.0", "ready", 120.0);
         for end in 0..data.len() {
             assert!(validate(&data[..end], 2, 120.0).is_err());
         }
@@ -160,7 +161,7 @@ mod tests {
             .arr(8)
             .str("ok")
             .str("1")
-            .uint(1)
+            .uint(2)
             .uint(2)
             .str("3.9.0")
             .uint(14)
