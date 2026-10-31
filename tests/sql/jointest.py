@@ -199,6 +199,7 @@ class JoinTest(movetest.Test):
             self.check(r is not None and st.get("stopped", stop_at) < stop_at,
                        f"TARN REMOVE SHARD {a.remove} under load, its storage stopped before the workload ended "
                        f"({st['remove_err']})")
+        self.until_reads()
         self.finish()
         for s in self.servers:
             self.check_members(connect(s), s)
