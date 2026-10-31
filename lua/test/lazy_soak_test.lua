@@ -100,12 +100,20 @@ local function refused(r)
     return true
 end
 
+-- A raised transaction conflict, such as the strong-read guard's while the
+-- clock is not ready after a restart, also leaves the write undone.
+local function conflict(e)
+    local ok, code = pcall(function() return e.code end)
+    return ok and code == box.error.TRANSACTION_CONFLICT
+end
+
 local function autocommit(shard)
     local id = pick(shard)
     if id == nil then return end
     local w = plan(id)
     local done, r = try(shard, 'tarn_autocommit', {w}, {fence = {sid, 0}, wb = {bucket(id)}})
-    if not done then other({'autocommit', tostring(r)})
+    if not done and conflict(r) then stats.throttled = stats.throttled + 1
+    elseif not done then other({'autocommit', tostring(r)})
     elseif r[1] == 'ok' then stats.writes = stats.writes + 1; want[id] = result(w)
     elseif not refused(r) then other(r) end
 end
@@ -141,13 +149,16 @@ local function begin(mode, parts, ids)
 end
 -- PREPARE the i-th write of t on its owner. Answers true (YES), false (a
 -- definite NO: the transaction aborts) or nil (unknown: recovery decides).
+-- 'expired' (clock safety unavailable, as for a peer that just restarted,
+-- or a transaction too old) is neither a YES nor a NO, and PREPARE wrote
+-- nothing: the transaction cannot commit either.
 local function prepare(txid, t, i)
     local id = t.writes[i][1]
     local done, r = try(owner(id), 'tarn_prepare', txid, 1, t.parts, {t.plans[i]}, {}, {},
                         clock.realtime(), NULL, {sid, 0}, {bucket(id)})
     if not done then other({'prepare', tostring(r)}); return nil end
     if r[1] == 'yes' then return true end
-    if r[1] ~= 'no' and r[1] ~= 'clock_unknown' then other(r) end
+    if r[1] ~= 'no' and r[1] ~= 'clock_unknown' and r[1] ~= 'expired' then other(r) end
     if r[2] == 1041 then stats.prepare_no = stats.prepare_no + 1 end
     local why = r[1] .. ':' .. tostring(r[2])
     stats.no[why] = (stats.no[why] or 0) + 1
