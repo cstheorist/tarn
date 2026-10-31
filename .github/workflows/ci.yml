@@ -35,9 +35,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes its run. Every commit pushed to
+# main runs to completion in its own group, so main's result (and the README
+# badge) is never a cancellation.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.topology_only && 'topology' || (github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification && format('kv-{0}', inputs.strong_kv_scope || 'all') || 'ci') }}
-  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.strong_read_cost || inputs.strong_kv_qualification)) }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ inputs.topology_only && 'topology' || (github.event_name == 'workflow_dispatch' && inputs.strong_read_cost && 'cost' || github.event_name == 'workflow_dispatch' && inputs.strong_kv_qualification && format('kv-{0}', inputs.strong_kv_scope || 'all') || 'ci') }}
+  cancel-in-progress: ${{ github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && (inputs.strong_read_cost || inputs.strong_kv_qualification)) }}
 
 env:
   CARGO_TERM_COLOR: always

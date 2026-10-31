@@ -1021,6 +1021,7 @@ function M.new(c)
         if not L.paused and not box.info.ro and (L.next_legacy or 0) <= clock.monotonic() then
             L.next_legacy = clock.monotonic() + .1
             pcall(L.clear_legacy)
+            pcall(L.clear_retired)
         end
         if not L.paused and not box.info.ro and box.space._tarn_lazy_defs ~= nil
            and box.space._tarn_lazy_defs:len() > 0 then
@@ -1242,6 +1243,79 @@ function M.new(c)
                 end
             end
         end
+    end
+    -- Floors of retired incarnations. L.apply acknowledges a retired
+    -- incarnation's frames from its retirement, which is durable and never
+    -- undone, without reading its floors, and L.collect_once drops its
+    -- target. Its floors go next: at most BATCH in a transaction, in buckets
+    -- the node may write, noted for a move like any write. One a move brings
+    -- back from a node that kept it goes the same way. Each pass resumes
+    -- after the last floor it looked at, and moves on to the next retired
+    -- incarnation when it reaches the end of one.
+    function L.clear_retired()
+        local floors = box.space._tarn_lazy_floor
+        if floors == nil or floors:len() == 0 then return false end
+        local gens = confirmed(function()
+            local out = {}
+            for _, d in box.space._tarn_lazy_defs:pairs() do
+                if d.phase == 'retired' and box.space[d.gen] == nil and floors.index.pk:min{d.gen} ~= nil then
+                    out[#out + 1] = d.gen
+                end
+            end
+            return out
+        end)
+        if #gens == 0 then L.retired_gen, L.retired_after = nil, nil; return false end
+        local gen = gens[1]
+        for _, g in ipairs(gens) do
+            if L.retired_gen ~= nil and g >= L.retired_gen then gen = g; break end
+        end
+        if gen ~= L.retired_gen then L.retired_gen, L.retired_after = gen, nil end
+        c.writable()
+        c.bk.fresh()
+        local flight
+        local ok, result = pcall(function()
+            flight = c.inflight_begin()
+            box.begin(c.rw)
+            local d = box.space._tarn_lazy_defs:get{gen}
+            if d == nil or d.phase ~= 'retired' or box.space[gen] ~= nil then box.rollback(); return false end
+            local keys, scanned, last = {}, 0, nil
+            local opts = {iterator = 'EQ'}
+            if L.retired_after ~= nil then opts.after = L.retired_after end
+            for _, f in floors:pairs({gen}, opts) do
+                scanned, last = scanned + 1, f
+                if not c.bk.bad(f.bucket_id, true) then keys[#keys + 1] = {f.gen, f.bucket_id, f.source} end
+                if #keys >= BATCH or scanned >= BATCH * 8 then break end
+            end
+            if scanned >= BATCH * 8 or #keys >= BATCH then
+                L.retired_after = floors.index.pk:tuple_pos(last)
+            else
+                -- (the end of this incarnation's floors: the next pass
+                -- starts the next one)
+                L.retired_gen, L.retired_after = gen + 1, nil
+            end
+            local plans, buckets, seen = {}, {}, {}
+            for _, key in ipairs(keys) do
+                local old = floors:delete(key)
+                if old ~= nil then
+                    c.bk.note(floors, old, nil)
+                    plans[#plans + 1] = {floors, key, old, nil, nil, false}
+                    if not seen[old.bucket_id] then seen[old.bucket_id] = true; buckets[#buckets + 1] = old.bucket_id end
+                end
+            end
+            if #plans == 0 then box.rollback(); return false end
+            c.inflight_writes(flight, plans)
+            local refused = c.atomic('LazyClearRetired', L.final_check, buckets, plans)
+            if refused then box.rollback(); return false end
+            box.commit()
+            return true
+        end)
+        if box.is_in_txn() then box.rollback() end
+        if flight ~= nil then c.inflight_end(flight) end
+        if not ok then
+            L.retired_gen, L.retired_after = nil, nil
+            error(result)
+        end
+        return result
     end
     function L.stats()
         local u = q.snapshot()
