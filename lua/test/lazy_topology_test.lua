@@ -4,7 +4,11 @@ local opts = {user = 'tarn', password = 'tarn', wait_connected = 5}
 local c = {net.connect(assert(os.getenv('S1')), opts), net.connect(assert(os.getenv('S2')), opts),
            net.connect(assert(os.getenv('S3')), opts)}
 local pass, fail = 0, 0
-local function ok(r) assert(r[1] == 'ok', debug.traceback(json.encode(r), 2)); return r end
+local function ok(r)
+    -- (a FAIL line, so that CI's failure annotations carry the reply)
+    if r[1] ~= 'ok' then print('  FAIL unexpected reply ' .. json.encode(r)) end
+    assert(r[1] == 'ok', debug.traceback(json.encode(r), 2)); return r
+end
 local function check(name, yes, extra)
     if yes then pass = pass + 1; print('  ok   ' .. name)
     else fail = fail + 1; print('  FAIL ' .. name .. ' ' .. json.encode(extra)) end
@@ -215,7 +219,16 @@ check('heterogeneous-ID copy and counter delta use stable auxiliary names; write
       aux[1]==9051 and aux[2]==9052 and aux[3]==9053 and aux[4]==5 and aux[5]==0,aux)
 check('completed source handoff refreshes owner hints without waiting for TTL',
       c[3]:eval('return tarn.lazy.owners({1})[1]')==3)
-ok(call(3,'tarn_lazy_gc',gen,target,{target}))
+-- This shard's own collector may be collecting the same tombstone now that
+-- its owner hint names this shard: a conflict means it committed first, and
+-- a second call finds the floor it wrote.
+local collected
+for _ = 1, 50 do
+    collected = call(3,'tarn_lazy_gc',gen,target,{target})
+    if collected[1] ~= 'conflict' then break end
+    fiber.sleep(0.02)
+end
+ok(collected)
 c[3]:eval([[box.space._tarn_meta:replace{'test.lazy.join_restart',{sid=...,gen=select(2,...),target=select(3,...),
     replay=select(4,...),counter=5,aux={9051,9052,9053}}}]],{sid,gen,target,oldadd})
 print(string.format('%d passed, %d failed', pass, fail))

@@ -12,6 +12,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bounded typed merging for partial prefixes, single-destination complete
   keys, routing diagnostics and guarded incarnation migration (#185).
 
+- A churn and outage soak test for lazy indexes, `lua/test/lazy_soak.sh`,
+  on memtx and vinyl ([#177](https://github.com/cstheorist/tarn/issues/177)).
+  Single-shard writes and cross-shard transactions run over many protocol
+  record lifetimes and checkpoints. The run includes a stopped destination
+  with a capped outbox, and a killed and restarted shard with transactions
+  in flight. Then the rows and the index must converge exactly, and
+  tombstones and records must be reclaimed. `bench/lazy_footprint.py
+  study` measures two commits in matched pairs, with source and build
+  receipts. It reports memory, disk, latency tails, WAL bytes per change
+  and restart time. See [Memory and disk](docs/lazy-indexes.md#memory-and-disk).
+
 - A versioned, read-only strong Key/Value API for full-primary-key points
   and bounded independent-point batches, with dedicated-reader grants,
   ownership/schema handles and a generic Rust client. Complete responses
@@ -33,6 +44,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   See [the procedure and RPO/RTO boundaries](docs/cluster-backup.md).
 
 ### Fixed
+
+- A SQL server's catalog poller no longer reloads a catalog that a
+  statement already reloaded when it met the new version. Each such reload
+  discarded every cached plan once more after a schema change made on
+  another server, and made a statistics test's plan-cache check fail
+  intermittently ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
+- Storage nodes delete the tombstone floors of retired lazy incarnations
+  once the target is dropped ([#177](https://github.com/cstheorist/tarn/issues/177)).
+  They used to keep them forever, one per target and source bucket, for
+  every index a DROP or a rotation retired. The deletion runs in the
+  background, at most 128 in a transaction, only in buckets the node may
+  write. Late frames for a retired incarnation are still acknowledged from
+  its retirement (`tla/LazyBaseline.tla`, `Bug_LazyBaselineClearLiveFloors`).
+
+- A schema change sends APPLY again at once, up to five times, to a shard
+  where a transaction conflict rolled it back. A DDL statement of APPLY, such
+  as an index rename, can be aborted by a conflict while writers use the
+  table; the statement used to report 1180 ("did not finish on every shard")
+  and leave the change to finish in the background about 30 s later
+  ([#221](https://github.com/cstheorist/tarn/issues/221)).
 
 - Prepared administrative assignments capture prior diagnostic counts before
   clearing messages on each execution, including reused statement handles.
@@ -634,10 +666,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bucket's counter, read in the same view as the row. Any sequence up to
   the counter is correct, which `tla/LazyBaseline.tla` checks
   (`Bug_LazyBaselineAboveCounter` must fail it). Storage nodes delete the
-  entries older releases left, in bounded batches, in the background. At
-  1,000,000 rows on one storage node, the ledger held 82 MB of memtx, 83
-  bytes a row; without it the process RSS falls from 410 to 329 MiB with a
-  memtx table, and from 324 to 244 MiB with a vinyl one. See
+  entries older releases left, in bounded batches, in the background. In
+  three matched pairs at 1,000,000 rows on one storage node, the ledger
+  held 83 bytes a row of memtx (79 MiB) and cost 80 MiB of process RSS
+  with a memtx table and 72 MiB with a vinyl one. After a restart, which
+  also brought back an MVCC story per ledger entry, the vinyl node's RSS
+  falls from 595 to 54 MiB and its restart from 1.6 to 0.1 s. See
   [the measurements](docs/lazy-indexes.md#memory-and-disk) and
   `bench/lazy_footprint.py`.
 - The native storage procedures check locks key by key

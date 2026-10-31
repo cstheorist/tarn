@@ -1,0 +1,148 @@
+name: Scheduled SQL load generator
+
+on:
+  pull_request:
+    paths:
+      - 'bench/loadgen*'
+      - 'bench/LOAD_GENERATOR.md'
+      - '.github/workflows/load-generator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-generator-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mysql-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      mysql:
+        image: mysql:8.4.13@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 3408:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - name: Exercise the portable workload on pinned MySQL
+        run: |
+          common=(--endpoint 127.0.0.1:3408 --database tarn_load_reference --engine InnoDB)
+          python3 bench/loadgen.py prepare "${common[@]}" --out /tmp/loadgen-reference/prepare
+          for workload in point transaction; do
+            python3 bench/loadgen.py run "${common[@]}" --workload "$workload" \
+              --warmup .2 --seconds 1 --rate 20 --p99-ms 10000 --max-error-rate 1 \
+              --out "/tmp/loadgen-reference/$workload"
+            python3 bench/loadgen.py audit --database tarn_load_reference \
+              --out "/tmp/loadgen-reference/$workload"
+          done
+          python3 bench/loadgen.py run "${common[@]}" --keys-per-transaction 4 --distribution hot \
+            --isolation READ-COMMITTED --warmup .2 --seconds 1 --rate 20 --p99-ms 10000 \
+            --max-error-rate 1 --out /tmp/loadgen-reference/hot
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loadgen-mysql-reference-${{ github.run_id }}
+          path: /tmp/loadgen-reference
+          retention-days: 30
+          if-no-files-found: error
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - run: python3 bench/loadgen_test.py
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Build normal release target and retain identity
+        run: |
+          cargo build --release --locked -p tarn-server -p tarn-storage
+          mkdir /tmp/loadgen-build
+          cp target/release/tarn-server target/release/libtarn_storage.so /tmp/loadgen-build/
+          git rev-parse HEAD > /tmp/loadgen-build/source.txt
+          rustc -Vv > /tmp/loadgen-build/rustc.txt
+          sha256sum target/release/tarn-server target/release/libtarn_storage.so > /tmp/loadgen-build/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loadgen-build-${{ github.run_id }}
+          path: /tmp/loadgen-build
+          retention-days: 30
+
+  functional:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        engine: [memtx, vinyl]
+        native: [enabled, disabled]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: loadgen-build-${{ github.run_id }}
+          path: /tmp/loadgen-build
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install PyMySQL==1.1.2
+      - uses: actions/cache/restore@v6
+        id: tarantool-cache
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: Install target runtime and verify release artifacts
+        run: |
+          ci/install-tarantool.sh 3.9.0 "$HOME/.local/tarantool"
+          echo "$HOME/.local/tarantool/bin" >> "$GITHUB_PATH"
+          test "$(cat /tmp/loadgen-build/source.txt)" = "$(git rev-parse HEAD)"
+          mkdir -p target/release
+          cp /tmp/loadgen-build/tarn-server /tmp/loadgen-build/libtarn_storage.so target/release/
+          chmod +x target/release/tarn-server
+          sha256sum -c /tmp/loadgen-build/binaries.sha256
+      - uses: actions/cache/save@v6
+        if: steps.tarantool-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.local/tarantool
+          key: tarantool-3.9.0-${{ runner.os }}-${{ hashFiles('ci/install-tarantool.sh') }}
+      - name: RF3 fsync functional controls and explicit overload rejection
+        env:
+          ENGINE: ${{ matrix.engine }}
+          TARN_NATIVE: ${{ matrix.native == 'enabled' && '/tmp/loadgen-build/libtarn_storage.so' || '0' }}
+        run: |
+          bash bench/loadgen_smoke.sh /tmp/loadgen-smoke
+          tarantool --version > /tmp/loadgen-smoke/tarantool-version.txt
+          sha256sum "$(command -v tarantool)" > /tmp/loadgen-smoke/tarantool.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loadgen-${{ matrix.engine }}-${{ matrix.native }}-${{ github.run_id }}
+          path: |
+            /tmp/loadgen-smoke
+            /tmp/loadgen-build/source.txt
+            /tmp/loadgen-build/rustc.txt
+            /tmp/loadgen-build/binaries.sha256
+          retention-days: 30
+          if-no-files-found: error
