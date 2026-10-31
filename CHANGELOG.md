@@ -59,6 +59,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   write. Late frames for a retired incarnation are still acknowledged from
   its retirement (`tla/LazyBaseline.tla`, `Bug_LazyBaselineClearLiveFloors`).
 
+- A schema change sends APPLY again at once, up to five times, to a shard
+  where a transaction conflict rolled it back. A DDL statement of APPLY, such
+  as an index rename, can be aborted by a conflict while writers use the
+  table; the statement used to report 1180 ("did not finish on every shard")
+  and leave the change to finish in the background about 30 s later
+  ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
 - Preserve 1180/40003 for native commit uncertainty, missing write DATA and
   malformed mutation replies. Require complete error and handback envelopes
   before retry/fallback so a plausible prefix cannot replay an increment.

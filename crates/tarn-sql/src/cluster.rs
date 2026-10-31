@@ -717,6 +717,32 @@ impl Drop for LockRequestGuard<'_> {
 /// if it still waits.
 const DEADLOCK_MIN_WAIT: Duration = Duration::from_millis(50);
 
+/// How many more times a schema change sends APPLY to a shard where a
+/// transaction conflict rolled it back, before it reports the change
+/// unfinished (see `run_job_steps`).
+const APPLY_CONFLICT_RETRIES: u32 = 5;
+
+/// Run `attempt` again while it fails with a transaction conflict (1213), at
+/// most `retries` more times, waiting `backoff` and then twice as long each
+/// time in between. Only for steps that may be repeated.
+pub(crate) async fn retry_conflicts<T, F, Fut>(retries: u32, backoff: Duration, mut attempt: F) -> SqlResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = SqlResult<T>>,
+{
+    let (mut left, mut wait) = (retries, backoff);
+    loop {
+        match attempt().await {
+            Err(e) if e.code == 1213 && left > 0 => {
+                left -= 1;
+                tokio::time::sleep(wait).await;
+                wait = wait.saturating_mul(2);
+            }
+            r => return r,
+        }
+    }
+}
+
 /// A pending row-lock wait, as its shard reports it (`tarn_lock_waits`).
 #[derive(Clone, Debug, PartialEq)]
 struct Wait {
@@ -2496,8 +2522,15 @@ impl Cluster {
             vec![live.clone()]
         };
         for g in groups {
+            // APPLY may be repeated (a server that finishes the job repeats
+            // it). A shard where a transaction conflict rolled it back, as
+            // one can roll back a DDL statement of it, gets it again at once.
             for r in crate::topology::collect(
-                g.iter().map(|&i| step(i, job.kind.proc("apply"))),
+                g.iter().map(|&i| {
+                    retry_conflicts(APPLY_CONFLICT_RETRIES, Duration::from_millis(20), move || {
+                        step(i, job.kind.proc("apply"))
+                    })
+                }),
                 self.cfg.topology.fanout,
             )
             .await
@@ -2783,6 +2816,10 @@ mod topology_tests;
 #[cfg(test)]
 #[path = "cluster_catalog_tests.rs"]
 mod catalog_tests;
+
+#[cfg(test)]
+#[path = "cluster_step_tests.rs"]
+mod step_tests;
 
 #[cfg(test)]
 mod tests {
