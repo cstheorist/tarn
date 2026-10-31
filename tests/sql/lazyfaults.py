@@ -320,7 +320,14 @@ return {inactive = rawget(_G, '__tarn_lazyfaults') == nil, errors = errors, txid
         if self.txid and self.known_committed:
             for node in self.test.nodes:
                 try:
-                    result = rpc(node, "tarn_apply", [self.txid])
+                    # Another fiber of the node, such as its recovery, may
+                    # be applying the same transaction: a conflict rolled
+                    # this APPLY back, and the next one finds it applied.
+                    for _ in range(50):
+                        result = rpc(node, "tarn_apply", [self.txid])
+                        if not result or result[0] != "conflict":
+                            break
+                        time.sleep(0.02)
                     assert list(result[:2]) in (["ok", "applied"], ["ok", "none"]), result
                 except Exception as exc:
                     errors.append(f"owned APPLY cleanup {node}: {exc}")
