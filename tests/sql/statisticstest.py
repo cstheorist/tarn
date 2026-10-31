@@ -9,6 +9,7 @@ import json
 import secrets
 import struct
 import threading
+import time
 
 import pymysql
 
@@ -54,6 +55,17 @@ def main():
         for start in range(1, 2049, 256):
             q(a, "INSERT INTO a VALUES" + ",".join(f"({i},{i},'Á',{i}.25)" for i in range(start, start + 256)))
         q(a, "INSERT INTO b VALUES" + ",".join(f"({i},{777 if i < 9 else 'NULL'},{777})" for i in range(1, 21)))
+        def misses():
+            return int(dict(q(b,"SHOW TARN STATUS"))["Tarn_plan_cache_misses"])
+        # A statement that meets a table its gateway does not know reloads the
+        # catalog; the gateway's poller then reloads only a newer one, since a
+        # reload discards every cached plan.
+        q(a, "CREATE TABLE c(id INT PRIMARY KEY)")
+        assert q(b, "SELECT id FROM c WHERE id=1") == ()
+        cached = misses()
+        time.sleep(1)  # more than three of the poller's 0.3 s polls
+        assert q(b, "SELECT id FROM c WHERE id=1") == ()
+        assert misses() == cached, "the catalog poller reloaded a catalog that a statement had reloaded"
         sql = "SELECT a.*,b.* FROM a JOIN b ON a.id=b.a_id WHERE b.id=7 ORDER BY a.id,b.id"
         baseline = q(a, sql)
         assert len(baseline) == 1 and baseline[0][0] == 777 and baseline[0][4] == 7
@@ -67,8 +79,6 @@ def main():
         point, point_cols, point_params = prepare(b,"SELECT k FROM a WHERE id=1")
         assert (point_cols,point_params) == (1,0)
         assert q(b,"SELECT k FROM a WHERE id=1") == ((1,),)
-        def misses():
-            return int(dict(q(b,"SHOW TARN STATUS"))["Tarn_plan_cache_misses"])
         before_misses = misses()
         analyze, ncols, nparams = prepare(b, "ANALYZE TABLE b")
         assert (ncols, nparams) == (4, 0)

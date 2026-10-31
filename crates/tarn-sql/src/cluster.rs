@@ -1128,13 +1128,8 @@ impl Cluster {
             loop {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 let Some(c) = weak.upgrade() else { break };
-                if let Ok(v) = c.catalog_version().await {
-                    if v != known {
-                        known = v;
-                        if let Err(e) = c.reload_catalog().await {
-                            tracing::warn!("catalog reload failed: {}", e);
-                        }
-                    }
+                if let Err(e) = c.poll_catalog(&mut known).await {
+                    tracing::warn!("catalog reload failed: {}", e);
                 }
             }
         });
@@ -1583,6 +1578,26 @@ impl Cluster {
     /// fences cannot reuse an overlapping read that captured an older schema.
     pub async fn reload_catalog(&self) -> SqlResult<()> {
         let _g = self.reload_mu.lock().await;
+        self.reload_catalog_inner().await
+    }
+
+    /// One poll of the catalog poller (every 0.3 s). Once the shards'
+    /// catalog version changes from `known`, it reloads the catalog, unless
+    /// this server's is that new already: a statement that met the version
+    /// reloaded it, and a reload discards every cached plan. A failed reload
+    /// waits for the next version, or for a statement that meets the fence.
+    async fn poll_catalog(&self, known: &mut u64) -> SqlResult<()> {
+        let Ok(v) = self.catalog_version().await else {
+            return Ok(());
+        };
+        if v == *known {
+            return Ok(());
+        }
+        *known = v;
+        let _g = self.reload_mu.lock().await;
+        if self.catalog().version >= v {
+            return Ok(());
+        }
         self.reload_catalog_inner().await
     }
 

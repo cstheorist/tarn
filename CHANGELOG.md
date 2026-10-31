@@ -45,6 +45,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A SQL server's catalog poller no longer reloads a catalog that a
+  statement already reloaded when it met the new version. Each such reload
+  discarded every cached plan once more after a schema change made on
+  another server, and made a statistics test's plan-cache check fail
+  intermittently ([#221](https://github.com/cstheorist/tarn/issues/221)).
+
 - Storage nodes delete the tombstone floors of retired lazy incarnations
   once the target is dropped ([#177](https://github.com/cstheorist/tarn/issues/177)).
   They used to keep them forever, one per target and source bucket, for
