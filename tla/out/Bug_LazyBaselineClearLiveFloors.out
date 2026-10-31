@@ -1,0 +1,210 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=33791 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2026.10.24.013619 (rev: 2ef2af8)
+Running breadth-first search Model-Checking with fp 107 and seed 4680134279237305972 with 1 worker on 2 cores with 2731MB heap and 64MB offheap memory [pid: 23968] (Linux 6.18.44-fc-v185 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-claude/8aec7761-055c-5fdf-8c73-2965d21440fe/scratchpad/wt-177c/tla/LazyBaseline.tla
+Parsing file /tmp/tlc-7239368122014184803/Naturals.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-7239368122014184803/Integers.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-7239368122014184803/FiniteSets.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-7239368122014184803/_TLCTrace.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-7239368122014184803/Sequences.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-7239368122014184803/TLC.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-7239368122014184803/TLCExt.tla (jar:file:/home/claude/tarn/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module LazyBaseline
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module LazyBaseline
+Starting... (2026-10-30 16:17:46)
+Computing initial states...
+Computed 2 initial states...
+Finished computing initial states: 3 distinct states generated at 2026-10-30 16:17:46.
+Progress(14) at 2026-10-30 16:17:49: 368,101 states generated (368,101 s/min), 75,647 distinct states found (75,647 ds/min), 30,783 states left on queue.
+Error: Invariant DrainedConverges is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 0
+/\ wire = {}
+/\ after = 0
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = {}
+/\ phase = "before"
+/\ base = "none"
+
+State 2: <Bootstrap line 77, col 5 to line 82, col 78 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 0
+/\ wire = {}
+/\ after = 0
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = {}
+/\ phase = "building"
+/\ base = "none"
+
+State 3: <Ready line 86, col 5 to line 88, col 86 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 0
+/\ wire = {}
+/\ after = 0
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = {}
+/\ phase = "ready"
+/\ base = "none"
+
+State 4: <WriteAfter line 93, col 5 to line 104, col 63 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 1
+/\ wire = {}
+/\ after = 1
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ before = 0
+/\ sent = {}
+/\ phase = "ready"
+/\ base = "A"
+
+State 5: <WriteAfter line 93, col 5 to line 104, col 63 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {}
+/\ after = 2
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ before = 0
+/\ sent = {}
+/\ phase = "ready"
+/\ base = "none"
+
+State 6: <Ship([seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]) line 107, col 5 to line 109, col 81 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ after = 2
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ before = 0
+/\ sent = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ phase = "ready"
+/\ base = "none"
+
+State 7: <Deliver([seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]) line 127, col 5 to line 135, col 70 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {}
+/\ after = 2
+/\ markers = [A |-> [seq |-> 1, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {[seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE]}
+/\ before = 0
+/\ sent = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ phase = "ready"
+/\ base = "none"
+
+State 8: <Duplicate([seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]) line 113, col 5 to line 115, col 87 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ after = 2
+/\ markers = [A |-> [seq |-> 1, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {[seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE]}
+/\ before = 0
+/\ sent = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ phase = "ready"
+/\ base = "none"
+
+State 9: <Ship([seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE]) line 107, col 5 to line 109, col 81 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ after = 2
+/\ markers = [A |-> [seq |-> 1, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {[seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE]}
+/\ before = 0
+/\ sent = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ phase = "ready"
+/\ base = "none"
+
+State 10: <Deliver([seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE]) line 127, col 5 to line 135, col 70 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ after = 2
+/\ markers = [A |-> [seq |-> 2, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ phase = "ready"
+/\ base = "none"
+
+State 11: <InstallFloor("A") line 139, col 5 to line 141, col 85 of module LazyBaseline>
+/\ floors = [A |-> 2, B |-> -1]
+/\ counter = 2
+/\ wire = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ after = 2
+/\ markers = [A |-> [seq |-> 2, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ phase = "ready"
+/\ base = "none"
+
+State 12: <GC("A") line 145, col 5 to line 147, col 84 of module LazyBaseline>
+/\ floors = [A |-> 2, B |-> -1]
+/\ counter = 2
+/\ wire = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ after = 2
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ phase = "ready"
+/\ base = "none"
+
+State 13: <ClearFloors("A") line 159, col 5 to line 163, col 85 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {[seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]}
+/\ after = 2
+/\ markers = [A |-> [seq |-> -1, present |-> FALSE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ phase = "ready"
+/\ base = "none"
+
+State 14: <Deliver([seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE]) line 127, col 5 to line 135, col 70 of module LazyBaseline>
+/\ floors = [A |-> -1, B |-> -1]
+/\ counter = 2
+/\ wire = {}
+/\ after = 2
+/\ markers = [A |-> [seq |-> 1, present |-> TRUE], B |-> [seq |-> -1, present |-> FALSE]]
+/\ outbox = {}
+/\ before = 0
+/\ sent = { [seq |-> 1, key |-> "A", put |-> TRUE, boot |-> FALSE],
+  [seq |-> 2, key |-> "A", put |-> FALSE, boot |-> FALSE] }
+/\ phase = "ready"
+/\ base = "none"
+
+455369 states generated, 87841 distinct states found, 33027 states left on queue.
+The depth of the complete state graph search is 14.
+Finished in 04s at (2026-10-30 16:17:50)
+Trace exploration spec path: ./LazyBaseline_TTrace_1793391466.tla
