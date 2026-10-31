@@ -11,6 +11,12 @@ adds other runtime changes and expands the default registry to 319 models.
 Historical measurements and model outputs are not relabeled as current-source
 validation. Their recorded input hashes remain the audit boundary.
 
+The 50 archives that #213 added are not in the tree, to keep the repository
+small: they are retained at commit
+[`dfc2b6f`](https://github.com/cstheorist/tarn/tree/dfc2b6f41381a0ff2c126aa656d7a97c6b73e7cb/tests/evidence/lazy-routing),
+which the pull request keeps reachable. `index.json` still gives each one's
+size and SHA-256, and its link in `retained_at`.
+
 * `bound-{uniform,skewed}-{1,4,16}.tar.gz`: six local cases, each with five
   alternating baseline/composite pairs, ten seconds per arm, four RF3/fsync
   groups, 32 client threads/four processes and a twelve-CPU quota. Each

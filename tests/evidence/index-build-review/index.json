@@ -27,5 +27,9 @@
     "positive-native.out": "2e8f057fc9a925f932ebf57546bee5bc0f85c002e1ab34bc15a1c170ceb44965"
   },
   "negative_harness": "830c8a72566f535ffb9194d0c31f50ae55035d09",
-  "source_label_boundary": "The retained negative controller used a placeholder source label; index.json identifies its actual harness revision. The final positive cohorts use b219feb. Only cleanup handling changed between those harnesses; no original receipt is relabeled."
+  "source_label_boundary": "The retained negative controller used a placeholder source label; index.json identifies its actual harness revision. The final positive cohorts use b219feb. Only cleanup handling changed between those harnesses; no original receipt is relabeled.",
+  "retained_at": {
+    "clusters.tar.gz": "https://github.com/cstheorist/tarn/blob/dfc2b6f41381a0ff2c126aa656d7a97c6b73e7cb/tests/evidence/index-build-review/clusters.tar.gz",
+    "original-41110785622-job124252347419.out.gz": "https://github.com/cstheorist/tarn/blob/dfc2b6f41381a0ff2c126aa656d7a97c6b73e7cb/tests/evidence/index-build-review/original-41110785622-job124252347419.out.gz"
+  }
 }
